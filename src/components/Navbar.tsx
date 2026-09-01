@@ -1,23 +1,16 @@
 import React from 'react';
 import { 
   Stethoscope, 
-  Sparkles, 
-  Users, 
-  Calendar, 
-  FileText, 
-  Receipt, 
-  MessageSquare, 
-  PhoneCall, 
-  Building2, 
   Bot, 
-  Activity,
   Plus,
   UserCheck,
   Menu,
-  ChevronRight,
-  ShieldAlert
+  LogOut,
+  Shield
 } from 'lucide-react';
-import { Doctor } from '../types';
+import { Doctor, UserRole } from '../types';
+import { useAuth } from '../auth/AuthContext';
+import { useNav } from '../nav/NavigationContext';
 
 export type NavView = 
   | 'ambient' 
@@ -41,6 +34,9 @@ interface NavbarProps {
   onToggleHexa: () => void;
   onToggleSidebar?: () => void;
   isSidebarCollapsed?: boolean;
+  userName?: string;
+  userRole?: UserRole;
+  canOpenAdmin?: boolean;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -52,7 +48,12 @@ export const Navbar: React.FC<NavbarProps> = ({
   onToggleHexa,
   onToggleSidebar,
   isSidebarCollapsed,
+  userName,
+  userRole,
+  canOpenAdmin,
 }) => {
+  const { logout } = useAuth();
+  const { go } = useNav();
   const VIEW_TITLES: Record<NavView, string> = {
     ambient: 'Ambient AI Scribe & SOAP',
     rx: 'Smart Rx & Specialty Studio',
@@ -147,6 +148,37 @@ export const Navbar: React.FC<NavbarProps> = ({
         >
           <Bot className="w-3.5 h-3.5 text-blue-200" />
           <span className="hidden sm:inline">HEXA AI</span>
+        </button>
+
+        {canOpenAdmin && (
+          <button
+            type="button"
+            onClick={() => go('admin')}
+            className="hidden sm:flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-xs text-slate-200 hover:text-white"
+          >
+            <Shield className="w-3.5 h-3.5 text-blue-300" />
+            Admin CMS
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => go('landing')}
+          className="hidden md:inline text-[11px] text-slate-400 hover:text-white"
+        >
+          Exit to site
+        </button>
+        {userName && (
+          <span className="hidden lg:inline text-[11px] text-slate-400">
+            {userName}
+            {userRole ? ` · ${userRole.replace('_', ' ')}` : ''}
+          </span>
+        )}
+        <button
+          onClick={() => logout().then(() => go('landing'))}
+          className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
+          title="Sign out"
+        >
+          <LogOut className="w-3.5 h-3.5" />
         </button>
       </div>
     </header>

@@ -1,4 +1,16 @@
 export type UserRole = 'doctor' | 'receptionist' | 'polyclinic_admin' | 'super_admin' | 'patient';
+export type UserStatus = 'active' | 'invited' | 'disabled';
+
+export interface AppUser {
+  id: string;
+  email: string;
+  name: string;
+  role: UserRole;
+  status: UserStatus;
+  phone: string;
+  lastLogin: string | null;
+  createdAt: string;
+}
 
 export type PolyclinicSpecialty = 
   | 'General Medicine'
@@ -16,6 +28,7 @@ export type PolyclinicSpecialty =
 
 export interface Doctor {
   id: string;
+  userId?: string | null;
   name: string;
   qualification: string;
   regNumber: string;
