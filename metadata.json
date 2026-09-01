@@ -1,0 +1,6 @@
+{
+  "name": "Lumera AI - Clinical & Healthcare Practice Suite",
+  "description": "Comprehensive AI Clinical Practice Suite with Ambient SOAP notes, Smart Rx Prescription Builder, Token Queue, Appointments, WhatsApp Bot, Polyclinic Management, Voice Bot, and Patient Portal.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
