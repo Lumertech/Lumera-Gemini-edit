@@ -94,24 +94,38 @@ export const LandingPage: React.FC = () => {
   useEffect(() => {
     fetch("/api/public/site")
       .then((r) => r.json())
-      .then((d) => setSite({ ...FALLBACK, ...d, settings: { ...FALLBACK.settings, ...d.settings } }))
+      .then((d) =>
+        setSite({
+          ...FALLBACK,
+          ...d,
+          settings: { ...FALLBACK.settings, ...(d.settings || {}) },
+          stats: Array.isArray(d.stats) && d.stats.length ? d.stats : FALLBACK.stats,
+          pains: d.pains || FALLBACK.pains,
+          features: d.features || FALLBACK.features,
+          personas: d.personas || FALLBACK.personas,
+          testimonials: d.testimonials || FALLBACK.testimonials,
+          policies: d.policies || FALLBACK.policies,
+        })
+      )
       .catch(() => undefined);
   }, []);
 
   const s = site.settings;
 
   return (
-    <div className="min-h-screen text-white font-sans selection:bg-violet-500 selection:text-white bg-[#14061f]">
-      <div className="relative overflow-hidden">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,_rgba(168,85,247,0.45),_transparent_55%),radial-gradient(ellipse_at_bottom,_rgba(76,29,149,0.35),_#0b0214_70%)]" />
+    <div className="min-h-screen text-white font-sans selection:bg-violet-500 selection:text-white bg-violet-950">
+      <div className="relative overflow-hidden bg-gradient-to-b from-violet-700 via-violet-950 to-black">
 
+        <div className="relative z-20 text-center text-[11px] text-violet-200/80 pt-3">
+          Public marketing site · clinician app is at Login → Doctor
+        </div>
         <header className="relative z-20 max-w-6xl mx-auto px-4 sm:px-6 py-5 flex items-center justify-between">
           <Link to="/" className="flex items-center gap-2.5">
             {s.logoUrl ? (
               <img src={s.logoUrl} alt={s.brandName} className="h-9 w-9 rounded-xl object-cover" />
             ) : (
-              <div className="h-9 w-9 rounded-xl bg-violet-500/90 flex items-center justify-center shadow-[0_0_24px_rgba(168,85,247,0.65)]">
-                <Sparkles className="w-4.5 h-4.5 w-5 h-5" />
+              <div className="h-9 w-9 rounded-xl bg-violet-500 flex items-center justify-center shadow-lg shadow-violet-500/50">
+                <Sparkles className="w-5 h-5" />
               </div>
             )}
             <span className="text-lg font-extrabold tracking-tight">{s.brandName}</span>

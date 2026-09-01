@@ -16,7 +16,7 @@ export default function PatientPortalApp() {
         <div className="flex items-center gap-3">
           <span className="text-slate-400">{user?.name}</span>
           <Link to="/" className="hover:text-blue-300">Site</Link>
-          <button onClick={() => logout().then(() => { window.location.href = "/"; })}>Sign out</button>
+          <button onClick={() => logout().then(() => { window.location.hash = "#/"; })}>Sign out</button>
         </div>
       </header>
       <PatientPortal

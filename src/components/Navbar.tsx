@@ -171,7 +171,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           </span>
         )}
         <button
-          onClick={() => logout().then(() => { window.location.href = '/'; })}
+          onClick={() => logout().then(() => { window.location.hash = '#/'; })}
           className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
           title="Sign out"
         >

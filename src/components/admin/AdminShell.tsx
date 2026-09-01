@@ -1,5 +1,5 @@
 import React from "react";
-import { NavLink, Navigate, Route, Routes, useNavigate } from "react-router-dom";
+import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard,
   Users,
@@ -14,15 +14,6 @@ import {
   Home,
 } from "lucide-react";
 import { useAuth } from "../../auth/AuthContext";
-import { AdminOverview } from "./AdminOverview";
-import { AdminUsers } from "./AdminUsers";
-import { AdminPeople } from "./AdminPeople";
-import { AdminBranches } from "./AdminBranches";
-import { AdminCmsSite } from "./AdminCmsSite";
-import { AdminPolicies } from "./AdminPolicies";
-import { AdminMedia } from "./AdminMedia";
-import { AdminSettings } from "./AdminSettings";
-import { AdminAudit } from "./AdminAudit";
 
 const NAV = [
   { to: "/admin", label: "Overview", icon: LayoutDashboard, end: true },
@@ -83,18 +74,7 @@ export const AdminShell: React.FC = () => {
         </div>
       </aside>
       <main className="flex-1 overflow-y-auto p-6">
-        <Routes>
-          <Route index element={<AdminOverview />} />
-          <Route path="users" element={<AdminUsers />} />
-          <Route path="people" element={<AdminPeople />} />
-          <Route path="branches" element={<AdminBranches />} />
-          <Route path="site" element={<AdminCmsSite />} />
-          <Route path="policies" element={<AdminPolicies />} />
-          <Route path="media" element={<AdminMedia />} />
-          <Route path="settings" element={<AdminSettings />} />
-          <Route path="audit" element={<AdminAudit />} />
-          <Route path="*" element={<Navigate to="/admin" replace />} />
-        </Routes>
+        <Outlet />
       </main>
     </div>
   );

@@ -563,6 +563,20 @@ async function startServer() {
       server: { middlewareMode: true },
       appType: "spa",
     });
+    app.use((req, _res, next) => {
+      const p = req.path;
+      const isAsset =
+        p.startsWith("/api") ||
+        p.startsWith("/uploads") ||
+        p.startsWith("/@") ||
+        p.startsWith("/src") ||
+        p.startsWith("/node_modules") ||
+        p.includes(".");
+      if ((req.method === "GET" || req.method === "HEAD") && !isAsset) {
+        req.url = "/index.html";
+      }
+      next();
+    });
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), "dist");
