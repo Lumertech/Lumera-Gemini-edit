@@ -8,9 +8,9 @@ import {
   LogOut,
   Shield
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
 import { Doctor, UserRole } from '../types';
 import { useAuth } from '../auth/AuthContext';
+import { useNav } from '../nav/NavigationContext';
 
 export type NavView = 
   | 'ambient' 
@@ -53,6 +53,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   canOpenAdmin,
 }) => {
   const { logout } = useAuth();
+  const { go } = useNav();
   const VIEW_TITLES: Record<NavView, string> = {
     ambient: 'Ambient AI Scribe & SOAP',
     rx: 'Smart Rx & Specialty Studio',
@@ -150,20 +151,22 @@ export const Navbar: React.FC<NavbarProps> = ({
         </button>
 
         {canOpenAdmin && (
-          <Link
-            to="/admin"
+          <button
+            type="button"
+            onClick={() => go('admin')}
             className="hidden sm:flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-xs text-slate-200 hover:text-white"
           >
             <Shield className="w-3.5 h-3.5 text-blue-300" />
             Admin CMS
-          </Link>
+          </button>
         )}
-        <Link
-          to="/"
+        <button
+          type="button"
+          onClick={() => go('landing')}
           className="hidden md:inline text-[11px] text-slate-400 hover:text-white"
         >
           Exit to site
-        </Link>
+        </button>
         {userName && (
           <span className="hidden lg:inline text-[11px] text-slate-400">
             {userName}
@@ -171,7 +174,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           </span>
         )}
         <button
-          onClick={() => logout().then(() => { window.location.hash = '#/'; })}
+          onClick={() => logout().then(() => go('landing'))}
           className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
           title="Sign out"
         >

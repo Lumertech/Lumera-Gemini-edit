@@ -1,22 +1,23 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { apiFetch } from "../api/http";
 import { AppUser, UserRole } from "../types";
+import { Surface } from "../nav/NavigationContext";
 
 interface AuthContextValue {
   user: AppUser | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<AppUser>;
   logout: () => Promise<void>;
-  homePath: string;
+  homeSurface: Surface;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-export function homePathForRole(role?: UserRole): string {
-  if (role === "patient") return "/portal";
-  if (role === "super_admin" || role === "polyclinic_admin") return "/admin";
-  if (role === "doctor" || role === "receptionist") return "/app";
-  return "/login";
+export function homeSurfaceForRole(role?: UserRole): Surface {
+  if (role === "patient") return "portal";
+  if (role === "super_admin" || role === "polyclinic_admin") return "admin";
+  if (role === "doctor" || role === "receptionist") return "app";
+  return "login";
 }
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -50,7 +51,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       loading,
       login,
       logout,
-      homePath: homePathForRole(user?.role),
+      homeSurface: homeSurfaceForRole(user?.role),
     }),
     [user, loading, login, logout]
   );

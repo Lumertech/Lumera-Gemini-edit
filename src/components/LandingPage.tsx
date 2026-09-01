@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
 import {
   Sparkles,
   Phone,
@@ -21,6 +20,7 @@ import {
   Briefcase,
   ArrowRight,
 } from "lucide-react";
+import { useNav } from "../nav/NavigationContext";
 
 interface SitePayload {
   settings: {
@@ -89,7 +89,7 @@ const FALLBACK: SitePayload = {
 
 export const LandingPage: React.FC = () => {
   const [site, setSite] = useState<SitePayload>(FALLBACK);
-  const navigate = useNavigate();
+  const { go } = useNav();
 
   useEffect(() => {
     fetch("/api/public/site")
@@ -115,12 +115,11 @@ export const LandingPage: React.FC = () => {
   return (
     <div className="min-h-screen text-white font-sans selection:bg-violet-500 selection:text-white bg-violet-950">
       <div className="relative overflow-hidden bg-gradient-to-b from-violet-700 via-violet-950 to-black">
-
         <div className="relative z-20 text-center text-[11px] text-violet-200/80 pt-3">
-          Public marketing site · clinician app is at Login → Doctor
+          Public marketing site
         </div>
         <header className="relative z-20 max-w-6xl mx-auto px-4 sm:px-6 py-5 flex items-center justify-between">
-          <Link to="/" className="flex items-center gap-2.5">
+          <button type="button" onClick={() => go("landing")} className="flex items-center gap-2.5">
             {s.logoUrl ? (
               <img src={s.logoUrl} alt={s.brandName} className="h-9 w-9 rounded-xl object-cover" />
             ) : (
@@ -129,23 +128,29 @@ export const LandingPage: React.FC = () => {
               </div>
             )}
             <span className="text-lg font-extrabold tracking-tight">{s.brandName}</span>
-          </Link>
+          </button>
           <div className="flex items-center gap-2 sm:gap-3">
-            <a
-              href={`https://wa.me/919800012345`}
+            <button
+              type="button"
+              onClick={() => go("login", { loginNext: "app", loginDemo: true })}
               className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-500 hover:bg-emerald-400 text-white text-xs font-semibold"
             >
               WhatsApp Login
-            </a>
-            <Link to="/login" className="px-3 py-1.5 text-sm font-medium text-white/90 hover:text-white">
+            </button>
+            <button
+              type="button"
+              onClick={() => go("login", { loginNext: "app" })}
+              className="px-3 py-1.5 text-sm font-medium text-white/90 hover:text-white"
+            >
               Login
-            </Link>
-            <Link
-              to="/login?next=/admin"
-              className="px-4 py-1.5 rounded-full bg-violet-500 hover:bg-violet-400 text-sm font-semibold shadow-[0_0_22px_rgba(168,85,247,0.55)]"
+            </button>
+            <button
+              type="button"
+              onClick={() => go("login", { loginNext: "admin" })}
+              className="px-4 py-1.5 rounded-full bg-violet-500 hover:bg-violet-400 text-sm font-semibold"
             >
               Start Free Trial
-            </Link>
+            </button>
           </div>
         </header>
 
@@ -158,14 +163,16 @@ export const LandingPage: React.FC = () => {
           <p className="mt-5 text-base sm:text-lg text-violet-100/80 max-w-2xl mx-auto">{s.heroSubtitle}</p>
           <div className="mt-8 flex flex-wrap justify-center gap-3">
             <button
-              onClick={() => navigate("/login?next=/app")}
-              className="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-violet-500 hover:bg-violet-400 font-semibold shadow-[0_0_32px_rgba(168,85,247,0.7)]"
+              type="button"
+              onClick={() => go("login", { loginNext: "app" })}
+              className="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-violet-500 hover:bg-violet-400 font-semibold"
             >
               <Sparkles className="w-4 h-4" />
               {s.ctaPrimary}
             </button>
             <button
-              onClick={() => navigate("/login?next=/app&demo=1")}
+              type="button"
+              onClick={() => go("login", { loginNext: "app", loginDemo: true })}
               className="inline-flex items-center gap-2 px-6 py-3 rounded-full border border-white/25 bg-white/5 hover:bg-white/10 font-semibold"
             >
               <Phone className="w-4 h-4" />
@@ -177,10 +184,7 @@ export const LandingPage: React.FC = () => {
             {site.stats.map((stat) => {
               const Icon = STAT_ICONS[stat.icon] || Calendar;
               return (
-                <div
-                  key={stat.label}
-                  className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-md px-4 py-5"
-                >
+                <div key={stat.label} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-5">
                   <Icon className="w-5 h-5 mx-auto mb-2 text-violet-200" />
                   <div className="text-2xl font-extrabold">{stat.value}</div>
                   <div className="text-xs text-violet-200/80 mt-1">{stat.label}</div>
@@ -279,7 +283,8 @@ export const LandingPage: React.FC = () => {
           <h2 className="text-3xl font-extrabold">{s.ctaBannerTitle}</h2>
           <p className="text-violet-100/80 mt-3">{s.ctaBannerSubtitle}</p>
           <button
-            onClick={() => navigate("/login?next=/app")}
+            type="button"
+            onClick={() => go("login", { loginNext: "app" })}
             className="mt-6 inline-flex items-center gap-2 px-6 py-3 rounded-full bg-violet-500 hover:bg-violet-400 font-semibold"
           >
             Start Free Trial <ArrowRight className="w-4 h-4" />
@@ -297,9 +302,14 @@ export const LandingPage: React.FC = () => {
         <div className="font-semibold text-violet-100 mb-2">Policies & Disclaimers</div>
         <div className="flex flex-wrap justify-center gap-4 mb-4">
           {site.policies.map((p) => (
-            <Link key={p.slug} to={`/${p.slug}`} className="hover:text-white">
+            <button
+              key={p.slug}
+              type="button"
+              onClick={() => go("policy", { policySlug: p.slug })}
+              className="hover:text-white"
+            >
               {p.title}
-            </Link>
+            </button>
           ))}
         </div>
         <p>

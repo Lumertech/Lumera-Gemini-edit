@@ -1,60 +1,69 @@
 import React from "react";
-import { HashRouter, Navigate, Route, Routes } from "react-router-dom";
-import { AuthProvider } from "./auth/AuthContext";
-import { RequireAuth } from "./auth/RequireAuth";
+import { AuthProvider, homeSurfaceForRole, useAuth } from "./auth/AuthContext";
+import { NavigationProvider, Surface, useNav } from "./nav/NavigationContext";
 import { LandingPage } from "./components/LandingPage";
 import { LoginPage } from "./pages/LoginPage";
 import { PolicyPage } from "./pages/PolicyPage";
 import { AdminShell } from "./components/admin/AdminShell";
-import { AdminOverview } from "./components/admin/AdminOverview";
-import { AdminUsers } from "./components/admin/AdminUsers";
-import { AdminPeople } from "./components/admin/AdminPeople";
-import { AdminBranches } from "./components/admin/AdminBranches";
-import { AdminCmsSite } from "./components/admin/AdminCmsSite";
-import { AdminPolicies } from "./components/admin/AdminPolicies";
-import { AdminMedia } from "./components/admin/AdminMedia";
-import { AdminSettings } from "./components/admin/AdminSettings";
-import { AdminAudit } from "./components/admin/AdminAudit";
 import ClinicianApp from "./ClinicianApp";
 import PatientPortalApp from "./PatientPortalApp";
+import { UserRole } from "./types";
+
+const CLINICIAN: UserRole[] = ["doctor", "receptionist", "polyclinic_admin", "super_admin"];
+const ADMIN: UserRole[] = ["super_admin", "polyclinic_admin"];
+const PATIENT: UserRole[] = ["patient", "super_admin"];
+
+function allowed(surface: Surface, role?: UserRole): boolean {
+  if (surface === "app") return !!role && CLINICIAN.includes(role);
+  if (surface === "admin") return !!role && ADMIN.includes(role);
+  if (surface === "portal") return !!role && PATIENT.includes(role);
+  return true;
+}
+
+function SurfaceRoot() {
+  const { surface, policySlug } = useNav();
+  const { user, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-violet-950 text-violet-100 flex items-center justify-center text-sm">
+        Loading Lumera…
+      </div>
+    );
+  }
+
+  if (surface === "login") return <LoginPage />;
+  if (surface === "policy") return <PolicyPage slug={policySlug} />;
+
+  if (surface === "app") {
+    if (!user) return <LoginPage />;
+    if (!allowed("app", user.role)) return <LandingPage />;
+    return <ClinicianApp />;
+  }
+
+  if (surface === "admin") {
+    if (!user) return <LoginPage />;
+    if (!allowed("admin", user.role)) return <LandingPage />;
+    return <AdminShell />;
+  }
+
+  if (surface === "portal") {
+    if (!user) return <LoginPage />;
+    if (!allowed("portal", user.role)) return <LandingPage />;
+    return <PatientPortalApp />;
+  }
+
+  return <LandingPage />;
+}
 
 export default function App() {
   return (
     <AuthProvider>
-      <HashRouter>
-        <Routes>
-          <Route path="/" element={<LandingPage />} />
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/privacy" element={<PolicyPage slug="privacy" />} />
-          <Route path="/terms" element={<PolicyPage slug="terms" />} />
-          <Route path="/disclaimer" element={<PolicyPage slug="disclaimer" />} />
-          <Route path="/security" element={<PolicyPage slug="security" />} />
-
-          <Route element={<RequireAuth roles={["doctor", "receptionist", "polyclinic_admin", "super_admin"]} />}>
-            <Route path="/app/*" element={<ClinicianApp />} />
-          </Route>
-
-          <Route element={<RequireAuth roles={["super_admin", "polyclinic_admin"]} />}>
-            <Route path="/admin" element={<AdminShell />}>
-              <Route index element={<AdminOverview />} />
-              <Route path="users" element={<AdminUsers />} />
-              <Route path="people" element={<AdminPeople />} />
-              <Route path="branches" element={<AdminBranches />} />
-              <Route path="site" element={<AdminCmsSite />} />
-              <Route path="policies" element={<AdminPolicies />} />
-              <Route path="media" element={<AdminMedia />} />
-              <Route path="settings" element={<AdminSettings />} />
-              <Route path="audit" element={<AdminAudit />} />
-            </Route>
-          </Route>
-
-          <Route element={<RequireAuth roles={["patient", "super_admin"]} />}>
-            <Route path="/portal" element={<PatientPortalApp />} />
-          </Route>
-
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </HashRouter>
+      <NavigationProvider>
+        <SurfaceRoot />
+      </NavigationProvider>
     </AuthProvider>
   );
 }
+
+export { homeSurfaceForRole };

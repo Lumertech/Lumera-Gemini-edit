@@ -1,11 +1,12 @@
 import React, { useState } from "react";
-import { Link } from "react-router-dom";
 import { PatientPortal } from "./components/PatientPortal";
 import { MOCK_APPOINTMENTS, MOCK_PATIENTS } from "./data/clinicalData";
 import { useAuth } from "./auth/AuthContext";
+import { useNav } from "./nav/NavigationContext";
 
 export default function PatientPortalApp() {
   const { user, logout } = useAuth();
+  const { go } = useNav();
   const patient = MOCK_PATIENTS.find((p) => p.email === user?.email) || MOCK_PATIENTS[0];
   const [appointments] = useState(MOCK_APPOINTMENTS);
 
@@ -15,8 +16,12 @@ export default function PatientPortalApp() {
         <span className="font-bold">Lumera Patient Portal</span>
         <div className="flex items-center gap-3">
           <span className="text-slate-400">{user?.name}</span>
-          <Link to="/" className="hover:text-blue-300">Site</Link>
-          <button onClick={() => logout().then(() => { window.location.hash = "#/"; })}>Sign out</button>
+          <button type="button" onClick={() => go("landing")} className="hover:text-blue-300">
+            Site
+          </button>
+          <button type="button" onClick={() => logout().then(() => go("landing"))}>
+            Sign out
+          </button>
         </div>
       </header>
       <PatientPortal

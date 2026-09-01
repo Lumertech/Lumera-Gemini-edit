@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { apiFetch } from "../../api/http";
+import { useNav } from "../../nav/NavigationContext";
 
 interface Policy {
   slug: string;
@@ -9,6 +10,7 @@ interface Policy {
 }
 
 export const AdminPolicies: React.FC = () => {
+  const { go } = useNav();
   const [policies, setPolicies] = useState<Policy[]>([]);
   const [active, setActive] = useState<string>("privacy");
   const [saved, setSaved] = useState(false);
@@ -68,9 +70,13 @@ export const AdminPolicies: React.FC = () => {
               Save policy
             </button>
             {saved && <span className="text-xs text-emerald-600">Saved</span>}
-            <a className="text-xs text-blue-600" href={`/${current.slug}`} target="_blank" rel="noreferrer">
+            <button
+              type="button"
+              className="text-xs text-blue-600"
+              onClick={() => go("policy", { policySlug: current.slug })}
+            >
               View public page
-            </a>
+            </button>
           </div>
         </div>
       )}
