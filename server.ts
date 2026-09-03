@@ -9,10 +9,36 @@ import { attachUser } from "./server/auth.ts";
 import { createApiRouter } from "./server/api.ts";
 
 dotenv.config();
-initDatabase();
+
+try {
+  initDatabase();
+} catch (err) {
+  console.error("Database init failed:", err);
+  process.exit(1);
+}
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
+
+function requestPath(url: string | undefined): string {
+  return (url ?? "/").split("?")[0] || "/";
+}
+
+/** Respond to /healthz before Express/Vite so Windows curl always gets a body. */
+function handleRawHealthz(req: http.IncomingMessage, res: http.ServerResponse): boolean {
+  const path = requestPath(req.url);
+  if (path !== "/healthz") return false;
+  if (req.method !== "GET" && req.method !== "HEAD") return false;
+  res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
+  res.end(req.method === "HEAD" ? undefined : "ok");
+  return true;
+}
+
+function logIncomingRequest(req: http.IncomingMessage): void {
+  process.stdout.write(
+    `[http] ${new Date().toISOString()} ${req.method ?? "?"} ${req.url ?? "/"}\n`
+  );
+}
 
 app.use(express.json({ limit: "10mb" }));
 if (process.platform !== "win32") {
@@ -608,8 +634,16 @@ async function startServer() {
     });
   }
 
-  const httpServer = http.createServer(app);
-  httpServer.keepAliveTimeout = 0;
+  const httpServer = http.createServer((req, res) => {
+    logIncomingRequest(req);
+    if (handleRawHealthz(req, res)) return;
+    app(req, res);
+  });
+
+  if (process.platform !== "win32") {
+    // Cursor preview proxy can RST keep-alive sockets; disable on non-Windows only.
+    httpServer.keepAliveTimeout = 0;
+  }
   httpServer.headersTimeout = 10_000;
 
   httpServer.on("clientError", (err, socket) => {
@@ -623,28 +657,33 @@ async function startServer() {
     console.error("HTTP server error:", err);
   });
 
-  const logListening = () => {
+  const logListening = (host: string) => {
     if (process.platform === "win32") {
-      console.log(`Lumera AI Server running on http://0.0.0.0:${PORT} (IPv4 only; use http://127.0.0.1:${PORT})`);
+      console.log(
+        `Lumera AI Server running on http://${host}:${PORT} (IPv4; curl http://127.0.0.1:${PORT}/healthz)`
+      );
     } else {
-      console.log(`Lumera AI Server running on http://0.0.0.0:${PORT} (IPv4+IPv6)`);
+      console.log(`Lumera AI Server running on http://${host}:${PORT} (IPv4+IPv6)`);
     }
   };
 
   if (process.platform === "win32") {
-    // Windows: dual-stack `::` and two sockets on one port both cause curl 52 empty replies
-    // on Node 24. A single IPv4 listener on 0.0.0.0 is reliable for 127.0.0.1 and LAN.
+    // Windows Node 24: dual-stack `::` and http.createServer(app) can yield curl 52 empty replies.
+    // Single IPv4 listener + raw /healthz before Express is the reliable path.
     await new Promise<void>((resolve, reject) => {
       httpServer.once("error", reject);
-      httpServer.listen({ port: PORT, host: "0.0.0.0" }, () => {
+      httpServer.listen(PORT, "0.0.0.0", () => {
         httpServer.removeListener("error", reject);
-        logListening();
+        logListening("0.0.0.0");
         resolve();
       });
     });
   } else {
-    httpServer.listen({ port: PORT, host: "::", ipv6Only: false }, logListening);
+    httpServer.listen({ port: PORT, host: "::", ipv6Only: false }, () => logListening("::"));
   }
 }
 
-startServer();
+startServer().catch((err) => {
+  console.error("Failed to start server:", err);
+  process.exit(1);
+});
