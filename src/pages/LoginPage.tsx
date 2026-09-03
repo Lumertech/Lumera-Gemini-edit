@@ -101,7 +101,7 @@ export const LoginPage: React.FC = () => {
 };
 
 function allowedNext(next: string, role: string) {
-  if (next === "admin") return role === "super_admin" || role === "polyclinic_admin";
+  if (next === "admin") return role === "super_admin";
   if (next === "app") return ["doctor", "receptionist", "polyclinic_admin"].includes(role);
   if (next === "portal") return role === "patient";
   return true;

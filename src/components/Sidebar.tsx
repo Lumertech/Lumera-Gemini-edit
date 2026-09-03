@@ -116,6 +116,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
           label: 'Patient EMR Portal',
           icon: ShieldCheck,
         },
+        {
+          id: 'team' as NavView,
+          label: 'Clinic team',
+          icon: Stethoscope,
+          badge: 'Staff',
+          badgeColor: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30',
+        },
       ],
     },
   ];

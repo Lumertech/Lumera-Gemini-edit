@@ -109,7 +109,8 @@ export function requireRole(...roles: UserRole[]) {
   };
 }
 
-export const ADMIN_ROLES: UserRole[] = ["super_admin", "polyclinic_admin"];
+export const ADMIN_ROLES: UserRole[] = ["super_admin"];
+export const CLINIC_MANAGER_ROLES: UserRole[] = ["doctor", "polyclinic_admin"];
 export const CLINICIAN_ROLES: UserRole[] = [
   "doctor",
   "receptionist",

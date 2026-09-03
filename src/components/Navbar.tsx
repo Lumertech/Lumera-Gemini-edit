@@ -23,7 +23,8 @@ export type NavView =
   | 'whatsapp' 
   | 'voicebot' 
   | 'billing' 
-  | 'portal';
+  | 'portal'
+  | 'team';
 
 interface NavbarProps {
   currentView: NavView;
@@ -66,6 +67,7 @@ export const Navbar: React.FC<NavbarProps> = ({
     whatsapp: 'WhatsApp AI Suite',
     voicebot: 'AI Voice Receptionist',
     portal: 'Patient EMR Portal',
+    team: 'Clinic Team & Staff',
   };
 
   return (
