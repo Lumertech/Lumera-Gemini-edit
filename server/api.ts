@@ -16,6 +16,7 @@ import {
 import {
   ADMIN_ROLES,
   CLINICIAN_ROLES,
+  CLINIC_MANAGER_ROLES,
   clearSessionCookie,
   createSession,
   destroySession,
@@ -150,6 +151,120 @@ export function createApiRouter(): Router {
   api.get("/doctors", requireAuth, requireRole(...CLINICIAN_ROLES, "patient"), (_req, res) => {
     const rows = getDb().prepare("SELECT * FROM doctors ORDER BY name").all() as Record<string, unknown>[];
     res.json({ doctors: rows.map(mapDoctor) });
+  });
+
+  api.get("/clinic/team", requireAuth, requireRole(...CLINICIAN_ROLES), (_req, res) => {
+    const members = getDb()
+      .prepare(
+        "SELECT * FROM users WHERE role IN ('doctor', 'receptionist', 'polyclinic_admin') ORDER BY name"
+      )
+      .all() as unknown as DbUser[];
+    const doctors = getDb().prepare("SELECT * FROM doctors ORDER BY name").all() as Record<string, unknown>[];
+    const staff = getDb().prepare("SELECT * FROM staff ORDER BY name").all();
+    res.json({ members: members.map(publicUser), doctors: doctors.map(mapDoctor), staff });
+  });
+
+  api.post("/clinic/members", requireAuth, requireRole(...CLINIC_MANAGER_ROLES), (req, res) => {
+    const { name, email, phone, role, password, specialty, qualification, regNumber, consultationFee, opdRoom, department, shift } =
+      req.body || {};
+    const allowedRoles =
+      req.user?.role === "polyclinic_admin" ? ["doctor", "receptionist", "polyclinic_admin"] : ["doctor", "receptionist"];
+    if (!name || !email || !role) {
+      return res.status(400).json({ error: "name, email, and role are required" });
+    }
+    if (!allowedRoles.includes(role)) {
+      return res.status(403).json({ error: "You cannot assign that role" });
+    }
+    const id = crypto.randomUUID();
+    const pwd = password ? String(password) : `Temp${Math.random().toString(36).slice(2, 8)}!A1`;
+    try {
+      getDb()
+        .prepare(
+          `INSERT INTO users (id, email, password_hash, name, role, status, phone, last_login, created_at)
+           VALUES (?, ?, ?, ?, ?, 'active', ?, NULL, ?)`
+        )
+        .run(id, String(email).trim().toLowerCase(), hashPassword(pwd), String(name), role, String(phone || ""), new Date().toISOString());
+    } catch {
+      return res.status(409).json({ error: "Email already exists" });
+    }
+    if (role === "doctor") {
+      const docId = `doc-${id.slice(0, 8)}`;
+      getDb()
+        .prepare(
+          `INSERT INTO doctors (id, user_id, name, qualification, reg_number, specialty, experience_years, consultation_fee, opd_room, available_days, opd_timing, phone, email, active)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
+        )
+        .run(
+          docId,
+          id,
+          String(name),
+          qualification || "",
+          regNumber || "",
+          specialty || "General Medicine",
+          0,
+          Number(consultationFee || 600),
+          opdRoom || "",
+          JSON.stringify(["Mon", "Tue", "Wed", "Thu", "Fri"]),
+          "09:00 AM - 02:00 PM",
+          phone || "",
+          String(email).trim().toLowerCase()
+        );
+    }
+    if (role === "receptionist") {
+      const staffId = `s-${id.slice(0, 8)}`;
+      getDb()
+        .prepare(
+          `INSERT INTO staff (id, user_id, name, role, department, phone, email, status, shift)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'Active', ?)`
+        )
+        .run(staffId, id, String(name), "Receptionist", department || "Front Desk", phone || "", String(email).trim().toLowerCase(), shift || "Full Day");
+    }
+    seedSubscriptionsIfMissing(getDb());
+    audit(req, "Clinic member created", `${name} <${email}> as ${role}`);
+    const user = getDb().prepare("SELECT * FROM users WHERE id = ?").get(id) as unknown as DbUser;
+    res.status(201).json({ user: publicUser(user), temporaryPassword: password ? undefined : pwd });
+  });
+
+  api.patch("/clinic/members/:id", requireAuth, requireRole(...CLINIC_MANAGER_ROLES), (req, res) => {
+    const existing = getDb().prepare("SELECT * FROM users WHERE id = ?").get(req.params.id) as unknown as DbUser | undefined;
+    if (!existing) return res.status(404).json({ error: "User not found" });
+    if (existing.role === "super_admin" || existing.role === "patient") {
+      return res.status(403).json({ error: "This account is not a clinic team member" });
+    }
+    if (existing.id === req.user?.id && req.body.status === "disabled") {
+      return res.status(400).json({ error: "You cannot disable your own login" });
+    }
+    const name = req.body.name ?? existing.name;
+    const phone = req.body.phone ?? existing.phone;
+    const status = req.body.status ?? existing.status;
+    const allowedRoles =
+      req.user?.role === "polyclinic_admin" ? ["doctor", "receptionist", "polyclinic_admin"] : ["doctor", "receptionist"];
+    let role = existing.role;
+    if (req.body.role && req.body.role !== existing.role) {
+      if (!allowedRoles.includes(req.body.role)) {
+        return res.status(403).json({ error: "You cannot assign that role" });
+      }
+      role = req.body.role;
+    }
+    getDb()
+      .prepare("UPDATE users SET name = ?, phone = ?, status = ?, role = ? WHERE id = ?")
+      .run(name, phone, status, role, existing.id);
+    audit(req, "Clinic member updated", `${existing.email} status=${status} role=${role}`);
+    const user = getDb().prepare("SELECT * FROM users WHERE id = ?").get(existing.id) as unknown as DbUser;
+    res.json({ user: publicUser(user) });
+  });
+
+  api.post("/clinic/members/:id/password", requireAuth, requireRole(...CLINIC_MANAGER_ROLES), (req, res) => {
+    const existing = getDb().prepare("SELECT * FROM users WHERE id = ?").get(req.params.id) as unknown as DbUser | undefined;
+    if (!existing) return res.status(404).json({ error: "User not found" });
+    if (existing.role === "super_admin" || existing.role === "patient") {
+      return res.status(403).json({ error: "This account is not a clinic team member" });
+    }
+    const password = String(req.body?.password || `Temp${Math.random().toString(36).slice(2, 8)}!A1`);
+    if (password.length < 8) return res.status(400).json({ error: "Password must be at least 8 characters" });
+    getDb().prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(hashPassword(password), existing.id);
+    audit(req, "Clinic password reset", existing.email);
+    res.json({ ok: true, temporaryPassword: req.body?.password ? undefined : password });
   });
 
   api.get("/admin/overview", requireAuth, requireRole(...ADMIN_ROLES), (_req, res) => {
@@ -320,7 +435,7 @@ export function createApiRouter(): Router {
     });
   });
 
-  api.post("/doctors", requireAuth, requireRole(...ADMIN_ROLES), (req, res) => {
+  api.post("/doctors", requireAuth, requireRole(...ADMIN_ROLES, ...CLINIC_MANAGER_ROLES), (req, res) => {
     const b = req.body || {};
     if (!b.name || !b.specialty) return res.status(400).json({ error: "name and specialty are required" });
     const id = b.id || `doc-${crypto.randomUUID().slice(0, 8)}`;
@@ -350,7 +465,7 @@ export function createApiRouter(): Router {
     res.status(201).json({ doctor: mapDoctor(row) });
   });
 
-  api.patch("/doctors/:id", requireAuth, requireRole(...ADMIN_ROLES), (req, res) => {
+  api.patch("/doctors/:id", requireAuth, requireRole(...ADMIN_ROLES, ...CLINIC_MANAGER_ROLES), (req, res) => {
     const existing = getDb().prepare("SELECT * FROM doctors WHERE id = ?").get(req.params.id) as Record<string, unknown> | undefined;
     if (!existing) return res.status(404).json({ error: "Doctor not found" });
     const mapped = mapDoctor(existing);
@@ -380,7 +495,7 @@ export function createApiRouter(): Router {
     res.json({ doctor: mapDoctor(row) });
   });
 
-  api.delete("/doctors/:id", requireAuth, requireRole(...ADMIN_ROLES), (req, res) => {
+  api.delete("/doctors/:id", requireAuth, requireRole(...ADMIN_ROLES, ...CLINIC_MANAGER_ROLES), (req, res) => {
     getDb().prepare("DELETE FROM doctors WHERE id = ?").run(req.params.id);
     audit(req, "Doctor deleted", req.params.id);
     res.json({ ok: true });
@@ -390,7 +505,7 @@ export function createApiRouter(): Router {
     res.json({ staff: getDb().prepare("SELECT * FROM staff ORDER BY name").all() });
   });
 
-  api.post("/staff", requireAuth, requireRole(...ADMIN_ROLES), (req, res) => {
+  api.post("/staff", requireAuth, requireRole(...ADMIN_ROLES, ...CLINIC_MANAGER_ROLES), (req, res) => {
     const b = req.body || {};
     if (!b.name || !b.role) return res.status(400).json({ error: "name and role are required" });
     const id = `s-${crypto.randomUUID().slice(0, 8)}`;
@@ -404,7 +519,7 @@ export function createApiRouter(): Router {
     res.status(201).json({ staff: getDb().prepare("SELECT * FROM staff WHERE id = ?").get(id) });
   });
 
-  api.patch("/staff/:id", requireAuth, requireRole(...ADMIN_ROLES), (req, res) => {
+  api.patch("/staff/:id", requireAuth, requireRole(...ADMIN_ROLES, ...CLINIC_MANAGER_ROLES), (req, res) => {
     const existing = getDb().prepare("SELECT * FROM staff WHERE id = ?").get(req.params.id) as Record<string, unknown> | undefined;
     if (!existing) return res.status(404).json({ error: "Staff not found" });
     const next = { ...existing, ...req.body };
@@ -417,7 +532,7 @@ export function createApiRouter(): Router {
     res.json({ staff: getDb().prepare("SELECT * FROM staff WHERE id = ?").get(req.params.id) });
   });
 
-  api.delete("/staff/:id", requireAuth, requireRole(...ADMIN_ROLES), (req, res) => {
+  api.delete("/staff/:id", requireAuth, requireRole(...ADMIN_ROLES, ...CLINIC_MANAGER_ROLES), (req, res) => {
     getDb().prepare("DELETE FROM staff WHERE id = ?").run(req.params.id);
     audit(req, "Staff deleted", req.params.id);
     res.json({ ok: true });

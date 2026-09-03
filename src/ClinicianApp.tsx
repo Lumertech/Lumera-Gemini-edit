@@ -12,6 +12,7 @@ import { BillingManager } from './components/BillingManager';
 import { PatientPortal } from './components/PatientPortal';
 import { WaitingRoomKiosk } from './components/WaitingRoomKiosk';
 import { LabReportAnalyzer } from './components/LabReportAnalyzer';
+import { ClinicTeamManager } from './components/ClinicTeamManager';
 import { HexaAssistant } from './components/HexaAssistant';
 import { 
   MOCK_DOCTORS, 
@@ -114,7 +115,7 @@ export default function ClinicianApp() {
         isSidebarCollapsed={isSidebarCollapsed}
         userName={user?.name}
         userRole={user?.role}
-        canOpenAdmin={user?.role === 'super_admin' || user?.role === 'polyclinic_admin'}
+        canOpenAdmin={user?.role === 'super_admin'}
       />
 
       <div className="flex flex-1 overflow-hidden">
@@ -266,6 +267,19 @@ export default function ClinicianApp() {
               prescriptions={prescriptions}
               appointments={appointments}
               onBookNewSlot={() => setCurrentView('appointments')}
+            />
+          )}
+
+          {currentView === 'team' && (
+            <ClinicTeamManager
+              canManage={user?.role === 'doctor' || user?.role === 'polyclinic_admin'}
+              currentUserId={user?.id}
+              onDoctorsChanged={(next) => {
+                if (next.length) {
+                  setDoctors(next);
+                  setCurrentDoctor((prev) => next.find((x) => x.id === prev.id) || next[0]);
+                }
+              }}
             />
           )}
         </main>

@@ -15,8 +15,8 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function homeSurfaceForRole(role?: UserRole): Surface {
   if (role === "patient") return "portal";
-  if (role === "super_admin" || role === "polyclinic_admin") return "admin";
-  if (role === "doctor" || role === "receptionist") return "app";
+  if (role === "super_admin") return "admin";
+  if (role === "doctor" || role === "receptionist" || role === "polyclinic_admin") return "app";
   return "login";
 }
 

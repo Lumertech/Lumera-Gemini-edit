@@ -10,7 +10,7 @@ import PatientPortalApp from "./PatientPortalApp";
 import { UserRole } from "./types";
 
 const CLINICIAN: UserRole[] = ["doctor", "receptionist", "polyclinic_admin"];
-const ADMIN: UserRole[] = ["super_admin", "polyclinic_admin"];
+const ADMIN: UserRole[] = ["super_admin"];
 const PATIENT: UserRole[] = ["patient"];
 
 function allowed(surface: Surface, role?: UserRole): boolean {
