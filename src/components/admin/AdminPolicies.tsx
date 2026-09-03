@@ -43,7 +43,7 @@ export const AdminPolicies: React.FC = () => {
           <button
             key={p.slug}
             onClick={() => setActive(p.slug)}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${active === p.slug ? "bg-blue-600 text-white" : "bg-white border"}`}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${active === p.slug ? "bg-purple-600 text-white" : "bg-white border"}`}
           >
             {p.title}
           </button>
@@ -66,7 +66,7 @@ export const AdminPolicies: React.FC = () => {
             }
           />
           <div className="flex items-center gap-3">
-            <button onClick={save} className="px-4 py-2 bg-blue-600 text-white text-xs font-semibold rounded-lg">
+            <button onClick={save} className="px-4 py-2 bg-purple-600 text-white text-xs font-semibold rounded-lg">
               Save policy
             </button>
             {saved && <span className="text-xs text-emerald-600">Saved</span>}

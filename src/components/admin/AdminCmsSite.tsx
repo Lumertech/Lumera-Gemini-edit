@@ -59,7 +59,10 @@ export const AdminCmsSite: React.FC = () => {
   return (
     <div className="space-y-6 max-w-4xl">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-extrabold">Marketing site CMS</h1>
+        <div>
+          <h1 className="font-manrope text-xl font-extrabold">Website management</h1>
+          <p className="text-xs text-slate-500">Landing copy from lumer.me — live after save.</p>
+        </div>
         {saved && <span className="text-xs text-emerald-600">{saved}</span>}
       </div>
       <section className="bg-white border rounded-xl p-4 space-y-3">
@@ -83,7 +86,7 @@ export const AdminCmsSite: React.FC = () => {
             onChange={(e) => setSettings({ ...settings, stats: e.target.value })}
           />
         </label>
-        <button onClick={saveSettings} className="px-4 py-2 bg-blue-600 text-white text-xs font-semibold rounded-lg">
+        <button onClick={saveSettings} className="px-4 py-2 bg-purple-600 text-white text-xs font-semibold rounded-lg">
           Save hero & stats
         </button>
       </section>
@@ -141,7 +144,7 @@ export const AdminCmsSite: React.FC = () => {
             ))}
         </section>
       ))}
-      <button onClick={saveSections} className="px-4 py-2 bg-blue-600 text-white text-xs font-semibold rounded-lg">
+      <button onClick={saveSections} className="px-4 py-2 bg-purple-600 text-white text-xs font-semibold rounded-lg">
         Save landing sections
       </button>
     </div>
