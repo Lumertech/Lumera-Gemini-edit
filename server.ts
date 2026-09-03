@@ -603,9 +603,32 @@ async function startServer() {
   const httpServer = http.createServer(app);
   httpServer.keepAliveTimeout = 0;
   httpServer.headersTimeout = 10_000;
-  httpServer.listen({ port: PORT, host: "::", ipv6Only: false }, () => {
+
+  const logListening = () => {
     console.log(`Lumera AI Server running on http://0.0.0.0:${PORT} (IPv4+IPv6)`);
-  });
+  };
+
+  if (process.platform === "win32") {
+    // Windows dual-stack via `::` + ipv6Only:false can accept TCP on 127.0.0.1
+    // but return empty HTTP replies (curl 52). Bind IPv4 and IPv6 separately.
+    await new Promise<void>((resolve, reject) => {
+      httpServer.once("error", reject);
+      httpServer.listen({ port: PORT, host: "0.0.0.0" }, () => {
+        httpServer.removeListener("error", reject);
+        const v6Server = http.createServer(app);
+        v6Server.keepAliveTimeout = 0;
+        v6Server.headersTimeout = 10_000;
+        v6Server.once("error", reject);
+        v6Server.listen({ port: PORT, host: "::", ipv6Only: true }, () => {
+          v6Server.removeListener("error", reject);
+          logListening();
+          resolve();
+        });
+      });
+    });
+  } else {
+    httpServer.listen({ port: PORT, host: "::", ipv6Only: false }, logListening);
+  }
 }
 
 startServer();
