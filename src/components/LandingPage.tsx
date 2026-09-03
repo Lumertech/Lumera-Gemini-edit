@@ -55,25 +55,28 @@ const STAT_ICONS: Record<string, React.ComponentType<{ className?: string }>> = 
 };
 
 const FEATURE_ICONS = [Mic, MessageCircle, CalendarCheck, Bell, CreditCard, ShieldCheck];
-const FEATURE_COLORS = [
-  "from-purple-500 to-indigo-500",
-  "from-green-500 to-teal-500",
-  "from-blue-500 to-cyan-500",
-  "from-orange-500 to-red-500",
-  "from-pink-500 to-purple-500",
-  "from-teal-500 to-green-500",
+const FEATURE_ICON_STYLES = [
+  "bg-indigo-100 text-indigo-600",
+  "bg-teal-100 text-teal-600",
+  "bg-sky-100 text-sky-600",
+  "bg-amber-100 text-amber-600",
+  "bg-rose-100 text-rose-600",
+  "bg-emerald-100 text-emerald-600",
 ];
 const PERSONA_ICONS = [Stethoscope, Smile, HeartPulse, Flower2, Activity, Briefcase];
-const PERSONA_COLORS = [
-  "from-indigo-500 to-purple-600",
-  "from-teal-500 to-cyan-600",
-  "from-violet-500 to-fuchsia-600",
-  "from-rose-400 to-orange-500",
-  "from-emerald-500 to-teal-600",
-  "from-slate-600 to-indigo-700",
+const PERSONA_ICON_STYLES = [
+  "bg-indigo-100 text-indigo-600",
+  "bg-teal-100 text-teal-600",
+  "bg-violet-100 text-violet-600",
+  "bg-rose-100 text-rose-600",
+  "bg-emerald-100 text-emerald-600",
+  "bg-slate-100 text-slate-600",
 ];
 
 const LANGUAGES = ["Hindi", "Tamil", "Telugu", "Marathi", "Bengali", "English"];
+
+const CARD =
+  "rounded-2xl bg-white border border-slate-200 shadow-sm hover:shadow-md transition-shadow";
 
 const FALLBACK: SitePayload = {
   settings: {
@@ -134,56 +137,64 @@ export const LandingPage: React.FC = () => {
   const s = site.settings;
 
   return (
-    <div className="min-h-screen text-white font-sans selection:bg-purple-600 selection:text-white bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
-      <header className="max-w-6xl mx-auto px-4 sm:px-6 py-6 flex items-center justify-between">
-        <button type="button" onClick={() => go("landing")} className="flex items-center gap-3">
-          {s.logoUrl ? (
-            <img src={s.logoUrl} alt={s.brandName} className="h-12 w-12 rounded-xl object-cover shadow-lg shadow-purple-500/30" />
-          ) : (
-            <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-purple-500/30">
-              <Sparkles className="w-7 h-7 text-white" />
-            </div>
-          )}
-          <span className="font-manrope text-2xl font-bold tracking-tight">{s.brandName}</span>
-        </button>
-        <div className="flex items-center gap-2 sm:gap-3">
-          <button
-            type="button"
-            onClick={() => go("login", { loginNext: "app", loginDemo: true })}
-            className="hidden sm:inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-semibold"
-          >
-            <MessageSquare className="w-4 h-4" />
-            WhatsApp Login
+    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans selection:bg-indigo-600 selection:text-white">
+      <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-slate-200">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between">
+          <button type="button" onClick={() => go("landing")} className="flex items-center gap-3">
+            {s.logoUrl ? (
+              <img
+                src={s.logoUrl}
+                alt={s.brandName}
+                className="h-12 w-12 rounded-xl object-cover border border-slate-200 shadow-sm"
+              />
+            ) : (
+              <div className="h-12 w-12 rounded-xl bg-indigo-600 flex items-center justify-center shadow-sm">
+                <Sparkles className="w-7 h-7 text-white" />
+              </div>
+            )}
+            <span className="font-manrope text-2xl font-bold tracking-tight text-slate-900">{s.brandName}</span>
           </button>
-          <button
-            type="button"
-            onClick={() => go("login", { loginNext: "app" })}
-            className="px-3 py-2 text-sm font-medium text-white/90 hover:bg-white/10 rounded-lg"
-          >
-            Login
-          </button>
-          <button
-            type="button"
-            onClick={() => go("login", { loginNext: "admin" })}
-            className="px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-700 text-sm font-semibold shadow-lg shadow-purple-500/30"
-          >
-            Start Free Trial
-          </button>
+          <div className="flex items-center gap-2 sm:gap-3">
+            <button
+              type="button"
+              onClick={() => go("login", { loginNext: "app", loginDemo: true })}
+              className="hidden sm:inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-teal-600 hover:bg-teal-700 text-white text-sm font-semibold shadow-sm"
+            >
+              <MessageSquare className="w-4 h-4" />
+              WhatsApp Login
+            </button>
+            <button
+              type="button"
+              onClick={() => go("login", { loginNext: "app" })}
+              className="px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 rounded-lg"
+            >
+              Login
+            </button>
+            <button
+              type="button"
+              onClick={() => go("login", { loginNext: "admin" })}
+              className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold shadow-sm"
+            >
+              Start Free Trial
+            </button>
+          </div>
         </div>
       </header>
 
       <section className="max-w-4xl mx-auto px-4 pt-10 pb-20 text-center">
-        <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-purple-500/20 border border-purple-500/30 text-sm text-purple-300 mb-8">
-          <Bot className="w-4 h-4 text-purple-400" />
+        <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-indigo-50 border border-indigo-200/50 text-sm text-indigo-700 mb-8">
+          <Bot className="w-4 h-4 text-indigo-600" />
           {s.badgeText}
         </div>
-        <h1 className="font-manrope text-4xl sm:text-6xl font-bold leading-tight tracking-tight">{s.heroTitle}</h1>
-        <p className="mt-6 text-lg sm:text-xl text-slate-300 max-w-3xl mx-auto leading-relaxed">{s.heroSubtitle}</p>
+        <h1 className="font-manrope text-4xl sm:text-6xl font-bold leading-tight tracking-tight text-slate-900">
+          {s.heroTitle}
+        </h1>
+        <p className="mt-6 text-lg sm:text-xl text-slate-600 max-w-3xl mx-auto leading-relaxed">{s.heroSubtitle}</p>
         <div className="mt-10 flex flex-wrap justify-center gap-4">
           <button
             type="button"
             onClick={() => go("login", { loginNext: "app" })}
-            className="inline-flex items-center gap-2 px-8 py-3 rounded-lg bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 font-manrope font-semibold shadow-xl shadow-purple-500/30"
+            className="inline-flex items-center gap-2 px-8 py-3 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-manrope font-semibold shadow-sm"
           >
             <Sparkles className="w-5 h-5" />
             {s.ctaPrimary}
@@ -191,7 +202,7 @@ export const LandingPage: React.FC = () => {
           <button
             type="button"
             onClick={() => go("login", { loginNext: "app", loginDemo: true })}
-            className="inline-flex items-center gap-2 px-8 py-3 rounded-lg border-2 border-purple-500/50 bg-transparent hover:bg-purple-500/20 font-manrope font-semibold"
+            className="inline-flex items-center gap-2 px-8 py-3 rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 font-manrope font-semibold"
           >
             <Phone className="w-5 h-5" />
             {s.ctaSecondary}
@@ -202,10 +213,10 @@ export const LandingPage: React.FC = () => {
           {site.stats.map((stat) => {
             const Icon = STAT_ICONS[stat.icon] || Calendar;
             return (
-              <div key={stat.label} className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-sm px-4 py-6">
-                <Icon className="w-8 h-8 mx-auto mb-3 text-purple-400" />
-                <div className="font-manrope text-3xl font-bold">{stat.value}</div>
-                <div className="text-sm text-slate-400 mt-1">{stat.label}</div>
+              <div key={stat.label} className={`${CARD} px-4 py-6`}>
+                <Icon className="w-8 h-8 mx-auto mb-3 text-indigo-600" />
+                <div className="font-manrope text-3xl font-bold text-slate-900">{stat.value}</div>
+                <div className="text-sm text-slate-500 mt-1">{stat.label}</div>
               </div>
             );
           })}
@@ -213,20 +224,22 @@ export const LandingPage: React.FC = () => {
       </section>
 
       {site.pains.length > 0 && (
-        <section className="py-20 bg-slate-900/50">
+        <section className="py-20 bg-white border-y border-slate-200">
           <div className="max-w-6xl mx-auto px-4">
-            <h2 className="font-manrope text-3xl sm:text-4xl font-bold text-center">Sound Familiar? You're Not Alone.</h2>
-            <p className="text-center text-slate-400 mt-4 mb-12 text-lg">
+            <h2 className="font-manrope text-3xl sm:text-4xl font-bold text-center text-slate-900">
+              Sound Familiar? You're Not Alone.
+            </h2>
+            <p className="text-center text-slate-600 mt-4 mb-12 text-lg">
               Healthcare professionals struggle with three inefficient ways to handle patient calls:
             </p>
             <div className="grid md:grid-cols-3 gap-8">
               {site.pains.map((p) => (
-                <div key={p.id} className="rounded-2xl border border-red-500/20 bg-red-500/10 backdrop-blur-sm p-6">
-                  <h3 className="font-manrope font-bold text-xl mb-4">{p.title}</h3>
-                  <ul className="space-y-3 text-sm text-slate-300">
+                <div key={p.id} className="rounded-2xl border border-red-200 bg-red-50 p-6 shadow-sm">
+                  <h3 className="font-manrope font-bold text-xl mb-4 text-slate-900">{p.title}</h3>
+                  <ul className="space-y-3 text-sm text-slate-600">
                     {(p.items || []).map((item) => (
                       <li key={item} className="flex items-start gap-2">
-                        <span className="text-red-400 mt-0.5">✗</span>
+                        <span className="text-red-500 mt-0.5">✗</span>
                         <span>{item}</span>
                       </li>
                     ))}
@@ -241,12 +254,14 @@ export const LandingPage: React.FC = () => {
       {site.features.length > 0 && (
         <section className="max-w-6xl mx-auto px-4 py-20">
           <div className="text-center mb-12">
-            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-green-500/20 border border-green-500/30 text-sm text-green-300 mb-6">
-              <Check className="w-4 h-4 text-green-400" />
+            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-teal-50 text-teal-700 border border-teal-200/50 text-sm mb-6">
+              <Check className="w-4 h-4 text-teal-600" />
               The Lumera Solution
             </div>
-            <h2 className="font-manrope text-3xl sm:text-4xl font-bold">Lumera AI Never Misses a Call</h2>
-            <p className="text-slate-400 mt-4 max-w-2xl mx-auto text-lg">
+            <h2 className="font-manrope text-3xl sm:text-4xl font-bold text-slate-900">
+              Lumera AI Never Misses a Call
+            </h2>
+            <p className="text-slate-600 mt-4 max-w-2xl mx-auto text-lg">
               Trained on your practice, Lumera delivers accurate responses every time. Available 24/7/365, it handles
               calls and WhatsApp messages whenever you can't.
             </p>
@@ -255,14 +270,14 @@ export const LandingPage: React.FC = () => {
             {site.features.map((f, i) => {
               const Icon = FEATURE_ICONS[i % FEATURE_ICONS.length];
               return (
-                <div key={f.id} className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-sm p-6 hover:bg-white/10">
+                <div key={f.id} className={`${CARD} p-6`}>
                   <div
-                    className={`w-12 h-12 rounded-xl bg-gradient-to-br ${FEATURE_COLORS[i % FEATURE_COLORS.length]} flex items-center justify-center mb-4 shadow-lg`}
+                    className={`w-12 h-12 rounded-xl ${FEATURE_ICON_STYLES[i % FEATURE_ICON_STYLES.length]} flex items-center justify-center mb-4`}
                   >
-                    <Icon className="w-6 h-6 text-white" />
+                    <Icon className="w-6 h-6" />
                   </div>
-                  <h3 className="font-manrope font-bold text-xl mb-2">{f.title}</h3>
-                  <p className="text-sm text-slate-400 leading-relaxed">{f.desc}</p>
+                  <h3 className="font-manrope font-bold text-xl mb-2 text-slate-900">{f.title}</h3>
+                  <p className="text-sm text-slate-600 leading-relaxed">{f.desc}</p>
                 </div>
               );
             })}
@@ -270,18 +285,23 @@ export const LandingPage: React.FC = () => {
         </section>
       )}
 
-      <section className="py-16 bg-gradient-to-r from-purple-900/50 to-indigo-900/50">
+      <section className="py-16 bg-white border-y border-slate-200">
         <div className="max-w-6xl mx-auto px-4 flex flex-col md:flex-row items-center justify-between gap-8">
           <div className="flex items-center gap-4">
-            <Globe className="w-12 h-12 text-purple-400" />
+            <div className="w-12 h-12 rounded-xl bg-indigo-100 flex items-center justify-center">
+              <Globe className="w-6 h-6 text-indigo-600" />
+            </div>
             <div>
-              <h3 className="font-manrope font-bold text-2xl">Multi-Language AI Voice</h3>
-              <p className="text-slate-400">Natural conversations in your patients' preferred language</p>
+              <h3 className="font-manrope font-bold text-2xl text-slate-900">Multi-Language AI Voice</h3>
+              <p className="text-slate-600">Natural conversations in your patients' preferred language</p>
             </div>
           </div>
           <div className="flex flex-wrap gap-3 justify-center">
             {LANGUAGES.map((lang) => (
-              <span key={lang} className="px-4 py-2 bg-white/10 rounded-full text-sm border border-white/20">
+              <span
+                key={lang}
+                className="px-4 py-2 bg-white rounded-full text-sm border border-slate-200 text-slate-700 shadow-sm"
+              >
                 {lang}
               </span>
             ))}
@@ -291,22 +311,24 @@ export const LandingPage: React.FC = () => {
 
       {site.personas.length > 0 && (
         <section className="max-w-6xl mx-auto px-4 py-20">
-          <h2 className="font-manrope text-3xl sm:text-4xl font-bold text-center">Built for Healthcare Professionals Like You</h2>
-          <p className="text-center text-slate-400 mt-4 mb-12 text-lg">
+          <h2 className="font-manrope text-3xl sm:text-4xl font-bold text-center text-slate-900">
+            Built for Healthcare Professionals Like You
+          </h2>
+          <p className="text-center text-slate-600 mt-4 mb-12 text-lg">
             Join thousands of doctors, dentists, therapists, and wellness professionals using Lumera.
           </p>
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
             {site.personas.map((p, i) => {
               const Icon = PERSONA_ICONS[i % PERSONA_ICONS.length];
               return (
-                <div key={p.id} className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-sm p-6 hover:bg-white/10">
+                <div key={p.id} className={`${CARD} p-6`}>
                   <div
-                    className={`w-12 h-12 rounded-xl bg-gradient-to-br ${PERSONA_COLORS[i % PERSONA_COLORS.length]} flex items-center justify-center mb-4 shadow-lg`}
+                    className={`w-12 h-12 rounded-xl ${PERSONA_ICON_STYLES[i % PERSONA_ICON_STYLES.length]} flex items-center justify-center mb-4`}
                   >
-                    <Icon className="w-6 h-6 text-white" />
+                    <Icon className="w-6 h-6" />
                   </div>
-                  <h3 className="font-manrope font-bold text-xl">{p.title}</h3>
-                  <p className="text-sm text-slate-400 mt-2">{p.desc}</p>
+                  <h3 className="font-manrope font-bold text-xl text-slate-900">{p.title}</h3>
+                  <p className="text-sm text-slate-600 mt-2">{p.desc}</p>
                 </div>
               );
             })}
@@ -315,16 +337,18 @@ export const LandingPage: React.FC = () => {
       )}
 
       {site.testimonials.length > 0 && (
-        <section className="py-20 bg-slate-900/50">
+        <section className="py-20 bg-white border-y border-slate-200">
           <div className="max-w-6xl mx-auto px-4">
-            <h2 className="font-manrope text-3xl sm:text-4xl font-bold text-center mb-12">What Doctors Are Saying</h2>
+            <h2 className="font-manrope text-3xl sm:text-4xl font-bold text-center mb-12 text-slate-900">
+              What Doctors Are Saying
+            </h2>
             <div className="grid md:grid-cols-3 gap-8">
               {site.testimonials.map((t) => (
-                <blockquote key={t.id} className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-sm p-6">
-                  <p className="text-slate-300 leading-relaxed">“{t.quote}”</p>
+                <blockquote key={t.id} className={`${CARD} p-6`}>
+                  <p className="text-slate-600 leading-relaxed">"{t.quote}"</p>
                   <footer className="mt-6">
-                    <div className="font-manrope font-bold">{t.name}</div>
-                    <div className="text-sm text-purple-400">{t.role}</div>
+                    <div className="font-manrope font-bold text-slate-900">{t.name}</div>
+                    <div className="text-sm text-indigo-600">{t.role}</div>
                   </footer>
                 </blockquote>
               ))}
@@ -334,39 +358,44 @@ export const LandingPage: React.FC = () => {
       )}
 
       <section className="max-w-5xl mx-auto px-4 py-20">
-        <div className="rounded-3xl bg-gradient-to-r from-purple-600 to-indigo-600 p-12 text-center shadow-2xl shadow-purple-500/20">
-          <h2 className="font-manrope text-3xl sm:text-4xl font-bold">{s.ctaBannerTitle}</h2>
-          <p className="text-purple-100 mt-3 text-lg">{s.ctaBannerSubtitle}</p>
+        <div className="rounded-3xl bg-indigo-600 p-12 text-center shadow-sm">
+          <h2 className="font-manrope text-3xl sm:text-4xl font-bold text-white">{s.ctaBannerTitle}</h2>
+          <p className="text-indigo-100 mt-3 text-lg">{s.ctaBannerSubtitle}</p>
           <div className="mt-8 flex flex-wrap justify-center gap-3">
             <button
               type="button"
               onClick={() => go("login", { loginNext: "admin" })}
-              className="inline-flex items-center gap-2 px-6 py-3 rounded-lg bg-white text-purple-700 hover:bg-purple-50 font-semibold"
+              className="inline-flex items-center gap-2 px-6 py-3 rounded-lg bg-white text-indigo-700 hover:bg-indigo-50 font-semibold shadow-sm"
             >
               Start Free Trial <ArrowRight className="w-4 h-4" />
             </button>
             <button
               type="button"
               onClick={() => go("login", { loginNext: "app", loginDemo: true })}
-              className="inline-flex items-center gap-2 px-6 py-3 rounded-lg border border-white/40 hover:bg-white/10 font-semibold"
+              className="inline-flex items-center gap-2 px-6 py-3 rounded-lg border border-white/60 bg-white/10 text-white hover:bg-white/20 font-semibold"
             >
               Schedule Demo Call
             </button>
           </div>
-          <p className="text-sm text-purple-100/80 mt-6">
+          <p className="text-sm text-indigo-100 mt-6">
             Questions?{" "}
-            <a className="underline" href={`mailto:${s.contactEmail}`}>
+            <a className="underline hover:text-white" href={`mailto:${s.contactEmail}`}>
               {s.contactEmail}
             </a>
           </p>
         </div>
       </section>
 
-      <footer className="border-t border-white/10 px-4 py-8 text-center text-xs text-slate-400">
-        <div className="font-manrope font-semibold text-white mb-2">Policies & Disclaimers</div>
+      <footer className="border-t border-slate-200 px-4 py-8 text-center text-xs text-slate-500 bg-slate-50">
+        <div className="font-manrope font-semibold text-slate-900 mb-2">Policies & Disclaimers</div>
         <div className="flex flex-wrap justify-center gap-4 mb-4">
           {site.policies.map((p) => (
-            <button key={p.slug} type="button" onClick={() => go("policy", { policySlug: p.slug })} className="hover:text-white">
+            <button
+              key={p.slug}
+              type="button"
+              onClick={() => go("policy", { policySlug: p.slug })}
+              className="hover:text-slate-900"
+            >
               {p.title}
             </button>
           ))}
