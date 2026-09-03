@@ -1,15 +1,26 @@
 import express, { Request, Response } from "express";
+import http from "http";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
+import { initDatabase } from "./server/db.ts";
+import { attachUser } from "./server/auth.ts";
+import { createApiRouter } from "./server/api.ts";
 
 dotenv.config();
+initDatabase();
 
 const app = express();
 const PORT = 3000;
 
 app.use(express.json({ limit: "10mb" }));
+app.get("/healthz", (_req, res) => {
+  res.type("text/plain").send("ok");
+});
+app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
+app.use(attachUser);
+app.use("/api", createApiRouter());
 
 // Lazy Google GenAI initialization
 let genAIClient: GoogleGenAI | null = null;
@@ -553,8 +564,27 @@ For query "${query}":
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        host: true,
+        allowedHosts: true as const,
+      },
       appType: "spa",
+    });
+    app.use((req, _res, next) => {
+      const p = req.path;
+      const isAsset =
+        p === "/healthz" ||
+        p.startsWith("/api") ||
+        p.startsWith("/uploads") ||
+        p.startsWith("/@") ||
+        p.startsWith("/src") ||
+        p.startsWith("/node_modules") ||
+        p.includes(".");
+      if ((req.method === "GET" || req.method === "HEAD") && !isAsset) {
+        req.url = "/index.html";
+      }
+      next();
     });
     app.use(vite.middlewares);
   } else {

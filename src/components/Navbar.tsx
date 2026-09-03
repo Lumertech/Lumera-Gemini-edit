@@ -1,23 +1,16 @@
 import React from 'react';
 import { 
   Stethoscope, 
-  Sparkles, 
-  Users, 
-  Calendar, 
-  FileText, 
-  Receipt, 
-  MessageSquare, 
-  PhoneCall, 
-  Building2, 
   Bot, 
-  Activity,
   Plus,
   UserCheck,
   Menu,
-  ChevronRight,
-  ShieldAlert
+  LogOut,
+  Shield
 } from 'lucide-react';
-import { Doctor } from '../types';
+import { Doctor, UserRole } from '../types';
+import { useAuth } from '../auth/AuthContext';
+import { useNav } from '../nav/NavigationContext';
 
 export type NavView = 
   | 'ambient' 
@@ -30,7 +23,8 @@ export type NavView =
   | 'whatsapp' 
   | 'voicebot' 
   | 'billing' 
-  | 'portal';
+  | 'portal'
+  | 'team';
 
 interface NavbarProps {
   currentView: NavView;
@@ -41,6 +35,9 @@ interface NavbarProps {
   onToggleHexa: () => void;
   onToggleSidebar?: () => void;
   isSidebarCollapsed?: boolean;
+  userName?: string;
+  userRole?: UserRole;
+  canOpenAdmin?: boolean;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -52,7 +49,12 @@ export const Navbar: React.FC<NavbarProps> = ({
   onToggleHexa,
   onToggleSidebar,
   isSidebarCollapsed,
+  userName,
+  userRole,
+  canOpenAdmin,
 }) => {
+  const { logout } = useAuth();
+  const { go } = useNav();
   const VIEW_TITLES: Record<NavView, string> = {
     ambient: 'Ambient AI Scribe & SOAP',
     rx: 'Smart Rx & Specialty Studio',
@@ -65,6 +67,7 @@ export const Navbar: React.FC<NavbarProps> = ({
     whatsapp: 'WhatsApp AI Suite',
     voicebot: 'AI Voice Receptionist',
     portal: 'Patient EMR Portal',
+    team: 'Clinic Team & Staff',
   };
 
   return (
@@ -110,8 +113,19 @@ export const Navbar: React.FC<NavbarProps> = ({
       {/* Right: Quick Actions & Doctor Profile */}
       <div className="flex items-center space-x-2 sm:space-x-3">
         {/* Doctor Switcher Dropdown */}
-        <div className="flex items-center space-x-1.5 bg-slate-800 border border-slate-700/80 px-2.5 py-1.5 rounded-lg text-xs">
-          <UserCheck className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+        <div className="flex items-center space-x-2 bg-slate-800 border border-slate-700/80 px-2 py-1 rounded-lg text-xs">
+          <div className="w-6 h-6 rounded-full overflow-hidden bg-blue-600/30 border border-blue-400/40 flex items-center justify-center shrink-0">
+            {currentDoctor.avatarUrl ? (
+              <img
+                src={currentDoctor.avatarUrl}
+                alt={currentDoctor.name}
+                referrerPolicy="no-referrer"
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              <UserCheck className="w-3.5 h-3.5 text-blue-400" />
+            )}
+          </div>
           <select
             aria-label="Doctor Profile Selector"
             value={currentDoctor.id}
@@ -119,7 +133,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               const doc = allDoctors.find((d) => d.id === e.target.value);
               if (doc) onSelectDoctor(doc);
             }}
-            className="bg-transparent text-slate-200 text-xs font-medium focus:outline-none cursor-pointer max-w-[130px] sm:max-w-[190px] truncate"
+            className="bg-transparent text-slate-200 text-xs font-medium focus:outline-none cursor-pointer max-w-[130px] sm:max-w-[180px] truncate"
           >
             {allDoctors.map((d) => (
               <option key={d.id} value={d.id} className="bg-slate-900 text-white">
@@ -147,6 +161,37 @@ export const Navbar: React.FC<NavbarProps> = ({
         >
           <Bot className="w-3.5 h-3.5 text-blue-200" />
           <span className="hidden sm:inline">HEXA AI</span>
+        </button>
+
+        {canOpenAdmin && (
+          <button
+            type="button"
+            onClick={() => go('admin')}
+            className="hidden sm:flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-xs text-slate-200 hover:text-white"
+          >
+            <Shield className="w-3.5 h-3.5 text-blue-300" />
+            Admin CMS
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => go('landing')}
+          className="hidden md:inline text-[11px] text-slate-400 hover:text-white"
+        >
+          Exit to site
+        </button>
+        {userName && (
+          <span className="hidden lg:inline text-[11px] text-slate-400">
+            {userName}
+            {userRole ? ` · ${userRole.replace('_', ' ')}` : ''}
+          </span>
+        )}
+        <button
+          onClick={() => logout().then(() => go('landing'))}
+          className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
+          title="Sign out"
+        >
+          <LogOut className="w-3.5 h-3.5" />
         </button>
       </div>
     </header>
