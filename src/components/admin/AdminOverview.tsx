@@ -3,9 +3,10 @@ import { apiFetch } from "../../api/http";
 
 interface Overview {
   users: number;
-  doctors: number;
-  staff: number;
-  branches: number;
+  subscriptions: number;
+  activePlans: number;
+  trials: number;
+  mrr: number;
   media: number;
   policies: number;
   geminiConfigured: boolean;
@@ -23,9 +24,10 @@ export const AdminOverview: React.FC = () => {
 
   const cards = [
     ["Users", data.users],
-    ["Doctors", data.doctors],
-    ["Staff", data.staff],
-    ["Branches", data.branches],
+    ["Subscriptions", data.subscriptions],
+    ["Active plans", data.activePlans],
+    ["Trials", data.trials],
+    ["MRR (₹)", data.mrr],
     ["Media", data.media],
     ["Policies", data.policies],
   ];
@@ -33,23 +35,27 @@ export const AdminOverview: React.FC = () => {
   return (
     <div className="space-y-6 max-w-6xl">
       <div>
-        <h1 className="text-xl font-extrabold">Practice overview</h1>
-        <p className="text-sm text-slate-500">Live counts from SQLite plus recent admin actions.</p>
+        <h1 className="font-manrope text-2xl font-bold text-slate-900">Admin dashboard</h1>
+        <p className="text-sm text-slate-500">Website, accounts, and subscription health — not the clinical EMR.</p>
       </div>
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
         {cards.map(([label, value]) => (
           <div key={String(label)} className="bg-white border border-slate-200 rounded-xl p-4">
             <div className="text-[11px] uppercase text-slate-500 font-bold">{label}</div>
-            <div className="text-2xl font-extrabold mt-1">{value}</div>
+            <div className="text-2xl font-extrabold mt-1 text-slate-900">{value}</div>
           </div>
         ))}
       </div>
       <div className="bg-white border border-slate-200 rounded-xl p-4">
-        <div className="text-xs font-bold mb-2">Gemini API</div>
-        <p className="text-sm">{data.geminiConfigured ? "Configured in server environment" : "Not configured — AI falls back to local synthesis. Set GEMINI_API_KEY in .env."}</p>
+        <div className="text-xs font-bold mb-2 text-purple-700">Platform</div>
+        <p className="text-sm">
+          {data.geminiConfigured
+            ? "Gemini API is configured for clinician AI features."
+            : "Gemini API is not configured. Clinician AI will use local synthesis."}
+        </p>
       </div>
       <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-        <div className="px-4 py-3 border-b text-xs font-bold uppercase text-slate-500">Recent audit</div>
+        <div className="px-4 py-3 border-b text-xs font-bold uppercase text-slate-500">Recent admin activity</div>
         <table className="w-full text-xs">
           <tbody>
             {data.recentAudit.map((l) => (

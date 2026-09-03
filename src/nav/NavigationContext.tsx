@@ -4,12 +4,10 @@ export type Surface = "landing" | "login" | "app" | "admin" | "portal" | "policy
 export type AdminTab =
   | "overview"
   | "users"
-  | "people"
-  | "branches"
+  | "subscriptions"
   | "site"
   | "policies"
   | "media"
-  | "settings"
   | "audit";
 
 export interface GoOptions {

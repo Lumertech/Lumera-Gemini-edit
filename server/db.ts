@@ -43,6 +43,7 @@ export function initDatabase(): DatabaseSync {
   db.exec("PRAGMA foreign_keys = ON");
   migrate(db);
   seedIfEmpty(db);
+  seedSubscriptionsIfMissing(db);
   return db;
 }
 
@@ -145,6 +146,19 @@ function migrate(database: DatabaseSync) {
       user_name TEXT NOT NULL,
       action TEXT NOT NULL,
       details TEXT NOT NULL DEFAULT ''
+    );
+
+    CREATE TABLE IF NOT EXISTS subscriptions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL UNIQUE,
+      status TEXT NOT NULL,
+      plan_type TEXT NOT NULL,
+      monthly_price INTEGER NOT NULL DEFAULT 0,
+      auto_renew INTEGER NOT NULL DEFAULT 1,
+      started_at TEXT NOT NULL,
+      ends_at TEXT,
+      notes TEXT NOT NULL DEFAULT '',
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
   `);
 }
@@ -343,6 +357,67 @@ function seedIfEmpty(database: DatabaseSync) {
 
 function hashPasswordSync(password: string): string {
   return hashPassword(password);
+}
+
+function addDays(iso: string, days: number) {
+  const d = new Date(iso);
+  d.setDate(d.getDate() + days);
+  return d.toISOString();
+}
+
+export function seedSubscriptionsIfMissing(database: DatabaseSync) {
+  const users = database.prepare("SELECT id, role FROM users").all() as { id: string; role: string }[];
+  const insert = database.prepare(`
+    INSERT OR IGNORE INTO subscriptions (id, user_id, status, plan_type, monthly_price, auto_renew, started_at, ends_at, notes)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const now = new Date().toISOString();
+  for (const u of users) {
+    const plan =
+      u.role === "super_admin"
+        ? { status: "active", plan: "internal", price: 0, days: 3650, notes: "Platform operator" }
+        : u.role === "doctor"
+          ? { status: "active", plan: "professional", price: 2499, days: 365, notes: "Clinician professional plan" }
+          : u.role === "receptionist"
+            ? { status: "active", plan: "starter", price: 999, days: 365, notes: "Front-desk starter plan" }
+            : u.role === "polyclinic_admin"
+              ? { status: "active", plan: "clinic", price: 4999, days: 365, notes: "Multi-branch clinic plan" }
+              : { status: "trial", plan: "trial", price: 0, days: 14, notes: "14-day product trial" };
+    insert.run(
+      `sub-${u.id}`,
+      u.id,
+      plan.status,
+      plan.plan,
+      plan.price,
+      plan.price > 0 ? 1 : 0,
+      now,
+      addDays(now, plan.days),
+      plan.notes
+    );
+  }
+}
+
+export function mapSubscription(row: Record<string, unknown>, user?: { name: string; email: string; phone: string }) {
+  const ends = (row.ends_at as string) || null;
+  let daysRemaining: number | null = null;
+  if (ends) {
+    daysRemaining = Math.ceil((new Date(ends).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+  }
+  return {
+    id: row.id as string,
+    userId: row.user_id as string,
+    name: user?.name || "",
+    email: user?.email || "",
+    phone: user?.phone || "",
+    status: row.status as string,
+    planType: row.plan_type as string,
+    monthlyPrice: Number(row.monthly_price),
+    autoRenew: Boolean(row.auto_renew),
+    startedAt: row.started_at as string,
+    endsAt: ends,
+    notes: (row.notes as string) || "",
+    daysRemaining,
+  };
 }
 
 function seedCms(database: DatabaseSync, now: string) {

@@ -95,7 +95,7 @@ export const AdminUsers: React.FC = () => {
           {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
         </select>
         <input placeholder="Phone" className="border rounded px-2 py-1.5" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
-        <button className="bg-blue-600 text-white rounded font-semibold">Create user</button>
+        <button className="bg-purple-600 text-white rounded font-semibold">Create user</button>
       </form>
 
       <div className="bg-white border rounded-xl overflow-x-auto">
@@ -140,7 +140,7 @@ export const AdminUsers: React.FC = () => {
             {ROLES.map((r) => <option key={r}>{r}</option>)}
           </select>
           <div className="flex gap-2">
-            <button className="bg-blue-600 text-white px-3 py-1.5 rounded">Save</button>
+            <button className="bg-purple-600 text-white px-3 py-1.5 rounded">Save</button>
             <button type="button" onClick={() => setEditing(null)}>Cancel</button>
           </div>
         </form>

@@ -4,9 +4,9 @@ import { homeSurfaceForRole, useAuth } from "../auth/AuthContext";
 import { useNav } from "../nav/NavigationContext";
 
 const DEMOS = [
-  { label: "Super Admin", email: "admin@lumera.me", hint: "CMS, users, clinic" },
+  { label: "Super Admin", email: "admin@lumera.me", hint: "Website, users, billing" },
   { label: "Doctor", email: "doctor@lumera.me", hint: "Clinician suite" },
-  { label: "Patient", email: "patient@lumera.me", hint: "EMR portal" },
+  { label: "Patient", email: "patient@lumera.me", hint: "Patient portal" },
   { label: "Reception", email: "reception@lumera.me", hint: "Front desk" },
 ];
 
@@ -40,16 +40,16 @@ export const LoginPage: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-violet-950 text-white flex items-center justify-center px-4">
-      <div className="w-full max-w-md rounded-3xl border border-white/10 bg-white/5 p-8">
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 text-white flex items-center justify-center px-4">
+      <div className="w-full max-w-md rounded-3xl border border-white/10 bg-white/5 p-8 backdrop-blur-sm">
         <button type="button" onClick={() => go("landing")} className="flex items-center gap-2 mb-6">
-          <div className="h-9 w-9 rounded-xl bg-violet-500 flex items-center justify-center">
+          <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-purple-500/30">
             <Sparkles className="w-5 h-5" />
           </div>
-          <span className="font-extrabold text-lg">Lumera</span>
+          <span className="font-manrope font-extrabold text-lg">Lumera</span>
         </button>
-        <h1 className="text-2xl font-extrabold">Sign in</h1>
-        <p className="text-sm text-violet-200/80 mt-1 mb-6">Use a demo account or your clinic credentials.</p>
+        <h1 className="font-manrope text-2xl font-extrabold">Sign in</h1>
+        <p className="text-sm text-slate-300 mt-1 mb-6">Use a demo account or your clinic credentials.</p>
         <form onSubmit={submit} className="space-y-3">
           <label className="block text-xs font-semibold">
             Email
@@ -74,7 +74,7 @@ export const LoginPage: React.FC = () => {
           {error && <p className="text-xs text-red-300">{error}</p>}
           <button
             disabled={busy}
-            className="w-full py-2.5 rounded-xl bg-violet-500 hover:bg-violet-400 font-semibold disabled:opacity-60"
+            className="w-full py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 font-semibold disabled:opacity-60"
           >
             {busy ? "Signing in…" : "Continue"}
           </button>
@@ -85,15 +85,15 @@ export const LoginPage: React.FC = () => {
               key={d.email}
               type="button"
               onClick={() => setEmail(d.email)}
-              className="text-left rounded-xl border border-white/10 bg-black/20 px-3 py-2 hover:border-violet-400/50"
+              className="text-left rounded-xl border border-white/10 bg-black/20 px-3 py-2 hover:border-purple-400/50"
             >
               <div className="text-xs font-bold">{d.label}</div>
-              <div className="text-[10px] text-violet-200/70">{d.hint}</div>
+              <div className="text-[10px] text-slate-400">{d.hint}</div>
             </button>
           ))}
         </div>
         <p className="text-[11px] text-violet-200/60 mt-4">
-          Demo password for all seeded accounts: <span className="font-mono text-violet-100">Lumera@2026</span>
+          Demo password for all seeded accounts: <span className="font-mono text-purple-100">Lumera@2026</span>
         </p>
       </div>
     </div>
@@ -102,7 +102,7 @@ export const LoginPage: React.FC = () => {
 
 function allowedNext(next: string, role: string) {
   if (next === "admin") return role === "super_admin" || role === "polyclinic_admin";
-  if (next === "app") return ["doctor", "receptionist", "polyclinic_admin", "super_admin"].includes(role);
-  if (next === "portal") return role === "patient" || role === "super_admin";
+  if (next === "app") return ["doctor", "receptionist", "polyclinic_admin"].includes(role);
+  if (next === "portal") return role === "patient";
   return true;
 }

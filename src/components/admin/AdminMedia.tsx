@@ -35,7 +35,7 @@ export const AdminMedia: React.FC = () => {
       <form onSubmit={upload} className="bg-white border rounded-xl p-4 flex flex-wrap gap-2 items-end text-xs">
         <input type="file" accept="image/*" onChange={(e) => setFile(e.target.files?.[0] || null)} />
         <input className="border rounded px-2 py-1.5" placeholder="Alt text" value={alt} onChange={(e) => setAlt(e.target.value)} />
-        <button className="bg-blue-600 text-white px-3 py-1.5 rounded font-semibold">Upload</button>
+        <button className="bg-purple-600 text-white px-3 py-1.5 rounded font-semibold">Upload</button>
       </form>
       <div className="grid sm:grid-cols-3 gap-3">
         {items.map((m) => (

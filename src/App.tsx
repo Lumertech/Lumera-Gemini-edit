@@ -9,9 +9,9 @@ import ClinicianApp from "./ClinicianApp";
 import PatientPortalApp from "./PatientPortalApp";
 import { UserRole } from "./types";
 
-const CLINICIAN: UserRole[] = ["doctor", "receptionist", "polyclinic_admin", "super_admin"];
+const CLINICIAN: UserRole[] = ["doctor", "receptionist", "polyclinic_admin"];
 const ADMIN: UserRole[] = ["super_admin", "polyclinic_admin"];
-const PATIENT: UserRole[] = ["patient", "super_admin"];
+const PATIENT: UserRole[] = ["patient"];
 
 function allowed(surface: Surface, role?: UserRole): boolean {
   if (surface === "app") return !!role && CLINICIAN.includes(role);
@@ -26,7 +26,7 @@ function SurfaceRoot() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-violet-950 text-violet-100 flex items-center justify-center text-sm">
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 text-purple-100 flex items-center justify-center text-sm">
         Loading Lumera…
       </div>
     );

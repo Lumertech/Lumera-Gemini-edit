@@ -572,7 +572,7 @@ async function startServer() {
       server: {
         middlewareMode: true,
         host: true,
-        allowedHosts: true,
+        allowedHosts: true as const,
       },
       appType: "spa",
     });

@@ -5,7 +5,9 @@ import path from "node:path";
 import {
   getDb,
   mapDoctor,
+  mapSubscription,
   publicUser,
+  seedSubscriptionsIfMissing,
   writeAudit,
   type DbUser,
   type UserRole,
@@ -157,9 +159,10 @@ export function createApiRouter(): Router {
       .all();
     res.json({
       users: count("SELECT COUNT(*) AS c FROM users"),
-      doctors: count("SELECT COUNT(*) AS c FROM doctors"),
-      staff: count("SELECT COUNT(*) AS c FROM staff"),
-      branches: count("SELECT COUNT(*) AS c FROM branches"),
+      subscriptions: count("SELECT COUNT(*) AS c FROM subscriptions"),
+      activePlans: count("SELECT COUNT(*) AS c FROM subscriptions WHERE status = 'active'"),
+      trials: count("SELECT COUNT(*) AS c FROM subscriptions WHERE status = 'trial'"),
+      mrr: (getDb().prepare("SELECT COALESCE(SUM(monthly_price),0) AS c FROM subscriptions WHERE status = 'active'").get() as { c: number }).c,
       media: count("SELECT COUNT(*) AS c FROM cms_media"),
       policies: count("SELECT COUNT(*) AS c FROM cms_policies"),
       geminiConfigured: Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== "MY_GEMINI_API_KEY"),
@@ -217,6 +220,7 @@ export function createApiRouter(): Router {
       return res.status(409).json({ error: "Email already exists" });
     }
     audit(req, "User created", `${name} <${email}> as ${role}`);
+    seedSubscriptionsIfMissing(getDb());
     const user = getDb().prepare("SELECT * FROM users WHERE id = ?").get(id) as unknown as DbUser;
     res.status(201).json({ user: publicUser(user), temporaryPassword: password ? undefined : pwd });
   });
@@ -249,6 +253,71 @@ export function createApiRouter(): Router {
     getDb().prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(hashPassword(password), existing.id);
     audit(req, "Password reset", `Password reset for ${existing.email}`);
     res.json({ ok: true });
+  });
+
+  api.get("/admin/subscriptions", requireAuth, requireRole(...ADMIN_ROLES), (_req, res) => {
+    const rows = getDb()
+      .prepare(
+        `SELECT s.*, u.name, u.email, u.phone
+         FROM subscriptions s JOIN users u ON u.id = s.user_id
+         ORDER BY u.name`
+      )
+      .all() as Record<string, unknown>[];
+    res.json({
+      subscriptions: rows.map((r) =>
+        mapSubscription(r, { name: String(r.name), email: String(r.email), phone: String(r.phone) })
+      ),
+    });
+  });
+
+  api.get("/admin/subscriptions/summary", requireAuth, requireRole(...ADMIN_ROLES), (_req, res) => {
+    const totalUsers = (getDb().prepare("SELECT COUNT(*) AS c FROM users").get() as { c: number }).c;
+    const statuses = getDb()
+      .prepare("SELECT status, COUNT(*) AS c FROM subscriptions GROUP BY status")
+      .all() as { status: string; c: number }[];
+    const counts: Record<string, number> = { trial: 0, active: 0, suspended: 0, cancelled: 0, expired: 0 };
+    for (const s of statuses) counts[s.status] = s.c;
+    const mrr = (
+      getDb().prepare("SELECT COALESCE(SUM(monthly_price),0) AS c FROM subscriptions WHERE status = 'active'").get() as {
+        c: number;
+      }
+    ).c;
+    res.json({ totalUsers, counts, mrr });
+  });
+
+  api.patch("/admin/subscriptions/:id", requireAuth, requireRole(...ADMIN_ROLES), (req, res) => {
+    const existing = getDb().prepare("SELECT * FROM subscriptions WHERE id = ?").get(req.params.id) as
+      | Record<string, unknown>
+      | undefined;
+    if (!existing) return res.status(404).json({ error: "Subscription not found" });
+    const status = String(req.body.status || existing.status);
+    const planType = String(req.body.planType || req.body.plan_type || existing.plan_type);
+    const monthlyPrice = Number(req.body.monthlyPrice ?? req.body.monthly_price ?? existing.monthly_price);
+    const autoFlag = req.body.autoRenew ?? req.body.auto_renew;
+    const autoRenew = autoFlag === undefined ? existing.auto_renew : autoFlag ? 1 : 0;
+    const notes = req.body.notes ?? existing.notes;
+    let endsAt = (existing.ends_at as string) || null;
+    const extendDays = Number(req.body.extendDays || req.body.extend_days || 0);
+    if (extendDays) {
+      const base = endsAt && new Date(endsAt) > new Date() ? new Date(endsAt) : new Date();
+      base.setDate(base.getDate() + extendDays);
+      endsAt = base.toISOString();
+    }
+    if (req.body.endsAt || req.body.ends_at) endsAt = String(req.body.endsAt || req.body.ends_at);
+    getDb()
+      .prepare(
+        `UPDATE subscriptions SET status = ?, plan_type = ?, monthly_price = ?, auto_renew = ?, ends_at = ?, notes = ? WHERE id = ?`
+      )
+      .run(status, planType, monthlyPrice, Number(autoRenew), endsAt, String(notes || ""), req.params.id);
+    audit(req, "Subscription updated", `${req.params.id} ${status} ${planType}`);
+    const row = getDb()
+      .prepare(
+        `SELECT s.*, u.name, u.email, u.phone FROM subscriptions s JOIN users u ON u.id = s.user_id WHERE s.id = ?`
+      )
+      .get(req.params.id) as Record<string, unknown>;
+    res.json({
+      subscription: mapSubscription(row, { name: String(row.name), email: String(row.email), phone: String(row.phone) }),
+    });
   });
 
   api.post("/doctors", requireAuth, requireRole(...ADMIN_ROLES), (req, res) => {
