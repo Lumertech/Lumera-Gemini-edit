@@ -12,6 +12,10 @@
     {
       "name": "web",
       "port": 3000
+    },
+    {
+      "name": "web-alt",
+      "port": 4173
     }
   ]
 }
