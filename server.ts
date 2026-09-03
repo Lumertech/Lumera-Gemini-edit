@@ -12,7 +12,8 @@ dotenv.config();
 initDatabase();
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
+const PREVIEW_PORT = Number(process.env.PREVIEW_PORT) || 4173;
 
 app.use(express.json({ limit: "10mb" }));
 app.use((_req, res, next) => {
@@ -568,11 +569,15 @@ For query "${query}":
 // ----------------------------------------------------
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
+    const disableHmr =
+      process.env.CURSOR_AGENT === "1" || process.env.DISABLE_HMR === "true";
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
         host: true,
         allowedHosts: true,
+        hmr: disableHmr ? false : true,
+        watch: disableHmr ? null : {},
       },
       appType: "spa",
     });
@@ -600,12 +605,25 @@ async function startServer() {
     });
   }
 
-  const httpServer = http.createServer(app);
-  httpServer.keepAliveTimeout = 0;
-  httpServer.headersTimeout = 10_000;
-  httpServer.listen({ port: PORT, host: "::", ipv6Only: false }, () => {
-    console.log(`Lumera AI Server running on http://0.0.0.0:${PORT} (IPv4+IPv6)`);
-  });
+  const listen = (port: number) => {
+    const httpServer = http.createServer(app);
+    // keepAliveTimeout: 0 makes Node RST sockets; Chrome then reports ERR_EMPTY_RESPONSE
+    // through Cursor's preview tunnel. Stay above Chromium's ~60s idle timeout.
+    httpServer.keepAliveTimeout = 65_000;
+    httpServer.headersTimeout = 66_000;
+    httpServer.requestTimeout = 0;
+    httpServer.timeout = 0;
+    httpServer.on("connection", (socket) => {
+      socket.setNoDelay(true);
+      socket.setKeepAlive(true, 10_000);
+    });
+    httpServer.listen({ port, host: "0.0.0.0" }, () => {
+      console.log(`Lumera AI Server running on http://0.0.0.0:${port}`);
+    });
+  };
+
+  listen(PORT);
+  if (PREVIEW_PORT !== PORT) listen(PREVIEW_PORT);
 }
 
 startServer();

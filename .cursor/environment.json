@@ -1,0 +1,21 @@
+{
+  "name": "Lumera AI",
+  "install": "npm install",
+  "terminals": [
+    {
+      "name": "dev-server",
+      "command": "npm run dev",
+      "description": "Lumera AI Express + Vite dev server (port 3000)"
+    }
+  ],
+  "ports": [
+    {
+      "name": "web",
+      "port": 3000
+    },
+    {
+      "name": "web-alt",
+      "port": 4173
+    }
+  ]
+}
