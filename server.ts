@@ -15,6 +15,11 @@ const app = express();
 const PORT = 3000;
 
 app.use(express.json({ limit: "10mb" }));
+app.use((_req, res, next) => {
+  // Cursor's preview proxy can RST keep-alive sockets; close each response cleanly.
+  res.setHeader("Connection", "close");
+  next();
+});
 app.get("/healthz", (_req, res) => {
   res.type("text/plain").send("ok");
 });
@@ -595,8 +600,11 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Lumera AI Server running on http://0.0.0.0:${PORT}`);
+  const httpServer = http.createServer(app);
+  httpServer.keepAliveTimeout = 0;
+  httpServer.headersTimeout = 10_000;
+  httpServer.listen({ port: PORT, host: "::", ipv6Only: false }, () => {
+    console.log(`Lumera AI Server running on http://0.0.0.0:${PORT} (IPv4+IPv6)`);
   });
 }
 
