@@ -15,11 +15,19 @@ const app = express();
 const PORT = 3000;
 
 app.use(express.json({ limit: "10mb" }));
-app.use((_req, res, next) => {
-  // Cursor's preview proxy can RST keep-alive sockets; close each response cleanly.
-  res.setHeader("Connection", "close");
-  next();
-});
+if (process.platform !== "win32") {
+  app.use((_req, res, next) => {
+    // Cursor's preview proxy can RST keep-alive sockets; close each response cleanly.
+    res.setHeader("Connection", "close");
+    next();
+  });
+}
+if (process.env.NODE_ENV !== "production") {
+  app.use((req, _res, next) => {
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+    next();
+  });
+}
 app.get("/healthz", (_req, res) => {
   res.type("text/plain").send("ok");
 });
@@ -604,26 +612,34 @@ async function startServer() {
   httpServer.keepAliveTimeout = 0;
   httpServer.headersTimeout = 10_000;
 
+  httpServer.on("clientError", (err, socket) => {
+    console.error("HTTP client error:", err.message);
+    if (!socket.destroyed) {
+      socket.end("HTTP/1.1 400 Bad Request\r\n\r\n");
+    }
+  });
+
+  httpServer.on("error", (err) => {
+    console.error("HTTP server error:", err);
+  });
+
   const logListening = () => {
-    console.log(`Lumera AI Server running on http://0.0.0.0:${PORT} (IPv4+IPv6)`);
+    if (process.platform === "win32") {
+      console.log(`Lumera AI Server running on http://0.0.0.0:${PORT} (IPv4 only; use http://127.0.0.1:${PORT})`);
+    } else {
+      console.log(`Lumera AI Server running on http://0.0.0.0:${PORT} (IPv4+IPv6)`);
+    }
   };
 
   if (process.platform === "win32") {
-    // Windows dual-stack via `::` + ipv6Only:false can accept TCP on 127.0.0.1
-    // but return empty HTTP replies (curl 52). Bind IPv4 and IPv6 separately.
+    // Windows: dual-stack `::` and two sockets on one port both cause curl 52 empty replies
+    // on Node 24. A single IPv4 listener on 0.0.0.0 is reliable for 127.0.0.1 and LAN.
     await new Promise<void>((resolve, reject) => {
       httpServer.once("error", reject);
       httpServer.listen({ port: PORT, host: "0.0.0.0" }, () => {
         httpServer.removeListener("error", reject);
-        const v6Server = http.createServer(app);
-        v6Server.keepAliveTimeout = 0;
-        v6Server.headersTimeout = 10_000;
-        v6Server.once("error", reject);
-        v6Server.listen({ port: PORT, host: "::", ipv6Only: true }, () => {
-          v6Server.removeListener("error", reject);
-          logListening();
-          resolve();
-        });
+        logListening();
+        resolve();
       });
     });
   } else {
