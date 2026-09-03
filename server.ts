@@ -1,4 +1,5 @@
 import express, { Request, Response } from "express";
+import http from "http";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
@@ -14,6 +15,14 @@ const app = express();
 const PORT = 3000;
 
 app.use(express.json({ limit: "10mb" }));
+app.use((_req, res, next) => {
+  // Cursor's preview proxy can RST keep-alive sockets; close each response cleanly.
+  res.setHeader("Connection", "close");
+  next();
+});
+app.get("/healthz", (_req, res) => {
+  res.type("text/plain").send("ok");
+});
 app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 app.use(attachUser);
 app.use("/api", createApiRouter());
@@ -560,12 +569,17 @@ For query "${query}":
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        host: true,
+        allowedHosts: true,
+      },
       appType: "spa",
     });
     app.use((req, _res, next) => {
       const p = req.path;
       const isAsset =
+        p === "/healthz" ||
         p.startsWith("/api") ||
         p.startsWith("/uploads") ||
         p.startsWith("/@") ||
@@ -586,8 +600,11 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Lumera AI Server running on http://0.0.0.0:${PORT}`);
+  const httpServer = http.createServer(app);
+  httpServer.keepAliveTimeout = 0;
+  httpServer.headersTimeout = 10_000;
+  httpServer.listen({ port: PORT, host: "::", ipv6Only: false }, () => {
+    console.log(`Lumera AI Server running on http://0.0.0.0:${PORT} (IPv4+IPv6)`);
   });
 }
 
