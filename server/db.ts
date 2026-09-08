@@ -10,6 +10,7 @@ export type UserRole =
   | "doctor"
   | "receptionist"
   | "polyclinic_admin"
+  | "CLINIC_ADMIN"
   | "super_admin"
   | "patient";
 
@@ -17,6 +18,7 @@ export type UserStatus = "active" | "invited" | "disabled";
 
 export interface DbUser {
   id: string;
+  tenant_id?: string;
   email: string;
   password_hash: string;
   name: string;
@@ -25,6 +27,50 @@ export interface DbUser {
   phone: string;
   last_login: string | null;
   created_at: string;
+  avatar_url?: string;
+  clinic_name?: string;
+  whatsapp_verified?: number;
+  hpr_id?: string;
+  hfr_id?: string;
+  onboarding_completed?: number;
+}
+
+export interface DbTenant {
+  id: string;
+  name: string;
+  specialty: string;
+  country: string;
+  timezone: string;
+  phone: string;
+  trial_ends_at: string;
+  ai_scribe_minutes_limit: number;
+  ai_scribe_minutes_used: number;
+  active_status: number;
+  hfr_id: string;
+  waba_id?: string;
+  phone_number_id?: string;
+  meta_access_token?: string;
+  meta_token_expires_at?: string;
+  meta_waba_name?: string;
+  meta_quality_rating?: string;
+  meta_onboarding_status?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DbMetaTemplate {
+  id: string;
+  tenant_id: string;
+  waba_id: string;
+  name: string;
+  category: string;
+  language: string;
+  status: string;
+  components: string;
+  meta_template_id?: string;
+  rejection_reason?: string;
+  created_at: string;
+  updated_at: string;
 }
 
 let db: DatabaseSync | null = null;
@@ -45,6 +91,8 @@ export function initDatabase(): DatabaseSync {
   seedIfEmpty(db);
   seedSubscriptionsIfMissing(db);
   seedClinicalAndWhatsAppIfMissing(db);
+  ensureMetaTechProviderAndPolicies(db);
+  ensureAbdmAndDhisSeeding(db);
   return db;
 }
 
@@ -285,6 +333,68 @@ function migrate(database: DatabaseSync) {
       action_payload TEXT,
       sent_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS tenants (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      specialty TEXT NOT NULL,
+      country TEXT NOT NULL,
+      timezone TEXT NOT NULL,
+      phone TEXT NOT NULL,
+      trial_ends_at TEXT NOT NULL,
+      ai_scribe_minutes_limit INTEGER NOT NULL DEFAULT 500,
+      ai_scribe_minutes_used INTEGER NOT NULL DEFAULT 0,
+      active_status INTEGER NOT NULL DEFAULT 1,
+      hfr_id TEXT NOT NULL DEFAULT '',
+      waba_id TEXT DEFAULT '',
+      phone_number_id TEXT DEFAULT '',
+      meta_access_token TEXT DEFAULT '',
+      meta_token_expires_at TEXT DEFAULT '',
+      meta_waba_name TEXT DEFAULT '',
+      meta_quality_rating TEXT DEFAULT 'GREEN',
+      meta_onboarding_status TEXT DEFAULT 'pending',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS meta_templates (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      waba_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      category TEXT NOT NULL,
+      language TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'PENDING',
+      components TEXT NOT NULL DEFAULT '[]',
+      meta_template_id TEXT,
+      rejection_reason TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS dhis_transactions (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      claims_count INTEGER NOT NULL DEFAULT 0,
+      claims_threshold INTEGER NOT NULL DEFAULT 100,
+      month_year TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS otp_verifications (
+      id TEXT PRIMARY KEY,
+      phone TEXT NOT NULL,
+      email TEXT NOT NULL,
+      otp TEXT NOT NULL,
+      purpose TEXT NOT NULL,
+      payload TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      verified_at TEXT
+    );
   `);
 
   try {
@@ -295,6 +405,93 @@ function migrate(database: DatabaseSync) {
   } catch {}
   try {
     database.exec("ALTER TABLE doctors ADD COLUMN hpr_id TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE users ADD COLUMN avatar_url TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE users ADD COLUMN clinic_name TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE users ADD COLUMN whatsapp_verified INTEGER DEFAULT 0");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE users ADD COLUMN tenant_id TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE users ADD COLUMN hpr_id TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE users ADD COLUMN hfr_id TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE users ADD COLUMN onboarding_completed INTEGER DEFAULT 0");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE tenants ADD COLUMN waba_id TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE tenants ADD COLUMN phone_number_id TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE tenants ADD COLUMN meta_access_token TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE tenants ADD COLUMN meta_token_expires_at TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE tenants ADD COLUMN meta_waba_name TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE tenants ADD COLUMN meta_quality_rating TEXT DEFAULT 'GREEN'");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE tenants ADD COLUMN meta_onboarding_status TEXT DEFAULT 'pending'");
+  } catch {}
+
+  // ABDM & DHIS Schema Extensions
+  try {
+    database.exec("ALTER TABLE patients ADD COLUMN abha_number TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE patients ADD COLUMN abha_address TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE patients ADD COLUMN kyc_status TEXT DEFAULT 'PENDING'");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE patients ADD COLUMN hfr_id TEXT DEFAULT ''");
+  } catch {}
+
+  try {
+    database.exec("ALTER TABLE dhis_transactions ADD COLUMN transaction_type TEXT DEFAULT 'OP_CONSULT'");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE dhis_transactions ADD COLUMN patient_id TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE dhis_transactions ADD COLUMN abha_address TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE dhis_transactions ADD COLUMN abha_number TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE dhis_transactions ADD COLUMN kyc_status TEXT DEFAULT 'VERIFIED'");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE dhis_transactions ADD COLUMN record_id TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE dhis_transactions ADD COLUMN fhir_bundle_id TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE dhis_transactions ADD COLUMN incentive_amount INTEGER DEFAULT 20");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE dhis_transactions ADD COLUMN clinic_share INTEGER DEFAULT 14");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE dhis_transactions ADD COLUMN lumera_share INTEGER DEFAULT 6");
   } catch {}
 }
 
@@ -788,6 +985,7 @@ export function mapDoctor(row: Record<string, unknown>) {
 export function publicUser(user: DbUser) {
   return {
     id: user.id,
+    tenantId: user.tenant_id || "",
     email: user.email,
     name: user.name,
     role: user.role,
@@ -795,12 +993,57 @@ export function publicUser(user: DbUser) {
     phone: user.phone,
     lastLogin: user.last_login,
     createdAt: user.created_at,
+    avatarUrl: user.avatar_url || "",
+    clinicName: user.clinic_name || "",
+    whatsappVerified: Boolean(user.whatsapp_verified),
+    hprId: user.hpr_id || "",
+    hfrId: user.hfr_id || "",
+    onboardingCompleted: Boolean(user.onboarding_completed),
   };
 }
 
 export function seedClinicalAndWhatsAppIfMissing(database: DatabaseSync) {
-  const patientCount = database.prepare("SELECT COUNT(*) AS c FROM patients").get() as { c: number };
   const now = new Date().toISOString();
+
+  // Seed default tenant if tenants table is empty
+  const tenantCount = database.prepare("SELECT COUNT(*) AS c FROM tenants").get() as { c: number };
+  if (tenantCount.c === 0) {
+    const trialEnds = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    database.prepare(`
+      INSERT INTO tenants (id, name, specialty, country, timezone, phone, trial_ends_at, ai_scribe_minutes_limit, ai_scribe_minutes_used, active_status, hfr_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+    `).run(
+      "tenant-lumera-main",
+      "Lumera Apex PolyClinic",
+      "General Medicine",
+      "India",
+      "IST (UTC+5:30)",
+      "+91 98234 55667",
+      trialEnds,
+      500,
+      0,
+      "HFR-IN-8829104",
+      now,
+      now
+    );
+
+    database.prepare(`
+      INSERT INTO dhis_transactions (id, tenant_id, claims_count, claims_threshold, month_year, status, created_at, updated_at)
+      VALUES (?, 'tenant-lumera-main', 0, 100, ?, 'active', ?, ?)
+    `).run(
+      "dhis-lumera-main",
+      `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`,
+      now,
+      now
+    );
+
+    try {
+      database.exec("UPDATE users SET tenant_id = 'tenant-lumera-main' WHERE tenant_id IS NULL OR tenant_id = ''");
+      database.exec("UPDATE users SET hpr_id = 'HPR-IN-9024819' WHERE role IN ('doctor', 'polyclinic_admin', 'CLINIC_ADMIN') AND (hpr_id IS NULL OR hpr_id = '')");
+    } catch {}
+  }
+
+  const patientCount = database.prepare("SELECT COUNT(*) AS c FROM patients").get() as { c: number };
 
   if (patientCount.c === 0) {
     const insertPatient = database.prepare(`
@@ -1444,4 +1687,476 @@ export function seedClinicalAndWhatsAppIfMissing(database: DatabaseSync) {
     );
   }
 }
+
+export function ensureMetaTechProviderAndPolicies(database: DatabaseSync) {
+  const now = new Date().toISOString();
+
+  // 1. Ensure Meta Compliance Policies exist in cms_policies
+  const insertOrReplacePolicy = database.prepare(`
+    INSERT INTO cms_policies (slug, title, body, updated_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(slug) DO UPDATE SET title = excluded.title, body = excluded.body, updated_at = excluded.updated_at
+  `);
+
+  const privacyPolicyContent = `# Lumera Privacy Policy & Meta Tech Provider Notice
+
+**Last Updated:** September 2026  
+**Effective Date:** January 1, 2026  
+**Provider:** Lumera Solutions LLP (“Lumera”, “we”, “our”, or “us”)  
+**Designated Compliance Contact:** dpo@lumera.me | privacy@lumera.health  
+
+---
+
+### 1. Overview & Meta Tech Provider Architecture
+Lumera operates an enterprise clinical practice operating system and official Meta Tech Provider / Business Solution Provider platform. Through our integration with Meta Platforms Ireland Ltd and the WhatsApp Business Platform, we provide verified polyclinics, healthcare networks, and independent practitioners with automated patient notifications, digital prescription delivery, appointment confirmations, and triage routing.
+
+### 2. Scope of WhatsApp & User Data Handled
+When clinics connect their WhatsApp Business Accounts (WABA) or when patients interact via the Lumera WhatsApp Desk, we process:
+- **Phone Numbers & Identifiers:** Patient mobile numbers (E.164 standard), Unique Healthcare Identifiers (UHID), and Meta Phone Number IDs.
+- **Transactional Messages:** Appointment tokens, schedule changes, OPD reminders, and doctor follow-up notices.
+- **Clinical Artifacts:** Encrypted PDF links for diagnostic reports and physician-authorized digital prescriptions.
+- **Opt-In & Consent Records:** Timestamped affirmative patient consents collected during clinic intake or conversational opt-in.
+- **Technical Telemetry:** Webhook delivery receipts (sent, delivered, read), quality indicators, and error diagnostics.
+
+### 3. Purpose of Processing & Meta Terms Compliance
+All WhatsApp messaging is processed strictly in accordance with:
+1. **Meta WhatsApp Business Messaging Policy**
+2. **Meta Commerce Policy & Developer Terms**
+3. **India Digital Personal Data Protection (DPDP) Act & ABDM Health Data Management Policy**
+
+We **NEVER** sell personal or medical data to third parties, advertising brokers, or unauthorized entities. Data is processed solely to fulfill requested clinical operations, facilitate physician-patient communication, and maintain regulatory compliance.
+
+### 4. Data Storage, Encryption & Security
+- **Encryption in Transit:** All communications between Meta Graph API, Lumera edge nodes, and clinic servers are encrypted via TLS 1.3.
+- **Encryption at Rest:** Patient identifiers, access tokens, and clinical notes are safeguarded using AES-256-GCM encryption with periodic key rotation.
+- **Access Control:** Role-Based Access Control (RBAC) isolates super-admins, clinicians, reception desks, and patient portal sessions.
+
+### 5. Subprocessors
+- **Meta Platforms, Inc. / Meta Platforms Ireland Ltd:** WhatsApp Business Platform API and Webhook infrastructure.
+- **Google Cloud Platform:** Secure container hosting and cloud infrastructure.
+- **Google Gemini API:** Server-side clinical transcription and note structuring (runs with zero data retention for training).
+
+### 6. Data Deletion & User Rights
+Patients and clinic administrators retain full rights to request access, rectification, or complete erasure of their data. See our dedicated [Data Deletion Instructions](/data-deletion-instructions) or email our Data Protection Officer directly at **dpo@lumera.me**.`;
+
+  const termsOfServiceContent = `# Lumera Enterprise Clinical Terms of Service & Meta WhatsApp Usage Terms
+
+**Last Updated:** September 2026  
+**Jurisdiction:** India & Global Healthcare Cloud  
+**Contact:** legal@lumera.health  
+
+---
+
+### 1. Agreement to Terms
+These Terms of Service (“Terms”) constitute a binding legal agreement between Lumera Solutions LLP (“Lumera”) and the registered healthcare facility or medical practitioner (“Tenant”, “Clinic”, or “You”). By utilizing the Lumera Clinician Suite, Admin CMS, or WhatsApp Embedded Signup, you agree to be bound by these Terms.
+
+### 2. WhatsApp Business Account (WABA) & Meta Tech Provider Governance
+- **Authorized Tech Provider:** Lumera acts as your technical intermediary and software solution provider for Meta WhatsApp Business Management and Messaging.
+- **Account Ownership:** The Clinic retains full ownership and control of its WhatsApp Business Account, verified phone numbers, and display names.
+- **Acceptable Use & Anti-Spam:** Clinics must strictly adhere to the Meta WhatsApp Business Messaging Policy. Unsolicited promotional broadcasts, deceptive advertising, or non-consented bulk messages are strictly prohibited and constitute grounds for immediate service suspension.
+- **Prior Patient Consent:** The Clinic warrants that it has collected valid, revocable patient consent prior to initiating outbound WhatsApp notifications.
+
+### 3. Clinical Responsibility & AI Assistive Scope
+- Lumera provides assistive decision-support tools, including ambient SOAP transcription, triage drafting, and prescription generation.
+- **Licensed Practitioner Prerogative:** All AI-generated suggestions, diagnostic summaries, and prescription drafts are strictly advisory. The licensed treating clinician remains solely responsible for medical diagnosis, treatment plans, and clinical record accuracy.
+
+### 4. Service Availability & SLA
+Lumera targets 99.9% platform availability for core clinical and WhatsApp webhook processing. Scheduled maintenance windows are announced in advance in the Admin Audit Log.
+
+### 5. Termination & Data Portability
+Upon account termination or cancellation, Clinics may export all patient records, EMR notes, and appointment histories in standard FHIR / HL7 compliant formats within thirty (30) days.`;
+
+  const dataDeletionContent = `# Lumera Data Deletion Instructions (Meta App Review Compliance)
+
+**Last Updated:** September 2026  
+**Applicable For:** Meta WhatsApp Embedded Signup, Facebook Login & Lumera Patient Portal  
+**Compliance Authority:** Meta Platform Terms §4.b & GDPR / India DPDP Act  
+**Direct Data Protection Office:** dpo@lumera.me | compliance@lumera.health  
+
+---
+
+### Overview
+In accordance with Meta Platform Terms, GDPR, and India's Digital Personal Data Protection (DPDP) Act, all users, clinicians, and patients have the unconditional right to request the complete deletion of their personal data, WhatsApp message records, and account credentials collected through the Lumera application.
+
+Below are the step-by-step instructions on how to request and confirm data erasure.
+
+---
+
+### Option 1: Automated Self-Service Deletion (Within Facebook / Meta Account)
+If you connected Lumera through Facebook Login or WhatsApp Embedded Signup:
+1. Log into your **Facebook** or **Meta Business Suite** account.
+2. Navigate to **Settings & Privacy** > **Settings**.
+3. In the left navigation menu, click **Apps and Websites**.
+4. Search for or locate **Lumera Health** in your connected applications list.
+5. Click **Remove** to revoke Lumera's access to your profile and business assets.
+6. Click **View removed apps and websites**, find Lumera, and click **Send Request** to trigger Meta's automated data deletion callback.
+7. Meta will invoke Lumera's Automated Deletion Endpoint (\`/api/meta/data-deletion\`), which will immediately generate a unique **Confirmation Code** for tracking.
+
+---
+
+### Option 2: Automated Direct API Request
+Patients and developers can trigger or verify data deletion directly via our verified compliance endpoint:
+- **Deletion Endpoint:** \`POST /api/meta/data-deletion\`
+- **Status Verification Endpoint:** \`GET /api/meta/data-deletion-status?code={CONFIRMATION_CODE}\`
+- Response provides an instant JSON tracking object with confirmation code, timestamp, and audit trail.
+
+---
+
+### Option 3: Manual Deletion Request via Data Protection Officer
+You may submit a written deletion request directly to our Data Protection Office:
+- **Email:** \`dpo@lumera.me\` or \`compliance@lumera.health\`
+- **Subject Line:** \`Meta Data Deletion Request - [Your Phone Number / Email]\`
+- **Required Details:**
+  1. Your full name or Clinic practice name.
+  2. Registered phone number (with country code) or email address.
+  3. WhatsApp Business Account ID (WABA ID) if you are a clinic administrator.
+- **SLA:** Our team processes and verifies manual requests within **24 to 48 business hours**, permanently purging database entries, session tokens, and cached media. A formal Certificate of Erasure will be emailed to you upon completion.
+
+---
+
+### Scope of Data Erased
+Upon execution of a data deletion request:
+- All authentication sessions, passwords, and Meta Access Tokens are invalidated and deleted.
+- WhatsApp conversation threads and cached media files under \`/uploads\` are permanently erased.
+- Non-clinical contact entries and marketing preferences are purged.
+- *Note:* Legally mandated medical records governed by statutory clinical retention regulations (e.g. state medical council archives) will be anonymized in compliance with applicable healthcare statutes.`;
+
+  // Seed both short and long slug forms for seamless navigation
+  insertOrReplacePolicy.run("privacy-policy", "Privacy Policy", privacyPolicyContent, now);
+  insertOrReplacePolicy.run("privacy", "Privacy Policy", privacyPolicyContent, now);
+  insertOrReplacePolicy.run("terms-of-service", "Terms of Service", termsOfServiceContent, now);
+  insertOrReplacePolicy.run("terms", "Terms of Service", termsOfServiceContent, now);
+  insertOrReplacePolicy.run("data-deletion-instructions", "Data Deletion Instructions", dataDeletionContent, now);
+  insertOrReplacePolicy.run("data-deletion", "Data Deletion Instructions", dataDeletionContent, now);
+
+  // 2. Ensure Primary Tenant has WABA credentials configured
+  const mainTenant = database.prepare("SELECT * FROM tenants WHERE id = 'tenant-lumera-main'").get() as any;
+  if (mainTenant && (!mainTenant.waba_id || mainTenant.waba_id === "")) {
+    database.prepare(`
+      UPDATE tenants 
+      SET waba_id = 'waba_398249018247019',
+          phone_number_id = 'phone_982345566701',
+          meta_access_token = 'EAAJ...verified_system_user_token_lumera_prod_2026',
+          meta_token_expires_at = 'Never (Permanent System User Token)',
+          meta_waba_name = 'Lumera Apex PolyClinic (Verified WABA)',
+          meta_quality_rating = 'GREEN',
+          meta_onboarding_status = 'connected',
+          updated_at = ?
+      WHERE id = 'tenant-lumera-main'
+    `).run(now);
+  }
+
+  // 3. Ensure Secondary Multi-Tenant Practice exists for WABA directory demonstration
+  const rehabTenant = database.prepare("SELECT * FROM tenants WHERE id = 'tenant-rehab-mumbai'").get();
+  if (!rehabTenant) {
+    const trialEnds = new Date(Date.now() + 45 * 24 * 60 * 60 * 1000).toISOString();
+    database.prepare(`
+      INSERT INTO tenants (id, name, specialty, country, timezone, phone, trial_ends_at, ai_scribe_minutes_limit, ai_scribe_minutes_used, active_status, hfr_id, waba_id, phone_number_id, meta_access_token, meta_token_expires_at, meta_waba_name, meta_quality_rating, meta_onboarding_status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 600, 120, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      "tenant-rehab-mumbai",
+      "Lumera Specialty Care & Rehab Center",
+      "Physiotherapy & Rehabilitation",
+      "India",
+      "IST (UTC+5:30)",
+      "+91 22 2640 1234",
+      trialEnds,
+      "HFR-MH-5529188",
+      "waba_489201948102394",
+      "phone_982001234502",
+      "EAAJ...verified_system_user_token_rehab_mumbai_2026",
+      "Never (Permanent System User Token)",
+      "Lumera Rehab & Sports Clinic (Verified)",
+      "GREEN",
+      "connected",
+      now,
+      now
+    );
+  }
+
+  // 4. Ensure Meta WhatsApp Templates exist in meta_templates
+  const templateCount = (database.prepare("SELECT COUNT(*) AS c FROM meta_templates").get() as { c: number }).c;
+  if (templateCount === 0) {
+    const insertTemplate = database.prepare(`
+      INSERT INTO meta_templates (id, tenant_id, waba_id, name, category, language, status, components, meta_template_id, rejection_reason, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const standardTemplates = [
+      {
+        id: "tpl-1",
+        tenant_id: "tenant-lumera-main",
+        waba_id: "waba_398249018247019",
+        name: "appointment_reminder_v1",
+        category: "UTILITY",
+        language: "en",
+        status: "APPROVED",
+        components: JSON.stringify([
+          { type: "HEADER", format: "TEXT", text: "Appointment Confirmation - Lumera Health" },
+          {
+            type: "BODY",
+            text: "Hello {{1}}, your consultation with {{2}} is confirmed for {{3}} at {{4}}. Your OPD Token is #{{5}}. Please arrive 10 minutes prior to your slot.",
+            example: { body_text: [["Rajiv Saxena", "Dr. Vikram Malhotra", "Tomorrow", "09:30 AM", "04"]] }
+          },
+          { type: "FOOTER", text: "Lumera Apex PolyClinic • Indiranagar, Bengaluru" },
+          {
+            type: "BUTTONS",
+            buttons: [
+              { type: "QUICK_REPLY", text: "Confirm Arrival" },
+              { type: "QUICK_REPLY", text: "Reschedule Slot" }
+            ]
+          }
+        ]),
+        meta_template_id: "meta_tpl_983102948102",
+        rejection_reason: null
+      },
+      {
+        id: "tpl-2",
+        tenant_id: "tenant-lumera-main",
+        waba_id: "waba_398249018247019",
+        name: "post_consultation_rx",
+        category: "UTILITY",
+        language: "en",
+        status: "APPROVED",
+        components: JSON.stringify([
+          { type: "HEADER", format: "DOCUMENT" },
+          {
+            type: "BODY",
+            text: "Dear {{1}}, thank you for consulting Dr. {{2}}. Your digital prescription (Rx: {{3}}) and itemized consultation receipt are attached above. You can view dosage schedules anytime on your Lumera Portal.",
+            example: { body_text: [["Sunita Roy", "Vikram Malhotra", "RX-2026-0101"]] }
+          },
+          { type: "FOOTER", text: "Lumera Health EMR System • Certified Digital Rx" },
+          {
+            type: "BUTTONS",
+            buttons: [
+              { type: "URL", text: "Open Patient Portal", url: "https://lumera.health/portal" }
+            ]
+          }
+        ]),
+        meta_template_id: "meta_tpl_983102948103",
+        rejection_reason: null
+      },
+      {
+        id: "tpl-3",
+        tenant_id: "tenant-lumera-main",
+        waba_id: "waba_398249018247019",
+        name: "lab_report_ready",
+        category: "UTILITY",
+        language: "en",
+        status: "APPROVED",
+        components: JSON.stringify([
+          { type: "HEADER", format: "TEXT", text: "Diagnostic Pathology Report" },
+          {
+            type: "BODY",
+            text: "Namaste {{1}}, your test results for {{2}} conducted on {{3}} have been signed off by the pathologist and are now ready for download.",
+            example: { body_text: [["Rajiv Saxena", "Renal & Vitamin Profile", "28 Aug 2026"]] }
+          },
+          { type: "FOOTER", text: "Lumera Central Diagnostics" },
+          {
+            type: "BUTTONS",
+            buttons: [
+              { type: "QUICK_REPLY", text: "Download PDF" },
+              { type: "QUICK_REPLY", text: "Book Follow-up" }
+            ]
+          }
+        ]),
+        meta_template_id: "meta_tpl_983102948104",
+        rejection_reason: null
+      },
+      {
+        id: "tpl-4",
+        tenant_id: "tenant-lumera-main",
+        waba_id: "waba_398249018247019",
+        name: "opd_queue_token_alert",
+        category: "UTILITY",
+        language: "en",
+        status: "APPROVED",
+        components: JSON.stringify([
+          { type: "HEADER", format: "TEXT", text: "Live Queue Update" },
+          {
+            type: "BODY",
+            text: "Patient Alert: Token #{{1}} ({{2}}). You are next in line for {{3}}. Please proceed to {{4}}.",
+            example: { body_text: [["02", "Priyanka Mukherjee", "Dr. Siddharth Varma", "Rehab Suite 105"]] }
+          },
+          { type: "FOOTER", text: "Live OPD Triage System" }
+        ]),
+        meta_template_id: "meta_tpl_983102948105",
+        rejection_reason: null
+      },
+      {
+        id: "tpl-5",
+        tenant_id: "tenant-lumera-main",
+        waba_id: "waba_398249018247019",
+        name: "otp_login_verification",
+        category: "AUTHENTICATION",
+        language: "en",
+        status: "APPROVED",
+        components: JSON.stringify([
+          {
+            type: "BODY",
+            text: "Your Lumera Health verification code is {{1}}. Valid for 5 minutes. Never share this code with anyone.",
+            example: { body_text: [["492810"]] }
+          },
+          {
+            type: "BUTTONS",
+            buttons: [
+              { type: "QUICK_REPLY", text: "Copy Code" }
+            ]
+          }
+        ]),
+        meta_template_id: "meta_tpl_983102948106",
+        rejection_reason: null
+      },
+      {
+        id: "tpl-6",
+        tenant_id: "tenant-lumera-main",
+        waba_id: "waba_398249018247019",
+        name: "preventive_cardiac_camp",
+        category: "MARKETING",
+        language: "en",
+        status: "PENDING",
+        components: JSON.stringify([
+          { type: "HEADER", format: "IMAGE" },
+          {
+            type: "BODY",
+            text: "Dear {{1}}, Lumera Health is organizing a Comprehensive Cardiac Wellness Camp on Saturday, {{2}}. Includes ECG, Lipid Profile & Senior Cardiologist consultation at 50% discount.",
+            example: { body_text: [["Rajiv", "15 September 2026"]] }
+          },
+          { type: "FOOTER", text: "Reply STOP to unsubscribe from health updates" },
+          {
+            type: "BUTTONS",
+            buttons: [
+              { type: "QUICK_REPLY", text: "Book Camp Slot" },
+              { type: "QUICK_REPLY", text: "View Details" }
+            ]
+          }
+        ]),
+        meta_template_id: "meta_tpl_983102948107",
+        rejection_reason: null
+      }
+    ];
+
+    for (const tpl of standardTemplates) {
+      insertTemplate.run(
+        tpl.id,
+        tpl.tenant_id,
+        tpl.waba_id,
+        tpl.name,
+        tpl.category,
+        tpl.language,
+        tpl.status,
+        tpl.components,
+        tpl.meta_template_id,
+        tpl.rejection_reason,
+        now,
+        now
+      );
+    }
+  }
+}
+
+/**
+ * Ensures existing clinical patients have verified ABHA numbers & addresses,
+ * and seeds qualifying DHIS transactions for current month progress meter.
+ */
+export function ensureAbdmAndDhisSeeding(database: DatabaseSync) {
+  const now = new Date().toISOString();
+  const currentMonth = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
+  const defaultHfrId = "HFR-IN-8829104";
+
+  // 1. Enrich existing patients with ABHA details
+  const updatePatientAbha = database.prepare(`
+    UPDATE patients 
+    SET abha_number = ?, abha_address = ?, kyc_status = ?, hfr_id = ?
+    WHERE id = ?
+  `);
+
+  const abhaSeedMap: Record<string, { abhaNumber: string; abhaAddress: string; kycStatus: string }> = {
+    "pat-6": { abhaNumber: "91-4428-9102-3841", abhaAddress: "rajiv.saxena@abdm", kycStatus: "VERIFIED" },
+    "pat-7": { abhaNumber: "91-7291-0384-9182", abhaAddress: "priyanka.m@abdm", kycStatus: "VERIFIED" },
+    "pat-1": { abhaNumber: "91-8840-2910-4491", abhaAddress: "sunita.roy@abdm", kycStatus: "VERIFIED" },
+    "pat-2": { abhaNumber: "91-5519-3829-1048", abhaAddress: "rohan.deshmukh@abdm", kycStatus: "VERIFIED" },
+    "pat-4": { abhaNumber: "91-9928-1029-4820", abhaAddress: "mohd.tariq@abdm", kycStatus: "VERIFIED" },
+    "pat-3": { abhaNumber: "91-3829-4019-2810", abhaAddress: "aarav.gupta@abdm", kycStatus: "PENDING" },
+  };
+
+  for (const [id, data] of Object.entries(abhaSeedMap)) {
+    try {
+      updatePatientAbha.run(data.abhaNumber, data.abhaAddress, data.kycStatus, defaultHfrId, id);
+    } catch {}
+  }
+
+  // 2. Set HPR ID for doctors if missing
+  try {
+    database.prepare("UPDATE doctors SET hpr_id = 'HPR-IN-9024819' WHERE id = 'doc-1' AND (hpr_id IS NULL OR hpr_id = '')").run();
+    database.prepare("UPDATE doctors SET hpr_id = 'HPR-IN-9024820' WHERE id = 'doc-2' AND (hpr_id IS NULL OR hpr_id = '')").run();
+    database.prepare("UPDATE doctors SET hpr_id = 'HPR-IN-9024821' WHERE id = 'doc-3' AND (hpr_id IS NULL OR hpr_id = '')").run();
+  } catch {}
+
+  // 3. Seed DHIS transactions if fewer than 10 for the current month
+  try {
+    const existing = database.prepare(`
+      SELECT COUNT(*) as count 
+      FROM dhis_transactions 
+      WHERE month_year = ? AND transaction_type IS NOT NULL AND status = 'QUALIFIED'
+    `).get(currentMonth) as { count: number };
+
+    if ((existing?.count || 0) < 10) {
+      const insertDhis = database.prepare(`
+        INSERT INTO dhis_transactions (
+          id, tenant_id, transaction_type, patient_id, abha_address, abha_number,
+          kyc_status, record_id, fhir_bundle_id, incentive_amount, clinic_share, lumera_share,
+          status, month_year, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'QUALIFIED', ?, ?, ?)
+      `);
+
+      const patientPool = [
+        { id: "pat-6", abha: "rajiv.saxena@abdm", num: "91-4428-9102-3841" },
+        { id: "pat-7", abha: "priyanka.m@abdm", num: "91-7291-0384-9182" },
+        { id: "pat-1", abha: "sunita.roy@abdm", num: "91-8840-2910-4491" },
+        { id: "pat-2", abha: "rohan.deshmukh@abdm", num: "91-5519-3829-1048" },
+        { id: "pat-4", abha: "mohd.tariq@abdm", num: "91-9928-1029-4820" },
+      ];
+
+      const typeDist: Array<"OP_CONSULT" | "PRESCRIPTION" | "DIAGNOSTIC_REPORT" | "DISCHARGE_SUMMARY"> = [
+        "OP_CONSULT", "OP_CONSULT", "OP_CONSULT",
+        "PRESCRIPTION", "PRESCRIPTION",
+        "DIAGNOSTIC_REPORT",
+        "DISCHARGE_SUMMARY",
+      ];
+
+      // Seed 78 qualifying transactions to set progress meter at 78% of the 100-threshold
+      const seedCount = 78;
+      for (let i = 1; i <= seedCount; i++) {
+        const p = patientPool[(i - 1) % patientPool.length];
+        const txType = typeDist[(i - 1) % typeDist.length];
+        const dayOffset = Math.floor((i / seedCount) * 8); // Spread over past 8 days
+        const txDate = new Date(Date.now() - (8 - dayOffset) * 86400000 + (i * 123456) % 3600000).toISOString();
+
+        insertDhis.run(
+          `dhis-init-tx-${String(i).padStart(3, "0")}`,
+          "tenant-lumera-main",
+          txType,
+          p.id,
+          p.abha,
+          p.num,
+          "VERIFIED",
+          `rec-abdm-${i}`,
+          `bundle-nrc-r4-${String(i).padStart(4, "0")}`,
+          20, // ₹20 total incentive
+          14, // ₹14 (70%) clinic share
+          6,  // ₹6 (30%) Lumera digital solution share
+          currentMonth,
+          txDate,
+          txDate
+        );
+      }
+    }
+  } catch (err) {
+    console.error("Error seeding DHIS transactions:", err);
+  }
+}
+
+
 

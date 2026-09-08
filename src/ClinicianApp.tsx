@@ -13,7 +13,9 @@ import { PatientPortal } from './components/PatientPortal';
 import { WaitingRoomKiosk } from './components/WaitingRoomKiosk';
 import { LabReportAnalyzer } from './components/LabReportAnalyzer';
 import { ClinicTeamManager } from './components/ClinicTeamManager';
-import { HexaAssistant } from './components/HexaAssistant';
+import { GeminiAssistant } from './components/GeminiAssistant';
+import { Reception } from './components/Reception';
+import { DhisMeter } from './components/dhis/DhisMeter';
 import { 
   MOCK_DOCTORS, 
   MOCK_PATIENTS, 
@@ -34,7 +36,8 @@ import { useAuth } from './auth/AuthContext';
 
 export default function ClinicianApp() {
   const { user } = useAuth();
-  const [currentView, setCurrentView] = useState<NavView>('ambient');
+  // Default landing view: OPD Queue & Vitals so clinician starts from live patient queue
+  const [currentView, setCurrentView] = useState<NavView>('queue');
   const [currentDoctor, setCurrentDoctor] = useState<Doctor>(MOCK_DOCTORS[0]);
   const [currentPatient, setCurrentPatient] = useState<Patient>(MOCK_PATIENTS[0]);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
@@ -46,6 +49,20 @@ export default function ClinicianApp() {
   const [activeSoapData, setActiveSoapData] = useState<SoapNote | null>(null);
   const [selectedSpecialty, setSelectedSpecialty] = useState<PolyclinicSpecialty | 'All'>('All');
   const [isHexaOpen, setIsHexaOpen] = useState(false);
+
+  // Specialty locking enforcement for doctor accounts
+  const isSpecialtyLocked = user?.role === 'doctor' || Boolean(user?.specialty);
+  const lockedSpecialty = user?.specialty || (user?.role === 'doctor' ? currentDoctor.specialty : undefined);
+
+  // Bind active clinician profile to logged-in user specialty if specified
+  useEffect(() => {
+    if (user?.specialty) {
+      const match = doctors.find(
+        (d) => d.specialty.toLowerCase().includes(user.specialty!.toLowerCase())
+      );
+      if (match) setCurrentDoctor(match);
+    }
+  }, [user?.specialty, doctors]);
 
   useEffect(() => {
     apiFetch<{ doctors: Doctor[] }>('/api/doctors')
@@ -64,7 +81,15 @@ export default function ClinicianApp() {
   };
 
   const handleSavePrescription = (newRx: Prescription) => {
-    setPrescriptions((prev) => [newRx, ...prev]);
+    setPrescriptions((prev) => [newRx, ...prev.filter((p) => p.id !== newRx.id)]);
+    // Mark patient's current appointment in consultation as Completed
+    setAppointments((prev) =>
+      prev.map((a) =>
+        a.patientId === newRx.patientId && a.status === 'In Consultation'
+          ? { ...a, status: 'Completed' }
+          : a
+      )
+    );
   };
 
   const handleUpdateAppointmentStatus = (id: string, status: Appointment['status']) => {
@@ -85,7 +110,8 @@ export default function ClinicianApp() {
     setCurrentPatient(p);
     setCurrentDoctor(d);
     handleUpdateAppointmentStatus(apt.id, 'In Consultation');
-    setCurrentView('ambient');
+    // Seamlessly navigate directly to Smart Rx Studio for the active consultation
+    setCurrentView('rx');
   };
 
   const handleOpenBillForAppointment = (apt: Appointment) => {
@@ -116,6 +142,7 @@ export default function ClinicianApp() {
         userName={user?.name}
         userRole={user?.role}
         canOpenAdmin={user?.role === 'super_admin'}
+        isSpecialtyLocked={isSpecialtyLocked}
       />
 
       <div className="flex flex-1 overflow-hidden">
@@ -131,6 +158,44 @@ export default function ClinicianApp() {
         />
 
         <main className="flex-1 min-w-0 h-full overflow-y-auto bg-slate-100/70 p-4 sm:p-6 lg:p-8">
+          {currentView === 'reception' && (
+            <Reception
+              patients={patients}
+              doctors={doctors}
+              appointments={appointments}
+              onSelectPatient={setCurrentPatient}
+              onAddNewPatient={(newPat) => {
+                setPatients((prev) => [newPat, ...prev]);
+              }}
+              onCheckInPatient={(pat, doc, type) => {
+                const newApt: Appointment = {
+                  id: 'apt-' + Date.now(),
+                  tokenNumber: appointments.length + 1,
+                  patientId: pat.id,
+                  patientName: pat.name,
+                  uhid: pat.uhid,
+                  patientPhone: pat.phone,
+                  doctorId: doc.id,
+                  doctorName: doc.name,
+                  specialty: doc.specialty as PolyclinicSpecialty,
+                  date: new Date().toISOString().split('T')[0],
+                  timeSlot: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
+                  status: 'Waiting',
+                  type: type || 'New Consultation',
+                  source: 'Walk-in',
+                  consultationFee: doc.consultationFee,
+                  isPaid: false,
+                };
+                setAppointments((prev) => [...prev, newApt]);
+              }}
+              onSwitchToConsultation={() => setCurrentView('ambient')}
+            />
+          )}
+
+          {currentView === 'dhis' && (
+            <DhisMeter compact={false} />
+          )}
+
           {currentView === 'ambient' && (
             <AmbientAIStudio
               currentPatient={currentPatient}
@@ -148,6 +213,9 @@ export default function ClinicianApp() {
               initialSoapData={activeSoapData}
               onSavePrescription={handleSavePrescription}
               clinicSettings={DEFAULT_CLINIC_SETTINGS}
+              isSpecialtyLocked={isSpecialtyLocked}
+              lockedSpecialty={lockedSpecialty}
+              onProceedToBilling={() => setCurrentView('billing')}
             />
           )}
 
@@ -262,6 +330,16 @@ export default function ClinicianApp() {
               currentPatient={currentPatient}
               currentDoctor={currentDoctor}
               clinicSettings={DEFAULT_CLINIC_SETTINGS}
+              activePrescription={prescriptions.find((p) => p.patientId === currentPatient.id) || null}
+              onPaymentSuccess={(_invoiceNumber, _amount) => {
+                setAppointments((prev) =>
+                  prev.map((a) =>
+                    a.patientId === currentPatient.id
+                      ? { ...a, isPaid: true, status: 'Completed' }
+                      : a
+                  )
+                );
+              }}
             />
           )}
 
@@ -276,7 +354,7 @@ export default function ClinicianApp() {
 
           {currentView === 'team' && (
             <ClinicTeamManager
-              canManage={user?.role === 'doctor' || user?.role === 'polyclinic_admin'}
+              canManage={user?.role === 'doctor' || user?.role === 'polyclinic_admin' || user?.role === 'CLINIC_ADMIN'}
               currentUserId={user?.id}
               onDoctorsChanged={(next) => {
                 if (next.length) {
@@ -307,11 +385,14 @@ export default function ClinicianApp() {
         </div>
         <div className="flex items-center gap-4 text-slate-400">
           <div className="hidden sm:block">ICD-10 / ABDM Standard</div>
-          <div className="text-blue-400 font-medium">Gemini 3.7 Flash Engine</div>
+          <div className="text-purple-400 font-medium flex items-center gap-1">
+            <span className="w-2 h-2 rounded-full bg-purple-400 animate-pulse"></span>
+            Pulse AI (Gemini 3.8 Flash)
+          </div>
         </div>
       </footer>
 
-      <HexaAssistant
+      <GeminiAssistant
         isOpen={isHexaOpen}
         onClose={() => setIsHexaOpen(false)}
         currentPatient={currentPatient}

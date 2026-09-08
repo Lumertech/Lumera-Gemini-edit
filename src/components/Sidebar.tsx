@@ -15,7 +15,9 @@ import {
   ChevronLeft,
   ChevronRight,
   ShieldCheck,
-  Zap
+  Zap,
+  Award,
+  UserCheck
 } from 'lucide-react';
 import { NavView } from './Navbar';
 import { Patient, Doctor } from '../types';
@@ -46,18 +48,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
       title: 'Clinical AI & Consultation',
       items: [
         {
-          id: 'ambient' as NavView,
-          label: 'Ambient AI Scribe',
-          icon: Sparkles,
-          badge: 'Live',
-          badgeColor: 'bg-blue-500/20 text-blue-300 border-blue-500/30',
-        },
-        {
           id: 'rx' as NavView,
           label: 'Smart Rx Studio',
           icon: FileText,
           badge: 'Rx',
           badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
+        },
+        {
+          id: 'ambient' as NavView,
+          label: 'Ambient AI Scribe',
+          icon: Sparkles,
+          badge: 'Live',
+          badgeColor: 'bg-blue-500/20 text-blue-300 border-blue-500/30',
         },
         {
           id: 'reports' as NavView,
@@ -72,14 +74,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
       title: 'OPD Flow & Diagnostics',
       items: [
         {
+          id: 'reception' as NavView,
+          label: 'OPD Reception & ABHA',
+          icon: UserCheck,
+          badge: 'ABDM',
+          badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
+        },
+        {
           id: 'queue' as NavView,
           label: 'OPD Queue & Vitals',
           icon: Users,
-        },
-        {
-          id: 'kiosk' as NavView,
-          label: 'TV Waiting Kiosk',
-          icon: Monitor,
         },
         {
           id: 'appointments' as NavView,
@@ -91,11 +95,28 @@ export const Sidebar: React.FC<SidebarProps> = ({
           label: 'Polyclinic Roster',
           icon: Building2,
         },
+        {
+          id: 'kiosk' as NavView,
+          label: 'TV Waiting Kiosk',
+          icon: Monitor,
+        },
       ],
     },
     {
       title: 'Practice & Engagement',
       items: [
+        {
+          id: 'dhis' as NavView,
+          label: 'DHIS Incentive Meter',
+          icon: Award,
+          badge: '₹20/tx',
+          badgeColor: 'bg-purple-500/20 text-purple-300 border-purple-500/30',
+        },
+        {
+          id: 'portal' as NavView,
+          label: 'Patient EMR Portal',
+          icon: ShieldCheck,
+        },
         {
           id: 'billing' as NavView,
           label: 'Billing & Payments',
@@ -112,13 +133,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
           icon: PhoneCall,
         },
         {
-          id: 'portal' as NavView,
-          label: 'Patient EMR Portal',
-          icon: ShieldCheck,
-        },
-        {
           id: 'team' as NavView,
-          label: 'Clinic team',
+          label: 'Clinic Team Staff',
           icon: Stethoscope,
           badge: 'Staff',
           badgeColor: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30',
@@ -145,7 +161,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <div className="space-y-0.5">
               {section.items.map((item) => {
                 const Icon = item.icon;
-                const isActive = currentView === item.id;
+                const isActive =
+                  currentView === item.id ||
+                  (item.id === 'queue' && currentView === 'opd-queue') ||
+                  (item.id === 'rx' && currentView === 'smart-rx');
                 return (
                   <button
                     key={item.id}

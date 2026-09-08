@@ -6,16 +6,21 @@ import {
   UserCheck,
   Menu,
   LogOut,
-  Shield
+  Shield,
+  Sparkles,
+  Lock
 } from 'lucide-react';
 import { Doctor, UserRole } from '../types';
 import { useAuth } from '../auth/AuthContext';
 import { useNav } from '../nav/NavigationContext';
 
 export type NavView = 
+  | 'reception'
   | 'ambient' 
   | 'rx' 
+  | 'smart-rx'
   | 'queue' 
+  | 'opd-queue'
   | 'kiosk'
   | 'reports'
   | 'appointments' 
@@ -24,6 +29,7 @@ export type NavView =
   | 'voicebot' 
   | 'billing' 
   | 'portal'
+  | 'dhis'
   | 'team';
 
 interface NavbarProps {
@@ -32,12 +38,15 @@ interface NavbarProps {
   currentDoctor: Doctor;
   onSelectDoctor: (doctor: Doctor) => void;
   allDoctors: Doctor[];
-  onToggleHexa: () => void;
+  onTogglePulse?: () => void;
+  onToggleGemini?: () => void;
+  onToggleHexa?: () => void;
   onToggleSidebar?: () => void;
   isSidebarCollapsed?: boolean;
   userName?: string;
   userRole?: UserRole;
   canOpenAdmin?: boolean;
+  isSpecialtyLocked?: boolean;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -46,19 +55,26 @@ export const Navbar: React.FC<NavbarProps> = ({
   currentDoctor,
   onSelectDoctor,
   allDoctors,
+  onTogglePulse,
+  onToggleGemini,
   onToggleHexa,
   onToggleSidebar,
   isSidebarCollapsed,
   userName,
   userRole,
   canOpenAdmin,
+  isSpecialtyLocked,
 }) => {
+  const toggleCopilot = onTogglePulse || onToggleGemini || onToggleHexa || (() => {});
   const { logout } = useAuth();
   const { go } = useNav();
   const VIEW_TITLES: Record<NavView, string> = {
+    reception: 'OPD Reception & ABHA Intake',
     ambient: 'Ambient AI Scribe & SOAP',
     rx: 'Smart Rx & Specialty Studio',
+    'smart-rx': 'Smart Rx & Specialty Studio',
     queue: 'Live OPD Queue & Triage',
+    'opd-queue': 'Live OPD Queue & Triage',
     kiosk: 'Waiting Room TV Kiosk',
     reports: 'AI Lab OCR & Biomarker Trends',
     appointments: 'Appointments Calendar',
@@ -67,6 +83,7 @@ export const Navbar: React.FC<NavbarProps> = ({
     whatsapp: 'WhatsApp AI Suite',
     voicebot: 'AI Voice Receptionist',
     portal: 'Patient EMR Portal',
+    dhis: 'ABDM v3 & DHIS Incentive Meter',
     team: 'Clinic Team & Staff',
   };
 
@@ -112,36 +129,64 @@ export const Navbar: React.FC<NavbarProps> = ({
 
       {/* Right: Quick Actions & Doctor Profile */}
       <div className="flex items-center space-x-2 sm:space-x-3">
-        {/* Doctor Switcher Dropdown */}
-        <div className="flex items-center space-x-2 bg-slate-800 border border-slate-700/80 px-2 py-1 rounded-lg text-xs">
-          <div className="w-6 h-6 rounded-full overflow-hidden bg-blue-600/30 border border-blue-400/40 flex items-center justify-center shrink-0">
-            {currentDoctor.avatarUrl ? (
-              <img
-                src={currentDoctor.avatarUrl}
-                alt={currentDoctor.name}
-                referrerPolicy="no-referrer"
-                className="w-full h-full object-cover"
-              />
-            ) : (
-              <UserCheck className="w-3.5 h-3.5 text-blue-400" />
-            )}
-          </div>
-          <select
-            aria-label="Doctor Profile Selector"
-            value={currentDoctor.id}
-            onChange={(e) => {
-              const doc = allDoctors.find((d) => d.id === e.target.value);
-              if (doc) onSelectDoctor(doc);
-            }}
-            className="bg-transparent text-slate-200 text-xs font-medium focus:outline-none cursor-pointer max-w-[130px] sm:max-w-[180px] truncate"
+        {/* Doctor Profile (Locked during Doctor sessions to prevent accidental specialty switching) */}
+        {userRole === 'doctor' || isSpecialtyLocked ? (
+          <div 
+            className="flex items-center space-x-2 bg-slate-800/95 border border-slate-700/80 px-2.5 py-1 rounded-lg text-xs"
+            title="Doctor profile and clinical workflow locked during consultation"
           >
-            {allDoctors.map((d) => (
-              <option key={d.id} value={d.id} className="bg-slate-900 text-white">
-                {d.name} ({d.specialty})
-              </option>
-            ))}
-          </select>
-        </div>
+            <div className="w-6 h-6 rounded-full overflow-hidden bg-blue-600/30 border border-blue-400/40 flex items-center justify-center shrink-0">
+              {currentDoctor.avatarUrl ? (
+                <img
+                  src={currentDoctor.avatarUrl}
+                  alt={currentDoctor.name}
+                  referrerPolicy="no-referrer"
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <UserCheck className="w-3.5 h-3.5 text-blue-400" />
+              )}
+            </div>
+            <div className="flex items-center space-x-1.5">
+              <span className="text-slate-200 text-xs font-semibold max-w-[130px] sm:max-w-[180px] truncate">
+                {currentDoctor.name} ({currentDoctor.specialty})
+              </span>
+              <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-700/80 text-amber-300 font-mono font-bold uppercase flex items-center gap-0.5">
+                <Lock className="w-2.5 h-2.5 text-amber-400" /> Locked
+              </span>
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center space-x-2 bg-slate-800 border border-slate-700/80 px-2 py-1 rounded-lg text-xs">
+            <div className="w-6 h-6 rounded-full overflow-hidden bg-blue-600/30 border border-blue-400/40 flex items-center justify-center shrink-0">
+              {currentDoctor.avatarUrl ? (
+                <img
+                  src={currentDoctor.avatarUrl}
+                  alt={currentDoctor.name}
+                  referrerPolicy="no-referrer"
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <UserCheck className="w-3.5 h-3.5 text-blue-400" />
+              )}
+            </div>
+            <select
+              aria-label="Doctor Profile Selector"
+              value={currentDoctor.id}
+              onChange={(e) => {
+                const doc = allDoctors.find((d) => d.id === e.target.value);
+                if (doc) onSelectDoctor(doc);
+              }}
+              className="bg-transparent text-slate-200 text-xs font-medium focus:outline-none cursor-pointer max-w-[130px] sm:max-w-[180px] truncate"
+            >
+              {allDoctors.map((d) => (
+                <option key={d.id} value={d.id} className="bg-slate-900 text-white">
+                  {d.name} ({d.specialty})
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         {/* Quick New Rx Action */}
         <button
@@ -153,14 +198,15 @@ export const Navbar: React.FC<NavbarProps> = ({
           <span className="hidden sm:inline">New Rx</span>
         </button>
 
-        {/* Hexa AI Copilot button */}
+        {/* Pulse AI Clinical Copilot button */}
         <button
-          onClick={onToggleHexa}
-          className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-semibold transition-all shadow-sm shadow-indigo-500/20"
-          title="Open HEXA AI Clinical Decision Support"
+          onClick={toggleCopilot}
+          className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-purple-600 via-indigo-600 to-blue-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-semibold transition-all shadow-sm shadow-purple-500/30"
+          title="Open Pulse AI Clinical Decision Support"
         >
-          <Bot className="w-3.5 h-3.5 text-blue-200" />
-          <span className="hidden sm:inline">HEXA AI</span>
+          <Sparkles className="w-3.5 h-3.5 text-purple-200 animate-pulse" />
+          <span className="hidden sm:inline">Pulse AI</span>
+          <span className="px-1 py-0.2 rounded text-[9px] font-mono bg-white/20 text-white">AI</span>
         </button>
 
         {canOpenAdmin && (

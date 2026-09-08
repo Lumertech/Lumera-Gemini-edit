@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" fill="none">
+  <defs>
+    <linearGradient id="lumera-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#9333EA" />
+      <stop offset="50%" stop-color="#7C3AED" />
+      <stop offset="100%" stop-color="#4F46E5" />
+    </linearGradient>
+    <linearGradient id="lumera-glow" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#C084FC" stop-opacity="0.8" />
+      <stop offset="100%" stop-color="#60A5FA" stop-opacity="0.6" />
+    </linearGradient>
+    <filter id="subtle-shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#4F46E5" flood-opacity="0.3" />
+    </filter>
+  </defs>
+
+  <!-- Background Rounded Shield / Tile -->
+  <rect x="2" y="2" width="60" height="60" rx="16" fill="url(#lumera-grad)" filter="url(#subtle-shadow)" />
+
+  <!-- Outer Ring Accent -->
+  <rect x="2.5" y="2.5" width="59" height="59" rx="15.5" stroke="rgba(255, 255, 255, 0.2)" stroke-width="1" />
+
+  <!-- Center Clinical Medical Cross + Pulse Spark -->
+  <!-- Vertical Beam -->
+  <rect x="27" y="14" width="10" height="36" rx="5" fill="#FFFFFF" />
+  
+  <!-- Horizontal Beam -->
+  <rect x="14" y="27" width="36" height="10" rx="5" fill="#FFFFFF" />
+
+  <!-- Dynamic Center Diamond Spark -->
+  <path d="M32 20 L35.5 28.5 L44 32 L35.5 35.5 L32 44 L28.5 35.5 L20 32 L28.5 28.5 Z" fill="url(#lumera-glow)" />
+
+  <!-- Core Pulse Light Center -->
+  <circle cx="32" cy="32" r="3.5" fill="#7C3AED" />
+  <circle cx="32" cy="32" r="1.8" fill="#FFFFFF" />
+</svg>

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { apiFetch } from "../../api/http";
 import { AppUser, UserRole, UserStatus } from "../../types";
 
-const ROLES: UserRole[] = ["super_admin", "polyclinic_admin", "doctor", "receptionist", "patient"];
+const ROLES: UserRole[] = ["super_admin", "polyclinic_admin", "CLINIC_ADMIN", "doctor", "receptionist", "patient"];
 
 export const AdminUsers: React.FC = () => {
   const [users, setUsers] = useState<AppUser[]>([]);

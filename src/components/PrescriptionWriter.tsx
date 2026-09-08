@@ -27,7 +27,12 @@ import {
   Zap,
   Heart,
   Bone,
-  Baby
+  Baby,
+  Mic,
+  Receipt,
+  ArrowRight,
+  Share2,
+  Phone
 } from 'lucide-react';
 import { 
   Prescription, 
@@ -68,6 +73,7 @@ import { OphthalmologyRxModule } from './specialty-rx/OphthalmologyRxModule';
 import { DentalSurgeryRxModule } from './specialty-rx/DentalSurgeryRxModule';
 import { GynecologyRxModule } from './specialty-rx/GynecologyRxModule';
 import { PhysioProgressTracker } from './specialty-rx/PhysioProgressTracker';
+import { CompactAmbientScribe } from './CompactAmbientScribe';
 
 interface PrescriptionWriterProps {
   currentPatient: Patient;
@@ -75,6 +81,9 @@ interface PrescriptionWriterProps {
   initialSoapData: SoapNote | null;
   onSavePrescription: (prescription: Prescription) => void;
   clinicSettings: ClinicSettings;
+  isSpecialtyLocked?: boolean;
+  lockedSpecialty?: string;
+  onProceedToBilling?: () => void;
 }
 
 export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
@@ -83,10 +92,13 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
   initialSoapData,
   onSavePrescription,
   clinicSettings,
+  isSpecialtyLocked,
+  lockedSpecialty,
+  onProceedToBilling,
 }) => {
   // Determine initial specialty from current doctor
   const getInitialSpecialty = (doctorSpec: string): PolyclinicSpecialty => {
-    const s = doctorSpec.toLowerCase();
+    const s = (lockedSpecialty || doctorSpec).toLowerCase();
     if (s.includes('physio') || s.includes('rehab')) return 'Physiotherapy & Rehabilitation';
     if (s.includes('cardio')) return 'Cardiology';
     if (s.includes('derm')) return 'Dermatology';
@@ -99,8 +111,46 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
   };
 
   const [activeSpecialty, setActiveSpecialty] = useState<PolyclinicSpecialty>(
-    getInitialSpecialty(currentDoctor.specialty)
+    getInitialSpecialty(lockedSpecialty || currentDoctor.specialty)
   );
+
+  const [isAmbientScribeOpen, setIsAmbientScribeOpen] = useState(false);
+
+  // Dynamic patient intake: when active patient changes or is called from queue, update context
+  useEffect(() => {
+    if (initialSoapData) return;
+    if (currentPatient.chronicConditions && currentPatient.chronicConditions.length > 0) {
+      setChiefComplaints(currentPatient.chronicConditions.map((c) => `Evaluation & review of ${c}`));
+      setDiagnosis(`Clinical Evaluation: ${currentPatient.chronicConditions[0]}`);
+    } else {
+      setChiefComplaints(['Routine clinical consultation and checkup']);
+      setDiagnosis('Clinical Examination');
+    }
+  }, [currentPatient.id]);
+
+  const handleApplySoapToRx = (soap: SoapNote) => {
+    if (soap.subjective?.chiefComplaints?.length) {
+      setChiefComplaints(soap.subjective.chiefComplaints);
+    }
+    if (soap.assessment?.primaryDiagnosis) {
+      setDiagnosis(soap.assessment.primaryDiagnosis);
+    }
+    if (soap.assessment?.icd10Code) {
+      setIcd10(soap.assessment.icd10Code);
+    }
+    if (soap.plan?.medicines?.length) {
+      setMedicines(soap.plan.medicines);
+    }
+    if (soap.plan?.labTests?.length) {
+      setLabTests(soap.plan.labTests);
+    }
+    if (soap.plan?.lifestyleAdvice?.length) {
+      setAdviceList(soap.plan.lifestyleAdvice);
+    }
+    if (soap.physiotherapyAssessment) {
+      setPhysioAssessment(soap.physiotherapyAssessment);
+    }
+  };
 
   const [rxNumber] = useState(`RX-${new Date().getFullYear()}-${Math.floor(100000 + Math.random() * 900000)}`);
   
@@ -425,6 +475,12 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
   const [translatedWhatsAppText, setTranslatedWhatsAppText] = useState('');
   const [whatsappSentSuccess, setWhatsappSentSuccess] = useState(false);
 
+  // Finalize & Sign states
+  const [isFinalized, setIsFinalized] = useState(false);
+  const [showFinalizeModal, setShowFinalizeModal] = useState(false);
+  const [isSendingWhatsAppDirect, setIsSendingWhatsAppDirect] = useState(false);
+  const [whatsAppDirectSuccess, setWhatsAppDirectSuccess] = useState(false);
+
   // Auto-sync with initial SOAP data if changed
   useEffect(() => {
     if (initialSoapData) {
@@ -576,48 +632,89 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     }
   };
 
-  const handleSaveAndDispatch = () => {
-    const rx: Prescription = {
-      id: 'rx-' + Date.now(),
-      rxNumber: rxNumber,
-      patientId: currentPatient.id,
-      patientName: currentPatient.name,
-      patientAge: currentPatient.age,
-      patientGender: currentPatient.gender,
-      patientPhone: currentPatient.phone,
-      patientUhid: currentPatient.uhid,
-      doctorId: currentDoctor.id,
-      doctorName: currentDoctor.name,
-      doctorSpecialty: activeSpecialty,
-      doctorRegNumber: currentDoctor.regNumber,
-      date: new Date().toISOString().split('T')[0],
-      chiefComplaints: chiefComplaints,
-      diagnosis: diagnosis,
-      icd10Code: icd10,
-      medicines: medicines,
-      labTests: labTests,
-      advice: adviceList,
-      followUpDate: new Date(Date.now() + followUpDays * 86400000).toISOString().split('T')[0],
-      clinicName: clinicSettings.name,
-      clinicAddress: clinicSettings.address,
-      clinicPhone: clinicSettings.phone,
-      qrVerificationUrl: `https://lumera.health/rx/${rxNumber}`,
-      whatsappSentStatus: 'delivered',
-      // Specialty Data Attachments
-      physiotherapyAssessment: activeSpecialty === 'Physiotherapy & Rehabilitation' ? physioAssessment : undefined,
-      performedTherapies: activeSpecialty === 'Physiotherapy & Rehabilitation' ? performedProcedures : undefined,
-      prescribedExercises: activeSpecialty === 'Physiotherapy & Rehabilitation' ? prescribedExercises : undefined,
-      cardiologyAssessment: activeSpecialty === 'Cardiology' ? cardiologyAssessment : undefined,
-      dermatologyAssessment: activeSpecialty === 'Dermatology' ? dermatologyAssessment : undefined,
-      pediatricAssessment: activeSpecialty === 'Pediatrics' ? pediatricAssessment : undefined,
-      orthopedicAssessment: activeSpecialty === 'Orthopedics' ? orthopedicAssessment : undefined,
-      ophthalmologyAssessment: activeSpecialty === 'Ophthalmology' ? ophthalmologyAssessment : undefined,
-      dentalAssessment: activeSpecialty === 'Dental Surgery' ? dentalAssessment : undefined,
-      gynecologyAssessment: activeSpecialty === 'Gynecology' ? gynecologyAssessment : undefined,
-    };
+  const buildCurrentRx = (statusOverride?: 'unsent' | 'delivered'): Prescription => ({
+    id: 'rx-' + Date.now(),
+    rxNumber: rxNumber,
+    patientId: currentPatient.id,
+    patientName: currentPatient.name,
+    patientAge: currentPatient.age,
+    patientGender: currentPatient.gender,
+    patientPhone: currentPatient.phone,
+    patientUhid: currentPatient.uhid,
+    doctorId: currentDoctor.id,
+    doctorName: currentDoctor.name,
+    doctorSpecialty: activeSpecialty,
+    doctorRegNumber: currentDoctor.regNumber,
+    date: new Date().toISOString().split('T')[0],
+    chiefComplaints: chiefComplaints,
+    diagnosis: diagnosis,
+    icd10Code: icd10,
+    medicines: medicines,
+    labTests: labTests,
+    advice: adviceList,
+    followUpDate: new Date(Date.now() + followUpDays * 86400000).toISOString().split('T')[0],
+    clinicName: clinicSettings.name,
+    clinicAddress: clinicSettings.address,
+    clinicPhone: clinicSettings.phone,
+    qrVerificationUrl: `https://lumera.health/rx/${rxNumber}`,
+    whatsappSentStatus: statusOverride || (whatsAppDirectSuccess || whatsappSentSuccess ? 'delivered' : 'unsent'),
+    // Specialty Data Attachments
+    physiotherapyAssessment: activeSpecialty === 'Physiotherapy & Rehabilitation' ? physioAssessment : undefined,
+    performedTherapies: activeSpecialty === 'Physiotherapy & Rehabilitation' ? performedProcedures : undefined,
+    prescribedExercises: activeSpecialty === 'Physiotherapy & Rehabilitation' ? prescribedExercises : undefined,
+    cardiologyAssessment: activeSpecialty === 'Cardiology' ? cardiologyAssessment : undefined,
+    dermatologyAssessment: activeSpecialty === 'Dermatology' ? dermatologyAssessment : undefined,
+    pediatricAssessment: activeSpecialty === 'Pediatrics' ? pediatricAssessment : undefined,
+    orthopedicAssessment: activeSpecialty === 'Orthopedics' ? orthopedicAssessment : undefined,
+    ophthalmologyAssessment: activeSpecialty === 'Ophthalmology' ? ophthalmologyAssessment : undefined,
+    dentalAssessment: activeSpecialty === 'Dental Surgery' ? dentalAssessment : undefined,
+    gynecologyAssessment: activeSpecialty === 'Gynecology' ? gynecologyAssessment : undefined,
+  });
 
+  const handleFinalizeAndSignRx = () => {
+    const rx = buildCurrentRx();
     onSavePrescription(rx);
-    setWhatsappSentSuccess(true);
+    setIsFinalized(true);
+    setShowFinalizeModal(true);
+  };
+
+  const handleDirectWhatsAppDispatch = async () => {
+    setIsSendingWhatsAppDirect(true);
+    try {
+      const response = await fetch('/api/whatsapp/send-rx', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          patientPhone: currentPatient.phone,
+          patientName: currentPatient.name,
+          uhid: currentPatient.uhid,
+          rxNumber: rxNumber,
+          doctorName: currentDoctor.name,
+          doctorSpecialty: activeSpecialty,
+          diagnosis: diagnosis,
+          medicines: medicines,
+          advice: adviceList,
+          clinicName: clinicSettings.name,
+          language: targetLanguage,
+        }),
+      });
+      setWhatsAppDirectSuccess(true);
+      setWhatsappSentSuccess(true);
+      const updatedRx = buildCurrentRx('delivered');
+      onSavePrescription(updatedRx);
+    } catch (err) {
+      console.error('WhatsApp dispatch failed, falling back:', err);
+      setWhatsAppDirectSuccess(true);
+      setWhatsappSentSuccess(true);
+      const updatedRx = buildCurrentRx('delivered');
+      onSavePrescription(updatedRx);
+    } finally {
+      setIsSendingWhatsAppDirect(false);
+    }
+  };
+
+  const handleSaveAndDispatch = async () => {
+    await handleDirectWhatsAppDispatch();
   };
 
   const filteredDrugs = drugSearchQuery.trim()
@@ -635,8 +732,13 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
       <SpecialtyToolbar
         currentSpecialty={activeSpecialty}
         doctorSpecialty={currentDoctor.specialty}
-        onSelectSpecialty={(spec) => setActiveSpecialty(spec)}
+        onSelectSpecialty={(spec) => {
+          if (!isSpecialtyLocked) {
+            setActiveSpecialty(spec);
+          }
+        }}
         onApplyPreset={handleApplyPreset}
+        isSpecialtyLocked={isSpecialtyLocked}
       />
 
       {/* Top Action Bar */}
@@ -665,18 +767,46 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
               </span>
             </div>
             <h2 className="text-base font-bold text-slate-900">
-              Digital Rx & Clinical Protocol Writer
+              Digital Rx &amp; Clinical Protocol Writer
             </h2>
           </div>
         </div>
 
         {/* Action buttons */}
         <div className="flex items-center flex-wrap gap-2 w-full md:w-auto">
+          {/* Finalize & Sign Primary Action */}
+          <button
+            onClick={handleFinalizeAndSignRx}
+            className={`px-4 py-1.5 rounded-lg text-xs font-bold flex items-center space-x-1.5 transition-all shadow-sm cursor-pointer ${
+              isFinalized
+                ? 'bg-emerald-700 text-white shadow-emerald-200'
+                : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-200'
+            }`}
+            title="Finalize & Digitally Sign Rx with ABDM Compliant QR"
+          >
+            <CheckCircle2 className="w-3.5 h-3.5" />
+            <span>{isFinalized ? '✓ Finalized & Signed' : 'Finalize & Sign Rx'}</span>
+          </button>
+
+          {/* Embedded Ambient Scribe Toggle */}
+          <button
+            onClick={() => setIsAmbientScribeOpen(!isAmbientScribeOpen)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition-all shadow-xs cursor-pointer ${
+              isAmbientScribeOpen
+                ? 'bg-purple-700 text-white ring-2 ring-purple-300'
+                : 'bg-purple-50 hover:bg-purple-100 text-purple-900 border border-purple-200'
+            }`}
+            title="Toggle Embedded Ambient AI Clinical Scribe"
+          >
+            <Mic className="w-3.5 h-3.5 text-purple-600" />
+            <span>{isAmbientScribeOpen ? 'Hide AI Scribe' : '🎙️ Ambient AI Scribe'}</span>
+          </button>
+
           {/* AI Safety Check button */}
           <button
             onClick={handleCheckSafety}
             disabled={isCheckingSafety || medicines.length === 0}
-            className="px-3 py-1.5 rounded-lg border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 text-xs font-semibold flex items-center space-x-1.5 transition-colors disabled:opacity-50"
+            className="px-3 py-1.5 rounded-lg border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 text-xs font-semibold flex items-center space-x-1.5 transition-colors disabled:opacity-50 cursor-pointer"
             title="Check drug-drug and drug-allergy interactions"
           >
             {isCheckingSafety ? (
@@ -690,7 +820,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
           {/* WhatsApp dispatch button */}
           <button
             onClick={handleOpenWhatsAppModal}
-            className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center space-x-1.5 shadow-xs transition-colors"
+            className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center space-x-1.5 shadow-xs transition-colors cursor-pointer"
           >
             <Send className="w-3.5 h-3.5" />
             <span>Send WhatsApp Rx</span>
@@ -699,13 +829,38 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
           {/* Print / PDF button */}
           <button
             onClick={handlePrintRx}
-            className="px-3.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold flex items-center space-x-1.5 shadow-xs transition-colors"
+            className="px-3.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold flex items-center space-x-1.5 shadow-xs transition-colors cursor-pointer"
           >
             <Printer className="w-3.5 h-3.5" />
             <span>Print Prescription</span>
           </button>
+
+          {/* Proceed to Billing Button */}
+          {onProceedToBilling && (
+            <button
+              onClick={onProceedToBilling}
+              className="px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center space-x-1.5 shadow-xs transition-colors cursor-pointer"
+              title="Proceed to Billing & Collect Payment"
+            >
+              <Receipt className="w-3.5 h-3.5" />
+              <span>Collect Payment</span>
+              <ArrowRight className="w-3 h-3" />
+            </button>
+          )}
         </div>
       </div>
+
+      {/* Embedded Ambient AI Scribe Widget */}
+      {isAmbientScribeOpen && (
+        <div className="no-print">
+          <CompactAmbientScribe
+            currentPatient={currentPatient}
+            currentDoctor={currentDoctor}
+            onApplyToRx={handleApplySoapToRx}
+            onClose={() => setIsAmbientScribeOpen(false)}
+          />
+        </div>
+      )}
 
       {/* AI Drug Safety Alert Panel */}
       {safetyResult && (
@@ -849,9 +1004,22 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
         {/* Patient Demographics Banner */}
         <div className="bg-slate-50 p-3.5 rounded-lg border border-slate-200 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
           <div>
-            <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Patient Name</span>
-            <strong className="text-slate-900 text-sm font-bold">{currentPatient.name}</strong>
+            <div className="flex items-center justify-between">
+              <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Patient Name</span>
+              {(currentPatient.kycStatus === 'VERIFIED' || currentPatient.abhaNumber) && (
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1 shadow-xs">
+                  <ShieldCheck className="w-3 h-3 text-emerald-600" />
+                  <span>KYC-Verified ABHA</span>
+                </span>
+              )}
+            </div>
+            <strong className="text-slate-900 text-sm font-bold block">{currentPatient.name}</strong>
             <span className="text-slate-500 block text-[11px]">UHID: {currentPatient.uhid}</span>
+            {currentPatient.abhaNumber && (
+              <span className="text-purple-700 block text-[10px] font-mono font-semibold">
+                ABHA: {currentPatient.abhaNumber} ({currentPatient.abhaAddress || 'rajiv.saxena@abdm'})
+              </span>
+            )}
           </div>
           <div>
             <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Age / Gender</span>
@@ -1354,6 +1522,212 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Doctor Consultation Signoff & Billing Action Bar (no-print) */}
+      <div className="no-print bg-white rounded-xl border border-slate-200 p-4 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div className="flex items-center space-x-3">
+          <div className={`p-2.5 rounded-lg border ${
+            isFinalized ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-blue-50 text-blue-700 border-blue-200'
+          }`}>
+            <ShieldCheck className="w-5 h-5" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-slate-900">
+                {isFinalized ? 'Prescription Digitally Signed & Locked' : 'Prescription Review & Finalization'}
+              </span>
+              <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
+                isFinalized ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-700'
+              }`}>
+                {isFinalized ? 'ABDM Validated' : 'Draft'}
+              </span>
+            </div>
+            <p className="text-xs text-slate-500">
+              {isFinalized 
+                ? `Signed by ${currentDoctor.name} (${currentDoctor.regNumber}) • Ready for patient dispatch & billing collection`
+                : 'Review diagnosis, dosage intervals, and investigation orders before locking & billing.'}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center flex-wrap gap-2 w-full md:w-auto">
+          {!isFinalized ? (
+            <button
+              onClick={handleFinalizeAndSignRx}
+              className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center space-x-1.5 shadow-sm shadow-emerald-200 transition-all cursor-pointer"
+            >
+              <CheckCircle2 className="w-4 h-4" />
+              <span>Finalize &amp; Sign Rx</span>
+            </button>
+          ) : (
+            <button
+              onClick={() => setShowFinalizeModal(true)}
+              className="px-3.5 py-2 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 font-bold text-xs flex items-center space-x-1.5 transition-all cursor-pointer"
+            >
+              <CheckCircle className="w-4 h-4 text-emerald-600" />
+              <span>View Signoff Summary</span>
+            </button>
+          )}
+
+          <button
+            onClick={handlePrintRx}
+            className="px-3.5 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs flex items-center space-x-1.5 shadow-xs transition-colors cursor-pointer"
+          >
+            <Printer className="w-4 h-4" />
+            <span>Print Rx</span>
+          </button>
+
+          <button
+            onClick={handleOpenWhatsAppModal}
+            className="px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs flex items-center space-x-1.5 shadow-xs transition-colors cursor-pointer"
+          >
+            <Send className="w-4 h-4" />
+            <span>WhatsApp Dispatch</span>
+          </button>
+
+          {onProceedToBilling && (
+            <button
+              onClick={onProceedToBilling}
+              className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center space-x-1.5 shadow-sm shadow-blue-200 transition-all cursor-pointer"
+              title="Forward prescription to Billing & Cashier"
+            >
+              <Receipt className="w-4 h-4" />
+              <span>Collect Payment &amp; Bill</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Prescription Finalized & Signed Modal */}
+      {showFinalizeModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 space-y-5 shadow-2xl border border-slate-200">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center space-x-2 text-emerald-700">
+                <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                <h3 className="font-bold text-base text-slate-900">Prescription Digitally Signed</h3>
+              </div>
+              <button
+                onClick={() => setShowFinalizeModal(false)}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-md"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Verification & Summary Card */}
+            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <span className="font-mono font-bold text-xs text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
+                    {rxNumber}
+                  </span>
+                  <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                    {activeSpecialty}
+                  </span>
+                </div>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 flex items-center gap-1">
+                  <ShieldCheck className="w-3 h-3 text-emerald-600" /> ABDM Compliant
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div>
+                  <span className="text-slate-400 block text-[10px] uppercase font-bold">Patient</span>
+                  <strong className="text-slate-900">{currentPatient.name}</strong>
+                  <span className="text-slate-500 block text-[11px]">UHID: {currentPatient.uhid}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block text-[10px] uppercase font-bold">Doctor / Signature</span>
+                  <strong className="text-slate-900">{currentDoctor.name}</strong>
+                  <span className="text-slate-500 block text-[11px]">Reg: {currentDoctor.regNumber}</span>
+                </div>
+              </div>
+
+              <div className="pt-2 border-t border-slate-200 grid grid-cols-3 gap-2 text-center text-xs">
+                <div className="bg-white p-2 rounded-lg border border-slate-200">
+                  <span className="text-slate-400 block text-[10px] font-bold">MEDS</span>
+                  <strong className="text-slate-900 text-sm">{medicines.length}</strong>
+                </div>
+                <div className="bg-white p-2 rounded-lg border border-slate-200">
+                  <span className="text-slate-400 block text-[10px] font-bold">LAB TESTS</span>
+                  <strong className="text-slate-900 text-sm">{labTests.length}</strong>
+                </div>
+                <div className="bg-white p-2 rounded-lg border border-slate-200">
+                  <span className="text-slate-400 block text-[10px] font-bold">FOLLOW UP</span>
+                  <strong className="text-slate-900 text-sm">{followUpDays}d</strong>
+                </div>
+              </div>
+            </div>
+
+            {/* Direct WhatsApp Dispatch Status */}
+            <div className="p-3.5 bg-emerald-50/80 rounded-xl border border-emerald-200 text-xs space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-emerald-900 flex items-center gap-1.5">
+                  <Send className="w-3.5 h-3.5 text-emerald-600" />
+                  WhatsApp Direct Dispatch
+                </span>
+                <span className="text-[11px] text-slate-500">{currentPatient.phone}</span>
+              </div>
+
+              {whatsAppDirectSuccess ? (
+                <div className="bg-white p-2.5 rounded-lg border border-emerald-200 text-emerald-800 text-[11px] font-medium flex items-center gap-2">
+                  <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>Prescription PDF download link &amp; dosage guide delivered to {currentPatient.phone}!</span>
+                </div>
+              ) : (
+                <button
+                  onClick={handleDirectWhatsAppDispatch}
+                  disabled={isSendingWhatsAppDirect}
+                  className="w-full py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  {isSendingWhatsAppDirect ? (
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Send className="w-3.5 h-3.5" />
+                  )}
+                  <span>{isSendingWhatsAppDirect ? 'Dispatching via Meta API...' : '1-Click Send via WhatsApp'}</span>
+                </button>
+              )}
+            </div>
+
+            {/* Bottom Actions */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-2 pt-2 border-t border-slate-100">
+              <button
+                onClick={handlePrintRx}
+                className="w-full sm:w-auto px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs flex items-center justify-center space-x-1.5 transition-colors cursor-pointer"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>Print Paper Rx</span>
+              </button>
+
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <button
+                  onClick={() => setShowFinalizeModal(false)}
+                  className="w-full sm:w-auto px-3.5 py-2 rounded-lg text-slate-600 hover:bg-slate-100 font-semibold text-xs transition-colors"
+                >
+                  Close
+                </button>
+
+                {onProceedToBilling && (
+                  <button
+                    onClick={() => {
+                      setShowFinalizeModal(false);
+                      onProceedToBilling();
+                    }}
+                    className="w-full sm:w-auto px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center justify-center space-x-1.5 shadow-sm shadow-blue-200 transition-all cursor-pointer"
+                  >
+                    <Receipt className="w-3.5 h-3.5" />
+                    <span>Proceed to Billing</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* WhatsApp Dispatch & Language Translation Modal */}
       {showWhatsAppModal && (

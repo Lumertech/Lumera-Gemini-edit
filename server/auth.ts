@@ -1,11 +1,38 @@
 import type { NextFunction, Request, Response } from "express";
+import jwt from "jsonwebtoken";
 import { getDb, publicUser, type DbUser, type UserRole } from "./db.ts";
 
 const COOKIE = "lumera_sid";
 const SESSION_DAYS = 7;
+const JWT_SECRET = process.env.JWT_SECRET || "lumera-medical-suite-jwt-secret-key-2026";
+
+export interface JwtTokenPayload {
+  userId: string;
+  tenantId: string;
+  email?: string;
+  role?: string;
+  name?: string;
+}
+
+export function signJwtToken(payload: JwtTokenPayload): string {
+  return jwt.sign(payload, JWT_SECRET, { expiresIn: `${SESSION_DAYS}d` });
+}
+
+export function verifyJwtToken(token: string): JwtTokenPayload | null {
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    if (decoded && typeof decoded === "object" && (decoded as any).userId) {
+      return decoded as JwtTokenPayload;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 export interface AuthUser {
   id: string;
+  tenantId?: string;
   email: string;
   name: string;
   role: UserRole;
@@ -13,6 +40,8 @@ export interface AuthUser {
   phone: string;
   lastLogin: string | null;
   createdAt: string;
+  clinicName?: string;
+  hprId?: string;
 }
 
 declare global {
@@ -82,6 +111,17 @@ export function getSessionId(req: Request): string | null {
 export function loadUserFromSession(req: Request): AuthUser | null {
   const sid = getSessionId(req);
   if (!sid) return null;
+
+  // 1. Try decoding as JWT token (which contains userId & tenantId)
+  const jwtPayload = verifyJwtToken(sid);
+  if (jwtPayload?.userId) {
+    const userRow = getDb().prepare("SELECT * FROM users WHERE id = ?").get(jwtPayload.userId) as unknown as DbUser | undefined;
+    if (!userRow) return null;
+    if (userRow.status === "disabled") return null;
+    return publicUser(userRow);
+  }
+
+  // 2. Fallback to session record lookup in database
   const row = getDb()
     .prepare(
       `SELECT u.* FROM sessions s
@@ -119,10 +159,11 @@ export function requireRole(...roles: UserRole[]) {
 }
 
 export const ADMIN_ROLES: UserRole[] = ["super_admin"];
-export const CLINIC_MANAGER_ROLES: UserRole[] = ["doctor", "polyclinic_admin"];
+export const CLINIC_MANAGER_ROLES: UserRole[] = ["doctor", "polyclinic_admin", "CLINIC_ADMIN"];
 export const CLINICIAN_ROLES: UserRole[] = [
   "doctor",
   "receptionist",
   "polyclinic_admin",
+  "CLINIC_ADMIN",
   "super_admin",
 ];

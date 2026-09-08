@@ -10,7 +10,8 @@ import {
   Smile, 
   Brain,
   Zap,
-  BookmarkPlus
+  BookmarkPlus,
+  Lock
 } from 'lucide-react';
 import { PolyclinicSpecialty } from '../../types';
 import { RX_PRESETS } from '../../data/clinicalData';
@@ -20,6 +21,7 @@ interface SpecialtyToolbarProps {
   doctorSpecialty: string;
   onSelectSpecialty: (specialty: PolyclinicSpecialty) => void;
   onApplyPreset: (preset: any) => void;
+  isSpecialtyLocked?: boolean;
 }
 
 const SPECIALTY_CONFIGS: Array<{
@@ -108,7 +110,8 @@ export const SpecialtyToolbar: React.FC<SpecialtyToolbarProps> = ({
   currentSpecialty,
   doctorSpecialty,
   onSelectSpecialty,
-  onApplyPreset
+  onApplyPreset,
+  isSpecialtyLocked
 }) => {
   // Filter presets for the active specialty or show top ones
   const relevantPresets = RX_PRESETS.filter(
@@ -118,40 +121,57 @@ export const SpecialtyToolbar: React.FC<SpecialtyToolbarProps> = ({
   return (
     <div className="bg-white rounded-xl border border-slate-200 p-3.5 shadow-2xs mb-4">
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-        {/* Specialty Selector Pills */}
+        {/* Specialty Selector Pills / Locked Badge */}
         <div className="flex items-center gap-2 overflow-x-auto pb-1 lg:pb-0 scrollbar-none">
           <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider whitespace-nowrap mr-1 flex items-center gap-1">
             <Zap className="w-3.5 h-3.5 text-amber-500" />
             Specialty Workflow:
           </span>
-          {SPECIALTY_CONFIGS.map((spec) => {
-            const Icon = spec.icon;
-            const isSelected = currentSpecialty === spec.id;
-            const isDoctorDefault = doctorSpecialty.toLowerCase().includes(spec.shortName.toLowerCase());
 
-            return (
-              <button
-                key={spec.id}
-                type="button"
-                onClick={() => onSelectSpecialty(spec.id)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all flex items-center gap-1.5 border ${
-                  isSelected
-                    ? `${spec.badgeBg} border-transparent shadow-xs scale-[1.02]`
-                    : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
-                }`}
-              >
-                <Icon className={`w-3.5 h-3.5 ${isSelected ? 'text-white' : 'text-slate-500'}`} />
-                <span>{spec.shortName}</span>
-                {isDoctorDefault && (
-                  <span className={`text-[9px] px-1 py-0.2 rounded font-bold uppercase ${
-                    isSelected ? 'bg-white/20 text-white' : 'bg-teal-100 text-teal-800'
-                  }`}>
-                    Doctor
-                  </span>
-                )}
-              </button>
-            );
-          })}
+          {isSpecialtyLocked ? (
+            <div 
+              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-900 text-white border border-slate-700 shadow-xs text-xs font-semibold"
+              title="Specialty workflow is locked to your clinician credential during consultation"
+            >
+              <Lock className="w-3.5 h-3.5 text-amber-400" />
+              <span className="text-slate-300">Active Specialty:</span>
+              <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-teal-600 text-white shadow-xs">
+                {currentSpecialty}
+              </span>
+              <span className="text-[9px] uppercase tracking-wider px-1.5 py-0.2 rounded bg-slate-800 text-slate-300 border border-slate-700 font-mono">
+                Locked
+              </span>
+            </div>
+          ) : (
+            SPECIALTY_CONFIGS.map((spec) => {
+              const Icon = spec.icon;
+              const isSelected = currentSpecialty === spec.id;
+              const isDoctorDefault = doctorSpecialty.toLowerCase().includes(spec.shortName.toLowerCase());
+
+              return (
+                <button
+                  key={spec.id}
+                  type="button"
+                  onClick={() => onSelectSpecialty(spec.id)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all flex items-center gap-1.5 border ${
+                    isSelected
+                      ? `${spec.badgeBg} border-transparent shadow-xs scale-[1.02]`
+                      : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                  }`}
+                >
+                  <Icon className={`w-3.5 h-3.5 ${isSelected ? 'text-white' : 'text-slate-500'}`} />
+                  <span>{spec.shortName}</span>
+                  {isDoctorDefault && (
+                    <span className={`text-[9px] px-1 py-0.2 rounded font-bold uppercase ${
+                      isSelected ? 'bg-white/20 text-white' : 'bg-teal-100 text-teal-800'
+                    }`}>
+                      Doctor
+                    </span>
+                  )}
+                </button>
+              );
+            })
+          )}
         </div>
 
         {/* Quick Clinical Protocol / Presets */}

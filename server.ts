@@ -7,6 +7,8 @@ import dotenv from "dotenv";
 import { initDatabase } from "./server/db.ts";
 import { attachUser } from "./server/auth.ts";
 import { createApiRouter } from "./server/api.ts";
+import { createMetaRouter } from "./server/meta.ts";
+import { createAbdmRouter } from "./server/abdm.ts";
 
 dotenv.config();
 initDatabase();
@@ -15,17 +17,20 @@ const app = express();
 const PORT = 3000;
 
 app.use(express.json({ limit: "10mb" }));
-app.use((_req, res, next) => {
-  // Cursor's preview proxy can RST keep-alive sockets; close each response cleanly.
-  res.setHeader("Connection", "close");
-  next();
-});
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.get("/healthz", (_req, res) => {
   res.type("text/plain").send("ok");
 });
 app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 app.use(attachUser);
+app.use("/api/v3", createAbdmRouter());
+app.use("/v3", createAbdmRouter());
 app.use("/api", createApiRouter());
+app.use("/meta", createMetaRouter());
+app.post("/data-deletion-callback", (req, res, next) => {
+  req.url = "/data-deletion";
+  createMetaRouter()(req, res, next);
+});
 
 // Lazy Google GenAI initialization
 let genAIClient: GoogleGenAI | null = null;
@@ -166,8 +171,8 @@ Return STRICTLY a JSON object with this exact schema:
   }
 });
 
-// 2. Hexa Clinical Assistant (Clinical Decision Support Chat)
-app.post("/api/gemini/hexa-assistant", async (req: Request, res: Response) => {
+// 2. Gemini Clinical Assistant / Copilot (Clinical Decision Support Chat - Pulse AI)
+const handleGeminiCopilot = async (req: Request, res: Response) => {
   try {
     const { query, patientContext = {}, history = [] } = req.body;
     if (!query) {
@@ -177,14 +182,15 @@ app.post("/api/gemini/hexa-assistant", async (req: Request, res: Response) => {
     const ai = getGenAI();
     if (ai) {
       try {
-        const systemInstruction = `You are HEXA AI, a senior medical AI copilot for doctors and clinicians in India.
-Provide evidence-based, concise, precise clinical advice.
+        const systemInstruction = `You are Pulse AI, an advanced enterprise clinical decision support copilot powered by Google Gemini.
+Provide evidence-based, concise, physician-to-physician clinical decision support for doctors, clinicians, and healthcare providers.
 Include:
-1. Direct answer with clinical rationale
-2. Standard Indian/International guidelines (ICMR, WHO, NICE, ADA, ESC)
+1. Direct answer with sound physiological and clinical rationale
+2. Standard clinical guidelines (ICMR, WHO, NICE, ADA, ESC, AHA)
 3. Drug dosage recommendations, contraindications, and pediatric/geriatric adjustments when applicable
 4. Differential diagnoses & red flag alerts
-Always maintain an objective, physician-to-physician professional tone.`;
+5. Active patient risk analysis if patient profile is provided
+Always maintain an objective, rigorous, professional medical tone.`;
 
         const contents: any[] = [];
         if (patientContext && Object.keys(patientContext).length > 0) {
@@ -194,7 +200,7 @@ Always maintain an objective, physician-to-physician professional tone.`;
           });
           contents.push({
             role: "model",
-            parts: [{ text: "Understood. I will tailor my clinical recommendations to this patient's profile, vitals, and history." }],
+            parts: [{ text: "Understood. Tailoring clinical recommendations, drug interactions, and dosage checks to this patient's profile." }],
           });
         }
 
@@ -212,27 +218,31 @@ Always maintain an objective, physician-to-physician professional tone.`;
         });
 
         const response = await ai.models.generateContent({
-          model: "gemini-3.7-flash",
+          model: "gemini-3.8-flash",
           contents: contents,
           config: {
             systemInstruction: systemInstruction,
-            temperature: 0.3,
+            temperature: 0.2,
           },
         });
 
-        return res.json({ response: response.text, source: "gemini-3.7-flash" });
+        return res.json({ response: response.text, source: "Pulse AI (Google Gemini 3.8 Flash)" });
       } catch (err: any) {
-        console.error("Hexa Gemini error:", err?.message);
+        console.error("Pulse AI / Gemini Copilot API error:", err?.message);
       }
     }
 
     // Fallback response for offline / simulated queries
-    const fallbackAnswer = getHexaFallbackAnswer(query, patientContext);
-    return res.json({ response: fallbackAnswer, source: "clinical-knowledge-base" });
+    const fallbackAnswer = getPulseFallbackAnswer(query, patientContext);
+    return res.json({ response: fallbackAnswer, source: "Pulse AI Knowledge Base (Offline Fallback)" });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
-});
+};
+
+app.post("/api/gemini/copilot", handleGeminiCopilot);
+app.post("/api/gemini/pulse-assistant", handleGeminiCopilot);
+app.post("/api/gemini/hexa-assistant", handleGeminiCopilot);
 
 // 3. Clinical Safety & Drug Interaction Checker
 app.post("/api/gemini/safety-check", async (req: Request, res: Response) => {
@@ -533,7 +543,7 @@ function generateRuleBasedSoap(name: string, age: number, gender: string, transc
   };
 }
 
-function getHexaFallbackAnswer(query: string, ctx: any): string {
+function getPulseFallbackAnswer(query: string, ctx: any): string {
   const q = query.toLowerCase();
   if (q.includes("dose") || q.includes("paracetamol")) {
     return `### Paracetamol Dosage Guidelines (Adult & Pediatric):
@@ -572,7 +582,7 @@ async function startServer() {
       server: {
         middlewareMode: true,
         host: true,
-        allowedHosts: true,
+        allowedHosts: true as const,
       },
       appType: "spa",
     });
@@ -600,11 +610,8 @@ async function startServer() {
     });
   }
 
-  const httpServer = http.createServer(app);
-  httpServer.keepAliveTimeout = 0;
-  httpServer.headersTimeout = 10_000;
-  httpServer.listen({ port: PORT, host: "::", ipv6Only: false }, () => {
-    console.log(`Lumera AI Server running on http://0.0.0.0:${PORT} (IPv4+IPv6)`);
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`Lumera AI Server running on http://0.0.0.0:${PORT}`);
   });
 }
 

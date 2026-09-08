@@ -10,6 +10,8 @@ import {
   LogOut,
   Home,
   Shield,
+  Share2,
+  Award,
 } from "lucide-react";
 import { useAuth } from "../../auth/AuthContext";
 import { AdminTab, useNav } from "../../nav/NavigationContext";
@@ -20,9 +22,13 @@ import { AdminCmsSite } from "./AdminCmsSite";
 import { AdminPolicies } from "./AdminPolicies";
 import { AdminMedia } from "./AdminMedia";
 import { AdminAudit } from "./AdminAudit";
+import { AdminMetaTechProvider } from "./AdminMetaTechProvider";
+import { DhisMeter } from "../dhis/DhisMeter";
 
 const NAV: { id: AdminTab; label: string; icon: typeof Users }[] = [
   { id: "overview", label: "Dashboard", icon: LayoutDashboard },
+  { id: "dhis", label: "ABDM & DHIS Meter", icon: Award },
+  { id: "meta", label: "Meta Tech Provider", icon: Share2 },
   { id: "users", label: "User management", icon: Users },
   { id: "subscriptions", label: "Subscriptions", icon: KeyRound },
   { id: "site", label: "Website CMS", icon: Globe },
@@ -37,6 +43,8 @@ export const AdminShell: React.FC = () => {
 
   const panel = {
     overview: <AdminOverview />,
+    dhis: <DhisMeter compact={false} />,
+    meta: <AdminMetaTechProvider />,
     users: <AdminUsers />,
     subscriptions: <AdminSubscriptions />,
     site: <AdminCmsSite />,

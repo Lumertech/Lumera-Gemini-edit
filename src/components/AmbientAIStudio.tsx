@@ -16,7 +16,8 @@ import {
   User, 
   BookOpen, 
   Zap,
-  Info
+  Info,
+  ShieldCheck
 } from 'lucide-react';
 import { SoapNote, Patient, Doctor } from '../types';
 
@@ -207,7 +208,7 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-lg font-bold tracking-tight text-slate-900">Ambient AI Clinical Scribe</h1>
+              <h1 className="text-lg font-bold tracking-tight text-slate-900">Pulse AI Ambient Scribe</h1>
               <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-blue-50 text-blue-700 border border-blue-200">
                 Real-time SOAP Engine
               </span>
@@ -219,10 +220,18 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
         </div>
 
         {/* Patient Selection Bar */}
-        <div className="flex items-center gap-2.5 bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-200 w-full md:w-auto">
+        <div className="flex flex-wrap items-center gap-2.5 bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-200 w-full md:w-auto">
           <User className="w-4 h-4 text-slate-500 flex-shrink-0" />
           <div className="text-xs">
-            <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Active Patient</span>
+            <div className="flex items-center gap-2">
+              <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Active Patient</span>
+              {(currentPatient.kycStatus === 'VERIFIED' || currentPatient.abhaNumber) && (
+                <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-0.5">
+                  <ShieldCheck className="w-3 h-3 text-emerald-600" />
+                  <span>KYC-Verified ABHA</span>
+                </span>
+              )}
+            </div>
             <select
               aria-label="Select Active Patient"
               value={currentPatient.id}
@@ -234,7 +243,7 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
             >
               {allPatients.map((p) => (
                 <option key={p.id} value={p.id} className="bg-white text-slate-800">
-                  {p.name} ({p.age}y/{p.gender.charAt(0)}) - {p.uhid}
+                  {p.name} ({p.age}y/{p.gender.charAt(0)}) - {p.uhid} {p.abhaNumber ? '✓ ABHA' : ''}
                 </option>
               ))}
             </select>

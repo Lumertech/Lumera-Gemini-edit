@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { apiFetch } from "../../api/http";
+import { DhisMeter } from "../dhis/DhisMeter";
 
 interface Overview {
   users: number;
@@ -46,6 +47,9 @@ export const AdminOverview: React.FC = () => {
           </div>
         ))}
       </div>
+      {/* NHA ABDM DHIS Incentive Tracker */}
+      <DhisMeter compact={true} />
+
       <div className="bg-white border border-slate-200 rounded-xl p-4">
         <div className="text-xs font-bold mb-2 text-purple-700">Platform</div>
         <p className="text-sm">

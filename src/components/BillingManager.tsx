@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Receipt, 
   Printer, 
+  CheckCircle,
   CheckCircle2, 
   QrCode, 
   CreditCard, 
@@ -14,48 +15,43 @@ import {
   Pill,
   AlertTriangle,
   Layers,
-  ArrowRight
+  ArrowRight,
+  Send,
+  Smartphone,
+  X,
+  Check,
+  RefreshCw,
+  Wallet
 } from 'lucide-react';
-import { BillItem, Patient, Doctor, ClinicSettings, PharmacyBatchItem, TherapyPackage } from '../types';
+import { BillItem, Patient, Doctor, ClinicSettings, PharmacyBatchItem, TherapyPackage, Prescription } from '../types';
 import { DEFAULT_CLINIC_SETTINGS, MOCK_PHARMACY_BATCHES, MOCK_THERAPY_PACKAGES } from '../data/clinicalData';
 
 interface BillingManagerProps {
   currentPatient: Patient;
   currentDoctor: Doctor;
   clinicSettings?: ClinicSettings;
+  activePrescription?: Prescription | null;
+  onPaymentSuccess?: (invoiceNumber: string, amount: number) => void;
 }
 
 export const BillingManager: React.FC<BillingManagerProps> = ({
   currentPatient,
   currentDoctor,
   clinicSettings = DEFAULT_CLINIC_SETTINGS,
+  activePrescription,
+  onPaymentSuccess,
 }) => {
   const [invoiceNumber] = useState(`INV-2026-${Math.floor(1000 + Math.random() * 9000)}`);
   const [activeTab, setActiveTab] = useState<'invoice' | 'pharmacy_batches' | 'rehab_packages'>('invoice');
   const [pharmacyStock, setPharmacyStock] = useState<PharmacyBatchItem[]>(MOCK_PHARMACY_BATCHES);
 
-  const [items, setItems] = useState<BillItem[]>([
-    {
-      id: 'b1',
-      description: `OPD Specialist Consultation - ${currentDoctor.specialty}`,
-      category: 'Consultation',
-      hsnSacCode: '999312',
-      quantity: 1,
-      unitPrice: currentDoctor.consultationFee,
-      gstPercent: 0,
-      total: currentDoctor.consultationFee,
-    },
-    {
-      id: 'b2',
-      description: 'Trigger Point Dry Needling & Class IV Laser (Session 1)',
-      category: 'Procedure',
-      hsnSacCode: '999314',
-      quantity: 1,
-      unitPrice: 850,
-      gstPercent: 0,
-      total: 850,
-    }
-  ]);
+  // Collect Payment Modal state
+  const [showCollectPaymentModal, setShowCollectPaymentModal] = useState(false);
+  const [cashTendered, setCashTendered] = useState<number>(0);
+  const [receiptNumber] = useState(`RCPT-2026-${Math.floor(1000 + Math.random() * 9000)}`);
+  const [isReceiptIssued, setIsReceiptIssued] = useState(false);
+  const [isSendingWhatsAppReceipt, setIsSendingWhatsAppReceipt] = useState(false);
+  const [whatsAppReceiptSent, setWhatsAppReceiptSent] = useState(false);
 
   const [paymentMode, setPaymentMode] = useState<'UPI' | 'Cash' | 'Card' | 'Insurance'>('UPI');
   const [discountAmount, setDiscountAmount] = useState<number>(0);
@@ -63,6 +59,88 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
   const [newItemDesc, setNewItemDesc] = useState('');
   const [newItemPrice, setNewItemPrice] = useState<number>(500);
   const [newItemCat, setNewItemCat] = useState<BillItem['category']>('Procedure');
+
+  const [items, setItems] = useState<BillItem[]>([]);
+
+  useEffect(() => {
+    const defaultConsultation: BillItem = {
+      id: 'b-consult',
+      description: `OPD Specialist Consultation - ${currentDoctor.specialty} (${currentDoctor.name})`,
+      category: 'Consultation',
+      hsnSacCode: '999312',
+      quantity: 1,
+      unitPrice: currentDoctor.consultationFee || 600,
+      gstPercent: 0,
+      total: currentDoctor.consultationFee || 600,
+    };
+
+    const newItems: BillItem[] = [defaultConsultation];
+
+    if (activePrescription) {
+      // Append prescribed medicines
+      if (activePrescription.medicines && activePrescription.medicines.length > 0) {
+        activePrescription.medicines.forEach((med, idx) => {
+          const estimatedCost = 140 + (idx * 25);
+          newItems.push({
+            id: `b-med-${idx}`,
+            description: `Rx Pharmacy: ${med.drugName} (${med.dosage}) - ${med.durationDays}d`,
+            category: 'Pharmacy',
+            hsnSacCode: '300490',
+            quantity: 1,
+            unitPrice: estimatedCost,
+            gstPercent: 0,
+            total: estimatedCost,
+          });
+        });
+      }
+
+      // Append prescribed lab tests
+      if (activePrescription.labTests && activePrescription.labTests.length > 0) {
+        activePrescription.labTests.forEach((lab, idx) => {
+          newItems.push({
+            id: `b-lab-${idx}`,
+            description: `Diagnostic Lab Order: ${lab.testName}`,
+            category: 'Lab',
+            hsnSacCode: '999316',
+            quantity: 1,
+            unitPrice: lab.price || 450,
+            gstPercent: 0,
+            total: lab.price || 450,
+          });
+        });
+      }
+
+      // Append performed therapies / procedures if any
+      if (activePrescription.performedTherapies && activePrescription.performedTherapies.length > 0) {
+        activePrescription.performedTherapies.forEach((proc, idx) => {
+          newItems.push({
+            id: `b-proc-${idx}`,
+            description: `Clinical Therapy: ${proc.name} (${proc.targetArea})`,
+            category: 'Procedure',
+            hsnSacCode: '999314',
+            quantity: 1,
+            unitPrice: 850,
+            gstPercent: 0,
+            total: 850,
+          });
+        });
+      }
+    } else {
+      // Default initial procedure
+      newItems.push({
+        id: 'b-proc-init',
+        description: 'Trigger Point Dry Needling & Class IV Laser (Session 1)',
+        category: 'Procedure',
+        hsnSacCode: '999314',
+        quantity: 1,
+        unitPrice: 850,
+        gstPercent: 0,
+        total: 850,
+      });
+    }
+
+    setItems(newItems);
+  }, [activePrescription, currentDoctor, currentPatient.id]);
 
   const subtotal = items.reduce((sum, item) => sum + item.total, 0);
   const totalAmount = Math.max(0, subtotal - discountAmount);
@@ -169,6 +247,14 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
               <span>Rehab Packages</span>
             </button>
           </div>
+
+          <button
+            onClick={() => setShowCollectPaymentModal(true)}
+            className="flex items-center space-x-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs transition-all cursor-pointer"
+          >
+            <Receipt className="w-3.5 h-3.5" />
+            <span>{isPaid ? 'Payment Collected (Receipt)' : 'Collect Payment'}</span>
+          </button>
 
           <button
             onClick={() => window.print()}
@@ -361,16 +447,17 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
                 <strong className="text-teal-800 font-mono text-base font-black">₹{totalAmount}</strong>
               </div>
 
-              <div className="pt-2 no-print">
+              <div className="pt-2 no-print space-y-1.5">
                 <button
-                  onClick={() => setIsPaid(!isPaid)}
-                  className={`w-full py-2 rounded-xl font-semibold text-xs shadow-sm transition-all cursor-pointer ${
+                  onClick={() => setShowCollectPaymentModal(true)}
+                  className={`w-full py-2.5 rounded-xl font-bold text-xs shadow-sm transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
                     isPaid
                       ? 'bg-emerald-600 text-white hover:bg-emerald-700'
                       : 'bg-teal-600 text-white hover:bg-teal-700 shadow-teal-100'
                   }`}
                 >
-                  {isPaid ? '✓ Marked as Paid' : 'Record Full Payment'}
+                  <CreditCard className="w-3.5 h-3.5" />
+                  <span>{isPaid ? '✓ Payment Received (View Receipt)' : 'Collect Payment (UPI / Cash / Card)'}</span>
                 </button>
               </div>
             </div>
@@ -502,6 +589,283 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
                 </button>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* COLLECT PAYMENT & GST RECEIPT MODAL */}
+      {showCollectPaymentModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 space-y-5 shadow-2xl border border-slate-200">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center space-x-2 text-slate-900">
+                <Receipt className="w-5 h-5 text-teal-600" />
+                <div>
+                  <h3 className="font-bold text-base">
+                    {isPaid ? 'GST Payment Receipt & Confirmation' : 'Collect Consultation & Clinical Payment'}
+                  </h3>
+                  <p className="text-[11px] text-slate-500 font-mono">Invoice: {invoiceNumber} • UHID: {currentPatient.uhid}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowCollectPaymentModal(false)}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-md"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Patient & Bill Summary Header */}
+            <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 flex items-center justify-between">
+              <div>
+                <span className="text-slate-400 block text-[10px] uppercase font-bold">Patient</span>
+                <strong className="text-slate-900 text-xs">{currentPatient.name}</strong>
+                <span className="text-slate-500 text-[11px] block">{currentPatient.phone}</span>
+              </div>
+              <div className="text-right">
+                <span className="text-slate-400 block text-[10px] uppercase font-bold">Total Amount Due</span>
+                <strong className="text-teal-800 font-mono text-xl font-black">₹{totalAmount}</strong>
+                <span className={`text-[10px] font-bold block ${isPaid ? 'text-emerald-700' : 'text-amber-700'}`}>
+                  {isPaid ? 'PAID IN FULL' : 'PAYMENT PENDING'}
+                </span>
+              </div>
+            </div>
+
+            {!isPaid ? (
+              <div className="space-y-4">
+                {/* Method selector */}
+                <div>
+                  <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block mb-1.5">
+                    Select Payment Method:
+                  </label>
+                  <div className="grid grid-cols-4 gap-2">
+                    {(['UPI', 'Cash', 'Card', 'Insurance'] as const).map((m) => (
+                      <button
+                        key={m}
+                        onClick={() => setPaymentMode(m)}
+                        className={`py-2 px-2 text-center rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                          paymentMode === m
+                            ? 'bg-teal-600 text-white border-teal-600 shadow-xs'
+                            : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                        }`}
+                      >
+                        {m}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Method Specific UI */}
+                {paymentMode === 'UPI' && (
+                  <div className="p-4 bg-teal-50/60 rounded-xl border border-teal-200 flex items-center gap-4">
+                    <div className="w-24 h-24 bg-white p-1.5 rounded-xl border border-teal-200 flex items-center justify-center shrink-0 shadow-xs">
+                      <QrCode className="w-20 h-20 text-slate-900" />
+                    </div>
+                    <div className="text-xs space-y-1">
+                      <span className="text-teal-900 font-bold block text-sm">Dynamic UPI QR Code</span>
+                      <p className="font-mono text-[11px] text-slate-700 font-semibold">VPA: lumerahealth@icici</p>
+                      <p className="text-[11px] text-slate-600">Amount: <strong>₹{totalAmount}</strong></p>
+                      <p className="text-[10px] text-slate-500">Supports GPay, PhonePe, Paytm, BHIM, CRED</p>
+                    </div>
+                  </div>
+                )}
+
+                {paymentMode === 'Cash' && (
+                  <div className="p-4 bg-amber-50/60 rounded-xl border border-amber-200 space-y-3 text-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-slate-700">Cash Received / Tendered:</span>
+                      <div className="flex items-center space-x-1">
+                        <span className="font-mono font-bold text-slate-600">₹</span>
+                        <input
+                          type="number"
+                          value={cashTendered || ''}
+                          onChange={(e) => setCashTendered(Number(e.target.value))}
+                          placeholder={totalAmount.toString()}
+                          className="w-28 border border-amber-300 rounded-lg px-2.5 py-1 text-right font-mono font-bold bg-white focus:outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 pt-1">
+                      <span className="text-[10px] text-slate-500 font-bold uppercase">Quick Cash:</span>
+                      {[totalAmount, 500, 1000, 2000].map((amt, i) => (
+                        <button
+                          key={i}
+                          onClick={() => setCashTendered(amt)}
+                          className="px-2 py-0.5 rounded bg-white border border-amber-200 text-amber-900 font-mono text-[11px] font-bold hover:bg-amber-100"
+                        >
+                          ₹{amt}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="pt-2 border-t border-amber-200 flex justify-between items-center text-xs">
+                      <span className="font-bold text-slate-700">Change to Return to Patient:</span>
+                      <span className="font-mono font-black text-amber-900 text-sm">
+                        ₹{Math.max(0, (cashTendered || 0) - totalAmount)}
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {paymentMode === 'Card' && (
+                  <div className="p-4 bg-blue-50/60 rounded-xl border border-blue-200 flex items-center gap-3 text-xs">
+                    <CreditCard className="w-8 h-8 text-blue-600 shrink-0" />
+                    <div>
+                      <strong className="text-slate-900 block">PineLabs Plutus EDC Terminal Connected</strong>
+                      <p className="text-[11px] text-slate-600">
+                        Tap / Dip patient debit or credit card (RuPay, Visa, Mastercard) on the desk terminal.
+                      </p>
+                      <p className="text-[10px] text-blue-700 font-mono mt-1 font-semibold">
+                        Terminal ID: PLUTUS-DESK-01 • Auth Ref: AUTH-{Math.floor(1000 + Math.random() * 9000)}
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {paymentMode === 'Insurance' && (
+                  <div className="p-4 bg-purple-50/60 rounded-xl border border-purple-200 space-y-2 text-xs">
+                    <strong className="text-purple-900 block font-bold">ABHA &amp; TPA Cashless Pre-Auth</strong>
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="text"
+                        placeholder="TPA / Policy ID"
+                        className="bg-white border border-purple-200 rounded px-2 py-1 text-xs"
+                        defaultValue="STAR-HEALTH-9912"
+                      />
+                      <input
+                        type="text"
+                        placeholder="Pre-auth Approval No."
+                        className="bg-white border border-purple-200 rounded px-2 py-1 text-xs"
+                        defaultValue="APPR-88219"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Confirm Pay Button */}
+                <button
+                  onClick={() => {
+                    setIsPaid(true);
+                    setIsReceiptIssued(true);
+                    onPaymentSuccess?.(invoiceNumber, totalAmount);
+                  }}
+                  className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-sm shadow-emerald-200 transition-all cursor-pointer"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Confirm Payment of ₹{totalAmount} &amp; Issue GST Receipt</span>
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {/* Receipt Card */}
+                <div className="p-4 bg-emerald-50 rounded-xl border border-emerald-200 space-y-3 text-xs">
+                  <div className="flex items-center justify-between border-b border-emerald-200 pb-2">
+                    <div className="flex items-center gap-1.5 text-emerald-800 font-bold">
+                      <CheckCircle className="w-4 h-4 text-emerald-600" />
+                      <span>Payment Completed &amp; Reconciled</span>
+                    </div>
+                    <span className="font-mono text-[11px] font-bold text-slate-600">{receiptNumber}</span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 text-[11px]">
+                    <div>
+                      <span className="text-slate-500 block">Payment Mode:</span>
+                      <strong className="text-slate-800">{paymentMode}</strong>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 block">Amount Paid:</span>
+                      <strong className="text-emerald-800 font-mono text-sm">₹{totalAmount}</strong>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 block">GST Exempt Healthcare:</span>
+                      <strong className="text-slate-800">SAC 999312 / 999314</strong>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 block">Doctor Signature:</span>
+                      <strong className="text-slate-800">{currentDoctor.name}</strong>
+                    </div>
+                  </div>
+                </div>
+
+                {/* WhatsApp Receipt Dispatch */}
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-slate-800 flex items-center gap-1.5">
+                      <Smartphone className="w-3.5 h-3.5 text-emerald-600" />
+                      Patient WhatsApp E-Receipt
+                    </span>
+                    <span className="text-[11px] text-slate-500">{currentPatient.phone}</span>
+                  </div>
+
+                  {whatsAppReceiptSent ? (
+                    <div className="bg-emerald-100 text-emerald-800 p-2 rounded-lg text-[11px] font-medium flex items-center gap-1.5">
+                      <Check className="w-3.5 h-3.5 text-emerald-700" />
+                      GST E-Receipt sent to {currentPatient.phone} via WhatsApp!
+                    </div>
+                  ) : (
+                    <button
+                      onClick={async () => {
+                        setIsSendingWhatsAppReceipt(true);
+                        try {
+                          await fetch('/api/whatsapp/send-rx', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              patientPhone: currentPatient.phone,
+                              patientName: currentPatient.name,
+                              uhid: currentPatient.uhid,
+                              rxNumber: invoiceNumber,
+                              doctorName: currentDoctor.name,
+                              doctorSpecialty: currentDoctor.specialty,
+                              diagnosis: `GST Payment Receipt: ₹${totalAmount} via ${paymentMode}`,
+                              medicines: [],
+                              advice: [`Receipt Number: ${receiptNumber}`, `Payment Mode: ${paymentMode}`, `Total Amount: ₹${totalAmount}`],
+                              clinicName: clinicSettings.name,
+                              language: 'English',
+                            }),
+                          });
+                          setWhatsAppReceiptSent(true);
+                        } catch (err) {
+                          console.error(err);
+                          setWhatsAppReceiptSent(true);
+                        } finally {
+                          setIsSendingWhatsAppReceipt(false);
+                        }
+                      }}
+                      disabled={isSendingWhatsAppReceipt}
+                      className="w-full py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+                    >
+                      {isSendingWhatsAppReceipt ? (
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Send className="w-3.5 h-3.5" />
+                      )}
+                      <span>Send E-Receipt via WhatsApp</span>
+                    </button>
+                  )}
+                </div>
+
+                {/* Receipt Actions */}
+                <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+                  <button
+                    onClick={() => window.print()}
+                    className="px-4 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold flex items-center space-x-1.5 transition-colors cursor-pointer"
+                  >
+                    <Printer className="w-3.5 h-3.5" />
+                    <span>Print GST Receipt</span>
+                  </button>
+
+                  <button
+                    onClick={() => setShowCollectPaymentModal(false)}
+                    className="px-4 py-2 rounded-lg bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold transition-colors cursor-pointer"
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

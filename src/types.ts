@@ -1,14 +1,87 @@
-export type UserRole = 'doctor' | 'receptionist' | 'polyclinic_admin' | 'super_admin' | 'patient';
+export type UserRole = 'doctor' | 'receptionist' | 'polyclinic_admin' | 'CLINIC_ADMIN' | 'super_admin' | 'patient';
 export type UserStatus = 'active' | 'invited' | 'disabled';
 
 export interface AppUser {
   id: string;
+  tenantId?: string;
   email: string;
   name: string;
   role: UserRole;
   status: UserStatus;
   phone: string;
   lastLogin: string | null;
+  createdAt: string;
+  clinicName?: string;
+  avatarUrl?: string;
+  whatsappVerified?: boolean;
+  hprId?: string;
+  hfrId?: string;
+  onboardingCompleted?: boolean;
+  specialty?: string;
+}
+
+export interface Tenant {
+  id: string;
+  name: string;
+  specialty: string;
+  country: string;
+  timezone: string;
+  phone: string;
+  trialEndsAt: string;
+  aiScribeMinutesLimit: number;
+  aiScribeMinutesUsed: number;
+  activeStatus: boolean;
+  hfrId: string;
+  wabaId?: string;
+  phoneNumberId?: string;
+  metaAccessToken?: string;
+  metaTokenExpiresAt?: string;
+  metaWabaName?: string;
+  metaQualityRating?: 'GREEN' | 'YELLOW' | 'RED' | 'UNKNOWN';
+  metaOnboardingStatus?: 'connected' | 'pending' | 'disconnected';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MetaTemplateComponent {
+  type: 'HEADER' | 'BODY' | 'FOOTER' | 'BUTTONS';
+  format?: 'TEXT' | 'IMAGE' | 'DOCUMENT' | 'VIDEO';
+  text?: string;
+  example?: {
+    header_text?: string[];
+    body_text?: string[][];
+  };
+  buttons?: Array<{
+    type: 'QUICK_REPLY' | 'URL' | 'PHONE_NUMBER';
+    text: string;
+    url?: string;
+    phone_number?: string;
+  }>;
+}
+
+export interface MetaWhatsAppTemplate {
+  id: string;
+  tenantId: string;
+  tenantName?: string;
+  wabaId: string;
+  name: string;
+  category: 'UTILITY' | 'MARKETING' | 'AUTHENTICATION';
+  language: string;
+  status: 'APPROVED' | 'PENDING' | 'REJECTED' | 'PAUSED';
+  components: MetaTemplateComponent[];
+  metaTemplateId?: string;
+  rejectionReason?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DhisTransactionSummary {
+  id: string;
+  tenantId: string;
+  claimsCount: number;
+  claimsThreshold: number;
+  monthYear: string;
+  status: string;
   createdAt: string;
 }
 
@@ -61,6 +134,11 @@ export interface Patient {
   address?: string;
   lastVisit?: string;
   avatar?: string;
+  abhaNumber?: string;
+  abhaAddress?: string;
+  kycStatus?: 'VERIFIED' | 'PENDING' | 'FAILED';
+  hfrId?: string;
+  vitals?: Vitals;
 }
 
 export interface Vitals {
@@ -69,6 +147,7 @@ export interface Vitals {
   heartRate?: number;
   temperature?: number; // in Fahrenheit
   spO2?: number; // percentage
+  respiratoryRate?: number;
   weightKg?: number;
   heightCm?: number;
   bmi?: number;
@@ -404,6 +483,10 @@ export interface Appointment {
   consultationFee: number;
   isPaid: boolean;
   vitals?: Vitals;
+  age?: number;
+  gender?: 'Male' | 'Female' | 'Other';
+  abhaAddress?: string;
+  abhaNumber?: string;
 }
 
 export interface BillItem {
