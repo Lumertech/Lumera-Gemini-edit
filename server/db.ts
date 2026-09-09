@@ -1086,16 +1086,21 @@ export function seedClinicalAndWhatsAppIfMissing(database: DatabaseSync) {
 
     try {
       database.exec("UPDATE users SET tenant_id = 'tenant-lumera-main' WHERE tenant_id IS NULL OR tenant_id = ''");
-      database.exec(`
-        UPDATE users
-        SET onboarding_completed = 1,
-            practice_type = COALESCE(NULLIF(practice_type, ''), 'polyclinic')
-        WHERE id IN ('user-admin', 'user-doctor', 'user-patient', 'user-reception')
-           OR id LIKE 'test-user-%'
-      `);
       database.exec("UPDATE users SET hpr_id = 'HPR-IN-9024819' WHERE role IN ('doctor', 'polyclinic_admin', 'CLINIC_ADMIN') AND (hpr_id IS NULL OR hpr_id = '')");
     } catch {}
   }
+
+  // Keep the shared demo roster on the demo tenant even after test-doctor logins are created.
+  try {
+    database.exec(`
+      UPDATE users
+      SET tenant_id = '${DEMO_TENANT_ID}',
+          onboarding_completed = 1,
+          practice_type = COALESCE(NULLIF(practice_type, ''), 'polyclinic')
+      WHERE id IN ('user-admin', 'user-doctor', 'user-patient', 'user-reception')
+         OR id LIKE 'test-user-%'
+    `);
+  } catch {}
 
   const patientCount = database.prepare("SELECT COUNT(*) AS c FROM patients").get() as { c: number };
 
@@ -1116,11 +1121,15 @@ export function seedClinicalAndWhatsAppIfMissing(database: DatabaseSync) {
       const existingUser = database.prepare("SELECT id FROM users WHERE email = ? OR id = ?").get(testEmail, testUserId) as { id: string } | undefined;
       if (!existingUser) {
         database.prepare(`
-          INSERT OR REPLACE INTO users (id, email, password_hash, name, role, status, phone, last_login, created_at, onboarding_completed, practice_type)
-          VALUES (?, ?, ?, ?, 'doctor', 'active', ?, NULL, ?, 1, 'polyclinic')
-        `).run(testUserId, testEmail, testUserPasswordHash, testName, d.phone, now);
+          INSERT OR REPLACE INTO users (id, tenant_id, email, password_hash, name, role, status, phone, last_login, created_at, onboarding_completed, practice_type)
+          VALUES (?, ?, ?, ?, ?, 'doctor', 'active', ?, NULL, ?, 1, 'polyclinic')
+        `).run(testUserId, DEMO_TENANT_ID, testEmail, testUserPasswordHash, testName, d.phone, now);
       } else {
-        database.prepare("UPDATE users SET name = ? WHERE id = ?").run(testName, existingUser.id);
+        database.prepare("UPDATE users SET name = ?, tenant_id = COALESCE(NULLIF(tenant_id, ''), ?), onboarding_completed = 1 WHERE id = ?").run(
+          testName,
+          DEMO_TENANT_ID,
+          existingUser.id
+        );
       }
 
       database.prepare("UPDATE doctors SET user_id = ? WHERE id = ?").run(testUserId, d.id);

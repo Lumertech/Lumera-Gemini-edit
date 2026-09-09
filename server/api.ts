@@ -997,7 +997,7 @@ export function createApiRouter(): Router {
     res.json(row);
   });
 
-  api.get("/doctors", (req, res) => {
+  api.get("/doctors", requireAuth, (req, res) => {
     const tenantId = req.user?.tenantId;
     if (!tenantId) {
       return res.json({ doctors: [] });
