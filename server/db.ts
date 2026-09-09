@@ -1096,7 +1096,7 @@ export function seedClinicalAndWhatsAppIfMissing(database: DatabaseSync) {
       UPDATE users
       SET tenant_id = '${DEMO_TENANT_ID}',
           onboarding_completed = 1,
-          practice_type = COALESCE(NULLIF(practice_type, ''), 'polyclinic')
+          practice_type = 'polyclinic'
       WHERE id IN ('user-admin', 'user-doctor', 'user-patient', 'user-reception')
          OR id LIKE 'test-user-%'
     `);
