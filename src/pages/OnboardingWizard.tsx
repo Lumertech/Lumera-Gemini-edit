@@ -56,6 +56,9 @@ export const OnboardingWizard: React.FC = () => {
   const [specialty, setSpecialty] = useState<PolyclinicSpecialty>(
     (user?.specialty as PolyclinicSpecialty) || "General Medicine"
   );
+  const [practiceType, setPracticeType] = useState<'individual' | 'polyclinic'>(
+    (user?.practiceType as 'individual' | 'polyclinic') || 'individual'
+  );
   const [consultationFee, setConsultationFee] = useState<number>(600);
   const [opdRoom, setOpdRoom] = useState("OPD Suite 101");
   const [opdTiming, setOpdTiming] = useState("09:00 AM - 01:00 PM, 04:00 PM - 07:00 PM");
@@ -143,6 +146,7 @@ export const OnboardingWizard: React.FC = () => {
         qualification,
         opdRoom,
         opdTiming,
+        practiceType,
       });
 
       // If clean queue was selected, set local preference
@@ -328,6 +332,50 @@ export const OnboardingWizard: React.FC = () => {
                   </option>
                 ))}
               </select>
+            </div>
+
+            {/* Practice Type */}
+            <div className="md:col-span-2">
+              <label className="block text-slate-300 font-semibold mb-1">
+                Practice Type & Staff Onboarding
+              </label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setPracticeType('individual')}
+                  className={`p-3 rounded-xl border text-left transition-all flex flex-col gap-1 cursor-pointer ${
+                    practiceType === 'individual'
+                      ? 'bg-purple-950/40 border-purple-500 text-white shadow-md'
+                      : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700'
+                  }`}
+                >
+                  <div className="flex items-center justify-between font-semibold text-xs text-white">
+                    <span>Individual Practice (Single Specialty)</span>
+                    {practiceType === 'individual' && <CheckCircle2 className="w-4 h-4 text-purple-400" />}
+                  </div>
+                  <p className="text-[11px] text-slate-400">
+                    Locked specialty workflow. Focused single-doctor practice without multi-staff onboarding.
+                  </p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setPracticeType('polyclinic')}
+                  className={`p-3 rounded-xl border text-left transition-all flex flex-col gap-1 cursor-pointer ${
+                    practiceType === 'polyclinic'
+                      ? 'bg-purple-950/40 border-purple-500 text-white shadow-md'
+                      : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700'
+                  }`}
+                >
+                  <div className="flex items-center justify-between font-semibold text-xs text-white">
+                    <span>Polyclinic / Multi-Speciality Clinic</span>
+                    {practiceType === 'polyclinic' && <CheckCircle2 className="w-4 h-4 text-purple-400" />}
+                  </div>
+                  <p className="text-[11px] text-slate-400">
+                    Option to onboard different doctors, receptionists, and staff across multiple specialties.
+                  </p>
+                </button>
+              </div>
             </div>
 
             {/* Qualifications */}

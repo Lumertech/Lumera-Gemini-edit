@@ -269,6 +269,23 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     initialSoapData?.plan?.followUpDays || 7
   );
 
+  const [selectedTherapyPackage, setSelectedTherapyPackage] = useState(
+    (diagnosis.toLowerCase().includes('lumbar') || diagnosis.toLowerCase().includes('disc') || diagnosis.toLowerCase().includes('sciatica') || diagnosis.toLowerCase().includes('back'))
+      ? MOCK_THERAPY_PACKAGES[0]
+      : MOCK_THERAPY_PACKAGES[1]
+  );
+
+  useEffect(() => {
+    if (activeSpecialty === 'Physiotherapy & Rehabilitation') {
+      const diagLower = diagnosis.toLowerCase();
+      if (diagLower.includes('lumbar') || diagLower.includes('disc') || diagLower.includes('sciatica') || diagLower.includes('back')) {
+        setSelectedTherapyPackage(MOCK_THERAPY_PACKAGES[0]);
+      } else if (diagLower.includes('shoulder') || diagLower.includes('capsulitis') || diagLower.includes('adhesive')) {
+        setSelectedTherapyPackage(MOCK_THERAPY_PACKAGES[1]);
+      }
+    }
+  }, [diagnosis, activeSpecialty]);
+
   // Physiotherapy Specific States
   const [physioAssessment, setPhysioAssessment] = useState<PhysiotherapyAssessment>(
     initialSoapData?.physiotherapyAssessment || {
@@ -517,6 +534,11 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     if (preset.physiotherapyAssessment) setPhysioAssessment(preset.physiotherapyAssessment);
     if (preset.performedTherapies) setPerformedProcedures(preset.performedTherapies);
     if (preset.prescribedExercises) setPrescribedExercises(preset.prescribedExercises);
+    if (preset.id === 'preset-physio-lumbar-radiculopathy') {
+      setSelectedTherapyPackage(MOCK_THERAPY_PACKAGES[0]);
+    } else if (preset.id === 'preset-physio-frozen-shoulder') {
+      setSelectedTherapyPackage(MOCK_THERAPY_PACKAGES[1]);
+    }
 
     // If preset contains cardiology modules
     if (preset.cardiologyAssessment) setCardiologyAssessment(preset.cardiologyAssessment);
@@ -917,7 +939,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
             onUpdateExercises={(newExs) => setPrescribedExercises(newExs)}
           />
           <PhysioProgressTracker
-            therapyPackage={MOCK_THERAPY_PACKAGES[0]}
+            therapyPackage={selectedTherapyPackage}
             exercises={prescribedExercises}
             patientName={currentPatient.name}
             uhid={currentPatient.uhid}

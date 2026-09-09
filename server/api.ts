@@ -752,8 +752,13 @@ export function createApiRouter(): Router {
     const qualification = req.body?.qualification ? String(req.body.qualification).trim() : undefined;
     const opdRoom = req.body?.opdRoom ? String(req.body.opdRoom).trim() : undefined;
     const opdTiming = req.body?.opdTiming ? String(req.body.opdTiming).trim() : undefined;
+    const practiceType = req.body?.practiceType ? String(req.body.practiceType).trim() : undefined;
 
-    getDb().prepare("UPDATE users SET onboarding_completed = 1 WHERE id = ?").run(userId);
+    if (practiceType) {
+      getDb().prepare("UPDATE users SET onboarding_completed = 1, practice_type = ? WHERE id = ?").run(practiceType, userId);
+    } else {
+      getDb().prepare("UPDATE users SET onboarding_completed = 1 WHERE id = ?").run(userId);
+    }
 
     const existingDoc = getDb().prepare("SELECT id FROM doctors WHERE user_id = ?").get(userId) as { id: string } | undefined;
     if (existingDoc) {

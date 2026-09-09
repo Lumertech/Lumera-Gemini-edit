@@ -33,6 +33,7 @@ export interface DbUser {
   hpr_id?: string;
   hfr_id?: string;
   onboarding_completed?: number;
+  practice_type?: string;
 }
 
 export interface DbTenant {
@@ -107,7 +108,8 @@ function migrate(database: DatabaseSync) {
       status TEXT NOT NULL DEFAULT 'active',
       phone TEXT NOT NULL DEFAULT '',
       last_login TEXT,
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      practice_type TEXT DEFAULT 'individual'
     );
 
     CREATE TABLE IF NOT EXISTS sessions (
@@ -426,6 +428,9 @@ function migrate(database: DatabaseSync) {
   } catch {}
   try {
     database.exec("ALTER TABLE users ADD COLUMN onboarding_completed INTEGER DEFAULT 0");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE users ADD COLUMN practice_type TEXT DEFAULT 'individual'");
   } catch {}
   try {
     database.exec("ALTER TABLE tenants ADD COLUMN waba_id TEXT DEFAULT ''");
@@ -999,6 +1004,7 @@ export function publicUser(user: DbUser) {
     hprId: user.hpr_id || "",
     hfrId: user.hfr_id || "",
     onboardingCompleted: Boolean(user.onboarding_completed),
+    practiceType: (user.practice_type as string) || 'individual',
   };
 }
 
@@ -1044,6 +1050,26 @@ export function seedClinicalAndWhatsAppIfMissing(database: DatabaseSync) {
   }
 
   const patientCount = database.prepare("SELECT COUNT(*) AS c FROM patients").get() as { c: number };
+
+  // Ensure test users for all specialties exist with "Test " prefixed to their name
+  const testUserPasswordHash = hashPasswordSync("Lumera@2026");
+  for (const d of DOCTOR_SEED) {
+    const testUserId = `test-user-${d.id}`;
+    const testName = d.name.startsWith("Test ") ? d.name : `Test ${d.name}`;
+    const testEmail = d.email.includes("test") ? d.email : d.email.replace("@", ".test@");
+    
+    const existingUser = database.prepare("SELECT id FROM users WHERE email = ? OR id = ?").get(testEmail, testUserId) as { id: string } | undefined;
+    if (!existingUser) {
+      database.prepare(`
+        INSERT OR REPLACE INTO users (id, email, password_hash, name, role, status, phone, last_login, created_at, onboarding_completed, practice_type)
+        VALUES (?, ?, ?, ?, 'doctor', 'active', ?, NULL, ?, 1, 'polyclinic')
+      `).run(testUserId, testEmail, testUserPasswordHash, testName, d.phone, now);
+    } else {
+      database.prepare("UPDATE users SET name = ? WHERE id = ?").run(testName, existingUser.id);
+    }
+    
+    database.prepare("UPDATE doctors SET user_id = ? WHERE id = ?").run(testUserId, d.id);
+  }
 
   if (patientCount.c === 0) {
     const insertPatient = database.prepare(`

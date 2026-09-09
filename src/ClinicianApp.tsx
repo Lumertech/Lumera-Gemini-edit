@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Navbar, NavView } from './components/Navbar';
-import { Sidebar } from './components/Sidebar';
+import { Sidebar, ROLE_VISIBLE_VIEWS } from './components/Sidebar';
+import { ShieldCheck } from 'lucide-react';
 import { AmbientAIStudio } from './components/AmbientAIStudio';
 import { PrescriptionWriter } from './components/PrescriptionWriter';
 import { QueueBoard } from './components/QueueBoard';
@@ -51,7 +52,7 @@ export default function ClinicianApp() {
   const [isHexaOpen, setIsHexaOpen] = useState(false);
 
   // Specialty locking enforcement for doctor accounts
-  const isSpecialtyLocked = user?.role === 'doctor' || Boolean(user?.specialty);
+  const isSpecialtyLocked = user?.role === 'doctor' || Boolean(user?.specialty) || user?.practiceType === 'individual';
   const lockedSpecialty = user?.specialty || (user?.role === 'doctor' ? currentDoctor.specialty : undefined);
 
   // Bind active clinician profile to logged-in user specialty if specified
@@ -128,6 +129,13 @@ export default function ClinicianApp() {
     setAppointments((prev) => [newApt as Appointment, ...prev]);
   };
 
+  const userRole = user?.role || 'doctor';
+  let allowedViews = ROLE_VISIBLE_VIEWS[userRole] || ROLE_VISIBLE_VIEWS.doctor;
+  if (user?.practiceType === 'individual') {
+    allowedViews = allowedViews.filter(v => v !== 'team');
+  }
+  const isViewAllowed = allowedViews.includes(currentView) || currentView === 'opd-queue' || currentView === 'smart-rx';
+
   return (
     <div className="h-screen w-screen overflow-hidden flex flex-col bg-slate-100 text-slate-900 font-sans selection:bg-blue-600 selection:text-white">
       <Navbar
@@ -157,8 +165,26 @@ export default function ClinicianApp() {
           currentDoctor={currentDoctor}
         />
 
-        <main className="flex-1 min-w-0 h-full overflow-y-auto bg-slate-100/70 p-4 sm:p-6 lg:p-8">
-          {currentView === 'reception' && (
+        <main className="flex-1 min-w-0 h-full overflow-y-auto bg-slate-100/70 p-4 sm:p-6 lg:p-8 flex flex-col">
+          {!isViewAllowed ? (
+            <div className="flex flex-col items-center justify-center h-full p-8 bg-white rounded-xl shadow-sm border border-slate-200 text-center my-auto">
+              <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center text-red-600 mb-4 mx-auto">
+                <ShieldCheck className="w-8 h-8" />
+              </div>
+              <h2 className="text-xl font-bold text-slate-900 mb-2">Access Restricted for Your Role</h2>
+              <p className="text-slate-600 max-w-md mb-6 text-sm mx-auto">
+                Your current user role (<span className="font-semibold text-slate-800">{userRole}</span>) does not have permission to access the <span className="font-semibold text-slate-800">{currentView}</span> module.
+              </p>
+              <button
+                onClick={() => setCurrentView('queue')}
+                className="px-4 py-2 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700 transition-colors shadow-sm mx-auto"
+              >
+                Return to OPD Queue
+              </button>
+            </div>
+          ) : (
+            <>
+              {currentView === 'reception' && (
             <Reception
               patients={patients}
               doctors={doctors}
@@ -363,6 +389,8 @@ export default function ClinicianApp() {
                 }
               }}
             />
+          )}
+            </>
           )}
         </main>
       </div>

@@ -18,6 +18,7 @@ export interface AppUser {
   hfrId?: string;
   onboardingCompleted?: boolean;
   specialty?: string;
+  practiceType?: 'individual' | 'polyclinic';
 }
 
 export interface Tenant {

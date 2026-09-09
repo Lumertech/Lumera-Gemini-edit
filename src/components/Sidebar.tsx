@@ -21,6 +21,20 @@ import {
 } from 'lucide-react';
 import { NavView } from './Navbar';
 import { Patient, Doctor } from '../types';
+import { useAuth } from '../auth/AuthContext';
+
+export const ROLE_VISIBLE_VIEWS: Record<string, NavView[]> = {
+  doctor: ['queue', 'opd-queue', 'rx', 'smart-rx', 'ambient', 'reports', 'appointments', 'polyclinic', 'whatsapp', 'voicebot', 'billing', 'portal', 'dhis', 'team', 'reception', 'kiosk'],
+  receptionist: ['reception', 'queue', 'opd-queue', 'appointments', 'kiosk', 'billing', 'whatsapp', 'portal'],
+  polyclinic_admin: ['queue', 'opd-queue', 'reception', 'appointments', 'polyclinic', 'billing', 'reports', 'whatsapp', 'voicebot', 'dhis', 'portal', 'team', 'kiosk'],
+  CLINIC_ADMIN: ['queue', 'opd-queue', 'reception', 'appointments', 'polyclinic', 'billing', 'reports', 'whatsapp', 'voicebot', 'dhis', 'portal', 'team', 'kiosk'],
+  super_admin: ['queue', 'opd-queue', 'reception', 'rx', 'smart-rx', 'ambient', 'reports', 'appointments', 'polyclinic', 'whatsapp', 'voicebot', 'billing', 'portal', 'dhis', 'team', 'kiosk'],
+  patient: ['portal'],
+  nurse: ['reception', 'queue', 'opd-queue', 'reports', 'portal'],
+  lab_technician: ['reports', 'queue', 'opd-queue', 'portal'],
+  pharmacist: ['billing', 'queue', 'opd-queue', 'portal'],
+  default: ['queue', 'opd-queue', 'reception', 'appointments', 'portal', 'billing']
+};
 
 interface SidebarProps {
   currentView: NavView;
@@ -43,6 +57,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
   allPatients,
   currentDoctor,
 }) => {
+  const { user } = useAuth();
+  const userRole = user?.role || 'doctor';
+  let allowedViews = ROLE_VISIBLE_VIEWS[userRole] || ROLE_VISIBLE_VIEWS.doctor;
+  if (user?.practiceType === 'individual') {
+    allowedViews = allowedViews.filter(v => v !== 'team');
+  }
+
   const NAV_SECTIONS = [
     {
       title: 'Clinical AI & Consultation',
@@ -143,6 +164,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
     },
   ];
 
+  const filteredSections = NAV_SECTIONS.map(section => ({
+    ...section,
+    items: section.items.filter(item => 
+      allowedViews.includes(item.id) ||
+      (item.id === 'queue' && allowedViews.includes('opd-queue')) ||
+      (item.id === 'rx' && allowedViews.includes('smart-rx'))
+    )
+  })).filter(section => section.items.length > 0);
+
   return (
     <aside
       className={`${
@@ -151,7 +181,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     >
       {/* Top Section: Navigation Links */}
       <div className="flex-1 overflow-y-auto p-3 space-y-5 scrollbar-thin scrollbar-thumb-slate-800">
-        {NAV_SECTIONS.map((section, idx) => (
+        {filteredSections.map((section, idx) => (
           <div key={idx} className="space-y-1">
             {!isCollapsed && (
               <h3 className="px-3 text-[10px] font-bold uppercase tracking-wider text-slate-400">
