@@ -31,7 +31,8 @@ import {
   Send,
   ExternalLink,
   ShieldAlert,
-  Award
+  Award,
+  Shield
 } from "lucide-react";
 import { useNav } from "../nav/NavigationContext";
 
@@ -952,6 +953,14 @@ export const LandingPage: React.FC = () => {
               className="hover:text-blue-400 transition cursor-pointer"
             >
               ABDM &amp; DPDP Security Statement
+            </button>
+            <button
+              type="button"
+              onClick={() => go("login", { loginNext: "admin" })}
+              className="hover:text-purple-400 transition cursor-pointer inline-flex items-center gap-1 text-slate-400 hover:text-slate-200"
+            >
+              <Shield className="w-3 h-3 text-purple-400" />
+              <span>Admin</span>
             </button>
           </div>
 

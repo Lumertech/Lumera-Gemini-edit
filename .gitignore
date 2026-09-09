@@ -6,5 +6,9 @@ coverage/
 *.log
 .env*
 !.env.example
-data/
+# Anchored to repo root — an unanchored `data/` here was also matching
+# src/data/, which silently untracked src/data/clinicalData.ts on every
+# fresh clone. That's the actual root cause behind the repeated "restore
+# clinicalData.ts" commits in this repo's history.
+/data/
 uploads/

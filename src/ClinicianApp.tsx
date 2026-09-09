@@ -76,6 +76,27 @@ export default function ClinicianApp() {
       .catch(() => undefined);
   }, []);
 
+  // SAFETY: the sidebar's patient switcher is intentionally always visible
+  // (a receptionist may need to jump between patients quickly), but it must
+  // never silently pull a doctor out from under an in-progress note or
+  // prescription for a different patient — that's how clinical documentation
+  // ends up attached to the wrong chart. Views where the doctor is actively
+  // writing into currentPatient's record require confirmation before the
+  // context switches.
+  const CLINICAL_DOCUMENTATION_VIEWS: NavView[] = ['ambient', 'rx'];
+  const handleSelectPatient = (patient: Patient) => {
+    if (
+      CLINICAL_DOCUMENTATION_VIEWS.includes(currentView) &&
+      patient.id !== currentPatient.id
+    ) {
+      const confirmed = window.confirm(
+        `You're actively documenting for ${currentPatient.name}. Switching to ${patient.name} now will not move this unsaved note or prescription to the new patient's chart. Switch anyway?`
+      );
+      if (!confirmed) return;
+    }
+    setCurrentPatient(patient);
+  };
+
   const handleTransferToRx = (soap: SoapNote) => {
     setActiveSoapData(soap);
     setCurrentView('rx');
@@ -160,7 +181,7 @@ export default function ClinicianApp() {
           isCollapsed={isSidebarCollapsed}
           onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
           currentPatient={currentPatient}
-          onSelectPatient={setCurrentPatient}
+          onSelectPatient={handleSelectPatient}
           allPatients={patients}
           currentDoctor={currentDoctor}
         />
@@ -227,7 +248,7 @@ export default function ClinicianApp() {
               currentPatient={currentPatient}
               currentDoctor={currentDoctor}
               onTransferToRx={handleTransferToRx}
-              onSelectPatient={setCurrentPatient}
+              onSelectPatient={handleSelectPatient}
               allPatients={patients}
             />
           )}

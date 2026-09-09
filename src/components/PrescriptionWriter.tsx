@@ -484,6 +484,35 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
   // Safety checker state
   const [isCheckingSafety, setIsCheckingSafety] = useState(false);
   const [safetyResult, setSafetyResult] = useState<SafetyCheckResult | null>(null);
+  // Tracks which exact medicine list the last safety check ran against, and
+  // which exact list a HIGH_RISK override was acknowledged for. Both are
+  // compared against the *current* medicine list signature below, so any
+  // edit to the medicine list invalidates a stale check or a stale override
+  // and re-blocks Print/Send/Finalize until the doctor re-runs the audit.
+  const [safetyCheckedSignature, setSafetyCheckedSignature] = useState<string | null>(null);
+  const [safetyOverrideSignature, setSafetyOverrideSignature] = useState<string | null>(null);
+
+  // Fingerprint of the current medicine list — used purely to detect whether
+  // the medicine list has changed since the last safety audit ran.
+  const medicinesSignature = medicines
+    .map((m) => `${m.id}:${m.drugName}:${m.dosage}:${m.frequency}:${m.durationDays}`)
+    .join('|');
+  const isSafetyCheckStale = medicines.length > 0 && safetyCheckedSignature !== medicinesSignature;
+  const isSafetyHighRisk = safetyResult?.safetyStatus === 'HIGH_RISK';
+  const isSafetyOverridden = safetyOverrideSignature === medicinesSignature;
+  // Blocks Print / WhatsApp Dispatch / Finalize & Sign until the doctor has
+  // run the AI Safety Audit against the *current* medicine list, and — if it
+  // came back HIGH_RISK — explicitly acknowledged the override. This is the
+  // safety gate: a prescription must not leave the app unaudited.
+  const isSafetyGateBlocking =
+    medicines.length > 0 && (isSafetyCheckStale || (isSafetyHighRisk && !isSafetyOverridden));
+  const safetyGateMessage = !medicines.length
+    ? ''
+    : isSafetyCheckStale
+    ? 'Run the AI Safety Audit before printing, sending, or signing this prescription — the medicine list has changed since the last check.'
+    : isSafetyHighRisk && !isSafetyOverridden
+    ? 'This prescription was flagged HIGH_RISK by the AI Safety Audit. Review the contraindications above and acknowledge the override before proceeding.'
+    : '';
 
   // WhatsApp Translation modal
   const [showWhatsAppModal, setShowWhatsAppModal] = useState(false);
@@ -567,8 +596,14 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
       });
       const data = await response.json();
       setSafetyResult(data);
+      setSafetyCheckedSignature(medicinesSignature);
+      // A fresh check invalidates any previous override — the doctor must
+      // re-acknowledge if this new result is still HIGH_RISK.
+      setSafetyOverrideSignature(null);
     } catch (err) {
       console.error('Safety check failed:', err);
+      // On a failed check we deliberately do NOT record a checked signature,
+      // so the gate stays closed rather than silently passing.
     } finally {
       setIsCheckingSafety(false);
     }
@@ -618,10 +653,18 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
   };
 
   const handlePrintRx = () => {
+    if (isSafetyGateBlocking) {
+      window.alert(safetyGateMessage || 'Run the AI Safety Audit before printing this prescription.');
+      return;
+    }
     window.print();
   };
 
   const handleOpenWhatsAppModal = async () => {
+    if (isSafetyGateBlocking) {
+      window.alert(safetyGateMessage || 'Run the AI Safety Audit before sending this prescription.');
+      return;
+    }
     setShowWhatsAppModal(true);
     setWhatsappSentSuccess(false);
     await translateRxForWhatsApp(targetLanguage);
@@ -694,6 +737,12 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
   });
 
   const handleFinalizeAndSignRx = () => {
+    // Defense in depth: block here too, not just via the disabled button, in
+    // case this is ever called from another code path.
+    if (isSafetyGateBlocking) {
+      window.alert(safetyGateMessage || 'Run the AI Safety Audit before signing this prescription.');
+      return;
+    }
     const rx = buildCurrentRx();
     onSavePrescription(rx);
     setIsFinalized(true);
@@ -701,6 +750,10 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
   };
 
   const handleDirectWhatsAppDispatch = async () => {
+    if (isSafetyGateBlocking) {
+      window.alert(safetyGateMessage || 'Run the AI Safety Audit before sending this prescription.');
+      return;
+    }
     setIsSendingWhatsAppDirect(true);
     try {
       const response = await fetch('/api/whatsapp/send-rx', {
@@ -842,7 +895,9 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
           {/* WhatsApp dispatch button */}
           <button
             onClick={handleOpenWhatsAppModal}
-            className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center space-x-1.5 shadow-xs transition-colors cursor-pointer"
+            disabled={isSafetyGateBlocking}
+            title={isSafetyGateBlocking ? safetyGateMessage : undefined}
+            className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center space-x-1.5 shadow-xs transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <Send className="w-3.5 h-3.5" />
             <span>Send WhatsApp Rx</span>
@@ -851,7 +906,9 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
           {/* Print / PDF button */}
           <button
             onClick={handlePrintRx}
-            className="px-3.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold flex items-center space-x-1.5 shadow-xs transition-colors cursor-pointer"
+            disabled={isSafetyGateBlocking}
+            title={isSafetyGateBlocking ? safetyGateMessage : undefined}
+            className="px-3.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold flex items-center space-x-1.5 shadow-xs transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <Printer className="w-3.5 h-3.5" />
             <span>Print Prescription</span>
@@ -924,6 +981,29 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
               </ul>
             </div>
           )}
+
+          {isSafetyHighRisk && !isSafetyCheckStale && (
+            <label className="flex items-start gap-2 pt-2 border-t border-rose-200 text-xs text-rose-900 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={isSafetyOverridden}
+                onChange={(e) => setSafetyOverrideSignature(e.target.checked ? medicinesSignature : null)}
+                className="mt-0.5"
+              />
+              <span>
+                I have reviewed the contraindications above and, using my clinical judgment, choose to proceed
+                with this prescription as written.
+              </span>
+            </label>
+          )}
+        </div>
+      )}
+
+      {/* Safety gate warning — shown whenever Print / Send / Finalize are blocked */}
+      {isSafetyGateBlocking && (
+        <div className="no-print bg-rose-50 border border-rose-200 rounded-xl p-3 flex items-start gap-2 text-xs text-rose-800">
+          <ShieldAlert className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+          <span>{safetyGateMessage}</span>
         </div>
       )}
 
@@ -1576,7 +1656,9 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
           {!isFinalized ? (
             <button
               onClick={handleFinalizeAndSignRx}
-              className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center space-x-1.5 shadow-sm shadow-emerald-200 transition-all cursor-pointer"
+              disabled={isSafetyGateBlocking}
+              title={isSafetyGateBlocking ? safetyGateMessage : undefined}
+              className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center space-x-1.5 shadow-sm shadow-emerald-200 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <CheckCircle2 className="w-4 h-4" />
               <span>Finalize &amp; Sign Rx</span>
@@ -1593,7 +1675,9 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
 
           <button
             onClick={handlePrintRx}
-            className="px-3.5 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs flex items-center space-x-1.5 shadow-xs transition-colors cursor-pointer"
+            disabled={isSafetyGateBlocking}
+            title={isSafetyGateBlocking ? safetyGateMessage : undefined}
+            className="px-3.5 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs flex items-center space-x-1.5 shadow-xs transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <Printer className="w-4 h-4" />
             <span>Print Rx</span>
@@ -1601,7 +1685,9 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
 
           <button
             onClick={handleOpenWhatsAppModal}
-            className="px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs flex items-center space-x-1.5 shadow-xs transition-colors cursor-pointer"
+            disabled={isSafetyGateBlocking}
+            title={isSafetyGateBlocking ? safetyGateMessage : undefined}
+            className="px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs flex items-center space-x-1.5 shadow-xs transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <Send className="w-4 h-4" />
             <span>WhatsApp Dispatch</span>
@@ -1742,7 +1828,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
                   >
                     <Receipt className="w-3.5 h-3.5" />
                     <span>Proceed to Billing</span>
-                    <ArrowRight className="w-3.5 h-3.5" />
+                    <ArrowRight className="w-3 h-3" />
                   </button>
                 )}
               </div>

@@ -35,6 +35,14 @@ import { hashPassword, verifyPassword } from "./password.ts";
 const uploadDir = path.join(process.cwd(), "uploads");
 fs.mkdirSync(uploadDir, { recursive: true });
 
+// SECURITY: OTPs must never be echoed back to the client in a real deployment —
+// doing so lets anyone bypass verification by reading the network response
+// instead of the actual WhatsApp/SMS message. This only echoes the OTP when
+// NODE_ENV is explicitly non-production, purely for local development where
+// no live WhatsApp Business API is connected yet. It is always false once
+// NODE_ENV=production is set (e.g. in any real/staging/prod deployment).
+const DEV_OTP_ECHO = process.env.NODE_ENV !== "production";
+
 const upload = multer({
   storage: multer.diskStorage({
     destination: (_req, _file, cb) => cb(null, uploadDir),
@@ -217,7 +225,7 @@ export function createApiRouter(): Router {
       verificationId,
       phone,
       email: user.email,
-      demoOtp: otp,
+      demoOtp: DEV_OTP_ECHO ? otp : undefined,
       expiresAt,
       user: publicUser(user),
       message: "Security code dispatched to your WhatsApp Business number.",
@@ -290,7 +298,7 @@ export function createApiRouter(): Router {
       verificationId,
       phone,
       email: user.email,
-      demoOtp: otp,
+      demoOtp: DEV_OTP_ECHO ? otp : undefined,
       provider,
       user: publicUser(user),
       message: `Signed in with ${provider === "google" ? "Google" : "Facebook"}. Please verify your WhatsApp Business number.`,
@@ -324,7 +332,7 @@ export function createApiRouter(): Router {
       ok: true,
       verificationId,
       phone,
-      demoOtp: otp,
+      demoOtp: DEV_OTP_ECHO ? otp : undefined,
       expiresAt,
       status: "delivered",
       channel: "WhatsApp Cloud Business API",
@@ -603,6 +611,8 @@ export function createApiRouter(): Router {
     const email = String(req.body?.email || "").trim().toLowerCase();
     const password = String(req.body?.password || "");
     const avatarUrl = String(req.body?.avatarUrl || "");
+    const practiceType = String(req.body?.practiceType || "individual").trim();
+    const assignedRole = practiceType === "multispecialty" ? "CLINIC_ADMIN" : "doctor";
 
     if (!practiceName || !phone || !name || !email) {
       return res.status(400).json({ error: "Practice Name, Director Name, Email, and WhatsApp Phone are required." });
@@ -629,7 +639,7 @@ export function createApiRouter(): Router {
       VALUES (?, ?, ?, ?, ?, ?, ?, 500, 0, 1, ?, ?, ?)
     `).run(tenantId, practiceName, specialty, country, timezone, phone, trialEndsAt, hfrId, now, now);
 
-    // 2. PRIMARY ADMIN USER CREATION with role CLINIC_ADMIN mapped to new tenant ID:
+    // 2. PRIMARY USER CREATION (doctor for individual practice, CLINIC_ADMIN for multispecialty clinic) mapped to new tenant ID:
     const userId = `user-${crypto.randomUUID().slice(0, 8)}`;
     // ABDM HPR (Healthcare Professionals Registry ID) placeholder
     const hprId = `IN-HPR-${Math.floor(10000000 + Math.random() * 90000000)}`;
@@ -637,8 +647,8 @@ export function createApiRouter(): Router {
 
     getDb().prepare(`
       INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, clinic_name, avatar_url, whatsapp_verified, hpr_id, hfr_id, onboarding_completed, created_at)
-      VALUES (?, ?, ?, ?, ?, 'CLINIC_ADMIN', 'active', ?, ?, ?, 0, ?, ?, 0, ?)
-    `).run(userId, tenantId, email, passwordHash, name, phone, practiceName, avatarUrl, hprId, hfrId, now);
+      VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, 0, ?, ?, 0, ?)
+    `).run(userId, tenantId, email, passwordHash, name, assignedRole, phone, practiceName, avatarUrl, hprId, hfrId, now);
 
     // 3. DHIS TRANSACTIONS INITIALIZATION (0/100 threshold for current month):
     const dhisId = `dhis-${crypto.randomUUID().slice(0, 8)}`;
@@ -726,7 +736,7 @@ export function createApiRouter(): Router {
       verificationId,
       phone,
       email,
-      demoOtp: otp,
+      demoOtp: DEV_OTP_ECHO ? otp : undefined,
       tenantId,
       userId,
       hfrId,
@@ -852,7 +862,7 @@ export function createApiRouter(): Router {
       ok: true,
       verificationId,
       phone,
-      demoOtp: otp,
+      demoOtp: DEV_OTP_ECHO ? otp : undefined,
       message: `Password reset verification code dispatched to WhatsApp number ${phone}.`,
     });
   });

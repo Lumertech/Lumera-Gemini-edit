@@ -76,7 +76,7 @@ function detectInitialNav(): { surface: Surface; policySlug: string; adminTab: A
       return { surface: "onboarding", policySlug: "privacy", adminTab: "overview" };
     }
   }
-  return { surface: "app", policySlug: "privacy", adminTab: "overview" };
+  return { surface: "landing", policySlug: "privacy", adminTab: "overview" };
 }
 
 export const NavigationProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {

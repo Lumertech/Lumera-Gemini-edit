@@ -1051,24 +1051,32 @@ export function seedClinicalAndWhatsAppIfMissing(database: DatabaseSync) {
 
   const patientCount = database.prepare("SELECT COUNT(*) AS c FROM patients").get() as { c: number };
 
-  // Ensure test users for all specialties exist with "Test " prefixed to their name
-  const testUserPasswordHash = hashPasswordSync("Lumera@2026");
-  for (const d of DOCTOR_SEED) {
-    const testUserId = `test-user-${d.id}`;
-    const testName = d.name.startsWith("Test ") ? d.name : `Test ${d.name}`;
-    const testEmail = d.email.includes("test") ? d.email : d.email.replace("@", ".test@");
-    
-    const existingUser = database.prepare("SELECT id FROM users WHERE email = ? OR id = ?").get(testEmail, testUserId) as { id: string } | undefined;
-    if (!existingUser) {
-      database.prepare(`
-        INSERT OR REPLACE INTO users (id, email, password_hash, name, role, status, phone, last_login, created_at, onboarding_completed, practice_type)
-        VALUES (?, ?, ?, ?, 'doctor', 'active', ?, NULL, ?, 1, 'polyclinic')
-      `).run(testUserId, testEmail, testUserPasswordHash, testName, d.phone, now);
-    } else {
-      database.prepare("UPDATE users SET name = ? WHERE id = ?").run(testName, existingUser.id);
+  // SECURITY: this block creates a "Test {DoctorName}" login for every seeded
+  // doctor, using one shared, hardcoded password, and repoints each real
+  // doctor row's user_id at that test account. That is safe only on a local
+  // dev database — in any real deployment it would let anyone who has read
+  // this public source code log in as any doctor, and it re-applies on every
+  // server restart, silently overwriting whatever real credentials were set.
+  // It must never run when NODE_ENV=production.
+  if (process.env.NODE_ENV !== "production") {
+    const testUserPasswordHash = hashPasswordSync("Lumera@2026");
+    for (const d of DOCTOR_SEED) {
+      const testUserId = `test-user-${d.id}`;
+      const testName = d.name.startsWith("Test ") ? d.name : `Test ${d.name}`;
+      const testEmail = d.email.includes("test") ? d.email : d.email.replace("@", ".test@");
+
+      const existingUser = database.prepare("SELECT id FROM users WHERE email = ? OR id = ?").get(testEmail, testUserId) as { id: string } | undefined;
+      if (!existingUser) {
+        database.prepare(`
+          INSERT OR REPLACE INTO users (id, email, password_hash, name, role, status, phone, last_login, created_at, onboarding_completed, practice_type)
+          VALUES (?, ?, ?, ?, 'doctor', 'active', ?, NULL, ?, 1, 'polyclinic')
+        `).run(testUserId, testEmail, testUserPasswordHash, testName, d.phone, now);
+      } else {
+        database.prepare("UPDATE users SET name = ? WHERE id = ?").run(testName, existingUser.id);
+      }
+
+      database.prepare("UPDATE doctors SET user_id = ? WHERE id = ?").run(testUserId, d.id);
     }
-    
-    database.prepare("UPDATE doctors SET user_id = ? WHERE id = ?").run(testUserId, d.id);
   }
 
   if (patientCount.c === 0) {

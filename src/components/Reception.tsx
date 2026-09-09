@@ -120,7 +120,11 @@ export const Reception: React.FC<ReceptionProps> = ({
       }
 
       setOtpSentTxnId(data.txnId);
-      setOtpCode(data.testOtp || '123456'); // Pre-fill sandbox test OTP
+      // Only pre-fill when the backend explicitly echoes a dev/sandbox test
+      // OTP (non-production only). In a real deployment `data.testOtp` is
+      // absent and the receptionist must enter the OTP the patient reads
+      // off their own phone.
+      setOtpCode(data.testOtp || '');
     } catch (err: any) {
       setOtpError(err.message || 'Error generating Aadhaar OTP');
     } finally {
@@ -623,7 +627,7 @@ export const Reception: React.FC<ReceptionProps> = ({
             <div className="bg-slate-50 border-2 border-dashed border-slate-300 rounded-xl p-6 text-center space-y-3">
               <Camera className="w-10 h-10 text-purple-600 mx-auto" />
               <div>
-                <p className="text-sm font-semibold text-slate-800">Scan ABDM QR Code via Camera</p>
+                <p className="text-sm font-semibold text-slate-800">Scan ABHA QR Code via Camera</p>
                 <p className="text-xs text-slate-500 mt-0.5">
                   Point camera at the patient's Ayushman Bharat Health Card QR code
                 </p>

@@ -19,6 +19,14 @@ import {
   type TenantContext,
 } from "./fhir.ts";
 
+// SECURITY: this module is a *local stand-in* for the real ABDM sandbox
+// gateway (no requests currently leave this server for GATEWAY_URL — see
+// the integration notes). Until real ABDM sandbox credentials are wired in,
+// it accepts a fixed test OTP for local development convenience only. This
+// must never echo the OTP back to the client, or accept the fixed test OTP,
+// once NODE_ENV=production is set.
+const DEV_OTP_ECHO = process.env.NODE_ENV !== "production";
+
 // ABDM Sandbox Default Configuration
 const ABDM_CONFIG = {
   GATEWAY_URL: process.env.ABDM_GATEWAY_URL || "https://sandbox.abdm.gov.in/api/v3",
@@ -329,7 +337,9 @@ export function createAbdmRouter(): Router {
       res.json({
         txnId,
         message: `OTP sent successfully to Aadhaar-registered mobile ending in ******${lastFour}`,
-        testOtp: "123456", // Revealed for frictionless sandbox verification
+        // Only present in non-production local dev, where there is no real
+        // ABDM/UIDAI OTP delivery channel wired up yet.
+        testOtp: DEV_OTP_ECHO ? "123456" : undefined,
         expiresInSeconds: 600,
       });
     } catch (err: any) {
@@ -353,8 +363,11 @@ export function createAbdmRouter(): Router {
         return res.status(400).json({ error: "Transaction session expired or invalid. Please request a new OTP." });
       }
 
-      if (otp !== session.otp && otp !== "123456") {
-        return res.status(400).json({ error: "Incorrect OTP. Use 123456 in Sandbox." });
+      const allowFixedTestOtp = DEV_OTP_ECHO && otp === "123456";
+      if (otp !== session.otp && !allowFixedTestOtp) {
+        return res.status(400).json({
+          error: DEV_OTP_ECHO ? "Incorrect OTP. Use 123456 in local Sandbox mode." : "Incorrect OTP.",
+        });
       }
 
       // Generate 14-digit ABHA Number (Format: 91-XXXX-XXXX-XXXX)

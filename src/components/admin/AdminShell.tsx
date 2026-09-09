@@ -41,6 +41,38 @@ export const AdminShell: React.FC = () => {
   const { user, logout } = useAuth();
   const { go, adminTab } = useNav();
 
+  const isAdmin = user && (user.role === 'super_admin' || user.role === 'polyclinic_admin' || user.role === 'CLINIC_ADMIN');
+
+  if (!isAdmin) {
+    return (
+      <div className="h-screen w-screen flex items-center justify-center bg-slate-950 text-white p-6">
+        <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center space-y-4 shadow-2xl">
+          <div className="w-12 h-12 rounded-xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center mx-auto">
+            <Shield className="w-6 h-6" />
+          </div>
+          <h2 className="text-xl font-bold">Admin - Administrator Only</h2>
+          <p className="text-xs text-slate-400">
+            This control panel is restricted to Administrator roles only. Please sign in with an administrator profile or return to the public site.
+          </p>
+          <div className="flex gap-3 pt-2">
+            <button
+              onClick={() => go("login", { loginNext: "admin" })}
+              className="flex-1 py-2.5 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-xs font-semibold transition-colors"
+            >
+              Sign In as Admin
+            </button>
+            <button
+              onClick={() => go("landing")}
+              className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold transition-colors"
+            >
+              Public Site
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const panel = {
     overview: <AdminOverview />,
     dhis: <DhisMeter compact={false} />,

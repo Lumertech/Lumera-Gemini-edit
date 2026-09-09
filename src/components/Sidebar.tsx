@@ -17,12 +17,19 @@ import {
   ShieldCheck,
   Zap,
   Award,
-  UserCheck
+  UserCheck,
+  LogOut
 } from 'lucide-react';
 import { NavView } from './Navbar';
 import { Patient, Doctor } from '../types';
 import { useAuth } from '../auth/AuthContext';
+import { useNav } from '../nav/NavigationContext';
 
+// Which nav items each role actually needs day-to-day. This is deliberately
+// conservative for `receptionist`, `nurse`, `lab_technician`, and
+// `pharmacist`: clinical documentation tools (Ambient Scribe, Smart Rx
+// Studio) write directly into a patient's medical record and shouldn't be a
+// click away for a role that isn't authorized to author clinical notes.
 export const ROLE_VISIBLE_VIEWS: Record<string, NavView[]> = {
   doctor: ['queue', 'opd-queue', 'rx', 'smart-rx', 'ambient', 'reports', 'appointments', 'polyclinic', 'whatsapp', 'voicebot', 'billing', 'portal', 'dhis', 'team', 'reception', 'kiosk'],
   receptionist: ['reception', 'queue', 'opd-queue', 'appointments', 'kiosk', 'billing', 'whatsapp', 'portal'],
@@ -57,7 +64,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   allPatients,
   currentDoctor,
 }) => {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
+  const { go } = useNav();
   const userRole = user?.role || 'doctor';
   let allowedViews = ROLE_VISIBLE_VIEWS[userRole] || ROLE_VISIBLE_VIEWS.doctor;
   if (user?.practiceType === 'individual') {
@@ -283,6 +291,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
           </div>
         )}
+
+        {/* Logout Button */}
+        <button
+          onClick={() => logout().then(() => go("landing"))}
+          className={`w-full flex items-center ${isCollapsed ? 'justify-center' : 'space-x-2 px-3'} py-2 text-xs text-rose-300 hover:text-white hover:bg-rose-500/20 rounded-md transition-colors border border-rose-500/20`}
+          title="Logout"
+        >
+          <LogOut className="w-4 h-4 shrink-0" />
+          {!isCollapsed && <span className="font-medium">Logout</span>}
+        </button>
 
         {/* Collapse / Expand Toggle Button */}
         <button

@@ -28,6 +28,7 @@ export interface RegisterClinicData {
   email: string;
   password?: string;
   avatarUrl?: string;
+  practiceType?: 'individual' | 'multispecialty';
 }
 
 interface AuthContextValue {
@@ -35,11 +36,11 @@ interface AuthContextValue {
   loading: boolean;
   login: (email: string, password: string, skipOtp?: boolean) => Promise<LoginResult>;
   oauthLogin: (provider: "google" | "facebook", profile: { email: string; name?: string; avatarUrl?: string }, skipOtp?: boolean) => Promise<LoginResult>;
-  sendWhatsAppOtp: (phone: string, email?: string, purpose?: string, name?: string) => Promise<{ ok: boolean; verificationId: string; phone: string; demoOtp: string; expiresAt: string; message?: string }>;
+  sendWhatsAppOtp: (phone: string, email?: string, purpose?: string, name?: string) => Promise<{ ok: boolean; verificationId: string; phone: string; demoOtp?: string; expiresAt: string; message?: string }>;
   verifyWhatsAppOtp: (verificationId: string, otp: string, updatedPhone?: string) => Promise<{ ok: boolean; user?: AppUser; token?: string; tenantId?: string; message?: string }>;
-  registerClinic: (data: RegisterClinicData) => Promise<{ requiresOtp: boolean; verificationId: string; phone: string; email: string; demoOtp: string; tenantId?: string; userId?: string; hfrId?: string; hprId?: string; message: string }>;
+  registerClinic: (data: RegisterClinicData) => Promise<{ requiresOtp: boolean; verificationId: string; phone: string; email: string; demoOtp?: string; tenantId?: string; userId?: string; hfrId?: string; hprId?: string; message: string }>;
   completeOnboarding: (data: { specialty?: string; regNumber?: string; consultationFee?: number; qualification?: string; opdRoom?: string; opdTiming?: string }) => Promise<{ ok: boolean; user?: AppUser; message?: string }>;
-  requestPasswordReset: (email: string) => Promise<{ ok: boolean; verificationId: string; phone: string; demoOtp: string; message: string }>;
+  requestPasswordReset: (email: string) => Promise<{ ok: boolean; verificationId: string; phone: string; demoOtp?: string; message: string }>;
   resetPassword: (verificationId: string, otp: string, newPassword: string) => Promise<{ ok: boolean; message: string }>;
   logout: () => Promise<void>;
   setUserDirectly: (u: AppUser | null) => void;
@@ -115,7 +116,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const sendWhatsAppOtp = useCallback(async (phone: string, email?: string, purpose = "login", name = "Clinician") => {
-    return await apiFetch<{ ok: boolean; verificationId: string; phone: string; demoOtp: string; expiresAt: string; message?: string }>("/api/auth/whatsapp/send-otp", {
+    return await apiFetch<{ ok: boolean; verificationId: string; phone: string; demoOtp?: string; expiresAt: string; message?: string }>("/api/auth/whatsapp/send-otp", {
       method: "POST",
       body: JSON.stringify({ phone, email, purpose, name }),
     });
@@ -141,7 +142,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       verificationId: string;
       phone: string;
       email: string;
-      demoOtp: string;
+      demoOtp?: string;
       tenantId?: string;
       userId?: string;
       hfrId?: string;
@@ -157,7 +158,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const requestPasswordReset = useCallback(async (email: string) => {
-    return await apiFetch<{ ok: boolean; verificationId: string; phone: string; demoOtp: string; message: string }>("/api/auth/forgot-password", {
+    return await apiFetch<{ ok: boolean; verificationId: string; phone: string; demoOtp?: string; message: string }>("/api/auth/forgot-password", {
       method: "POST",
       body: JSON.stringify({ email }),
     });

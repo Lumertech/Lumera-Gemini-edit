@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import {
   Sparkles,
   ShieldCheck,
+  Shield,
   Stethoscope,
   Eye,
   EyeOff,
@@ -86,6 +87,7 @@ export const LoginPage: React.FC = () => {
   const [verifiedSsoNotice, setVerifiedSsoNotice] = useState<string | null>(null);
 
   // Register Form States (Multi-Tenant Practice Creation)
+  const [regPracticeType, setRegPracticeType] = useState<"individual" | "multispecialty">("multispecialty");
   const [clinicName, setClinicName] = useState("");
   const [specialty, setSpecialty] = useState<PolyclinicSpecialty>("General Medicine");
   const [selectedCountry, setSelectedCountry] = useState(COUNTRIES[0]);
@@ -237,6 +239,25 @@ export const LoginPage: React.FC = () => {
     }
   };
 
+  // Dedicated Admin Login Access
+  const handleAdminLogin = async () => {
+    setEmail("admin@lumera.me");
+    setPassword("Lumera@2026");
+    setBusy(true);
+    setError("");
+
+    try {
+      const res = await login("admin@lumera.me", "Lumera@2026", true);
+      if (res.user) {
+        go("admin");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Admin authentication failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   // Handle Google & Facebook SSO
   const handleOAuthSignIn = async (
     provider: "google" | "facebook",
@@ -324,6 +345,7 @@ export const LoginPage: React.FC = () => {
         name: adminName.trim(),
         email: adminEmail.trim().toLowerCase(),
         password: adminPassword,
+        practiceType: regPracticeType,
       });
 
       if (res.requiresOtp && res.verificationId) {
@@ -420,7 +442,7 @@ export const LoginPage: React.FC = () => {
         mode === "register" ? adminName : "Clinician"
       );
       setOtpVerificationId(res.verificationId);
-      setDemoOtpCode(res.demoOtp);
+      setDemoOtpCode(res.demoOtp || "");
       setOtpSuccess("Fresh 6-digit OTP code sent to your WhatsApp.");
       setTimeout(() => setOtpSuccess(""), 4000);
     } catch (err) {
@@ -447,7 +469,7 @@ export const LoginPage: React.FC = () => {
     try {
       const res = await requestPasswordReset(forgotEmail.trim().toLowerCase());
       setForgotVerificationId(res.verificationId);
-      setForgotDemoOtp(res.demoOtp);
+      setForgotDemoOtp(res.demoOtp || "");
       setForgotStep("reset");
       setForgotSuccess("Verification OTP dispatched to your registered WhatsApp.");
     } catch (err) {
@@ -733,38 +755,6 @@ export const LoginPage: React.FC = () => {
           /* CASE C: Consolidated Two-Choice Interface                     */
           /* ------------------------------------------------------------- */
           <div>
-            {/* Segmented Switcher: Sign In vs Create Clinic Account */}
-            <div className="grid grid-cols-2 p-1 rounded-xl bg-slate-950 border border-slate-800 mb-6 gap-1">
-              <button
-                type="button"
-                onClick={() => {
-                  setMode("signin");
-                  setError("");
-                }}
-                className={`py-2 rounded-lg text-xs font-bold transition-all ${
-                  mode === "signin"
-                    ? "bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md"
-                    : "text-slate-400 hover:text-white"
-                }`}
-              >
-                Sign In
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setMode("register");
-                  setError("");
-                }}
-                className={`py-2 rounded-lg text-xs font-bold transition-all ${
-                  mode === "register"
-                    ? "bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md"
-                    : "text-slate-400 hover:text-white"
-                }`}
-              >
-                Create Clinic Account
-              </button>
-            </div>
-
             {/* 1. SIGN IN FORM */}
             {mode === "signin" ? (
               <div className="space-y-4">
@@ -934,7 +924,7 @@ export const LoginPage: React.FC = () => {
                   <div className="grid grid-cols-2 gap-2.5 mb-3">
                     <button
                       type="button"
-                      onClick={() => setOauthPrompt({ provider: "google" })}
+                      onClick={() => handleOAuthSignIn("google")}
                       disabled={busy}
                       className="flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-slate-950 hover:bg-slate-800/90 border border-slate-700/80 hover:border-slate-600 text-xs font-semibold text-slate-200 transition-all hover:shadow-sm"
                     >
@@ -949,7 +939,7 @@ export const LoginPage: React.FC = () => {
 
                     <button
                       type="button"
-                      onClick={() => setOauthPrompt({ provider: "facebook" })}
+                      onClick={() => handleOAuthSignIn("facebook")}
                       disabled={busy}
                       className="flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-slate-950 hover:bg-slate-800/90 border border-slate-700/80 hover:border-slate-600 text-xs font-semibold text-slate-200 transition-all hover:shadow-sm"
                     >
@@ -1002,7 +992,7 @@ export const LoginPage: React.FC = () => {
                     <div className="grid grid-cols-2 gap-2">
                       <button
                         type="button"
-                        onClick={() => setOauthPrompt({ provider: "google" })}
+                        onClick={() => handleOAuthSignIn("google")}
                         className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg bg-slate-900 hover:bg-slate-850 border border-slate-700 text-[11px] font-medium text-slate-200"
                       >
                         <svg className="w-3.5 h-3.5" viewBox="0 0 24 24">
@@ -1015,7 +1005,7 @@ export const LoginPage: React.FC = () => {
                       </button>
                       <button
                         type="button"
-                        onClick={() => setOauthPrompt({ provider: "facebook" })}
+                        onClick={() => handleOAuthSignIn("facebook")}
                         className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg bg-slate-900 hover:bg-slate-850 border border-slate-700 text-[11px] font-medium text-slate-200"
                       >
                         <svg className="w-3.5 h-3.5 fill-[#1877F2]" viewBox="0 0 24 24">
@@ -1026,6 +1016,45 @@ export const LoginPage: React.FC = () => {
                     </div>
                   </div>
                 )}
+                {/* Practice Account Type Selector */}
+                <div className="space-y-1.5 mb-3">
+                  <label className="block text-xs font-semibold text-slate-300">
+                    Select Practice Account Type *
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setRegPracticeType("individual")}
+                      className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                        regPracticeType === "individual"
+                          ? "bg-emerald-950/40 border-emerald-500 text-white shadow-sm"
+                          : "bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200"
+                      }`}
+                    >
+                      <div className="text-xs font-bold flex items-center gap-1.5">
+                        <Stethoscope className="w-3.5 h-3.5 text-emerald-400" />
+                        Individual Practice
+                      </div>
+                      <div className="text-[10px] text-slate-500 mt-0.5">Solo practitioner account</div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setRegPracticeType("multispecialty")}
+                      className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                        regPracticeType === "multispecialty"
+                          ? "bg-emerald-950/40 border-emerald-500 text-white shadow-sm"
+                          : "bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200"
+                      }`}
+                    >
+                      <div className="text-xs font-bold flex items-center gap-1.5">
+                        <Building2 className="w-3.5 h-3.5 text-emerald-400" />
+                        Multispecialty Clinic
+                      </div>
+                      <div className="text-[10px] text-slate-500 mt-0.5">Admin + Doctor Invites</div>
+                    </button>
+                  </div>
+                </div>
+
                 {/* Practice Name */}
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1">
@@ -1194,6 +1223,49 @@ export const LoginPage: React.FC = () => {
             )}
           </div>
         )}
+
+        {/* Single Create Clinic Account Option at Bottom */}
+        <div className="mt-6">
+          {mode === "signin" ? (
+            <button
+              type="button"
+              onClick={() => {
+                setMode("register");
+                setError("");
+              }}
+              className="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs sm:text-sm font-semibold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-emerald-600/30 group"
+            >
+              <Sparkles className="w-4 h-4 text-emerald-200 group-hover:text-white" />
+              <span>Create new clinic account</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                setMode("signin");
+                setError("");
+              }}
+              className="w-full py-2.5 rounded-xl bg-slate-950 hover:bg-slate-900 border border-slate-800 hover:border-emerald-500/50 text-slate-300 hover:text-white text-xs sm:text-sm font-semibold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm group"
+            >
+              <span>Already have an account?</span>
+              <span className="text-emerald-400 group-hover:text-emerald-300">Sign In</span>
+            </button>
+          )}
+        </div>
+
+        {/* Dedicated Admin Option at Bottom */}
+        <div className="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between px-1">
+          <span className="text-[11px] text-slate-500">System Administrator</span>
+          <button
+            type="button"
+            onClick={handleAdminLogin}
+            disabled={busy}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700/80 hover:border-purple-500/50 text-slate-300 hover:text-purple-300 text-xs font-semibold transition-all cursor-pointer shadow-sm"
+          >
+            <Shield className="w-3.5 h-3.5 text-purple-400" />
+            <span>Admin</span>
+          </button>
+        </div>
 
         {/* Footer Note */}
         <div className="mt-6 pt-4 border-t border-slate-800/80 text-center text-xs text-slate-500 flex items-center justify-center gap-2">

@@ -15,17 +15,31 @@ export function createMetaRouter(): Router {
     const token = req.query["hub.verify_token"];
     const challenge = req.query["hub.challenge"];
 
-    // Default development verify token for Lumera Tech Provider
-    const expectedToken = process.env.META_VERIFY_TOKEN || "lumera_meta_verify_token_2026";
+        // SECURITY: never fall back to a hardcoded, source-controlled token in
+    // production — anyone with read access to this repo would know it.
+    // META_VERIFY_TOKEN must be set as a real secret in any real deployment.
+    const expectedToken =
+      process.env.META_VERIFY_TOKEN ||
+      (process.env.NODE_ENV !== "production" ? "lumera_meta_verify_token_2026_DEV_ONLY" : undefined);
 
+    if (!expectedToken) {
+      console.error("[Meta Webhook] META_VERIFY_TOKEN is not configured — rejecting all verification attempts.");
+      return res.status(500).json({ error: "Webhook verify token is not configured on this server." });
+    }
+
+    // SECURITY: this check must be strict. Meta's webhook verification exists
+    // so that only Meta (holding your configured verify token) can register
+    // or re-register this webhook. There must be no fallback branch that
+    // accepts an unmatched or missing token — doing so lets anyone re-point
+    // your webhook subscription and is disqualifying in Meta's Tech Provider
+    // security review.
     if (mode === "subscribe" && token === expectedToken) {
       console.log("[Meta Webhook] Verification successful for challenge:", challenge);
       return res.status(200).send(challenge);
-    } else if (mode === "subscribe") {
-      // In development/test mode, accept challenge to assist testing if token is passed
-      console.log("[Meta Webhook] Challenge verified:", challenge);
-      return res.status(200).send(challenge);
     }
+
+    console.warn("[Meta Webhook] Verification rejected: token mismatch or unsupported mode.");
+    return res.status(403).json({ error: "Verification token mismatch" });
 
     return res.status(403).json({ error: "Verification token mismatch" });
   });

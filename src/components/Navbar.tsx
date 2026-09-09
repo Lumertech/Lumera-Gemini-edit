@@ -216,7 +216,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             className="hidden sm:flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-xs text-slate-200 hover:text-white"
           >
             <Shield className="w-3.5 h-3.5 text-blue-300" />
-            Admin CMS
+            Admin
           </button>
         )}
         <button
