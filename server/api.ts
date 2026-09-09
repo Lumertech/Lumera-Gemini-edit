@@ -403,8 +403,9 @@ export function createApiRouter(): Router {
       if (!user && record.phone) {
         const rawDigits = record.phone.replace(/\D/g, "");
         const last10 = rawDigits.slice(-10);
-        user = (getDb().prepare("SELECT * FROM users WHERE phone LIKE ? OR phone = ?").get(`%${last10}%`, record.phone) ||
-          getDb().prepare("SELECT * FROM users WHERE role IN ('doctor', 'CLINIC_ADMIN') LIMIT 1").get()) as unknown as DbUser | undefined;
+        user = getDb()
+          .prepare("SELECT * FROM users WHERE phone LIKE ? OR phone = ?")
+          .get(`%${last10}%`, record.phone) as unknown as DbUser | undefined;
       }
 
       if (!user) {
@@ -487,8 +488,8 @@ export function createApiRouter(): Router {
         userId = `user-${crypto.randomUUID().slice(0, 8)}`;
         hprId = hprId || `IN-HPR-${Math.floor(10000000 + Math.random() * 90000000)}`;
         getDb().prepare(`
-          INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, clinic_name, avatar_url, whatsapp_verified, hpr_id, hfr_id, onboarding_completed, last_login, created_at)
-          VALUES (?, ?, ?, ?, ?, 'CLINIC_ADMIN', 'active', ?, ?, ?, 1, ?, ?, 0, ?, ?)
+          INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, clinic_name, avatar_url, whatsapp_verified, hpr_id, hfr_id, onboarding_completed, practice_type, specialty, last_login, created_at)
+          VALUES (?, ?, ?, ?, ?, 'CLINIC_ADMIN', 'active', ?, ?, ?, 1, ?, ?, 0, 'individual', ?, ?, ?)
         `).run(
           userId,
           tenantId,
@@ -500,6 +501,7 @@ export function createApiRouter(): Router {
           avatarUrl,
           hprId,
           hfrId,
+          specialty,
           now,
           now
         );
