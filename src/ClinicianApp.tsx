@@ -17,11 +17,12 @@ import { ClinicTeamManager } from './components/ClinicTeamManager';
 import { GeminiAssistant } from './components/GeminiAssistant';
 import { Reception } from './components/Reception';
 import { DhisMeter } from './components/dhis/DhisMeter';
+import { WelcomeSetupDashboard } from './components/WelcomeSetupDashboard';
+import { ClinicProfileSettings } from './components/ClinicProfileSettings';
 import { 
   MOCK_DOCTORS, 
   MOCK_PATIENTS, 
   MOCK_APPOINTMENTS, 
-  DEFAULT_CLINIC_SETTINGS 
 } from './data/clinicalData';
 import { 
   Patient, 
@@ -34,18 +35,27 @@ import {
 } from './types';
 import { apiFetch } from './api/http';
 import { useAuth } from './auth/AuthContext';
+import {
+  UNASSIGNED_PATIENT,
+  clinicSettingsFromSession,
+  consumeWelcomeDashboard,
+  doctorFromUser,
+  isPolyclinicPractice,
+} from './lib/sessionWorkspace';
 
 export default function ClinicianApp() {
   const { user } = useAuth();
-  // Default landing view: OPD Queue & Vitals so clinician starts from live patient queue
-  const [currentView, setCurrentView] = useState<NavView>('queue');
-  const [currentDoctor, setCurrentDoctor] = useState<Doctor>(MOCK_DOCTORS[0]);
-  const [currentPatient, setCurrentPatient] = useState<Patient>(MOCK_PATIENTS[0]);
+  const demoWorkspace = Boolean(user?.isDemoWorkspace);
+  const sessionDoctor = doctorFromUser(user);
+  const showWelcomeInitially = consumeWelcomeDashboard();
+  const [currentView, setCurrentView] = useState<NavView>(showWelcomeInitially ? 'welcome' : 'queue');
+  const [currentDoctor, setCurrentDoctor] = useState<Doctor>(demoWorkspace ? MOCK_DOCTORS[0] : sessionDoctor);
+  const [currentPatient, setCurrentPatient] = useState<Patient>(demoWorkspace ? MOCK_PATIENTS[0] : UNASSIGNED_PATIENT);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   
-  const [patients, setPatients] = useState<Patient[]>(MOCK_PATIENTS);
-  const [doctors, setDoctors] = useState<Doctor[]>(MOCK_DOCTORS);
-  const [appointments, setAppointments] = useState<Appointment[]>(MOCK_APPOINTMENTS);
+  const [patients, setPatients] = useState<Patient[]>(demoWorkspace ? MOCK_PATIENTS : []);
+  const [doctors, setDoctors] = useState<Doctor[]>(demoWorkspace ? MOCK_DOCTORS : [sessionDoctor]);
+  const [appointments, setAppointments] = useState<Appointment[]>(demoWorkspace ? MOCK_APPOINTMENTS : []);
   const [prescriptions, setPrescriptions] = useState<Prescription[]>([]);
   const [activeSoapData, setActiveSoapData] = useState<SoapNote | null>(null);
   const [selectedSpecialty, setSelectedSpecialty] = useState<PolyclinicSpecialty | 'All'>('All');
@@ -54,27 +64,73 @@ export default function ClinicianApp() {
   // Specialty locking enforcement for doctor accounts
   const isSpecialtyLocked = user?.role === 'doctor' || Boolean(user?.specialty) || user?.practiceType === 'individual';
   const lockedSpecialty = user?.specialty || (user?.role === 'doctor' ? currentDoctor.specialty : undefined);
-
-  // Bind active clinician profile to logged-in user specialty if specified
-  useEffect(() => {
-    if (user?.specialty) {
-      const match = doctors.find(
-        (d) => d.specialty.toLowerCase().includes(user.specialty!.toLowerCase())
-      );
-      if (match) setCurrentDoctor(match);
-    }
-  }, [user?.specialty, doctors]);
+  const clinicSettings = clinicSettingsFromSession(user, currentDoctor);
 
   useEffect(() => {
+    if (!user?.id) return;
+
+    const bindDoctor = (list: Doctor[]) => {
+      const mine =
+        list.find((d) => d.userId && d.userId === user.id) ||
+        list.find((d) => d.email && user.email && d.email.toLowerCase() === user.email.toLowerCase());
+      if (mine) {
+        setCurrentDoctor(mine);
+        return;
+      }
+      if (user.isDemoWorkspace && list.length) {
+        setCurrentDoctor(list[0]);
+        return;
+      }
+      setCurrentDoctor(doctorFromUser(user));
+    };
+
     apiFetch<{ doctors: Doctor[] }>('/api/doctors')
       .then((d) => {
-        if (d.doctors?.length) {
-          setDoctors(d.doctors as Doctor[]);
-          setCurrentDoctor((prev) => d.doctors.find((x) => x.id === prev.id) || d.doctors[0]);
+        const list = (d.doctors || []) as Doctor[];
+        if (list.length) {
+          setDoctors(list);
+          bindDoctor(list);
+        } else {
+          const fallback = doctorFromUser(user);
+          setDoctors([fallback]);
+          setCurrentDoctor(fallback);
         }
       })
-      .catch(() => undefined);
-  }, []);
+      .catch(() => {
+        const fallback = doctorFromUser(user);
+        setDoctors([fallback]);
+        setCurrentDoctor(fallback);
+      });
+
+    apiFetch<{ patients: Patient[] }>('/api/patients')
+      .then((d) => {
+        if (Array.isArray(d.patients)) {
+          setPatients(d.patients);
+          if (d.patients.length) {
+            setCurrentPatient((prev) => (prev.id ? d.patients.find((p) => p.id === prev.id) || d.patients[0] : d.patients[0]));
+          } else if (!user.isDemoWorkspace) {
+            setPatients([]);
+            setCurrentPatient(UNASSIGNED_PATIENT);
+          }
+        }
+      })
+      .catch(() => {
+        if (!user.isDemoWorkspace) {
+          setPatients([]);
+          setCurrentPatient(UNASSIGNED_PATIENT);
+        }
+      });
+
+    apiFetch<{ appointments: Appointment[] }>('/api/appointments')
+      .then((d) => {
+        if (Array.isArray(d.appointments)) {
+          setAppointments(d.appointments);
+        }
+      })
+      .catch(() => {
+        if (!user.isDemoWorkspace) setAppointments([]);
+      });
+  }, [user?.id, user?.isDemoWorkspace, user?.email]);
 
   // SAFETY: the sidebar's patient switcher is intentionally always visible
   // (a receptionist may need to jump between patients quickly), but it must
@@ -152,10 +208,15 @@ export default function ClinicianApp() {
 
   const userRole = user?.role || 'doctor';
   let allowedViews = ROLE_VISIBLE_VIEWS[userRole] || ROLE_VISIBLE_VIEWS.doctor;
-  if (user?.practiceType === 'individual') {
-    allowedViews = allowedViews.filter(v => v !== 'team');
+  if (!isPolyclinicPractice(user)) {
+    allowedViews = allowedViews.filter(v => v !== 'team' && v !== 'polyclinic');
   }
-  const isViewAllowed = allowedViews.includes(currentView) || currentView === 'opd-queue' || currentView === 'smart-rx';
+  const isViewAllowed =
+    allowedViews.includes(currentView) ||
+    currentView === 'opd-queue' ||
+    currentView === 'smart-rx' ||
+    currentView === 'welcome' ||
+    currentView === 'settings';
 
   return (
     <div className="h-screen w-screen overflow-hidden flex flex-col bg-slate-100 text-slate-900 font-sans selection:bg-blue-600 selection:text-white">
@@ -205,6 +266,23 @@ export default function ClinicianApp() {
             </div>
           ) : (
             <>
+              {currentView === 'welcome' && (
+                <WelcomeSetupDashboard onSelectView={setCurrentView} />
+              )}
+
+              {currentView === 'settings' && (
+                <ClinicProfileSettings
+                  currentDoctor={currentDoctor}
+                  onDoctorUpdated={(updated) => {
+                    setCurrentDoctor(updated);
+                    setDoctors((prev) => {
+                      const exists = prev.some((d) => d.id === updated.id);
+                      return exists ? prev.map((d) => (d.id === updated.id ? updated : d)) : [updated, ...prev];
+                    });
+                  }}
+                />
+              )}
+
               {currentView === 'reception' && (
             <Reception
               patients={patients}
@@ -254,16 +332,32 @@ export default function ClinicianApp() {
           )}
 
           {currentView === 'rx' && (
+            currentPatient.id ? (
             <PrescriptionWriter
               currentPatient={currentPatient}
               currentDoctor={currentDoctor}
               initialSoapData={activeSoapData}
               onSavePrescription={handleSavePrescription}
-              clinicSettings={DEFAULT_CLINIC_SETTINGS}
+              clinicSettings={clinicSettings}
               isSpecialtyLocked={isSpecialtyLocked}
               lockedSpecialty={lockedSpecialty}
               onProceedToBilling={() => setCurrentView('billing')}
             />
+            ) : (
+              <div className="max-w-lg mx-auto my-auto bg-white border border-slate-200 rounded-2xl p-8 text-center shadow-sm">
+                <h2 className="text-lg font-bold text-slate-900 mb-2">Select a patient to start the consult</h2>
+                <p className="text-sm text-slate-600 mb-5">
+                  This clinic session has no active patient yet. Register a patient at OPD Reception, then return to Smart Rx Studio.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setCurrentView('reception')}
+                  className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold"
+                >
+                  Add Patients
+                </button>
+              </div>
+            )
           )}
 
           {currentView === 'queue' && (
@@ -376,7 +470,7 @@ export default function ClinicianApp() {
             <BillingManager
               currentPatient={currentPatient}
               currentDoctor={currentDoctor}
-              clinicSettings={DEFAULT_CLINIC_SETTINGS}
+              clinicSettings={clinicSettings}
               activePrescription={prescriptions.find((p) => p.patientId === currentPatient.id) || null}
               onPaymentSuccess={(_invoiceNumber, _amount) => {
                 setAppointments((prev) =>

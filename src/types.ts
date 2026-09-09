@@ -19,6 +19,7 @@ export interface AppUser {
   onboardingCompleted?: boolean;
   specialty?: string;
   practiceType?: 'individual' | 'polyclinic';
+  isDemoWorkspace?: boolean;
 }
 
 export interface Tenant {
@@ -118,6 +119,9 @@ export interface Doctor {
   phone: string;
   email: string;
   active: boolean;
+  signatureUrl?: string;
+  slotDurationMinutes?: number;
+  rxTemplate?: 'classic' | 'compact' | 'detailed';
 }
 
 export interface Patient {

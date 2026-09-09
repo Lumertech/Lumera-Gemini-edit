@@ -6,9 +6,12 @@ import { createWhatsAppRouter } from "./whatsapp.ts";
 import { createMetaRouter } from "./meta.ts";
 import { createAbdmRouter } from "./abdm.ts";
 import {
+  DEMO_TENANT_ID,
   getDb,
+  isDemoWorkspaceUser,
   mapDoctor,
   mapSubscription,
+  normalizePracticeType,
   publicUser,
   seedSubscriptionsIfMissing,
   writeAudit,
@@ -516,21 +519,19 @@ export function createApiRouter(): Router {
         `).run(tenantId, practiceName, updatedPhone || phone, now, hprId, hfrId, userId);
       }
 
-      // Ensure Doctor entry exists for EHR suite
+      // Ensure Doctor entry exists for EHR suite (blank credentials until onboarding)
       const existingDoc = getDb().prepare("SELECT id FROM doctors WHERE user_id = ?").get(userId);
       if (!existingDoc) {
         const docId = `doc-${crypto.randomUUID().slice(0, 8)}`;
         getDb().prepare(`
-          INSERT INTO doctors (id, user_id, name, qualification, reg_number, specialty, experience_years, consultation_fee, opd_room, available_days, opd_timing, avatar_url, bio, hpr_id, phone, email, active)
-          VALUES (?, ?, ?, 'MBBS, MD', ?, ?, 12, 800, 'Suite 101 - Director Office', '["Mon","Tue","Wed","Thu","Fri","Sat"]', '09:00 AM - 05:00 PM', ?, ?, ?, ?, ?, 1)
+          INSERT INTO doctors (id, user_id, name, qualification, reg_number, specialty, experience_years, consultation_fee, opd_room, available_days, opd_timing, avatar_url, bio, hpr_id, phone, email, signature_url, slot_duration_minutes, rx_template, active)
+          VALUES (?, ?, ?, '', '', ?, 0, 0, '', '["Mon","Tue","Wed","Thu","Fri","Sat"]', '', ?, '', ?, ?, ?, '', 15, 'classic', 1)
         `).run(
           docId,
           userId,
           name.startsWith("Dr.") ? name : `Dr. ${name}`,
-          `MED-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}`,
           specialty,
           avatarUrl,
-          `Practice Director & Lead Specialist at ${practiceName}`,
           hprId,
           updatedPhone || phone,
           email
@@ -611,8 +612,8 @@ export function createApiRouter(): Router {
     const email = String(req.body?.email || "").trim().toLowerCase();
     const password = String(req.body?.password || "");
     const avatarUrl = String(req.body?.avatarUrl || "");
-    const practiceType = String(req.body?.practiceType || "individual").trim();
-    const assignedRole = practiceType === "multispecialty" ? "CLINIC_ADMIN" : "doctor";
+    const practiceType = normalizePracticeType(req.body?.practiceType);
+    const assignedRole = practiceType === "polyclinic" ? "CLINIC_ADMIN" : "doctor";
 
     if (!practiceName || !phone || !name || !email) {
       return res.status(400).json({ error: "Practice Name, Director Name, Email, and WhatsApp Phone are required." });
@@ -646,9 +647,9 @@ export function createApiRouter(): Router {
     const passwordHash = password ? hashPassword(password) : hashPassword("Lumera@2026");
 
     getDb().prepare(`
-      INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, clinic_name, avatar_url, whatsapp_verified, hpr_id, hfr_id, onboarding_completed, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, 0, ?, ?, 0, ?)
-    `).run(userId, tenantId, email, passwordHash, name, assignedRole, phone, practiceName, avatarUrl, hprId, hfrId, now);
+      INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, clinic_name, avatar_url, whatsapp_verified, hpr_id, hfr_id, onboarding_completed, practice_type, specialty, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, 0, ?, ?, 0, ?, ?, ?)
+    `).run(userId, tenantId, email, passwordHash, name, assignedRole, phone, practiceName, avatarUrl, hprId, hfrId, practiceType, specialty, now);
 
     // 3. DHIS TRANSACTIONS INITIALIZATION (0/100 threshold for current month):
     const dhisId = `dhis-${crypto.randomUUID().slice(0, 8)}`;
@@ -659,19 +660,17 @@ export function createApiRouter(): Router {
       VALUES (?, ?, 0, 100, ?, 'active', ?, ?)
     `).run(dhisId, tenantId, currentMonth, now, now);
 
-    // 4. Clinical Doctor Profile for Doctor EHR Suite:
+    // 4. Clinical Doctor Profile — empty credentials until the onboarding wizard is completed.
     const docId = `doc-${crypto.randomUUID().slice(0, 8)}`;
     getDb().prepare(`
-      INSERT INTO doctors (id, user_id, name, qualification, reg_number, specialty, experience_years, consultation_fee, opd_room, available_days, opd_timing, avatar_url, bio, hpr_id, phone, email, active)
-      VALUES (?, ?, ?, 'MBBS, MD', ?, ?, 12, 800, 'Suite 101 - Director Office', '["Mon","Tue","Wed","Thu","Fri","Sat"]', '09:00 AM - 05:00 PM', ?, ?, ?, ?, ?, 1)
+      INSERT INTO doctors (id, user_id, name, qualification, reg_number, specialty, experience_years, consultation_fee, opd_room, available_days, opd_timing, avatar_url, bio, hpr_id, phone, email, signature_url, slot_duration_minutes, rx_template, active)
+      VALUES (?, ?, ?, '', '', ?, 0, 0, '', '["Mon","Tue","Wed","Thu","Fri","Sat"]', '', ?, '', ?, ?, ?, '', 15, 'classic', 1)
     `).run(
       docId,
       userId,
       name.startsWith("Dr.") ? name : `Dr. ${name}`,
-      `MED-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}`,
       specialty,
       avatarUrl,
-      `Practice Director & Lead Specialist at ${practiceName}`,
       hprId,
       phone,
       email
@@ -756,58 +755,90 @@ export function createApiRouter(): Router {
   // Guided Onboarding Completion: saves clinician doctor profile and sets onboarding_completed = 1
   api.post("/auth/complete-onboarding", requireAuth, (req: Request, res: Response) => {
     const userId = req.user!.id;
+    const doctorName = req.body?.doctorName ? String(req.body.doctorName).trim() : undefined;
+    const clinicName = req.body?.clinicName ? String(req.body.clinicName).trim() : undefined;
     const specialty = req.body?.specialty ? String(req.body.specialty).trim() : undefined;
     const regNumber = req.body?.regNumber ? String(req.body.regNumber).trim() : undefined;
-    const consultationFee = req.body?.consultationFee ? Number(req.body.consultationFee) : undefined;
+    const consultationFee = req.body?.consultationFee !== undefined && req.body?.consultationFee !== null
+      ? Number(req.body.consultationFee)
+      : undefined;
     const qualification = req.body?.qualification ? String(req.body.qualification).trim() : undefined;
     const opdRoom = req.body?.opdRoom ? String(req.body.opdRoom).trim() : undefined;
     const opdTiming = req.body?.opdTiming ? String(req.body.opdTiming).trim() : undefined;
-    const practiceType = req.body?.practiceType ? String(req.body.practiceType).trim() : undefined;
+    const practiceType = req.body?.practiceType ? normalizePracticeType(req.body.practiceType) : undefined;
+    const signatureUrl = req.body?.signatureUrl ? String(req.body.signatureUrl) : undefined;
+    const slotDurationMinutes = req.body?.slotDurationMinutes !== undefined && req.body?.slotDurationMinutes !== null
+      ? Number(req.body.slotDurationMinutes)
+      : undefined;
+    const rxTemplate = req.body?.rxTemplate ? String(req.body.rxTemplate).trim() : undefined;
 
-    if (practiceType) {
-      getDb().prepare("UPDATE users SET onboarding_completed = 1, practice_type = ? WHERE id = ?").run(practiceType, userId);
-    } else {
-      getDb().prepare("UPDATE users SET onboarding_completed = 1 WHERE id = ?").run(userId);
+    getDb().prepare(`
+      UPDATE users
+      SET onboarding_completed = 1,
+          practice_type = COALESCE(?, practice_type),
+          specialty = COALESCE(?, specialty),
+          name = COALESCE(?, name),
+          clinic_name = COALESCE(?, clinic_name)
+      WHERE id = ?
+    `).run(practiceType || null, specialty || null, doctorName || null, clinicName || null, userId);
+
+    if (clinicName && req.user?.tenantId) {
+      getDb().prepare("UPDATE tenants SET name = ?, updated_at = ? WHERE id = ?").run(
+        clinicName,
+        new Date().toISOString(),
+        req.user.tenantId
+      );
     }
 
     const existingDoc = getDb().prepare("SELECT id FROM doctors WHERE user_id = ?").get(userId) as { id: string } | undefined;
     if (existingDoc) {
       getDb().prepare(`
         UPDATE doctors
-        SET specialty = COALESCE(?, specialty),
+        SET name = COALESCE(?, name),
+            specialty = COALESCE(?, specialty),
             reg_number = COALESCE(?, reg_number),
             consultation_fee = COALESCE(?, consultation_fee),
             qualification = COALESCE(?, qualification),
             opd_room = COALESCE(?, opd_room),
-            opd_timing = COALESCE(?, opd_timing)
+            opd_timing = COALESCE(?, opd_timing),
+            signature_url = COALESCE(?, signature_url),
+            slot_duration_minutes = COALESCE(?, slot_duration_minutes),
+            rx_template = COALESCE(?, rx_template)
         WHERE id = ?
       `).run(
+        doctorName || null,
         specialty || null,
         regNumber || null,
-        consultationFee || null,
+        consultationFee ?? null,
         qualification || null,
         opdRoom || null,
         opdTiming || null,
+        signatureUrl || null,
+        slotDurationMinutes ?? null,
+        rxTemplate || null,
         existingDoc.id
       );
     } else {
       const docId = `doc-${crypto.randomUUID().slice(0, 8)}`;
       getDb().prepare(`
-        INSERT INTO doctors (id, user_id, name, qualification, reg_number, specialty, experience_years, consultation_fee, opd_room, available_days, opd_timing, avatar_url, bio, hpr_id, phone, email, active)
-        VALUES (?, ?, ?, ?, ?, ?, 10, ?, ?, '["Mon","Tue","Wed","Thu","Fri","Sat"]', ?, '', 'Clinical Director', ?, ?, ?, 1)
+        INSERT INTO doctors (id, user_id, name, qualification, reg_number, specialty, experience_years, consultation_fee, opd_room, available_days, opd_timing, avatar_url, bio, hpr_id, phone, email, signature_url, slot_duration_minutes, rx_template, active)
+        VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, '["Mon","Tue","Wed","Thu","Fri","Sat"]', ?, '', '', ?, ?, ?, ?, ?, ?, 1)
       `).run(
         docId,
         userId,
-        req.user!.name.startsWith("Dr.") ? req.user!.name : `Dr. ${req.user!.name}`,
-        qualification || "MBBS, MD",
-        regNumber || `MED-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}`,
+        doctorName || (req.user!.name.startsWith("Dr.") ? req.user!.name : `Dr. ${req.user!.name}`),
+        qualification || "",
+        regNumber || "",
         specialty || "General Medicine",
-        consultationFee || 600,
-        opdRoom || "OPD Suite 101",
-        opdTiming || "09:00 AM - 05:00 PM",
-        req.user!.hprId || `IN-HPR-${Math.floor(10000000 + Math.random() * 90000000)}`,
+        consultationFee || 0,
+        opdRoom || "",
+        opdTiming || "",
+        req.user!.hprId || "",
         req.user!.phone || "",
-        req.user!.email || ""
+        req.user!.email || "",
+        signatureUrl || "",
+        slotDurationMinutes || 15,
+        rxTemplate || "classic"
       );
     }
 
@@ -966,20 +997,42 @@ export function createApiRouter(): Router {
     res.json(row);
   });
 
-  api.get("/doctors", (_req, res) => {
-    const rows = getDb().prepare("SELECT * FROM doctors ORDER BY name").all() as Record<string, unknown>[];
+  api.get("/doctors", (req, res) => {
+    const tenantId = req.user?.tenantId;
+    if (!tenantId) {
+      return res.json({ doctors: [] });
+    }
+    const rows = getDb()
+      .prepare(
+        `SELECT d.* FROM doctors d
+         INNER JOIN users u ON u.id = d.user_id
+         WHERE u.tenant_id = ?
+         ORDER BY d.name`
+      )
+      .all(tenantId) as Record<string, unknown>[];
     res.json({ doctors: rows.map(mapDoctor) });
   });
 
-  api.get("/clinic/team", requireAuth, requireRole(...CLINICIAN_ROLES), (_req, res) => {
+  api.get("/clinic/team", requireAuth, requireRole(...CLINICIAN_ROLES), (req, res) => {
+    const tenantId = req.user?.tenantId || "";
     const members = getDb()
       .prepare(
-        "SELECT * FROM users WHERE role IN ('doctor', 'receptionist', 'polyclinic_admin', 'CLINIC_ADMIN') ORDER BY name"
+        `SELECT * FROM users
+         WHERE role IN ('doctor', 'receptionist', 'polyclinic_admin', 'CLINIC_ADMIN')
+           AND tenant_id = ?
+         ORDER BY name`
       )
-      .all() as unknown as DbUser[];
-    const doctors = getDb().prepare("SELECT * FROM doctors ORDER BY name").all() as Record<string, unknown>[];
+      .all(tenantId) as unknown as DbUser[];
+    const doctors = getDb()
+      .prepare(
+        `SELECT d.* FROM doctors d
+         INNER JOIN users u ON u.id = d.user_id
+         WHERE u.tenant_id = ?
+         ORDER BY d.name`
+      )
+      .all(tenantId) as Record<string, unknown>[];
     const staff = getDb().prepare("SELECT * FROM staff ORDER BY name").all();
-    res.json({ members: members.map(publicUser), doctors: doctors.map(mapDoctor), staff });
+    res.json({ members: members.map(publicUser), doctors: doctors.map(mapDoctor), staff: tenantId === DEMO_TENANT_ID ? staff : [] });
   });
 
   api.post("/clinic/members", requireAuth, requireRole(...CLINIC_MANAGER_ROLES), (req, res) => {
@@ -1557,8 +1610,11 @@ export function createApiRouter(): Router {
   });
 
   // EMR Patients & Appointments live endpoints
-  api.get("/patients", (_req, res) => {
+  api.get("/patients", (req, res) => {
     try {
+      if (!req.user?.tenantId || !isDemoWorkspaceUser({ tenant_id: req.user.tenantId, id: req.user.id })) {
+        return res.json({ patients: [] });
+      }
       const rows = getDb().prepare("SELECT * FROM patients ORDER BY name ASC").all() as Record<string, unknown>[];
       const patients = rows.map((p) => ({
         id: p.id,
@@ -1603,6 +1659,9 @@ export function createApiRouter(): Router {
 
   api.get("/appointments", (req, res) => {
     try {
+      if (!req.user?.tenantId || !isDemoWorkspaceUser({ tenant_id: req.user.tenantId, id: req.user.id })) {
+        return res.json({ appointments: [] });
+      }
       const rows = getDb().prepare("SELECT * FROM appointments ORDER BY token_number ASC").all() as Record<string, unknown>[];
       const appointments = rows.map((a) => ({
         id: a.id,

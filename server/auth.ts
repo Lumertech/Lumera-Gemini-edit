@@ -42,6 +42,10 @@ export interface AuthUser {
   createdAt: string;
   clinicName?: string;
   hprId?: string;
+  onboardingCompleted?: boolean;
+  practiceType?: "individual" | "polyclinic";
+  specialty?: string;
+  isDemoWorkspace?: boolean;
 }
 
 declare global {

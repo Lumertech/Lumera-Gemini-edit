@@ -2,6 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import { apiFetch, setStoredToken } from "../api/http";
 import { AppUser, UserRole } from "../types";
 import { Surface } from "../nav/NavigationContext";
+import { needsOnboarding } from "../lib/sessionWorkspace";
 
 export interface LoginResult {
   requiresOtp?: boolean;
@@ -28,7 +29,22 @@ export interface RegisterClinicData {
   email: string;
   password?: string;
   avatarUrl?: string;
-  practiceType?: 'individual' | 'multispecialty';
+  practiceType?: "individual" | "multispecialty" | "polyclinic";
+}
+
+export interface OnboardingPayload {
+  doctorName?: string;
+  clinicName?: string;
+  specialty?: string;
+  regNumber?: string;
+  qualification?: string;
+  consultationFee?: number;
+  opdRoom?: string;
+  opdTiming?: string;
+  practiceType?: "individual" | "polyclinic" | "multispecialty";
+  signatureUrl?: string;
+  slotDurationMinutes?: number;
+  rxTemplate?: "classic" | "compact" | "detailed";
 }
 
 interface AuthContextValue {
@@ -39,7 +55,7 @@ interface AuthContextValue {
   sendWhatsAppOtp: (phone: string, email?: string, purpose?: string, name?: string) => Promise<{ ok: boolean; verificationId: string; phone: string; demoOtp?: string; expiresAt: string; message?: string }>;
   verifyWhatsAppOtp: (verificationId: string, otp: string, updatedPhone?: string) => Promise<{ ok: boolean; user?: AppUser; token?: string; tenantId?: string; message?: string }>;
   registerClinic: (data: RegisterClinicData) => Promise<{ requiresOtp: boolean; verificationId: string; phone: string; email: string; demoOtp?: string; tenantId?: string; userId?: string; hfrId?: string; hprId?: string; message: string }>;
-  completeOnboarding: (data: { specialty?: string; regNumber?: string; consultationFee?: number; qualification?: string; opdRoom?: string; opdTiming?: string }) => Promise<{ ok: boolean; user?: AppUser; message?: string }>;
+  completeOnboarding: (data: OnboardingPayload) => Promise<{ ok: boolean; user?: AppUser; message?: string }>;
   requestPasswordReset: (email: string) => Promise<{ ok: boolean; verificationId: string; phone: string; demoOtp?: string; message: string }>;
   resetPassword: (verificationId: string, otp: string, newPassword: string) => Promise<{ ok: boolean; message: string }>;
   logout: () => Promise<void>;
@@ -49,14 +65,31 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-export function homeSurfaceForRole(role?: UserRole, onboardingCompleted?: boolean): Surface {
+export function homeSurfaceForRole(role?: UserRole, onboardingCompleted?: boolean, isDemoWorkspace?: boolean): Surface {
   if (role === "patient") return "portal";
   if (role === "super_admin") return "admin";
   if (role === "doctor" || role === "receptionist" || role === "polyclinic_admin" || role === "CLINIC_ADMIN") {
-    if (onboardingCompleted === false) return "onboarding";
+    if (onboardingCompleted === false && !isDemoWorkspace) return "onboarding";
     return "app";
   }
   return "login";
+}
+
+export function allowedAuthNext(next: string | undefined, role: string): boolean {
+  if (!next) return false;
+  if (next === "admin") return role === "super_admin";
+  if (next === "onboarding") {
+    return ["doctor", "receptionist", "polyclinic_admin", "CLINIC_ADMIN"].includes(role);
+  }
+  if (next === "app") return ["doctor", "receptionist", "polyclinic_admin", "CLINIC_ADMIN"].includes(role);
+  if (next === "portal") return role === "patient";
+  return true;
+}
+
+export function destinationAfterAuth(user: AppUser, requested?: Surface): Surface {
+  if (needsOnboarding(user)) return "onboarding";
+  if (requested && allowedAuthNext(requested, user.role) && requested !== "onboarding") return requested;
+  return homeSurfaceForRole(user.role, user.onboardingCompleted, user.isDemoWorkspace);
 }
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -104,7 +137,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return d;
   }, []);
 
-  const completeOnboarding = useCallback(async (data: { specialty?: string; regNumber?: string; consultationFee?: number; qualification?: string; opdRoom?: string; opdTiming?: string }) => {
+  const completeOnboarding = useCallback(async (data: OnboardingPayload) => {
     const res = await apiFetch<{ ok: boolean; user?: AppUser; message?: string }>("/api/auth/complete-onboarding", {
       method: "POST",
       body: JSON.stringify(data),
@@ -199,7 +232,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       resetPassword,
       logout,
       setUserDirectly,
-      homeSurface: homeSurfaceForRole(user?.role, user?.onboardingCompleted),
+      homeSurface: homeSurfaceForRole(user?.role, user?.onboardingCompleted, user?.isDemoWorkspace),
     }),
     [user, loading, login, oauthLogin, sendWhatsAppOtp, verifyWhatsAppOtp, registerClinic, completeOnboarding, requestPasswordReset, resetPassword, logout, setUserDirectly]
   );
