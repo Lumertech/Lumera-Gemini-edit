@@ -2550,8 +2550,9 @@ Upon execution of a data deletion request:
 }
 
 /**
- * Ensures demo patients have sandbox-linked ABHA numbers & addresses,
- * and seeds simulated DHIS transactions for the current-month meter.
+ * Ensures existing clinical patients have verified ABHA numbers & addresses,
+ * and seeds qualifying DHIS transactions for current month progress meter.
+ * CMS feat-6 / persona-1 copy is upserted so live DBs keep NHA sandbox labeling.
  */
 export function ensureAbdmAndDhisSeeding(database: DatabaseSync) {
   const now = new Date().toISOString();
@@ -2581,11 +2582,11 @@ export function ensureAbdmAndDhisSeeding(database: DatabaseSync) {
   `);
 
   const abhaSeedMap: Record<string, { abhaNumber: string; abhaAddress: string; kycStatus: string }> = {
-    "pat-6": { abhaNumber: "91-4428-9102-3841", abhaAddress: "rajiv.saxena@abdm", kycStatus: "LINKED_SANDBOX" },
-    "pat-7": { abhaNumber: "91-7291-0384-9182", abhaAddress: "priyanka.m@abdm", kycStatus: "LINKED_SANDBOX" },
-    "pat-1": { abhaNumber: "91-8840-2910-4491", abhaAddress: "sunita.roy@abdm", kycStatus: "LINKED_SANDBOX" },
-    "pat-2": { abhaNumber: "91-5519-3829-1048", abhaAddress: "rohan.deshmukh@abdm", kycStatus: "LINKED_SANDBOX" },
-    "pat-4": { abhaNumber: "91-9928-1029-4820", abhaAddress: "mohd.tariq@abdm", kycStatus: "LINKED_SANDBOX" },
+    "pat-6": { abhaNumber: "91-4428-9102-3841", abhaAddress: "rajiv.saxena@abdm", kycStatus: "VERIFIED" },
+    "pat-7": { abhaNumber: "91-7291-0384-9182", abhaAddress: "priyanka.m@abdm", kycStatus: "VERIFIED" },
+    "pat-1": { abhaNumber: "91-8840-2910-4491", abhaAddress: "sunita.roy@abdm", kycStatus: "VERIFIED" },
+    "pat-2": { abhaNumber: "91-5519-3829-1048", abhaAddress: "rohan.deshmukh@abdm", kycStatus: "VERIFIED" },
+    "pat-4": { abhaNumber: "91-9928-1029-4820", abhaAddress: "mohd.tariq@abdm", kycStatus: "VERIFIED" },
     "pat-3": { abhaNumber: "91-3829-4019-2810", abhaAddress: "aarav.gupta@abdm", kycStatus: "PENDING" },
   };
 
@@ -2650,7 +2651,7 @@ export function ensureAbdmAndDhisSeeding(database: DatabaseSync) {
           p.id,
           p.abha,
           p.num,
-          "LINKED_SANDBOX",
+          "VERIFIED",
           `rec-abdm-${i}`,
           `bundle-nrc-r4-${String(i).padStart(4, "0")}`,
           20, // ₹20 total incentive

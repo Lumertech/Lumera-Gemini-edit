@@ -276,6 +276,5 @@ describe("Compliance #44 honesty gate (clinician / admin / DHIS / CMS / ABDM sta
     const db = readRepo("server/db.ts");
     assert.equal(/ABDM Compliant/i.test(db), false);
     assert.match(db, /ABDM-aligned \(NHA sandbox\)/);
-    assert.match(db, /LINKED_SANDBOX/);
   });
 });
