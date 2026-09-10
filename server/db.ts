@@ -4,6 +4,13 @@ import path from "node:path";
 import { hashPassword } from "./password.ts";
 import { scrubSeedBillingIds } from "./seed-branding.ts";
 import { CMS_POLICY_UPSERTS } from "./cms-policy-seed.ts";
+import {
+  DEMO_SPECIALTY_MATRIX,
+  assertPacksDifferByMoreThanLabel,
+  getSpecialtyPack,
+  resolveSpecialtyPack,
+  roleHomeForAccount,
+} from "./specialty-packs.ts";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const DB_PATH = path.join(DATA_DIR, "lumera.db");
@@ -37,6 +44,7 @@ export interface DbUser {
   onboarding_completed?: number;
   practice_type?: string;
   specialty?: string;
+  pack_id?: string;
 }
 
 export const DEMO_TENANT_ID = "tenant-lumera-main";
@@ -180,6 +188,8 @@ export function initDatabase(): DatabaseSync {
   seedIfEmpty(db);
   seedSubscriptionsIfMissing(db);
   seedClinicalAndWhatsAppIfMissing(db);
+  seedDemoSpecialtyPackUsers(db);
+  seedSubscriptionsIfMissing(db);
   assignDemoTenantToUnscopedClinicalRows(db);
   ensureMetaTechProviderAndPolicies(db);
   ensureAbdmAndDhisSeeding(db);
@@ -601,6 +611,12 @@ function migrate(database: DatabaseSync) {
   } catch {}
   try {
     database.exec("ALTER TABLE users ADD COLUMN specialty TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE users ADD COLUMN pack_id TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE doctors ADD COLUMN pack_id TEXT DEFAULT ''");
   } catch {}
   try {
     database.exec("ALTER TABLE doctors ADD COLUMN signature_url TEXT DEFAULT ''");
@@ -1457,6 +1473,7 @@ export function mapDoctor(row: Record<string, unknown>) {
     qualification: (row.qualification as string) || "",
     regNumber: (row.reg_number as string) || "",
     specialty: row.specialty as string,
+    packId: (row.pack_id as string) || resolveSpecialtyPack(String(row.specialty || ""))?.id || "",
     experienceYears: Number(row.experience_years || 0),
     consultationFee: Number(row.consultation_fee || 0),
     opdRoom: (row.opd_room as string) || "",
@@ -1558,6 +1575,8 @@ export function publicUser(user: DbUser) {
     onboardingCompleted: Boolean(user.onboarding_completed),
     practiceType: normalizePracticeType(user.practice_type),
     specialty: (user.specialty as string) || "",
+    packId: (user.pack_id as string) || resolveSpecialtyPack(String(user.specialty || ""))?.id || "",
+    ...roleHomeForAccount(user.role, (user.pack_id as string) || resolveSpecialtyPack(String(user.specialty || ""))?.id || ""),
     isDemoWorkspace: isDemoWorkspaceUser(user),
     gstin: billing.gstin,
     upiId: billing.upiId,
@@ -2294,6 +2313,123 @@ export function seedClinicalAndWhatsAppIfMissing(database: DatabaseSync) {
       now
     );
   }
+}
+
+function backfillPackIdsFromSpecialty(database: DatabaseSync) {
+  try {
+    const users = database.prepare("SELECT id, specialty, pack_id FROM users").all() as {
+      id: string;
+      specialty?: string;
+      pack_id?: string;
+    }[];
+    const updateUser = database.prepare("UPDATE users SET pack_id = ? WHERE id = ?");
+    for (const u of users) {
+      if (u.pack_id) continue;
+      const pack = resolveSpecialtyPack(u.specialty || "");
+      if (pack) updateUser.run(pack.id, u.id);
+    }
+  } catch {
+    /* pack_id column added in the same migrate() pass */
+  }
+  try {
+    const doctors = database.prepare("SELECT id, specialty, pack_id FROM doctors").all() as {
+      id: string;
+      specialty?: string;
+      pack_id?: string;
+    }[];
+    const updateDoc = database.prepare("UPDATE doctors SET pack_id = ? WHERE id = ?");
+    for (const d of doctors) {
+      if (d.pack_id) continue;
+      const pack = resolveSpecialtyPack(d.specialty || "");
+      if (pack) updateDoc.run(pack.id, d.id);
+    }
+  } catch {
+    /* pack_id column added in the same migrate() pass */
+  }
+}
+
+/**
+ * Demo UM-5 matrix on tenant-lumera-main only. Never copies these logins onto real tenants.
+ * Existing emails on a non-demo tenant are left untouched.
+ */
+export function seedDemoSpecialtyPackUsers(database: DatabaseSync) {
+  assertPacksDifferByMoreThanLabel();
+  backfillPackIdsFromSpecialty(database);
+
+  const demoTenant = database.prepare("SELECT id FROM tenants WHERE id = ?").get(DEMO_TENANT_ID) as
+    | { id: string }
+    | undefined;
+  if (!demoTenant) return;
+
+  const now = new Date().toISOString();
+  const passwordHash = hashPasswordSync("Lumera@2026");
+
+  const insertUser = database.prepare(`
+    INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, last_login, created_at, onboarding_completed, practice_type, specialty, pack_id)
+    VALUES (?, ?, ?, ?, ?, ?, 'active', ?, NULL, ?, 1, 'individual', ?, ?)
+  `);
+  const updateDemoUser = database.prepare(`
+    UPDATE users
+    SET tenant_id = ?, name = ?, role = ?, status = 'active', onboarding_completed = 1,
+        practice_type = 'individual', specialty = ?, pack_id = ?
+    WHERE id = ?
+  `);
+  const insertDoc = database.prepare(`
+    INSERT INTO doctors (id, user_id, name, qualification, reg_number, specialty, experience_years, consultation_fee, opd_room, available_days, opd_timing, phone, email, avatar_url, bio, hpr_id, pack_id, active)
+    VALUES (?, ?, ?, '', '', ?, 0, 0, '', '[]', '', ?, ?, '', '', '', ?, 1)
+  `);
+  const updateDoc = database.prepare(`
+    UPDATE doctors SET specialty = ?, pack_id = ?, name = ?, phone = ?, email = ? WHERE user_id = ?
+  `);
+
+  for (const row of DEMO_SPECIALTY_MATRIX) {
+    const pack = getSpecialtyPack(row.packId);
+    if (!pack) continue;
+    const existing = database.prepare("SELECT id, tenant_id FROM users WHERE email = ? OR id = ?").get(row.email, row.id) as
+      | { id: string; tenant_id?: string }
+      | undefined;
+    if (existing) {
+      if (existing.tenant_id && existing.tenant_id !== DEMO_TENANT_ID) {
+        continue;
+      }
+      updateDemoUser.run(DEMO_TENANT_ID, row.name, row.role, pack.defaultSpecialty, pack.id, existing.id);
+    } else {
+      insertUser.run(
+        row.id,
+        DEMO_TENANT_ID,
+        row.email,
+        passwordHash,
+        row.name,
+        row.role,
+        row.phone,
+        now,
+        pack.defaultSpecialty,
+        pack.id
+      );
+    }
+
+    const userId = existing?.id || row.id;
+    const docId = `doc-${row.id}`;
+    const existingDoc = database.prepare("SELECT id FROM doctors WHERE user_id = ? OR id = ?").get(userId, docId) as
+      | { id: string }
+      | undefined;
+    if (existingDoc) {
+      updateDoc.run(pack.defaultSpecialty, pack.id, row.name, row.phone, row.email, userId);
+    } else {
+      insertDoc.run(docId, userId, row.name, pack.defaultSpecialty, row.phone, row.email, pack.id);
+    }
+  }
+
+  // Keep the documented reception + admin demo logins on the demo tenant (do not invent extra tenants).
+  try {
+    database
+      .prepare(
+        `UPDATE users SET tenant_id = ?, onboarding_completed = 1, pack_id = COALESCE(NULLIF(pack_id, ''), '')
+         WHERE email IN ('admin@lumera.me', 'reception@lumera.me')
+           AND (tenant_id IS NULL OR tenant_id = '' OR tenant_id = ?)`
+      )
+      .run(DEMO_TENANT_ID, DEMO_TENANT_ID);
+  } catch {}
 }
 
 export function ensureMetaTechProviderAndPolicies(database: DatabaseSync) {
