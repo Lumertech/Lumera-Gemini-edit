@@ -146,7 +146,7 @@ export const LoginPage: React.FC = () => {
     }
     if (!user || busy || showOtpView) return;
     const dest = destinationAfterAuth(user, loginNext);
-    go(dest);
+    go(dest, { replace: true });
   }, [user, busy, showOtpView, loginNext, go]);
 
   useEffect(() => {
@@ -204,7 +204,7 @@ export const LoginPage: React.FC = () => {
         if (cancelled) return;
         stripOauthQuery();
         if (hydrated) {
-          go(destinationAfterAuth(hydrated, loginNext));
+          go(destinationAfterAuth(hydrated, loginNext), { replace: true });
         } else {
           setSuccessMsg("");
           setError("Facebook sign-in succeeded but the session could not be restored. Please try again.");
@@ -265,7 +265,7 @@ export const LoginPage: React.FC = () => {
         setShowOtpView(true);
       } else if (res.user) {
         const dest = destinationAfterAuth(res.user, loginNext);
-        go(dest);
+        go(dest, { replace: true });
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Authentication failed. Please check your credentials.");
@@ -318,7 +318,7 @@ export const LoginPage: React.FC = () => {
       const res = await login("doctor@lumera.me", "Lumera@2026", true);
       if (res.user) {
         const dest = destinationAfterAuth(res.user, loginNext);
-        go(dest);
+        go(dest, { replace: true });
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Demo sign in failed.");
@@ -413,7 +413,7 @@ export const LoginPage: React.FC = () => {
         setShowOtpView(true);
       } else if (res.user) {
         const dest = destinationAfterAuth(res.user, loginNext);
-        go(dest);
+        go(dest, { replace: true });
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "SSO Authorization failed. Please try again.");
@@ -517,7 +517,7 @@ export const LoginPage: React.FC = () => {
         setTimeout(() => {
           setShowOtpView(false);
           const dest = destinationAfterAuth(res.user!, loginNext);
-          go(dest);
+          go(dest, { replace: true });
         }, 500);
       } else {
         setOtpError(res.message || "Verification failed. Please check your code.");
@@ -606,7 +606,10 @@ export const LoginPage: React.FC = () => {
   };
 
   return (
-    <div className="h-full overflow-y-auto bg-slate-950 text-slate-100 flex items-center justify-center p-4 sm:p-6 relative font-sans">
+    <div
+      data-testid="public-login"
+      className="h-full overflow-y-auto bg-slate-950 text-slate-100 flex items-center justify-center p-4 sm:p-6 relative font-sans"
+    >
       {/* Background Glow Accents */}
       <div className="absolute -top-32 -left-32 w-80 h-80 bg-purple-600/15 rounded-full blur-3xl pointer-events-none" />
       <div className="absolute -bottom-32 -right-32 w-80 h-80 bg-indigo-600/15 rounded-full blur-3xl pointer-events-none" />
@@ -618,7 +621,7 @@ export const LoginPage: React.FC = () => {
         <div className="flex flex-col items-center text-center mb-6">
           <button
             type="button"
-            onClick={() => go("landing")}
+            onClick={() => go("landing", { explicitPublic: true })}
             className="flex items-center gap-3 group focus:outline-none mb-2"
           >
             <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-purple-500 via-indigo-600 to-blue-600 flex items-center justify-center shadow-lg shadow-purple-500/30 group-hover:scale-105 transition-transform p-1.5">

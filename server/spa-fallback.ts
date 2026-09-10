@@ -6,9 +6,14 @@ import express from "express";
 /** Public Meta App Review SPA routes that must 200 without login. */
 export const PUBLIC_SPA_PATHS = [
   "/",
+  "/landing",
+  "/login",
   "/privacy-policy",
   "/terms-of-service",
   "/data-deletion-instructions",
+  "/app",
+  "/admin",
+  "/dashboard",
 ] as const;
 
 export function isBackendPath(pathname: string): boolean {

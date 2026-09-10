@@ -62,7 +62,7 @@ export const AdminShell: React.FC = () => {
               Sign In as Admin
             </button>
             <button
-              onClick={() => go("landing")}
+              onClick={() => go("landing", { explicitPublic: true })}
               className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold transition-colors"
             >
               Public Site
@@ -130,7 +130,7 @@ export const AdminShell: React.FC = () => {
         <div className="p-4 border-t border-slate-700 space-y-2">
           <button
             type="button"
-            onClick={() => go("landing")}
+            onClick={() => go("landing", { explicitPublic: true })}
             className="w-full flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm text-slate-300 border border-slate-600 hover:bg-slate-700"
           >
             <Home className="w-4 h-4" /> Back to landing

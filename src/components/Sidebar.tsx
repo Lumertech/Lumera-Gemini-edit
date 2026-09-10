@@ -173,6 +173,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   return (
     <aside
+      data-testid="app-sidebar"
       className={`${
         isCollapsed ? 'w-16' : 'w-64'
       } flex-shrink-0 bg-slate-900 border-r border-slate-800 text-slate-300 flex flex-col justify-between transition-all duration-200 select-none z-20 overflow-hidden`}

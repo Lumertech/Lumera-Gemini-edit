@@ -1,16 +1,12 @@
-import React, { createContext, useCallback, useContext, useMemo, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import {
+  type AdminTab,
+  type Surface,
+  pathToNav,
+  surfaceToPath,
+} from "./surfaces";
 
-export type Surface = "landing" | "login" | "app" | "admin" | "portal" | "policy" | "legal" | "onboarding";
-export type AdminTab =
-  | "overview"
-  | "dhis"
-  | "users"
-  | "subscriptions"
-  | "meta"
-  | "site"
-  | "policies"
-  | "media"
-  | "audit";
+export type { AdminTab, Surface } from "./surfaces";
 
 export interface GoOptions {
   adminTab?: AdminTab;
@@ -18,6 +14,9 @@ export interface GoOptions {
   loginNext?: Surface;
   loginDemo?: boolean;
   loginMode?: "signin" | "register";
+  replace?: boolean;
+  /** Stay on the marketing site even if a session exists (`/landing`). */
+  explicitPublic?: boolean;
 }
 
 interface NavContextValue {
@@ -32,51 +31,21 @@ interface NavContextValue {
 
 const NavContext = createContext<NavContextValue | null>(null);
 
-function detectInitialNav(): { surface: Surface; policySlug: string; adminTab: AdminTab } {
-  if (typeof window !== "undefined") {
-    const p = window.location.pathname.toLowerCase();
-    const search = new URLSearchParams(window.location.search);
-    const surfaceQuery = (search.get("surface") || search.get("view") || search.get("tab") || "").toLowerCase();
-
-    if (surfaceQuery === "landing" || surfaceQuery === "site" || surfaceQuery === "public") {
-      return { surface: "landing", policySlug: "privacy", adminTab: "overview" };
-    }
-    if (surfaceQuery === "portal" || surfaceQuery === "patient") {
-      return { surface: "portal", policySlug: "privacy", adminTab: "overview" };
-    }
-    if (surfaceQuery === "admin") {
-      return { surface: "admin", policySlug: "privacy", adminTab: "overview" };
-    }
-    if (surfaceQuery === "login") {
-      return { surface: "login", policySlug: "privacy", adminTab: "overview" };
-    }
-
-    if (p === "/privacy-policy" || p === "/privacy") {
-      return { surface: "legal", policySlug: "privacy-policy", adminTab: "overview" };
-    }
-    if (p === "/terms-of-service" || p === "/terms") {
-      return { surface: "legal", policySlug: "terms-of-service", adminTab: "overview" };
-    }
-    if (p === "/data-deletion-instructions" || p === "/data-deletion") {
-      return { surface: "legal", policySlug: "data-deletion-instructions", adminTab: "overview" };
-    }
-    if (p === "/admin") {
-      return { surface: "admin", policySlug: "privacy", adminTab: "overview" };
-    }
-    if (p === "/portal" || p === "/patient") {
-      return { surface: "portal", policySlug: "privacy", adminTab: "overview" };
-    }
-    if (p === "/landing" || p === "/site" || p === "/public") {
-      return { surface: "landing", policySlug: "privacy", adminTab: "overview" };
-    }
-    if (p === "/login") {
-      return { surface: "login", policySlug: "privacy", adminTab: "overview" };
-    }
-    if (p === "/onboarding") {
-      return { surface: "onboarding", policySlug: "privacy", adminTab: "overview" };
-    }
+function detectInitialNav() {
+  if (typeof window === "undefined") {
+    return pathToNav("/");
   }
-  return { surface: "landing", policySlug: "privacy", adminTab: "overview" };
+  return pathToNav(window.location.pathname, window.location.search);
+}
+
+function syncHistory(path: string, replace: boolean) {
+  if (typeof window === "undefined") return;
+  if (window.location.pathname === path) return;
+  if (replace) {
+    window.history.replaceState({}, "", path);
+  } else {
+    window.history.pushState({}, "", path);
+  }
 }
 
 export const NavigationProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -95,16 +64,24 @@ export const NavigationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     if (typeof opts?.loginDemo === "boolean") setLoginDemo(opts.loginDemo);
     if (opts?.loginMode) setLoginMode(opts.loginMode);
     if (next === "admin") setAdminTab(opts?.adminTab || "overview");
-    if (next === "legal" && opts?.policySlug && typeof window !== "undefined") {
-      const targetPath = `/${opts.policySlug}`;
-      if (window.location.pathname !== targetPath) {
-        window.history.pushState({}, "", targetPath);
-      }
-    }
-    if (next === "login" && !opts?.loginNext) {
-      /* keep existing loginNext */
-    }
+    const targetPath = surfaceToPath(next, {
+      policySlug: opts?.policySlug,
+      explicitPublic: opts?.explicitPublic,
+    });
+    syncHistory(targetPath, Boolean(opts?.replace));
     setSurface(next);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onPop = () => {
+      const next = pathToNav(window.location.pathname, window.location.search);
+      setSurface(next.surface);
+      setPolicySlug(next.policySlug);
+      setAdminTab(next.adminTab);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
   }, []);
 
   const value = useMemo(
