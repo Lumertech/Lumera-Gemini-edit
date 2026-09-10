@@ -41,7 +41,7 @@ const ABDM_CONFIG = {
 };
 
 const NHA_SANDBOX_NOTICE =
-  "NHA sandbox: local stand-in until live NHA credentials.";
+  "NHA sandbox: local stand-in until NHA credentials are provisioned.";
 
 function tenantIdOf(req: { user?: { tenantId?: string } }): string {
   return String(req.user?.tenantId || "").trim();

@@ -6,7 +6,7 @@ describe("ABDM callback HMAC hook (NHA sandbox)", () => {
   const secret = "callback-secret-for-tests";
   const body = JSON.stringify({ patientId: "pat-1", consentId: "c-1" });
 
-  it("signs and verifies sha256 hex", () => {
+  it("signs and matches sha256 hex", () => {
     const header = signAbdmCallback(secret, body);
     assert.match(header, /^sha256=[a-f0-9]{64}$/);
     assert.equal(verifyAbdmCallbackHmac(body, header, secret), true);

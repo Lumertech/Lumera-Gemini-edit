@@ -2,7 +2,7 @@
  * HMAC hook for ABDM gateway callbacks (#39).
  * Stub-grade: sandbox-tolerant when ABDM_CALLBACK_SECRET is unset.
  * Real protocol mapping is owned by Lumera ABDM.
- * NHA sandbox — not a live ABDM claim.
+ * NHA sandbox only.
  */
 
 import crypto from "node:crypto";

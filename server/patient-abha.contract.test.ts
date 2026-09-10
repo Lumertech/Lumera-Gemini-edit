@@ -132,7 +132,7 @@ describe("#35 dual onboard — same patientId + frozen link-abha", () => {
     assert.equal(created.status, 201, String(created.json.error || ""));
     const p1 = created.json.patient as { id: string; kycStatus?: string; consentArtefacts?: unknown[] };
     assert.ok(p1.id);
-    assert.notEqual(p1.kycStatus, "VERIFIED");
+    assert.equal(p1.kycStatus, "PENDING");
 
     const linked = await jsonRequest(
       port,
@@ -227,7 +227,7 @@ describe("#35 dual onboard — same patientId + frozen link-abha", () => {
     const detail = await jsonRequest(port, "GET", `/api/patients/${p2.id}`, undefined, auth);
     const detailed = detail.json.patient as { consentArtefacts: unknown[]; kycStatus: string };
     assert.deepEqual(detailed.consentArtefacts, []);
-    assert.notEqual(detailed.kycStatus, "VERIFIED");
+    assert.equal(detailed.kycStatus, "LINKED_SANDBOX");
   });
 
   it("(c) cross-tenant cannot read or link", async () => {
@@ -295,7 +295,7 @@ describe("#35 dual onboard — same patientId + frozen link-abha", () => {
     assert.equal(stolenByAbha.json.patient, undefined);
   });
 
-  it("(d) duplicate ABHA under tenant returns same id; VERIFIED is rejected", async () => {
+  it("(d) duplicate ABHA under tenant returns same id; unlocked kycStatus is rejected", async () => {
     const clinic = createClinicUser("dupAbha");
     const token = await login(clinic.email);
     const auth = { Authorization: `Bearer ${token}` };
@@ -347,7 +347,8 @@ describe("#35 dual onboard — same patientId + frozen link-abha", () => {
       auth
     );
     assert.equal(rejected.status, 400);
-    assert.match(String(rejected.json.error || ""), /VERIFIED/);
+    assert.match(String(rejected.json.error || ""), /NHA sandbox/);
+    assert.match(String(rejected.json.error || ""), /LINKED_SANDBOX/);
   });
 
   it("GET /api/abdm/status is { abdmMode, bridgeReady } only", async () => {
@@ -486,21 +487,24 @@ describe("#38 ABDM_MODE stub|sandbox", () => {
 });
 
 describe("#35 overclaim grep (Platform ABHA / ABDM)", () => {
-  const files = ["server/clinical.ts", "server/abdm.ts", "server/abdm-mode.ts", "server/abdm-hmac.ts"];
+  const files = [
+    "server/clinical.ts",
+    "server/abdm.ts",
+    "server/abdm-mode.ts",
+    "server/abdm-hmac.ts",
+    "src/types.ts",
+  ];
 
-  it("no Ready/Compliant/M1-M3/certified/VERIFIED except reject-VERIFIED and bridgeReady", () => {
-    const overclaim = /\bReady\b|\bCompliant\b|M1[–-]M3|certified|\bVERIFIED\b/i;
+  it("no Ready/Compliant/M1/M2/M3/certified/live HIP-HIU claims except reject-unlocked KYC and bridgeReady", () => {
+    const overclaim =
+      /\bReady\b|\bCompliant\b|\bM1\b|\bM2\b|\bM3\b|M1[–-]M3|certified|live HIP|live HIU|live HRP|ABDM live|Government e-KYC|\bVERIFIED\b/i;
     for (const rel of files) {
       const src = fs.readFileSync(path.join(root, rel), "utf8");
       const leftover = src
         .split(/\n/)
         .map((line, i) => ({ line, n: i + 1 }))
         .filter(({ line }) => {
-          if (
-            /kycStatus VERIFIED is not allowed|never VERIFIED|rejecting VERIFIED|except rejecting VERIFIED|rejectVerifiedKyc|\/\^verified\$\/i/i.test(
-              line
-            )
-          ) {
+          if (/\/\^verified\$\/i/.test(line)) {
             return false;
           }
           const stripped = line.replace(/bridgeReady/g, "");

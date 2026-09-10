@@ -160,7 +160,7 @@ export interface Patient {
   avatar?: string;
   abhaNumber?: string;
   abhaAddress?: string;
-  kycStatus?: 'LINKED_SANDBOX' | 'PENDING' | 'FAILED' | 'VERIFIED';
+  kycStatus?: 'LINKED_SANDBOX' | 'PENDING' | 'FAILED';
   hfrId?: string;
   /** ISO timestamp when ABHA was first attached. Empty until an NHA sandbox link. */
   abhaLinkedAt?: string;

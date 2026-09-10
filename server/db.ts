@@ -532,7 +532,7 @@ function migrate(database: DatabaseSync) {
       verified_at TEXT
     );
 
-    -- NHA sandbox: tenant-scoped ABDM consent artefacts. Not a live ABDM store.
+    -- NHA sandbox: tenant-scoped ABDM consent artefacts.
     CREATE TABLE IF NOT EXISTS abdm_consent_artefacts (
       id TEXT PRIMARY KEY,
       tenant_id TEXT NOT NULL,

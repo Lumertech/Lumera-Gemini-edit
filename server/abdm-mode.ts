@@ -1,7 +1,6 @@
 /**
  * NHA sandbox mode contract (#38 / #35 freeze).
  * Default is local stub (zero outbound). sandbox requires real env creds.
- * Not a live ABDM claim.
  */
 
 export type AbdmMode = "stub" | "sandbox";
@@ -36,7 +35,7 @@ export function getAbdmBridgeStatus(env: NodeJS.ProcessEnv = process.env): {
 }
 
 /** Sandbox outbound must not start with placeholder SBX_LUMERA_* defaults. */
-export function assertAbdmSandboxReady(env: NodeJS.ProcessEnv = process.env): void {
+export function assertAbdmSandboxCreds(env: NodeJS.ProcessEnv = process.env): void {
   if (resolveAbdmMode(env) === "sandbox" && !abdmHasRealCreds(env)) {
     throw Object.assign(
       new Error(

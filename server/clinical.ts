@@ -67,9 +67,9 @@ export function getTenantPatient(tenantId: string, id: string) {
     .get(id, tenantId) as Record<string, unknown> | undefined;
 }
 
-/** NHA sandbox notice — Platform persists ABHA/consent only; not a live HIP claim. */
+/** NHA sandbox notice — Platform persists ABHA/consent for the sandbox path only. */
 export const ABHA_SANDBOX_NOTICE =
-  "NHA sandbox: ABHA link and consent artefact storage until live NHA credentials.";
+  "NHA sandbox: ABHA link and consent artefact storage until NHA credentials are provisioned.";
 
 export function digitsOnly(value: string): string {
   return String(value || "").replace(/\D/g, "");
@@ -220,10 +220,10 @@ export const KYC_LINKED_SANDBOX = "LINKED_SANDBOX";
 
 const LINK_SOURCES = new Set(["aadhaar_otp", "abha_search", "qr"]);
 
-export function rejectVerifiedKyc(body: Record<string, unknown>) {
+export function rejectUnlockedKyc(body: Record<string, unknown>) {
   const kyc = String(body.kycStatus || body.kyc_status || "");
   if (/^verified$/i.test(kyc)) {
-    throw httpError(400, "kycStatus VERIFIED is not allowed on the NHA sandbox path; use LINKED_SANDBOX");
+    throw httpError(400, "NHA sandbox kycStatus must be LINKED_SANDBOX");
   }
 }
 
@@ -380,7 +380,7 @@ export function insertPatient(
   body: Record<string, unknown>,
   options?: { allowAbha?: boolean }
 ) {
-  rejectVerifiedKyc(body);
+  rejectUnlockedKyc(body);
   const name = String(body.name || "").trim();
   const phone = String(body.phone || "").trim();
   const allowAbha = Boolean(options?.allowAbha);
@@ -492,7 +492,7 @@ export function linkPatientAbha(
   body: Record<string, unknown>,
   actor?: { id?: string | null; name?: string }
 ) {
-  rejectVerifiedKyc(body);
+  rejectUnlockedKyc(body);
   const flat = flattenLinkBody(body);
   const patientId = String(flat.patientId || "").trim();
   const abhaNumber = readAbhaNumber(flat);
@@ -743,7 +743,7 @@ function insertPrescription(tenantId: string, body: Record<string, unknown>) {
  * POST /patients/link-abha    → { patient, abdmMode }  frozen #35 field names
  *   body { patientId?, phone?, abhaNumber, abhaAddress?, demographics?,
  *          consentArtefact?, source, abdmMode }
- *   kycStatus is always LINKED_SANDBOX (NHA sandbox — never Government e-KYC)
+ *   kycStatus is always LINKED_SANDBOX (NHA sandbox)
  * PATCH /patients/:id         → { patient }  partial
  * PATCH /patients/:id/abha    → same as link-abha for an existing id
  *
@@ -856,7 +856,7 @@ export function createClinicalRouter(): Router {
     const existing = getTenantPatient(tenantId, req.params.id);
     if (!existing) return res.status(404).json({ error: "Patient not found" });
     try {
-      rejectVerifiedKyc((req.body || {}) as Record<string, unknown>);
+      rejectUnlockedKyc((req.body || {}) as Record<string, unknown>);
     } catch (err: unknown) {
       const status = errorStatus(err);
       return res.status(status || 400).json({ error: err instanceof Error ? err.message : "Invalid KYC status" });
