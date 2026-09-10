@@ -28,7 +28,7 @@ import { DhisMeter } from "../dhis/DhisMeter";
 const NAV: { id: AdminTab; label: string; icon: typeof Users; badge?: string }[] = [
   { id: "overview", label: "Dashboard", icon: LayoutDashboard },
   { id: "dhis", label: "ABDM & DHIS Meter", icon: Award },
-  { id: "meta", label: "Meta Tech Provider", icon: Share2, badge: "Simulator" },
+  { id: "meta", label: "Meta WhatsApp", icon: Share2, badge: "SANDBOX" },
   { id: "users", label: "User management", icon: Users },
   { id: "subscriptions", label: "Subscriptions", icon: KeyRound },
   { id: "site", label: "Website CMS", icon: Globe },

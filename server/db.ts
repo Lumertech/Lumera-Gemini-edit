@@ -1960,7 +1960,7 @@ export function ensureMetaTechProviderAndPolicies(database: DatabaseSync) {
     ON CONFLICT(slug) DO UPDATE SET title = excluded.title, body = excluded.body, updated_at = excluded.updated_at
   `);
 
-  const privacyPolicyContent = `# Lumera Privacy Policy & Meta Tech Provider Notice
+  const privacyPolicyContent = `# Lumera Privacy Policy & WhatsApp Cloud API Notice
 
 **Last Updated:** September 2026  
 **Effective Date:** January 1, 2026  
@@ -1969,8 +1969,8 @@ export function ensureMetaTechProviderAndPolicies(database: DatabaseSync) {
 
 ---
 
-### 1. Overview & Meta Tech Provider Architecture
-Lumera operates an enterprise clinical practice operating system and official Meta Tech Provider / Business Solution Provider platform. Through our integration with Meta Platforms Ireland Ltd and the WhatsApp Business Platform, we provide verified polyclinics, healthcare networks, and independent practitioners with automated patient notifications, digital prescription delivery, appointment confirmations, and triage routing.
+### 1. Overview & WhatsApp Cloud API status
+Lumera operates a clinical practice operating system with a WhatsApp Cloud API integration path. **Lumera is not a certified Meta Tech Provider or Business Solution Provider, and Meta App Review is not submitted.** Copy in this policy describes intended processing once Cloud API credentials are configured; it is not a certification claim.
 
 ### 2. Scope of WhatsApp & User Data Handled
 When clinics connect their WhatsApp Business Accounts (WABA) or when patients interact via the Lumera WhatsApp Desk, we process:
@@ -2012,8 +2012,8 @@ Patients and clinic administrators retain full rights to request access, rectifi
 ### 1. Agreement to Terms
 These Terms of Service (“Terms”) constitute a binding legal agreement between Lumera Solutions LLP (“Lumera”) and the registered healthcare facility or medical practitioner (“Tenant”, “Clinic”, or “You”). By utilizing the Lumera Clinician Suite, Admin CMS, or WhatsApp Embedded Signup, you agree to be bound by these Terms.
 
-### 2. WhatsApp Business Account (WABA) & Meta Tech Provider Governance
-- **Authorized Tech Provider:** Lumera acts as your technical intermediary and software solution provider for Meta WhatsApp Business Management and Messaging.
+### 2. WhatsApp Business Account (WABA) & Cloud API governance
+- **Integration role:** Lumera may act as software that calls Meta Graph APIs on behalf of a clinic after the clinic connects a WABA. This is not Meta Tech Provider certification.
 - **Account Ownership:** The Clinic retains full ownership and control of its WhatsApp Business Account, verified phone numbers, and display names.
 - **Acceptable Use & Anti-Spam:** Clinics must strictly adhere to the Meta WhatsApp Business Messaging Policy. Unsolicited promotional broadcasts, deceptive advertising, or non-consented bulk messages are strictly prohibited and constitute grounds for immediate service suspension.
 - **Prior Patient Consent:** The Clinic warrants that it has collected valid, revocable patient consent prior to initiating outbound WhatsApp notifications.
@@ -2099,9 +2099,9 @@ Upon execution of a data deletion request:
       SET waba_id = 'waba_398249018247019',
           phone_number_id = 'phone_982345566701',
           meta_access_token = 'EAAJ...verified_system_user_token_lumera_prod_2026',
-          meta_token_expires_at = 'Never (Permanent System User Token)',
-          meta_waba_name = 'Lumera Apex PolyClinic (Verified WABA)',
-          meta_quality_rating = 'GREEN',
+          meta_token_expires_at = 'SANDBOX / DEV-ONLY local token',
+          meta_waba_name = 'Lumera Apex PolyClinic (SANDBOX WABA)',
+          meta_quality_rating = 'UNKNOWN',
           meta_onboarding_status = 'connected',
           updated_at = ?
       WHERE id = 'tenant-lumera-main'
@@ -2127,9 +2127,9 @@ Upon execution of a data deletion request:
       "waba_489201948102394",
       "phone_982001234502",
       "EAAJ...verified_system_user_token_rehab_mumbai_2026",
-      "Never (Permanent System User Token)",
-      "Lumera Rehab & Sports Clinic (Verified)",
-      "GREEN",
+      "SANDBOX / DEV-ONLY local token",
+      "Lumera Rehab & Sports Clinic (SANDBOX)",
+      "UNKNOWN",
       "connected",
       now,
       now

@@ -43,6 +43,20 @@ export function signJwtToken(payload: JwtTokenPayload): string {
   return jwt.sign(payload, getJwtSecret(), { expiresIn: `${SESSION_DAYS}d` });
 }
 
+/** Cookie + Bearer share one JWT shape (OTP verify, Facebook OAuth, skipOtp). */
+export function issueLumeraSession(res: Response, user: DbUser): string {
+  const jwtToken = signJwtToken({
+    userId: user.id,
+    tenantId: user.tenant_id || "",
+    email: user.email,
+    role: user.role,
+    name: user.name,
+  });
+  setSessionCookie(res, jwtToken);
+  createSession(user.id);
+  return jwtToken;
+}
+
 export function verifyJwtToken(token: string): JwtTokenPayload | null {
   try {
     const decoded = jwt.verify(token, getJwtSecret());
@@ -77,6 +91,7 @@ declare global {
   namespace Express {
     interface Request {
       user?: AuthUser;
+      rawBody?: Buffer;
     }
   }
 }

@@ -104,7 +104,7 @@ const FALLBACK: SitePayload = {
     ctaPrimary: "Experience Doctor EHR",
     ctaSecondary: "Open Clinical Demo",
     ctaBannerTitle: "Ready to Supercharge Your Practice?",
-    ctaBannerSubtitle: "Experience seamless AI receptionist calls, smart prescriptions, and compliant ABDM records.",
+    ctaBannerSubtitle: "Experience seamless AI receptionist calls, smart prescriptions, and ABDM-aligned records (sandbox path).",
     logoUrl: "",
     clinicName: "Lumera Health Systems",
   },
@@ -378,7 +378,7 @@ export const LandingPage: React.FC = () => {
               </div>
               <div className="text-left">
                 <span className="block text-xs font-bold text-slate-100 uppercase tracking-wider">WhatsApp Cloud API · Meta Tech Provider path</span>
-                <span className="text-[11px] text-slate-400 font-medium">WhatsApp Cloud Business API</span>
+                <span className="text-[11px] text-slate-400 font-medium">SANDBOX readiness — App Review not submitted</span>
               </div>
             </div>
 
@@ -967,7 +967,7 @@ export const LandingPage: React.FC = () => {
           {/* Compliance declaration */}
           <div className="pt-2 text-[11px] text-slate-500 space-y-1">
             <p>
-              Lumera Health Systems is building toward Meta Tech Provider.
+              Lumera Health Systems is building toward Meta Tech Provider. App Review is not submitted.
             </p>
             <p>
               Designed for ABDM M1–M3 &amp; DPDP (sandbox path).

@@ -1,5 +1,15 @@
 import { Router, type Request, type Response } from "express";
 import { getDb } from "./db.ts";
+import { isProduction, sandboxSimulatorsEnabled } from "./runtime.ts";
+import { resolveGraphCredentials } from "./graph-whatsapp.ts";
+import { facebookOAuthConfigured } from "./facebook-oauth.ts";
+import {
+  buildMetaReadinessOverview,
+  decideWebhookSignature,
+  getMetaAppSecret,
+  getMetaVerifyToken,
+  rejectProductionSimulator,
+} from "./meta-security.ts";
 
 export function createMetaRouter(): Router {
   const router = Router();
@@ -15,12 +25,7 @@ export function createMetaRouter(): Router {
     const token = req.query["hub.verify_token"];
     const challenge = req.query["hub.challenge"];
 
-        // SECURITY: never fall back to a hardcoded, source-controlled token in
-    // production — anyone with read access to this repo would know it.
-    // META_VERIFY_TOKEN must be set as a real secret in any real deployment.
-    const expectedToken =
-      process.env.META_VERIFY_TOKEN ||
-      (process.env.NODE_ENV !== "production" ? "lumera_meta_verify_token_2026_DEV_ONLY" : undefined);
+    const expectedToken = getMetaVerifyToken();
 
     if (!expectedToken) {
       console.error("[Meta Webhook] META_VERIFY_TOKEN is not configured — rejecting all verification attempts.");
@@ -40,12 +45,23 @@ export function createMetaRouter(): Router {
 
     console.warn("[Meta Webhook] Verification rejected: token mismatch or unsupported mode.");
     return res.status(403).json({ error: "Verification token mismatch" });
-
-    return res.status(403).json({ error: "Verification token mismatch" });
   });
 
   // POST /api/meta/webhook - Meta Inbound Webhook Event Receiver
   router.post("/webhook", (req: Request, res: Response) => {
+    const signatureDecision = decideWebhookSignature({
+      rawBody: req.rawBody ?? Buffer.from(JSON.stringify(req.body || {})),
+      signatureHeader: req.headers["x-hub-signature-256"],
+      appSecret: getMetaAppSecret(),
+    });
+    if (signatureDecision.ok === false) {
+      console.warn("[Meta Webhook] Signature rejected:", signatureDecision.error);
+      return res.status(signatureDecision.status).json({ error: signatureDecision.error });
+    }
+    if (signatureDecision.unsignedDevBypass) {
+      console.warn("[Meta Webhook] SANDBOX / DEV-ONLY: accepted unsigned webhook because META_WEBHOOK_ALLOW_UNSIGNED is set.");
+    }
+
     try {
       const db = getDb();
       const body = req.body;
@@ -201,30 +217,23 @@ export function createMetaRouter(): Router {
       const totalMessages = (db.prepare("SELECT COUNT(*) AS c FROM whatsapp_messages").get() as { c: number }).c;
       const totalOutbound = (db.prepare("SELECT COUNT(*) AS c FROM whatsapp_outbound_events").get() as { c: number }).c;
 
-      res.json({
-        providerName: "Lumera Health Solutions LLP",
-        providerType: "Meta Tech Provider / Business Solution Provider (BSP)",
-        appReviewStatus: {
-          status: "APPROVED_READY",
-          checklist: [
-            { item: "Privacy Policy accessible with Meta scope", passed: true, url: "/privacy-policy" },
-            { item: "Terms of Service with WhatsApp acceptable use", passed: true, url: "/terms-of-service" },
-            { item: "Live Data Deletion Callback Endpoint (/api/meta/data-deletion)", passed: true, url: "/data-deletion-instructions" },
-            { item: "Webhook Verification Challenge (/api/meta/webhook)", passed: true, url: "/api/meta/webhook" },
-            { item: "Permanent System User Token Architecture", passed: true }
-          ]
-        },
-        connectedWabasCount: tenants.filter(t => t.waba_id && t.waba_id !== "").length,
-        totalClinics: tenants.length,
-        approvedTemplatesCount,
-        totalTemplatesCount: templates.length,
-        totalMessagesSentAndReceived: totalMessages + totalOutbound,
-        webhookUrl: "/api/meta/webhook",
-        qualityRating: "GREEN (High Quality Messaging Tier)"
-      });
+      res.json(
+        buildMetaReadinessOverview({
+          connectedWabasCount: tenants.filter((t) => t.waba_id && t.waba_id !== "").length,
+          totalClinics: tenants.length,
+          approvedTemplatesCount,
+          totalTemplatesCount: templates.length,
+          totalMessagesSentAndReceived: totalMessages + totalOutbound,
+          webhookUrl: "/api/meta/webhook",
+          graphOtpConfigured: Boolean(resolveGraphCredentials(db)),
+          webhookSecretConfigured: Boolean(getMetaAppSecret()),
+          verifyTokenConfigured: Boolean(getMetaVerifyToken()),
+          facebookOAuthConfigured: facebookOAuthConfigured(),
+        })
+      );
     } catch (err: unknown) {
       console.error("[Meta Overview Error]", err);
-      res.status(500).json({ error: "Failed to load Meta Tech Provider overview" });
+      res.status(500).json({ error: "Failed to load Meta WhatsApp readiness overview" });
     }
   });
 
@@ -247,9 +256,9 @@ export function createMetaRouter(): Router {
         wabaId: r.waba_id || "",
         phoneNumberId: r.phone_number_id || "",
         metaWabaName: r.meta_waba_name || r.name,
-        metaQualityRating: r.meta_quality_rating || "GREEN",
+        metaQualityRating: r.meta_quality_rating || "UNKNOWN",
         metaOnboardingStatus: r.meta_onboarding_status || (r.waba_id ? "connected" : "disconnected"),
-        metaTokenExpiresAt: r.meta_token_expires_at || "Never (Permanent System User Token)",
+        metaTokenExpiresAt: r.meta_token_expires_at || (sandboxSimulatorsEnabled() ? "SANDBOX / DEV-ONLY local token" : "unknown"),
         updatedAt: r.updated_at
       }));
 
@@ -271,36 +280,48 @@ export function createMetaRouter(): Router {
       const db = getDb();
       const now = new Date().toISOString();
 
+      const token = String(metaAccessToken || "").trim();
+      if (isProduction() && !token) {
+        return res.status(400).json({
+          error: "metaAccessToken is required in production. Demo tokens are not invented.",
+        });
+      }
+
       db.prepare(`
         UPDATE tenants
         SET waba_id = ?,
             phone_number_id = ?,
             meta_access_token = ?,
-            meta_token_expires_at = 'Never (Permanent System User Token)',
+            meta_token_expires_at = ?,
             meta_waba_name = ?,
-            meta_quality_rating = 'GREEN',
+            meta_quality_rating = ?,
             meta_onboarding_status = 'connected',
             updated_at = ?
         WHERE id = ?
       `).run(
         wabaId,
         phoneNumberId,
-        metaAccessToken || "EAAJ...lumera_system_user_token_valid",
-        metaWabaName || "Verified Clinic WABA",
+        token || (sandboxSimulatorsEnabled() ? "EAAJ...SANDBOX_DEV_ONLY_not_a_live_token" : ""),
+        sandboxSimulatorsEnabled() ? "SANDBOX / DEV-ONLY — not a Graph-validated system user token" : "unknown",
+        metaWabaName || "Clinic WABA",
+        sandboxSimulatorsEnabled() ? "UNKNOWN" : "UNKNOWN",
         now,
         tenantId
       );
 
       return res.json({
         success: true,
-        message: "WhatsApp Business Account credentials verified and connected successfully!",
+        sandbox: sandboxSimulatorsEnabled(),
+        message: sandboxSimulatorsEnabled()
+          ? "SANDBOX / DEV-ONLY: WABA ids stored locally. Credentials were not validated with Graph."
+          : "WABA ids stored. Graph validation is not performed on this route yet.",
         waba: {
           tenantId,
           wabaId,
           phoneNumberId,
           metaWabaName,
           status: "connected",
-          qualityRating: "GREEN"
+          qualityRating: "UNKNOWN",
         }
       });
     } catch (err: unknown) {
@@ -335,8 +356,8 @@ export function createMetaRouter(): Router {
     }
   });
 
-  // POST /api/meta/simulate-embedded-signup - Simulate / Complete Meta Embedded Signup
-  router.post("/simulate-embedded-signup", (req: Request, res: Response) => {
+  // POST /api/meta/simulate-embedded-signup — SANDBOX / DEV-ONLY, disabled in production
+  router.post("/simulate-embedded-signup", rejectProductionSimulator, (req: Request, res: Response) => {
     try {
       const { tenantId, clinicName } = req.body;
       const db = getDb();
@@ -349,27 +370,29 @@ export function createMetaRouter(): Router {
         UPDATE tenants
         SET waba_id = ?,
             phone_number_id = ?,
-            meta_access_token = 'EAAJ...embedded_signup_authorized_token_2026',
-            meta_token_expires_at = 'Never (Permanent System User Token)',
+            meta_access_token = 'EAAJ...SANDBOX_DEV_ONLY_embedded_signup_not_live',
+            meta_token_expires_at = 'SANDBOX / DEV-ONLY — not a Graph token',
             meta_waba_name = ?,
-            meta_quality_rating = 'GREEN',
+            meta_quality_rating = 'UNKNOWN',
             meta_onboarding_status = 'connected',
             updated_at = ?
         WHERE id = ?
       `).run(
         randomWaba,
         randomPhoneId,
-        clinicName ? `${clinicName} (Meta Verified)` : "Lumera Verified Practice",
+        clinicName ? `${clinicName} (SANDBOX / DEV-ONLY)` : "Lumera SANDBOX practice",
         now,
         targetTenantId
       );
 
       return res.json({
         success: true,
-        message: "Meta Embedded Signup completed! Co-existence WABA permissions granted to Lumera Tech Provider.",
+        sandbox: true,
+        notice: "SANDBOX / DEV-ONLY simulator — not live Meta Embedded Signup.",
+        message: "SANDBOX / DEV-ONLY: fake WABA ids stored locally. This is not Meta Embedded Signup and Lumera is not a certified Tech Provider.",
         wabaId: randomWaba,
         phoneNumberId: randomPhoneId,
-        qualityRating: "GREEN",
+        qualityRating: "UNKNOWN",
         onboardingStatus: "connected"
       });
     } catch (err: unknown) {
@@ -378,16 +401,16 @@ export function createMetaRouter(): Router {
     }
   });
 
-  // POST /api/meta/send-test - Send live test WhatsApp message
-  router.post("/send-test", (req: Request, res: Response) => {
+  // POST /api/meta/send-test — SANDBOX fake-success path, disabled in production
+  router.post("/send-test", rejectProductionSimulator, (req: Request, res: Response) => {
     try {
       const { recipientPhone, messageText, templateName } = req.body;
       if (!recipientPhone) return res.status(400).json({ error: "Recipient phone number is required" });
 
       const db = getDb();
       const now = new Date().toISOString();
-      const eventId = `test-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-      const content = messageText || `✨ *Lumera Health - Meta WhatsApp Tech Provider Test Notification*\n\nYour WhatsApp Business Cloud API integration is actively transmitting messages with Tier-1 Green Quality Rating.\n\nTemplate Used: ${templateName || "appointment_reminder_v1"}\nTimestamp: ${now}`;
+      const eventId = `sandbox-test-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      const content = messageText || `SANDBOX / DEV-ONLY test notification (not sent via Graph).\nTemplate: ${templateName || "appointment_reminder_v1"}\nTimestamp: ${now}`;
 
       // Record in outbound events
       db.prepare(`
@@ -396,19 +419,21 @@ export function createMetaRouter(): Router {
       `).run(
         eventId,
         recipientPhone,
-        `Test message dispatched via Meta Tech Provider WABA`,
-        JSON.stringify({ text: content }),
+        `SANDBOX / DEV-ONLY: test message recorded locally (not dispatched via Graph)`,
+        JSON.stringify({ text: content, sandbox: true }),
         now
       );
 
       return res.json({
         success: true,
-        messageId: `wamid.HBgL${Date.now().toString(36).toUpperCase()}`,
-        status: "sent",
+        sandbox: true,
+        notice: "SANDBOX / DEV-ONLY — no Graph send; no live wamid.",
+        messageId: eventId,
+        status: "sandbox_recorded",
         recipient: recipientPhone,
-        qualityScore: "GREEN",
+        qualityScore: "UNKNOWN",
         deliveredAt: now,
-        message: "WhatsApp test notification successfully dispatched via Meta WhatsApp Business Platform!"
+        message: "SANDBOX / DEV-ONLY: test payload stored in SQLite. This is not a Meta Cloud API delivery."
       });
     } catch (err: unknown) {
       console.error("[Meta Send Test Error]", err);
@@ -478,7 +503,7 @@ export function createMetaRouter(): Router {
 
       db.prepare(`
         INSERT INTO meta_templates (id, tenant_id, waba_id, name, category, language, status, components, meta_template_id, rejection_reason, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, 'APPROVED', ?, ?, NULL, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
       `).run(
         id,
         targetTenantId,
@@ -486,15 +511,19 @@ export function createMetaRouter(): Router {
         sanitizedName,
         category,
         language,
+        sandboxSimulatorsEnabled() ? "APPROVED" : "PENDING",
         JSON.stringify(parsedComponents),
-        `meta_tpl_${Date.now().toString().slice(-8)}`,
+        sandboxSimulatorsEnabled() ? `sandbox_tpl_${Date.now().toString().slice(-8)}` : "",
         now,
         now
       );
 
       return res.json({
         success: true,
-        message: "Template submitted to Meta Graph API and registered successfully!",
+        sandbox: sandboxSimulatorsEnabled(),
+        message: sandboxSimulatorsEnabled()
+          ? "SANDBOX / DEV-ONLY: template stored locally as APPROVED. Not submitted to Meta."
+          : "Template stored as PENDING. Message Templates API submit is not wired yet.",
         templateId: id
       });
     } catch (err: unknown) {
@@ -503,13 +532,18 @@ export function createMetaRouter(): Router {
     }
   });
 
-  // POST /api/meta/templates/:id/approve - Simulate / force approve template
-  router.post("/templates/:id/approve", (req: Request, res: Response) => {
+  // POST /api/meta/templates/:id/approve — SANDBOX force-approve, disabled in production
+  router.post("/templates/:id/approve", rejectProductionSimulator, (req: Request, res: Response) => {
     try {
       const db = getDb();
       const now = new Date().toISOString();
       db.prepare("UPDATE meta_templates SET status = 'APPROVED', updated_at = ? WHERE id = ?").run(now, req.params.id);
-      return res.json({ success: true, message: "Template approved by Meta Review." });
+      return res.json({
+        success: true,
+        sandbox: true,
+        notice: "SANDBOX / DEV-ONLY force-approve — not Meta review.",
+        message: "SANDBOX / DEV-ONLY: template marked APPROVED locally. This is not Meta template review.",
+      });
     } catch (err: unknown) {
       console.error("[Approve Template Error]", err);
       res.status(500).json({ error: "Failed to approve template" });
