@@ -222,7 +222,7 @@ const LINK_SOURCES = new Set(["aadhaar_otp", "abha_search", "qr"]);
 
 export function rejectUnlockedKyc(body: Record<string, unknown>) {
   const kyc = String(body.kycStatus || body.kyc_status || "");
-  if (/^verified$/i.test(kyc)) {
+  if (/^verified$/i.test(kyc) || /government|unlocked/i.test(kyc)) {
     throw httpError(400, "NHA sandbox kycStatus must be LINKED_SANDBOX");
   }
 }

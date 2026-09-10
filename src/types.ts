@@ -171,7 +171,7 @@ export interface Patient {
 
 /** Demo / local-stub ABHA is LINKED_SANDBOX — not government-registry KYC. */
 export function isAbhaLinked(patient: { kycStatus?: string; abhaNumber?: string }): boolean {
-  return patient.kycStatus === 'VERIFIED' || patient.kycStatus === 'LINKED_SANDBOX' || Boolean(patient.abhaNumber);
+  return patient.kycStatus === 'LINKED_SANDBOX' || Boolean(patient.abhaNumber);
 }
 
 /** NHA sandbox consent artefact persisted for the ABDM path only. */

@@ -349,6 +349,24 @@ describe("#35 dual onboard — same patientId + frozen link-abha", () => {
     assert.equal(rejected.status, 400);
     assert.match(String(rejected.json.error || ""), /NHA sandbox/);
     assert.match(String(rejected.json.error || ""), /LINKED_SANDBOX/);
+
+    for (const unlocked of ["Government", "Unlocked"]) {
+      const again = await jsonRequest(
+        port,
+        "POST",
+        "/api/patients/link-abha",
+        {
+          patientId: p.id,
+          abhaNumber,
+          kycStatus: unlocked,
+          source: "aadhaar_otp",
+          abdmMode: "stub",
+        },
+        auth
+      );
+      assert.equal(again.status, 400, unlocked);
+      assert.match(String(again.json.error || ""), /NHA sandbox/);
+    }
   });
 
   it("GET /api/abdm/status is { abdmMode, bridgeReady } only", async () => {
@@ -497,7 +515,7 @@ describe("#35 overclaim grep (Platform ABHA / ABDM)", () => {
 
   it("no Ready/Compliant/M1/M2/M3/certified/live HIP-HIU claims except reject-unlocked KYC and bridgeReady", () => {
     const overclaim =
-      /\bReady\b|\bCompliant\b|\bM1\b|\bM2\b|\bM3\b|M1[–-]M3|certified|live HIP|live HIU|live HRP|ABDM live|Government e-KYC|\bVERIFIED\b/i;
+      /\bReady\b|\bCompliant\b|\bM1\b|\bM2\b|\bM3\b|M1[–-]M3|certified|live HIP|live HIU|live HRP|ABDM live|Government e-KYC|Government Verified|\bVERIFIED\b/i;
     for (const rel of files) {
       const src = fs.readFileSync(path.join(root, rel), "utf8");
       const leftover = src
@@ -524,5 +542,11 @@ describe("#35 overclaim grep (Platform ABHA / ABDM)", () => {
     assert.match(clinical, /NHA sandbox/);
     assert.match(abdm, /NHA sandbox/);
     assert.match(clinical, /LINKED_SANDBOX/);
+  });
+
+  it("demo patient ABHA seed is LINKED_SANDBOX, never an unlocked KYC value", () => {
+    const db = fs.readFileSync(path.join(root, "server/db.ts"), "utf8");
+    assert.equal(/kycStatus:\s*"VERIFIED"/.test(db), false);
+    assert.match(db, /kycStatus: "LINKED_SANDBOX"/);
   });
 });

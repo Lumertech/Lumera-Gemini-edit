@@ -245,9 +245,8 @@ export function recordDhisTransaction(params: {
 export type AbdmMode = "stub" | "sandbox";
 
 export function buildAbdmStatusPayload(): { abdmMode: AbdmMode; bridgeReady: boolean } {
-  // Local stand-in: OTP/DHIS work in-process. Do not report sandbox until #45
-  // wires real NHA creds (ABDM_MODE=sandbox). Placeholder SBX_* is not sandbox.
-  return { abdmMode: "stub", bridgeReady: true };
+  // Same two-key shape as #47. Mode/creds live in abdm-mode.ts.
+  return getAbdmBridgeStatus();
 }
 
 /**
@@ -451,6 +450,7 @@ export function createAbdmRouter(): Router {
     res.json({
       found: true,
       abdmMode: resolveAbdmMode(),
+      kycStatus: "LINKED_SANDBOX",
       profile: {
         name: row.name,
         gender: row.gender,
@@ -461,6 +461,7 @@ export function createAbdmRouter(): Router {
         abhaNumber: row.abha_number,
         abhaAddress: row.abha_address,
       },
+      sandboxNotice: NHA_SANDBOX_NOTICE,
     });
   });
 
@@ -962,15 +963,36 @@ export function createAbdmRouter(): Router {
     });
   };
 
-  router.post(["/hip/notify", "/callbacks/hip/notify", "/v3/hip/notify"], (req, res) => {
-    persistCallbackArtefact(req, res, "hip_notify");
-  });
-  router.post(["/hiu/consent/notify", "/hiu/consent", "/callbacks/hiu/consent", "/v3/hiu/consent/notify"], (req, res) => {
-    persistCallbackArtefact(req, res, "hiu_consent");
-  });
-  router.post(["/hiu/fetch", "/callbacks/hiu/fetch", "/v3/hiu/fetch"], (req, res) => {
-    persistCallbackArtefact(req, res, "hiu_fetch");
-  });
+  router.post(
+    ["/hip/consent/on-notify", "/hip/notify", "/callbacks/hip/notify", "/v3/hip/notify"],
+    (req, res) => {
+      persistCallbackArtefact(req, res, "hip_notify");
+    }
+  );
+  router.post(
+    [
+      "/hiu/consent-request/on-status",
+      "/hiu/consent/notify",
+      "/hiu/consent",
+      "/callbacks/hiu/consent",
+      "/v3/hiu/consent/notify",
+    ],
+    (req, res) => {
+      persistCallbackArtefact(req, res, "hiu_consent");
+    }
+  );
+  router.post(
+    [
+      "/hiu/health-information/request",
+      "/hiu/health-information/on-receive",
+      "/hiu/fetch",
+      "/callbacks/hiu/fetch",
+      "/v3/hiu/fetch",
+    ],
+    (req, res) => {
+      persistCallbackArtefact(req, res, "hiu_fetch");
+    }
+  );
   router.post(["/hrp/registry", "/callbacks/hrp/registry", "/v3/hrp/registry"], (req, res) => {
     persistCallbackArtefact(req, res, "hrp_registry");
   });
