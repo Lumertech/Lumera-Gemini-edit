@@ -1,41 +1,44 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  Receipt, 
-  Printer, 
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  Receipt,
+  Printer,
   CheckCircle,
-  CheckCircle2, 
-  QrCode, 
-  CreditCard, 
-  DollarSign, 
-  Plus, 
-  Trash2, 
-  Sparkles,
-  ShieldCheck,
-  PackageCheck,
+  CheckCircle2,
+  QrCode,
+  CreditCard,
+  Plus,
+  Trash2,
   Pill,
-  AlertTriangle,
   Layers,
-  ArrowRight,
   Send,
   Smartphone,
   X,
   Check,
   RefreshCw,
-  Wallet
+  Copy,
+  ExternalLink,
 } from 'lucide-react';
 import { BillItem, Patient, Doctor, ClinicSettings, PharmacyBatchItem, TherapyPackage, Prescription } from '../types';
 import { MOCK_PHARMACY_BATCHES, MOCK_THERAPY_PACKAGES } from '../data/clinicalData';
 import { BLANK_CLINIC_SETTINGS } from '../lib/letterhead';
 import { apiFetch } from '../api/http';
-
-type PersistedInvoice = {
-  id: string;
-  invoiceNumber: string;
-  paymentStatus: string;
-  payLink?: string;
-  receiptWhatsAppChannel?: string;
-  receiptWhatsAppStatus?: string;
-};
+import {
+  BillingPaymentMode,
+  BillingSettings,
+  DayEndReport,
+  PersistedInvoice,
+  ReceiptHonesty,
+  canMarkPaidLocally,
+  displayBillingIds,
+  formatRupees,
+  isInvoicePaid,
+  paymentModeFromInvoice,
+  paymentStatusLabel,
+  pickInvoiceForContext,
+  receiptHonestyFromResponse,
+  shouldShowSandboxPay,
+  todayIsoDate,
+} from '../lib/billingCollect';
 
 interface BillingManagerProps {
   currentPatient: Patient;
@@ -43,7 +46,84 @@ interface BillingManagerProps {
   clinicSettings?: ClinicSettings;
   activePrescription?: Prescription | null;
   appointmentId?: string;
+  appointmentIsPaid?: boolean;
   onPaymentSuccess?: (invoiceNumber: string, amount: number) => void;
+}
+
+function defaultLineItems(currentDoctor: Doctor, activePrescription?: Prescription | null): BillItem[] {
+  const defaultConsultation: BillItem = {
+    id: 'b-consult',
+    description: `OPD Specialist Consultation - ${currentDoctor.specialty} (${currentDoctor.name})`,
+    category: 'Consultation',
+    hsnSacCode: '999312',
+    quantity: 1,
+    unitPrice: currentDoctor.consultationFee || 600,
+    gstPercent: 0,
+    total: currentDoctor.consultationFee || 600,
+  };
+
+  const newItems: BillItem[] = [defaultConsultation];
+
+  if (activePrescription) {
+    if (activePrescription.medicines && activePrescription.medicines.length > 0) {
+      activePrescription.medicines.forEach((med, idx) => {
+        const estimatedCost = 140 + idx * 25;
+        newItems.push({
+          id: `b-med-${idx}`,
+          description: `Rx Pharmacy: ${med.drugName} (${med.dosage}) - ${med.durationDays}d`,
+          category: 'Pharmacy',
+          hsnSacCode: '300490',
+          quantity: 1,
+          unitPrice: estimatedCost,
+          gstPercent: 0,
+          total: estimatedCost,
+        });
+      });
+    }
+
+    if (activePrescription.labTests && activePrescription.labTests.length > 0) {
+      activePrescription.labTests.forEach((lab, idx) => {
+        newItems.push({
+          id: `b-lab-${idx}`,
+          description: `Diagnostic Lab Order: ${lab.testName}`,
+          category: 'Lab',
+          hsnSacCode: '999316',
+          quantity: 1,
+          unitPrice: lab.price || 450,
+          gstPercent: 0,
+          total: lab.price || 450,
+        });
+      });
+    }
+
+    if (activePrescription.performedTherapies && activePrescription.performedTherapies.length > 0) {
+      activePrescription.performedTherapies.forEach((proc, idx) => {
+        newItems.push({
+          id: `b-proc-${idx}`,
+          description: `Clinical Therapy: ${proc.name} (${proc.targetArea})`,
+          category: 'Procedure',
+          hsnSacCode: '999314',
+          quantity: 1,
+          unitPrice: 850,
+          gstPercent: 0,
+          total: 850,
+        });
+      });
+    }
+  } else {
+    newItems.push({
+      id: 'b-proc-init',
+      description: 'Trigger Point Dry Needling & Class IV Laser (Session 1)',
+      category: 'Procedure',
+      hsnSacCode: '999314',
+      quantity: 1,
+      unitPrice: 850,
+      gstPercent: 0,
+      total: 850,
+    });
+  }
+
+  return newItems;
 }
 
 export const BillingManager: React.FC<BillingManagerProps> = ({
@@ -52,22 +132,22 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
   clinicSettings = BLANK_CLINIC_SETTINGS,
   activePrescription,
   appointmentId,
+  appointmentIsPaid = false,
   onPaymentSuccess,
 }) => {
   const [invoiceNumber, setInvoiceNumber] = useState(`INV-2026-${Math.floor(1000 + Math.random() * 9000)}`);
   const [activeTab, setActiveTab] = useState<'invoice' | 'pharmacy_batches' | 'rehab_packages'>('invoice');
   const [pharmacyStock, setPharmacyStock] = useState<PharmacyBatchItem[]>(MOCK_PHARMACY_BATCHES);
 
-  // Collect Payment Modal state
   const [showCollectPaymentModal, setShowCollectPaymentModal] = useState(false);
   const [cashTendered, setCashTendered] = useState<number>(0);
   const [receiptNumber] = useState(`RCPT-2026-${Math.floor(1000 + Math.random() * 9000)}`);
   const [isReceiptIssued, setIsReceiptIssued] = useState(false);
   const [isSendingWhatsAppReceipt, setIsSendingWhatsAppReceipt] = useState(false);
   const [whatsAppReceiptSent, setWhatsAppReceiptSent] = useState(false);
-  const [whatsAppReceiptSandbox, setWhatsAppReceiptSandbox] = useState(false);
+  const [receiptHonesty, setReceiptHonesty] = useState<ReceiptHonesty | null>(null);
 
-  const [paymentMode, setPaymentMode] = useState<'UPI' | 'Cash' | 'Card' | 'Insurance'>('UPI');
+  const [paymentMode, setPaymentMode] = useState<BillingPaymentMode>('UPI');
   const [discountAmount, setDiscountAmount] = useState<number>(0);
   const [isPaid, setIsPaid] = useState<boolean>(false);
   const [newItemDesc, setNewItemDesc] = useState('');
@@ -75,117 +155,123 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
   const [newItemCat, setNewItemCat] = useState<BillItem['category']>('Procedure');
   const [persistedInvoice, setPersistedInvoice] = useState<PersistedInvoice | null>(null);
   const [payLink, setPayLink] = useState('');
-  const [sandboxPay, setSandboxPay] = useState(false);
   const [collectBusy, setCollectBusy] = useState(false);
   const [collectError, setCollectError] = useState('');
+  const [copiedPayLink, setCopiedPayLink] = useState(false);
+  const [billingSettings, setBillingSettings] = useState<BillingSettings | null>(null);
+  const [dayEnd, setDayEnd] = useState<DayEndReport | null>(null);
 
   const [items, setItems] = useState<BillItem[]>([]);
-  const upiLabel = clinicSettings.upiId?.trim() || 'Not set';
+  const wasPaidRef = useRef(false);
+  const onPaymentSuccessRef = useRef(onPaymentSuccess);
+  onPaymentSuccessRef.current = onPaymentSuccess;
+
+  const billingIds = displayBillingIds(billingSettings, {
+    gstin: clinicSettings.gstin,
+    upiId: clinicSettings.upiId,
+    name: clinicSettings.name,
+  });
+  const clinicName = billingIds.clinicName || clinicSettings.name || 'Clinic name not set';
+  const statusLabel = paymentStatusLabel({
+    invoicePaid: isPaid,
+    appointmentIsPaid: isPaid ? true : appointmentIsPaid && !persistedInvoice,
+  });
+  const paid = statusLabel === 'Paid';
+  const showSandboxPay = shouldShowSandboxPay({
+    isPaid: paid,
+    sandboxSimulatorsEnabled: Boolean(billingSettings?.sandboxSimulatorsEnabled),
+    hasInvoiceId: Boolean(persistedInvoice?.id),
+  });
+
+  const loadDayEnd = async () => {
+    const report = await apiFetch<DayEndReport>(`/api/billing/day-end?date=${todayIsoDate()}`);
+    setDayEnd(report);
+  };
+
+  const applyServerInvoice = (invoice: PersistedInvoice, opts?: { notify?: boolean }) => {
+    const invoicePaid = isInvoicePaid(invoice);
+    setPersistedInvoice(invoice);
+    setInvoiceNumber(invoice.invoiceNumber);
+    if (invoice.payLink) setPayLink(invoice.payLink);
+    if (invoice.paymentMode) setPaymentMode(paymentModeFromInvoice(invoice.paymentMode));
+    setIsPaid(invoicePaid);
+    setIsReceiptIssued(invoicePaid);
+    if (invoicePaid && invoice.receiptWhatsAppStatus && invoice.receiptWhatsAppStatus !== 'unsent') {
+      const honesty = receiptHonestyFromResponse({
+        channel: invoice.receiptWhatsAppChannel,
+        sandbox: invoice.receiptWhatsAppChannel === 'sandbox',
+        graphDelivered: invoice.receiptWhatsAppChannel === 'graph',
+        wamid: invoice.receiptWhatsAppMessageId || null,
+      });
+      setWhatsAppReceiptSent(true);
+      setReceiptHonesty(honesty);
+    }
+    if (invoicePaid && opts?.notify !== false && !wasPaidRef.current) {
+      onPaymentSuccessRef.current?.(invoice.invoiceNumber, invoice.totalAmount ?? 0);
+      void loadDayEnd().catch(() => undefined);
+    }
+    wasPaidRef.current = invoicePaid;
+  };
 
   useEffect(() => {
-    const defaultConsultation: BillItem = {
-      id: 'b-consult',
-      description: `OPD Specialist Consultation - ${currentDoctor.specialty} (${currentDoctor.name})`,
-      category: 'Consultation',
-      hsnSacCode: '999312',
-      quantity: 1,
-      unitPrice: currentDoctor.consultationFee || 600,
-      gstPercent: 0,
-      total: currentDoctor.consultationFee || 600,
+    setItems(defaultLineItems(currentDoctor, activePrescription));
+  }, [activePrescription, currentDoctor, currentPatient.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch<BillingSettings>('/api/billing/settings')
+      .then((settings) => {
+        if (!cancelled) setBillingSettings(settings);
+      })
+      .catch(() => undefined);
+    void loadDayEnd().catch(() => undefined);
+    return () => {
+      cancelled = true;
     };
+  }, []);
 
-    const newItems: BillItem[] = [defaultConsultation];
-
-    if (activePrescription) {
-      // Append prescribed medicines
-      if (activePrescription.medicines && activePrescription.medicines.length > 0) {
-        activePrescription.medicines.forEach((med, idx) => {
-          const estimatedCost = 140 + (idx * 25);
-          newItems.push({
-            id: `b-med-${idx}`,
-            description: `Rx Pharmacy: ${med.drugName} (${med.dosage}) - ${med.durationDays}d`,
-            category: 'Pharmacy',
-            hsnSacCode: '300490',
-            quantity: 1,
-            unitPrice: estimatedCost,
-            gstPercent: 0,
-            total: estimatedCost,
-          });
-        });
-      }
-
-      // Append prescribed lab tests
-      if (activePrescription.labTests && activePrescription.labTests.length > 0) {
-        activePrescription.labTests.forEach((lab, idx) => {
-          newItems.push({
-            id: `b-lab-${idx}`,
-            description: `Diagnostic Lab Order: ${lab.testName}`,
-            category: 'Lab',
-            hsnSacCode: '999316',
-            quantity: 1,
-            unitPrice: lab.price || 450,
-            gstPercent: 0,
-            total: lab.price || 450,
-          });
-        });
-      }
-
-      // Append performed therapies / procedures if any
-      if (activePrescription.performedTherapies && activePrescription.performedTherapies.length > 0) {
-        activePrescription.performedTherapies.forEach((proc, idx) => {
-          newItems.push({
-            id: `b-proc-${idx}`,
-            description: `Clinical Therapy: ${proc.name} (${proc.targetArea})`,
-            category: 'Procedure',
-            hsnSacCode: '999314',
-            quantity: 1,
-            unitPrice: 850,
-            gstPercent: 0,
-            total: 850,
-          });
-        });
-      }
-    } else {
-      // Default initial procedure
-      newItems.push({
-        id: 'b-proc-init',
-        description: 'Trigger Point Dry Needling & Class IV Laser (Session 1)',
-        category: 'Procedure',
-        hsnSacCode: '999314',
-        quantity: 1,
-        unitPrice: 850,
-        gstPercent: 0,
-        total: 850,
-      });
-    }
-
-    setItems(newItems);
+  useEffect(() => {
+    let cancelled = false;
+    wasPaidRef.current = false;
     setPersistedInvoice(null);
     setPayLink('');
-    setSandboxPay(false);
     setIsPaid(false);
     setIsReceiptIssued(false);
     setWhatsAppReceiptSent(false);
+    setReceiptHonesty(null);
     setCollectError('');
-  }, [activePrescription, currentDoctor, currentPatient.id]);
+
+    const hydrate = async () => {
+      const list = await apiFetch<{ invoices: PersistedInvoice[] }>('/api/invoices');
+      if (cancelled) return;
+      const picked = pickInvoiceForContext(list.invoices || [], {
+        appointmentId,
+        patientId: currentPatient.id,
+      });
+      if (picked) {
+        applyServerInvoice(picked, { notify: false });
+        return;
+      }
+      if (appointmentIsPaid) {
+        setIsPaid(Boolean(appointmentIsPaid));
+        setIsReceiptIssued(Boolean(appointmentIsPaid));
+        wasPaidRef.current = true;
+      }
+    };
+
+    void hydrate().catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [currentPatient.id, appointmentId, appointmentIsPaid]);
 
   const subtotal = items.reduce((sum, item) => sum + item.total, 0);
   const totalAmount = Math.max(0, subtotal - discountAmount);
 
-  const applyPaidInvoice = (invoice: PersistedInvoice) => {
-    setPersistedInvoice(invoice);
-    setInvoiceNumber(invoice.invoiceNumber);
-    if (invoice.payLink) setPayLink(invoice.payLink);
-    const paid = invoice.paymentStatus === 'Paid';
-    setIsPaid(paid);
-    setIsReceiptIssued(paid);
-    if (paid) onPaymentSuccess?.(invoice.invoiceNumber, totalAmount);
-  };
-
   const ensureInvoice = async (): Promise<PersistedInvoice> => {
     if (persistedInvoice?.id && persistedInvoice.paymentStatus !== 'Paid') return persistedInvoice;
     if (persistedInvoice?.paymentStatus === 'Paid') return persistedInvoice;
-    const created = await apiFetch<{ invoice: PersistedInvoice & { invoiceNumber: string; paymentStatus: string; payLink?: string } }>(
+    const created = await apiFetch<{ invoice: PersistedInvoice }>(
       '/api/invoices',
       {
         method: 'POST',
@@ -201,8 +287,8 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
           discountAmount,
           taxAmount: 0,
           gstPercent: 0,
-          gstin: clinicSettings.gstin || '',
-          upiId: clinicSettings.upiId || '',
+          gstin: billingIds.gstin,
+          upiId: billingIds.upiId,
           issuedBy: currentDoctor.name,
         }),
       }
@@ -215,7 +301,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
 
   const refreshInvoice = async (id: string) => {
     const res = await apiFetch<{ invoice: PersistedInvoice }>(`/api/invoices/${id}`);
-    applyPaidInvoice(res.invoice);
+    applyServerInvoice(res.invoice);
     return res.invoice;
   };
 
@@ -230,10 +316,8 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
         sandbox?: boolean;
         error?: string;
       }>(`/api/invoices/${invoice.id}/pay-order`, { method: 'POST' });
-      setPersistedInvoice(order.invoice);
-      setInvoiceNumber(order.invoice.invoiceNumber);
+      applyServerInvoice(order.invoice, { notify: false });
       setPayLink(order.payLink || order.invoice.payLink || '');
-      setSandboxPay(Boolean(order.sandbox));
     } catch (err) {
       setCollectError(err instanceof Error ? err.message : 'Failed to create Razorpay pay link');
     } finally {
@@ -250,7 +334,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
         `/api/invoices/${persistedInvoice.id}/sandbox-pay`,
         { method: 'POST' }
       );
-      applyPaidInvoice(res.invoice);
+      applyServerInvoice(res.invoice);
     } catch (err) {
       setCollectError(err instanceof Error ? err.message : 'Sandbox capture failed');
     } finally {
@@ -259,6 +343,10 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
   };
 
   const collectDeskPayment = async () => {
+    if (!canMarkPaidLocally(paymentMode)) {
+      setCollectError('UPI / Razorpay stays Unpaid until a verified webhook (or SANDBOX / DEV-ONLY sandbox-pay).');
+      return;
+    }
     setCollectBusy(true);
     setCollectError('');
     try {
@@ -267,7 +355,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
         method: 'POST',
         body: JSON.stringify({ paymentMode }),
       });
-      applyPaidInvoice(res.invoice);
+      applyServerInvoice(res.invoice);
     } catch (err) {
       setCollectError(err instanceof Error ? err.message : 'Desk collect failed');
     } finally {
@@ -275,13 +363,50 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
     }
   };
 
+  const copyPayLink = async () => {
+    if (!payLink) return;
+    try {
+      await navigator.clipboard.writeText(payLink);
+      setCopiedPayLink(true);
+      window.setTimeout(() => setCopiedPayLink(false), 1600);
+    } catch {
+      setCollectError('Could not copy pay link');
+    }
+  };
+
+  const sendWhatsAppReceipt = async () => {
+    if (!persistedInvoice?.id) return;
+    setIsSendingWhatsAppReceipt(true);
+    setCollectError('');
+    try {
+      const res = await apiFetch<{
+        ok?: boolean;
+        sandbox?: boolean;
+        graphDelivered?: boolean;
+        channel?: string;
+        wamid?: string | null;
+        messageId?: string | null;
+        notice?: string;
+      }>(`/api/invoices/${persistedInvoice.id}/receipt`, { method: 'POST' });
+      const honesty = receiptHonestyFromResponse(res);
+      setReceiptHonesty(honesty);
+      setWhatsAppReceiptSent(true);
+    } catch (err) {
+      setWhatsAppReceiptSent(false);
+      setReceiptHonesty(null);
+      setCollectError(err instanceof Error ? err.message : 'WhatsApp receipt failed');
+    } finally {
+      setIsSendingWhatsAppReceipt(false);
+    }
+  };
+
   useEffect(() => {
-    if (!persistedInvoice?.id || isPaid || !payLink) return;
+    if (!persistedInvoice?.id || paid || !payLink) return;
     const timer = window.setInterval(() => {
       void refreshInvoice(persistedInvoice.id).catch(() => undefined);
     }, 2500);
     return () => window.clearInterval(timer);
-  }, [persistedInvoice?.id, isPaid, payLink]);
+  }, [persistedInvoice?.id, paid, payLink]);
 
   const handleAddItem = () => {
     if (!newItemDesc.trim()) return;
@@ -309,11 +434,10 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
       quantity: 1,
       unitPrice: drug.mrp,
       gstPercent: 0,
-      total: drug.mrp
+      total: drug.mrp,
     };
     setItems([...items, newItem]);
 
-    // Deduct 1 unit from stock
     setPharmacyStock((prev) =>
       prev.map((item) =>
         item.id === drug.id ? { ...item, currentStock: Math.max(0, item.currentStock - 1) } : item
@@ -331,7 +455,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
       quantity: 1,
       unitPrice: pkg.cost,
       gstPercent: 0,
-      total: pkg.cost
+      total: pkg.cost,
     };
     setItems([...items, newItem]);
     setActiveTab('invoice');
@@ -341,9 +465,41 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
     setItems(items.filter((i) => i.id !== id));
   };
 
+  const statusChip = (
+    <span
+      className={`font-bold inline-block px-2 py-0.5 rounded text-[10px] uppercase tracking-wide ${
+        paid ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+      }`}
+    >
+      {statusLabel}
+    </span>
+  );
+
   return (
     <div className="max-w-6xl mx-auto px-4 py-6 space-y-6">
-      {/* Top Banner & Sub-Navigation */}
+      {dayEnd && (
+        <div className="no-print bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Day-end collections · {dayEnd.date}</p>
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+              <span className="px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold">
+                Paid {dayEnd.paidCount} · {formatRupees(dayEnd.paidAmount)}
+              </span>
+              <span className="px-2.5 py-1 rounded-lg bg-amber-50 text-amber-800 border border-amber-200 font-semibold">
+                Due {dayEnd.dueCount} · {formatRupees(dayEnd.dueAmount)}
+              </span>
+            </div>
+          </div>
+          <button
+            onClick={() => void loadDayEnd().catch(() => undefined)}
+            className="self-start sm:self-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            Refresh day-end
+          </button>
+        </div>
+      )}
+
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm no-print">
         <div>
           <div className="flex items-center space-x-2">
@@ -351,12 +507,12 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
               Integrated OPD Desk & Pharmacy
             </span>
             <span className="font-mono text-xs text-slate-500 font-medium">{invoiceNumber}</span>
+            {statusChip}
           </div>
           <h1 className="text-lg font-bold text-slate-900 mt-1">Multi-Specialty Billing, Therapy Packages & Batch Inventory</h1>
         </div>
 
         <div className="flex items-center space-x-2">
-          {/* Sub Navigation */}
           <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-semibold">
             <button
               onClick={() => setActiveTab('invoice')}
@@ -391,7 +547,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
             className="flex items-center space-x-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs transition-all cursor-pointer"
           >
             <Receipt className="w-3.5 h-3.5" />
-            <span>{isPaid ? 'Payment Collected (Receipt)' : 'Collect Payment'}</span>
+            <span>{paid ? 'Payment Collected (Receipt)' : 'Collect Payment'}</span>
           </button>
 
           <button
@@ -404,23 +560,22 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
         </div>
       </div>
 
-      {/* TAB 1: TAX INVOICE */}
       {activeTab === 'invoice' && (
         <div className="bg-white rounded-2xl border border-slate-200 shadow-md p-6 sm:p-8 space-y-6">
-          {/* Clinic & GST Header */}
           <div className="border-b-2 border-slate-900 pb-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div>
-              <h2 className="text-xl font-bold text-slate-900">{clinicSettings.name || 'Clinic name not set'}</h2>
+              <h2 className="text-xl font-bold text-slate-900">{clinicName}</h2>
               <p className="text-xs text-slate-600 mt-0.5">
                 {[clinicSettings.address, clinicSettings.city].filter(Boolean).join(', ') || 'Address not set'}
               </p>
               <p className="text-xs text-slate-500 font-mono">
                 {[
-                  clinicSettings.gstin ? `GSTIN: ${clinicSettings.gstin}` : null,
+                  `GSTIN: ${billingIds.gstinLabel}`,
+                  `UPI: ${billingIds.upiLabel}`,
                   clinicSettings.regId ? `Clinic Reg: ${clinicSettings.regId}` : null,
                   clinicSettings.phone ? `Tel: ${clinicSettings.phone}` : null,
                   clinicSettings.email || null,
-                ].filter(Boolean).join(' • ') || 'GSTIN / clinic registration not set'}
+                ].filter(Boolean).join(' • ')}
               </p>
             </div>
 
@@ -437,10 +592,10 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
               </span>
               <p className="text-xs font-mono text-slate-700 mt-1 font-bold">No: {invoiceNumber}</p>
               <p className="text-xs text-slate-500">{new Date().toLocaleDateString('en-IN')}</p>
+              <div className="mt-1">{statusChip}</div>
             </div>
           </div>
 
-          {/* Patient Details Row */}
           <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
             <div>
               <span className="text-slate-400 block text-[10px] uppercase font-bold">Billed To (Patient)</span>
@@ -456,15 +611,10 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
             </div>
             <div>
               <span className="text-slate-400 block text-[10px] uppercase font-bold">Payment Status</span>
-              <span className={`font-bold inline-block px-2 py-0.5 rounded text-[10px] ${
-                isPaid ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
-              }`}>
-                {isPaid ? 'PAID' : 'PENDING'}
-              </span>
+              {statusChip}
             </div>
           </div>
 
-          {/* Add Item Row (No-print) */}
           <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 flex flex-col sm:flex-row items-center gap-2 text-xs no-print">
             <input
               type="text"
@@ -475,7 +625,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
             />
             <select
               value={newItemCat}
-              onChange={(e) => setNewItemCat(e.target.value as any)}
+              onChange={(e) => setNewItemCat(e.target.value as BillItem['category'])}
               className="border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white focus:outline-none"
             >
               <option value="Procedure">Procedure</option>
@@ -499,7 +649,6 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
             </button>
           </div>
 
-          {/* Invoice Table */}
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs border-collapse">
               <thead>
@@ -541,9 +690,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
             </table>
           </div>
 
-          {/* Calculations & Summary */}
           <div className="border-t border-slate-200 pt-4 flex flex-col sm:flex-row justify-between gap-6">
-            {/* Payment Mode Selector & UPI QR */}
             <div className="space-y-3 flex-1">
               <span className="text-xs font-bold text-slate-700 uppercase tracking-wider block">Payment Mode:</span>
               <div className="flex gap-2 no-print">
@@ -551,35 +698,39 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
                   <button
                     key={mode}
                     onClick={() => setPaymentMode(mode)}
+                    disabled={paid}
                     className={`px-3 py-1.5 rounded-lg text-xs font-semibold border ${
                       paymentMode === mode
                         ? 'bg-teal-600 text-white border-teal-600 shadow-xs'
                         : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
-                    }`}
+                    } disabled:opacity-60`}
                   >
                     {mode}
                   </button>
                 ))}
               </div>
 
-              {/* UPI QR Code box */}
-              <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 flex items-center space-x-3 w-fit">
-                <div className="w-14 h-14 bg-white p-1 rounded-lg border border-slate-200 flex items-center justify-center">
+              <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 flex items-center space-x-3 w-fit max-w-full">
+                <div className="w-14 h-14 bg-white p-1 rounded-lg border border-slate-200 flex items-center justify-center shrink-0">
                   <QrCode className="w-12 h-12 text-slate-900" />
                 </div>
-                <div className="text-xs">
-                  <strong className="text-slate-900 block font-mono">UPI: {upiLabel}</strong>
+                <div className="text-xs min-w-0">
+                  <strong className="text-slate-900 block font-mono">UPI: {billingIds.upiLabel}</strong>
                   <span className="text-slate-500 text-[11px] block">
                     {payLink ? 'Razorpay UPI / cards / netbanking pay link' : 'Scan via GPay, PhonePe, Paytm, BHIM'}
                   </span>
-                  <span className="text-emerald-700 font-semibold text-[11px]">
-                    Paid only after verified Razorpay webhook
+                  {payLink && !paid && (
+                    <a href={payLink} target="_blank" rel="noreferrer" className="text-teal-800 font-semibold text-[11px] underline break-all">
+                      {payLink}
+                    </a>
+                  )}
+                  <span className={`font-semibold text-[11px] block ${paid ? 'text-emerald-700' : 'text-amber-800'}`}>
+                    {paid ? 'Paid (verified server status)' : 'Unpaid until verified Razorpay webhook'}
                   </span>
                 </div>
               </div>
             </div>
 
-            {/* Totals */}
             <div className="w-full sm:w-64 space-y-2 text-xs">
               <div className="flex justify-between text-slate-600">
                 <span>Subtotal:</span>
@@ -595,11 +746,12 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
                   type="number"
                   value={discountAmount}
                   onChange={(e) => setDiscountAmount(Number(e.target.value))}
-                  className="w-20 border border-slate-200 rounded px-1.5 py-0.5 text-right font-mono"
+                  disabled={paid}
+                  className="w-20 border border-slate-200 rounded px-1.5 py-0.5 text-right font-mono disabled:bg-slate-100"
                 />
               </div>
               <div className="border-t-2 border-slate-900 pt-2 flex justify-between text-sm">
-                <strong className="text-slate-900">Total Payable:</strong>
+                <strong className="text-slate-900">{paid ? 'Total Paid:' : 'Total Payable:'}</strong>
                 <strong className="text-teal-800 font-mono text-base font-black">₹{totalAmount}</strong>
               </div>
 
@@ -607,13 +759,13 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
                 <button
                   onClick={() => setShowCollectPaymentModal(true)}
                   className={`w-full py-2.5 rounded-xl font-bold text-xs shadow-sm transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-                    isPaid
+                    paid
                       ? 'bg-emerald-600 text-white hover:bg-emerald-700'
                       : 'bg-teal-600 text-white hover:bg-teal-700 shadow-teal-100'
                   }`}
                 >
                   <CreditCard className="w-3.5 h-3.5" />
-                  <span>{isPaid ? '✓ Payment Received (View Receipt)' : 'Collect Payment (UPI / Cash / Card)'}</span>
+                  <span>{paid ? '✓ Payment Received (View Receipt)' : 'Collect Payment (UPI / Cash / Card)'}</span>
                 </button>
               </div>
             </div>
@@ -621,7 +773,6 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
         </div>
       )}
 
-      {/* TAB 2: PHARMACY BATCH INVENTORY & FIFO DISPENSING */}
       {activeTab === 'pharmacy_batches' && (
         <div className="bg-white rounded-2xl border border-slate-200 p-6 space-y-4 shadow-sm">
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">
@@ -687,7 +838,6 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
         </div>
       )}
 
-      {/* TAB 3: MULTI-SESSION REHAB PACKAGES */}
       {activeTab === 'rehab_packages' && (
         <div className="bg-white rounded-2xl border border-slate-200 p-6 space-y-4 shadow-sm">
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">
@@ -749,17 +899,15 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
         </div>
       )}
 
-      {/* COLLECT PAYMENT & GST RECEIPT MODAL */}
       {showCollectPaymentModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-lg w-full p-6 space-y-5 shadow-2xl border border-slate-200">
-            {/* Modal Header */}
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div className="flex items-center space-x-2 text-slate-900">
                 <Receipt className="w-5 h-5 text-teal-600" />
                 <div>
                   <h3 className="font-bold text-base">
-                    {isPaid ? 'GST Payment Receipt & Confirmation' : 'Collect Consultation & Clinical Payment'}
+                    {paid ? 'GST Payment Receipt & Confirmation' : 'Collect Consultation & Clinical Payment'}
                   </h3>
                   <p className="text-[11px] text-slate-500 font-mono">Invoice: {invoiceNumber} • UHID: {currentPatient.uhid}</p>
                 </div>
@@ -772,7 +920,6 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
               </button>
             </div>
 
-            {/* Patient & Bill Summary Header */}
             <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 flex items-center justify-between">
               <div>
                 <span className="text-slate-400 block text-[10px] uppercase font-bold">Patient</span>
@@ -780,17 +927,16 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
                 <span className="text-slate-500 text-[11px] block">{currentPatient.phone}</span>
               </div>
               <div className="text-right">
-                <span className="text-slate-400 block text-[10px] uppercase font-bold">Total Amount Due</span>
+                <span className="text-slate-400 block text-[10px] uppercase font-bold">{paid ? 'Amount Paid' : 'Total Amount Due'}</span>
                 <strong className="text-teal-800 font-mono text-xl font-black">₹{totalAmount}</strong>
-                <span className={`text-[10px] font-bold block ${isPaid ? 'text-emerald-700' : 'text-amber-700'}`}>
-                  {isPaid ? 'PAID IN FULL' : 'PAYMENT PENDING'}
+                <span className={`text-[10px] font-bold block ${paid ? 'text-emerald-700' : 'text-amber-700'}`}>
+                  {paid ? 'PAID IN FULL' : 'UNPAID'}
                 </span>
               </div>
             </div>
 
-            {!isPaid ? (
+            {!paid ? (
               <div className="space-y-4">
-                {/* Method selector */}
                 <div>
                   <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block mb-1.5">
                     Select Payment Method:
@@ -812,24 +958,55 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
                   </div>
                 </div>
 
-                {/* Method Specific UI */}
                 {paymentMode === 'UPI' && (
-                  <div className="p-4 bg-teal-50/60 rounded-xl border border-teal-200 flex items-center gap-4">
-                    <div className="w-24 h-24 bg-white p-1.5 rounded-xl border border-teal-200 flex items-center justify-center shrink-0 shadow-xs">
-                      <QrCode className="w-20 h-20 text-slate-900" />
+                  <div className="p-4 bg-teal-50/60 rounded-xl border border-teal-200 space-y-3">
+                    <div className="flex items-center gap-4">
+                      <div className="w-24 h-24 bg-white p-1.5 rounded-xl border border-teal-200 flex items-center justify-center shrink-0 shadow-xs">
+                        <QrCode className="w-20 h-20 text-slate-900" />
+                      </div>
+                      <div className="text-xs space-y-1 min-w-0">
+                        <span className="text-teal-900 font-bold block text-sm">Razorpay UPI collect</span>
+                        <p className="font-mono text-[11px] text-slate-700 font-semibold">VPA: {billingIds.upiLabel}</p>
+                        <p className="text-[11px] text-slate-600">Amount: <strong>₹{totalAmount}</strong></p>
+                        <p className="text-[10px] text-amber-800 font-semibold">Invoice stays Unpaid until webhook (or SANDBOX pay).</p>
+                      </div>
                     </div>
-                    <div className="text-xs space-y-1">
-                      <span className="text-teal-900 font-bold block text-sm">Razorpay UPI collect</span>
-                      <p className="font-mono text-[11px] text-slate-700 font-semibold">VPA: {upiLabel}</p>
-                      <p className="text-[11px] text-slate-600">Amount: <strong>₹{totalAmount}</strong></p>
-                      {payLink ? (
-                        <a href={payLink} target="_blank" rel="noreferrer" className="text-[11px] text-teal-800 font-semibold underline break-all">
+                    {payLink ? (
+                      <div className="space-y-2">
+                        <a href={payLink} target="_blank" rel="noreferrer" className="text-[11px] text-teal-800 font-semibold underline break-all block">
                           {payLink}
                         </a>
-                      ) : (
-                        <p className="text-[10px] text-slate-500">Generate a Razorpay pay link. Invoice stays Unpaid until webhook.</p>
-                      )}
-                    </div>
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            onClick={() => void copyPayLink()}
+                            className="px-2.5 py-1 rounded-lg bg-white border border-teal-200 text-[11px] font-bold text-teal-900 flex items-center gap-1"
+                          >
+                            {copiedPayLink ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                            {copiedPayLink ? 'Copied' : 'Copy pay link'}
+                          </button>
+                          <a
+                            href={payLink}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="px-2.5 py-1 rounded-lg bg-white border border-teal-200 text-[11px] font-bold text-teal-900 flex items-center gap-1"
+                          >
+                            <ExternalLink className="w-3 h-3" />
+                            Open pay link
+                          </a>
+                          <button
+                            onClick={() => persistedInvoice?.id && void refreshInvoice(persistedInvoice.id)}
+                            disabled={collectBusy}
+                            className="px-2.5 py-1 rounded-lg bg-white border border-teal-200 text-[11px] font-bold text-teal-900 flex items-center gap-1 disabled:opacity-60"
+                          >
+                            <RefreshCw className={`w-3 h-3 ${collectBusy ? 'animate-spin' : ''}`} />
+                            Refresh status
+                          </button>
+                        </div>
+                        <p className="text-[11px] text-teal-900 font-semibold">Waiting for verified Razorpay webhook… polling every 2.5s.</p>
+                      </div>
+                    ) : (
+                      <p className="text-[10px] text-slate-500">Create a Razorpay pay link. Status will not flip to Paid in this browser.</p>
+                    )}
                   </div>
                 )}
 
@@ -875,12 +1052,9 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
                   <div className="p-4 bg-blue-50/60 rounded-xl border border-blue-200 flex items-center gap-3 text-xs">
                     <CreditCard className="w-8 h-8 text-blue-600 shrink-0" />
                     <div>
-                      <strong className="text-slate-900 block">PineLabs Plutus EDC Terminal Connected</strong>
+                      <strong className="text-slate-900 block">Card collection at desk</strong>
                       <p className="text-[11px] text-slate-600">
-                        Tap / Dip patient debit or credit card (RuPay, Visa, Mastercard) on the desk terminal.
-                      </p>
-                      <p className="text-[10px] text-blue-700 font-mono mt-1 font-semibold">
-                        Terminal ID: PLUTUS-DESK-01 • Auth Ref: AUTH-{Math.floor(1000 + Math.random() * 9000)}
+                        Record the card collection on the server. This does not mark a Razorpay UPI invoice paid.
                       </p>
                     </div>
                   </div>
@@ -888,19 +1062,18 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
 
                 {paymentMode === 'Insurance' && (
                   <div className="p-4 bg-purple-50/60 rounded-xl border border-purple-200 space-y-2 text-xs">
-                    <strong className="text-purple-900 block font-bold">ABHA &amp; TPA Cashless Pre-Auth</strong>
+                    <strong className="text-purple-900 block font-bold">Insurance / TPA desk collect</strong>
+                    <p className="text-[11px] text-slate-600">Records Cashless / TPA collection via desk-collect. Not a UPI mark-paid.</p>
                     <div className="grid grid-cols-2 gap-2">
                       <input
                         type="text"
                         placeholder="TPA / Policy ID"
                         className="bg-white border border-purple-200 rounded px-2 py-1 text-xs"
-                        defaultValue="STAR-HEALTH-9912"
                       />
                       <input
                         type="text"
                         placeholder="Pre-auth Approval No."
                         className="bg-white border border-purple-200 rounded px-2 py-1 text-xs"
-                        defaultValue="APPR-88219"
                       />
                     </div>
                   </div>
@@ -910,7 +1083,6 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
                   <p className="text-[11px] text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{collectError}</p>
                 )}
 
-                {/* Confirm Pay Button */}
                 {paymentMode === 'UPI' ? (
                   <div className="space-y-2">
                     <button
@@ -921,13 +1093,13 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
                       {collectBusy ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
                       <span>{payLink ? 'Waiting for verified Razorpay webhook…' : `Create Razorpay pay link for ₹${totalAmount}`}</span>
                     </button>
-                    {sandboxPay && payLink && (
+                    {showSandboxPay && (
                       <button
                         onClick={() => void simulateSandboxCapture()}
                         disabled={collectBusy}
                         className="w-full py-2 rounded-xl bg-amber-100 hover:bg-amber-200 text-amber-900 font-bold text-[11px] border border-amber-300 cursor-pointer"
                       >
-                        Simulate Razorpay webhook (SANDBOX / DEV-ONLY)
+                        SANDBOX / DEV-ONLY — simulate Razorpay capture
                       </button>
                     )}
                   </div>
@@ -944,14 +1116,13 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
               </div>
             ) : (
               <div className="space-y-4">
-                {/* Receipt Card */}
                 <div className="p-4 bg-emerald-50 rounded-xl border border-emerald-200 space-y-3 text-xs">
                   <div className="flex items-center justify-between border-b border-emerald-200 pb-2">
                     <div className="flex items-center gap-1.5 text-emerald-800 font-bold">
                       <CheckCircle className="w-4 h-4 text-emerald-600" />
                       <span>Payment Completed &amp; Reconciled</span>
                     </div>
-                    <span className="font-mono text-[11px] font-bold text-slate-600">{receiptNumber}</span>
+                    <span className="font-mono text-[11px] font-bold text-slate-600">{isReceiptIssued ? receiptNumber : invoiceNumber}</span>
                   </div>
 
                   <div className="grid grid-cols-2 gap-2 text-[11px]">
@@ -964,17 +1135,16 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
                       <strong className="text-emerald-800 font-mono text-sm">₹{totalAmount}</strong>
                     </div>
                     <div>
-                      <span className="text-slate-500 block">GST Exempt Healthcare:</span>
-                      <strong className="text-slate-800">SAC 999312 / 999314</strong>
+                      <span className="text-slate-500 block">GSTIN:</span>
+                      <strong className="text-slate-800 font-mono">{billingIds.gstinLabel}</strong>
                     </div>
                     <div>
-                      <span className="text-slate-500 block">Doctor Signature:</span>
-                      <strong className="text-slate-800">{currentDoctor.name}</strong>
+                      <span className="text-slate-500 block">UPI:</span>
+                      <strong className="text-slate-800 font-mono">{billingIds.upiLabel}</strong>
                     </div>
                   </div>
                 </div>
 
-                {/* WhatsApp Receipt Dispatch */}
                 <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2 text-xs">
                   <div className="flex items-center justify-between">
                     <span className="font-bold text-slate-800 flex items-center gap-1.5">
@@ -984,35 +1154,30 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
                     <span className="text-[11px] text-slate-500">{currentPatient.phone}</span>
                   </div>
 
-                  {whatsAppReceiptSent ? (
-                    <div className="bg-emerald-100 text-emerald-800 p-2 rounded-lg text-[11px] font-medium flex items-center gap-1.5">
-                      <Check className="w-3.5 h-3.5 text-emerald-700" />
-                      GST E-Receipt {whatsAppReceiptSandbox ? 'recorded in SANDBOX / DEV-ONLY (not Graph)' : `sent to ${currentPatient.phone} via WhatsApp`}
+                  {whatsAppReceiptSent && receiptHonesty ? (
+                    <div
+                      className={`p-2 rounded-lg text-[11px] font-medium space-y-0.5 ${
+                        receiptHonesty.tone === 'graph'
+                          ? 'bg-emerald-100 text-emerald-800'
+                          : receiptHonesty.tone === 'sandbox'
+                            ? 'bg-amber-100 text-amber-900'
+                            : 'bg-rose-50 text-rose-800'
+                      }`}
+                    >
+                      <p className="flex items-center gap-1.5 font-bold">
+                        <Check className="w-3.5 h-3.5 shrink-0" />
+                        {receiptHonesty.headline}
+                      </p>
+                      <p>{receiptHonesty.detail}</p>
+                      {receiptHonesty.graphDelivered && receiptHonesty.wamid && (
+                        <p className="font-mono text-[10px]">wamid {receiptHonesty.wamid}</p>
+                      )}
                     </div>
                   ) : (
                     <button
-                      onClick={async () => {
-                        if (!persistedInvoice?.id) return;
-                        setIsSendingWhatsAppReceipt(true);
-                        try {
-                          const res = await apiFetch<{
-                            ok?: boolean;
-                            sandbox?: boolean;
-                            graphDelivered?: boolean;
-                            channel?: string;
-                          }>(`/api/invoices/${persistedInvoice.id}/receipt`, { method: 'POST' });
-                          setWhatsAppReceiptSent(true);
-                          setWhatsAppReceiptSandbox(Boolean(res.sandbox) || res.channel === 'sandbox');
-                        } catch (err) {
-                          console.error(err);
-                          setWhatsAppReceiptSent(false);
-                          setCollectError(err instanceof Error ? err.message : 'WhatsApp receipt failed');
-                        } finally {
-                          setIsSendingWhatsAppReceipt(false);
-                        }
-                      }}
-                      disabled={isSendingWhatsAppReceipt}
-                      className="w-full py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+                      onClick={() => void sendWhatsAppReceipt()}
+                      disabled={isSendingWhatsAppReceipt || !persistedInvoice?.id}
+                      className="w-full py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-xs transition-colors cursor-pointer"
                     >
                       {isSendingWhatsAppReceipt ? (
                         <RefreshCw className="w-3.5 h-3.5 animate-spin" />
@@ -1022,9 +1187,11 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
                       <span>Send E-Receipt via WhatsApp</span>
                     </button>
                   )}
+                  {collectError && paid && (
+                    <p className="text-[11px] text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{collectError}</p>
+                  )}
                 </div>
 
-                {/* Receipt Actions */}
                 <div className="flex items-center justify-between pt-2 border-t border-slate-100">
                   <button
                     onClick={() => window.print()}
