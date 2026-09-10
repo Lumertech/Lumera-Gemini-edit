@@ -31,8 +31,7 @@ import {
   Send,
   ExternalLink,
   ShieldAlert,
-  Award,
-  Shield
+  Award
 } from "lucide-react";
 import { useNav } from "../nav/NavigationContext";
 
@@ -334,7 +333,7 @@ export const LandingPage: React.FC = () => {
 
           <div className="mt-4 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-xs text-slate-400">
             <span className="flex items-center gap-1.5">
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> Instant Sandbox Access
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> 30-day free trial
             </span>
             <span className="flex items-center gap-1.5">
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> No Credit Card Required
@@ -961,14 +960,6 @@ export const LandingPage: React.FC = () => {
               className="hover:text-blue-400 transition cursor-pointer"
             >
               ABDM &amp; DPDP Security Statement
-            </button>
-            <button
-              type="button"
-              onClick={() => go("login", { loginNext: "admin" })}
-              className="hover:text-purple-400 transition cursor-pointer inline-flex items-center gap-1 text-slate-400 hover:text-slate-200"
-            >
-              <Shield className="w-3 h-3 text-purple-400" />
-              <span>Admin</span>
             </button>
           </div>
 

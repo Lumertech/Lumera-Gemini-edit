@@ -5,6 +5,14 @@ import { hashPassword } from "./password.ts";
 import { scrubSeedBillingIds } from "./seed-branding.ts";
 import { CMS_POLICY_UPSERTS } from "./cms-policy-seed.ts";
 import { ensureDemoPersonaUsers } from "./demo-seed.ts";
+import {
+  DEMO_SPECIALTY_MATRIX,
+  assertPacksDifferByMoreThanLabel,
+  canonicalSpecialty,
+  getSpecialtyPack,
+  resolveSpecialtyPack,
+  roleHomeForAccount,
+} from "./specialty-packs.ts";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const DB_PATH = path.join(DATA_DIR, "lumera.db");
@@ -38,6 +46,7 @@ export interface DbUser {
   onboarding_completed?: number;
   practice_type?: string;
   specialty?: string;
+  pack_id?: string;
 }
 
 export const DEMO_TENANT_ID = "tenant-lumera-main";
@@ -183,6 +192,7 @@ export function initDatabase(): DatabaseSync {
   seedIfEmpty(db);
   seedSubscriptionsIfMissing(db);
   seedClinicalAndWhatsAppIfMissing(db);
+  seedDemoSpecialtyPackUsers(db);
   ensureDemoPersonaUsers(db);
   seedSubscriptionsIfMissing(db);
   assignDemoTenantToUnscopedClinicalRows(db);
@@ -606,6 +616,12 @@ function migrate(database: DatabaseSync) {
   } catch {}
   try {
     database.exec("ALTER TABLE users ADD COLUMN specialty TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE users ADD COLUMN pack_id TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE doctors ADD COLUMN pack_id TEXT DEFAULT ''");
   } catch {}
   try {
     database.exec("ALTER TABLE doctors ADD COLUMN signature_url TEXT DEFAULT ''");
@@ -1462,6 +1478,7 @@ export function mapDoctor(row: Record<string, unknown>) {
     qualification: (row.qualification as string) || "",
     regNumber: (row.reg_number as string) || "",
     specialty: row.specialty as string,
+    packId: (row.pack_id as string) || resolveSpecialtyPack(String(row.specialty || ""))?.id || "",
     experienceYears: Number(row.experience_years || 0),
     consultationFee: Number(row.consultation_fee || 0),
     opdRoom: (row.opd_room as string) || "",
@@ -1562,7 +1579,8 @@ export function publicUser(user: DbUser) {
     hfrId: user.hfr_id || "",
     onboardingCompleted: Boolean(user.onboarding_completed),
     practiceType: normalizePracticeType(user.practice_type),
-    specialty: (user.specialty as string) || "",
+    specialty: canonicalSpecialty(String(user.specialty || user.pack_id || "")),
+    ...roleHomeForAccount(user.role, canonicalSpecialty(String(user.specialty || user.pack_id || ""))),
     isDemoWorkspace: isDemoWorkspaceUser(user),
     gstin: billing.gstin,
     upiId: billing.upiId,
@@ -2305,6 +2323,105 @@ export function seedClinicalAndWhatsAppIfMissing(database: DatabaseSync) {
       now
     );
   }
+}
+
+function backfillUserSpecialtyEnum(database: DatabaseSync) {
+  try {
+    const users = database.prepare("SELECT id, specialty, pack_id FROM users").all() as {
+      id: string;
+      specialty?: string;
+      pack_id?: string;
+    }[];
+    const updateUser = database.prepare("UPDATE users SET specialty = ?, pack_id = ? WHERE id = ?");
+    for (const u of users) {
+      const pack = resolveSpecialtyPack(u.specialty || u.pack_id || "");
+      if (!pack) continue;
+      if (u.specialty === pack.id && (u.pack_id === pack.id || !u.pack_id)) continue;
+      updateUser.run(pack.id, pack.id, u.id);
+    }
+  } catch {
+    /* specialty / pack_id columns added in the same migrate() pass */
+  }
+}
+
+/**
+ * Demo UM-5 matrix on tenant-lumera-main only. Never copies these logins onto real tenants.
+ * Existing emails on a non-demo tenant are left untouched.
+ *
+ * Complementary to #55 AdminShell seeds: if therapist@ / consultant@ already exist,
+ * only canonicalize users.specialty + pack_id. Do not overwrite #55 persona name/role/phone
+ * or clinical doctors.specialty display labels.
+ */
+export function seedDemoSpecialtyPackUsers(database: DatabaseSync) {
+  assertPacksDifferByMoreThanLabel();
+  backfillUserSpecialtyEnum(database);
+
+  const demoTenant = database.prepare("SELECT id FROM tenants WHERE id = ?").get(DEMO_TENANT_ID) as
+    | { id: string }
+    | undefined;
+  if (!demoTenant) return;
+
+  const now = new Date().toISOString();
+  const passwordHash = hashPasswordSync("Lumera@2026");
+
+  const insertUser = database.prepare(`
+    INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, last_login, created_at, onboarding_completed, practice_type, specialty, pack_id)
+    VALUES (?, ?, ?, ?, ?, ?, 'active', ?, NULL, ?, 1, 'individual', ?, ?)
+  `);
+  const canonicalizeSpecialty = database.prepare(`
+    UPDATE users SET specialty = ?, pack_id = ? WHERE id = ?
+  `);
+  const insertDoc = database.prepare(`
+    INSERT INTO doctors (id, user_id, name, qualification, reg_number, specialty, experience_years, consultation_fee, opd_room, available_days, opd_timing, phone, email, avatar_url, bio, hpr_id, pack_id, active)
+    VALUES (?, ?, ?, '', '', ?, 0, 0, '', '[]', '', ?, ?, '', '', '', ?, 1)
+  `);
+
+  for (const row of DEMO_SPECIALTY_MATRIX) {
+    const pack = getSpecialtyPack(row.specialty);
+    if (!pack) continue;
+    const existing = database.prepare("SELECT id, tenant_id FROM users WHERE email = ? OR id = ?").get(row.email, row.id) as
+      | { id: string; tenant_id?: string }
+      | undefined;
+    if (existing) {
+      if (existing.tenant_id && existing.tenant_id !== DEMO_TENANT_ID) {
+        continue;
+      }
+      canonicalizeSpecialty.run(pack.id, pack.id, existing.id);
+      continue;
+    }
+
+    insertUser.run(
+      row.id,
+      DEMO_TENANT_ID,
+      row.email,
+      passwordHash,
+      row.name,
+      row.role,
+      row.phone,
+      now,
+      pack.id,
+      pack.id
+    );
+
+    const docId = `doc-${row.id}`;
+    const existingDoc = database.prepare("SELECT id FROM doctors WHERE user_id = ? OR id = ?").get(row.id, docId) as
+      | { id: string }
+      | undefined;
+    if (!existingDoc) {
+      insertDoc.run(docId, row.id, row.name, pack.id, row.phone, row.email, pack.id);
+    }
+  }
+
+  // Keep the documented reception + admin demo logins on the demo tenant (do not invent extra tenants).
+  try {
+    database
+      .prepare(
+        `UPDATE users SET tenant_id = ?, onboarding_completed = 1, pack_id = COALESCE(NULLIF(pack_id, ''), '')
+         WHERE email IN ('admin@lumera.me', 'reception@lumera.me')
+           AND (tenant_id IS NULL OR tenant_id = '' OR tenant_id = ?)`
+      )
+      .run(DEMO_TENANT_ID, DEMO_TENANT_ID);
+  } catch {}
 }
 
 export function ensureMetaTechProviderAndPolicies(database: DatabaseSync) {

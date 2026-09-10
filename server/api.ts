@@ -31,6 +31,7 @@ import {
   ADMIN_ROLES,
   CLINICIAN_ROLES,
   CLINIC_MANAGER_ROLES,
+  USER_MANAGER_ROLES,
   allowPasswordLoginWithoutOtp,
   allowSkipOtp,
   clearSessionCookie,
@@ -41,7 +42,8 @@ import {
   requireAuth,
   requireRole,
 } from "./auth.ts";
-import { hashPassword, verifyPassword } from "./password.ts";
+import { generateTemporaryPassword, hashPassword, passwordRuleError, verifyPassword } from "./password.ts";
+import { parseSpecialtyPackInput, resolveSpecialtyPack } from "./specialty-packs.ts";
 import { isProduction } from "./runtime.ts";
 import { dispatchWhatsAppCloudMessage, isCloudDispatchFailure } from "./graph-whatsapp.ts";
 import {
@@ -75,6 +77,66 @@ const upload = multer({
 
 function audit(req: Request, action: string, details: string) {
   writeAudit(getDb(), req.user?.id || null, req.user?.name || "Anonymous", action, details);
+}
+
+function isSuperAdmin(req: Request): boolean {
+  return req.user?.role === "super_admin";
+}
+
+function requestedTenantId(body: Record<string, unknown> | undefined): string {
+  if (!body) return "";
+  return String(body.tenantId ?? body.tenant_id ?? "").trim();
+}
+
+function requestedDisplayName(body: Record<string, unknown> | undefined, fallback = ""): string {
+  if (!body) return fallback;
+  const raw = body.displayName ?? body.display_name ?? body.name;
+  return raw == null ? fallback : String(raw);
+}
+
+function requestedStatus(body: Record<string, unknown> | undefined, fallback: UserStatus): UserStatus {
+  if (!body) return fallback;
+  if (typeof body.enabled === "boolean") return body.enabled ? "active" : "disabled";
+  if (body.status) return body.status as UserStatus;
+  return fallback;
+}
+
+/** `specialty` is canonical; optional `packId` / `pack_id` alias writes the same enum. */
+function specialtyInputFromBody(body: Record<string, unknown> | undefined): unknown {
+  if (!body) return undefined;
+  if (Object.prototype.hasOwnProperty.call(body, "specialty")) return body.specialty;
+  if (Object.prototype.hasOwnProperty.call(body, "packId")) return body.packId;
+  if (Object.prototype.hasOwnProperty.call(body, "pack_id")) return body.pack_id;
+  return undefined;
+}
+
+function loadUserRow(id: string): DbUser | undefined {
+  return getDb().prepare("SELECT * FROM users WHERE id = ?").get(id) as unknown as DbUser | undefined;
+}
+
+function canManageUser(req: Request, target: { tenant_id?: string }): boolean {
+  if (isSuperAdmin(req)) return true;
+  const actorTenant = req.user?.tenantId || "";
+  if (!actorTenant) return false;
+  return (target.tenant_id || "") === actorTenant;
+}
+
+function syncDoctorPackProfile(user: DbUser) {
+  if (user.role !== "doctor") return;
+  const specialty = resolveSpecialtyPack(user.specialty || user.pack_id || "")?.id || "";
+  const existing = getDb().prepare("SELECT id FROM doctors WHERE user_id = ?").get(user.id) as { id: string } | undefined;
+  if (existing) {
+    getDb()
+      .prepare("UPDATE doctors SET name = ?, specialty = ?, pack_id = ?, phone = ?, email = ? WHERE user_id = ?")
+      .run(user.name, specialty, specialty, user.phone || "", user.email, user.id);
+    return;
+  }
+  getDb()
+    .prepare(
+      `INSERT INTO doctors (id, user_id, name, qualification, reg_number, specialty, experience_years, consultation_fee, opd_room, available_days, opd_timing, phone, email, avatar_url, bio, hpr_id, pack_id, active)
+       VALUES (?, ?, ?, '', '', ?, 0, 0, '', '[]', '', ?, ?, '', '', '', ?, 1)`
+    )
+    .run(`doc-${user.id.slice(0, 8)}`, user.id, user.name, specialty, user.phone || "", user.email, specialty);
 }
 
 function settingsMap(): Record<string, string> {
@@ -276,7 +338,6 @@ export function createApiRouter(): Router {
   api.post("/auth/login", async (req: Request, res: Response) => {
     const email = String(req.body?.email || "").trim().toLowerCase();
     const password = String(req.body?.password || "");
-    const skipOtp = Boolean(req.body?.skipOtp) && allowSkipOtp();
 
     if (!email || !password) {
       return res.status(400).json({ error: "Email and password are required" });
@@ -289,15 +350,20 @@ export function createApiRouter(): Router {
       return res.status(403).json({ error: "This account has been disabled" });
     }
 
-    // skipOtp is honored only when NODE_ENV !== "production" (local/demo).
-    // super_admin / admin@ may use email+password on www without WhatsApp OTP.
-    if (skipOtp || allowPasswordLoginWithoutOtp(user)) {
+    const issuePasswordSession = (reason: string) => {
       const jwtToken = issueLumeraSession(res, user);
       getDb()
         .prepare("UPDATE users SET last_login = ?, whatsapp_verified = 1 WHERE id = ?")
         .run(new Date().toISOString(), user.id);
-      writeAudit(getDb(), user.id, user.name, "Login", `${user.email} signed in (direct session)`);
+      writeAudit(getDb(), user.id, user.name, "Login", `${user.email} signed in (${reason})`);
       return res.json({ user: publicUser(user), token: jwtToken, requiresOtp: false });
+    };
+
+    // MUST: super_admin / admin email+password is a production session — not skipOtp.
+    const passwordSession = allowPasswordLoginWithoutOtp(user);
+    const skipOtp = Boolean(req.body?.skipOtp) && (allowSkipOtp() || passwordSession);
+    if (passwordSession || skipOtp) {
+      return issuePasswordSession(passwordSession ? "admin password session" : "direct session");
     }
 
     // Mandatory WhatsApp Business Phone Binding & Verification
@@ -1532,10 +1598,11 @@ export function createApiRouter(): Router {
     });
   });
 
-  api.get("/users", requireAuth, requireRole(...ADMIN_ROLES), (req, res) => {
+  api.get("/users", requireAuth, requireRole(...USER_MANAGER_ROLES), (req, res) => {
     const q = String(req.query.q || "").toLowerCase();
     const role = String(req.query.role || "");
     const status = String(req.query.status || "");
+    const tenantFilter = String(req.query.tenantId || req.query.tenant_id || "");
     let sql = `
       SELECT u.*,
              COALESCE(NULLIF(u.clinic_name, ''), t.name, '') AS clinic_name,
@@ -1545,6 +1612,13 @@ export function createApiRouter(): Router {
       WHERE 1=1
     `;
     const args: unknown[] = [];
+    if (!isSuperAdmin(req)) {
+      sql += " AND u.tenant_id = ?";
+      args.push(req.user?.tenantId || "");
+    } else if (tenantFilter) {
+      sql += " AND u.tenant_id = ?";
+      args.push(tenantFilter);
+    }
     if (q) {
       sql += " AND (lower(u.name) LIKE ? OR lower(u.email) LIKE ? OR lower(COALESCE(u.clinic_name, t.name, '')) LIKE ? OR lower(COALESCE(u.hpr_id, '')) LIKE ? OR lower(COALESCE(u.hfr_id, t.hfr_id, '')) LIKE ?)";
       args.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
@@ -1562,98 +1636,136 @@ export function createApiRouter(): Router {
     res.json({ users: rows.map(publicUser) });
   });
 
-  api.post("/users", requireAuth, requireRole(...ADMIN_ROLES), (req, res) => {
-    const { email, password, name, role, phone, status, specialty, tenantId, practiceType } = req.body || {};
+  api.post("/users", requireAuth, requireRole(...USER_MANAGER_ROLES), (req, res) => {
+    const body = (req.body || {}) as Record<string, unknown>;
+    const email = String(body.email || "").trim().toLowerCase();
+    const name = requestedDisplayName(body);
+    const role = String(body.role || "") as UserRole;
     if (!email || !name || !role) {
       return res.status(400).json({ error: "name, email, and role are required" });
     }
-    const id = crypto.randomUUID();
-    const pwd = password ? String(password) : `Temp${Math.random().toString(36).slice(2, 8)}!`;
-    const mappedCreate = persistSpecialtyPackId(specialty);
-    if (!mappedCreate.ok) {
-      return res.status(400).json({ error: mappedCreate.error });
+
+    const packParsed = parseSpecialtyPackInput(specialtyInputFromBody(body));
+    if (packParsed && "error" in packParsed) {
+      return res.status(400).json({ error: packParsed.error });
     }
-    const spec = mappedCreate.id;
-    const scopedTenant = String(tenantId || req.user?.tenantId || DEMO_TENANT_ID || "").trim();
-    const practice = normalizePracticeType(practiceType);
+
+    let tenantId = requestedTenantId(body);
+    if (!isSuperAdmin(req)) {
+      if (tenantId && tenantId !== (req.user?.tenantId || "")) {
+        return res.status(403).json({ error: "Clinic admins cannot create users on another tenant" });
+      }
+      tenantId = req.user?.tenantId || "";
+    } else if (!tenantId) {
+      tenantId = req.user?.tenantId || DEMO_TENANT_ID;
+    }
+
+    const passwordProvided = Boolean(body.password);
+    const pwd = passwordProvided ? String(body.password) : generateTemporaryPassword();
+    const passwordError = passwordRuleError(pwd);
+    if (passwordError) return res.status(400).json({ error: passwordError });
+
+    const status = requestedStatus(body, "active");
+    const practiceType = normalizePracticeType(body.practiceType ? String(body.practiceType) : "individual");
+    const id = crypto.randomUUID();
     try {
       getDb()
         .prepare(
-          `INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, specialty, practice_type, last_login, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`
+          `INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, last_login, created_at, practice_type, specialty, pack_id, onboarding_completed)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, 1)`
         )
         .run(
           id,
-          scopedTenant,
-          String(email).trim().toLowerCase(),
+          tenantId,
+          email,
           hashPassword(pwd),
-          String(name),
-          role as UserRole,
-          (status as UserStatus) || "active",
-          String(phone || ""),
-          spec,
-          practice,
-          new Date().toISOString()
+          name,
+          role,
+          status,
+          String(body.phone || ""),
+          new Date().toISOString(),
+          practiceType,
+          packParsed && "specialty" in packParsed ? packParsed.specialty : "",
+          packParsed && "specialty" in packParsed ? packParsed.specialty : ""
         );
     } catch {
       return res.status(409).json({ error: "Email already exists" });
     }
-    if (spec) {
-      getDb().prepare("UPDATE doctors SET specialty = ? WHERE user_id = ?").run(spec, id);
-    }
-    audit(req, "User created", `${name} <${email}> as ${role}${spec ? ` specialty=${spec}` : ""}`);
+    audit(req, "User created", `${name} <${email}> as ${role}`);
     seedSubscriptionsIfMissing(getDb());
-    const user = getDb().prepare("SELECT * FROM users WHERE id = ?").get(id) as unknown as DbUser;
-    res.status(201).json({ user: publicUser(user), temporaryPassword: password ? undefined : pwd });
+    const user = loadUserRow(id)!;
+    syncDoctorPackProfile(user);
+    const created = loadUserRow(id)!;
+    res.status(201).json({
+      user: publicUser(created),
+      temporaryPassword: passwordProvided ? undefined : pwd,
+    });
   });
 
-  api.patch("/users/:id", requireAuth, requireRole(...ADMIN_ROLES), (req, res) => {
-    const existing = getDb().prepare("SELECT * FROM users WHERE id = ?").get(req.params.id) as unknown as DbUser | undefined;
+  api.patch("/users/:id", requireAuth, requireRole(...USER_MANAGER_ROLES), (req, res) => {
+    const existing = loadUserRow(req.params.id);
     if (!existing) return res.status(404).json({ error: "User not found" });
-    const name = req.body.name ?? existing.name;
-    const role = req.body.role ?? existing.role;
-    const status = req.body.status ?? existing.status;
-    const phone = req.body.phone ?? existing.phone;
-    const email = req.body.email ? String(req.body.email).trim().toLowerCase() : existing.email;
-    let specialty = existing.specialty || "";
-    if (req.body.specialty != null) {
-      const mappedPatch = persistSpecialtyPackId(req.body.specialty);
-      if (!mappedPatch.ok) {
-        return res.status(400).json({ error: mappedPatch.error });
-      }
-      specialty = mappedPatch.id;
+    if (!canManageUser(req, existing)) {
+      return res.status(403).json({ error: "User not found" });
     }
-    const practice =
-      req.body.practiceType != null || req.body.practice_type != null
-        ? normalizePracticeType(req.body.practiceType ?? req.body.practice_type)
-        : normalizePracticeType(existing.practice_type);
+
+    const body = (req.body || {}) as Record<string, unknown>;
+    const name = requestedDisplayName(body, existing.name) || existing.name;
+    const role = (body.role ? String(body.role) : existing.role) as UserRole;
+    const status = requestedStatus(body, existing.status);
+    const phone = body.phone != null ? String(body.phone) : existing.phone;
+    const email = body.email ? String(body.email).trim().toLowerCase() : existing.email;
+
+    let tenantId = existing.tenant_id || "";
     const wantsTenant =
-      Object.prototype.hasOwnProperty.call(req.body || {}, "tenantId") ||
-      Object.prototype.hasOwnProperty.call(req.body || {}, "tenant_id");
-    if (wantsTenant && req.user?.role !== "super_admin") {
+      Object.prototype.hasOwnProperty.call(body, "tenantId") ||
+      Object.prototype.hasOwnProperty.call(body, "tenant_id");
+    if (wantsTenant && !isSuperAdmin(req)) {
       return res.status(403).json({ error: "Only super_admin can reassign tenantId" });
     }
-    const tenantId = wantsTenant
-      ? String(req.body.tenantId ?? req.body.tenant_id ?? "")
-      : existing.tenant_id || "";
+    const requestedTenant = requestedTenantId(body);
+    if (wantsTenant && requestedTenant && requestedTenant !== tenantId) {
+      const tenant = getDb().prepare("SELECT id FROM tenants WHERE id = ?").get(requestedTenant) as { id: string } | undefined;
+      if (!tenant) return res.status(404).json({ error: "Tenant not found" });
+      tenantId = requestedTenant;
+    }
+
+    let specialty = resolveSpecialtyPack(existing.specialty || existing.pack_id || "")?.id || existing.specialty || "";
+    if (specialtyInputFromBody(body) !== undefined) {
+      const packParsed = parseSpecialtyPackInput(specialtyInputFromBody(body));
+      if (packParsed && "error" in packParsed) {
+        return res.status(400).json({ error: packParsed.error });
+      }
+      specialty = packParsed && "specialty" in packParsed ? packParsed.specialty : "";
+    }
+
+    const practiceType =
+      body.practiceType != null || body.practice_type != null
+        ? normalizePracticeType(body.practiceType ?? body.practice_type)
+        : normalizePracticeType(existing.practice_type);
+
     try {
       getDb()
-        .prepare("UPDATE users SET name = ?, role = ?, status = ?, phone = ?, email = ?, specialty = ?, practice_type = ?, tenant_id = ? WHERE id = ?")
-        .run(name, role, status, phone, email, specialty, practice, tenantId, existing.id);
+        .prepare(
+          "UPDATE users SET name = ?, role = ?, status = ?, phone = ?, email = ?, tenant_id = ?, specialty = ?, pack_id = ?, practice_type = ? WHERE id = ?"
+        )
+        .run(name, role, status, phone, email, tenantId, specialty, specialty, practiceType, existing.id);
     } catch {
       return res.status(409).json({ error: "Email already exists" });
     }
-    if (req.body.specialty != null) {
-      getDb().prepare("UPDATE doctors SET specialty = ? WHERE user_id = ?").run(specialty, existing.id);
-    }
-    audit(req, "User updated", `${email} role=${role} status=${status} specialty=${specialty || "—"}`);
-    const user = getDb().prepare("SELECT * FROM users WHERE id = ?").get(existing.id) as unknown as DbUser;
-    res.json({ user: publicUser(user) });
+    audit(req, "User updated", `${email} role=${role} status=${status}`);
+    const user = loadUserRow(existing.id)!;
+    syncDoctorPackProfile(user);
+    const updated = loadUserRow(existing.id)!;
+    res.json({ user: publicUser(updated) });
   });
 
-  api.delete("/users/:id", requireAuth, requireRole(...ADMIN_ROLES), (req, res) => {
-    const existing = getDb().prepare("SELECT * FROM users WHERE id = ?").get(req.params.id) as unknown as DbUser | undefined;
+  api.delete("/users/:id", requireAuth, requireRole(...USER_MANAGER_ROLES), (req, res) => {
+    const existing = loadUserRow(req.params.id);
     if (!existing) return res.status(404).json({ error: "User not found" });
+    if (!canManageUser(req, existing)) {
+      return res.status(403).json({ error: "User not found" });
+    }
     if (existing.id === req.user?.id) {
       return res.status(400).json({ error: "You cannot delete your own account from User management. Use profile or disable instead." });
     }
@@ -1666,14 +1778,19 @@ export function createApiRouter(): Router {
     res.json({ ok: true });
   });
 
-  api.post("/users/:id/password", requireAuth, requireRole(...ADMIN_ROLES), (req, res) => {
-    const existing = getDb().prepare("SELECT * FROM users WHERE id = ?").get(req.params.id) as unknown as DbUser | undefined;
+  api.post("/users/:id/password", requireAuth, requireRole(...USER_MANAGER_ROLES), (req, res) => {
+    const existing = loadUserRow(req.params.id);
     if (!existing) return res.status(404).json({ error: "User not found" });
-    const password = String(req.body?.password || "");
-    if (password.length < 8) return res.status(400).json({ error: "Password must be at least 8 characters" });
+    if (!canManageUser(req, existing)) {
+      return res.status(403).json({ error: "User not found" });
+    }
+    const provided = req.body?.password != null && String(req.body.password) !== "";
+    const password = provided ? String(req.body.password) : generateTemporaryPassword();
+    const passwordError = passwordRuleError(password);
+    if (passwordError) return res.status(400).json({ error: passwordError });
     getDb().prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(hashPassword(password), existing.id);
     audit(req, "Password reset", `Password reset for ${existing.email}`);
-    res.json({ ok: true });
+    res.json({ ok: true, temporaryPassword: provided ? undefined : password });
   });
 
   api.get("/admin/subscriptions", requireAuth, requireRole(...ADMIN_ROLES), (_req, res) => {

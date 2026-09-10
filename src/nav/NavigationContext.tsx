@@ -2,6 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import {
   type AdminTab,
   type Surface,
+  loginModeFromPath,
   pathToNav,
   surfaceToPath,
 } from "./surfaces";
@@ -55,7 +56,9 @@ export const NavigationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [policySlug, setPolicySlug] = useState(initial.policySlug);
   const [loginNext, setLoginNext] = useState<Surface>("app");
   const [loginDemo, setLoginDemo] = useState(false);
-  const [loginMode, setLoginMode] = useState<"signin" | "register">("signin");
+  const [loginMode, setLoginMode] = useState<"signin" | "register">(
+    loginModeFromPath(typeof window !== "undefined" ? window.location.pathname : "/")
+  );
 
   const go = useCallback((next: Surface, opts?: GoOptions) => {
     if (opts?.adminTab) setAdminTab(opts.adminTab);
@@ -64,13 +67,15 @@ export const NavigationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     if (typeof opts?.loginDemo === "boolean") setLoginDemo(opts.loginDemo);
     if (opts?.loginMode) setLoginMode(opts.loginMode);
     if (next === "admin") setAdminTab(opts?.adminTab || "overview");
+    const nextLoginMode = next === "login" ? opts?.loginMode || loginMode : opts?.loginMode;
     const targetPath = surfaceToPath(next, {
       policySlug: opts?.policySlug,
       explicitPublic: opts?.explicitPublic,
+      loginMode: nextLoginMode,
     });
     syncHistory(targetPath, Boolean(opts?.replace));
     setSurface(next);
-  }, []);
+  }, [loginMode]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -79,6 +84,7 @@ export const NavigationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       setSurface(next.surface);
       setPolicySlug(next.policySlug);
       setAdminTab(next.adminTab);
+      setLoginMode(loginModeFromPath(window.location.pathname));
     };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);

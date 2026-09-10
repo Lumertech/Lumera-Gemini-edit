@@ -101,17 +101,23 @@ export function pathToNav(pathname = "/", search = ""): NavLocation {
   if (p === "/portal" || p === "/patient") return nav("portal");
   if (p === "/landing" || p === "/site" || p === "/public") return nav("landing");
   if (p === "/login") return nav("login");
+  if (p === "/signup" || p === "/register") return nav("login");
   if (p === "/onboarding") return nav("onboarding");
   if (p === "/app" || p === "/dashboard" || p === "/studio" || p === "/clinic") return nav("app");
 
   return nav("landing");
 }
 
+export function loginModeFromPath(pathname: string): "signin" | "register" {
+  const p = normalizePath(pathname);
+  return p === "/signup" || p === "/register" ? "register" : "signin";
+}
+
 export function surfaceToPath(
   surface: Surface,
-  opts?: { policySlug?: string; explicitPublic?: boolean }
+  opts?: { policySlug?: string; explicitPublic?: boolean; loginMode?: "signin" | "register" }
 ): string {
-  if (surface === "login") return "/login";
+  if (surface === "login") return opts?.loginMode === "register" ? "/signup" : "/login";
   if (surface === "app") return "/app";
   if (surface === "admin") return "/admin";
   if (surface === "portal") return "/portal";

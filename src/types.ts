@@ -18,6 +18,9 @@ export interface AppUser {
   hfrId?: string;
   onboardingCompleted?: boolean;
   specialty?: string;
+  packId?: string;
+  roleHome?: 'admin' | 'app' | 'portal' | 'login';
+  homeView?: string;
   practiceType?: 'individual' | 'polyclinic';
   isDemoWorkspace?: boolean;
   gstin?: string;
