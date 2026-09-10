@@ -124,26 +124,24 @@ describe("Admin UM users API (UM-1…6)", () => {
     assert.ok(temp.length >= 8, "temporaryPassword must be returned and usable");
     const user = (created.json.user || {}) as Record<string, unknown>;
     assert.equal(user.email, email);
-    assert.equal(user.packId, "physio");
+    assert.equal(user.specialty, "physio");
     assert.equal(user.tenantId, DEMO_TENANT_ID);
     assert.equal(user.practiceType, "individual");
 
     const row = getDb()
-      .prepare("SELECT tenant_id, pack_id, specialty, practice_type FROM users WHERE email = ?")
-      .get(email) as { tenant_id: string; pack_id: string; specialty: string; practice_type: string };
+      .prepare("SELECT tenant_id, specialty, practice_type FROM users WHERE email = ?")
+      .get(email) as { tenant_id: string; specialty: string; practice_type: string };
     assert.equal(row.tenant_id, DEMO_TENANT_ID);
-    assert.equal(row.pack_id, "physio");
-    assert.ok(row.specialty);
+    assert.equal(row.specialty, "physio");
     assert.equal(row.practice_type, "individual");
 
-    const doc = getDb().prepare("SELECT pack_id, specialty FROM doctors WHERE user_id = ?").get(user.id) as {
-      pack_id: string;
+    const doc = getDb().prepare("SELECT specialty FROM doctors WHERE user_id = ?").get(user.id) as {
       specialty: string;
     };
-    assert.equal(doc.pack_id, "physio");
+    assert.equal(doc.specialty, "physio");
 
     const tempLogin = await login(email, temp);
-    assert.equal(tempLogin.user.packId, "physio");
+    assert.equal(tempLogin.user.specialty, "physio");
 
     const audits = getDb()
       .prepare("SELECT details FROM audit_logs WHERE action = 'User created' AND details LIKE ? ORDER BY timestamp DESC LIMIT 3")
@@ -191,6 +189,7 @@ describe("Admin UM users API (UM-1…6)", () => {
       { Authorization: `Bearer ${admin.token}` }
     );
     assert.equal(created.status, 201, String(created.json.error || "create failed"));
+    assert.equal((created.json.user as Record<string, unknown>).specialty, "gp");
     const id = String((created.json.user as Record<string, unknown>).id);
 
     const patched = await jsonRequest(
@@ -209,7 +208,7 @@ describe("Admin UM users API (UM-1…6)", () => {
     assert.equal(patched.status, 200, String(patched.json.error || "patch failed"));
     const patchedUser = (patched.json.user || {}) as Record<string, unknown>;
     assert.equal(patchedUser.name, "Patched Dentist");
-    assert.equal(patchedUser.packId, "dentist");
+    assert.equal(patchedUser.specialty, "dentist");
     assert.equal(patchedUser.phone, "+91 90000 11111");
     assert.equal(patchedUser.status, "active");
 
@@ -221,7 +220,7 @@ describe("Admin UM users API (UM-1…6)", () => {
     const found = users.find((u) => u.email === email);
     assert.ok(found);
     assert.equal(found?.name, "Patched Dentist");
-    assert.equal(found?.packId, "dentist");
+    assert.equal(found?.specialty, "dentist");
   });
 
   it("UM-1/tenant: non-super_admin cannot reassign tenant; wrong-tenant is 403/404", async () => {
@@ -353,9 +352,9 @@ describe("Admin UM users API (UM-1…6)", () => {
       ...DEMO_SPECIALTY_MATRIX.map((row) => ({
         email: row.email,
         role: "doctor",
-        packId: row.packId,
-        roleHome: roleHomeForAccount("doctor", row.packId).roleHome,
-        homeView: roleHomeForAccount("doctor", row.packId).homeView,
+        specialty: row.specialty,
+        roleHome: roleHomeForAccount("doctor", row.specialty).roleHome,
+        homeView: roleHomeForAccount("doctor", row.specialty).homeView,
       })),
     ];
 
@@ -364,8 +363,8 @@ describe("Admin UM users API (UM-1…6)", () => {
       assert.equal(session.user.tenantId, DEMO_TENANT_ID, row.email);
       assert.equal(session.user.role, row.role, row.email);
       assert.equal(session.user.roleHome, row.roleHome, row.email);
-      if ("packId" in row && row.packId) {
-        assert.equal(session.user.packId, row.packId, row.email);
+      if ("specialty" in row && row.specialty) {
+        assert.equal(session.user.specialty, row.specialty, row.email);
         assert.equal(session.user.homeView, row.homeView, row.email);
       }
       if (row.email === "reception@lumera.me") {

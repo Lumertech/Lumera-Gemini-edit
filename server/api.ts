@@ -99,9 +99,13 @@ function requestedStatus(body: Record<string, unknown> | undefined, fallback: Us
   return fallback;
 }
 
+/** `specialty` is canonical; optional `packId` / `pack_id` alias writes the same enum. */
 function specialtyInputFromBody(body: Record<string, unknown> | undefined): unknown {
   if (!body) return undefined;
-  return body.packId ?? body.pack_id ?? body.specialtyPack ?? body.specialty_pack ?? body.specialty;
+  if (Object.prototype.hasOwnProperty.call(body, "specialty")) return body.specialty;
+  if (Object.prototype.hasOwnProperty.call(body, "packId")) return body.packId;
+  if (Object.prototype.hasOwnProperty.call(body, "pack_id")) return body.pack_id;
+  return undefined;
 }
 
 function loadUserRow(id: string): DbUser | undefined {
@@ -117,14 +121,12 @@ function canManageUser(req: Request, target: { tenant_id?: string }): boolean {
 
 function syncDoctorPackProfile(user: DbUser) {
   if (user.role !== "doctor") return;
-  const pack = resolveSpecialtyPack(user.pack_id || user.specialty || "");
-  const specialty = user.specialty || pack?.defaultSpecialty || "General Medicine";
-  const packId = user.pack_id || pack?.id || "";
+  const specialty = resolveSpecialtyPack(user.specialty || user.pack_id || "")?.id || "";
   const existing = getDb().prepare("SELECT id FROM doctors WHERE user_id = ?").get(user.id) as { id: string } | undefined;
   if (existing) {
     getDb()
       .prepare("UPDATE doctors SET name = ?, specialty = ?, pack_id = ?, phone = ?, email = ? WHERE user_id = ?")
-      .run(user.name, specialty, packId, user.phone || "", user.email, user.id);
+      .run(user.name, specialty, specialty, user.phone || "", user.email, user.id);
     return;
   }
   getDb()
@@ -132,7 +134,7 @@ function syncDoctorPackProfile(user: DbUser) {
       `INSERT INTO doctors (id, user_id, name, qualification, reg_number, specialty, experience_years, consultation_fee, opd_room, available_days, opd_timing, phone, email, avatar_url, bio, hpr_id, pack_id, active)
        VALUES (?, ?, ?, '', '', ?, 0, 0, '', '[]', '', ?, ?, '', '', '', ?, 1)`
     )
-    .run(`doc-${user.id.slice(0, 8)}`, user.id, user.name, specialty, user.phone || "", user.email, packId);
+    .run(`doc-${user.id.slice(0, 8)}`, user.id, user.name, specialty, user.phone || "", user.email, specialty);
 }
 
 function settingsMap(): Record<string, string> {
@@ -1628,8 +1630,8 @@ export function createApiRouter(): Router {
           String(body.phone || ""),
           new Date().toISOString(),
           practiceType,
-          packParsed && "packId" in packParsed ? packParsed.specialty : "",
-          packParsed && "packId" in packParsed ? packParsed.packId : ""
+          packParsed && "specialty" in packParsed ? packParsed.specialty : "",
+          packParsed && "specialty" in packParsed ? packParsed.specialty : ""
         );
     } catch {
       return res.status(409).json({ error: "Email already exists" });
@@ -1670,20 +1672,13 @@ export function createApiRouter(): Router {
       tenantId = requestedTenant;
     }
 
-    let specialty = existing.specialty || "";
-    let packId = existing.pack_id || "";
+    let specialty = resolveSpecialtyPack(existing.specialty || existing.pack_id || "")?.id || existing.specialty || "";
     if (specialtyInputFromBody(body) !== undefined) {
       const packParsed = parseSpecialtyPackInput(specialtyInputFromBody(body));
       if (packParsed && "error" in packParsed) {
         return res.status(400).json({ error: packParsed.error });
       }
-      if (packParsed && "packId" in packParsed) {
-        packId = packParsed.packId;
-        specialty = packParsed.specialty;
-      } else {
-        packId = "";
-        specialty = "";
-      }
+      specialty = packParsed && "specialty" in packParsed ? packParsed.specialty : "";
     }
 
     try {
@@ -1691,7 +1686,7 @@ export function createApiRouter(): Router {
         .prepare(
           "UPDATE users SET name = ?, role = ?, status = ?, phone = ?, email = ?, tenant_id = ?, specialty = ?, pack_id = ? WHERE id = ?"
         )
-        .run(name, role, status, phone, email, tenantId, specialty, packId, existing.id);
+        .run(name, role, status, phone, email, tenantId, specialty, specialty, existing.id);
     } catch {
       return res.status(409).json({ error: "Email already exists" });
     }

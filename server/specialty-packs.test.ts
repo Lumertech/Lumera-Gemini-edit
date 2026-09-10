@@ -34,9 +34,13 @@ describe("specialty packs (Admin UM)", () => {
     assert.equal(resolveSpecialtyPack("therapist")?.id, "therapist");
     assert.equal(resolveSpecialtyPack("consultant")?.id, "consultant");
     const parsed = parseSpecialtyPackInput("physio");
-    assert.ok(parsed && "packId" in parsed);
-    assert.equal(parsed.packId, "physio");
-    assert.equal(parseSpecialtyPackInput("not-a-pack") && "error" in (parseSpecialtyPackInput("not-a-pack") || {}), true);
+    assert.ok(parsed && "specialty" in parsed);
+    assert.equal(parsed.specialty, "physio");
+    const unknown = parseSpecialtyPackInput("not-a-pack");
+    assert.ok(unknown && "error" in unknown);
+    const fromAlias = parseSpecialtyPackInput("Cardiology");
+    assert.ok(fromAlias && "specialty" in fromAlias);
+    assert.equal(fromAlias.specialty, "gp");
   });
 
   it("lands each role/pack on a distinct role-home", () => {

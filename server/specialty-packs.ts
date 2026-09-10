@@ -130,9 +130,14 @@ export function resolveSpecialtyPack(raw: string | null | undefined): SpecialtyP
   return null;
 }
 
+/** Canonical DB/API value: specialty enum, never a display label. */
+export function canonicalSpecialty(raw: string | null | undefined): SpecialtyPackId | "" {
+  return resolveSpecialtyPack(raw)?.id || "";
+}
+
 export function parseSpecialtyPackInput(
   raw: unknown
-): { packId: SpecialtyPackId; specialty: string } | { error: string } | null {
+): { specialty: SpecialtyPackId } | { error: string } | null {
   if (raw == null) return null;
   const text = String(raw).trim();
   if (!text) return null;
@@ -142,9 +147,7 @@ export function parseSpecialtyPackInput(
       error: `Unknown specialty pack "${text}". Expected gp|physio|dentist|spa_salon|therapist|consultant`,
     };
   }
-  const asId = normalizePackKey(text).replace(/\s+/g, "_");
-  const specialty = asId === pack.id || normalizePackKey(text) === pack.id ? pack.defaultSpecialty : text;
-  return { packId: pack.id, specialty };
+  return { specialty: pack.id };
 }
 
 export function packFingerprint(pack: SpecialtyPack): string {
@@ -187,7 +190,7 @@ export const DEMO_SPECIALTY_MATRIX: ReadonlyArray<{
   email: string;
   name: string;
   role: "doctor" | "receptionist" | "super_admin";
-  packId: SpecialtyPackId | "";
+  specialty: SpecialtyPackId;
   phone: string;
 }> = [
   {
@@ -195,7 +198,7 @@ export const DEMO_SPECIALTY_MATRIX: ReadonlyArray<{
     email: "gp.doctor@lumera.me",
     name: "Dr. Demo GP",
     role: "doctor",
-    packId: "gp",
+    specialty: "gp",
     phone: "+91 98001 11001",
   },
   {
@@ -203,7 +206,7 @@ export const DEMO_SPECIALTY_MATRIX: ReadonlyArray<{
     email: "physio.doctor@lumera.me",
     name: "Dr. Demo Physio",
     role: "doctor",
-    packId: "physio",
+    specialty: "physio",
     phone: "+91 98001 11002",
   },
   {
@@ -211,7 +214,7 @@ export const DEMO_SPECIALTY_MATRIX: ReadonlyArray<{
     email: "dentist.doctor@lumera.me",
     name: "Dr. Demo Dentist",
     role: "doctor",
-    packId: "dentist",
+    specialty: "dentist",
     phone: "+91 98001 11003",
   },
   {
@@ -219,7 +222,7 @@ export const DEMO_SPECIALTY_MATRIX: ReadonlyArray<{
     email: "spa.doctor@lumera.me",
     name: "Dr. Demo Spa",
     role: "doctor",
-    packId: "spa_salon",
+    specialty: "spa_salon",
     phone: "+91 98001 11004",
   },
   {
@@ -227,7 +230,7 @@ export const DEMO_SPECIALTY_MATRIX: ReadonlyArray<{
     email: "therapist@lumera.me",
     name: "Dr. Demo Therapist",
     role: "doctor",
-    packId: "therapist",
+    specialty: "therapist",
     phone: "+91 98001 11005",
   },
   {
@@ -235,7 +238,7 @@ export const DEMO_SPECIALTY_MATRIX: ReadonlyArray<{
     email: "consultant@lumera.me",
     name: "Dr. Demo Consultant",
     role: "doctor",
-    packId: "consultant",
+    specialty: "consultant",
     phone: "+91 98001 11006",
   },
 ];

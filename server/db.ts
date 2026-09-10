@@ -7,6 +7,7 @@ import { CMS_POLICY_UPSERTS } from "./cms-policy-seed.ts";
 import {
   DEMO_SPECIALTY_MATRIX,
   assertPacksDifferByMoreThanLabel,
+  canonicalSpecialty,
   getSpecialtyPack,
   resolveSpecialtyPack,
   roleHomeForAccount,
@@ -1574,9 +1575,8 @@ export function publicUser(user: DbUser) {
     hfrId: user.hfr_id || "",
     onboardingCompleted: Boolean(user.onboarding_completed),
     practiceType: normalizePracticeType(user.practice_type),
-    specialty: (user.specialty as string) || "",
-    packId: (user.pack_id as string) || resolveSpecialtyPack(String(user.specialty || ""))?.id || "",
-    ...roleHomeForAccount(user.role, (user.pack_id as string) || resolveSpecialtyPack(String(user.specialty || ""))?.id || ""),
+    specialty: canonicalSpecialty(String(user.specialty || user.pack_id || "")),
+    ...roleHomeForAccount(user.role, canonicalSpecialty(String(user.specialty || user.pack_id || ""))),
     isDemoWorkspace: isDemoWorkspaceUser(user),
     gstin: billing.gstin,
     upiId: billing.upiId,
@@ -2315,36 +2315,22 @@ export function seedClinicalAndWhatsAppIfMissing(database: DatabaseSync) {
   }
 }
 
-function backfillPackIdsFromSpecialty(database: DatabaseSync) {
+function backfillUserSpecialtyEnum(database: DatabaseSync) {
   try {
     const users = database.prepare("SELECT id, specialty, pack_id FROM users").all() as {
       id: string;
       specialty?: string;
       pack_id?: string;
     }[];
-    const updateUser = database.prepare("UPDATE users SET pack_id = ? WHERE id = ?");
+    const updateUser = database.prepare("UPDATE users SET specialty = ?, pack_id = ? WHERE id = ?");
     for (const u of users) {
-      if (u.pack_id) continue;
-      const pack = resolveSpecialtyPack(u.specialty || "");
-      if (pack) updateUser.run(pack.id, u.id);
+      const pack = resolveSpecialtyPack(u.specialty || u.pack_id || "");
+      if (!pack) continue;
+      if (u.specialty === pack.id && (u.pack_id === pack.id || !u.pack_id)) continue;
+      updateUser.run(pack.id, pack.id, u.id);
     }
   } catch {
-    /* pack_id column added in the same migrate() pass */
-  }
-  try {
-    const doctors = database.prepare("SELECT id, specialty, pack_id FROM doctors").all() as {
-      id: string;
-      specialty?: string;
-      pack_id?: string;
-    }[];
-    const updateDoc = database.prepare("UPDATE doctors SET pack_id = ? WHERE id = ?");
-    for (const d of doctors) {
-      if (d.pack_id) continue;
-      const pack = resolveSpecialtyPack(d.specialty || "");
-      if (pack) updateDoc.run(pack.id, d.id);
-    }
-  } catch {
-    /* pack_id column added in the same migrate() pass */
+    /* specialty / pack_id columns added in the same migrate() pass */
   }
 }
 
@@ -2354,7 +2340,7 @@ function backfillPackIdsFromSpecialty(database: DatabaseSync) {
  */
 export function seedDemoSpecialtyPackUsers(database: DatabaseSync) {
   assertPacksDifferByMoreThanLabel();
-  backfillPackIdsFromSpecialty(database);
+  backfillUserSpecialtyEnum(database);
 
   const demoTenant = database.prepare("SELECT id FROM tenants WHERE id = ?").get(DEMO_TENANT_ID) as
     | { id: string }
@@ -2383,7 +2369,7 @@ export function seedDemoSpecialtyPackUsers(database: DatabaseSync) {
   `);
 
   for (const row of DEMO_SPECIALTY_MATRIX) {
-    const pack = getSpecialtyPack(row.packId);
+    const pack = getSpecialtyPack(row.specialty);
     if (!pack) continue;
     const existing = database.prepare("SELECT id, tenant_id FROM users WHERE email = ? OR id = ?").get(row.email, row.id) as
       | { id: string; tenant_id?: string }
@@ -2392,7 +2378,7 @@ export function seedDemoSpecialtyPackUsers(database: DatabaseSync) {
       if (existing.tenant_id && existing.tenant_id !== DEMO_TENANT_ID) {
         continue;
       }
-      updateDemoUser.run(DEMO_TENANT_ID, row.name, row.role, pack.defaultSpecialty, pack.id, existing.id);
+      updateDemoUser.run(DEMO_TENANT_ID, row.name, row.role, pack.id, pack.id, existing.id);
     } else {
       insertUser.run(
         row.id,
@@ -2403,7 +2389,7 @@ export function seedDemoSpecialtyPackUsers(database: DatabaseSync) {
         row.role,
         row.phone,
         now,
-        pack.defaultSpecialty,
+        pack.id,
         pack.id
       );
     }
@@ -2414,9 +2400,9 @@ export function seedDemoSpecialtyPackUsers(database: DatabaseSync) {
       | { id: string }
       | undefined;
     if (existingDoc) {
-      updateDoc.run(pack.defaultSpecialty, pack.id, row.name, row.phone, row.email, userId);
+      updateDoc.run(pack.id, pack.id, row.name, row.phone, row.email, userId);
     } else {
-      insertDoc.run(docId, userId, row.name, pack.defaultSpecialty, row.phone, row.email, pack.id);
+      insertDoc.run(docId, userId, row.name, pack.id, row.phone, row.email, pack.id);
     }
   }
 
