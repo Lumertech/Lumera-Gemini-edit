@@ -57,6 +57,8 @@ export const LoginPage: React.FC = () => {
     requestPasswordReset,
     resetPassword,
     user,
+    loading: authLoading,
+    refreshSession,
   } = useAuth();
   const { go, loginNext, loginDemo, loginMode } = useNav();
 
@@ -134,9 +136,14 @@ export const LoginPage: React.FC = () => {
   const [forgotSuccess, setForgotSuccess] = useState("");
 
   const otpInputRefs = useRef<(HTMLInputElement | null)[]>([]);
+  const facebookOauthSuccessHandled = useRef(false);
 
-  // Auto-redirect if already authenticated and not verifying OTP
+  // Auto-redirect if already authenticated and not verifying OTP / completing Facebook OAuth.
   useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("oauth") === "facebook" && params.get("status") === "ok") return;
+    }
     if (!user || busy || showOtpView) return;
     const dest = destinationAfterAuth(user, loginNext);
     go(dest);
@@ -172,6 +179,51 @@ export const LoginPage: React.FC = () => {
       );
     }
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (authLoading || facebookOauthSuccessHandled.current) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("oauth") !== "facebook" || params.get("status") !== "ok") return;
+
+    facebookOauthSuccessHandled.current = true;
+    const stripOauthQuery = () => {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("oauth");
+      url.searchParams.delete("status");
+      const nextSearch = url.searchParams.toString();
+      window.history.replaceState({}, "", `${url.pathname}${nextSearch ? `?${nextSearch}` : ""}${url.hash}`);
+    };
+
+    let cancelled = false;
+    (async () => {
+      setBusy(true);
+      setSuccessMsg("Completing Facebook sign-in…");
+      try {
+        const hydrated = user ?? (await refreshSession());
+        if (cancelled) return;
+        stripOauthQuery();
+        if (hydrated) {
+          go(destinationAfterAuth(hydrated, loginNext));
+        } else {
+          setSuccessMsg("");
+          setError("Facebook sign-in succeeded but the session could not be restored. Please try again.");
+        }
+      } catch {
+        if (cancelled) return;
+        stripOauthQuery();
+        setSuccessMsg("");
+        setError("Facebook sign-in succeeded but the session could not be restored. Please try again.");
+      } finally {
+        if (!cancelled) setBusy(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      facebookOauthSuccessHandled.current = false;
+    };
+  }, [authLoading, user, refreshSession, go, loginNext]);
 
   // OTP Countdown Timer
   useEffect(() => {

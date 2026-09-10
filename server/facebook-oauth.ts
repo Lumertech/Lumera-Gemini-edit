@@ -1,8 +1,14 @@
 import crypto from "node:crypto";
 import jwt from "jsonwebtoken";
+import { getJwtSecret } from "./auth.ts";
 import { appPublicUrl, graphApiVersion, isProduction, readSecret } from "./runtime.ts";
 
-const STATE_SECRET = readSecret("JWT_SECRET", "FACEBOOK_OAUTH_STATE_SECRET") || "lumera-facebook-oauth-state";
+/** Fail-closed: dedicated state secret if set, otherwise JWT_SECRET (no hardcoded fallback). */
+function oauthStateSecret(): string {
+  const dedicated = readSecret("FACEBOOK_OAUTH_STATE_SECRET");
+  if (dedicated) return dedicated;
+  return getJwtSecret();
+}
 
 export function facebookAppId(): string {
   return readSecret("FACEBOOK_APP_ID", "META_APP_ID");
@@ -23,12 +29,12 @@ export function facebookRedirectUri(reqHost?: string, reqProto?: string): string
 }
 
 export function signFacebookOAuthState(): string {
-  return jwt.sign({ purpose: "facebook_oauth", n: crypto.randomUUID() }, STATE_SECRET, { expiresIn: "10m" });
+  return jwt.sign({ purpose: "facebook_oauth", n: crypto.randomUUID() }, oauthStateSecret(), { expiresIn: "10m" });
 }
 
 export function verifyFacebookOAuthState(state: string): boolean {
   try {
-    const decoded = jwt.verify(state, STATE_SECRET);
+    const decoded = jwt.verify(state, oauthStateSecret());
     return Boolean(decoded && typeof decoded === "object" && (decoded as { purpose?: string }).purpose === "facebook_oauth");
   } catch {
     return false;

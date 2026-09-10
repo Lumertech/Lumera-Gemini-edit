@@ -10,9 +10,12 @@ import {
   isUsablePhoneNumberId,
   verifyMetaHubSignature,
 } from "./meta-security.ts";
-import { facebookOAuthConfigured, resolveFederatedIdentity } from "./facebook-oauth.ts";
+import { facebookOAuthConfigured, resolveFederatedIdentity, signFacebookOAuthState, verifyFacebookOAuthState } from "./facebook-oauth.ts";
 import { resolveGraphCredentials } from "./graph-whatsapp.ts";
 import { isUnsetOrPlaceholder } from "./runtime.ts";
+import { attachUser, verifyJwtToken } from "./auth.ts";
+import { createApiRouter } from "./api.ts";
+import { initDatabase } from "./db.ts";
 
 function hmacSha256(secret: string, body: string): string {
   return "sha256=" + crypto.createHmac("sha256", secret).update(body).digest("hex");
@@ -197,6 +200,128 @@ describe("Facebook OAuth identity", () => {
     });
     assert.equal(identity.sandbox, true);
     assert.equal(identity.email, "dev@example.com");
+  });
+
+  it("OAuth state signing fails closed without JWT_SECRET", () => {
+    const prevJwt = process.env.JWT_SECRET;
+    const prevState = process.env.FACEBOOK_OAUTH_STATE_SECRET;
+    try {
+      delete process.env.JWT_SECRET;
+      delete process.env.FACEBOOK_OAUTH_STATE_SECRET;
+      assert.throws(() => signFacebookOAuthState(), /JWT_SECRET/);
+      assert.equal(verifyFacebookOAuthState("not-a-state"), false);
+    } finally {
+      if (prevJwt === undefined) delete process.env.JWT_SECRET;
+      else process.env.JWT_SECRET = prevJwt;
+      if (prevState === undefined) delete process.env.FACEBOOK_OAUTH_STATE_SECRET;
+      else process.env.FACEBOOK_OAUTH_STATE_SECRET = prevState;
+    }
+  });
+
+  it("OAuth state uses JWT_SECRET (or dedicated FACEBOOK_OAUTH_STATE_SECRET) with no hardcoded fallback", () => {
+    const prevJwt = process.env.JWT_SECRET;
+    const prevState = process.env.FACEBOOK_OAUTH_STATE_SECRET;
+    try {
+      delete process.env.FACEBOOK_OAUTH_STATE_SECRET;
+      process.env.JWT_SECRET = "unit-test-oauth-state-jwt";
+      const state = signFacebookOAuthState();
+      assert.equal(verifyFacebookOAuthState(state), true);
+      assert.equal(verifyFacebookOAuthState("tampered." + state), false);
+
+      process.env.FACEBOOK_OAUTH_STATE_SECRET = "dedicated-facebook-state-secret";
+      const dedicated = signFacebookOAuthState();
+      assert.equal(verifyFacebookOAuthState(dedicated), true);
+      delete process.env.FACEBOOK_OAUTH_STATE_SECRET;
+      assert.equal(verifyFacebookOAuthState(dedicated), false);
+    } finally {
+      if (prevJwt === undefined) delete process.env.JWT_SECRET;
+      else process.env.JWT_SECRET = prevJwt;
+      if (prevState === undefined) delete process.env.FACEBOOK_OAUTH_STATE_SECRET;
+      else process.env.FACEBOOK_OAUTH_STATE_SECRET = prevState;
+    }
+  });
+});
+
+describe("Facebook OAuth session mint (JWT parity)", () => {
+  it("POST /api/auth/oauth mints a JWT and /auth/me hydrates with credentials", async () => {
+    const prevJwt = process.env.JWT_SECRET;
+    const prevNode = process.env.NODE_ENV;
+    const prevId = process.env.FACEBOOK_APP_ID;
+    const prevSecret = process.env.FACEBOOK_APP_SECRET;
+    if (!process.env.JWT_SECRET) {
+      process.env.JWT_SECRET = "test-jwt-secret-lock-phi";
+    }
+    process.env.NODE_ENV = "test";
+    delete process.env.FACEBOOK_APP_ID;
+    delete process.env.FACEBOOK_APP_SECRET;
+    initDatabase();
+
+    const app = express();
+    app.use(express.json());
+    app.use(attachUser);
+    app.use("/api", createApiRouter());
+    const server = app.listen(0, "127.0.0.1");
+    try {
+      await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+      const addr = server.address();
+      if (!addr || typeof addr === "string") throw new Error("server did not bind a port");
+      const port = addr.port;
+
+      const oauthRes = await fetch(`http://127.0.0.1:${port}/api/auth/oauth`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider: "facebook",
+          profile: { email: "doctor@lumera.me", name: "Dr. Rajiv Saxena" },
+          skipOtp: true,
+        }),
+      });
+      assert.equal(oauthRes.status, 200);
+      const oauthJson = (await oauthRes.json()) as {
+        token?: string;
+        user?: { email?: string };
+        sandbox?: boolean;
+        requiresOtp?: boolean;
+      };
+      assert.equal(oauthJson.requiresOtp, false);
+      assert.equal(oauthJson.sandbox, true);
+      assert.equal(oauthJson.user?.email, "doctor@lumera.me");
+      const token = String(oauthJson.token || "");
+      const payload = verifyJwtToken(token);
+      assert.ok(payload);
+      assert.equal(payload.email, "doctor@lumera.me");
+      assert.equal(payload.userId.startsWith("eyJ"), false);
+      assert.equal(token.split(".").length, 3);
+
+      const setCookie = oauthRes.headers.get("set-cookie") || "";
+      assert.match(setCookie, /lumera_sid=/);
+
+      const meBearer = await fetch(`http://127.0.0.1:${port}/api/auth/me`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      assert.equal(meBearer.status, 200);
+      const meBearerJson = (await meBearer.json()) as { user?: { email?: string }; token?: string };
+      assert.equal(meBearerJson.user?.email, "doctor@lumera.me");
+      assert.equal(meBearerJson.token, token);
+
+      const meCookie = await fetch(`http://127.0.0.1:${port}/api/auth/me`, {
+        headers: { Cookie: `lumera_sid=${encodeURIComponent(token)}` },
+      });
+      assert.equal(meCookie.status, 200);
+      const meCookieJson = (await meCookie.json()) as { user?: { email?: string }; token?: string };
+      assert.equal(meCookieJson.user?.email, "doctor@lumera.me");
+      assert.equal(meCookieJson.token, token);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+      if (prevJwt === undefined) delete process.env.JWT_SECRET;
+      else process.env.JWT_SECRET = prevJwt;
+      if (prevNode === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = prevNode;
+      if (prevId === undefined) delete process.env.FACEBOOK_APP_ID;
+      else process.env.FACEBOOK_APP_ID = prevId;
+      if (prevSecret === undefined) delete process.env.FACEBOOK_APP_SECRET;
+      else process.env.FACEBOOK_APP_SECRET = prevSecret;
+    }
   });
 });
 

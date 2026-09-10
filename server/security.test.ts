@@ -163,6 +163,10 @@ describe("Wave 1A PHI / auth lock", () => {
     assert.equal(login.json.requiresOtp, false);
     const token = String(login.json.token || "");
     assert.ok(token);
+    const jwtPayload = verifyJwtToken(token);
+    assert.ok(jwtPayload);
+    assert.equal(jwtPayload.email, "doctor@lumera.me");
+    assert.equal(jwtPayload.tenantId, "tenant-lumera-main");
 
     const patients = await jsonRequest(port, "GET", "/api/patients", undefined, {
       Authorization: `Bearer ${token}`,
@@ -178,6 +182,13 @@ describe("Wave 1A PHI / auth lock", () => {
       { Authorization: `Bearer ${token}` }
     );
     assert.equal(gemini.status, 200);
+
+    const me = await jsonRequest(port, "GET", "/api/auth/me", undefined, {
+      Authorization: `Bearer ${token}`,
+    });
+    assert.equal(me.status, 200);
+    assert.equal((me.json.user as { email?: string } | null)?.email, "doctor@lumera.me");
+    assert.equal(me.json.token, token);
   });
 
   it("production login ignores skipOtp and omits demoOtp", async () => {

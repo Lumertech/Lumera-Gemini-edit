@@ -25,15 +25,12 @@ import {
   CLINIC_MANAGER_ROLES,
   allowSkipOtp,
   clearSessionCookie,
-  createSession,
   destroySession,
   getSessionId,
+  issueLumeraSession,
   otpEchoPayload,
   requireAuth,
   requireRole,
-  setSessionCookie,
-  signJwtToken,
-  verifyJwtToken,
 } from "./auth.ts";
 import { hashPassword, verifyPassword } from "./password.ts";
 import { isProduction } from "./runtime.ts";
@@ -279,13 +276,12 @@ export function createApiRouter(): Router {
 
     // skipOtp is honored only when NODE_ENV !== "production" (local/demo).
     if (skipOtp) {
-      const sid = createSession(user.id);
-      setSessionCookie(res, sid);
+      const jwtToken = issueLumeraSession(res, user);
       getDb()
         .prepare("UPDATE users SET last_login = ?, whatsapp_verified = 1 WHERE id = ?")
         .run(new Date().toISOString(), user.id);
       writeAudit(getDb(), user.id, user.name, "Login", `${user.email} signed in (direct session)`);
-      return res.json({ user: publicUser(user), token: sid, requiresOtp: false });
+      return res.json({ user: publicUser(user), token: jwtToken, requiresOtp: false });
     }
 
     // Mandatory WhatsApp Business Phone Binding & Verification
@@ -376,8 +372,7 @@ export function createApiRouter(): Router {
       }
       if (user.status === "disabled") return fail("account_disabled");
 
-      const sid = createSession(user.id);
-      setSessionCookie(res, sid);
+      issueLumeraSession(res, user);
       getDb()
         .prepare("UPDATE users SET last_login = ?, whatsapp_verified = 1, avatar_url = COALESCE(NULLIF(?, ''), avatar_url) WHERE id = ?")
         .run(new Date().toISOString(), identity.avatarUrl, user.id);
@@ -437,8 +432,7 @@ export function createApiRouter(): Router {
     const skipOtp = Boolean(req.body?.skipOtp) && allowSkipOtp();
     const graphVerifiedFacebook = identity.provider === "facebook" && !identity.sandbox;
     if (graphVerifiedFacebook || skipOtp) {
-      const sid = createSession(user.id);
-      setSessionCookie(res, sid);
+      const jwtToken = issueLumeraSession(res, user);
       getDb()
         .prepare("UPDATE users SET last_login = ?, whatsapp_verified = 1, avatar_url = COALESCE(NULLIF(?, ''), avatar_url) WHERE id = ?")
         .run(new Date().toISOString(), identity.avatarUrl, user.id);
@@ -451,7 +445,7 @@ export function createApiRouter(): Router {
       );
       return res.json({
         user: publicUser(user),
-        token: sid,
+        token: jwtToken,
         requiresOtp: false,
         sandbox: Boolean(identity.sandbox),
         notice: identity.sandbox ? "SANDBOX / DEV-ONLY: session issued from client-supplied email. Disabled in production." : undefined,
@@ -614,14 +608,13 @@ export function createApiRouter(): Router {
       `).run(now, activePhone, avatarUrl, user.id);
 
       const updatedUser = getDb().prepare("SELECT * FROM users WHERE id = ?").get(user.id) as unknown as DbUser;
-      const sid = createSession(user.id);
-      setSessionCookie(res, sid);
+      const jwtToken = issueLumeraSession(res, updatedUser);
       writeAudit(getDb(), user.id, user.name, "WhatsApp Verified", `WhatsApp phone ${activePhone} verified for ${user.email}`);
 
       return res.json({
         ok: true,
         user: publicUser(updatedUser),
-        token: sid,
+        token: jwtToken,
         message: "WhatsApp Business verification confirmed. Welcome back!",
       });
     }
@@ -758,19 +751,7 @@ export function createApiRouter(): Router {
       );
 
       const updatedUser = getDb().prepare("SELECT * FROM users WHERE id = ?").get(userId) as unknown as DbUser;
-
-      // SIGN JWT TOKEN CONTAINING BOTH userId AND tenantId
-      const jwtToken = signJwtToken({
-        userId: updatedUser.id,
-        tenantId,
-        email: updatedUser.email,
-        role: updatedUser.role,
-        name: updatedUser.name,
-      });
-
-      // Set session cookie with JWT token
-      setSessionCookie(res, jwtToken);
-      createSession(updatedUser.id);
+      const jwtToken = issueLumeraSession(res, updatedUser);
 
       writeAudit(getDb(), updatedUser.id, updatedUser.name, "Practice Registered", `Registered and activated tenant: ${practiceName} (HFR: ${hfrId || "Active"})`);
 
@@ -1168,7 +1149,7 @@ export function createApiRouter(): Router {
     if (req.user.tenantId) {
       tenant = getDb().prepare("SELECT * FROM tenants WHERE id = ?").get(req.user.tenantId) as any;
     }
-    return res.json({ user: req.user, tenant });
+    return res.json({ user: req.user, tenant, token: getSessionId(req) });
   });
 
   api.get("/tenant/current", requireAuth, (req: Request, res: Response) => {
