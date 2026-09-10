@@ -24,9 +24,8 @@ describe("Firebase Hosting → Cloud Run config (#26)", () => {
     assert.equal(cfg.hosting.public, "hosting");
     const catchAll = cfg.hosting.rewrites.find((r) => r.source === "**");
     assert.ok(catchAll?.run, "missing ** rewrite to Cloud Run");
-    assert.equal(typeof catchAll!.run!.serviceId, "string");
-    assert.match(catchAll!.run!.serviceId, /^[a-z][a-z0-9-]*$/);
-    assert.match(catchAll!.run!.region, /^[a-z]+-[a-z]+\d+$/);
+    assert.equal(catchAll!.run!.serviceId, "lumera-gemini-edit");
+    assert.equal(catchAll!.run!.region, "asia-south1");
     assert.equal(catchAll!.destination, undefined);
   });
 
@@ -44,6 +43,8 @@ describe("Firebase Hosting → Cloud Run config (#26)", () => {
     assert.match(runbook, /Cloud Run/);
     assert.match(runbook, /Do not buy Hostinger/i);
     assert.match(runbook, /Do not remove Firebase DNS/i);
+    assert.match(runbook, /lumera-gemini-edit/);
+    assert.match(runbook, /asia-south1/);
     assert.match(runbook, /https:\/\/www\.mylumera\.in\/api\/auth\/facebook\/callback/);
     assert.match(runbook, /https:\/\/www\.mylumera\.in\/api\/meta\/webhook/);
     assert.equal(/do not (point the domain at|leave Gemini).*(Firebase|AI Studio)/i.test(runbook), false);

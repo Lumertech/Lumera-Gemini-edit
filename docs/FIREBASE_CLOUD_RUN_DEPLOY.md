@@ -1,6 +1,6 @@
 # Firebase Hosting + Cloud Run — www.mylumera.in
 
-**Status:** this document is the production runbook. It does **not** mean the site is live. The blocker is **Cloud Run deploy + Hosting rewrite + Firebase SSL cert mint**, not a new host.
+**Status:** this document is the production runbook. It does **not** mean `www.mylumera.in` is live. Cloud Run service **`lumera-gemini-edit`** in **`asia-south1`** was discovered in Firebase Console. Remaining: Hosting may still need **Get started** in Console, connect custom domain **`www.mylumera.in`**, deploy the Hosting rewrite, and wait for SSL cert mint. DNS already points at Firebase (`A 199.36.158.100`).
 
 **Architecture (locked):**
 
@@ -40,16 +40,16 @@ Do **not** deploy Vite `dist/` as a static Hosting site. That would 200 the land
 ### Path A — Gemini AI Studio Publish (preferred if already used)
 
 1. Publish this repo from AI Studio so Google builds and runs the Node app on Cloud Run.
-2. Copy the resulting **service name** and **region** (Cloud Console → Cloud Run).
-3. Put those values into `firebase.json` → `hosting.rewrites[0].run.serviceId` / `region` (placeholders today: `cloud-run-service-id` / `us-central1`).
+2. Live service (Firebase Console): **`lumera-gemini-edit`** in **`asia-south1`**.
+3. `firebase.json` already pins those values (`hosting.rewrites[0].run.serviceId` / `region`). Redeploy Hosting after Publish if the service was recreated.
 4. Cloud Run **ingress**: allow traffic from Firebase Hosting / public (Hosting rewrite needs to reach the service).
 
 ### Path B — Container from this repo
 
 ```bash
 export PROJECT=gen-lang-client-0108182367
-export REGION=us-central1
-export SERVICE=lumera   # then paste this as firebase.json serviceId
+export REGION=asia-south1
+export SERVICE=lumera-gemini-edit
 
 gcloud builds submit --tag "gcr.io/${PROJECT}/${SERVICE}" --project "${PROJECT}"
 gcloud run deploy "${SERVICE}" \
@@ -102,17 +102,17 @@ Leave unset for the URL-hosting stage. Production **does not fake** Graph delive
 Repo files:
 
 - `.firebaserc` — default project `gen-lang-client-0108182367`
-- `firebase.json` — `rewrites: [{ source: "**", run: { serviceId, region } }]`
+- `firebase.json` — rewrite `**` → Cloud Run **`lumera-gemini-edit`** in **`asia-south1`**
 - `hosting/` — empty public root so Hosting does not shadow `/`
 
-After Cloud Run exists:
+Hosting site + custom domain (www is **not** live until these are done):
 
-1. Replace `cloud-run-service-id` (and region if not `us-central1`) in `firebase.json`.
-2. `firebase deploy --only hosting --project gen-lang-client-0108182367`
-3. Firebase Console → Hosting → custom domain **`www.mylumera.in`**. DNS **already** has the Firebase Hosting A record (`199.36.158.100`) — do not point it elsewhere. Wait for Google to mint a cert whose SAN includes `www.mylumera.in` (today it is still `firebaseapp.com`).
+1. Firebase Console → Hosting: if the site still shows **Get started**, complete that first (the Hosting site may not exist yet).
+2. `firebase deploy --only hosting --project gen-lang-client-0108182367` (rewrites `**` to `lumera-gemini-edit` / `asia-south1`).
+3. Connect custom domain **`www.mylumera.in`**. DNS **already** has the Firebase Hosting A record (`199.36.158.100`) — do not point it elsewhere. Wait for Google to mint a cert whose SAN includes `www.mylumera.in` (today it is still `firebaseapp.com`).
 4. Optional: apex `mylumera.in` as a Firebase **redirect** to `https://www.mylumera.in` (301). Keep www as the canonical host.
 
-Hosting rewrite regions must be one of [Firebase’s Cloud Run rewrite regions](https://firebase.google.com/docs/hosting/cloud-run). `us-central1` is the usual AI Studio default.
+Hosting rewrite regions must be one of [Firebase’s Cloud Run rewrite regions](https://firebase.google.com/docs/hosting/cloud-run). The live service is **`asia-south1`**.
 
 ---
 
@@ -192,10 +192,10 @@ Graph OTP / reminder / receipt without tokens; `simulate-embedded-signup`; unsig
 
 This repo change cannot finish issue #26 acceptance. Ask the founder / GCP owner for:
 
-1. Permission to deploy Cloud Run on `gen-lang-client-0108182367` (AI Studio Publish **or** `gcloud run deploy` from `Dockerfile`).
+1. Permission to deploy / update Cloud Run on `gen-lang-client-0108182367` (AI Studio Publish **or** `gcloud run deploy` from `Dockerfile`) for service **`lumera-gemini-edit`** in **`asia-south1`**.
 2. Cloud Run env: `APP_URL=https://www.mylumera.in`, a new `JWT_SECRET`, `NODE_ENV=production`.
-3. The Cloud Run **serviceId + region** to drop into `firebase.json`, then `firebase deploy --only hosting`.
-4. Firebase Hosting custom-domain completion for **www** until the cert SAN includes `www.mylumera.in` (keep existing A `199.36.158.100`).
+3. If Hosting still shows **Get started**, finish that in Console, then `firebase deploy --only hosting` (`firebase.json` already pins `lumera-gemini-edit` / `asia-south1`).
+4. Connect custom domain **`www.mylumera.in`** and wait until the cert SAN includes it (keep existing A `199.36.158.100`).
 5. Optional apex 301 → www in Firebase Hosting.
 6. After public HTTPS 200s: who pastes the Dashboard table in §6 (founder / Meta owner).
 
@@ -214,7 +214,7 @@ Until those exist, treat www as **not live** even if this PR is merged.
 | App not responding | Not honoring `PORT`. Logs should show `Lumera AI Server running on http://0.0.0.0:<port>`. |
 | Policy URL 404 | SPA fallback not running (static host) or rewrite missing. |
 | Webhook GET 500 | Expected until `META_VERIFY_TOKEN` is set. |
-| Hosting rewrite 404 from Cloud Run | `serviceId` / `region` placeholders not replaced, or region not in Firebase’s rewrite allow-list. |
+| Hosting rewrite 404 from Cloud Run | Wrong `serviceId` / `region` (must be `lumera-gemini-edit` / `asia-south1`), Hosting site not created (Console still on **Get started**), or region not in Firebase’s rewrite allow-list. |
 
 ---
 
