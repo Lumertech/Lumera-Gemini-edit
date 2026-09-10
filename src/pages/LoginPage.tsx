@@ -1106,7 +1106,7 @@ export const LoginPage: React.FC = () => {
                     <option value="">Fill a demo account…</option>
                     {DEMO_ACCOUNTS.map((a) => (
                       <option key={a.email} value={a.email}>
-                        {a.email} · {a.role} · {a.practiceLine}{a.specialty ? ` · ${a.specialty}` : ""}
+                        {a.email} · {a.role} · {a.practiceLine}{a.displaySpecialty || a.specialty ? ` · ${a.displaySpecialty || a.specialty}` : ""}
                       </option>
                     ))}
                   </select>

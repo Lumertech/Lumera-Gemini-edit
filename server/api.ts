@@ -19,6 +19,7 @@ import {
   type UserRole,
   type UserStatus,
 } from "./db.ts";
+import { persistSpecialtyPackId } from "../src/lib/specialtyPack.ts";
 import { createClinicalRouter } from "./clinical.ts";
 import { createBillingRouter } from "./billing.ts";
 import {
@@ -30,6 +31,7 @@ import {
   ADMIN_ROLES,
   CLINICIAN_ROLES,
   CLINIC_MANAGER_ROLES,
+  allowPasswordLoginWithoutOtp,
   allowSkipOtp,
   clearSessionCookie,
   destroySession,
@@ -288,7 +290,8 @@ export function createApiRouter(): Router {
     }
 
     // skipOtp is honored only when NODE_ENV !== "production" (local/demo).
-    if (skipOtp) {
+    // super_admin / admin@ may use email+password on www without WhatsApp OTP.
+    if (skipOtp || allowPasswordLoginWithoutOtp(user)) {
       const jwtToken = issueLumeraSession(res, user);
       getDb()
         .prepare("UPDATE users SET last_login = ?, whatsapp_verified = 1 WHERE id = ?")
@@ -634,7 +637,8 @@ export function createApiRouter(): Router {
 
     if (record.purpose === "register") {
       const practiceName = payload.practiceName || payload.clinicName || "New Clinic";
-      const specialty = payload.specialty || "General Medicine";
+      const mappedRegisterSpecialty = persistSpecialtyPackId(payload.specialty || "General Medicine", { required: true });
+      const specialty = mappedRegisterSpecialty.ok ? mappedRegisterSpecialty.id : "gp";
       const country = payload.country || "India";
       const timezone = payload.timezone || "IST (UTC+5:30)";
       const phone = record.phone || payload.phone || "";
@@ -792,7 +796,11 @@ export function createApiRouter(): Router {
   // Practice Registration Endpoint: Creates Tenant, CLINIC_ADMIN, ABDM HFR/HPR, DHIS threshold, and dispatches WhatsApp OTP
   const handleRegisterPractice = async (req: Request, res: Response) => {
     const practiceName = String(req.body?.practiceName || req.body?.clinicName || "").trim();
-    const specialty = String(req.body?.specialty || "General Medicine").trim();
+    const mappedSpecialty = persistSpecialtyPackId(req.body?.specialty || "General Medicine", { required: true });
+    if (!mappedSpecialty.ok) {
+      return res.status(400).json({ error: mappedSpecialty.error });
+    }
+    const specialty = mappedSpecialty.id;
     const country = String(req.body?.country || "India").trim();
     const timezone = String(req.body?.timezone || "IST (UTC+5:30)").trim();
     const phone = String(req.body?.phone || "").trim();
@@ -951,7 +959,14 @@ export function createApiRouter(): Router {
     const userId = req.user!.id;
     const doctorName = req.body?.doctorName ? String(req.body.doctorName).trim() : undefined;
     const clinicName = req.body?.clinicName ? String(req.body.clinicName).trim() : undefined;
-    const specialty = req.body?.specialty ? String(req.body.specialty).trim() : undefined;
+    let specialty: string | undefined;
+    if (req.body?.specialty != null && String(req.body.specialty).trim()) {
+      const mappedOnboarding = persistSpecialtyPackId(req.body.specialty, { required: true });
+      if (!mappedOnboarding.ok) {
+        return res.status(400).json({ error: mappedOnboarding.error });
+      }
+      specialty = mappedOnboarding.id;
+    }
     const regNumber = req.body?.regNumber ? String(req.body.regNumber).trim() : undefined;
     const consultationFee = req.body?.consultationFee !== undefined && req.body?.consultationFee !== null
       ? Number(req.body.consultationFee)
@@ -1554,7 +1569,11 @@ export function createApiRouter(): Router {
     }
     const id = crypto.randomUUID();
     const pwd = password ? String(password) : `Temp${Math.random().toString(36).slice(2, 8)}!`;
-    const spec = specialty != null ? String(specialty).trim() : "";
+    const mappedCreate = persistSpecialtyPackId(specialty);
+    if (!mappedCreate.ok) {
+      return res.status(400).json({ error: mappedCreate.error });
+    }
+    const spec = mappedCreate.id;
     const scopedTenant = String(tenantId || req.user?.tenantId || DEMO_TENANT_ID || "").trim();
     const practice = normalizePracticeType(practiceType);
     try {
@@ -1596,15 +1615,27 @@ export function createApiRouter(): Router {
     const status = req.body.status ?? existing.status;
     const phone = req.body.phone ?? existing.phone;
     const email = req.body.email ? String(req.body.email).trim().toLowerCase() : existing.email;
-    const specialty = req.body.specialty != null ? String(req.body.specialty) : existing.specialty || "";
+    let specialty = existing.specialty || "";
+    if (req.body.specialty != null) {
+      const mappedPatch = persistSpecialtyPackId(req.body.specialty);
+      if (!mappedPatch.ok) {
+        return res.status(400).json({ error: mappedPatch.error });
+      }
+      specialty = mappedPatch.id;
+    }
     const practice =
       req.body.practiceType != null || req.body.practice_type != null
         ? normalizePracticeType(req.body.practiceType ?? req.body.practice_type)
         : normalizePracticeType(existing.practice_type);
-    const tenantId =
-      req.body.tenantId != null || req.body.tenant_id != null
-        ? String(req.body.tenantId ?? req.body.tenant_id)
-        : existing.tenant_id || "";
+    const wantsTenant =
+      Object.prototype.hasOwnProperty.call(req.body || {}, "tenantId") ||
+      Object.prototype.hasOwnProperty.call(req.body || {}, "tenant_id");
+    if (wantsTenant && req.user?.role !== "super_admin") {
+      return res.status(403).json({ error: "Only super_admin can reassign tenantId" });
+    }
+    const tenantId = wantsTenant
+      ? String(req.body.tenantId ?? req.body.tenant_id ?? "")
+      : existing.tenant_id || "";
     try {
       getDb()
         .prepare("UPDATE users SET name = ?, role = ?, status = ?, phone = ?, email = ?, specialty = ?, practice_type = ?, tenant_id = ? WHERE id = ?")

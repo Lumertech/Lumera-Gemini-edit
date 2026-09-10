@@ -1,5 +1,6 @@
 import type { AppUser, PolyclinicSpecialty } from "../types";
 import { demoAccountByEmail } from "./demoAccounts";
+import { mapSpecialtyToPackId } from "./specialtyPack";
 
 /** Views a specialty pack may land on or deep-link to. Keep in sync with Navbar NavView. */
 export type WorkflowView =
@@ -407,6 +408,12 @@ export function resolveRxModule(specialty?: string | null): PolyclinicSpecialty 
 }
 
 function packForSpecialty(specialty?: string | null): SpecialtyWorkflowPack {
+  const packId = mapSpecialtyToPackId(specialty);
+  if (packId === "dentist") return PACKS["dental surgery"] || DEFAULT_MEDICAL;
+  if (packId === "physio") return PACKS["physiotherapy & rehabilitation"] || DEFAULT_MEDICAL;
+  if (packId === "spa_salon") return PACKS["wellness & spas"] || DEFAULT_MEDICAL;
+  if (packId === "therapist") return PACKS["psychiatry & mental health"] || DEFAULT_MEDICAL;
+  if (packId === "consultant") return PACKS["consulting"] || DEFAULT_MEDICAL;
   const module = resolveRxModule(specialty);
   const key = module.toLowerCase();
   return PACKS[key] || DEFAULT_MEDICAL;
@@ -419,7 +426,7 @@ export function workflowForUser(user?: AppUser | null): SpecialtyWorkflowPack {
   if (user.role === "receptionist") return FRONT_DESK;
 
   const fromEmail = demoAccountByEmail(user.email);
-  const specialty = user.specialty || fromEmail?.specialty || "";
+  const specialty = fromEmail?.displaySpecialty || user.specialty || fromEmail?.specialty || "";
   return packForSpecialty(specialty);
 }
 

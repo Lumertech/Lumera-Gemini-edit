@@ -28,3 +28,5 @@ This is a local / staging matrix. It is **not** production. ABDM paths are NHA s
 Register / create-clinic first paint stays **Individual** (`DEFAULT_PRACTICE_TYPE`). `clinic.admin@lumera.me` is the single explicit Multi-specialty demo and does **not** change that default.
 
 Every specialty doctor above is an **individual** practice login. They land the matching specialty pack (GP / physio / dental / therapy / wellness / consultant), not the generic Multispecialty welcome roster.
+
+`users.specialty` is persisted as pack ids only: `gp` | `physio` | `dentist` | `spa_salon` | `therapist` | `consultant`. Admin UI labels map to those ids on write.

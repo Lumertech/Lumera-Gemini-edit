@@ -31,15 +31,19 @@ describe("specialty workflow packs", () => {
     assert.ok(DEMO_ACCOUNTS.some((a) => a.email === "therapist@lumera.me"));
     assert.ok(DEMO_ACCOUNTS.some((a) => a.email === "wellness@lumera.me"));
     assert.ok(DEMO_ACCOUNTS.some((a) => a.email === "consultant@lumera.me"));
+    const allowed = new Set(["", "gp", "physio", "dentist", "spa_salon", "therapist", "consultant"]);
+    for (const acct of DEMO_ACCOUNTS) {
+      assert.ok(allowed.has(acct.specialty), `${acct.email} specialty=${acct.specialty}`);
+    }
   });
 
   it("does not collapse spa / physio / dentist / GP into one pack", () => {
-    const gp = workflowForUser(fakeUser("doctor@lumera.me", "General Medicine"));
-    const dentist = workflowForUser(fakeUser("dentist@lumera.me", "Dental Surgery"));
-    const physio = workflowForUser(fakeUser("physio@lumera.me", "Physiotherapy & Rehabilitation"));
-    const spa = workflowForUser(fakeUser("wellness@lumera.me", "Wellness & Spas"));
-    const therapist = workflowForUser(fakeUser("therapist@lumera.me", "Psychiatry & Mental Health"));
-    const consultant = workflowForUser(fakeUser("consultant@lumera.me", "Consulting"));
+    const gp = workflowForUser(fakeUser("doctor@lumera.me", "gp"));
+    const dentist = workflowForUser(fakeUser("dentist@lumera.me", "dentist"));
+    const physio = workflowForUser(fakeUser("physio@lumera.me", "physio"));
+    const spa = workflowForUser(fakeUser("wellness@lumera.me", "spa_salon"));
+    const therapist = workflowForUser(fakeUser("therapist@lumera.me", "therapist"));
+    const consultant = workflowForUser(fakeUser("consultant@lumera.me", "consultant"));
 
     assert.equal(gp.kind, "medical");
     assert.equal(dentist.kind, "dental");
@@ -54,10 +58,10 @@ describe("specialty workflow packs", () => {
     assert.equal(therapist.showMedicalRx, false);
     assert.equal(physio.showMedicalRx, true);
     assert.equal(dentist.rxModule, "Dental Surgery");
-    assert.equal(clinicianHomeView(fakeUser("wellness@lumera.me", "Wellness & Spas")), "wellness");
-    assert.equal(clinicianHomeView(fakeUser("therapist@lumera.me", "Psychiatry & Mental Health")), "therapy-session");
-    assert.equal(clinicianHomeView(fakeUser("dentist@lumera.me", "Dental Surgery")), "queue");
-    assert.equal(clinicianHomeView(fakeUser("physio@lumera.me", "Physiotherapy & Rehabilitation")), "queue");
+    assert.equal(clinicianHomeView(fakeUser("wellness@lumera.me", "spa_salon")), "wellness");
+    assert.equal(clinicianHomeView(fakeUser("therapist@lumera.me", "therapist")), "therapy-session");
+    assert.equal(clinicianHomeView(fakeUser("dentist@lumera.me", "dentist")), "queue");
+    assert.equal(clinicianHomeView(fakeUser("physio@lumera.me", "physio")), "queue");
   });
 
   it("lands role-homes: receptionist, individual GP pack, explicit polyclinic clinic-admin", () => {
@@ -65,12 +69,12 @@ describe("specialty workflow packs", () => {
     reception.practiceType = "individual";
     assert.equal(clinicianHomeView(reception), "reception");
 
-    const gp = fakeUser("doctor@lumera.me", "General Medicine");
+    const gp = fakeUser("doctor@lumera.me", "gp");
     gp.practiceType = "individual";
     assert.equal(clinicianHomeView(gp), "queue");
     assert.equal(workflowForUser(gp).kind, "medical");
 
-    const clinicAdmin = fakeUser("clinic.admin@lumera.me", "General Medicine", "CLINIC_ADMIN");
+    const clinicAdmin = fakeUser("clinic.admin@lumera.me", "gp", "CLINIC_ADMIN");
     clinicAdmin.practiceType = "polyclinic";
     assert.equal(clinicianHomeView(clinicAdmin), "welcome");
   });

@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { DEMO_ACCOUNTS, DEMO_PASSWORD } from "../src/lib/demoAccounts.ts";
+import { packIdLabel } from "../src/lib/specialtyPack.ts";
 import { hashPassword } from "./password.ts";
 
 const DEMO_TENANT_ID = "tenant-lumera-main";
@@ -70,7 +71,7 @@ export function ensureDemoPersonaUsers(database: DatabaseSync) {
         acct.name,
         acct.qualification || "",
         acct.regNumber || "",
-        acct.specialty,
+        acct.displaySpecialty || packIdLabel(acct.specialty) || acct.specialty,
         10,
         acct.consultationFee || 0,
         acct.opdRoom || "",

@@ -1,4 +1,5 @@
 import type { UserRole } from "../types";
+import type { SpecialtyPackId } from "./specialtyPack";
 
 /** Shared sandbox password for every seeded @lumera.me demo login. */
 export const DEMO_PASSWORD = "Lumera@2026";
@@ -19,7 +20,10 @@ export interface DemoAccount {
   email: string;
   name: string;
   role: UserRole;
-  specialty: string;
+  /** Persisted users.specialty — pack id SoT, never a human label. */
+  specialty: SpecialtyPackId | "";
+  /** UI / roster chrome only. Not written to users.specialty. */
+  displaySpecialty?: string;
   phone: string;
   practiceLine: DemoPracticeLine;
   practiceType: "individual" | "polyclinic";
@@ -72,7 +76,8 @@ export const DEMO_ACCOUNTS: DemoAccount[] = [
     email: "clinic.admin@lumera.me",
     name: "Meera Iyer",
     role: "CLINIC_ADMIN",
-    specialty: "General Medicine",
+    specialty: "gp",
+    displaySpecialty: "General Medicine",
     phone: "+91 98000 22222",
     practiceLine: "Doctors & Clinics",
     practiceType: "polyclinic",
@@ -92,7 +97,8 @@ export const DEMO_ACCOUNTS: DemoAccount[] = [
     email: "doctor@lumera.me",
     name: "Dr. Vikram Malhotra",
     role: "doctor",
-    specialty: "General Medicine",
+    specialty: "gp",
+    displaySpecialty: "General Medicine",
     phone: "+91 98765 43210",
     practiceLine: "Doctors & Clinics",
     practiceType: "individual",
@@ -108,7 +114,8 @@ export const DEMO_ACCOUNTS: DemoAccount[] = [
     email: "cardiology@lumera.me",
     name: "Dr. Rajesh Sharma",
     role: "doctor",
-    specialty: "Cardiology",
+    specialty: "gp",
+    displaySpecialty: "Cardiology",
     phone: "+91 98223 99887",
     practiceLine: "Doctors & Clinics",
     practiceType: "individual",
@@ -124,7 +131,8 @@ export const DEMO_ACCOUNTS: DemoAccount[] = [
     email: "dermatology@lumera.me",
     name: "Dr. Meera Vasudevan",
     role: "doctor",
-    specialty: "Dermatology",
+    specialty: "gp",
+    displaySpecialty: "Dermatology",
     phone: "+91 97334 11223",
     practiceLine: "Doctors & Clinics",
     practiceType: "individual",
@@ -140,7 +148,8 @@ export const DEMO_ACCOUNTS: DemoAccount[] = [
     email: "orthopedics@lumera.me",
     name: "Dr. Harshvardhan Patel",
     role: "doctor",
-    specialty: "Orthopedics",
+    specialty: "gp",
+    displaySpecialty: "Orthopedics",
     phone: "+91 99445 66778",
     practiceLine: "Doctors & Clinics",
     practiceType: "individual",
@@ -156,7 +165,8 @@ export const DEMO_ACCOUNTS: DemoAccount[] = [
     email: "pediatrics@lumera.me",
     name: "Dr. Ananya Sen",
     role: "doctor",
-    specialty: "Pediatrics",
+    specialty: "gp",
+    displaySpecialty: "Pediatrics",
     phone: "+91 98112 34567",
     practiceLine: "Doctors & Clinics",
     practiceType: "individual",
@@ -172,7 +182,8 @@ export const DEMO_ACCOUNTS: DemoAccount[] = [
     email: "gynecology@lumera.me",
     name: "Dr. Shalini Mukhopadhyay",
     role: "doctor",
-    specialty: "Gynecology",
+    specialty: "gp",
+    displaySpecialty: "Gynecology",
     phone: "+91 98319 88990",
     practiceLine: "Doctors & Clinics",
     practiceType: "individual",
@@ -188,7 +199,8 @@ export const DEMO_ACCOUNTS: DemoAccount[] = [
     email: "ent@lumera.me",
     name: "Dr. Naveen Iyer",
     role: "doctor",
-    specialty: "ENT",
+    specialty: "gp",
+    displaySpecialty: "ENT",
     phone: "+91 98120 66771",
     practiceLine: "Doctors & Clinics",
     practiceType: "individual",
@@ -204,7 +216,8 @@ export const DEMO_ACCOUNTS: DemoAccount[] = [
     email: "ophthalmology@lumera.me",
     name: "Dr. Alok Nath Mukherjee",
     role: "doctor",
-    specialty: "Ophthalmology",
+    specialty: "gp",
+    displaySpecialty: "Ophthalmology",
     phone: "+91 98109 44332",
     practiceLine: "Doctors & Clinics",
     practiceType: "individual",
@@ -220,7 +233,8 @@ export const DEMO_ACCOUNTS: DemoAccount[] = [
     email: "dentist@lumera.me",
     name: "Dr. Arunachalam Swamy",
     role: "doctor",
-    specialty: "Dental Surgery",
+    specialty: "dentist",
+    displaySpecialty: "Dental Surgery",
     phone: "+91 98401 22334",
     practiceLine: "Dentists",
     practiceType: "individual",
@@ -236,7 +250,8 @@ export const DEMO_ACCOUNTS: DemoAccount[] = [
     email: "physio@lumera.me",
     name: "Dr. Siddharth Varma (PT)",
     role: "doctor",
-    specialty: "Physiotherapy & Rehabilitation",
+    specialty: "physio",
+    displaySpecialty: "Physiotherapy & Rehabilitation",
     phone: "+91 98312 77889",
     practiceLine: "Physiotherapists",
     practiceType: "individual",
@@ -252,7 +267,8 @@ export const DEMO_ACCOUNTS: DemoAccount[] = [
     email: "therapist@lumera.me",
     name: "Anika Bose, MPhil (Clinical Psychology)",
     role: "doctor",
-    specialty: "Psychiatry & Mental Health",
+    specialty: "therapist",
+    displaySpecialty: "Psychiatry & Mental Health",
     phone: "+91 98177 22001",
     practiceLine: "Therapists",
     practiceType: "individual",
@@ -268,7 +284,8 @@ export const DEMO_ACCOUNTS: DemoAccount[] = [
     email: "wellness@lumera.me",
     name: "Kavya Menon",
     role: "doctor",
-    specialty: "Wellness & Spas",
+    specialty: "spa_salon",
+    displaySpecialty: "Wellness & Spas",
     phone: "+91 98450 11882",
     practiceLine: "Wellness & Spas",
     practiceType: "individual",
@@ -284,7 +301,8 @@ export const DEMO_ACCOUNTS: DemoAccount[] = [
     email: "consultant@lumera.me",
     name: "Aarav Mehta",
     role: "doctor",
-    specialty: "Consulting",
+    specialty: "consultant",
+    displaySpecialty: "Consulting",
     phone: "+91 99001 33445",
     practiceLine: "Consultants",
     practiceType: "individual",

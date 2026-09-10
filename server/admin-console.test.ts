@@ -102,7 +102,7 @@ describe("Admin console persist (founder audit 1–9)", () => {
     );
     assert.equal(created.status, 201, String(created.json.error || "create"));
     const user = created.json.user as Record<string, unknown>;
-    assert.equal(user.specialty, "Dental Surgery");
+    assert.equal(user.specialty, "dentist");
     assert.equal(user.practiceType, "individual");
     assert.equal(user.tenantId, DEMO_TENANT_ID);
     assert.ok(created.json.temporaryPassword);
@@ -112,7 +112,7 @@ describe("Admin console persist (founder audit 1–9)", () => {
       practice_type: string;
     };
     assert.equal(dbRow.tenant_id, DEMO_TENANT_ID);
-    assert.equal(dbRow.specialty, "Dental Surgery");
+    assert.equal(dbRow.specialty, "dentist");
     assert.equal(dbRow.practice_type, "individual");
   });
 
@@ -136,7 +136,7 @@ describe("Admin console persist (founder audit 1–9)", () => {
         email,
         role: "doctor",
         status: "active",
-        specialty: "Cardiology",
+        specialty: "Wellness & Spas",
         phone: "+91 91111 22222",
         practiceType: "polyclinic",
       },
@@ -145,14 +145,14 @@ describe("Admin console persist (founder audit 1–9)", () => {
     assert.equal(patched.status, 200, String(patched.json.error || "patch"));
     const user = patched.json.user as Record<string, unknown>;
     assert.equal(user.name, "After Edit");
-    assert.equal(user.specialty, "Cardiology");
+    assert.equal(user.specialty, "spa_salon");
     assert.equal(user.practiceType, "polyclinic");
     const listed = await jsonRequest(port, "GET", `/api/users?q=${encodeURIComponent(email)}`, undefined, auth);
     const rows = listed.json.users as Array<Record<string, unknown>>;
     const found = rows.find((r) => r.id === id);
     assert.ok(found);
     assert.equal(found?.name, "After Edit");
-    assert.equal(found?.specialty, "Cardiology");
+    assert.equal(found?.specialty, "spa_salon");
     assert.equal(found?.practiceType, "polyclinic");
   });
 
@@ -172,5 +172,62 @@ describe("Admin console persist (founder audit 1–9)", () => {
     assert.equal(next.phone, "+91 98000 19999");
     assert.equal(next.avatarUrl, "https://example.com/admin.png");
     await jsonRequest(port, "PATCH", "/api/auth/me", { name: originalName }, auth);
+  });
+
+  it("POST /api/users rejects unknown specialty (fail closed)", async () => {
+    const { auth } = await login("admin@lumera.me");
+    const email = `audit.badspec.${Date.now()}@lumera.me`;
+    const created = await jsonRequest(
+      port,
+      "POST",
+      "/api/users",
+      { name: "Bad Spec", email, role: "doctor", specialty: "Quantum Healing" },
+      auth
+    );
+    assert.equal(created.status, 400);
+    assert.match(String(created.json.error || ""), /specialty/i);
+  });
+
+  it("PATCH tenantId is super_admin-only (403 otherwise)", async () => {
+    const { auth } = await login("admin@lumera.me");
+    const email = `audit.tenant.${Date.now()}@lumera.me`;
+    const created = await jsonRequest(
+      port,
+      "POST",
+      "/api/users",
+      { name: "Tenant Target", email, role: "doctor", specialty: "gp", password: DEMO_PASSWORD },
+      auth
+    );
+    const id = String((created.json.user as { id: string }).id);
+    const asAdmin = await jsonRequest(
+      port,
+      "PATCH",
+      `/api/users/${id}`,
+      { tenantId: "tenant-reassign-audit" },
+      auth
+    );
+    assert.equal(asAdmin.status, 200, String(asAdmin.json.error || "admin tenant patch"));
+    assert.equal((asAdmin.json.user as { tenantId?: string }).tenantId, "tenant-reassign-audit");
+
+    const doctor = await login("doctor@lumera.me");
+    const asDoctor = await jsonRequest(
+      port,
+      "PATCH",
+      `/api/users/${id}`,
+      { tenantId: "tenant-stolen" },
+      doctor.auth
+    );
+    assert.equal(asDoctor.status, 403);
+    const clinic = await login("clinic.admin@lumera.me");
+    const asClinic = await jsonRequest(
+      port,
+      "PATCH",
+      `/api/users/${id}`,
+      { tenant_id: "tenant-stolen" },
+      clinic.auth
+    );
+    assert.equal(asClinic.status, 403);
+    const still = getDb().prepare("SELECT tenant_id FROM users WHERE id = ?").get(id) as { tenant_id: string };
+    assert.equal(still.tenant_id, "tenant-reassign-audit");
   });
 });

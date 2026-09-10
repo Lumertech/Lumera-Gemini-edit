@@ -14,6 +14,17 @@ export function allowSkipOtp(nodeEnv = process.env.NODE_ENV): boolean {
   return !isProductionEnv(nodeEnv);
 }
 
+/**
+ * Platform super_admin (admin@) may use email+password on www/production
+ * without a WhatsApp OTP gate. Clinician and patient logins still require OTP
+ * when skipOtp is not allowed.
+ */
+export function allowPasswordLoginWithoutOtp(user?: { role?: string; email?: string } | null): boolean {
+  const role = String(user?.role || "");
+  const email = String(user?.email || "").trim().toLowerCase();
+  return role === "super_admin" || email === "admin@lumera.me";
+}
+
 /** Echo OTPs in JSON only outside production (no live WhatsApp/SMS in local). */
 export function allowOtpEcho(nodeEnv = process.env.NODE_ENV): boolean {
   return !isProductionEnv(nodeEnv);

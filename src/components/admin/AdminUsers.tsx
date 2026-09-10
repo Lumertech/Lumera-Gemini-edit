@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { apiFetch } from "../../api/http";
 import { AppUser, UserRole, UserStatus } from "../../types";
-import { PRACTICE_SPECIALTIES } from "../../lib/specialtyWorkflow";
+import { PACK_ID_OPTIONS, packIdLabel } from "../../lib/specialtyPack";
 
 const ROLES: UserRole[] = ["super_admin", "polyclinic_admin", "CLINIC_ADMIN", "doctor", "receptionist", "patient"];
 const STATUSES: UserStatus[] = ["active", "invited", "disabled"];
@@ -181,7 +181,7 @@ export const AdminUsers: React.FC = () => {
         </select>
         <select className="border rounded px-2 py-1.5" value={form.specialty} onChange={(e) => setForm({ ...form, specialty: e.target.value })}>
           <option value="">Specialty (clinicians)</option>
-          {PRACTICE_SPECIALTIES.map((s) => <option key={s} value={s}>{s}</option>)}
+          {PACK_ID_OPTIONS.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
         </select>
         <select
           className="border rounded px-2 py-1.5"
@@ -227,7 +227,7 @@ export const AdminUsers: React.FC = () => {
                 <td className="px-3 py-2 font-semibold">{u.name}</td>
                 <td className="px-3 py-2">{u.email}</td>
                 <td className="px-3 py-2">{u.role}</td>
-                <td className="px-3 py-2">{u.specialty || "—"}</td>
+                <td className="px-3 py-2">{u.specialty ? `${u.specialty}${packIdLabel(u.specialty) ? ` · ${packIdLabel(u.specialty)}` : ""}` : "—"}</td>
                 <td className="px-3 py-2">{practiceLabel(u.practiceType)}</td>
                 <td className="px-3 py-2">{u.status}</td>
                 <td className="px-3 py-2 space-x-2 whitespace-nowrap">
@@ -285,7 +285,7 @@ export const AdminUsers: React.FC = () => {
               Specialty / practice pack
               <select className="mt-1 border rounded px-2 py-1.5 w-full" value={draft.specialty || ""} onChange={(e) => setDraft({ ...draft, specialty: e.target.value })}>
                 <option value="">None</option>
-                {PRACTICE_SPECIALTIES.map((s) => <option key={s} value={s}>{s}</option>)}
+                {PACK_ID_OPTIONS.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
               </select>
             </label>
             <label className="block font-semibold">
