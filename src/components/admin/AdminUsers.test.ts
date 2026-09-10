@@ -23,6 +23,8 @@ describe("Admin User Management Edit (P0 live-deploy AC)", () => {
     assert.match(src, /tenantId: actor\?\.tenantId/);
     assert.match(src, /temporaryPassword/);
     assert.match(src, /value=\{s\.id\}/);
+    assert.match(src, /SPECIALTY_PACK_IDS|PACK_ID_OPTIONS/);
+    assert.doesNotMatch(src, /<option key=\{s\}>\{s\}<\/option>/);
     assert.match(src, /practiceType: draft\.practiceType/);
     assert.match(src, /data-testid="admin-edit-practice-type"/);
     assert.match(src, /data-testid="admin-create-practice-type"/);

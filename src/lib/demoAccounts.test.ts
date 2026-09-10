@@ -8,6 +8,7 @@ import {
   DEMO_LOGIN_MATRIX,
   DEMO_PACK_ALIAS_LOGINS,
   DEMO_PASSWORD,
+  PRODUCT_DEMO_EMAILS,
 } from "./demoAccounts.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -43,5 +44,13 @@ describe("demo login matrix", () => {
     }
     assert.match(loginSrc, /DEMO_LOGIN_MATRIX/);
     assert.match(loginSrc, /data-testid="demo-account-picker"/);
+  });
+
+  it("lists Product table emails first and keeps dentist@ / physio@ as extras", () => {
+    const emails = DEMO_LOGIN_MATRIX.map((a) => a.email);
+    assert.deepEqual(emails.slice(0, PRODUCT_DEMO_EMAILS.length), [...PRODUCT_DEMO_EMAILS]);
+    assert.ok(emails.indexOf("dentist@lumera.me") > emails.indexOf("dentist.doctor@lumera.me"));
+    assert.ok(emails.indexOf("physio@lumera.me") > emails.indexOf("physio.doctor@lumera.me"));
+    assert.ok(emails.indexOf("wellness@lumera.me") > emails.indexOf("spa.doctor@lumera.me"));
   });
 });

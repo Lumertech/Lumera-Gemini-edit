@@ -317,6 +317,18 @@ export const DEMO_ACCOUNTS: DemoAccount[] = [
 
 export const DEMO_ACCOUNT_EMAILS = DEMO_ACCOUNTS.map((a) => a.email);
 
+/** Product table demo logins — picker lists these first. Aliases (dentist@, physio@, …) stay extras. */
+export const PRODUCT_DEMO_EMAILS = [
+  "admin@lumera.me",
+  "reception@lumera.me",
+  "gp.doctor@lumera.me",
+  "physio.doctor@lumera.me",
+  "dentist.doctor@lumera.me",
+  "spa.doctor@lumera.me",
+  "therapist@lumera.me",
+  "consultant@lumera.me",
+] as const;
+
 /**
  * #56 pack-id smoke aliases (seeded by seedDemoSpecialtyPackUsers).
  * Shown in the login picker; not re-inserted by ensureDemoPersonaUsers.
@@ -368,11 +380,20 @@ export const DEMO_PACK_ALIAS_LOGINS: DemoAccount[] = [
   },
 ];
 
-/** Login picker: #55 persona emails plus #56 pack aliases not already listed. */
-export const DEMO_LOGIN_MATRIX: DemoAccount[] = [
-  ...DEMO_ACCOUNTS,
-  ...DEMO_PACK_ALIAS_LOGINS.filter((alias) => !DEMO_ACCOUNTS.some((a) => a.email === alias.email)),
-];
+/** Login picker: Product table emails first, then #55 extras (dentist@, cardio@, …). */
+export const DEMO_LOGIN_MATRIX: DemoAccount[] = (() => {
+  const byEmail = new Map<string, DemoAccount>();
+  for (const acct of [...DEMO_PACK_ALIAS_LOGINS, ...DEMO_ACCOUNTS]) {
+    if (!byEmail.has(acct.email)) byEmail.set(acct.email, acct);
+  }
+  const preferred = PRODUCT_DEMO_EMAILS.map((email) => byEmail.get(email)).filter(
+    (acct): acct is DemoAccount => Boolean(acct)
+  );
+  const extras = [...byEmail.values()].filter(
+    (acct) => !(PRODUCT_DEMO_EMAILS as readonly string[]).includes(acct.email)
+  );
+  return [...preferred, ...extras];
+})();
 
 export function demoAccountByEmail(email?: string | null): DemoAccount | undefined {
   const key = String(email || "").trim().toLowerCase();

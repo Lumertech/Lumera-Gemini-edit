@@ -4,6 +4,8 @@ Shared password for every seeded `@lumera.me` login: **`Lumera@2026`**.
 
 This is a local / staging matrix. It is **not** production. ABDM paths are NHA sandbox — not certified.
 
+Product table (login picker lists these first): `admin@` · `reception@` · `gp.doctor@` · `physio.doctor@` · `dentist.doctor@` · `spa.doctor@` · `therapist@` · `consultant@`. `dentist@` / `physio@` / `wellness@` / medical `cardiology@`… remain extras.
+
 | Email | Role | Practice type | Practice line | Specialty pack | Lands on |
 |---|---|---|---|---|---|
 | `admin@lumera.me` | super_admin | platform (polyclinic tenant) | Platform | — | Admin console |
