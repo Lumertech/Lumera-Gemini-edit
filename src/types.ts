@@ -160,14 +160,34 @@ export interface Patient {
   avatar?: string;
   abhaNumber?: string;
   abhaAddress?: string;
-  kycStatus?: 'VERIFIED' | 'PENDING' | 'FAILED' | 'LINKED_SANDBOX';
+  kycStatus?: 'LINKED_SANDBOX' | 'PENDING' | 'FAILED' | 'VERIFIED';
   hfrId?: string;
+  /** ISO timestamp when ABHA was first attached. Empty until an NHA sandbox link. */
+  abhaLinkedAt?: string;
+  /** Present on patient detail / ABHA-link responses only. Never invented on the simple path. */
+  consentArtefacts?: AbdmConsentArtefact[];
   vitals?: Vitals;
 }
 
 /** Demo / local-stub ABHA is LINKED_SANDBOX — not government-registry KYC. */
 export function isAbhaLinked(patient: { kycStatus?: string; abhaNumber?: string }): boolean {
   return patient.kycStatus === 'VERIFIED' || patient.kycStatus === 'LINKED_SANDBOX' || Boolean(patient.abhaNumber);
+}
+
+/** NHA sandbox consent artefact persisted for the ABDM path only. */
+export interface AbdmConsentArtefact {
+  id?: string;
+  tenantId?: string;
+  patientId?: string;
+  consentId: string;
+  status?: 'GRANTED' | 'REVOKED' | 'DENIED' | string;
+  hiTypes?: string[];
+  dateRange?: { from?: string; to?: string };
+  requesterName?: string;
+  purpose?: string;
+  grantedAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface Vitals {

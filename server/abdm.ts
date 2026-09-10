@@ -10,7 +10,9 @@
 import { Router, type Request, type Response } from "express";
 import crypto from "node:crypto";
 import { getDb, writeAudit } from "./db.ts";
-import { allowOtpEcho } from "./auth.ts";
+import { allowOtpEcho, requireAuth } from "./auth.ts";
+import { getAbdmBridgeStatus, resolveAbdmMode } from "./abdm-mode.ts";
+import { getTenantPatient, storeConsentArtefact } from "./clinical.ts";
 import {
   createPrescriptionBundle,
   createOPConsultBundle,
@@ -27,14 +29,38 @@ import {
 // must never echo the OTP back to the client, or accept the fixed test OTP,
 // once NODE_ENV=production is set.
 
-// ABDM Sandbox Default Configuration
+// Stub-only local stand-in. Sandbox mode (#38) must use env creds — never these placeholders.
+const STUB_GATEWAY = "https://sandbox.abdm.gov.in/api/v3";
 const ABDM_CONFIG = {
-  GATEWAY_URL: process.env.ABDM_GATEWAY_URL || "https://sandbox.abdm.gov.in/api/v3",
-  CLIENT_ID: process.env.ABDM_CLIENT_ID || "SBX_LUMERA_HEALTH_2026",
-  CLIENT_SECRET: process.env.ABDM_CLIENT_SECRET || "lumera_abdm_sandbox_sec_99182",
-  HFR_ID: "HFR-IN-8829104",
+  GATEWAY_URL: process.env.ABDM_GATEWAY_URL || STUB_GATEWAY,
+  CLIENT_ID: resolveAbdmMode() === "sandbox" ? process.env.ABDM_CLIENT_ID || "" : process.env.ABDM_CLIENT_ID || "",
+  CLIENT_SECRET: resolveAbdmMode() === "sandbox" ? process.env.ABDM_CLIENT_SECRET || "" : process.env.ABDM_CLIENT_SECRET || "",
+  HFR_ID: process.env.ABDM_HFR_ID || "HFR-IN-8829104",
   FACILITY_NAME: "Lumera Polyclinic & Diagnostic Network",
 };
+
+const NHA_SANDBOX_NOTICE =
+  "NHA sandbox: local stand-in until live NHA credentials.";
+
+function tenantIdOf(req: { user?: { tenantId?: string } }): string {
+  return String(req.user?.tenantId || "").trim();
+}
+
+function callbackTenantId(req: { user?: { tenantId?: string }; headers: Record<string, unknown>; body?: Record<string, unknown> }): string | null {
+  const sessionTenant = tenantIdOf(req);
+  if (sessionTenant) return sessionTenant;
+  const hip = String(req.headers["x-hip-id"] || req.headers["X-HIP-ID"] || "").trim();
+  const hiu = String(req.headers["x-hiu-id"] || req.headers["X-HIU-ID"] || "").trim();
+  const headerId = hip || hiu;
+  if (headerId) {
+    const tenant = getDb()
+      .prepare("SELECT id FROM tenants WHERE hfr_id = ? AND TRIM(hfr_id) != ''")
+      .get(headerId) as { id: string } | undefined;
+    if (tenant?.id) return tenant.id;
+  }
+  const bodyTenant = String(req.body?.tenantId || req.body?.tenant_id || "").trim();
+  return bodyTenant || null;
+}
 
 // In-Memory ABDM Token Cache
 interface AbdmSession {
@@ -193,9 +219,9 @@ export function recordDhisTransaction(params: {
       tenantId,
       params.transactionType,
       params.patientId || "",
-      params.abhaAddress || "verified.patient@abdm",
+      params.abhaAddress || "patient@sbx",
       params.abhaNumber || "91-0000-0000-0000",
-      params.kycStatus || "VERIFIED",
+      params.kycStatus || "LINKED_SANDBOX",
       params.recordId || "",
       params.fhirBundleId || `bundle-${crypto.randomUUID().slice(0, 8)}`,
       incentiveAmount,
@@ -248,7 +274,7 @@ export function createAbdmRouter(): Router {
         });
       }
 
-      // Generate verified session token
+      // Generate session token (local stub)
       const expiresIn = 1800; // 30 minutes
       const accessToken = `eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.abdm_sbx_${crypto.randomUUID().replace(/-/g, "")}.${Date.now()}`;
 
@@ -276,7 +302,7 @@ export function createAbdmRouter(): Router {
 
   router.post(["/v3/bridgesession", "/bridgesession", "/v3/sessions", "/sessions"], handleBridgeSession);
 
-  // Status check — operational flags only while this router is a local stub
+  // Status check — exactly { abdmMode, bridgeReady } (#47 / #38 freeze).
   router.get("/status", (_req, res) => {
     res.json(buildAbdmStatusPayload());
   });
@@ -329,13 +355,14 @@ export function createAbdmRouter(): Router {
         address: "E-104, Palm Meadows, Whitefield, Bengaluru, Karnataka",
       });
 
+      const abdmMode = resolveAbdmMode();
       res.json({
         txnId,
         message: `OTP sent successfully to Aadhaar-registered mobile ending in ******${lastFour}`,
-        // Only present in non-production local dev, where there is no real
-        // ABDM/UIDAI OTP delivery channel wired up yet.
-        testOtp: allowOtpEcho() ? "123456" : undefined,
+        // Stub-only echo when allowOtpEcho(); never in production or sandbox.
+        testOtp: allowOtpEcho() && abdmMode === "stub" ? "123456" : undefined,
         expiresInSeconds: 600,
+        abdmMode,
       });
     } catch (err: any) {
       res.status(500).json({ error: "Failed to generate Aadhaar OTP: " + err.message });
@@ -347,7 +374,7 @@ export function createAbdmRouter(): Router {
   // Step 2: Verify Aadhaar OTP (/v3/registration/aadhaar/verifyOTP)
   const handleVerifyAadhaarOtp = (req: Request, res: Response) => {
     try {
-      const { txnId, otp, patientId, mobile } = req.body;
+      const { txnId, otp } = req.body;
 
       if (!txnId || !otp) {
         return res.status(400).json({ error: "Both txnId and otp are required" });
@@ -369,48 +396,22 @@ export function createAbdmRouter(): Router {
       const abhaSeed = session.aadhaarNumber.slice(2, 12) + "99";
       const abhaNumber = `91-${abhaSeed.slice(0, 4)}-${abhaSeed.slice(4, 8)}-${abhaSeed.slice(8, 12)}`;
       const cleanName = session.name.toLowerCase().replace(/[^a-z]/g, ".");
-      const abhaAddress = `${cleanName}@abdm`;
+      const abhaAddress = `${cleanName}@sbx`;
 
-      // Update patient in SQLite database if patientId or matching phone provided
-      const db = getDb();
-      let updatedPatientId = patientId;
-
-      if (patientId) {
-        db.prepare(`
-          UPDATE patients 
-          SET abha_number = ?, abha_address = ?, kyc_status = 'VERIFIED', hfr_id = ?
-          WHERE id = ?
-        `).run(abhaNumber, abhaAddress, ABDM_CONFIG.HFR_ID, patientId);
-      } else {
-        // Try matching by phone
-        const existing = db.prepare("SELECT id FROM patients WHERE phone = ? OR name LIKE ?").get(session.mobile, `%${session.name}%`) as { id: string } | undefined;
-        if (existing) {
-          updatedPatientId = existing.id;
-          db.prepare(`
-            UPDATE patients 
-            SET abha_number = ?, abha_address = ?, kyc_status = 'VERIFIED', hfr_id = ?
-            WHERE id = ?
-          `).run(abhaNumber, abhaAddress, ABDM_CONFIG.HFR_ID, existing.id);
-        }
-      }
-
-      // Record DHIS initial registration transaction
-      recordDhisTransaction({
-        transactionType: "OP_CONSULT",
-        patientId: updatedPatientId,
-        abhaAddress,
-        abhaNumber,
-        kycStatus: "VERIFIED",
-        recordId: txnId,
-      });
-
-      writeAudit(db, req.user?.id || null, req.user?.name || "Reception Desk", "ABDM_ABHA_KYC_VERIFIED", `ABHA: ${abhaNumber} (${abhaAddress})`);
+      writeAudit(
+        getDb(),
+        req.user?.id || null,
+        req.user?.name || "Reception Desk",
+        "ABHA OTP matched (NHA sandbox)",
+        `ABHA: ${abhaNumber} (${abhaAddress})`
+      );
 
       res.json({
         success: true,
-        kycStatus: "VERIFIED",
+        abdmMode: resolveAbdmMode(),
         abhaNumber,
         abhaAddress,
+        kycStatus: "LINKED_SANDBOX",
         profile: {
           name: session.name,
           gender: session.gender,
@@ -418,10 +419,8 @@ export function createAbdmRouter(): Router {
           mobile: session.mobile,
           address: session.address,
           pincode: session.pincode,
-          photo: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&h=120&fit=crop&crop=faces",
-          hfrId: ABDM_CONFIG.HFR_ID,
         },
-        message: "ABHA successfully verified and linked with Government Aadhaar e-KYC registry.",
+        sandboxNotice: NHA_SANDBOX_NOTICE,
       });
     } catch (err: any) {
       res.status(500).json({ error: "Failed to verify Aadhaar OTP: " + err.message });
@@ -430,80 +429,66 @@ export function createAbdmRouter(): Router {
 
   router.post(["/v3/registration/aadhaar/verifyOTP", "/registration/aadhaar/verifyOTP", "/aadhaar/verify-otp"], handleVerifyAadhaarOtp);
 
-  // Search by ABHA Address or Mobile
-  router.post(["/v3/search/searchByAbha", "/search/searchByAbha", "/v3/search/searchByMobile", "/search/searchByMobile"], (req, res) => {
-    const { abhaAddress } = req.body;
-    const db = getDb();
-    const patient = db.prepare("SELECT * FROM patients WHERE abha_address = ? OR abha_number = ?").get(abhaAddress, abhaAddress) as any;
-    if (patient) {
-      return res.json({
-        found: true,
-        patient: {
-          id: patient.id,
-          name: patient.name,
-          uhid: patient.uhid,
-          phone: patient.phone,
-          abhaNumber: patient.abha_number,
-          abhaAddress: patient.abha_address,
-          kycStatus: patient.kyc_status || "VERIFIED",
-        },
-      });
+  // Search by ABHA — tenant-scoped; do not invent a profile when missing.
+  router.post(["/v3/search/searchByAbha", "/search/searchByAbha", "/v3/search/searchByMobile", "/search/searchByMobile"], requireAuth, (req, res) => {
+    const tenantId = tenantIdOf(req);
+    const needle = String(req.body?.abhaAddress || req.body?.abhaNumber || req.body?.mobile || "").trim();
+    if (!tenantId || !needle) {
+      return res.json({ found: false, abdmMode: resolveAbdmMode() });
     }
-
-    // Return sandbox mock match
+    const row = getDb()
+      .prepare(
+        `SELECT * FROM patients
+         WHERE tenant_id = ? AND (abha_address = ? OR abha_number = ? OR phone = ?)
+         LIMIT 1`
+      )
+      .get(tenantId, needle, needle, needle) as Record<string, unknown> | undefined;
+    if (!row) {
+      return res.json({ found: false, abdmMode: resolveAbdmMode() });
+    }
     res.json({
       found: true,
-      patient: {
-        name: "Rajiv Saxena",
-        uhid: "LUM-2026-0106",
-        phone: "+91 98234 55667",
-        abhaNumber: "91-4428-9102-3841",
-        abhaAddress: abhaAddress || "rajiv.saxena@abdm",
-        kycStatus: "VERIFIED",
+      abdmMode: resolveAbdmMode(),
+      profile: {
+        name: row.name,
+        gender: row.gender,
+        dob: "",
+        mobile: row.phone,
+        address: row.address,
+        pincode: "",
+        abhaNumber: row.abha_number,
+        abhaAddress: row.abha_address,
       },
     });
   });
 
-  // ABDM QR Code Profile Share Simulator & Decoder
+  // QR share — return profile fields only; Platform link-abha is the SoT write.
   router.post(["/v3/profile/share", "/profile/share"], (req, res) => {
     try {
       const { qrPayload } = req.body;
-      let parsed: any = {};
+      let parsed: Record<string, unknown> = {};
       try {
-        parsed = typeof qrPayload === "string" ? JSON.parse(qrPayload) : qrPayload;
+        parsed = typeof qrPayload === "string" ? JSON.parse(qrPayload) : qrPayload || {};
       } catch {
-        parsed = {
-          hidn: "91-4428-9102-3841",
-          hid: "rajiv.saxena@abdm",
-          name: "Rajiv Saxena",
-          gender: "M",
-          dob: "1982-04-12",
-          mobile: "+91 98234 55667",
-          address: "Whitefield, Bengaluru",
-        };
+        parsed = {};
       }
-
-      const abhaNumber = parsed.hidn || parsed.abhaNumber || "91-4428-9102-3841";
-      const abhaAddress = parsed.hid || parsed.abhaAddress || "rajiv.saxena@abdm";
-      const name = parsed.name || "Rajiv Saxena";
-      const phone = parsed.mobile || "+91 98234 55667";
-
-      // Match or link to patient in DB
-      const db = getDb();
-      let patient = db.prepare("SELECT * FROM patients WHERE abha_number = ? OR phone = ?").get(abhaNumber, phone) as any;
-
-      if (patient) {
-        db.prepare("UPDATE patients SET abha_number = ?, abha_address = ?, kyc_status = 'VERIFIED' WHERE id = ?").run(abhaNumber, abhaAddress, patient.id);
-      }
-
+      const abhaNumber = String(parsed.hidn || parsed.abhaNumber || "");
+      const abhaAddress = String(parsed.hid || parsed.abhaAddress || "");
       res.json({
         success: true,
-        patientName: name,
+        abdmMode: resolveAbdmMode(),
         abhaNumber,
         abhaAddress,
-        kycStatus: "VERIFIED",
-        tokenNumber: Math.floor(10 + Math.random() * 40),
-        message: "ABHA QR Scan verified. Patient token prioritized for OPD intake.",
+        kycStatus: "LINKED_SANDBOX",
+        profile: {
+          name: String(parsed.name || ""),
+          gender: String(parsed.gender || ""),
+          dob: String(parsed.dob || ""),
+          mobile: String(parsed.mobile || ""),
+          address: String(parsed.address || ""),
+          pincode: String(parsed.pincode || ""),
+        },
+        sandboxNotice: NHA_SANDBOX_NOTICE,
       });
     } catch (err: any) {
       res.status(500).json({ error: "Failed to process ABDM QR Profile Share: " + err.message });
@@ -526,7 +511,7 @@ export function createAbdmRouter(): Router {
         patientAbha: consentArtefact?.patientAbha || "rajiv.saxena@abdm",
         hiTypes: consentArtefact?.hiTypes || ["Prescription", "OPConsultation", "DiagnosticReport"],
         dateRange: consentArtefact?.dateRange || { from: "2026-01-01", to: "2026-12-31" },
-        requesterName: consentArtefact?.requesterName || "Verified Health Information User (HIU)",
+        requesterName: consentArtefact?.requesterName || "Health Information User (HIU)",
         purpose: consentArtefact?.purpose || "Clinical Care Continuity",
         grantedAt: timestamp || new Date().toISOString(),
       });
@@ -583,7 +568,7 @@ export function createAbdmRouter(): Router {
         phone: patient.phone,
         abhaNumber: patient.abha_number || "91-4428-9102-3841",
         abhaAddress: patient.abha_address || "rajiv.saxena@abdm",
-        kycStatus: "VERIFIED",
+        kycStatus: "LINKED_SANDBOX",
       };
 
       const doctorContext: DoctorContext = {
@@ -624,7 +609,7 @@ export function createAbdmRouter(): Router {
         patientId: patient.id,
         abhaAddress: patientContext.abhaAddress,
         abhaNumber: patientContext.abhaNumber,
-        kycStatus: "VERIFIED",
+        kycStatus: "LINKED_SANDBOX",
         recordId: "rx-transfer-101",
         fhirBundleId: rxBundle.id,
       });
@@ -716,7 +701,7 @@ export function createAbdmRouter(): Router {
 
       // KYC count in patients table
       const kycRow = db.prepare(`
-        SELECT COUNT(*) as c FROM patients WHERE kyc_status = 'VERIFIED'
+        SELECT COUNT(*) as c FROM patients WHERE kyc_status = 'LINKED_SANDBOX'
       `).get() as { c: number };
 
       res.json({
@@ -729,7 +714,7 @@ export function createAbdmRouter(): Router {
         clinicShare,
         lumeraShare,
         breakdown,
-        kycVerifiedPatients: kycRow?.c || 0,
+        kycLinkedPatients: kycRow?.c || 0,
         recentTransactions,
         schemeDetails: {
           schemeName: "NHA Digital Health Incentive Scheme (DHIS v3)",
@@ -760,7 +745,7 @@ export function createAbdmRouter(): Router {
         transactionType: selectedType,
         abhaAddress,
         abhaNumber: "91-4428-9102-3841",
-        kycStatus: "VERIFIED",
+        kycStatus: "LINKED_SANDBOX",
         recordId: `rec-${crypto.randomUUID().slice(0, 8)}`,
         fhirBundleId: `bundle-${crypto.randomUUID().slice(0, 8)}`,
       });
@@ -791,7 +776,7 @@ export function createAbdmRouter(): Router {
       phone: patient.phone || "+91 98234 55667",
       abhaNumber: patient.abha_number || "91-4428-9102-3841",
       abhaAddress: patient.abha_address || "rajiv.saxena@abdm",
-      kycStatus: "VERIFIED",
+      kycStatus: "LINKED_SANDBOX",
     };
 
     const doctorContext: DoctorContext = {
@@ -875,6 +860,66 @@ export function createAbdmRouter(): Router {
       tenantContext
     );
     return res.json(bundle);
+  });
+
+  // -------------------------------------------------------------
+  // Thin HIP notify + HIU consent/fetch stubs (#35 / #39)
+  // Persist artefacts on tenant-scoped patientId. NHA sandbox only.
+  // -------------------------------------------------------------
+  const persistCallbackArtefact = (req: Request, res: Response, kind: "hip_notify" | "hiu_consent" | "hiu_fetch") => {
+    const tenantId = callbackTenantId(req as unknown as { user?: { tenantId?: string }; headers: Record<string, unknown>; body?: Record<string, unknown> });
+    if (!tenantId) {
+      return res.status(401).json({ error: "Authentication required" });
+    }
+    const patientId = String(req.body?.patientId || req.body?.patient_id || "").trim();
+    if (!patientId || !getTenantPatient(tenantId, patientId)) {
+      return res.status(404).json({ error: "Patient not found" });
+    }
+    const raw = req.body?.consentArtefact || req.body?.consent_artefact || req.body?.consent;
+    const artefact =
+      raw && typeof raw === "object"
+        ? { ...(raw as Record<string, unknown>) }
+        : {
+            consentId: String(req.body?.consentId || req.body?.consentRequestId || `${kind}-${crypto.randomUUID().slice(0, 8)}`),
+            status: req.body?.status || "GRANTED",
+            hiTypes: req.body?.hiTypes,
+            dateRange: req.body?.dateRange,
+            purpose: req.body?.purpose || kind,
+            requesterName: req.body?.requesterName,
+            grantedAt: req.body?.grantedAt || new Date().toISOString(),
+          };
+    if (!artefact.consentId) {
+      artefact.consentId = `${kind}-${crypto.randomUUID().slice(0, 8)}`;
+    }
+    storeConsentArtefact(tenantId, patientId, artefact, { id: req.user?.id, name: req.user?.name || "ABDM callback" });
+    writeAudit(
+      getDb(),
+      req.user?.id || null,
+      req.user?.name || "ABDM callback",
+      `ABDM ${kind} (NHA sandbox)`,
+      `patient ${patientId} consent ${artefact.consentId}`
+    );
+    const artefacts = getDb()
+      .prepare("SELECT * FROM abdm_consent_artefacts WHERE tenant_id = ? AND patient_id = ?")
+      .all(tenantId, patientId);
+    return res.status(kind === "hiu_fetch" ? 200 : 202).json({
+      status: kind === "hiu_fetch" ? "OK" : "ACKNOWLEDGED",
+      abdmMode: resolveAbdmMode(),
+      patientId,
+      consentId: artefact.consentId,
+      artefacts: kind === "hiu_fetch" ? artefacts.map((row) => ({ ...(row as object) })) : undefined,
+      sandboxNotice: NHA_SANDBOX_NOTICE,
+    });
+  };
+
+  router.post(["/hip/notify", "/callbacks/hip/notify", "/v3/hip/notify"], (req, res) => {
+    persistCallbackArtefact(req, res, "hip_notify");
+  });
+  router.post(["/hiu/consent/notify", "/hiu/consent", "/callbacks/hiu/consent", "/v3/hiu/consent/notify"], (req, res) => {
+    persistCallbackArtefact(req, res, "hiu_consent");
+  });
+  router.post(["/hiu/fetch", "/callbacks/hiu/fetch", "/v3/hiu/fetch"], (req, res) => {
+    persistCallbackArtefact(req, res, "hiu_fetch");
   });
 
   return router;

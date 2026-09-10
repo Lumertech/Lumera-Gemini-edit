@@ -118,6 +118,12 @@ describe("Wave 1A patient/appointment contract", () => {
       abhaAddress: "x@sbx",
     });
     assert.equal(abha.status, 401);
+    const linkAbha = await jsonRequest(port, "POST", "/api/patients/link-abha", {
+      abhaNumber: "91-0000-0000-0000",
+      source: "aadhaar_otp",
+      abdmMode: "stub",
+    });
+    assert.equal(linkAbha.status, 401);
   });
 
   it("POST patient assigns id/uhid and POST appointment defaults Waiting + next token", async () => {
@@ -236,7 +242,7 @@ describe("Wave 1A patient/appointment contract", () => {
       port,
       "PATCH",
       `/api/patients/${patient.id}/abha`,
-      { abhaNumber: "91-1234-5678-9012", abhaAddress: "meera@sbx", kycStatus: "VERIFIED" },
+      { abhaNumber: "91-1234-5678-9012", abhaAddress: "meera@sbx", source: "aadhaar_otp", abdmMode: "stub" },
       auth
     );
     assert.equal(abha.status, 200);
@@ -244,7 +250,7 @@ describe("Wave 1A patient/appointment contract", () => {
     assert.equal(abha.json.id, patient.id);
     assert.equal(abha.json.abhaNumber, "91-1234-5678-9012");
     assert.equal(abha.json.abhaAddress, "meera@sbx");
-    assert.equal(abha.json.kycStatus, "VERIFIED");
+    assert.equal(abha.json.kycStatus, "LINKED_SANDBOX");
 
     const vitals = { heartRate: 72, recordedAt: "10:31 AM" };
     const patchedApt = await jsonRequest(
@@ -322,7 +328,7 @@ describe("Wave 1A patient/appointment contract", () => {
       { abhaNumber: "99", abhaAddress: "stolen@sbx" },
       authB
     );
-    assert.equal(stolenAbha.status, 404);
+    assert.equal(stolenAbha.status, 403);
 
     const stolenApt = await jsonRequest(
       port,

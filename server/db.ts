@@ -531,6 +531,18 @@ function migrate(database: DatabaseSync) {
       expires_at TEXT NOT NULL,
       verified_at TEXT
     );
+
+    -- NHA sandbox: tenant-scoped ABDM consent artefacts. Not a live ABDM store.
+    CREATE TABLE IF NOT EXISTS abdm_consent_artefacts (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      patient_id TEXT NOT NULL,
+      consent_id TEXT NOT NULL,
+      artefact_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE (tenant_id, consent_id)
+    );
   `);
 
   try {
@@ -647,6 +659,31 @@ function migrate(database: DatabaseSync) {
   } catch {}
   try {
     database.exec("ALTER TABLE patients ADD COLUMN hfr_id TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE patients ADD COLUMN abha_linked_at TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS abdm_consent_artefacts (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        patient_id TEXT NOT NULL,
+        consent_id TEXT NOT NULL,
+        artefact_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE (tenant_id, consent_id)
+      )
+    `);
+  } catch {}
+  try {
+    database.exec(
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_patients_tenant_abha ON patients(tenant_id, abha_number) WHERE abha_number IS NOT NULL AND TRIM(abha_number) != ''"
+    );
+  } catch {}
+  try {
+    database.exec("CREATE INDEX IF NOT EXISTS idx_abdm_consent_tenant_patient ON abdm_consent_artefacts(tenant_id, patient_id)");
   } catch {}
 
   try {
@@ -1258,6 +1295,20 @@ export function mapPatient(row: Record<string, unknown>) {
     abhaAddress: (row.abha_address as string) || "",
     kycStatus: (row.kyc_status as string) || "PENDING",
     hfrId: (row.hfr_id as string) || "",
+    abhaLinkedAt: (row.abha_linked_at as string) || "",
+  };
+}
+
+export function mapConsentArtefact(row: Record<string, unknown>) {
+  const parsed = parseJsonColumn<Record<string, unknown>>(row.artefact_json, {});
+  return {
+    id: row.id as string,
+    tenantId: row.tenant_id as string,
+    patientId: row.patient_id as string,
+    consentId: (row.consent_id as string) || String(parsed.consentId || ""),
+    createdAt: (row.created_at as string) || "",
+    updatedAt: (row.updated_at as string) || "",
+    ...parsed,
   };
 }
 
