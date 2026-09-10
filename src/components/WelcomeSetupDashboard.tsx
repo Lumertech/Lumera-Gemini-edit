@@ -33,7 +33,7 @@ export const WelcomeSetupDashboard: React.FC<WelcomeSetupDashboardProps> = ({
             <h1 className="text-2xl font-bold text-slate-900">Welcome to {clinic}</h1>
             <p className="text-sm text-slate-600 mt-1">
               Your clinic account is ready. This workspace starts empty — no demo doctors or sample patients.
-              Register a patient first, then open a consultation. Records are saved to your clinic and survive refresh.
+              Register a patient first; check-in issues a Waiting OPD token. Records are saved to your clinic and survive refresh.
             </p>
           </div>
         </div>
@@ -48,7 +48,7 @@ export const WelcomeSetupDashboard: React.FC<WelcomeSetupDashboardProps> = ({
             <div className="text-base font-bold text-slate-900">Start First Consultation</div>
             <p className="text-xs text-slate-600 mt-1">
               {consultNeedsPatient
-                ? "No patient is selected yet. We'll take you to OPD Reception to add the first chart, then open Smart Rx."
+                ? "No patient is selected yet. We'll take you to OPD Reception to register a chart, issue a Waiting token, then open Smart Rx."
                 : "Open Smart Rx Studio for the selected patient."}
             </p>
           </button>

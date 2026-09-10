@@ -300,7 +300,7 @@ export const Reception: React.FC<ReceptionProps> = ({
           </div>
           <p className="text-xs text-slate-500 mt-1">
             {firstRunHint
-              ? 'Register the first patient for this clinic. Saving writes a durable chart — it will still be here after refresh.'
+              ? 'Register the first patient for this clinic. Saving writes a durable chart and a Waiting OPD token — both survive refresh.'
               : 'Seamless patient registration with Government ABHA QR scanning, instant Aadhaar e-KYC verification, and token generation.'}
           </p>
         </div>
