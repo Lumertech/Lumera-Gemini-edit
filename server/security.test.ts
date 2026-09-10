@@ -191,7 +191,7 @@ describe("Wave 1A PHI / auth lock", () => {
     assert.equal(me.json.token, token);
   });
 
-  it("production login ignores skipOtp and omits demoOtp", async () => {
+  it("production login ignores skipOtp and does not mint a session", async () => {
     const prev = process.env.NODE_ENV;
     process.env.NODE_ENV = "production";
     try {
@@ -200,11 +200,13 @@ describe("Wave 1A PHI / auth lock", () => {
         password: "Lumera@2026",
         skipOtp: true,
       });
-      assert.equal(login.status, 200);
-      assert.equal(login.json.requiresOtp, true);
+      // skipOtp is ignored in production. Without Graph OTP credentials, delivery hard-fails
+      // (no fake wamid / no sandbox echo). The important lock is: no token/session.
+      assert.equal(login.status, 503);
       assert.equal(login.json.token, undefined);
+      assert.equal(login.json.user, undefined);
       assert.equal(login.json.demoOtp, undefined);
-      assert.ok(login.json.verificationId);
+      assert.equal(login.json.otpDelivered, false);
     } finally {
       if (prev === undefined) delete process.env.NODE_ENV;
       else process.env.NODE_ENV = prev;
