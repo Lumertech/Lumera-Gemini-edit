@@ -756,8 +756,8 @@ export function createApiRouter(): Router {
         userId = `user-${crypto.randomUUID().slice(0, 8)}`;
         hprId = hprId || `IN-HPR-${Math.floor(10000000 + Math.random() * 90000000)}`;
         getDb().prepare(`
-          INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, clinic_name, avatar_url, whatsapp_verified, hpr_id, hfr_id, onboarding_completed, practice_type, specialty, last_login, created_at)
-          VALUES (?, ?, ?, ?, ?, 'doctor', 'active', ?, ?, ?, 1, ?, ?, 0, 'individual', ?, ?, ?)
+          INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, clinic_name, avatar_url, whatsapp_verified, hpr_id, hfr_id, onboarding_completed, practice_type, specialty, pack_id, last_login, created_at)
+          VALUES (?, ?, ?, ?, ?, 'doctor', 'active', ?, ?, ?, 1, ?, ?, 0, 'individual', ?, ?, ?, ?)
         `).run(
           userId,
           tenantId,
@@ -769,6 +769,7 @@ export function createApiRouter(): Router {
           avatarUrl,
           hprId,
           hfrId,
+          specialty,
           specialty,
           now,
           now
@@ -910,9 +911,9 @@ export function createApiRouter(): Router {
     const passwordHash = password ? hashPassword(password) : hashPassword("Lumera@2026");
 
     getDb().prepare(`
-      INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, clinic_name, avatar_url, whatsapp_verified, hpr_id, hfr_id, onboarding_completed, practice_type, specialty, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, 0, ?, ?, 0, ?, ?, ?)
-    `).run(userId, tenantId, email, passwordHash, name, assignedRole, phone, practiceName, avatarUrl, hprId, hfrId, practiceType, specialty, now);
+      INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, clinic_name, avatar_url, whatsapp_verified, hpr_id, hfr_id, onboarding_completed, practice_type, specialty, pack_id, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, 0, ?, ?, 0, ?, ?, ?, ?)
+    `).run(userId, tenantId, email, passwordHash, name, assignedRole, phone, practiceName, avatarUrl, hprId, hfrId, practiceType, specialty, specialty, now);
 
     // 3. DHIS TRANSACTIONS INITIALIZATION (0/100 threshold for current month):
     const dhisId = `dhis-${crypto.randomUUID().slice(0, 8)}`;
@@ -1064,12 +1065,14 @@ export function createApiRouter(): Router {
       SET onboarding_completed = 1,
           practice_type = COALESCE(?, practice_type),
           specialty = COALESCE(?, specialty),
+          pack_id = COALESCE(?, pack_id),
           name = COALESCE(?, name),
           clinic_name = COALESCE(?, clinic_name),
           role = COALESCE(?, role)
       WHERE id = ?
     `).run(
       practiceType || null,
+      specialty || null,
       specialty || null,
       doctorName || null,
       clinicName || null,

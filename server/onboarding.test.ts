@@ -117,14 +117,18 @@ describe("practice type onboarding", () => {
       password: "Lumera@2026",
     });
     assert.equal(res.status, 200, String(res.json.error || "register failed"));
-    const row = getDb().prepare("SELECT role, practice_type, onboarding_completed FROM users WHERE email = ?").get(email) as {
+    const row = getDb().prepare("SELECT role, practice_type, onboarding_completed, specialty, pack_id FROM users WHERE email = ?").get(email) as {
       role: string;
       practice_type: string;
       onboarding_completed: number;
+      specialty: string;
+      pack_id: string;
     };
     assert.equal(normalizePracticeType(row.practice_type), "individual");
     assert.equal(row.role, "doctor");
     assert.equal(row.onboarding_completed, 0);
+    assert.equal(row.specialty, "gp");
+    assert.equal(row.pack_id, "gp");
   });
 
   it("register-practice with multispecialty is an explicit polyclinic admin opt-in", async () => {
@@ -142,11 +146,15 @@ describe("practice type onboarding", () => {
       practiceType: "multispecialty",
     });
     assert.equal(res.status, 200, String(res.json.error || "register failed"));
-    const row = getDb().prepare("SELECT role, practice_type FROM users WHERE email = ?").get(email) as {
+    const row = getDb().prepare("SELECT role, practice_type, specialty, pack_id FROM users WHERE email = ?").get(email) as {
       role: string;
       practice_type: string;
+      specialty: string;
+      pack_id: string;
     };
     assert.equal(normalizePracticeType(row.practice_type), "polyclinic");
+    assert.equal(row.specialty, "gp");
+    assert.equal(row.pack_id, "gp");
     assert.equal(row.role, "CLINIC_ADMIN");
   });
 
