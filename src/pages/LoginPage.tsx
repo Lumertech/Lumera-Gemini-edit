@@ -1307,7 +1307,7 @@ export const LoginPage: React.FC = () => {
                     <Sparkles className="w-3.5 h-3.5 text-purple-400" />
                     Starter Enterprise Tier • 30-Day Free Trial • 500 AI Scribe Mins
                   </span>
-                  <span className="font-mono text-xs text-emerald-400 font-bold">ABDM Ready</span>
+                  <span className="font-mono text-xs text-emerald-400 font-bold">NHA sandbox</span>
                 </div>
 
                 {/* Submit Button */}
@@ -1376,7 +1376,7 @@ export const LoginPage: React.FC = () => {
 
         {/* Footer Note */}
         <div className="mt-6 pt-4 border-t border-slate-800/80 text-center text-xs text-slate-500 flex items-center justify-center gap-2">
-          <span>Protected by AES-256 GCM & ABDM Health Registry Standards</span>
+          <span>Protected by AES-256 GCM · Designed for ABDM (NHA sandbox path)</span>
         </div>
       </div>
     </div>

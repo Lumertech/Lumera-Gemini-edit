@@ -160,9 +160,14 @@ export interface Patient {
   avatar?: string;
   abhaNumber?: string;
   abhaAddress?: string;
-  kycStatus?: 'VERIFIED' | 'PENDING' | 'FAILED';
+  kycStatus?: 'VERIFIED' | 'PENDING' | 'FAILED' | 'LINKED_SANDBOX';
   hfrId?: string;
   vitals?: Vitals;
+}
+
+/** Demo / local-stub ABHA is LINKED_SANDBOX — not government-registry KYC. */
+export function isAbhaLinked(patient: { kycStatus?: string; abhaNumber?: string }): boolean {
+  return patient.kycStatus === 'VERIFIED' || patient.kycStatus === 'LINKED_SANDBOX' || Boolean(patient.abhaNumber);
 }
 
 export interface Vitals {

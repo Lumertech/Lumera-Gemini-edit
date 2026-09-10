@@ -195,7 +195,7 @@ export function recordDhisTransaction(params: {
       params.patientId || "",
       params.abhaAddress || "verified.patient@abdm",
       params.abhaNumber || "91-0000-0000-0000",
-      params.kycStatus || "VERIFIED",
+      params.kycStatus || SANDBOX_KYC,
       params.recordId || "",
       params.fhirBundleId || `bundle-${crypto.randomUUID().slice(0, 8)}`,
       incentiveAmount,
@@ -212,6 +212,32 @@ export function recordDhisTransaction(params: {
     return null;
   }
 }
+
+/** UI-facing ABDM status while this module is a local stand-in (no NHA sandbox wiring). */
+export type AbdmMode = "local_stub" | "nha_sandbox";
+
+export const ABDM_STATUS_NOTICE =
+  "Local ABDM Gateway stand-in / NHA sandbox — not production HIU/HIP approval.";
+
+export function currentAbdmMode(): AbdmMode {
+  // This module does not currently leave the process for GATEWAY_URL.
+  // Do not report nha_sandbox until a real NHA sandbox session is wired.
+  return "local_stub";
+}
+
+export function isBridgeReady(): boolean {
+  return Boolean(cachedSession && cachedSession.expiresAt > Date.now());
+}
+
+export function buildAbdmStatusPayload() {
+  return {
+    abdmMode: currentAbdmMode(),
+    bridgeReady: isBridgeReady(),
+    notice: ABDM_STATUS_NOTICE,
+  };
+}
+
+const SANDBOX_KYC = "LINKED_SANDBOX";
 
 /**
  * Creates the ABDM v3 Gateway and Identity Express Router
@@ -257,7 +283,8 @@ export function createAbdmRouter(): Router {
         tokenType: "Bearer",
         hfrId: ABDM_CONFIG.HFR_ID,
         facilityName: ABDM_CONFIG.FACILITY_NAME,
-        sandboxStatus: "AUDIT_READY_PASSING",
+        abdmMode: currentAbdmMode(),
+        notice: ABDM_STATUS_NOTICE,
         gatewayUrl: ABDM_CONFIG.GATEWAY_URL,
       });
     } catch (err: any) {
@@ -267,23 +294,9 @@ export function createAbdmRouter(): Router {
 
   router.post(["/v3/bridgesession", "/bridgesession", "/v3/sessions", "/sessions"], handleBridgeSession);
 
-  // Status check for ABDM connectivity
+  // Status check — operational flags only while this router is a local stub
   router.get("/status", (_req, res) => {
-    res.json({
-      abdmGateway: "CONNECTED",
-      sandboxAuditStatus: "COMPLIANT_V3",
-      hfrId: ABDM_CONFIG.HFR_ID,
-      facilityName: ABDM_CONFIG.FACILITY_NAME,
-      bridgeSessionActive: Boolean(cachedSession && cachedSession.expiresAt > Date.now()),
-      supportedProfiles: [
-        "https://nrces.in/ndhm/fhir/r4/StructureDefinition/PrescriptionRecord",
-        "https://nrces.in/ndhm/fhir/r4/StructureDefinition/DiagnosticReportRecord",
-        "https://nrces.in/ndhm/fhir/r4/StructureDefinition/OPConsultRecord",
-        "https://nrces.in/ndhm/fhir/r4/StructureDefinition/DischargeSummaryRecord",
-      ],
-      crypto: "ECDH (prime256v1) + AES-256-GCM",
-      activeConsentsCount: consentStore.size,
-    });
+    res.json(buildAbdmStatusPayload());
   });
 
   // -------------------------------------------------------------
@@ -383,7 +396,7 @@ export function createAbdmRouter(): Router {
       if (patientId) {
         db.prepare(`
           UPDATE patients 
-          SET abha_number = ?, abha_address = ?, kyc_status = 'VERIFIED', hfr_id = ?
+          SET abha_number = ?, abha_address = ?, kyc_status = 'LINKED_SANDBOX', hfr_id = ?
           WHERE id = ?
         `).run(abhaNumber, abhaAddress, ABDM_CONFIG.HFR_ID, patientId);
       } else {
@@ -393,7 +406,7 @@ export function createAbdmRouter(): Router {
           updatedPatientId = existing.id;
           db.prepare(`
             UPDATE patients 
-            SET abha_number = ?, abha_address = ?, kyc_status = 'VERIFIED', hfr_id = ?
+            SET abha_number = ?, abha_address = ?, kyc_status = 'LINKED_SANDBOX', hfr_id = ?
             WHERE id = ?
           `).run(abhaNumber, abhaAddress, ABDM_CONFIG.HFR_ID, existing.id);
         }
@@ -405,15 +418,15 @@ export function createAbdmRouter(): Router {
         patientId: updatedPatientId,
         abhaAddress,
         abhaNumber,
-        kycStatus: "VERIFIED",
+        kycStatus: SANDBOX_KYC,
         recordId: txnId,
       });
 
-      writeAudit(db, req.user?.id || null, req.user?.name || "Reception Desk", "ABDM_ABHA_KYC_VERIFIED", `ABHA: ${abhaNumber} (${abhaAddress})`);
+      writeAudit(db, req.user?.id || null, req.user?.name || "Reception Desk", "ABDM_ABHA_KYC_LINKED_SANDBOX", `ABHA: ${abhaNumber} (${abhaAddress})`);
 
       res.json({
         success: true,
-        kycStatus: "VERIFIED",
+        kycStatus: SANDBOX_KYC,
         abhaNumber,
         abhaAddress,
         profile: {
@@ -426,7 +439,7 @@ export function createAbdmRouter(): Router {
           photo: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&h=120&fit=crop&crop=faces",
           hfrId: ABDM_CONFIG.HFR_ID,
         },
-        message: "ABHA successfully verified and linked with Government Aadhaar e-KYC registry.",
+        message: "ABHA linked in local stub (NHA sandbox-unverified). Not production government registry KYC.",
       });
     } catch (err: any) {
       res.status(500).json({ error: "Failed to verify Aadhaar OTP: " + err.message });
@@ -450,7 +463,7 @@ export function createAbdmRouter(): Router {
           phone: patient.phone,
           abhaNumber: patient.abha_number,
           abhaAddress: patient.abha_address,
-          kycStatus: patient.kyc_status || "VERIFIED",
+          kycStatus: patient.kyc_status || SANDBOX_KYC,
         },
       });
     }
@@ -464,7 +477,7 @@ export function createAbdmRouter(): Router {
         phone: "+91 98234 55667",
         abhaNumber: "91-4428-9102-3841",
         abhaAddress: abhaAddress || "rajiv.saxena@abdm",
-        kycStatus: "VERIFIED",
+        kycStatus: SANDBOX_KYC,
       },
     });
   });
@@ -498,7 +511,7 @@ export function createAbdmRouter(): Router {
       let patient = db.prepare("SELECT * FROM patients WHERE abha_number = ? OR phone = ?").get(abhaNumber, phone) as any;
 
       if (patient) {
-        db.prepare("UPDATE patients SET abha_number = ?, abha_address = ?, kyc_status = 'VERIFIED' WHERE id = ?").run(abhaNumber, abhaAddress, patient.id);
+        db.prepare("UPDATE patients SET abha_number = ?, abha_address = ?, kyc_status = 'LINKED_SANDBOX' WHERE id = ?").run(abhaNumber, abhaAddress, patient.id);
       }
 
       res.json({
@@ -506,9 +519,9 @@ export function createAbdmRouter(): Router {
         patientName: name,
         abhaNumber,
         abhaAddress,
-        kycStatus: "VERIFIED",
+        kycStatus: SANDBOX_KYC,
         tokenNumber: Math.floor(10 + Math.random() * 40),
-        message: "ABHA QR Scan verified. Patient token prioritized for OPD intake.",
+        message: "ABHA QR scan accepted in local stub (NHA sandbox-unverified).",
       });
     } catch (err: any) {
       res.status(500).json({ error: "Failed to process ABDM QR Profile Share: " + err.message });
@@ -588,7 +601,7 @@ export function createAbdmRouter(): Router {
         phone: patient.phone,
         abhaNumber: patient.abha_number || "91-4428-9102-3841",
         abhaAddress: patient.abha_address || "rajiv.saxena@abdm",
-        kycStatus: "VERIFIED",
+        kycStatus: SANDBOX_KYC,
       };
 
       const doctorContext: DoctorContext = {
@@ -629,7 +642,7 @@ export function createAbdmRouter(): Router {
         patientId: patient.id,
         abhaAddress: patientContext.abhaAddress,
         abhaNumber: patientContext.abhaNumber,
-        kycStatus: "VERIFIED",
+        kycStatus: SANDBOX_KYC,
         recordId: "rx-transfer-101",
         fhirBundleId: rxBundle.id,
       });
@@ -721,7 +734,7 @@ export function createAbdmRouter(): Router {
 
       // KYC count in patients table
       const kycRow = db.prepare(`
-        SELECT COUNT(*) as c FROM patients WHERE kyc_status = 'VERIFIED'
+        SELECT COUNT(*) as c FROM patients WHERE kyc_status IN ('VERIFIED', 'LINKED_SANDBOX')
       `).get() as { c: number };
 
       res.json({
@@ -740,7 +753,8 @@ export function createAbdmRouter(): Router {
           schemeName: "NHA Digital Health Incentive Scheme (DHIS v3)",
           baseRate: "₹20 / Qualifying Transaction",
           splitRatio: "70% Facility (₹14) / 30% Lumera Digital Solution (₹6)",
-          disbursementSchedule: "Monthly direct bank transfer via PFMS / NHA",
+          disbursementSchedule: "Simulated ledger only (local stub — not a live incentive rail)",
+          notice: "DHIS meter is a local stub / NHA sandbox simulation — not a live incentive claim.",
         },
       });
     } catch (err: any) {
@@ -764,7 +778,7 @@ export function createAbdmRouter(): Router {
         transactionType: selectedType,
         abhaAddress,
         abhaNumber: "91-4428-9102-3841",
-        kycStatus: "VERIFIED",
+        kycStatus: SANDBOX_KYC,
         recordId: `rec-${crypto.randomUUID().slice(0, 8)}`,
         fhirBundleId: `bundle-${crypto.randomUUID().slice(0, 8)}`,
       });
@@ -795,7 +809,7 @@ export function createAbdmRouter(): Router {
       phone: patient.phone || "+91 98234 55667",
       abhaNumber: patient.abha_number || "91-4428-9102-3841",
       abhaAddress: patient.abha_address || "rajiv.saxena@abdm",
-      kycStatus: "VERIFIED",
+      kycStatus: SANDBOX_KYC,
     };
 
     const doctorContext: DoctorContext = {

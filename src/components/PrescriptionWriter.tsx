@@ -53,7 +53,8 @@ import {
   OrthopedicAssessment,
   OphthalmologyAssessment,
   DentalAssessment,
-  GynecologyAssessment
+  GynecologyAssessment,
+  isAbhaLinked
 } from '../types';
 import { 
   INDIAN_DRUG_DATABASE, 
@@ -857,7 +858,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
                 ? 'bg-emerald-700 text-white shadow-emerald-200'
                 : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-200'
             }`}
-            title="Finalize & Digitally Sign Rx with ABDM Compliant QR"
+            title="Finalize & Digitally Sign Rx (NHA sandbox QR — local stub)"
           >
             <CheckCircle2 className="w-3.5 h-3.5" />
             <span>{isFinalized ? '✓ Finalized & Signed' : 'Finalize & Sign Rx'}</span>
@@ -1117,10 +1118,10 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
           <div>
             <div className="flex items-center justify-between">
               <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Patient Name</span>
-              {(currentPatient.kycStatus === 'VERIFIED' || currentPatient.abhaNumber) && (
+              {isAbhaLinked(currentPatient) && (
                 <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1 shadow-xs">
                   <ShieldCheck className="w-3 h-3 text-emerald-600" />
-                  <span>KYC-Verified ABHA</span>
+                  <span>ABHA · NHA sandbox</span>
                 </span>
               )}
             </div>
@@ -1620,7 +1621,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
             <div className="text-[10px] text-slate-500 space-y-0.5">
               <p className="font-bold text-slate-800">Scan to Verify Digital Rx</p>
               <p>URL: https://lumera.health/rx/{rxNumber}</p>
-              <p className="text-slate-400">Compliant with ABDM & NHA Standards</p>
+              <p className="text-slate-400">Designed for ABDM (NHA sandbox path)</p>
             </div>
           </div>
 
@@ -1661,7 +1662,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
               <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
                 isFinalized ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-700'
               }`}>
-                {isFinalized ? 'ABDM Validated' : 'Draft'}
+                {isFinalized ? 'NHA sandbox' : 'Draft'}
               </span>
             </div>
             <p className="text-xs text-slate-500">
@@ -1756,7 +1757,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
                   </span>
                 </div>
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 flex items-center gap-1">
-                  <ShieldCheck className="w-3 h-3 text-emerald-600" /> ABDM Compliant
+                  <ShieldCheck className="w-3 h-3 text-emerald-600" /> NHA sandbox
                 </span>
               </div>
 

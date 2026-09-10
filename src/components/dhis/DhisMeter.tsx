@@ -128,7 +128,7 @@ export const DhisMeter: React.FC<{ compact?: boolean; onSimulateSuccess?: () => 
       schemeName: 'NHA Digital Health Incentive Scheme (DHIS v3)',
       baseRate: '₹20 / Qualifying Transaction',
       splitRatio: '70% Facility (₹14) / 30% Lumera Digital Solution (₹6)',
-      disbursementSchedule: 'Monthly direct bank transfer via PFMS / NHA'
+      disbursementSchedule: 'Simulated ledger only (local stub — not a live incentive rail)'
     }
   };
 
@@ -150,7 +150,7 @@ export const DhisMeter: React.FC<{ compact?: boolean; onSimulateSuccess?: () => 
                 <h3 className="font-bold text-sm text-white flex items-center gap-1.5">
                   DHIS Incentive Meter
                   <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 font-mono font-semibold">
-                    ABDM v3 Active
+                    NHA sandbox
                   </span>
                 </h3>
                 <p className="text-xs text-purple-200/70">NHA Digital Health Incentive Scheme ({d.currentMonth})</p>
@@ -184,11 +184,11 @@ export const DhisMeter: React.FC<{ compact?: boolean; onSimulateSuccess?: () => 
             <p className="text-[11px] text-purple-200/60 flex items-center gap-1">
               {d.thresholdReached ? (
                 <span className="text-emerald-300 flex items-center gap-1">
-                  <CheckCircle2 className="w-3.5 h-3.5" /> 100-Txn Threshold Met! Monthly PFMS disbursement unlocked.
+                  <CheckCircle2 className="w-3.5 h-3.5" /> 100-txn simulated threshold met (local stub — not a live payout).
                 </span>
               ) : (
                 <span>
-                  {d.threshold - d.transactionsCount} more verified transactions needed this month to claim PFMS disbursement.
+                  {d.threshold - d.transactionsCount} more simulated transactions this month to reach the local-stub meter (not a live claim).
                 </span>
               )}
             </p>
@@ -227,7 +227,7 @@ export const DhisMeter: React.FC<{ compact?: boolean; onSimulateSuccess?: () => 
               className="flex-1 text-xs py-2 px-3 bg-purple-600 hover:bg-purple-500 active:bg-purple-700 text-white rounded-lg font-medium transition-all shadow-md flex items-center justify-center gap-1.5 disabled:opacity-50"
             >
               {simulating ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <TrendingUp className="w-3.5 h-3.5" />}
-              <span>Simulate Verified Txn (+₹20)</span>
+              <span>Simulate sandbox txn (+₹20)</span>
             </button>
           </div>
 
@@ -258,11 +258,11 @@ export const DhisMeter: React.FC<{ compact?: boolean; onSimulateSuccess?: () => 
                     ABDM v3 Gateway & DHIS Incentive Automation
                   </h2>
                   <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1">
-                    <CheckCircle2 className="w-3 h-3" /> Audit Compliant
+                    <CheckCircle2 className="w-3 h-3" /> NHA sandbox
                   </span>
                 </div>
                 <p className="text-sm text-slate-500 mt-0.5">
-                  Ayushman Bharat Digital Mission (ABDM) Milestone 1–3 Integration & National Health Authority PFMS Claims
+                  Ayushman Bharat Digital Mission (ABDM) M1–M3 path — local stub / NHA sandbox (not a live incentive claim)
                 </p>
               </div>
             </div>
@@ -297,7 +297,7 @@ export const DhisMeter: React.FC<{ compact?: boolean; onSimulateSuccess?: () => 
               <span className="font-semibold text-slate-700">M1: Bridge OAuth</span>
             </div>
             <span className="font-mono text-xs font-bold text-slate-900 block">/v3/bridgesession</span>
-            <span className="text-[11px] text-slate-500">Active Bearer Token</span>
+            <span className="text-[11px] text-slate-500">Local stub session</span>
           </div>
 
           <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
@@ -306,7 +306,7 @@ export const DhisMeter: React.FC<{ compact?: boolean; onSimulateSuccess?: () => 
               <span className="font-semibold text-slate-700">M2: Aadhaar e-KYC</span>
             </div>
             <span className="font-mono text-xs font-bold text-slate-900 block">ABHA Creation & QR</span>
-            <span className="text-[11px] text-slate-500">14-Digit Identity Sync</span>
+            <span className="text-[11px] text-slate-500">NHA sandbox path</span>
           </div>
 
           <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
@@ -315,7 +315,7 @@ export const DhisMeter: React.FC<{ compact?: boolean; onSimulateSuccess?: () => 
               <span className="font-semibold text-slate-700">M3: NRCeS FHIR R4</span>
             </div>
             <span className="font-mono text-xs font-bold text-slate-900 block">4 Clinical Bundles</span>
-            <span className="text-[11px] text-slate-500">SNOMED + LOINC Valid</span>
+            <span className="text-[11px] text-slate-500">Sample bundles (local stub)</span>
           </div>
 
           <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
@@ -358,7 +358,7 @@ export const DhisMeter: React.FC<{ compact?: boolean; onSimulateSuccess?: () => 
             {/* Visual Progress Bar */}
             <div className="space-y-2 mt-4 bg-slate-50 p-4 rounded-xl border border-slate-200">
               <div className="flex justify-between items-center text-sm">
-                <span className="font-semibold text-slate-700">Certified Transactions Logged</span>
+                <span className="font-semibold text-slate-700">Simulated transactions logged (local stub)</span>
                 <span className="font-mono font-bold text-slate-900">
                   <span className="text-purple-600 text-lg">{d.transactionsCount}</span> / {d.threshold} txns
                 </span>
@@ -444,12 +444,12 @@ export const DhisMeter: React.FC<{ compact?: boolean; onSimulateSuccess?: () => 
             </div>
           </div>
 
-          {/* Real-time Ledger of Certified Transactions */}
+          {/* Simulated DHIS ledger (local stub) */}
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
             <div className="flex items-center justify-between mb-4">
               <div>
-                <h3 className="font-bold text-base text-slate-900">Recent DHIS Certified Transactions</h3>
-                <p className="text-xs text-slate-500">Live stream of clinical bundles serialized & claimed for incentive</p>
+                <h3 className="font-bold text-base text-slate-900">Recent DHIS simulated transactions</h3>
+                <p className="text-xs text-slate-500">Local stub ledger — NHA sandbox-unverified, not a live incentive claim</p>
               </div>
               <span className="text-xs text-slate-500 font-mono">
                 {d.recentTransactions.length} records shown
@@ -620,7 +620,7 @@ export const DhisMeter: React.FC<{ compact?: boolean; onSimulateSuccess?: () => 
               </div>
               <div className="flex justify-between py-1">
                 <span className="text-slate-500">Disbursement Rail</span>
-                <span className="font-semibold text-emerald-700">Govt PFMS Direct Credit</span>
+                <span className="font-semibold text-emerald-700">Simulated ledger (local stub)</span>
               </div>
             </div>
           </div>
