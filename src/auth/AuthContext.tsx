@@ -16,6 +16,8 @@ export interface LoginResult {
   user?: AppUser;
   provider?: string;
   message?: string;
+  sandbox?: boolean;
+  notice?: string;
 }
 
 export interface RegisterClinicData {
@@ -51,7 +53,11 @@ interface AuthContextValue {
   user: AppUser | null;
   loading: boolean;
   login: (email: string, password: string, skipOtp?: boolean) => Promise<LoginResult>;
-  oauthLogin: (provider: "google" | "facebook", profile: { email: string; name?: string; avatarUrl?: string }, skipOtp?: boolean) => Promise<LoginResult>;
+  oauthLogin: (
+    provider: "google" | "facebook",
+    profile: { email?: string; name?: string; avatarUrl?: string; code?: string; accessToken?: string; redirectUri?: string },
+    skipOtp?: boolean
+  ) => Promise<LoginResult>;
   sendWhatsAppOtp: (phone: string, email?: string, purpose?: string, name?: string) => Promise<{ ok: boolean; verificationId: string; phone: string; demoOtp?: string; expiresAt: string; message?: string }>;
   verifyWhatsAppOtp: (verificationId: string, otp: string, updatedPhone?: string) => Promise<{ ok: boolean; user?: AppUser; token?: string; tenantId?: string; message?: string }>;
   registerClinic: (data: RegisterClinicData) => Promise<{ requiresOtp: boolean; verificationId: string; phone: string; email: string; demoOtp?: string; tenantId?: string; userId?: string; hfrId?: string; hprId?: string; message: string }>;
@@ -123,10 +129,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return d;
   }, []);
 
-  const oauthLogin = useCallback(async (provider: "google" | "facebook", profile: { email: string; name?: string; avatarUrl?: string }, skipOtp = true): Promise<LoginResult> => {
+  const oauthLogin = useCallback(async (
+    provider: "google" | "facebook",
+    profile: { email?: string; name?: string; avatarUrl?: string; code?: string; accessToken?: string; redirectUri?: string },
+    skipOtp = true
+  ): Promise<LoginResult> => {
     const d = await apiFetch<LoginResult & { token?: string }>("/api/auth/oauth", {
       method: "POST",
-      body: JSON.stringify({ provider, profile, skipOtp }),
+      body: JSON.stringify({
+        provider,
+        profile: { email: profile.email, name: profile.name, avatarUrl: profile.avatarUrl },
+        code: profile.code,
+        accessToken: profile.accessToken,
+        redirectUri: profile.redirectUri,
+        skipOtp,
+      }),
     });
     if (d.token) {
       setStoredToken(d.token);

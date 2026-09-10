@@ -36,6 +36,18 @@ import {
   verifyJwtToken,
 } from "./auth.ts";
 import { hashPassword, verifyPassword } from "./password.ts";
+import { isProduction } from "./runtime.ts";
+import { resolveGraphCredentials, sendWhatsAppGraphMessage } from "./graph-whatsapp.ts";
+import {
+  FacebookOAuthError,
+  facebookLoginDialogUrl,
+  facebookOAuthConfigured,
+  facebookRedirectUri,
+  oauthPublicConfig,
+  resolveFederatedIdentity,
+  signFacebookOAuthState,
+  verifyFacebookOAuthState,
+} from "./facebook-oauth.ts";
 
 const uploadDir = path.join(process.cwd(), "uploads");
 fs.mkdirSync(uploadDir, { recursive: true });
@@ -109,22 +121,23 @@ function assemblePublicSite() {
   };
 }
 
-function dispatchWhatsAppOtpMessage(phone: string, name: string, otp: string, purpose: string) {
+function recordWhatsAppOtpEvent(opts: {
+  phone: string;
+  name: string;
+  otp: string;
+  purpose: string;
+  status: string;
+  details: string;
+  payload: Record<string, unknown>;
+  conversationContent?: string;
+}) {
   try {
     const db = getDb();
     const now = new Date().toISOString();
     const timeDisplay = new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
-    const cleanPhone = phone.trim() || "+91 98234 55667";
+    const cleanPhone = opts.phone.trim() || "+91 98234 55667";
     const convId = `conv-otp-${cleanPhone.replace(/\D/g, "").slice(-8) || "user"}`;
-    const userName = name.trim() || "Healthcare Clinician";
-
-    const content = `🔐 *Lumera Health Enterprise Security*\n\nYour 6-digit WhatsApp Business verification code is:\n\n*${otp}*\n\nAction: ${
-      purpose === "register"
-        ? "New Clinic Registration"
-        : purpose === "password_reset"
-        ? "Password Recovery"
-        : "Sign In & WhatsApp Phone Binding"
-    }\nStatus: Active (Valid for 5 minutes)\n\nDo not disclose this verification code to anyone.`;
+    const userName = opts.name.trim() || "Healthcare Clinician";
 
     let conv = db
       .prepare("SELECT * FROM whatsapp_conversations WHERE id = ? OR patient_phone = ?")
@@ -134,42 +147,121 @@ function dispatchWhatsAppOtpMessage(phone: string, name: string, otp: string, pu
       db.prepare(`
         INSERT INTO whatsapp_conversations (id, patient_phone, patient_name, handover_mode, assigned_staff, tags, preferred_language, unread_count, last_message, last_message_time, updated_at)
         VALUES (?, ?, ?, 'bot', 'Lumera Security Engine', '["Security", "OTP"]', 'en', 0, ?, ?, ?)
-      `).run(convId, cleanPhone, userName, `Security Code: ${otp}`, timeDisplay, now);
+      `).run(convId, cleanPhone, userName, opts.details, timeDisplay, now);
     } else {
       db.prepare(`
         UPDATE whatsapp_conversations
         SET last_message = ?, last_message_time = ?, updated_at = ?
         WHERE id = ?
-      `).run(`Security Code: ${otp}`, timeDisplay, now, String(conv.id));
+      `).run(opts.details, timeDisplay, now, String(conv.id));
     }
 
-    const msgId = `msg-otp-${crypto.randomUUID().slice(0, 8)}`;
-    db.prepare(`
-      INSERT INTO whatsapp_messages (id, conversation_id, patient_phone, sender, staff_name, content, translated_content, detected_language, time_display, buttons, media, status, created_at)
-      VALUES (?, ?, ?, 'agent', 'Lumera Security Bot', ?, null, 'en', ?, null, null, 'delivered', ?)
-    `).run(msgId, convId, cleanPhone, content, timeDisplay, now);
+    if (opts.conversationContent) {
+      const msgId = `msg-otp-${crypto.randomUUID().slice(0, 8)}`;
+      db.prepare(`
+        INSERT INTO whatsapp_messages (id, conversation_id, patient_phone, sender, staff_name, content, translated_content, detected_language, time_display, buttons, media, status, created_at)
+        VALUES (?, ?, ?, 'agent', 'Lumera Security Bot', ?, null, 'en', ?, null, null, ?, ?)
+      `).run(msgId, convId, cleanPhone, opts.conversationContent, timeDisplay, opts.status, now);
+    }
 
     const eventId = `evt-otp-${crypto.randomUUID().slice(0, 8)}`;
     db.prepare(`
       INSERT INTO whatsapp_outbound_events (id, event_type, patient_phone, patient_name, status, details, action_payload, sent_at)
-      VALUES (?, 'otp_verification', ?, ?, 'delivered', ?, ?, ?)
-    `).run(
-      eventId,
-      cleanPhone,
-      userName,
-      `WhatsApp Business OTP dispatched for ${purpose}`,
-      JSON.stringify({ otp, purpose }),
-      now
-    );
+      VALUES (?, 'otp_verification', ?, ?, ?, ?, ?, ?)
+    `).run(eventId, cleanPhone, userName, opts.status, opts.details, JSON.stringify(opts.payload), now);
   } catch (err) {
     console.error("Failed to record WhatsApp OTP dispatch in database:", err);
   }
 }
 
+export type OtpDispatchResult =
+  | { ok: true; channel: "graph" | "sandbox"; messageId?: string }
+  | { ok: false; error: string; channel: "none" | "graph" };
+
+async function dispatchWhatsAppOtpMessage(phone: string, name: string, otp: string, purpose: string): Promise<OtpDispatchResult> {
+  const creds = resolveGraphCredentials(getDb());
+  if (creds) {
+    const graph = await sendWhatsAppGraphMessage({ credentials: creds, to: phone, otp, purpose });
+    if (graph.ok) {
+      recordWhatsAppOtpEvent({
+        phone,
+        name,
+        otp,
+        purpose,
+        status: "sent",
+        details: `WhatsApp Cloud API OTP accepted for ${purpose}`,
+        payload: { purpose, channel: "graph", messageId: graph.messageId },
+      });
+      return { ok: true, channel: "graph", messageId: graph.messageId };
+    }
+    const graphError = "error" in graph ? graph.error : "Graph OTP send failed.";
+    recordWhatsAppOtpEvent({
+      phone,
+      name,
+      otp,
+      purpose,
+      status: "failed",
+      details: `Graph OTP send failed for ${purpose}: ${graphError}`,
+      payload: { purpose, channel: "graph", error: graphError },
+    });
+    return { ok: false, error: graphError, channel: "graph" };
+  }
+
+  if (isProduction()) {
+    recordWhatsAppOtpEvent({
+      phone,
+      name,
+      otp,
+      purpose,
+      status: "failed",
+      details: "OTP not delivered: META_ACCESS_TOKEN and META_PHONE_NUMBER_ID (or a real tenant token) are required in production.",
+      payload: { purpose, channel: "none", sandbox: false },
+    });
+    return {
+      ok: false,
+      channel: "none",
+      error:
+        "WhatsApp Cloud API is not configured. Set META_ACCESS_TOKEN and META_PHONE_NUMBER_ID (or a real tenant phone_number_id + token). OTP was not delivered.",
+    };
+  }
+
+  const content = `SANDBOX / DEV-ONLY OTP (not sent via Graph)\n\nYour 6-digit verification code is:\n\n*${otp}*\n\nAction: ${
+    purpose === "register"
+      ? "New Clinic Registration"
+      : purpose === "password_reset"
+      ? "Password Recovery"
+      : "Sign In & WhatsApp Phone Binding"
+  }\nStatus: SANDBOX recorded (Valid for 5 minutes)`;
+
+  recordWhatsAppOtpEvent({
+    phone,
+    name,
+    otp,
+    purpose,
+    status: "sandbox_recorded",
+    details: `SANDBOX / DEV-ONLY OTP recorded locally for ${purpose} (not Graph)`,
+    payload: { otp, purpose, sandbox: true, channel: "sandbox" },
+    conversationContent: content,
+  });
+  return { ok: true, channel: "sandbox" };
+}
+
+function otpDispatchFailure(res: Response, result: OtpDispatchResult) {
+  if (result.ok === false) {
+    res.status(503).json({
+      error: result.error,
+      otpDelivered: false,
+      channel: result.channel,
+    });
+    return true;
+  }
+  return false;
+}
+
 export function createApiRouter(): Router {
   const api = Router();
 
-  api.post("/auth/login", (req: Request, res: Response) => {
+  api.post("/auth/login", async (req: Request, res: Response) => {
     const email = String(req.body?.email || "").trim().toLowerCase();
     const password = String(req.body?.password || "");
     const skipOtp = Boolean(req.body?.skipOtp) && allowSkipOtp();
@@ -215,7 +307,8 @@ export function createApiRouter(): Router {
       expiresAt
     );
 
-    dispatchWhatsAppOtpMessage(phone, user.name, otp, "login");
+    const sent = await dispatchWhatsAppOtpMessage(phone, user.name, otp, "login");
+    if (otpDispatchFailure(res, sent)) return;
 
     return res.json({
       requiresOtp: true,
@@ -225,33 +318,115 @@ export function createApiRouter(): Router {
       ...otpEchoPayload(otp),
       expiresAt,
       user: publicUser(user),
-      message: "Security code dispatched to your WhatsApp Business number.",
+      otpChannel: sent.ok ? sent.channel : undefined,
+      message:
+        sent.ok && sent.channel === "graph"
+          ? "Security code dispatched via WhatsApp Cloud API."
+          : "SANDBOX / DEV-ONLY: security code recorded locally (not sent via Graph).",
     });
   });
 
-  // Federated OAuth Handler (Google & Facebook SSO)
-  api.post("/auth/oauth", (req: Request, res: Response) => {
+  api.get("/auth/oauth-config", (_req: Request, res: Response) => {
+    res.json(oauthPublicConfig());
+  });
+
+  api.get("/auth/facebook", (req: Request, res: Response) => {
+    if (!facebookOAuthConfigured()) {
+      if (isProduction()) {
+        return res.status(503).json({ error: "Facebook Login is not configured (FACEBOOK_APP_ID / FACEBOOK_APP_SECRET)." });
+      }
+      return res.redirect("/login?oauth=facebook&error=not_configured");
+    }
+    const host = req.get("host") || undefined;
+    const proto = req.get("x-forwarded-proto") || req.protocol;
+    const redirectUri = facebookRedirectUri(host, proto);
+    const state = signFacebookOAuthState();
+    return res.redirect(facebookLoginDialogUrl({ redirectUri, state }));
+  });
+
+  api.get("/auth/facebook/callback", async (req: Request, res: Response) => {
+    const host = req.get("host") || undefined;
+    const proto = req.get("x-forwarded-proto") || req.protocol;
+    const appUrl = (process.env.APP_URL || `${proto === "https" ? "https" : "http"}://${host || "localhost:3000"}`).replace(/\/$/, "");
+    const fail = (reason: string) => res.redirect(`${appUrl}/login?oauth=facebook&error=${encodeURIComponent(reason)}`);
+
+    const errorParam = String(req.query.error || "").trim();
+    if (errorParam) return fail(errorParam);
+
+    const code = String(req.query.code || "").trim();
+    const state = String(req.query.state || "").trim();
+    if (!code) return fail("missing_code");
+    if (!verifyFacebookOAuthState(state)) return fail("invalid_state");
+
+    try {
+      const identity = await resolveFederatedIdentity({
+        provider: "facebook",
+        code,
+        redirectUri: facebookRedirectUri(host, proto),
+      });
+      const user = getDb().prepare("SELECT * FROM users WHERE email = ?").get(identity.email) as unknown as DbUser | undefined;
+      if (!user) {
+        const params = new URLSearchParams({
+          oauth: "facebook",
+          unregistered: "1",
+          email: identity.email,
+          name: identity.name,
+        });
+        return res.redirect(`${appUrl}/login?${params.toString()}`);
+      }
+      if (user.status === "disabled") return fail("account_disabled");
+
+      const sid = createSession(user.id);
+      setSessionCookie(res, sid);
+      getDb()
+        .prepare("UPDATE users SET last_login = ?, whatsapp_verified = 1, avatar_url = COALESCE(NULLIF(?, ''), avatar_url) WHERE id = ?")
+        .run(new Date().toISOString(), identity.avatarUrl, user.id);
+      writeAudit(getDb(), user.id, user.name, "OAuth Sign In", `${user.email} signed in via facebook (Graph-verified)`);
+      return res.redirect(`${appUrl}/login?oauth=facebook&status=ok`);
+    } catch (err) {
+      const message = err instanceof FacebookOAuthError ? err.message : "facebook_oauth_failed";
+      return fail(message);
+    }
+  });
+
+  // Federated OAuth: Facebook requires Graph-verified identity in production.
+  api.post("/auth/oauth", async (req: Request, res: Response) => {
     const provider = String(req.body?.provider || "google").toLowerCase();
     const profile = req.body?.profile || {};
-    const email = String(profile?.email || "").trim().toLowerCase();
-    const name = String(profile?.name || "").trim();
-    const avatarUrl = String(profile?.avatarUrl || "").trim();
+    const host = req.get("host") || undefined;
+    const proto = req.get("x-forwarded-proto") || req.protocol;
+    const redirectUri = String(req.body?.redirectUri || facebookRedirectUri(host, proto)).trim();
 
-    if (!email) {
-      return res.status(400).json({ error: "Valid email required for OAuth authentication." });
+    let identity;
+    try {
+      identity = await resolveFederatedIdentity({
+        provider,
+        code: String(req.body?.code || "").trim() || undefined,
+        accessToken: String(req.body?.accessToken || req.body?.access_token || "").trim() || undefined,
+        redirectUri,
+        clientEmail: String(profile?.email || req.body?.email || "").trim().toLowerCase(),
+        clientName: String(profile?.name || "").trim(),
+        clientAvatarUrl: String(profile?.avatarUrl || "").trim(),
+      });
+    } catch (err) {
+      const status = err instanceof FacebookOAuthError ? err.status : 401;
+      const message = err instanceof Error ? err.message : "OAuth verification failed.";
+      return res.status(status).json({ error: message });
     }
 
-    const user = getDb().prepare("SELECT * FROM users WHERE email = ?").get(email) as unknown as DbUser | undefined;
+    const user = getDb().prepare("SELECT * FROM users WHERE email = ?").get(identity.email) as unknown as DbUser | undefined;
 
-    // Unregistered user detection
     if (!user) {
       return res.json({
         unregistered: true,
-        provider,
-        email,
-        name: name || email.split("@")[0],
-        avatarUrl,
-        message: "No existing clinic account found with this email. Please complete clinic registration.",
+        provider: identity.provider,
+        email: identity.email,
+        name: identity.name,
+        avatarUrl: identity.avatarUrl,
+        sandbox: Boolean(identity.sandbox),
+        message: identity.sandbox
+          ? "SANDBOX / DEV-ONLY: no clinic account for this email. Complete clinic registration."
+          : "No existing clinic account found with this verified Facebook email. Please complete clinic registration.",
       });
     }
 
@@ -259,17 +434,30 @@ export function createApiRouter(): Router {
       return res.status(403).json({ error: "This account has been disabled" });
     }
 
-    if (req.body?.skipOtp && allowSkipOtp()) {
+    const skipOtp = Boolean(req.body?.skipOtp) && allowSkipOtp();
+    const graphVerifiedFacebook = identity.provider === "facebook" && !identity.sandbox;
+    if (graphVerifiedFacebook || skipOtp) {
       const sid = createSession(user.id);
       setSessionCookie(res, sid);
       getDb()
-        .prepare("UPDATE users SET last_login = ?, whatsapp_verified = 1 WHERE id = ?")
-        .run(new Date().toISOString(), user.id);
-      writeAudit(getDb(), user.id, user.name, "OAuth Sign In", `${user.email} signed in via ${provider}`);
-      return res.json({ user: publicUser(user), token: sid, requiresOtp: false });
+        .prepare("UPDATE users SET last_login = ?, whatsapp_verified = 1, avatar_url = COALESCE(NULLIF(?, ''), avatar_url) WHERE id = ?")
+        .run(new Date().toISOString(), identity.avatarUrl, user.id);
+      writeAudit(
+        getDb(),
+        user.id,
+        user.name,
+        "OAuth Sign In",
+        `${user.email} signed in via ${identity.provider}${identity.sandbox ? " (SANDBOX / DEV-ONLY client email)" : " (Graph-verified)"}`
+      );
+      return res.json({
+        user: publicUser(user),
+        token: sid,
+        requiresOtp: false,
+        sandbox: Boolean(identity.sandbox),
+        notice: identity.sandbox ? "SANDBOX / DEV-ONLY: session issued from client-supplied email. Disabled in production." : undefined,
+      });
     }
 
-    // User exists -> Trigger mandatory WhatsApp Business verification
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const verificationId = crypto.randomUUID();
     const phone = user.phone || "+91 98234 55667";
@@ -283,12 +471,13 @@ export function createApiRouter(): Router {
       phone,
       user.email,
       otp,
-      JSON.stringify({ userId: user.id, provider, avatarUrl: avatarUrl || user.avatar_url }),
+      JSON.stringify({ userId: user.id, provider: identity.provider, avatarUrl: identity.avatarUrl || user.avatar_url }),
       new Date().toISOString(),
       expiresAt
     );
 
-    dispatchWhatsAppOtpMessage(phone, user.name, otp, "login");
+    const sent = await dispatchWhatsAppOtpMessage(phone, user.name, otp, "login");
+    if (otpDispatchFailure(res, sent)) return;
 
     return res.json({
       requiresOtp: true,
@@ -296,14 +485,17 @@ export function createApiRouter(): Router {
       phone,
       email: user.email,
       ...otpEchoPayload(otp),
-      provider,
+      provider: identity.provider,
       user: publicUser(user),
-      message: `Signed in with ${provider === "google" ? "Google" : "Facebook"}. Please verify your WhatsApp Business number.`,
+      sandbox: Boolean(identity.sandbox),
+      message: identity.sandbox
+        ? `SANDBOX / DEV-ONLY ${identity.provider} sign-in. Verify WhatsApp to continue.`
+        : `Signed in with ${identity.provider === "google" ? "Google" : "Facebook"}. Please verify your WhatsApp Business number.`,
     });
   });
 
   // WhatsApp OTP Dispatch Engine
-  api.post("/auth/whatsapp/send-otp", (req: Request, res: Response) => {
+  api.post("/auth/whatsapp/send-otp", async (req: Request, res: Response) => {
     const phone = String(req.body?.phone || "").trim();
     const email = String(req.body?.email || "").trim().toLowerCase();
     const purpose = String(req.body?.purpose || "login");
@@ -323,7 +515,8 @@ export function createApiRouter(): Router {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(verificationId, phone, email, otp, purpose, payload, new Date().toISOString(), expiresAt);
 
-    dispatchWhatsAppOtpMessage(phone, name, otp, purpose);
+    const sent = await dispatchWhatsAppOtpMessage(phone, name, otp, purpose);
+    if (otpDispatchFailure(res, sent)) return;
 
     return res.json({
       ok: true,
@@ -331,9 +524,13 @@ export function createApiRouter(): Router {
       phone,
       ...otpEchoPayload(otp),
       expiresAt,
-      status: "delivered",
-      channel: "WhatsApp Cloud Business API",
-      message: "6-digit OTP code successfully sent to WhatsApp Business.",
+      status: sent.ok && sent.channel === "graph" ? "sent" : "sandbox_recorded",
+      channel: sent.ok && sent.channel === "graph" ? "WhatsApp Cloud API" : "SANDBOX / DEV-ONLY SQLite",
+      sandbox: sent.ok && sent.channel === "sandbox",
+      message:
+        sent.ok && sent.channel === "graph"
+          ? "6-digit OTP sent via WhatsApp Cloud API."
+          : "SANDBOX / DEV-ONLY: OTP recorded locally (not sent via Graph).",
     });
   });
 
@@ -599,7 +796,7 @@ export function createApiRouter(): Router {
   });
 
   // Practice Registration Endpoint: Creates Tenant, CLINIC_ADMIN, ABDM HFR/HPR, DHIS threshold, and dispatches WhatsApp OTP
-  const handleRegisterPractice = (req: Request, res: Response) => {
+  const handleRegisterPractice = async (req: Request, res: Response) => {
     const practiceName = String(req.body?.practiceName || req.body?.clinicName || "").trim();
     const specialty = String(req.body?.specialty || "General Medicine").trim();
     const country = String(req.body?.country || "India").trim();
@@ -725,7 +922,8 @@ export function createApiRouter(): Router {
       VALUES (?, ?, ?, ?, 'register', ?, ?, ?)
     `).run(verificationId, phone, email, otp, JSON.stringify(otpPayload), now, expiresAt);
 
-    dispatchWhatsAppOtpMessage(phone, name, otp, "register");
+    const sent = await dispatchWhatsAppOtpMessage(phone, name, otp, "register");
+    if (otpDispatchFailure(res, sent)) return;
 
     return res.json({
       requiresOtp: true,
@@ -742,7 +940,11 @@ export function createApiRouter(): Router {
         aiScribeMinutesLimit: 500,
         dhisClaimsLimit: 100,
       },
-      message: "6-digit OTP verification code dispatched to your WhatsApp Business number.",
+      otpChannel: sent.ok ? sent.channel : undefined,
+      message:
+        sent.ok && sent.channel === "graph"
+          ? "6-digit OTP sent via WhatsApp Cloud API."
+          : "SANDBOX / DEV-ONLY: OTP recorded locally (not sent via Graph).",
     });
   };
 
@@ -858,7 +1060,7 @@ export function createApiRouter(): Router {
   });
 
   // Password Recovery / Forgot Password
-  api.post("/auth/forgot-password", (req: Request, res: Response) => {
+  api.post("/auth/forgot-password", async (req: Request, res: Response) => {
     const email = String(req.body?.email || "").trim().toLowerCase();
     if (!email) {
       return res.status(400).json({ error: "Please provide your registered email address." });
@@ -884,14 +1086,19 @@ export function createApiRouter(): Router {
       expiresAt
     );
 
-    dispatchWhatsAppOtpMessage(phone, name, otp, "password_reset");
+    const sent = await dispatchWhatsAppOtpMessage(phone, name, otp, "password_reset");
+    if (otpDispatchFailure(res, sent)) return;
 
     return res.json({
       ok: true,
       verificationId,
       phone,
       ...otpEchoPayload(otp),
-      message: `Password reset verification code dispatched to WhatsApp number ${phone}.`,
+      otpChannel: sent.ok ? sent.channel : undefined,
+      message:
+        sent.ok && sent.channel === "graph"
+          ? `Password reset code sent via WhatsApp Cloud API to ${phone}.`
+          : `SANDBOX / DEV-ONLY: password reset code recorded locally for ${phone} (not sent via Graph).`,
     });
   });
 
@@ -1597,7 +1804,7 @@ export function createApiRouter(): Router {
   api.use("/whatsapp", createWhatsAppRouter());
 
   // ----------------------------------------------------
-  // Meta Tech Provider, Webhooks & App Review Compliance Router
+  // Meta WhatsApp webhooks, WABA inventory, and SANDBOX simulators
   // ----------------------------------------------------
   api.use("/meta", createMetaRouter());
 

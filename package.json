@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "tsx --test --test-concurrency=1 server/security.test.ts server/clinical.test.ts server/wave1a.contract.test.ts"
+    "test": "tsx --test --test-concurrency=1 server/*.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

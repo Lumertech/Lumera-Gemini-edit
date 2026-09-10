@@ -377,8 +377,8 @@ export const LandingPage: React.FC = () => {
                 <MessageSquare className="w-5 h-5" />
               </div>
               <div className="text-left">
-                <span className="block text-xs font-bold text-slate-100 uppercase tracking-wider">WhatsApp Cloud API · Meta Tech Provider path</span>
-                <span className="text-[11px] text-slate-400 font-medium">WhatsApp Cloud Business API</span>
+                <span className="block text-xs font-bold text-slate-100 uppercase tracking-wider">WhatsApp Cloud API path (not TP certified)</span>
+                <span className="text-[11px] text-slate-400 font-medium">SANDBOX readiness — App Review not submitted</span>
               </div>
             </div>
 
@@ -967,7 +967,7 @@ export const LandingPage: React.FC = () => {
           {/* Compliance declaration */}
           <div className="pt-2 text-[11px] text-slate-500 space-y-1">
             <p>
-              Lumera Health Systems is building toward Meta Tech Provider.
+              Lumera Health is integrating WhatsApp Cloud API. It is not a certified Meta Tech Provider and App Review is not submitted.
             </p>
             <p>
               Designed for ABDM M1–M3 &amp; DPDP (sandbox path).

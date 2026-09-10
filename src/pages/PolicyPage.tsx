@@ -3,6 +3,7 @@ import {
   Shield,
   ArrowLeft,
   CheckCircle2,
+  AlertCircle,
   FileText,
   Lock,
   Trash2,
@@ -102,7 +103,7 @@ export const PolicyPage: React.FC<{ slug: string }> = ({ slug: initialSlug }) =>
               </div>
               <span className="font-bold text-sm text-slate-900 tracking-tight">Lumera Compliance Hub</span>
               <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
-                <CheckCircle2 className="w-3 h-3" /> Meta Tech Provider Verified
+                <AlertCircle className="w-3 h-3" /> Meta WhatsApp — not Tech Provider certified
               </span>
             </div>
           </div>
@@ -135,7 +136,7 @@ export const PolicyPage: React.FC<{ slug: string }> = ({ slug: initialSlug }) =>
           <div className="max-w-2xl">
             <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900">{title}</h1>
             <p className="mt-2 text-sm text-slate-600 leading-relaxed">
-              Official governance documentation for Lumera Health Clinical OS, Meta WhatsApp Cloud Platform Tech Provider integrations, and Data Protection Regulations.
+              Governance documentation for Lumera Health Clinical OS, WhatsApp Cloud API integration (not Tech Provider certified), and data protection.
             </p>
             {updatedAt && (
               <div className="mt-3 text-xs text-slate-400">
@@ -246,7 +247,7 @@ export const PolicyPage: React.FC<{ slug: string }> = ({ slug: initialSlug }) =>
               <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">Statutory Notice</span>
             </div>
             <p className="text-xs text-slate-300 leading-relaxed">
-              Lumera Health operates as a validated technical intermediary for Meta Platforms Ireland Ltd and is compliant with:
+              Lumera Health is building a WhatsApp Cloud API integration. This is not Meta Tech Provider certification and App Review is not submitted. Policies below describe intended processing:
             </p>
             <ul className="text-xs space-y-1.5 text-slate-200">
               <li className="flex items-center gap-1.5">

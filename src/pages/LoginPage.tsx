@@ -85,6 +85,11 @@ export const LoginPage: React.FC = () => {
   const [oauthEmail, setOauthEmail] = useState("rdp9999973271@gmail.com");
   const [oauthName, setOauthName] = useState("Dr. Rajiv Saxena");
   const [verifiedSsoNotice, setVerifiedSsoNotice] = useState<string | null>(null);
+  const [oauthConfig, setOauthConfig] = useState<{
+    facebookConfigured: boolean;
+    sandboxClientOAuthAllowed: boolean;
+    notice?: string;
+  } | null>(null);
 
   // Register Form States (Multi-Tenant Practice Creation)
   const [regPracticeType, setRegPracticeType] = useState<"individual" | "multispecialty">("multispecialty");
@@ -136,6 +141,37 @@ export const LoginPage: React.FC = () => {
     const dest = destinationAfterAuth(user, loginNext);
     go(dest);
   }, [user, busy, showOtpView, loginNext, go]);
+
+  useEffect(() => {
+    fetch("/api/auth/oauth-config")
+      .then((r) => r.json())
+      .then((cfg) => setOauthConfig(cfg))
+      .catch(() => setOauthConfig({ facebookConfigured: false, sandboxClientOAuthAllowed: true }));
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("oauth") !== "facebook") return;
+    const oauthError = params.get("error");
+    if (oauthError) {
+      setError(
+        oauthError === "not_configured"
+          ? "Facebook Login is not configured (FACEBOOK_APP_ID / FACEBOOK_APP_SECRET)."
+          : decodeURIComponent(oauthError)
+      );
+    }
+    if (params.get("unregistered") === "1") {
+      setMode("register");
+      const fbEmail = params.get("email") || "";
+      const fbName = params.get("name") || "";
+      if (fbEmail) setAdminEmail(fbEmail);
+      if (fbName) setAdminName(fbName);
+      setVerifiedSsoNotice(
+        `Facebook identity verified (${fbEmail}). Please complete your clinic details below.`
+      );
+    }
+  }, []);
 
   // OTP Countdown Timer
   useEffect(() => {
@@ -269,6 +305,17 @@ export const LoginPage: React.FC = () => {
     setSuccessMsg("");
     setOauthPrompt(null);
 
+    if (provider === "facebook" && oauthConfig?.facebookConfigured) {
+      window.location.href = "/api/auth/facebook";
+      return;
+    }
+
+    if (provider === "facebook" && !oauthConfig?.sandboxClientOAuthAllowed) {
+      setBusy(false);
+      setError("Facebook Login is not configured. Set FACEBOOK_APP_ID and FACEBOOK_APP_SECRET.");
+      return;
+    }
+
     const targetEmail = (chosenEmail || oauthEmail || "rdp9999973271@gmail.com").trim().toLowerCase();
     const targetName = (
       chosenName ||
@@ -288,17 +335,18 @@ export const LoginPage: React.FC = () => {
       );
 
       if (res.unregistered) {
-        // Switch to "Create Clinic Account" tab and pre-fill verified name and email
         setMode("register");
         setAdminEmail(targetEmail);
         setAdminName(targetName);
         setVerifiedSsoNotice(
-          `${provider === "google" ? "Google" : "Facebook"} identity verified (${targetEmail}). Please complete your clinic details below.`
+          res.sandbox
+            ? `SANDBOX / DEV-ONLY ${provider} email (${targetEmail}) — not Graph-verified. Complete clinic details below.`
+            : `${provider === "google" ? "Google" : "Facebook"} identity verified (${targetEmail}). Please complete your clinic details below.`
         );
         setSuccessMsg(
-          `Identity verified via ${
-            provider === "google" ? "Google" : "Facebook"
-          } SSO. Finish setting up your clinic account below.`
+          res.sandbox
+            ? `SANDBOX / DEV-ONLY: client-supplied ${provider} email accepted because NODE_ENV is not production.`
+            : `Identity verified via ${provider === "google" ? "Google" : "Facebook"} SSO. Finish setting up your clinic account below.`
         );
       } else if (res.requiresOtp && res.verificationId) {
         setOtpVerificationId(res.verificationId);
@@ -951,6 +999,11 @@ export const LoginPage: React.FC = () => {
                       <span>Facebook</span>
                     </button>
                   </div>
+                  {oauthConfig && !oauthConfig.facebookConfigured && oauthConfig.sandboxClientOAuthAllowed && (
+                    <p className="text-[11px] text-amber-400/90 mb-2">
+                      SANDBOX / DEV-ONLY: Facebook App credentials are unset, so the Facebook button still posts a client email. This path is disabled in production.
+                    </p>
+                  )}
                 </div>
 
                 {/* Subtle 1-Click Demo Clinician Access */}
