@@ -25,9 +25,10 @@ import { Patient, Doctor } from '../types';
 import { useAuth } from '../auth/AuthContext';
 import { useNav } from '../nav/NavigationContext';
 import { isPolyclinicPractice } from '../lib/sessionWorkspace';
+import { allowedViewsForWorkflow, workflowForUser } from '../lib/specialtyWorkflow';
 
 export const ROLE_VISIBLE_VIEWS: Record<string, NavView[]> = {
-  doctor: ['welcome', 'queue', 'opd-queue', 'rx', 'smart-rx', 'ambient', 'reports', 'appointments', 'polyclinic', 'whatsapp', 'voicebot', 'billing', 'dhis', 'team', 'reception', 'kiosk', 'settings'],
+  doctor: ['welcome', 'queue', 'opd-queue', 'rx', 'smart-rx', 'ambient', 'reports', 'appointments', 'polyclinic', 'whatsapp', 'voicebot', 'billing', 'dhis', 'team', 'reception', 'kiosk', 'settings', 'wellness', 'therapy-session', 'consult-practice'],
   receptionist: ['welcome', 'reception', 'queue', 'opd-queue', 'appointments', 'kiosk', 'billing', 'whatsapp', 'settings'],
   polyclinic_admin: ['welcome', 'queue', 'opd-queue', 'reception', 'appointments', 'polyclinic', 'billing', 'reports', 'whatsapp', 'voicebot', 'dhis', 'team', 'kiosk', 'settings'],
   CLINIC_ADMIN: ['welcome', 'queue', 'opd-queue', 'reception', 'appointments', 'polyclinic', 'billing', 'reports', 'whatsapp', 'voicebot', 'dhis', 'portal', 'team', 'kiosk', 'settings'],
@@ -68,8 +69,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
   if (!polyclinic) {
     allowedViews = allowedViews.filter(v => v !== 'team' && v !== 'polyclinic');
   }
+  const pack = workflowForUser(user);
+  allowedViews = allowedViewsForWorkflow(allowedViews, pack);
 
-  const canStartConsult = allowedViews.includes('rx') || allowedViews.includes('smart-rx');
+  const canStartConsult = allowedViews.includes('rx') || allowedViews.includes('smart-rx') || allowedViews.includes(pack.homeView as NavView);
+  const startView = (pack.showMedicalRx ? 'rx' : pack.homeView) as NavView;
   const canOpenAdminCms = userRole === 'super_admin';
 
   const NAV_SECTIONS = [
@@ -182,14 +186,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {canStartConsult && (
           <button
             type="button"
-            onClick={() => onSelectView('rx')}
-            title={isCollapsed ? 'Start New Consultation' : undefined}
+            onClick={() => onSelectView(startView)}
+            title={isCollapsed ? pack.primaryCta : undefined}
             className={`w-full flex items-center ${
               isCollapsed ? 'justify-center px-2' : 'justify-center gap-2 px-3'
             } py-2.5 rounded-xl text-xs font-bold bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-lg shadow-blue-600/30 hover:from-cyan-400 hover:to-blue-500`}
           >
             <Plus className="w-4 h-4 shrink-0" />
-            {!isCollapsed && <span>+ Start New Consultation</span>}
+            {!isCollapsed && <span>+ {pack.primaryCta}</span>}
           </button>
         )}
 

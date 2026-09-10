@@ -4,6 +4,7 @@ import path from "node:path";
 import { hashPassword } from "./password.ts";
 import { scrubSeedBillingIds } from "./seed-branding.ts";
 import { CMS_POLICY_UPSERTS } from "./cms-policy-seed.ts";
+import { ensureDemoPersonaUsers } from "./demo-seed.ts";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const DB_PATH = path.join(DATA_DIR, "lumera.db");
@@ -110,7 +111,9 @@ export function assignedRoleForPracticeType(
 
 export function isDemoWorkspaceUser(user: { id?: string; tenant_id?: string; email?: string }): boolean {
   if (user.tenant_id === DEMO_TENANT_ID) return true;
-  return ["user-admin", "user-doctor", "user-patient", "user-reception"].includes(String(user.id || ""));
+  const email = String(user.email || "").toLowerCase();
+  if (email.endsWith("@lumera.me")) return true;
+  return String(user.id || "").startsWith("user-") && ["user-admin", "user-doctor", "user-patient", "user-reception", "user-receptionist"].includes(String(user.id || ""));
 }
 
 export interface DbTenant {
@@ -180,6 +183,8 @@ export function initDatabase(): DatabaseSync {
   seedIfEmpty(db);
   seedSubscriptionsIfMissing(db);
   seedClinicalAndWhatsAppIfMissing(db);
+  ensureDemoPersonaUsers(db);
+  seedSubscriptionsIfMissing(db);
   assignDemoTenantToUnscopedClinicalRows(db);
   ensureMetaTechProviderAndPolicies(db);
   ensureAbdmAndDhisSeeding(db);

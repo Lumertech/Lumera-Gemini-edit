@@ -45,13 +45,21 @@ import {
   resolveSessionDoctor,
 } from './lib/sessionWorkspace';
 import { postOnboardingHomeView } from './lib/practiceOnboarding';
+import {
+  allowedViewsForWorkflow,
+  clinicianHomeView,
+  specialtyMatchesDoctor,
+  workflowForUser,
+} from './lib/specialtyWorkflow';
+import { SpecialtyPackBoard } from './components/specialty-packs/SpecialtyPackBoard';
 
 export default function ClinicianApp() {
   const { user } = useAuth();
   const isDemo = Boolean(user?.isDemoWorkspace);
   const sessionDoctor = doctorFromUser(user);
+  const pack = workflowForUser(user);
 
-  const [currentView, setCurrentView] = useState<NavView>('queue');
+  const [currentView, setCurrentView] = useState<NavView>(() => (clinicianHomeView(user) as NavView) || 'queue');
   const [currentDoctor, setCurrentDoctor] = useState<Doctor>(() =>
     isDemo ? MOCK_DOCTORS[0] : sessionDoctor
   );
@@ -83,16 +91,19 @@ export default function ClinicianApp() {
 
   useEffect(() => {
     if (!user) return;
-    if (!consumeWelcomeDashboard()) return;
-    setCurrentView(postOnboardingHomeView(user.practiceType === 'polyclinic' ? 'polyclinic' : 'individual'));
-  }, [user?.id, user?.practiceType]);
+    if (consumeWelcomeDashboard()) {
+      setCurrentView(postOnboardingHomeView(user.practiceType === 'polyclinic' ? 'polyclinic' : 'individual'));
+      return;
+    }
+    setCurrentView(clinicianHomeView(user) as NavView);
+  }, [user?.id, user?.practiceType, user?.specialty]);
 
   useEffect(() => {
     if (!user) return;
     if (isDemo) {
-      const match = MOCK_DOCTORS.find(
-        (d) => user.specialty && d.specialty.toLowerCase().includes(user.specialty!.toLowerCase())
-      );
+      const match =
+        MOCK_DOCTORS.find((d) => d.email && user.email && d.email.toLowerCase() === user.email.toLowerCase()) ||
+        MOCK_DOCTORS.find((d) => specialtyMatchesDoctor(user.specialty, d.specialty));
       setCurrentDoctor(match || MOCK_DOCTORS[0]);
       return;
     }
@@ -128,9 +139,9 @@ export default function ClinicianApp() {
             if (isDemo) {
               return (
                 nextDoctors.find((d) => d.id === prev.id) ||
-                nextDoctors.find(
-                  (d) => user?.specialty && d.specialty.toLowerCase().includes(user.specialty!.toLowerCase())
-                ) ||
+                nextDoctors.find((d) => d.userId === user?.id) ||
+                nextDoctors.find((d) => d.email && user?.email && d.email.toLowerCase() === user.email.toLowerCase()) ||
+                nextDoctors.find((d) => specialtyMatchesDoctor(user?.specialty, d.specialty)) ||
                 nextDoctors[0]
               );
             }
@@ -369,12 +380,16 @@ export default function ClinicianApp() {
   if (!isPolyclinicPractice(user)) {
     allowedViews = allowedViews.filter((v) => v !== 'team' && v !== 'polyclinic');
   }
+  allowedViews = allowedViewsForWorkflow(allowedViews, pack);
   const isViewAllowed =
     allowedViews.includes(currentView) ||
     currentView === 'opd-queue' ||
     currentView === 'smart-rx' ||
     currentView === 'welcome' ||
-    currentView === 'settings';
+    currentView === 'settings' ||
+    currentView === 'wellness' ||
+    currentView === 'therapy-session' ||
+    currentView === 'consult-practice';
 
   useEffect(() => {
     if (!isPolyclinicPractice(user) && (currentView === 'polyclinic' || currentView === 'team')) {
@@ -422,6 +437,11 @@ export default function ClinicianApp() {
         />
 
         <main className="flex-1 min-w-0 h-full overflow-y-auto bg-slate-100/70 p-4 sm:p-6 lg:p-8 flex flex-col">
+          {isDemo && (
+            <div className="mb-3 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-900" data-testid="demo-sandbox-banner">
+              {pack.sandboxNotice}
+            </div>
+          )}
           {!isViewAllowed ? (
             <div className="flex flex-col items-center justify-center h-full p-8 bg-white rounded-xl shadow-sm border border-slate-200 text-center my-auto">
               <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center text-red-600 mb-4 mx-auto">
@@ -460,6 +480,17 @@ export default function ClinicianApp() {
                 />
               )}
 
+              {(currentView === 'wellness' || currentView === 'therapy-session' || currentView === 'consult-practice') && (
+                <SpecialtyPackBoard
+                  pack={pack}
+                  patients={patients}
+                  appointments={appointments}
+                  currentDoctor={currentDoctor}
+                  onSelectView={setCurrentView}
+                  onSelectPatient={handleSelectPatient}
+                />
+              )}
+
               {currentView === 'settings' && (
                 <ClinicProfileSettings
                   currentDoctor={currentDoctor}
@@ -486,6 +517,7 @@ export default function ClinicianApp() {
               patients={patients}
               doctors={doctors}
               appointments={appointments}
+              workflow={pack}
               firstRunHint={intakeIntent !== 'none' || patients.length === 0}
               openRxAfterSave={intakeIntent === 'start-consult'}
               onSelectPatient={setCurrentPatient}

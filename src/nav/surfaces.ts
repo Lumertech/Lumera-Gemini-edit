@@ -4,11 +4,15 @@ export type AdminTab =
   | "overview"
   | "dhis"
   | "users"
+  | "profile"
+  | "people"
+  | "branches"
   | "subscriptions"
   | "meta"
   | "site"
   | "policies"
   | "media"
+  | "settings"
   | "audit";
 
 export interface NavLocation {

@@ -13,6 +13,7 @@ export const AdminMedia: React.FC = () => {
   const [items, setItems] = useState<MediaItem[]>([]);
   const [alt, setAlt] = useState("");
   const [file, setFile] = useState<File | null>(null);
+  const [error, setError] = useState("");
 
   const load = () =>
     apiFetch<{ media: MediaItem[] }>("/api/media")
@@ -22,19 +23,28 @@ export const AdminMedia: React.FC = () => {
 
   const upload = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!file) return;
-    const body = new FormData();
-    body.append("file", file);
-    body.append("alt", alt);
-    await apiFetch("/api/media", { method: "POST", body });
-    setFile(null);
-    setAlt("");
-    load();
+    if (!file) {
+      setError("Choose a file to upload");
+      return;
+    }
+    setError("");
+    try {
+      const body = new FormData();
+      body.append("file", file);
+      body.append("alt", alt);
+      await apiFetch("/api/media", { method: "POST", body });
+      setFile(null);
+      setAlt("");
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Upload failed");
+    }
   };
 
   return (
     <div className="max-w-5xl space-y-4">
       <h1 className="text-xl font-extrabold">Media library</h1>
+      {error && <p className="text-xs text-red-600">{error}</p>}
       <form onSubmit={upload} className="bg-white border rounded-xl p-4 flex flex-wrap gap-2 items-end text-xs">
         <input type="file" accept="image/*" onChange={(e) => setFile(e.target.files?.[0] || null)} />
         <input className="border rounded px-2 py-1.5" placeholder="Alt text" value={alt} onChange={(e) => setAlt(e.target.value)} />

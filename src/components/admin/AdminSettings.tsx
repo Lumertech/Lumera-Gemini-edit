@@ -5,6 +5,7 @@ export const AdminSettings: React.FC = () => {
   const [settings, setSettings] = useState<Record<string, string>>({});
   const [geminiConfigured, setGeminiConfigured] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     apiFetch<{ settings: Record<string, string>; geminiConfigured: boolean }>("/api/cms/settings")
@@ -16,9 +17,14 @@ export const AdminSettings: React.FC = () => {
   }, []);
 
   const save = async () => {
-    await apiFetch("/api/cms/settings", { method: "PUT", body: JSON.stringify({ settings }) });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    setError("");
+    try {
+      await apiFetch("/api/cms/settings", { method: "PUT", body: JSON.stringify({ settings }) });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Save failed");
+    }
   };
 
   return (
@@ -63,6 +69,7 @@ export const AdminSettings: React.FC = () => {
           Save configuration
         </button>
         {saved && <span className="text-xs text-emerald-600 ml-2">Saved</span>}
+        {error && <p className="text-xs text-red-600 mt-2">{error}</p>}
       </div>
     </div>
   );

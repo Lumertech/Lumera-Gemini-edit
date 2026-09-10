@@ -28,6 +28,7 @@ import {
   type PracticeType,
 } from "../lib/practiceOnboarding";
 import { PolyclinicSpecialty } from "../types";
+import { DEMO_ACCOUNTS, DEMO_PASSWORD } from "../lib/demoAccounts";
 
 const SPECIALTIES: PolyclinicSpecialty[] = [
   "General Medicine",
@@ -1088,8 +1089,27 @@ export const LoginPage: React.FC = () => {
                   )}
                 </div>
 
-                {/* Subtle 1-Click Demo Clinician Access */}
-                <div className="pt-2 border-t border-slate-800/60">
+                {/* SANDBOX demo matrix */}
+                <div className="pt-2 border-t border-slate-800/60 space-y-2">
+                  <p className="text-[10px] uppercase tracking-wider text-amber-400/90 font-semibold">SANDBOX / DEMO logins · password {DEMO_PASSWORD}</p>
+                  <select
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-[11px] text-slate-200"
+                    defaultValue=""
+                    onChange={(e) => {
+                      const acct = DEMO_ACCOUNTS.find((a) => a.email === e.target.value);
+                      if (!acct) return;
+                      setEmail(acct.email);
+                      setPassword(DEMO_PASSWORD);
+                    }}
+                    data-testid="demo-account-picker"
+                  >
+                    <option value="">Fill a demo account…</option>
+                    {DEMO_ACCOUNTS.map((a) => (
+                      <option key={a.email} value={a.email}>
+                        {a.email} · {a.role} · {a.practiceLine}{a.specialty ? ` · ${a.specialty}` : ""}
+                      </option>
+                    ))}
+                  </select>
                   <button
                     type="button"
                     onClick={handleQuickDemoClinician}

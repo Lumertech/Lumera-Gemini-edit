@@ -1241,6 +1241,42 @@ export function createApiRouter(): Router {
     return res.json({ user: req.user, tenant, token: getSessionId(req) });
   });
 
+  api.patch("/auth/me", requireAuth, (req: Request, res: Response) => {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ error: "Authentication required" });
+    const existing = getDb().prepare("SELECT * FROM users WHERE id = ?").get(userId) as unknown as DbUser | undefined;
+    if (!existing) return res.status(404).json({ error: "User not found" });
+
+    const name = req.body?.name != null ? String(req.body.name).trim() : existing.name;
+    const phone = req.body?.phone != null ? String(req.body.phone).trim() : existing.phone;
+    const email = req.body?.email ? String(req.body.email).trim().toLowerCase() : existing.email;
+    const avatarUrl = req.body?.avatarUrl != null ? String(req.body.avatarUrl).trim() : existing.avatar_url || "";
+    if (!name) return res.status(400).json({ error: "Name is required" });
+    if (!email || !email.includes("@")) return res.status(400).json({ error: "A valid email is required" });
+
+    try {
+      getDb()
+        .prepare("UPDATE users SET name = ?, phone = ?, email = ?, avatar_url = ? WHERE id = ?")
+        .run(name, phone, email, avatarUrl, existing.id);
+    } catch {
+      return res.status(409).json({ error: "Email already exists" });
+    }
+
+    const newPassword = req.body?.newPassword != null ? String(req.body.newPassword) : "";
+    const currentPassword = req.body?.currentPassword != null ? String(req.body.currentPassword) : "";
+    if (newPassword) {
+      if (newPassword.length < 8) return res.status(400).json({ error: "New password must be at least 8 characters" });
+      if (!currentPassword || !verifyPassword(currentPassword, existing.password_hash)) {
+        return res.status(400).json({ error: "Current password is incorrect" });
+      }
+      getDb().prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(hashPassword(newPassword), existing.id);
+    }
+
+    audit(req, "Profile updated", `${email}${newPassword ? " (password changed)" : ""}`);
+    const user = getDb().prepare("SELECT * FROM users WHERE id = ?").get(existing.id) as unknown as DbUser;
+    res.json({ user: publicUser(user) });
+  });
+
   api.get("/tenant/current", requireAuth, (req: Request, res: Response) => {
     const tenantId = req.user?.tenantId;
     if (!tenantId) {
@@ -1512,32 +1548,39 @@ export function createApiRouter(): Router {
   });
 
   api.post("/users", requireAuth, requireRole(...ADMIN_ROLES), (req, res) => {
-    const { email, password, name, role, phone, status } = req.body || {};
+    const { email, password, name, role, phone, status, specialty, tenantId } = req.body || {};
     if (!email || !name || !role) {
       return res.status(400).json({ error: "name, email, and role are required" });
     }
     const id = crypto.randomUUID();
     const pwd = password ? String(password) : `Temp${Math.random().toString(36).slice(2, 8)}!`;
+    const spec = specialty != null ? String(specialty).trim() : "";
+    const scopedTenant = String(tenantId || req.user?.tenantId || DEMO_TENANT_ID || "").trim();
     try {
       getDb()
         .prepare(
-          `INSERT INTO users (id, email, password_hash, name, role, status, phone, last_login, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?)`
+          `INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, specialty, last_login, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`
         )
         .run(
           id,
+          scopedTenant,
           String(email).trim().toLowerCase(),
           hashPassword(pwd),
           String(name),
           role as UserRole,
           (status as UserStatus) || "active",
           String(phone || ""),
+          spec,
           new Date().toISOString()
         );
     } catch {
       return res.status(409).json({ error: "Email already exists" });
     }
-    audit(req, "User created", `${name} <${email}> as ${role}`);
+    if (spec) {
+      getDb().prepare("UPDATE doctors SET specialty = ? WHERE user_id = ?").run(spec, id);
+    }
+    audit(req, "User created", `${name} <${email}> as ${role}${spec ? ` specialty=${spec}` : ""}`);
     seedSubscriptionsIfMissing(getDb());
     const user = getDb().prepare("SELECT * FROM users WHERE id = ?").get(id) as unknown as DbUser;
     res.status(201).json({ user: publicUser(user), temporaryPassword: password ? undefined : pwd });
@@ -1551,16 +1594,39 @@ export function createApiRouter(): Router {
     const status = req.body.status ?? existing.status;
     const phone = req.body.phone ?? existing.phone;
     const email = req.body.email ? String(req.body.email).trim().toLowerCase() : existing.email;
+    const specialty = req.body.specialty != null ? String(req.body.specialty) : existing.specialty || "";
+    const tenantId =
+      req.body.tenantId != null || req.body.tenant_id != null
+        ? String(req.body.tenantId ?? req.body.tenant_id)
+        : existing.tenant_id || "";
     try {
       getDb()
-        .prepare("UPDATE users SET name = ?, role = ?, status = ?, phone = ?, email = ? WHERE id = ?")
-        .run(name, role, status, phone, email, existing.id);
+        .prepare("UPDATE users SET name = ?, role = ?, status = ?, phone = ?, email = ?, specialty = ?, tenant_id = ? WHERE id = ?")
+        .run(name, role, status, phone, email, specialty, tenantId, existing.id);
     } catch {
       return res.status(409).json({ error: "Email already exists" });
     }
-    audit(req, "User updated", `${email} role=${role} status=${status}`);
+    if (req.body.specialty != null) {
+      getDb().prepare("UPDATE doctors SET specialty = ? WHERE user_id = ?").run(specialty, existing.id);
+    }
+    audit(req, "User updated", `${email} role=${role} status=${status} specialty=${specialty || "—"}`);
     const user = getDb().prepare("SELECT * FROM users WHERE id = ?").get(existing.id) as unknown as DbUser;
     res.json({ user: publicUser(user) });
+  });
+
+  api.delete("/users/:id", requireAuth, requireRole(...ADMIN_ROLES), (req, res) => {
+    const existing = getDb().prepare("SELECT * FROM users WHERE id = ?").get(req.params.id) as unknown as DbUser | undefined;
+    if (!existing) return res.status(404).json({ error: "User not found" });
+    if (existing.id === req.user?.id) {
+      return res.status(400).json({ error: "You cannot delete your own account from User management. Use profile or disable instead." });
+    }
+    if (existing.role === "super_admin") {
+      const admins = (getDb().prepare("SELECT COUNT(*) AS c FROM users WHERE role = 'super_admin' AND status != 'disabled'").get() as { c: number }).c;
+      if (admins <= 1) return res.status(400).json({ error: "Cannot delete the last active super_admin" });
+    }
+    getDb().prepare("DELETE FROM users WHERE id = ?").run(existing.id);
+    audit(req, "User deleted", `${existing.email} (${existing.role})`);
+    res.json({ ok: true });
   });
 
   api.post("/users/:id/password", requireAuth, requireRole(...ADMIN_ROLES), (req, res) => {

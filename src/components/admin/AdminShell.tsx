@@ -12,15 +12,23 @@ import {
   Shield,
   Share2,
   Award,
+  UserCircle,
+  Stethoscope,
+  Building2,
+  Settings,
 } from "lucide-react";
 import { useAuth } from "../../auth/AuthContext";
 import { AdminTab, useNav } from "../../nav/NavigationContext";
 import { AdminOverview } from "./AdminOverview";
 import { AdminUsers } from "./AdminUsers";
+import { AdminProfile } from "./AdminProfile";
+import { AdminPeople } from "./AdminPeople";
+import { AdminBranches } from "./AdminBranches";
 import { AdminSubscriptions } from "./AdminSubscriptions";
 import { AdminCmsSite } from "./AdminCmsSite";
 import { AdminPolicies } from "./AdminPolicies";
 import { AdminMedia } from "./AdminMedia";
+import { AdminSettings } from "./AdminSettings";
 import { AdminAudit } from "./AdminAudit";
 import { AdminMetaTechProvider } from "./AdminMetaTechProvider";
 import { DhisMeter } from "../dhis/DhisMeter";
@@ -30,10 +38,14 @@ const NAV: { id: AdminTab; label: string; icon: typeof Users; badge?: string }[]
   { id: "dhis", label: "ABDM & DHIS Meter", icon: Award },
   { id: "meta", label: "Meta WhatsApp", icon: Share2, badge: "SANDBOX" },
   { id: "users", label: "User management", icon: Users },
+  { id: "profile", label: "Admin profile", icon: UserCircle },
+  { id: "people", label: "Doctors & staff", icon: Stethoscope },
+  { id: "branches", label: "Branches", icon: Building2 },
   { id: "subscriptions", label: "Subscriptions", icon: KeyRound },
   { id: "site", label: "Website CMS", icon: Globe },
   { id: "policies", label: "Pages & policies", icon: FileText },
   { id: "media", label: "Media library", icon: Image },
+  { id: "settings", label: "Clinic & AI settings", icon: Settings },
   { id: "audit", label: "Audit log", icon: History },
 ];
 
@@ -78,10 +90,14 @@ export const AdminShell: React.FC = () => {
     dhis: <DhisMeter compact={false} />,
     meta: <AdminMetaTechProvider />,
     users: <AdminUsers />,
+    profile: <AdminProfile />,
+    people: <AdminPeople />,
+    branches: <AdminBranches />,
     subscriptions: <AdminSubscriptions />,
     site: <AdminCmsSite />,
     policies: <AdminPolicies />,
     media: <AdminMedia />,
+    settings: <AdminSettings />,
     audit: <AdminAudit />,
   }[adminTab];
 

@@ -108,6 +108,10 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     if (s.includes('eye') || s.includes('ophthal')) return 'Ophthalmology';
     if (s.includes('dent') || s.includes('oral')) return 'Dental Surgery';
     if (s.includes('gyn') || s.includes('obstet')) return 'Gynecology';
+    if (s.includes('ent') || s.includes('otolaryng')) return 'ENT';
+    if (s.includes('psych') || s.includes('therap') || s.includes('counsel')) return 'Psychiatry & Mental Health';
+    if (s.includes('wellness') || s.includes('spa') || s.includes('salon')) return 'Wellness & Spas';
+    if (s.includes('consult')) return 'Consulting';
     return 'General Medicine';
   };
 

@@ -32,7 +32,10 @@ export type NavView =
   | 'portal'
   | 'dhis'
   | 'team'
-  | 'settings';
+  | 'settings'
+  | 'wellness'
+  | 'therapy-session'
+  | 'consult-practice';
 
 interface NavbarProps {
   currentView: NavView;
@@ -89,6 +92,9 @@ export const Navbar: React.FC<NavbarProps> = ({
     dhis: 'DHIS Incentive & Analytics Meter',
     team: 'Clinic Team & Staff',
     settings: 'Clinic & Doctor Profile Settings',
+    wellness: 'Wellness & salon book',
+    'therapy-session': 'Therapy session desk',
+    'consult-practice': 'Consultant workspace',
   };
 
   return (

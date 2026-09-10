@@ -21,7 +21,8 @@ import {
   Upload,
   X
 } from 'lucide-react';
-import { Patient, Doctor, Appointment, PolyclinicSpecialty, isAbhaLinked } from '../types';
+import { Patient, Doctor, Appointment, isAbhaLinked } from '../types';
+import type { SpecialtyWorkflowPack } from '../lib/specialtyWorkflow';
 
 interface ReceptionProps {
   patients: Patient[];
@@ -34,6 +35,7 @@ interface ReceptionProps {
   onStartConsult?: (patient: Patient) => void;
   firstRunHint?: boolean;
   openRxAfterSave?: boolean;
+  workflow?: SpecialtyWorkflowPack;
 }
 
 export const Reception: React.FC<ReceptionProps> = ({
@@ -47,6 +49,7 @@ export const Reception: React.FC<ReceptionProps> = ({
   onStartConsult,
   firstRunHint = false,
   openRxAfterSave = false,
+  workflow,
 }) => {
   // Search & Filter
   const [searchQuery, setSearchQuery] = useState('');
@@ -83,6 +86,7 @@ export const Reception: React.FC<ReceptionProps> = ({
     emergencyContact: '',
     selectedDoctorId: doctors[0]?.id || '',
     consultationType: 'Walk-in Consultation',
+    extra: {} as Record<string, string>,
   });
 
   const [savingIntake, setSavingIntake] = useState(false);
@@ -244,7 +248,9 @@ export const Reception: React.FC<ReceptionProps> = ({
       phone: formData.phone,
       bloodGroup: formData.bloodGroup,
       allergies: ['None known'],
-      chronicConditions: [],
+      chronicConditions: Object.entries(formData.extra)
+        .filter(([, v]) => String(v || "").trim())
+        .map(([k, v]) => `${k}: ${v}`),
       emergencyContact: formData.emergencyContact || formData.phone,
       address: formData.address || '',
       lastVisit: 'Today',
@@ -276,7 +282,8 @@ export const Reception: React.FC<ReceptionProps> = ({
         address: '',
         emergencyContact: '',
         selectedDoctorId: doctors[0]?.id || '',
-        consultationType: 'Walk-in Consultation',
+        consultationType: workflow?.consultTypeDefault || 'Walk-in Consultation',
+        extra: {},
       });
     } catch (err: any) {
       setIntakeError(err?.message || 'Could not save patient. Please try again.');
@@ -291,8 +298,8 @@ export const Reception: React.FC<ReceptionProps> = ({
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-xl font-bold text-slate-900 font-manrope">
-              OPD Reception & ABHA Intake Desk
+              <h1 className="text-xl font-bold text-slate-900 font-manrope">
+              {workflow?.receptionLabel || 'OPD Reception & ABHA Intake Desk'}
             </h1>
             <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1">
               <BadgeCheck className="w-3.5 h-3.5" /> NHA sandbox
@@ -520,11 +527,39 @@ export const Reception: React.FC<ReceptionProps> = ({
                 onChange={(e) => setFormData({ ...formData, consultationType: e.target.value })}
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-purple-500"
               >
-                <option value="Walk-in Consultation">Walk-in Consultation</option>
-                <option value="Scheduled Follow-up">Scheduled Follow-up</option>
-                <option value="Emergency Triage">Emergency Triage</option>
+                {(workflow?.consultTypes?.length
+                  ? workflow.consultTypes
+                  : ["Walk-in Consultation", "Scheduled Follow-up", "Emergency Triage"]
+                ).map((t) => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
               </select>
             </div>
+            {(workflow?.intakeFields || []).map((field) => (
+              <div key={field.key} className="sm:col-span-2">
+                <label className="block text-slate-600 font-medium mb-1">{field.label}</label>
+                {field.type === "select" ? (
+                  <select
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900"
+                    value={formData.extra[field.key] || ""}
+                    onChange={(e) => setFormData({ ...formData, extra: { ...formData.extra, [field.key]: e.target.value } })}
+                  >
+                    <option value="">Select</option>
+                    {(field.options || []).map((opt) => (
+                      <option key={opt} value={opt}>{opt}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type={field.type === "number" ? "number" : "text"}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900"
+                    placeholder={field.placeholder}
+                    value={formData.extra[field.key] || ""}
+                    onChange={(e) => setFormData({ ...formData, extra: { ...formData.extra, [field.key]: e.target.value } })}
+                  />
+                )}
+              </div>
+            ))}
           </div>
 
           {intakeError && (

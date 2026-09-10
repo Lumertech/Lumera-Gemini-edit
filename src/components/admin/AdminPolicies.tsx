@@ -14,6 +14,7 @@ export const AdminPolicies: React.FC = () => {
   const [policies, setPolicies] = useState<Policy[]>([]);
   const [active, setActive] = useState<string>("privacy");
   const [saved, setSaved] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     apiFetch<{ policies: Policy[] }>("/api/cms/policies")
@@ -28,13 +29,18 @@ export const AdminPolicies: React.FC = () => {
 
   const save = async () => {
     if (!current) return;
-    const d = await apiFetch<{ policy: Policy }>(`/api/cms/policies/${current.slug}`, {
-      method: "PUT",
-      body: JSON.stringify({ title: current.title, body: current.body }),
-    });
-    setPolicies((prev) => prev.map((p) => (p.slug === d.policy.slug ? d.policy : p)));
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    setError("");
+    try {
+      const d = await apiFetch<{ policy: Policy }>(`/api/cms/policies/${current.slug}`, {
+        method: "PUT",
+        body: JSON.stringify({ title: current.title, body: current.body }),
+      });
+      setPolicies((prev) => prev.map((p) => (p.slug === d.policy.slug ? d.policy : p)));
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Save failed");
+    }
   };
 
   return (
@@ -72,6 +78,7 @@ export const AdminPolicies: React.FC = () => {
               Save policy
             </button>
             {saved && <span className="text-xs text-emerald-600">Saved</span>}
+            {error && <span className="text-xs text-red-600">{error}</span>}
             <button
               type="button"
               className="text-xs text-blue-600"

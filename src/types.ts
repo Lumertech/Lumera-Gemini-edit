@@ -118,7 +118,9 @@ export type PolyclinicSpecialty =
   | 'Neurology'
   | 'Ophthalmology'
   | 'Dental Surgery'
-  | 'Psychiatry & Mental Health';
+  | 'Psychiatry & Mental Health'
+  | 'Wellness & Spas'
+  | 'Consulting';
 
 export interface Doctor {
   id: string;
