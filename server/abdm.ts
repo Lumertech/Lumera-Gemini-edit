@@ -878,7 +878,7 @@ export function createAbdmRouter(): Router {
       rawBody,
       signatureHeader: req.headers["x-abdm-signature"],
     });
-    if (!hmac.ok) {
+    if (hmac.ok === false) {
       return res.status(hmac.status).json({ error: hmac.error, sandboxNotice: NHA_SANDBOX_NOTICE });
     }
 

@@ -1308,6 +1308,8 @@ export function mapConsentArtefact(row: Record<string, unknown>) {
     consentId: (row.consent_id as string) || String(parsed.consentId || ""),
     createdAt: (row.created_at as string) || "",
     updatedAt: (row.updated_at as string) || "",
+    status: parsed.status,
+    dateRange: parsed.dateRange as { from?: string; to?: string } | undefined,
     ...parsed,
   };
 }
