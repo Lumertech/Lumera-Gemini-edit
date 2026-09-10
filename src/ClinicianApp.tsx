@@ -238,6 +238,7 @@ export default function ClinicianApp() {
   };
 
   const persistPatientCreate = async (input: Patient) => {
+    // Practice-simple: name/phone only. No ABHA, consent, or KYC on this path.
     const { patient } = await apiFetch<{ patient: Patient }>('/api/patients', {
       method: 'POST',
       body: JSON.stringify({

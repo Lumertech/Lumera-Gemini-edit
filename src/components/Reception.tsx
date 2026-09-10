@@ -18,6 +18,8 @@ import {
   LINKED_SANDBOX_CHIP,
   NHA_SANDBOX_BADGE,
   NHA_SANDBOX_NOTICE,
+  OTP_ACCEPTED_NOTICE,
+  OTP_FAILED_MESSAGE,
   PRACTICE_SIMPLE_ABHA_LATER,
   SIMULATOR_BADGE,
   abhaStatusChip,
@@ -73,7 +75,8 @@ export const Reception: React.FC<ReceptionProps> = ({
   const [otpCode, setOtpCode] = useState('');
   const [isGeneratingOtp, setIsGeneratingOtp] = useState(false);
   const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
-  const [verified, setVerified] = useState<AbhaSandboxVerifyResponse | null>(null);
+  const [otpAccepted, setOtpAccepted] = useState<AbhaSandboxVerifyResponse | null>(null);
+  const [sandboxOtpHint, setSandboxOtpHint] = useState<string | null>(null);
   const [otpError, setOtpError] = useState<string | null>(null);
   const [bridgeError, setBridgeError] = useState<string | null>(null);
 
@@ -115,9 +118,9 @@ export const Reception: React.FC<ReceptionProps> = ({
     () =>
       findMatchingPatient(patients, {
         phone: formData.phone,
-        abhaNumber: verified?.abhaNumber,
+        abhaNumber: otpAccepted?.abhaNumber,
       }),
-    [patients, formData.phone, verified?.abhaNumber]
+    [patients, formData.phone, otpAccepted?.abhaNumber]
   );
 
   useEffect(() => {
@@ -150,10 +153,11 @@ export const Reception: React.FC<ReceptionProps> = ({
   }, [path]);
 
   const resetAbhaFlow = () => {
-    setVerified(null);
+    setOtpAccepted(null);
     setOtpSentTxnId(null);
     setAadhaarNumber('');
     setOtpCode('');
+    setSandboxOtpHint(null);
     setOtpError(null);
   };
 
@@ -168,10 +172,14 @@ export const Reception: React.FC<ReceptionProps> = ({
     try {
       const data = await generateAbhaSandboxOtp(clean);
       setOtpSentTxnId(data.txnId);
-      setOtpCode(data.testOtp || '');
+      setOtpCode('');
+      setSandboxOtpHint(data.testOtp || null);
+      setOtpAccepted(null);
     } catch (err: unknown) {
       setOtpError(err instanceof Error ? err.message : BRIDGE_DOWN_MESSAGE);
       setOtpSentTxnId(null);
+      setOtpAccepted(null);
+      setSandboxOtpHint(null);
     } finally {
       setIsGeneratingOtp(false);
     }
@@ -186,10 +194,7 @@ export const Reception: React.FC<ReceptionProps> = ({
     setIsVerifyingOtp(true);
     try {
       const data = await verifyAbhaSandboxOtp(otpSentTxnId, otpCode);
-      if (!data.abhaNumber || !data.profile) {
-        throw new Error(BRIDGE_DOWN_MESSAGE);
-      }
-      setVerified(data);
+      setOtpAccepted(data);
       setFormData((prev) => ({
         ...prev,
         name: data.profile.name,
@@ -199,8 +204,8 @@ export const Reception: React.FC<ReceptionProps> = ({
         age: ageFromDob(data.profile.dob) ?? prev.age,
       }));
     } catch (err: unknown) {
-      setVerified(null);
-      setOtpError(err instanceof Error ? err.message : BRIDGE_DOWN_MESSAGE);
+      setOtpAccepted(null);
+      setOtpError(err instanceof Error ? err.message : OTP_FAILED_MESSAGE);
     } finally {
       setIsVerifyingOtp(false);
     }
@@ -246,8 +251,8 @@ export const Reception: React.FC<ReceptionProps> = ({
       let saved: Patient;
       if (path === 'abha-sandbox') {
         if (bridgeError) throw new Error(bridgeError);
-        if (!verified) throw new Error('Complete NHA sandbox OTP before linking ABHA.');
-        const body = linkAbhaBodyFromVerify(verified, {
+        if (!otpAccepted) throw new Error('Complete NHA sandbox OTP before linking ABHA.');
+        const body = linkAbhaBodyFromVerify(otpAccepted, {
           patientId: confirmMatch?.id,
           phone: formData.phone,
           txnId: otpSentTxnId || undefined,
@@ -337,7 +342,10 @@ export const Reception: React.FC<ReceptionProps> = ({
             className="self-start px-3 py-2 text-xs font-semibold rounded-lg border border-amber-200 bg-amber-50 text-amber-900 hover:bg-amber-100 flex items-center gap-1.5"
           >
             <ShieldCheck className="w-3.5 h-3.5" />
-            {LINK_ABHA_CTA}
+            <span>{LINK_ABHA_CTA}</span>
+            <span className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-white text-amber-800 border border-amber-200">
+              {NHA_SANDBOX_BADGE}
+            </span>
           </button>
         ) : (
           <button
@@ -416,6 +424,11 @@ export const Reception: React.FC<ReceptionProps> = ({
                   <button type="button" onClick={resetAbhaFlow} className="text-slate-300 hover:text-white p-2 text-xs">
                     Cancel
                   </button>
+                  {sandboxOtpHint && (
+                    <span className="text-[10px] text-amber-200/80">
+                      {NHA_SANDBOX_BADGE} test OTP: <span className="font-mono font-bold">{sandboxOtpHint}</span>
+                    </span>
+                  )}
                 </>
               )}
             </div>
@@ -428,16 +441,14 @@ export const Reception: React.FC<ReceptionProps> = ({
             </div>
           )}
 
-          {verified && (
+          {otpAccepted && (
             <div className="mt-4 p-3 bg-amber-500/15 border border-amber-400/40 rounded-lg text-xs">
-              <div className="font-bold text-amber-200">{verified.profile.name}</div>
+              <div className="font-bold text-amber-200">{otpAccepted.profile.name}</div>
               <div className="text-amber-100/80 font-mono text-[11px] mt-0.5">
-                ABHA {verified.abhaNumber}
-                {verified.abhaAddress ? ` · ${verified.abhaAddress}` : ''}
+                ABHA {otpAccepted.abhaNumber}
+                {otpAccepted.abhaAddress ? ` · ${otpAccepted.abhaAddress}` : ''}
               </div>
-              <span className="inline-block mt-2 px-2 py-0.5 rounded bg-amber-500/20 text-amber-100 border border-amber-400/30 font-semibold">
-                {LINKED_SANDBOX_CHIP} pending save
-              </span>
+              <p className="mt-2 text-amber-100/90">{OTP_ACCEPTED_NOTICE}</p>
             </div>
           )}
         </div>
@@ -548,7 +559,7 @@ export const Reception: React.FC<ReceptionProps> = ({
             <button
               type="button"
               onClick={() => void handleCompleteIntake()}
-              disabled={savingIntake || abhaBlocked || (path === 'abha-sandbox' && !verified)}
+              disabled={savingIntake || abhaBlocked || (path === 'abha-sandbox' && !otpAccepted)}
               className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg shadow-sm flex items-center gap-2 disabled:opacity-60"
             >
               {savingIntake ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CreditCard className="w-4 h-4" />}

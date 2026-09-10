@@ -12,11 +12,12 @@
  *   consentArtefact.consentId is required or the server 400s.
  *
  * Platform owns the patients SoT — this module is a UI client only.
- * Lumera ABDM: GET /api/abdm/status { bridgeReady },
- *   POST /api/abdm/v3/registration/aadhaar/generateOtp,
- *   POST /api/abdm/v3/registration/aadhaar/verifyOTP
+ * Client calls: POST /api/patients, POST /api/patients/link-abha,
+ *   GET /api/abdm/status { bridgeReady, abdmMode },
+ *   POST /api/abdm/v3/registration/aadhaar/generateOtp|verifyOTP.
+ * ABDM-03+ OpenAPI bridge stubs are later — do not add HIU/HIP/HRP client chrome here.
  *
- * One patients table. No parallel ABDM EMR. Honesty badges: NHA sandbox / LINKED_SANDBOX.
+ * One patients table. No parallel ABDM EMR. Honesty badges: NHA sandbox / Simulator / LINKED_SANDBOX.
  */
 
 import { apiFetch } from "../api/http";
@@ -36,6 +37,10 @@ export const BRIDGE_DOWN_MESSAGE =
 export const PRACTICE_SIMPLE_ABHA_LATER =
   "ABHA can be linked later via Link ABHA (NHA sandbox). This path does not collect ABDM consent.";
 export const BACK_TO_PRACTICE_SIMPLE = "Back to practice-simple";
+export const OTP_FAILED_MESSAGE =
+  "NHA sandbox OTP did not succeed. ABHA was not linked. Use practice-simple intake, or retry when the sandbox bridge is up.";
+export const OTP_ACCEPTED_NOTICE =
+  "OTP accepted (NHA sandbox). Save to call link-abha — the chart chip becomes LINKED_SANDBOX only after that API succeeds.";
 
 export type LinkAbhaSource = "aadhaar_otp" | "abha_search" | "qr";
 export type LinkAbdmMode = "stub" | "sandbox";
@@ -108,7 +113,17 @@ export type AbhaSandboxVerifyResponse = {
 
 export type AbdmBridgeStatus = {
   bridgeReady: boolean;
+  abdmMode?: string;
 };
+
+/** Fail-closed: only an explicit bridgeReady === true is ready. */
+export function interpretAbdmStatus(data: { bridgeReady?: boolean; abdmMode?: string } | null | undefined): AbdmBridgeStatus {
+  const abdmMode = data && typeof data.abdmMode === "string" ? data.abdmMode : undefined;
+  if (!data || data.bridgeReady !== true) {
+    return { bridgeReady: false, abdmMode };
+  }
+  return { bridgeReady: true, abdmMode };
+}
 
 export function normalizePhoneDigits(phone: string): string {
   const digits = String(phone || "").replace(/\D/g, "");
@@ -165,13 +180,10 @@ export function abhaStatusChip(patient: {
 
 export async function fetchAbdmBridgeStatus(): Promise<AbdmBridgeStatus> {
   try {
-    const data = await apiFetch<{ bridgeReady?: boolean }>("/api/abdm/status");
-    // #44 owns status chrome. Explicit false fail-closes. Missing field
-    // (pre-#44) is not a green light — generateOtp still fail-closes if down.
-    if (data.bridgeReady === false) return { bridgeReady: false };
-    return { bridgeReady: true };
+    const data = await apiFetch<{ bridgeReady?: boolean; abdmMode?: string }>("/api/abdm/status");
+    return interpretAbdmStatus(data);
   } catch {
-    return { bridgeReady: false };
+    return interpretAbdmStatus(null);
   }
 }
 
@@ -184,18 +196,26 @@ export async function requireAbdmBridgeReady(): Promise<void> {
 
 export async function generateAbhaSandboxOtp(aadhaar: string): Promise<AbhaSandboxOtpResponse> {
   await requireAbdmBridgeReady();
-  return apiFetch<AbhaSandboxOtpResponse>("/api/abdm/v3/registration/aadhaar/generateOtp", {
+  const data = await apiFetch<AbhaSandboxOtpResponse>("/api/abdm/v3/registration/aadhaar/generateOtp", {
     method: "POST",
     body: JSON.stringify({ aadhaar: aadhaar.replace(/\D/g, "") }),
   });
+  if (!data?.txnId) {
+    throw new Error(OTP_FAILED_MESSAGE);
+  }
+  return data;
 }
 
 export async function verifyAbhaSandboxOtp(txnId: string, otp: string): Promise<AbhaSandboxVerifyResponse> {
   await requireAbdmBridgeReady();
-  return apiFetch<AbhaSandboxVerifyResponse>("/api/abdm/v3/registration/aadhaar/verifyOTP", {
+  const data = await apiFetch<AbhaSandboxVerifyResponse>("/api/abdm/v3/registration/aadhaar/verifyOTP", {
     method: "POST",
     body: JSON.stringify({ txnId, otp }),
   });
+  if (data?.success === false || !data?.abhaNumber || !data.profile?.name) {
+    throw new Error(OTP_FAILED_MESSAGE);
+  }
+  return data;
 }
 
 export async function createPracticeSimplePatient(input: {
@@ -267,6 +287,9 @@ export function linkAbhaBodyFromVerify(
   verified: AbhaSandboxVerifyResponse,
   extras: { patientId?: string; phone?: string; txnId?: string } = {}
 ): LinkAbhaRequest {
+  if (!verified.abhaNumber || !verified.profile?.name) {
+    throw new Error(OTP_FAILED_MESSAGE);
+  }
   const txnId = extras.txnId || verified.consent?.txnId || "";
   return {
     ...(extras.patientId ? { patientId: extras.patientId } : {}),

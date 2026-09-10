@@ -15,8 +15,10 @@ import {
   consentFromVerify,
   findMatchingPatient,
   genderFromAbdm,
+  interpretAbdmStatus,
   linkAbhaBodyFromVerify,
   normalizePhoneDigits,
+  OTP_ACCEPTED_NOTICE,
 } from "./patientOnboarding";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -46,6 +48,16 @@ describe("dual onboarding helpers (#40)", () => {
     assert.equal(findMatchingPatient([existing], { phone: "9811122334" })?.id, "pat-1");
     assert.equal(findMatchingPatient([existing], { abhaNumber: "91123456789012" })?.id, "pat-1");
     assert.equal(findMatchingPatient([existing], { phone: "9000000000" }), null);
+  });
+
+  it("fail-closes ABDM status unless bridgeReady is explicitly true", () => {
+    assert.equal(interpretAbdmStatus(null).bridgeReady, false);
+    assert.equal(interpretAbdmStatus({}).bridgeReady, false);
+    assert.equal(interpretAbdmStatus({ bridgeReady: false, abdmMode: "sandbox" }).bridgeReady, false);
+    assert.equal(interpretAbdmStatus({ abdmMode: "stub" }).bridgeReady, false);
+    const ready = interpretAbdmStatus({ bridgeReady: true, abdmMode: "stub" });
+    assert.equal(ready.bridgeReady, true);
+    assert.equal(ready.abdmMode, "stub");
   });
 
   it("never labels ABHA as Verified — LINKED_SANDBOX only", () => {
@@ -136,8 +148,13 @@ describe("dual onboarding helpers (#40)", () => {
     assert.match(reception, /verifyAbhaSandboxOtp/);
     assert.match(reception, /link-abha|onLinkAbha/);
     assert.match(reception, new RegExp(LINKED_SANDBOX_CHIP));
+    assert.match(reception, /OTP_ACCEPTED_NOTICE/);
+    assert.equal(OTP_ACCEPTED_NOTICE.includes("LINKED_SANDBOX"), true);
+    assert.equal(/pending save/.test(reception), false);
+    assert.equal(/\bVerified\b/.test(reception), false);
     assert.equal(/Scan ABHA QR|handleSampleQrScan/.test(reception), false);
     assert.equal(/bg-slate-100 p-1 rounded-lg/.test(reception), false);
+    assert.equal(/consentArtefact|abhaConsent/.test(reception), false);
     const welcome = fs.readFileSync(path.join(root, "src/components/WelcomeSetupDashboard.tsx"), "utf8");
     assert.match(welcome, /Practice-simple is the default/);
     assert.equal(/LINK_ABHA_CTA/.test(welcome), false);
@@ -145,10 +162,13 @@ describe("dual onboarding helpers (#40)", () => {
     assert.match(clinician, /\/api\/patients\/link-abha/);
     assert.match(clinician, /setCurrentPatient\(patient\)/);
     assert.match(clinician, /setCurrentPatient\(result\.patient\)/);
+    const createFn = clinician.slice(clinician.indexOf("persistPatientCreate"), clinician.indexOf("persistLinkAbha"));
+    assert.equal(/abhaNumber|consentArtefact|abhaConsent/.test(createFn), false);
     const onboarding = fs.readFileSync(path.join(root, "src/lib/patientOnboarding.ts"), "utf8");
     assert.match(onboarding, /consentArtefact/);
     assert.match(onboarding, /abdmMode/);
     assert.match(onboarding, /sandboxNotice/);
+    assert.equal(/\/api\/abdm\/(hiu|hip|hrp)/.test(`${onboarding}\n${clinician}\n${reception}`), false);
     const clinical = fs.readFileSync(path.join(root, "server/clinical.ts"), "utf8");
     assert.match(clinical, /consentArtefact\.consentId is required/);
     assert.equal(fs.existsSync(path.join(root, "server/patient-sot.test.ts")), false);
