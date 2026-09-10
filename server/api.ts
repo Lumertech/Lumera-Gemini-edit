@@ -179,13 +179,10 @@ async function dispatchWhatsAppOtpMessage(phone: string, name: string, otp: stri
   const sent = await dispatchWhatsAppCloudMessage({
     to: phone,
     kind: "otp",
-    patientName: name,
     textBody: `Lumera verification code: ${otp}\nAction: ${purpose}\nValid for 5 minutes. Do not share this code.`,
     otp,
     purpose,
-    eventType: "otp_verification",
     db: getDb(),
-    recordEvent: false,
   });
 
   if (sent.ok && sent.channel === "graph") {
