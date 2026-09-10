@@ -15,13 +15,13 @@ export function ensureDemoPersonaUsers(database: DatabaseSync) {
   const isProd = process.env.NODE_ENV === "production";
 
   const insertUser = database.prepare(`
-    INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, last_login, created_at, onboarding_completed, practice_type, specialty)
-    VALUES (?, ?, ?, ?, ?, ?, 'active', ?, NULL, ?, 1, ?, ?)
+    INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, last_login, created_at, onboarding_completed, practice_type, specialty, pack_id)
+    VALUES (?, ?, ?, ?, ?, ?, 'active', ?, NULL, ?, 1, ?, ?, ?)
   `);
   const updateUser = database.prepare(`
     UPDATE users
     SET name = ?, role = ?, phone = ?, tenant_id = COALESCE(NULLIF(tenant_id, ''), ?),
-        onboarding_completed = 1, practice_type = ?, specialty = ?, status = 'active'
+        onboarding_completed = 1, practice_type = ?, specialty = ?, pack_id = ?, status = 'active'
     WHERE id = ? OR email = ?
   `);
   const updatePassword = database.prepare("UPDATE users SET password_hash = ? WHERE email = ?");
@@ -46,6 +46,7 @@ export function ensureDemoPersonaUsers(database: DatabaseSync) {
         acct.phone,
         now,
         acct.practiceType,
+        acct.specialty,
         acct.specialty
       );
     } else {
@@ -55,6 +56,7 @@ export function ensureDemoPersonaUsers(database: DatabaseSync) {
         acct.phone,
         DEMO_TENANT_ID,
         acct.practiceType,
+        acct.specialty,
         acct.specialty,
         existing.id,
         acct.email

@@ -18,6 +18,8 @@ describe("Admin User Management Edit (P0 live-deploy AC)", () => {
 
   it("create and edit persist name/email/role/specialty/practiceType via API", () => {
     assert.match(src, /PACK_ID_OPTIONS/);
+    assert.match(src, /data-testid="admin-create-specialty"/);
+    assert.match(src, /value=\{s\.id\}/);
     assert.match(src, /practiceType: draft\.practiceType/);
     assert.match(src, /data-testid="admin-edit-practice-type"/);
     assert.match(src, /data-testid="admin-create-practice-type"/);

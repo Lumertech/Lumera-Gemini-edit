@@ -179,7 +179,12 @@ export const AdminUsers: React.FC = () => {
         <select className="border rounded px-2 py-1.5" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value as UserRole })}>
           {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
         </select>
-        <select className="border rounded px-2 py-1.5" value={form.specialty} onChange={(e) => setForm({ ...form, specialty: e.target.value })}>
+        <select
+          className="border rounded px-2 py-1.5"
+          value={form.specialty}
+          onChange={(e) => setForm({ ...form, specialty: e.target.value })}
+          data-testid="admin-create-specialty"
+        >
           <option value="">Specialty (clinicians)</option>
           {PACK_ID_OPTIONS.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
         </select>

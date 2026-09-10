@@ -38,7 +38,7 @@ import {
   type PracticeType,
 } from "../lib/practiceOnboarding";
 import { PolyclinicSpecialty } from "../types";
-import { DEMO_ACCOUNTS, DEMO_PASSWORD } from "../lib/demoAccounts";
+import { DEMO_LOGIN_MATRIX, DEMO_PASSWORD } from "../lib/demoAccounts";
 
 const SPECIALTIES: PolyclinicSpecialty[] = [
   "General Medicine",
@@ -1119,7 +1119,7 @@ export const LoginPage: React.FC = () => {
                     className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-[11px] text-slate-200"
                     defaultValue=""
                     onChange={(e) => {
-                      const acct = DEMO_ACCOUNTS.find((a) => a.email === e.target.value);
+                      const acct = DEMO_LOGIN_MATRIX.find((a) => a.email === e.target.value);
                       if (!acct) return;
                       setEmail(acct.email);
                       setPassword(DEMO_PASSWORD);
@@ -1127,7 +1127,7 @@ export const LoginPage: React.FC = () => {
                     data-testid="demo-account-picker"
                   >
                     <option value="">Fill a demo account…</option>
-                    {DEMO_ACCOUNTS.map((a) => (
+                    {DEMO_LOGIN_MATRIX.map((a) => (
                       <option key={a.email} value={a.email}>
                         {a.email} · {a.role} · {a.practiceLine}{a.displaySpecialty || a.specialty ? ` · ${a.displaySpecialty || a.specialty}` : ""}
                       </option>

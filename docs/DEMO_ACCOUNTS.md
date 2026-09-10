@@ -29,4 +29,13 @@ Register / create-clinic first paint stays **Individual** (`DEFAULT_PRACTICE_TYP
 
 Every specialty doctor above is an **individual** practice login. They land the matching specialty pack (GP / physio / dental / therapy / wellness / consultant), not the generic Multispecialty welcome roster.
 
-`users.specialty` is persisted as pack ids only: `gp` | `physio` | `dentist` | `spa_salon` | `therapist` | `consultant`. Admin UI labels map to those ids on write.
+`users.specialty` / `users.pack_id` persist pack ids only: `gp` | `physio` | `dentist` | `spa_salon` | `therapist` | `consultant`. Admin Create/Edit dropdowns write those ids (human labels are display-only).
+
+Pack-id smoke aliases (same password; seeded by `#56`, listed in the login demo picker):
+
+| Email | Pack |
+|---|---|
+| `gp.doctor@lumera.me` | `gp` |
+| `physio.doctor@lumera.me` | `physio` |
+| `dentist.doctor@lumera.me` | `dentist` |
+| `spa.doctor@lumera.me` | `spa_salon` |

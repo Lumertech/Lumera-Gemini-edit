@@ -317,9 +317,66 @@ export const DEMO_ACCOUNTS: DemoAccount[] = [
 
 export const DEMO_ACCOUNT_EMAILS = DEMO_ACCOUNTS.map((a) => a.email);
 
+/**
+ * #56 pack-id smoke aliases (seeded by seedDemoSpecialtyPackUsers).
+ * Shown in the login picker; not re-inserted by ensureDemoPersonaUsers.
+ */
+export const DEMO_PACK_ALIAS_LOGINS: DemoAccount[] = [
+  {
+    id: "user-demo-gp",
+    email: "gp.doctor@lumera.me",
+    name: "Dr. Demo GP",
+    role: "doctor",
+    specialty: "gp",
+    displaySpecialty: "General Medicine",
+    phone: "+91 98001 11001",
+    practiceLine: "Doctors & Clinics",
+    practiceType: "individual",
+  },
+  {
+    id: "user-demo-physio",
+    email: "physio.doctor@lumera.me",
+    name: "Dr. Demo Physio",
+    role: "doctor",
+    specialty: "physio",
+    displaySpecialty: "Physiotherapy & Rehabilitation",
+    phone: "+91 98001 11002",
+    practiceLine: "Physiotherapists",
+    practiceType: "individual",
+  },
+  {
+    id: "user-demo-dentist",
+    email: "dentist.doctor@lumera.me",
+    name: "Dr. Demo Dentist",
+    role: "doctor",
+    specialty: "dentist",
+    displaySpecialty: "Dental Surgery",
+    phone: "+91 98001 11003",
+    practiceLine: "Dentists",
+    practiceType: "individual",
+  },
+  {
+    id: "user-demo-spa",
+    email: "spa.doctor@lumera.me",
+    name: "Dr. Demo Spa",
+    role: "doctor",
+    specialty: "spa_salon",
+    displaySpecialty: "Wellness & Spas",
+    phone: "+91 98001 11004",
+    practiceLine: "Wellness & Spas",
+    practiceType: "individual",
+  },
+];
+
+/** Login picker: #55 persona emails plus #56 pack aliases not already listed. */
+export const DEMO_LOGIN_MATRIX: DemoAccount[] = [
+  ...DEMO_ACCOUNTS,
+  ...DEMO_PACK_ALIAS_LOGINS.filter((alias) => !DEMO_ACCOUNTS.some((a) => a.email === alias.email)),
+];
+
 export function demoAccountByEmail(email?: string | null): DemoAccount | undefined {
   const key = String(email || "").trim().toLowerCase();
-  return DEMO_ACCOUNTS.find((a) => a.email === key);
+  return DEMO_LOGIN_MATRIX.find((a) => a.email === key);
 }
 
 export function isDemoAccountEmail(email?: string | null): boolean {

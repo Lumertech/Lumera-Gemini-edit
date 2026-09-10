@@ -160,7 +160,11 @@ export const AdminShell: React.FC = () => {
           </button>
         </div>
       </aside>
-      <main className="flex-1 overflow-y-auto p-8">{panel}</main>
+      <main className="flex-1 overflow-y-auto p-8">
+        <div key={adminTab} data-testid="admin-tab-remount">
+          {panel}
+        </div>
+      </main>
     </div>
   );
 };
