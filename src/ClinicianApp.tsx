@@ -216,6 +216,10 @@ export default function ClinicianApp() {
     return appointment;
   };
 
+  const billingAppointment =
+    appointments.find((a) => a.patientId === currentPatient.id && !a.isPaid) ||
+    appointments.find((a) => a.patientId === currentPatient.id);
+
   const persistAppointmentCreate = async (input: Partial<Appointment>) => {
     const { appointment } = await apiFetch<{ appointment: Appointment }>('/api/appointments', {
       method: 'POST',
@@ -659,10 +663,8 @@ export default function ClinicianApp() {
               currentDoctor={currentDoctor}
               clinicSettings={clinicSettings}
               activePrescription={prescriptions.find((p) => p.patientId === currentPatient.id) || null}
-              appointmentId={
-                appointments.find((a) => a.patientId === currentPatient.id && !a.isPaid)?.id ||
-                appointments.find((a) => a.patientId === currentPatient.id)?.id
-              }
+              appointmentId={billingAppointment?.id}
+              appointmentIsPaid={Boolean(billingAppointment?.isPaid)}
               onPaymentSuccess={(_invoiceNumber, _amount) => {
                 void apiFetch<{ appointments: Appointment[] }>('/api/appointments')
                   .then((res) => {
