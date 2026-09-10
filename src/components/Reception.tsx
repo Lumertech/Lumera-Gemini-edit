@@ -1,27 +1,37 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  QrCode, 
-  ShieldCheck, 
-  UserCheck, 
-  Search, 
-  UserPlus, 
-  CheckCircle2, 
-  AlertCircle, 
-  RefreshCw, 
-  Clock, 
-  Phone, 
-  Calendar, 
-  User, 
-  Sparkles, 
-  Building2, 
-  BadgeCheck, 
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  ShieldCheck,
+  UserCheck,
+  Search,
+  UserPlus,
+  CheckCircle2,
+  AlertCircle,
+  RefreshCw,
   CreditCard,
   ArrowRight,
-  Camera,
-  Upload,
-  X
 } from 'lucide-react';
-import { Patient, Doctor, Appointment, PolyclinicSpecialty, isAbhaLinked } from '../types';
+import { Patient, Doctor, Appointment } from '../types';
+import {
+  BRIDGE_DOWN_MESSAGE,
+  LINK_ABHA_CTA,
+  LINKED_SANDBOX_CHIP,
+  NHA_SANDBOX_BADGE,
+  NHA_SANDBOX_NOTICE,
+  PRACTICE_SIMPLE_ABHA_LATER,
+  abhaStatusChip,
+  ageFromDob,
+  findMatchingPatient,
+  generateAbhaSandboxOtp,
+  genderFromAbdm,
+  linkAbhaBodyFromVerify,
+  requireAbdmBridgeReady,
+  verifyAbhaSandboxOtp,
+  type AbhaSandboxVerifyResponse,
+  type ClinicalHandoffView,
+  type LinkAbhaRequest,
+  type LinkAbhaResponse,
+  type OnboardingPath,
+} from '../lib/patientOnboarding';
 
 interface ReceptionProps {
   patients: Patient[];
@@ -34,12 +44,14 @@ interface ReceptionProps {
   onStartConsult?: (patient: Patient) => void;
   firstRunHint?: boolean;
   openRxAfterSave?: boolean;
+  onLinkAbha?: (body: LinkAbhaRequest) => Promise<LinkAbhaResponse>;
+  onHandoff?: (patient: Patient, view: ClinicalHandoffView) => void;
 }
 
 export const Reception: React.FC<ReceptionProps> = ({
   patients,
   doctors,
-  appointments,
+  appointments: _appointments,
   onSelectPatient,
   onAddNewPatient,
   onCheckInPatient,
@@ -47,48 +59,39 @@ export const Reception: React.FC<ReceptionProps> = ({
   onStartConsult,
   firstRunHint = false,
   openRxAfterSave = false,
+  onLinkAbha,
+  onHandoff,
 }) => {
-  // Search & Filter
+  const [path, setPath] = useState<OnboardingPath>('practice-simple');
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<Patient[]>(patients);
 
-  // Aadhaar OTP Verification State
   const [aadhaarNumber, setAadhaarNumber] = useState('');
   const [otpSentTxnId, setOtpSentTxnId] = useState<string | null>(null);
   const [otpCode, setOtpCode] = useState('');
   const [isGeneratingOtp, setIsGeneratingOtp] = useState(false);
   const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
-  const [verificationSuccess, setVerificationSuccess] = useState<{
-    abhaNumber: string;
-    abhaAddress: string;
-    name: string;
-    gender: string;
-    dob: string;
-    mobile: string;
-  } | null>(null);
+  const [verified, setVerified] = useState<AbhaSandboxVerifyResponse | null>(null);
   const [otpError, setOtpError] = useState<string | null>(null);
+  const [bridgeError, setBridgeError] = useState<string | null>(null);
 
-  // QR Scanner Modal State
-  const [showQrModal, setShowQrModal] = useState(false);
-  const [qrSimulating, setQrSimulating] = useState(false);
-
-  // Intake Form State (New or Verified Patient)
   const [formData, setFormData] = useState({
     name: '',
     phone: '',
     age: 35,
     gender: 'Male' as 'Male' | 'Female' | 'Other',
-    bloodGroup: 'B+',
     address: '',
-    emergencyContact: '',
     selectedDoctorId: doctors[0]?.id || '',
     consultationType: 'Walk-in Consultation',
+    issueToken: true,
   });
 
   const [savingIntake, setSavingIntake] = useState(false);
   const [intakeError, setIntakeError] = useState<string | null>(null);
+  const [handoffPatient, setHandoffPatient] = useState<Patient | null>(null);
+  const [confirmMatch, setConfirmMatch] = useState<Patient | null>(null);
+  const [useExistingConfirmed, setUseExistingConfirmed] = useState(false);
 
-  // Filter patients on search
   useEffect(() => {
     if (!searchQuery.trim()) {
       setSearchResults(patients);
@@ -106,339 +109,339 @@ export const Reception: React.FC<ReceptionProps> = ({
     setSearchResults(filtered);
   }, [searchQuery, patients]);
 
-  // Step 1: Generate Aadhaar OTP
+  const liveMatch = useMemo(
+    () =>
+      findMatchingPatient(patients, {
+        phone: formData.phone,
+        abhaNumber: verified?.abhaNumber,
+      }),
+    [patients, formData.phone, verified?.abhaNumber]
+  );
+
+  useEffect(() => {
+    if (!liveMatch) {
+      setConfirmMatch(null);
+      setUseExistingConfirmed(false);
+      return;
+    }
+    setConfirmMatch(liveMatch);
+  }, [liveMatch?.id]);
+
+  useEffect(() => {
+    if (path !== 'abha-sandbox') {
+      setBridgeError(null);
+      return;
+    }
+    let cancelled = false;
+    void requireAbdmBridgeReady()
+      .then(() => {
+        if (!cancelled) setBridgeError(null);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setBridgeError(err instanceof Error ? err.message : BRIDGE_DOWN_MESSAGE);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [path]);
+
+  const resetAbhaFlow = () => {
+    setVerified(null);
+    setOtpSentTxnId(null);
+    setAadhaarNumber('');
+    setOtpCode('');
+    setOtpError(null);
+  };
+
   const handleGenerateOtp = async () => {
     const clean = aadhaarNumber.replace(/\D/g, '');
     if (clean.length !== 12) {
-      setOtpError('Please enter a valid 12-digit Aadhaar number');
+      setOtpError('Enter a 12-digit Aadhaar number for the NHA sandbox OTP.');
       return;
     }
-
     setOtpError(null);
     setIsGeneratingOtp(true);
     try {
-      const res = await fetch('/api/abdm/v3/registration/aadhaar/generateOtp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ aadhaar: clean }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to generate OTP');
-      }
-
+      const data = await generateAbhaSandboxOtp(clean);
       setOtpSentTxnId(data.txnId);
-      // Only pre-fill when the backend explicitly echoes a dev/sandbox test
-      // OTP (non-production only). In a real deployment `data.testOtp` is
-      // absent and the receptionist must enter the OTP the patient reads
-      // off their own phone.
       setOtpCode(data.testOtp || '');
-    } catch (err: any) {
-      setOtpError(err.message || 'Error generating Aadhaar OTP');
+    } catch (err: unknown) {
+      setOtpError(err instanceof Error ? err.message : BRIDGE_DOWN_MESSAGE);
+      setOtpSentTxnId(null);
     } finally {
       setIsGeneratingOtp(false);
     }
   };
 
-  // Step 2: Verify Aadhaar OTP & Issue ABHA
   const handleVerifyOtp = async () => {
     if (!otpSentTxnId || !otpCode) {
-      setOtpError('Please enter the 6-digit OTP');
+      setOtpError('Enter the 6-digit OTP from the NHA sandbox.');
       return;
     }
-
     setOtpError(null);
     setIsVerifyingOtp(true);
     try {
-      const res = await fetch('/api/abdm/v3/registration/aadhaar/verifyOTP', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          txnId: otpSentTxnId,
-          otp: otpCode,
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Invalid OTP');
+      const data = await verifyAbhaSandboxOtp(otpSentTxnId, otpCode);
+      if (!data.abhaNumber || !data.profile) {
+        throw new Error(BRIDGE_DOWN_MESSAGE);
       }
-
-      setVerificationSuccess({
-        abhaNumber: data.abhaNumber,
-        abhaAddress: data.abhaAddress,
-        name: data.profile.name,
-        gender: data.profile.gender === 'M' ? 'Male' : data.profile.gender === 'F' ? 'Female' : 'Other',
-        dob: data.profile.dob,
-        mobile: data.profile.mobile,
-      });
-
-      // Pre-fill intake form with official Aadhaar demographic data
+      setVerified(data);
       setFormData((prev) => ({
         ...prev,
         name: data.profile.name,
         phone: data.profile.mobile,
-        gender: data.profile.gender === 'M' ? 'Male' : data.profile.gender === 'F' ? 'Female' : 'Other',
+        gender: genderFromAbdm(data.profile.gender),
         address: data.profile.address || prev.address,
-        age: data.profile.dob ? (new Date().getFullYear() - parseInt(data.profile.dob.split('-')[0])) : prev.age,
+        age: ageFromDob(data.profile.dob) ?? prev.age,
       }));
-    } catch (err: any) {
-      setOtpError(err.message || 'OTP verification failed');
+    } catch (err: unknown) {
+      setVerified(null);
+      setOtpError(err instanceof Error ? err.message : BRIDGE_DOWN_MESSAGE);
     } finally {
       setIsVerifyingOtp(false);
     }
   };
 
-  // Scan or Select Sample ABHA QR Card
-  const handleSampleQrScan = (sample: {
-    name: string;
-    abhaNumber: string;
-    abhaAddress: string;
-    phone: string;
-    gender: 'Male' | 'Female';
-    age: number;
-    address: string;
-  }) => {
-    setQrSimulating(true);
-    setTimeout(() => {
-      setVerificationSuccess({
-        abhaNumber: sample.abhaNumber,
-        abhaAddress: sample.abhaAddress,
-        name: sample.name,
-        gender: sample.gender,
-        dob: `${2026 - sample.age}-01-01`,
-        mobile: sample.phone,
-      });
-
-      setFormData((prev) => ({
-        ...prev,
-        name: sample.name,
-        phone: sample.phone,
-        gender: sample.gender,
-        age: sample.age,
-        address: sample.address,
-      }));
-
-      setQrSimulating(false);
-      setShowQrModal(false);
-    }, 400);
+  const finishHandoff = (saved: Patient) => {
+    onSelectPatient(saved);
+    setHandoffPatient(saved);
+    if (openRxAfterSave && onStartConsult) {
+      onStartConsult(saved);
+      return;
+    }
   };
 
-  // Complete Intake & Check-in
+  const goHandoff = (view: ClinicalHandoffView) => {
+    const patient = handoffPatient;
+    if (!patient) return;
+    onSelectPatient(patient);
+    if (onHandoff) {
+      onHandoff(patient, view);
+      return;
+    }
+    if (view === 'rx' && onStartConsult) onStartConsult(patient);
+    else onSwitchToConsultation();
+  };
+
   const handleCompleteIntake = async () => {
     if (!formData.name.trim() || !formData.phone.trim()) {
       setIntakeError('Please fill out patient name and phone number');
       return;
     }
 
+    if (confirmMatch && !useExistingConfirmed) {
+      setIntakeError(`This phone or ABHA already has a chart (${confirmMatch.name} · ${confirmMatch.uhid}). Confirm to use that patientId.`);
+      return;
+    }
+
     const doctor = doctors.find((d) => d.id === formData.selectedDoctorId) || doctors[0];
-    const generatedUHID = `LUM-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
-
-    const newPatient: Patient = {
-      id: `pat-${Date.now()}`,
-      uhid: generatedUHID,
-      name: formData.name,
-      age: formData.age,
-      gender: formData.gender,
-      phone: formData.phone,
-      bloodGroup: formData.bloodGroup,
-      allergies: ['None known'],
-      chronicConditions: [],
-      emergencyContact: formData.emergencyContact || formData.phone,
-      address: formData.address || '',
-      lastVisit: 'Today',
-      abhaNumber: verificationSuccess?.abhaNumber || '',
-      abhaAddress: verificationSuccess?.abhaAddress || '',
-      kycStatus: verificationSuccess ? 'LINKED_SANDBOX' : 'PENDING',
-      hfrId: verificationSuccess ? 'HFR-IN-8829104' : '',
-    };
-
     setSavingIntake(true);
     setIntakeError(null);
+
     try {
-      const saved = (await onAddNewPatient(newPatient)) || newPatient;
-      await onCheckInPatient(saved, doctor, formData.consultationType);
-      onSelectPatient(saved);
-      if (openRxAfterSave && onStartConsult) {
-        onStartConsult(saved);
+      let saved: Patient;
+      if (path === 'abha-sandbox') {
+        if (bridgeError) throw new Error(bridgeError);
+        if (!verified) throw new Error('Complete NHA sandbox OTP before linking ABHA.');
+        const body = linkAbhaBodyFromVerify(verified, {
+          patientId: confirmMatch?.id,
+          phone: formData.phone,
+          txnId: otpSentTxnId || undefined,
+        });
+        if (!onLinkAbha) {
+          throw new Error('ABHA link is unavailable until Platform POST /api/patients/link-abha is reachable.');
+        }
+        const result = await onLinkAbha(body);
+        saved = result.patient;
+      } else {
+        const draft: Patient = {
+          id: confirmMatch?.id || '',
+          uhid: confirmMatch?.uhid || '',
+          name: formData.name,
+          age: formData.age,
+          gender: formData.gender,
+          phone: formData.phone,
+          bloodGroup: 'B+',
+          allergies: ['None known'],
+          chronicConditions: [],
+          emergencyContact: formData.phone,
+          address: formData.address,
+          lastVisit: 'Today',
+        };
+        saved = (await onAddNewPatient(draft)) || draft;
+        if (!saved.id) {
+          throw new Error('Could not save patient');
+        }
       }
 
-      setVerificationSuccess(null);
-      setOtpSentTxnId(null);
-      setAadhaarNumber('');
+      if (formData.issueToken && doctor) {
+        await onCheckInPatient(saved, doctor, formData.consultationType);
+      }
+
+      finishHandoff(saved);
+      resetAbhaFlow();
       setFormData({
         name: '',
         phone: '',
         age: 35,
         gender: 'Male',
-        bloodGroup: 'B+',
         address: '',
-        emergencyContact: '',
         selectedDoctorId: doctors[0]?.id || '',
         consultationType: 'Walk-in Consultation',
+        issueToken: true,
       });
-    } catch (err: any) {
-      setIntakeError(err?.message || 'Could not save patient. Please try again.');
+      setConfirmMatch(null);
+      setUseExistingConfirmed(false);
+    } catch (err: unknown) {
+      setIntakeError(err instanceof Error ? err.message : 'Could not save patient. Please try again.');
     } finally {
       setSavingIntake(false);
     }
   };
 
+  const abhaBlocked = path === 'abha-sandbox' && Boolean(bridgeError);
+
   return (
     <div className="space-y-6">
-      {/* Top Header */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-bold text-slate-900 font-manrope">
-              OPD Reception & ABHA Intake Desk
-            </h1>
-            <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1">
-              <BadgeCheck className="w-3.5 h-3.5" /> NHA sandbox
-            </span>
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-xl font-bold text-slate-900 font-manrope">OPD Reception</h1>
+            {path === 'abha-sandbox' && (
+              <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200">
+                {NHA_SANDBOX_BADGE}
+              </span>
+            )}
           </div>
           <p className="text-xs text-slate-500 mt-1">
             {firstRunHint
-              ? 'Register the first patient for this clinic. Saving writes a durable chart and a Waiting OPD token — both survive refresh.'
-              : 'Patient registration with ABHA QR scanning and Aadhaar e-KYC in NHA sandbox (local stub — not government-registry KYC).'}
+              ? 'Register the first patient for this clinic. Saving writes a durable chart and an optional Waiting OPD token.'
+              : 'Practice-simple intake is the default. Link ABHA is a secondary NHA sandbox path that converges on the same patientId.'}
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-lg">
           <button
-            onClick={() => setShowQrModal(true)}
-            className="px-4 py-2.5 bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold rounded-lg shadow-sm transition-all flex items-center gap-2"
+            type="button"
+            onClick={() => setPath('practice-simple')}
+            className={`px-3 py-2 text-xs font-semibold rounded-md ${
+              path === 'practice-simple' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'
+            }`}
           >
-            <QrCode className="w-4 h-4" />
-            <span>Scan ABHA QR Code</span>
+            Practice-simple
+          </button>
+          <button
+            type="button"
+            onClick={() => setPath('abha-sandbox')}
+            className={`px-3 py-2 text-xs font-semibold rounded-md flex items-center gap-1.5 ${
+              path === 'abha-sandbox' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'
+            }`}
+          >
+            {LINK_ABHA_CTA}
           </button>
         </div>
       </div>
 
-      {/* Aadhaar e-KYC Verification & ABHA Bar */}
-      <div className="bg-gradient-to-r from-purple-900 via-indigo-900 to-slate-900 text-white rounded-xl p-5 border border-purple-500/30 shadow-md">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-white/10 border border-white/20 flex items-center justify-center text-purple-300">
-              <ShieldCheck className="w-6 h-6" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-bold uppercase tracking-wider text-purple-200">
-                  NHA sandbox Aadhaar e-KYC & ABHA (local stub)
-                </span>
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 font-mono">
-                  Sandbox v3
-                </span>
-              </div>
-              <p className="text-xs text-purple-200/80 mt-0.5">
-                Instant identity validation, 14-digit ABHA issuance, and automated DHIS ₹20 incentive entitlement.
-              </p>
-            </div>
+      {path === 'abha-sandbox' && (
+        <div className="bg-slate-900 text-white rounded-xl p-5 border border-slate-700 shadow-md">
+          <div className="flex items-center gap-2 mb-3">
+            <ShieldCheck className="w-5 h-5 text-amber-300" />
+            <span className="text-xs font-bold uppercase tracking-wider text-amber-200">{LINK_ABHA_CTA}</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-200 border border-amber-400/30">
+              {NHA_SANDBOX_BADGE}
+            </span>
           </div>
+          <p className="text-xs text-slate-300 mb-4">{NHA_SANDBOX_NOTICE}</p>
 
-          {/* Inline OTP Workflow */}
-          <div className="flex flex-wrap items-center gap-2">
-            {!otpSentTxnId ? (
-              <div className="flex items-center gap-2">
-                <input
-                  type="text"
-                  maxLength={12}
-                  value={aadhaarNumber}
-                  onChange={(e) => setAadhaarNumber(e.target.value)}
-                  placeholder="Enter 12-digit Aadhaar #"
-                  className="bg-black/30 border border-white/20 text-white placeholder-purple-300/50 text-xs px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-400 font-mono w-48"
-                />
-                <button
-                  onClick={handleGenerateOtp}
-                  disabled={isGeneratingOtp || aadhaarNumber.length < 12}
-                  className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 disabled:opacity-50"
-                >
-                  {isGeneratingOtp ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-                  <span>Generate OTP</span>
-                </button>
-              </div>
-            ) : (
-              <div className="flex items-center gap-2 animate-fade-in">
-                <div className="relative">
+          {abhaBlocked ? (
+            <div className="p-3 bg-rose-500/20 border border-rose-400/40 text-rose-100 text-xs rounded flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{bridgeError}</span>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2">
+              {!otpSentTxnId ? (
+                <>
+                  <input
+                    type="text"
+                    maxLength={12}
+                    value={aadhaarNumber}
+                    onChange={(e) => setAadhaarNumber(e.target.value)}
+                    placeholder="12-digit Aadhaar (sandbox)"
+                    className="bg-black/30 border border-white/20 text-white placeholder-slate-400 text-xs px-3 py-2 rounded-lg font-mono w-52"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void handleGenerateOtp()}
+                    disabled={isGeneratingOtp || aadhaarNumber.replace(/\D/g, '').length < 12}
+                    className="px-3.5 py-2 bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    {isGeneratingOtp ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />}
+                    Generate OTP
+                  </button>
+                </>
+              ) : (
+                <>
                   <input
                     type="text"
                     maxLength={6}
                     value={otpCode}
                     onChange={(e) => setOtpCode(e.target.value)}
-                    placeholder="Enter OTP (123456)"
-                    className="bg-black/40 border border-emerald-400/50 text-emerald-300 placeholder-emerald-500/50 text-xs px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-400 font-mono font-bold w-36"
+                    placeholder="OTP"
+                    className="bg-black/40 border border-amber-400/50 text-amber-100 text-xs px-3 py-2 rounded-lg font-mono font-bold w-28"
                   />
-                  <span className="absolute -top-2 right-2 px-1 text-[9px] bg-emerald-600 text-white rounded font-mono">
-                    Sandbox: 123456
-                  </span>
-                </div>
-                <button
-                  onClick={handleVerifyOtp}
-                  disabled={isVerifyingOtp}
-                  className="px-3.5 py-2 bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 disabled:opacity-50"
-                >
-                  {isVerifyingOtp ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
-                  <span>Verify & Issue ABHA</span>
-                </button>
-                <button
-                  onClick={() => {
-                    setOtpSentTxnId(null);
-                    setAadhaarNumber('');
-                  }}
-                  className="text-purple-300 hover:text-white p-2 text-xs"
-                >
-                  Cancel
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {otpError && (
-          <div className="mt-3 p-2 bg-rose-500/20 border border-rose-400/40 text-rose-200 text-xs rounded flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 shrink-0" />
-            <span>{otpError}</span>
-          </div>
-        )}
-
-        {verificationSuccess && (
-          <div className="mt-4 p-3 bg-emerald-500/20 border border-emerald-400/40 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-2 animate-fade-in text-xs">
-            <div className="flex items-center gap-2">
-              <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
-              <div>
-                <span className="font-bold text-emerald-300">
-                  Aadhaar e-KYC linked (NHA sandbox): {verificationSuccess.name}
-                </span>
-                <span className="block text-emerald-200/80 font-mono text-[11px]">
-                  ABHA: {verificationSuccess.abhaNumber} • {verificationSuccess.abhaAddress}
-                </span>
-              </div>
+                  <button
+                    type="button"
+                    onClick={() => void handleVerifyOtp()}
+                    disabled={isVerifyingOtp}
+                    className="px-3.5 py-2 bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    {isVerifyingOtp ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                    Verify OTP
+                  </button>
+                  <button type="button" onClick={resetAbhaFlow} className="text-slate-300 hover:text-white p-2 text-xs">
+                    Cancel
+                  </button>
+                </>
+              )}
             </div>
-            <span className="px-2.5 py-1 bg-emerald-500/30 text-emerald-200 rounded font-semibold text-[11px] border border-emerald-400/30">
-              ABHA · NHA sandbox
-            </span>
-          </div>
-        )}
-      </div>
+          )}
 
-      {/* Main Grid: Registration Form (Left) & Active Intake Queue / Search (Right) */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left 6 Cols: OPD Intake & Token Dispenser Form */}
-        <div className="lg:col-span-6 bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-            <div className="flex items-center gap-2">
-              <UserPlus className="w-5 h-5 text-purple-600" />
-              <h3 className="font-bold text-sm text-slate-900">
-                {patients.length === 0 ? 'Add your first patient' : 'Patient Intake & Token Generation'}
-              </h3>
+          {otpError && (
+            <div className="mt-3 p-2 bg-rose-500/20 border border-rose-400/40 text-rose-200 text-xs rounded flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{otpError}</span>
             </div>
-            {verificationSuccess && (
-              <span className="text-[11px] px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-medium">
-                Auto-filled from NHA sandbox KYC
+          )}
+
+          {verified && (
+            <div className="mt-4 p-3 bg-amber-500/15 border border-amber-400/40 rounded-lg text-xs">
+              <div className="font-bold text-amber-200">{verified.profile.name}</div>
+              <div className="text-amber-100/80 font-mono text-[11px] mt-0.5">
+                ABHA {verified.abhaNumber}
+                {verified.abhaAddress ? ` · ${verified.abhaAddress}` : ''}
+              </div>
+              <span className="inline-block mt-2 px-2 py-0.5 rounded bg-amber-500/20 text-amber-100 border border-amber-400/30 font-semibold">
+                {LINKED_SANDBOX_CHIP} pending save
               </span>
-            )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {path === 'practice-simple' && (
+        <p className="text-xs text-slate-500 px-1">{PRACTICE_SIMPLE_ABHA_LATER}</p>
+      )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <div className="lg:col-span-6 bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-4">
+          <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
+            <UserPlus className="w-5 h-5 text-blue-600" />
+            <h3 className="font-bold text-sm text-slate-900">
+              {patients.length === 0 ? 'Add your first patient' : 'Patient intake'}
+            </h3>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
@@ -448,11 +451,10 @@ export const Reception: React.FC<ReceptionProps> = ({
                 type="text"
                 value={formData.name}
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                placeholder="e.g. Rajiv Saxena"
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                placeholder="e.g. Anita Rao"
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
-
             <div>
               <label className="block text-slate-600 font-medium mb-1">Mobile Number *</label>
               <input
@@ -460,72 +462,68 @@ export const Reception: React.FC<ReceptionProps> = ({
                 value={formData.phone}
                 onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
                 placeholder="+91 98234 55667"
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
-
             <div>
               <label className="block text-slate-600 font-medium mb-1">Age (Years)</label>
               <input
                 type="number"
                 value={formData.age}
-                onChange={(e) => setFormData({ ...formData, age: parseInt(e.target.value) || 0 })}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                onChange={(e) => setFormData({ ...formData, age: parseInt(e.target.value, 10) || 0 })}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
-
             <div>
               <label className="block text-slate-600 font-medium mb-1">Gender</label>
               <select
                 value={formData.gender}
-                onChange={(e) => setFormData({ ...formData, gender: e.target.value as any })}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                onChange={(e) => setFormData({ ...formData, gender: e.target.value as 'Male' | 'Female' | 'Other' })}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="Male">Male</option>
                 <option value="Female">Female</option>
                 <option value="Other">Other</option>
               </select>
             </div>
-
             <div className="sm:col-span-2">
-              <label className="block text-slate-600 font-medium mb-1">Address / Pincode</label>
-              <input
-                type="text"
-                value={formData.address}
-                onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-                placeholder="Residential address"
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-purple-500"
-              />
-            </div>
-
-            <div className="sm:col-span-2 pt-2 border-t border-slate-100">
-              <label className="block text-slate-600 font-medium mb-1">Assign Doctor & Department *</label>
+              <label className="block text-slate-600 font-medium mb-1">Assign Doctor</label>
               <select
                 value={formData.selectedDoctorId}
                 onChange={(e) => setFormData({ ...formData, selectedDoctorId: e.target.value })}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 {doctors.map((doc) => (
                   <option key={doc.id} value={doc.id}>
-                    {doc.name} — {doc.specialty} (₹{doc.consultationFee})
+                    {doc.name} — {doc.specialty}
                   </option>
                 ))}
               </select>
             </div>
-
-            <div className="sm:col-span-2">
-              <label className="block text-slate-600 font-medium mb-1">Consultation Mode</label>
-              <select
-                value={formData.consultationType}
-                onChange={(e) => setFormData({ ...formData, consultationType: e.target.value })}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-purple-500"
-              >
-                <option value="Walk-in Consultation">Walk-in Consultation</option>
-                <option value="Scheduled Follow-up">Scheduled Follow-up</option>
-                <option value="Emergency Triage">Emergency Triage</option>
-              </select>
-            </div>
+            <label className="sm:col-span-2 flex items-center gap-2 text-slate-700">
+              <input
+                type="checkbox"
+                checked={formData.issueToken}
+                onChange={(e) => setFormData({ ...formData, issueToken: e.target.checked })}
+              />
+              Issue Waiting OPD token
+            </label>
           </div>
+
+          {confirmMatch && (
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs space-y-2">
+              <p className="text-amber-900">
+                Matching chart: <strong>{confirmMatch.name}</strong> ({confirmMatch.uhid}). Same tenant phone/ABHA — link instead of creating a duplicate.
+              </p>
+              <button
+                type="button"
+                onClick={() => setUseExistingConfirmed(true)}
+                className="px-3 py-1.5 bg-amber-700 text-white rounded-md font-semibold"
+              >
+                {useExistingConfirmed ? 'Using existing patientId' : 'Use existing chart'}
+              </button>
+            </div>
+          )}
 
           {intakeError && (
             <div className="p-2.5 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-lg flex items-center gap-2">
@@ -534,208 +532,131 @@ export const Reception: React.FC<ReceptionProps> = ({
             </div>
           )}
 
-          <div className="pt-4 border-t border-slate-100 flex items-center justify-between">
-            <div className="text-xs text-slate-500">
-              Consultation Fee:{' '}
-              <strong className="text-slate-900 font-mono">
-                ₹{doctors.find((d) => d.id === formData.selectedDoctorId)?.consultationFee || 600}
-              </strong>
-            </div>
-
+          <div className="pt-4 border-t border-slate-100 flex items-center justify-end">
             <button
-              onClick={handleCompleteIntake}
-              disabled={savingIntake}
-              className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg shadow-sm transition-all flex items-center gap-2 disabled:opacity-60"
+              type="button"
+              onClick={() => void handleCompleteIntake()}
+              disabled={savingIntake || abhaBlocked || (path === 'abha-sandbox' && !verified)}
+              className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg shadow-sm flex items-center gap-2 disabled:opacity-60"
             >
               {savingIntake ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CreditCard className="w-4 h-4" />}
-              <span>{savingIntake ? 'Saving…' : 'Issue OPD Token & Check-In'}</span>
+              <span>
+                {savingIntake
+                  ? 'Saving…'
+                  : path === 'abha-sandbox'
+                    ? 'Link ABHA & continue'
+                    : formData.issueToken
+                      ? 'Save chart & issue token'
+                      : 'Save chart'}
+              </span>
             </button>
           </div>
         </div>
 
-        {/* Right 6 Cols: Patient Directory & Search with ABHA status */}
         <div className="lg:col-span-6 bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="font-bold text-sm text-slate-900">Registered Patients & ABHA Status</h3>
-              <p className="text-xs text-slate-500">Search by ABHA address, UHID, or phone</p>
+              <h3 className="font-bold text-sm text-slate-900">Clinic patients</h3>
+              <p className="text-xs text-slate-500">Same tenant list — search is optional after intake handoff</p>
             </div>
-            <span className="text-xs font-mono text-slate-500">
-              {searchResults.length} patients
-            </span>
+            <span className="text-xs font-mono text-slate-500">{searchResults.length} patients</span>
           </div>
 
-          {/* Search Bar */}
+          {handoffPatient && (
+            <div className="p-3 rounded-lg border border-emerald-200 bg-emerald-50 text-xs space-y-2">
+              <div className="flex items-center gap-2">
+                <UserCheck className="w-4 h-4 text-emerald-700" />
+                <strong className="text-slate-900">
+                  Selected {handoffPatient.name} ({handoffPatient.uhid})
+                </strong>
+                {abhaStatusChip(handoffPatient).linked && (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-800 border border-amber-200">
+                    {LINKED_SANDBOX_CHIP}
+                  </span>
+                )}
+              </div>
+              <p className="text-slate-600">Continue on the clinical thread without searching again.</p>
+              <div className="flex flex-wrap gap-2">
+                <button type="button" onClick={() => goHandoff('queue')} className="px-3 py-1.5 bg-white border border-slate-200 rounded-md font-semibold text-slate-800">
+                  OPD Queue
+                </button>
+                <button type="button" onClick={() => goHandoff('rx')} className="px-3 py-1.5 bg-blue-600 text-white rounded-md font-semibold">
+                  Smart Rx
+                </button>
+                <button type="button" onClick={() => goHandoff('billing')} className="px-3 py-1.5 bg-white border border-slate-200 rounded-md font-semibold text-slate-800">
+                  Bill
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="relative">
             <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search by name, UHID, @abdm, or 91-XXXX..."
-              className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-purple-500"
+              placeholder="Search by name, UHID, ABHA, or phone"
+              className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
 
-          {/* Patient Cards List */}
           <div className="space-y-2.5 max-h-[460px] overflow-y-auto pr-1">
             {searchResults.length === 0 && (
               <div className="p-6 text-center border border-dashed border-slate-200 rounded-lg bg-slate-50">
                 <UserPlus className="w-8 h-8 text-slate-400 mx-auto mb-2" />
                 <p className="text-sm font-semibold text-slate-800">No patients in this clinic yet</p>
-                <p className="text-xs text-slate-500 mt-1">
-                  Use the intake form to register the first patient. They will appear here after save and after refresh.
-                </p>
+                <p className="text-xs text-slate-500 mt-1">Use practice-simple intake to register the first patient.</p>
               </div>
             )}
             {searchResults.map((p) => {
-              const isKyc = isAbhaLinked(p);
+              const chip = abhaStatusChip(p);
               return (
                 <div
                   key={p.id}
-                  className="p-3.5 rounded-lg border border-slate-200 hover:border-purple-300 hover:bg-purple-50/30 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs group"
+                  className="p-3.5 rounded-lg border border-slate-200 hover:border-blue-300 hover:bg-blue-50/30 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
                 >
                   <div className="space-y-1">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <strong className="font-bold text-slate-900 text-sm">{p.name}</strong>
                       <span className="text-slate-500 font-mono text-[11px]">{p.uhid}</span>
-                      {isKyc ? (
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1">
-                          <BadgeCheck className="w-3 h-3" /> ABHA · NHA sandbox
+                      {chip.linked ? (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-800 border border-amber-200">
+                          {LINKED_SANDBOX_CHIP}
                         </span>
                       ) : (
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
-                          KYC Pending
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-50 text-slate-600 border border-slate-200">
+                          No ABHA
                         </span>
                       )}
                     </div>
-
                     <div className="text-slate-500 flex items-center gap-3 text-[11px]">
-                      <span>{p.age} Yrs / {p.gender}</span>
+                      <span>
+                        {p.age} Yrs / {p.gender}
+                      </span>
                       <span>•</span>
                       <span>{p.phone}</span>
-                      {p.abhaAddress && (
-                        <>
-                          <span>•</span>
-                          <span className="font-mono text-purple-700 font-medium">{p.abhaAddress}</span>
-                        </>
-                      )}
                     </div>
                   </div>
-
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => {
-                        onSelectPatient(p);
-                        if (onStartConsult) onStartConsult(p);
-                        else onSwitchToConsultation();
-                      }}
-                      className="px-3 py-1.5 bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1"
-                    >
-                      <span>Start Consult</span>
-                      <ArrowRight className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onSelectPatient(p);
+                      setHandoffPatient(p);
+                      if (onStartConsult) onStartConsult(p);
+                      else onSwitchToConsultation();
+                    }}
+                    className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg text-xs font-semibold flex items-center gap-1"
+                  >
+                    <span>Start Consult</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
                 </div>
               );
             })}
           </div>
         </div>
       </div>
-
-      {/* ABHA QR Scanner Simulator Modal */}
-      {showQrModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4 animate-scale-up">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-lg bg-purple-100 text-purple-700 flex items-center justify-center">
-                  <QrCode className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-base text-slate-900">ABHA QR Scanner (NHA sandbox)</h3>
-                  <p className="text-xs text-slate-500">Scan physical card or select simulated sandbox patient</p>
-                </div>
-              </div>
-              <button
-                onClick={() => setShowQrModal(false)}
-                className="text-slate-400 hover:text-slate-600 p-1"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="bg-slate-50 border-2 border-dashed border-slate-300 rounded-xl p-6 text-center space-y-3">
-              <Camera className="w-10 h-10 text-purple-600 mx-auto" />
-              <div>
-                <p className="text-sm font-semibold text-slate-800">Scan ABHA QR Code via Camera</p>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Point camera at the patient's Ayushman Bharat Health Card QR code
-                </p>
-              </div>
-            </div>
-
-            <div>
-              <span className="text-xs font-bold uppercase tracking-wider text-slate-500 block mb-2">
-                Or Select Verified Sandbox Card to Simulate Scan:
-              </span>
-              <div className="space-y-2 text-xs">
-                <button
-                  disabled={qrSimulating}
-                  onClick={() =>
-                    handleSampleQrScan({
-                      name: 'Rajiv Saxena',
-                      abhaNumber: '91-4428-9102-3841',
-                      abhaAddress: 'rajiv.saxena@abdm',
-                      phone: '+91 98234 55667',
-                      gender: 'Male',
-                      age: 44,
-                      address: 'A-502, Orchid Woods, Whitefield, Bengaluru',
-                    })
-                  }
-                  className="w-full text-left p-3 rounded-lg border border-slate-200 hover:border-purple-400 hover:bg-purple-50 transition-all flex items-center justify-between"
-                >
-                  <div>
-                    <div className="font-bold text-slate-900">Rajiv Saxena (44 Yrs / Male)</div>
-                    <div className="text-slate-500 font-mono text-[11px]">
-                      ABHA: 91-4428-9102-3841 • rajiv.saxena@abdm
-                    </div>
-                  </div>
-                  <span className="px-2 py-1 bg-emerald-100 text-emerald-800 font-semibold rounded text-[10px]">
-                    Verified
-                  </span>
-                </button>
-
-                <button
-                  disabled={qrSimulating}
-                  onClick={() =>
-                    handleSampleQrScan({
-                      name: 'Priyanka Mukherjee',
-                      abhaNumber: '91-7291-0384-9182',
-                      abhaAddress: 'priyanka.m@abdm',
-                      phone: '+91 98311 44556',
-                      gender: 'Female',
-                      age: 52,
-                      address: '18/2, Gariahat Road, South Kolkata',
-                    })
-                  }
-                  className="w-full text-left p-3 rounded-lg border border-slate-200 hover:border-purple-400 hover:bg-purple-50 transition-all flex items-center justify-between"
-                >
-                  <div>
-                    <div className="font-bold text-slate-900">Priyanka Mukherjee (52 Yrs / Female)</div>
-                    <div className="text-slate-500 font-mono text-[11px]">
-                      ABHA: 91-7291-0384-9182 • priyanka.m@abdm
-                    </div>
-                  </div>
-                  <span className="px-2 py-1 bg-emerald-100 text-emerald-800 font-semibold rounded text-[10px]">
-                    Verified
-                  </span>
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
