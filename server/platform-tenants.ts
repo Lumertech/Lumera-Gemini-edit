@@ -403,10 +403,10 @@ export function ensureTenantSubscription(
        JOIN users u ON u.id = s.user_id
        WHERE u.tenant_id = ?
        ORDER BY CASE u.role
-         WHEN 'super_admin' THEN 0
-         WHEN 'CLINIC_ADMIN' THEN 1
-         WHEN 'polyclinic_admin' THEN 2
-         WHEN 'doctor' THEN 3
+         WHEN 'CLINIC_ADMIN' THEN 0
+         WHEN 'polyclinic_admin' THEN 1
+         WHEN 'doctor' THEN 2
+         WHEN 'super_admin' THEN 8
          ELSE 9
        END, s.started_at ASC
        LIMIT 1`
@@ -547,6 +547,17 @@ export function seedSuspendedDemoTenant(database: DatabaseSync) {
 export function seedPlatformTenantData(database: DatabaseSync) {
   seedPlanCatalog(database);
   backfillTenantSubscriptions(database);
+  const demoSub = database
+    .prepare("SELECT plan_code FROM tenant_subscriptions WHERE tenant_id = ?")
+    .get(DEMO_TENANT_ID) as unknown as { plan_code?: string } | undefined;
+  if (demoSub?.plan_code === "internal" || !demoSub) {
+    upsertTenantSubscription(database, DEMO_TENANT_ID, {
+      planCode: "clinic",
+      status: "active",
+      billingSource: "demo",
+      notes: "Demo polyclinic tenant — catalog Clinic plan, not a PSP charge.",
+    });
+  }
   seedSuspendedDemoTenant(database);
 }
 
