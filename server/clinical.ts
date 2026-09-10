@@ -7,6 +7,7 @@ import {
   PRESCRIPTION_SPECIALTY_KEYS,
   writeAudit,
 } from "./db.ts";
+import { clinicLine, getTenantLetterhead } from "./letterhead.ts";
 import { requireAuth } from "./auth.ts";
 
 function tenantIdOf(req: Request): string {
@@ -298,6 +299,8 @@ function insertPrescription(tenantId: string, body: Record<string, unknown>) {
   const rxNumber = uniqueRxNumber(String(body.rxNumber || body.rx_number || ""));
   const now = new Date().toISOString();
   const date = String(body.date || now.slice(0, 10));
+  const letterhead = getTenantLetterhead(tenantId);
+  const stamped = clinicLine(letterhead);
   getDb()
     .prepare(
       `INSERT INTO prescriptions (
@@ -335,9 +338,9 @@ function insertPrescription(tenantId: string, body: Record<string, unknown>) {
       String(body.pdfUrl || body.pdf_url || `/api/emr/prescription/${id}/pdf`),
       now,
       body.vitals == null ? null : jsonText(body.vitals, "null"),
-      String(body.clinicName || body.clinic_name || ""),
-      String(body.clinicAddress || body.clinic_address || ""),
-      String(body.clinicPhone || body.clinic_phone || ""),
+      String(body.clinicName || body.clinic_name || stamped.name || ""),
+      String(body.clinicAddress || body.clinic_address || stamped.address || ""),
+      String(body.clinicPhone || body.clinic_phone || stamped.phone || ""),
       String(body.qrVerificationUrl || body.qr_verification_url || `https://lumera.health/rx/${rxNumber}`),
       String(body.whatsappSentStatus || body.whatsapp_sent_status || "unsent"),
       String(body.specialtyType || body.specialty_type || ""),
