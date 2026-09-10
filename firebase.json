@@ -6,8 +6,8 @@
       {
         "source": "**",
         "run": {
-          "serviceId": "cloud-run-service-id",
-          "region": "us-central1"
+          "serviceId": "lumera-gemini-edit",
+          "region": "asia-south1"
         }
       }
     ]
