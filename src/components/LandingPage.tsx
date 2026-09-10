@@ -96,7 +96,7 @@ export const REGIONAL_LANGUAGES = [
 const FALLBACK: SitePayload = {
   settings: {
     brandName: "Lumera",
-    badgeText: "ABDM-Compliant AI Healthcare OS & Voice Receptionist",
+    badgeText: "ABDM-aligned AI Healthcare OS & Voice Receptionist (sandbox path)",
     heroTitle: "Next-Gen AI Receptionist & Ambient Clinical Scribe",
     heroSubtitle:
       "Automate patient call answering, 3-click WhatsApp appointment scheduling, and ambient consultation SOAP notes across regional Indian languages.",
@@ -333,7 +333,7 @@ export const LandingPage: React.FC = () => {
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> No Credit Card Required
             </span>
             <span className="flex items-center gap-1.5">
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> ABDM Milestone Ready
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> ABDM sandbox milestone path
             </span>
           </div>
         </div>
@@ -367,8 +367,8 @@ export const LandingPage: React.FC = () => {
                 <ShieldCheck className="w-5 h-5" />
               </div>
               <div className="text-left">
-                <span className="block text-xs font-bold text-slate-100 uppercase tracking-wider">ABDM M1, M2, M3 Certified</span>
-                <span className="text-[11px] text-slate-400 font-medium">National Health Authority Compliant</span>
+                <span className="block text-xs font-bold text-slate-100 uppercase tracking-wider">ABDM M1–M3 · NHA sandbox path</span>
+                <span className="text-[11px] text-slate-400 font-medium">Ayushman Bharat Digital Mission</span>
               </div>
             </div>
 
@@ -377,7 +377,7 @@ export const LandingPage: React.FC = () => {
                 <MessageSquare className="w-5 h-5" />
               </div>
               <div className="text-left">
-                <span className="block text-xs font-bold text-slate-100 uppercase tracking-wider">Official Meta WhatsApp Tech Provider</span>
+                <span className="block text-xs font-bold text-slate-100 uppercase tracking-wider">WhatsApp Cloud API · Meta Tech Provider path</span>
                 <span className="text-[11px] text-slate-400 font-medium">WhatsApp Cloud Business API</span>
               </div>
             </div>
@@ -387,8 +387,8 @@ export const LandingPage: React.FC = () => {
                 <Lock className="w-5 h-5" />
               </div>
               <div className="text-left">
-                <span className="block text-xs font-bold text-slate-100 uppercase tracking-wider">256-Bit Encryption / DPDP Act Compliant</span>
-                <span className="text-[11px] text-slate-400 font-medium">Digital Data Protection &amp; HIPAA Grade</span>
+                <span className="block text-xs font-bold text-slate-100 uppercase tracking-wider">256-Bit Encryption / Built for DPDP Act 2023</span>
+                <span className="text-[11px] text-slate-400 font-medium">Digital Personal Data Protection Act 2023</span>
               </div>
             </div>
           </div>
@@ -417,8 +417,8 @@ export const LandingPage: React.FC = () => {
           <div className="rounded-xl border border-white/10 bg-white/5 backdrop-blur-sm px-4 py-5 hover:border-cyan-500/30 transition-all">
             <ShieldCheck className="w-6 h-6 mx-auto mb-2 text-cyan-400" />
             <div className="font-manrope text-2xl sm:text-3xl font-bold text-white">100%</div>
-            <div className="text-xs text-slate-400 mt-1">ABDM M1, M2, M3 Ready</div>
-            <span className="inline-block mt-2 px-2 py-0.5 rounded-full bg-cyan-500/10 text-[10px] text-cyan-300 font-medium">FHIR R4 &amp; ABHA Validated</span>
+            <div className="text-xs text-slate-400 mt-1">ABDM sandbox-ready architecture</div>
+            <span className="inline-block mt-2 px-2 py-0.5 rounded-full bg-cyan-500/10 text-[10px] text-cyan-300 font-medium">FHIR R4 &amp; ABHA-aligned</span>
           </div>
         </div>
       </section>
@@ -434,7 +434,7 @@ export const LandingPage: React.FC = () => {
             Core Clinical Benefits
           </h2>
           <p className="text-slate-400 mt-2 max-w-2xl mx-auto text-sm">
-            Everything your practice needs to eliminate typing, automate patient communication, and remain fully ABDM-compliant.
+            Everything your practice needs to eliminate typing, automate patient communication, and stay on the ABDM sandbox path.
           </p>
         </div>
 
@@ -467,7 +467,7 @@ export const LandingPage: React.FC = () => {
                 </li>
                 <li className="flex items-center gap-2">
                   <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                  <span>Full ABDM FHIR R4 Bundle compliant output</span>
+                  <span>ABDM-aligned FHIR R4 Bundle output</span>
                 </li>
               </ul>
             </div>
@@ -494,7 +494,7 @@ export const LandingPage: React.FC = () => {
                 </p>
               </div>
               <p className="text-slate-300 text-xs leading-relaxed">
-                Automate appointment booking, live OPD token updates, and follow-up reminders via official Meta WhatsApp Business API.
+                Automate appointment booking, live OPD token updates, and follow-up reminders via WhatsApp Cloud API (Meta Tech Provider path).
               </p>
               <ul className="space-y-2 text-xs text-slate-400 pt-2 border-t border-slate-800">
                 <li className="flex items-center gap-2">
@@ -543,7 +543,7 @@ export const LandingPage: React.FC = () => {
                 </li>
                 <li className="flex items-center gap-2">
                   <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                  <span>Generic brand substitution &amp; Jan Aushadhi finder</span>
+                  <span>Generic / brand swap · Jan Aushadhi planned</span>
                 </li>
                 <li className="flex items-center gap-2">
                   <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
@@ -725,7 +725,7 @@ export const LandingPage: React.FC = () => {
                     <span className="text-xs font-bold">Lumera Clinic Assistant</span>
                     <CheckCircle2 className="w-3 h-3 text-emerald-300 fill-emerald-300 text-emerald-900" />
                   </div>
-                  <span className="text-[9px] text-emerald-200 block">Official Business Account • Online</span>
+                  <span className="text-[9px] text-emerald-200 block">Simulator Business Account</span>
                 </div>
               </div>
 
@@ -896,7 +896,7 @@ export const LandingPage: React.FC = () => {
             Ready to Experience the AI Clinical Operating System?
           </h3>
           <p className="text-slate-300 text-xs sm:text-sm max-w-xl mx-auto">
-            Get instant sandbox access in 30 seconds. No credit card required. Certified for ABDM M1, M2 &amp; M3 milestones.
+            Get instant sandbox access in 30 seconds. No credit card required. Designed for ABDM M1–M3 &amp; DPDP (sandbox path).
           </p>
           <div className="pt-2">
             <button
@@ -921,7 +921,7 @@ export const LandingPage: React.FC = () => {
             <span>Lumera Health</span>
           </div>
           <p className="text-xs text-slate-400 max-w-2xl mx-auto">
-            Empowering Indian healthcare with multilingual ambient scribing, automated WhatsApp patient self-service, and government-certified ABDM interoperability.
+            Empowering Indian healthcare with multilingual ambient scribing, automated WhatsApp patient self-service, and ABDM-aligned interoperability (sandbox path).
           </p>
 
           {/* Policy Links */}
@@ -967,10 +967,10 @@ export const LandingPage: React.FC = () => {
           {/* Compliance declaration */}
           <div className="pt-2 text-[11px] text-slate-500 space-y-1">
             <p>
-              Lumera Health Systems is an official Meta Tech Provider &amp; WhatsApp Business Solution Partner.
+              Lumera Health Systems is building toward Meta Tech Provider.
             </p>
             <p>
-              Certified compliant with National Health Authority (NHA) Ayushman Bharat Digital Mission (ABDM M1, M2, M3) &amp; Digital Personal Data Protection Act 2023.
+              Designed for ABDM M1–M3 &amp; DPDP (sandbox path).
             </p>
             <p className="text-slate-600 pt-2">
               © {new Date().getFullYear()} Lumera Solutions LLP. All rights reserved.
