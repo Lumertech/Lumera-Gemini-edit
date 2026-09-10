@@ -35,6 +35,7 @@ import {
   TenantLetterhead,
 } from './types';
 import { apiFetch } from './api/http';
+import type { LinkAbhaRequest, LinkAbhaResponse } from './lib/patientOnboarding';
 import { useAuth } from './auth/AuthContext';
 import {
   UNASSIGNED_PATIENT,
@@ -237,6 +238,7 @@ export default function ClinicianApp() {
   };
 
   const persistPatientCreate = async (input: Patient) => {
+    // Practice-simple: name/phone only. No ABHA, consent, or KYC on this path.
     const { patient } = await apiFetch<{ patient: Patient }>('/api/patients', {
       method: 'POST',
       body: JSON.stringify({
@@ -252,31 +254,19 @@ export default function ClinicianApp() {
         ...(input.address ? { address: input.address } : {}),
       }),
     });
-    let next = patient;
-    if (input.abhaNumber || input.abhaAddress) {
-      const abha = await apiFetch<{
-        success: boolean;
-        id: string;
-        abhaNumber: string;
-        abhaAddress: string;
-        kycStatus: Patient['kycStatus'];
-      }>(`/api/patients/${patient.id}/abha`, {
-        method: 'PATCH',
-        body: JSON.stringify({
-          abhaNumber: input.abhaNumber,
-          abhaAddress: input.abhaAddress,
-          ...(input.kycStatus ? { kycStatus: input.kycStatus } : {}),
-        }),
-      });
-      next = {
-        ...patient,
-        abhaNumber: abha.abhaNumber,
-        abhaAddress: abha.abhaAddress,
-        kycStatus: abha.kycStatus,
-      };
-    }
-    setPatients((prev) => [next, ...prev.filter((p) => p.id !== next.id && p.id !== input.id)]);
-    return next;
+    setPatients((prev) => [patient, ...prev.filter((p) => p.id !== patient.id && p.id !== input.id)]);
+    setCurrentPatient(patient);
+    return patient;
+  };
+
+  const persistLinkAbha = async (body: LinkAbhaRequest): Promise<LinkAbhaResponse> => {
+    const result = await apiFetch<LinkAbhaResponse>('/api/patients/link-abha', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+    setPatients((prev) => [result.patient, ...prev.filter((p) => p.id !== result.patient.id)]);
+    setCurrentPatient(result.patient);
+    return result;
   };
 
   const handleSavePrescription = (newRx: Prescription) => {
@@ -479,6 +469,12 @@ export default function ClinicianApp() {
               firstRunHint={intakeIntent !== 'none' || patients.length === 0}
               openRxAfterSave={intakeIntent === 'start-consult'}
               onSelectPatient={setCurrentPatient}
+              onLinkAbha={async (body) => persistLinkAbha(body)}
+              onHandoff={(pat, view) => {
+                setCurrentPatient(pat);
+                setIntakeIntent('none');
+                setCurrentView(view);
+              }}
               onAddNewPatient={async (newPat) => {
                 try {
                   return await persistPatientCreate(newPat);
