@@ -75,12 +75,23 @@ export const OutboundTriggerPanel: React.FC<OutboundTriggerPanelProps> = ({
         }),
       });
 
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        sandbox?: boolean;
+        channel?: string;
+        notice?: string;
+      };
       if (res.ok) {
-        setStatusMessage(`Successfully dispatched ${eventType.replace(/_/g, ' ')} to WhatsApp!`);
+        const via = data.sandbox
+          ? 'SANDBOX / DEV-ONLY (not Graph)'
+          : data.channel === 'graph'
+            ? 'WhatsApp Cloud API'
+            : 'WhatsApp';
+        setStatusMessage(`Dispatched ${eventType.replace(/_/g, ' ')} via ${via}.`);
         fetchEvents();
         if (onNotificationSent) onNotificationSent();
       } else {
-        setStatusMessage('Error dispatching outbound notification');
+        setStatusMessage(data.error || 'Error dispatching outbound notification');
       }
     } catch (err) {
       console.error('Error triggering notification:', err);

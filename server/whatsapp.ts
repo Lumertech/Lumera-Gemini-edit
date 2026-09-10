@@ -1,6 +1,19 @@
 import { Router, type Request, type Response } from "express";
 import { getDb } from "./db.ts";
 import { GoogleGenAI } from "@google/genai";
+import { requireAuth } from "./auth.ts";
+import {
+  buildBookConfirmationText,
+  buildReceiptText,
+  buildReminderText,
+  handleWhatsAppCloudSendBody,
+  isCloudDispatchFailure,
+  lookupAppointmentForWhatsAppSend,
+  mapEventTypeToKind,
+  sandboxBanner,
+  sendBookConfirmation,
+  type AppointmentSendFields,
+} from "./graph-whatsapp.ts";
 
 let defaultGenAIClient: GoogleGenAI | null = null;
 function getDefaultGenAI(): GoogleGenAI | null {
@@ -389,7 +402,7 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
   // ----------------------------------------------------
   // 3. DYNAMIC EMR & DATABASE ACTIONS (Live Queries)
   // ----------------------------------------------------
-  router.post("/emr-action", (req: Request, res: Response) => {
+  router.post("/emr-action", async (req: Request, res: Response) => {
     try {
       const { action, patientPhone = "+91 98234 55667", payload = {} } = req.body;
       const db = getDb();
@@ -543,6 +556,23 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
           now
         );
 
+        const confirmation = await sendBookConfirmation({
+          to: patientPhone,
+          patientName: String(patient?.name || "Rajiv Saxena"),
+          appointment: {
+            id: apptId,
+            patientName: String(patient?.name || "Rajiv Saxena"),
+            patientPhone,
+            doctorName: String(doc.name || ""),
+            specialty: String(doc.specialty || ""),
+            date,
+            timeSlot,
+            tokenNumber: nextToken,
+            uhid: String(patient?.uhid || "LUM-2026-0106"),
+          },
+          db,
+        });
+
         return res.json({
           success: true,
           appointment: {
@@ -557,6 +587,19 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
             patientName: patient?.name || "Rajiv Saxena",
             uhid: patient?.uhid || "LUM-2026-0106",
           },
+          confirmation: {
+            ok: confirmation.ok,
+            channel: confirmation.channel,
+            sandbox: confirmation.ok && confirmation.channel === "sandbox",
+            messageId: confirmation.ok ? confirmation.messageId : undefined,
+            error: isCloudDispatchFailure(confirmation) ? confirmation.error : undefined,
+            notice:
+              confirmation.ok && confirmation.channel === "sandbox"
+                ? "SANDBOX / DEV-ONLY book confirmation recorded locally (not Graph)."
+                : confirmation.ok
+                  ? "Book confirmation sent via WhatsApp Cloud API."
+                  : "Appointment stored; WhatsApp confirmation was not delivered.",
+          },
         });
       }
 
@@ -567,34 +610,77 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
     }
   });
 
+  function recordLocalOutboundChat(opts: {
+    patientPhone: string;
+    messageContent: string;
+    buttons: string[] | null;
+    media: Record<string, unknown> | null;
+    sandbox: boolean;
+  }) {
+    const db = getDb();
+    const now = new Date().toISOString();
+    const timeDisplay = getDisplayTime();
+    let conv = db.prepare("SELECT id FROM whatsapp_conversations WHERE patient_phone = ?").get(opts.patientPhone) as
+      | { id: string }
+      | undefined;
+    const convId = conv ? conv.id : "conv-rajiv";
+    const inboxBody = opts.sandbox ? sandboxBanner(opts.messageContent) : opts.messageContent;
+    const msgId = `msg-out-${crypto.randomUUID().slice(0, 8)}`;
+    db.prepare(
+      `INSERT INTO whatsapp_messages (id, conversation_id, patient_phone, sender, staff_name, content, time_display, buttons, media, status, created_at)
+       VALUES (?, ?, ?, 'bot', 'Automated Trigger Engine', ?, ?, ?, ?, ?, ?)`
+    ).run(
+      msgId,
+      convId,
+      opts.patientPhone,
+      inboxBody,
+      timeDisplay,
+      opts.buttons ? JSON.stringify(opts.buttons) : null,
+      opts.media ? JSON.stringify(opts.media) : null,
+      opts.sandbox ? "sandbox_recorded" : "sent",
+      now
+    );
+    db.prepare(
+      `UPDATE whatsapp_conversations
+       SET last_message = ?, last_message_time = ?, updated_at = ?
+       WHERE id = ?`
+    ).run(inboxBody.slice(0, 80), timeDisplay, now, convId);
+  }
+
   // ----------------------------------------------------
-  // 4. OUTBOUND AUTOMATED TRIGGER ENGINE
+  // 4. OUTBOUND AUTOMATED TRIGGER ENGINE (Graph dual-path)
   // ----------------------------------------------------
-  router.post("/outbound/trigger", (req: Request, res: Response) => {
+  const handleOutboundTrigger = async (req: Request, res: Response) => {
     try {
       const {
-        eventType, // 'appointment_reminder' | 'post_consultation_dispatch' | 'queue_token_update'
+        eventType, // 'appointment_reminder' | 'appointment_reminder_24h' | 'book_confirmation' | 'payment_receipt' | ...
         patientPhone = "+91 98234 55667",
         patientName = "Rajiv Saxena",
         customPayload = {},
+        appointmentId,
+        appointment,
+        receipt,
       } = req.body;
 
       if (!eventType) return res.status(400).json({ error: "eventType is required" });
 
       const db = getDb();
-      const now = new Date().toISOString();
-      const timeDisplay = getDisplayTime();
-      const eventId = `evt-${crypto.randomUUID().slice(0, 8)}`;
-
+      const kind = mapEventTypeToKind(eventType);
       let details = "";
       let messageContent = "";
       let buttons: string[] | null = null;
       let media: Record<string, unknown> | null = null;
+      const aptFields = (appointment || {}) as Partial<AppointmentSendFields>;
 
-      if (eventType === "appointment_reminder") {
-        details = `Pre-visit alert sent to ${patientName} (${patientPhone}) for scheduled consultation.`;
-        messageContent = `⏰ *Appointment Reminder - Lumera Polyclinic*\n\nNamaste ${patientName},\nThis is a confirmation that your consultation with *Dr. Siddharth Varma (PT)* is scheduled for today at *09:00 AM*.\n\n📍 *Room*: Rehab Suite 105\n🎫 *Your Token Number*: *#01*\n\nPlease tap below to confirm your arrival at the front desk or request a reschedule.`;
+      if (kind === "appointment_reminder") {
+        details = `Pre-visit alert for ${patientName} (${patientPhone}).`;
         buttons = ["✅ Confirm Arrival", "🔄 Reschedule Slot", "📍 Get Clinic Directions"];
+      } else if (kind === "book_confirmation") {
+        details = `Book confirmation for ${patientName} (${patientPhone}).`;
+        buttons = ["🎫 View My Queue", "📍 Clinic Directions"];
+      } else if (kind === "payment_receipt") {
+        details = `Payment receipt for ${patientName} (${patientPhone}).`;
+        buttons = ["📄 View Receipt"];
       } else if (eventType === "post_consultation_dispatch") {
         details = `Post-consultation digital packet dispatched: Prescription & Diagnostic invoice.`;
         messageContent = `📋 *Consultation Summary & Prescription Signed*\n\nNamaste ${patientName},\nDr. Siddharth Varma has signed your clinical prescription (*RX-2026-0106*).\n\nYour digital consultation receipt (#INV-9921 for ₹700) has been generated. You can preview or download your verified medical documents below.`;
@@ -615,52 +701,109 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
         messageContent = customPayload.message || "Important health notification from Lumera Polyclinic.";
       }
 
-      // Record outbound event
-      db.prepare(`
-        INSERT INTO whatsapp_outbound_events (id, event_type, patient_phone, patient_name, status, details, action_payload, sent_at)
-        VALUES (?, ?, ?, ?, 'delivered', ?, ?, ?)
-      `).run(eventId, eventType, patientPhone, patientName, details, JSON.stringify(customPayload), now);
+      if (kind === "appointment_reminder" && !messageContent) {
+        const lookedUp = lookupAppointmentForWhatsAppSend(db, {
+          appointmentId,
+          patientPhone,
+        });
+        const apt: AppointmentSendFields = {
+          id: aptFields.id || lookedUp?.id || "",
+          patientName: aptFields.patientName || lookedUp?.patientName || patientName,
+          patientPhone,
+          doctorName: aptFields.doctorName || lookedUp?.doctorName || "your clinician",
+          specialty: aptFields.specialty || lookedUp?.specialty || "",
+          date: aptFields.date || lookedUp?.date || "",
+          timeSlot: aptFields.timeSlot || lookedUp?.timeSlot || "",
+          tokenNumber: aptFields.tokenNumber ?? lookedUp?.tokenNumber ?? 0,
+          uhid: aptFields.uhid || lookedUp?.uhid,
+        };
+        messageContent = buildReminderText(apt, patientName);
+      } else if (kind === "book_confirmation" && !messageContent) {
+        const lookedUp = lookupAppointmentForWhatsAppSend(db, {
+          appointmentId,
+          patientPhone,
+        });
+        messageContent = buildBookConfirmationText(
+          {
+            id: aptFields.id || lookedUp?.id || "",
+            patientName: aptFields.patientName || lookedUp?.patientName || patientName,
+            patientPhone,
+            doctorName: aptFields.doctorName || lookedUp?.doctorName || "your clinician",
+            specialty: aptFields.specialty || lookedUp?.specialty || "",
+            date: aptFields.date || lookedUp?.date || "",
+            timeSlot: aptFields.timeSlot || lookedUp?.timeSlot || "",
+            tokenNumber: aptFields.tokenNumber ?? lookedUp?.tokenNumber ?? 0,
+            uhid: aptFields.uhid || lookedUp?.uhid,
+          },
+          patientName
+        );
+      } else if (kind === "payment_receipt" && !messageContent) {
+        const amount = customPayload.amount ?? receipt?.amount;
+        if (amount === undefined || amount === null || String(amount).trim() === "") {
+          return res.status(400).json({ error: "receipt.amount is required for payment_receipt" });
+        }
+        messageContent = buildReceiptText({
+          patientName,
+          amount,
+          currency: customPayload.currency ?? receipt?.currency,
+          invoiceId: customPayload.invoiceId ?? receipt?.invoiceId,
+          date: customPayload.date ?? receipt?.date,
+        });
+      }
 
-      // Also deliver message into the patient's active WhatsApp chat
-      let conv = db.prepare("SELECT id FROM whatsapp_conversations WHERE patient_phone = ?").get(patientPhone) as { id: string } | undefined;
-      const convId = conv ? conv.id : "conv-rajiv";
-
-      const msgId = `msg-out-${crypto.randomUUID().slice(0, 8)}`;
-      db.prepare(`
-        INSERT INTO whatsapp_messages (id, conversation_id, patient_phone, sender, staff_name, content, time_display, buttons, media, status, created_at)
-        VALUES (?, ?, ?, 'bot', 'Automated Trigger Engine', ?, ?, ?, ?, 'delivered', ?)
-      `).run(
-        msgId,
-        convId,
-        patientPhone,
-        messageContent,
-        timeDisplay,
-        buttons ? JSON.stringify(buttons) : null,
-        media ? JSON.stringify(media) : null,
-        now
+      const send = await handleWhatsAppCloudSendBody(
+        {
+          kind,
+          eventType,
+          to: patientPhone,
+          patientName,
+          appointmentId,
+          appointment: {
+            ...aptFields,
+            patientName: aptFields.patientName || patientName,
+            patientPhone: aptFields.patientPhone || patientPhone,
+          },
+          receipt,
+          text: messageContent || customPayload.message,
+          amount: customPayload.amount ?? receipt?.amount,
+          currency: customPayload.currency ?? receipt?.currency,
+          invoiceId: customPayload.invoiceId ?? receipt?.invoiceId,
+        },
+        { db }
       );
 
-      db.prepare(`
-        UPDATE whatsapp_conversations
-        SET last_message = ?, last_message_time = ?, updated_at = ?
-        WHERE id = ?
-      `).run(messageContent.slice(0, 80), timeDisplay, now, convId);
+      if (send.status >= 400) {
+        return res.status(send.status).json(send.json);
+      }
 
-      res.status(201).json({
-        ok: true,
-        eventId,
+      const sandbox = Boolean(send.json.sandbox);
+      if (!messageContent) {
+        messageContent = `${kind} notification for ${patientName}`;
+      }
+
+      recordLocalOutboundChat({
+        patientPhone,
+        messageContent: messageContent || `${kind} notification`,
+        buttons,
+        media,
+        sandbox,
+      });
+
+      res.status(send.status).json({
+        ...send.json,
         eventType,
         details,
-        messageDispatched: messageContent,
+        messageDispatched: sandbox && messageContent ? sandboxBanner(messageContent) : messageContent,
       });
     } catch (err: unknown) {
       console.error("Error triggering outbound notification:", err);
       res.status(500).json({ error: "Failed to dispatch outbound notification" });
     }
-  });
+  };
 
-  // Get Outbound Event Logs
-  router.get("/outbound/events", (_req: Request, res: Response) => {
+  router.post(["/outbound/trigger", "/outbound-trigger"], handleOutboundTrigger);
+
+  const handleOutboundEvents = (_req: Request, res: Response) => {
     try {
       const db = getDb();
       const events = db.prepare(`
@@ -671,6 +814,19 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
       res.json({ events });
     } catch (err: unknown) {
       res.status(500).json({ error: "Failed to fetch outbound events" });
+    }
+  };
+
+  router.get(["/outbound/events", "/outbound-events"], handleOutboundEvents);
+
+  // Platform / Meta call site: reminder, book confirmation, payment receipt (#24 Graph path, #25 assist)
+  router.post("/cloud-send", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const result = await handleWhatsAppCloudSendBody(req.body || {}, { db: getDb() });
+      res.status(result.status).json(result.json);
+    } catch (err: unknown) {
+      console.error("Error in WhatsApp cloud-send:", err);
+      res.status(500).json({ error: "Failed to dispatch WhatsApp Cloud message" });
     }
   });
 

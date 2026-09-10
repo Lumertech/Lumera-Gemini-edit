@@ -1,7 +1,8 @@
 import { Router, type Request, type Response } from "express";
 import { getDb } from "./db.ts";
 import { isProduction, sandboxSimulatorsEnabled } from "./runtime.ts";
-import { resolveGraphCredentials } from "./graph-whatsapp.ts";
+import { handleWhatsAppCloudSendBody, resolveGraphCredentials } from "./graph-whatsapp.ts";
+import { requireAuth } from "./auth.ts";
 import { facebookOAuthConfigured } from "./facebook-oauth.ts";
 import {
   buildMetaReadinessOverview,
@@ -438,6 +439,18 @@ export function createMetaRouter(): Router {
     } catch (err: unknown) {
       console.error("[Meta Send Test Error]", err);
       res.status(500).json({ error: "Failed to dispatch test WhatsApp message" });
+    }
+  });
+
+  // POST /api/meta/cloud-send — Wave 2 Graph dual-path (reminders / confirmations / receipts)
+  // Production hard-fails without secrets; non-prod without creds is SANDBOX SQLite.
+  router.post("/cloud-send", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const result = await handleWhatsAppCloudSendBody(req.body || {}, { db: getDb() });
+      res.status(result.status).json(result.json);
+    } catch (err: unknown) {
+      console.error("[Meta Cloud Send Error]", err);
+      res.status(500).json({ error: "Failed to dispatch WhatsApp Cloud message" });
     }
   });
 
