@@ -67,6 +67,7 @@ export default function ClinicianApp() {
   const [activeSoapData, setActiveSoapData] = useState<SoapNote | null>(null);
   const [selectedSpecialty, setSelectedSpecialty] = useState<PolyclinicSpecialty | 'All'>('All');
   const [isHexaOpen, setIsHexaOpen] = useState(false);
+  const [intakeIntent, setIntakeIntent] = useState<'none' | 'register' | 'start-consult'>('none');
 
   const clinicSettings = useMemo(
     () => clinicSettingsFromSession(user, currentDoctor),
@@ -186,9 +187,19 @@ export default function ClinicianApp() {
   };
 
   const persistAppointmentPatch = async (id: string, body: Partial<Appointment>) => {
+    const patch: {
+      status?: Appointment['status'];
+      tokenNumber?: number;
+      vitals?: Vitals;
+      isPaid?: boolean;
+    } = {};
+    if (body.status !== undefined) patch.status = body.status;
+    if (body.tokenNumber !== undefined) patch.tokenNumber = body.tokenNumber;
+    if (body.vitals !== undefined) patch.vitals = body.vitals;
+    if (body.isPaid !== undefined) patch.isPaid = body.isPaid;
     const { appointment } = await apiFetch<{ appointment: Appointment }>(`/api/appointments/${id}`, {
       method: 'PATCH',
-      body: JSON.stringify(body),
+      body: JSON.stringify(patch),
     });
     setAppointments((prev) => prev.map((a) => (a.id === id ? appointment : a)));
     return appointment;
@@ -197,19 +208,60 @@ export default function ClinicianApp() {
   const persistAppointmentCreate = async (input: Partial<Appointment>) => {
     const { appointment } = await apiFetch<{ appointment: Appointment }>('/api/appointments', {
       method: 'POST',
-      body: JSON.stringify(input),
+      body: JSON.stringify({
+        patientId: input.patientId,
+        doctorId: input.doctorId,
+        date: input.date || new Date().toISOString().slice(0, 10),
+        timeSlot: input.timeSlot || '',
+        ...(input.type ? { type: input.type } : {}),
+        ...(input.source ? { source: input.source } : {}),
+      }),
     });
-    setAppointments((prev) => [appointment, ...prev.filter((a) => a.id !== appointment.id)]);
+    setAppointments((prev) => [appointment, ...prev.filter((a) => a.id !== appointment.id && a.id !== input.id)]);
     return appointment;
   };
 
   const persistPatientCreate = async (input: Patient) => {
     const { patient } = await apiFetch<{ patient: Patient }>('/api/patients', {
       method: 'POST',
-      body: JSON.stringify(input),
+      body: JSON.stringify({
+        name: input.name,
+        age: input.age,
+        gender: input.gender,
+        phone: input.phone,
+        ...(input.email ? { email: input.email } : {}),
+        ...(input.bloodGroup ? { bloodGroup: input.bloodGroup } : {}),
+        ...(input.allergies ? { allergies: input.allergies } : {}),
+        ...(input.chronicConditions ? { chronicConditions: input.chronicConditions } : {}),
+        ...(input.emergencyContact ? { emergencyContact: input.emergencyContact } : {}),
+        ...(input.address ? { address: input.address } : {}),
+      }),
     });
-    setPatients((prev) => [patient, ...prev.filter((p) => p.id !== patient.id)]);
-    return patient;
+    let next = patient;
+    if (input.abhaNumber || input.abhaAddress) {
+      const abha = await apiFetch<{
+        success: boolean;
+        id: string;
+        abhaNumber: string;
+        abhaAddress: string;
+        kycStatus: Patient['kycStatus'];
+      }>(`/api/patients/${patient.id}/abha`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          abhaNumber: input.abhaNumber,
+          abhaAddress: input.abhaAddress,
+          ...(input.kycStatus ? { kycStatus: input.kycStatus } : {}),
+        }),
+      });
+      next = {
+        ...patient,
+        abhaNumber: abha.abhaNumber,
+        abhaAddress: abha.abhaAddress,
+        kycStatus: abha.kycStatus,
+      };
+    }
+    setPatients((prev) => [next, ...prev.filter((p) => p.id !== next.id && p.id !== input.id)]);
+    return next;
   };
 
   const handleSavePrescription = (newRx: Prescription) => {
@@ -275,14 +327,12 @@ export default function ClinicianApp() {
   };
 
   const handleAddNewToken = (newToken: Partial<Appointment>) => {
-    setAppointments((prev) => [newToken as Appointment, ...prev]);
     void persistAppointmentCreate(newToken).catch((err) => {
       console.error('Failed to persist token', err);
     });
   };
 
   const handleBookAppointment = (newApt: Partial<Appointment>) => {
-    setAppointments((prev) => [newApt as Appointment, ...prev]);
     void persistAppointmentCreate(newApt).catch((err) => {
       console.error('Failed to persist appointment', err);
     });
@@ -366,7 +416,23 @@ export default function ClinicianApp() {
           ) : (
             <>
               {currentView === 'welcome' && (
-                <WelcomeSetupDashboard onSelectView={setCurrentView} />
+                <WelcomeSetupDashboard
+                  hasPatients={patients.length > 0}
+                  hasSelectedPatient={Boolean(currentPatient.id)}
+                  onAddPatients={() => {
+                    setIntakeIntent('register');
+                    setCurrentView('reception');
+                  }}
+                  onStartFirstConsultation={() => {
+                    if (currentPatient.id) {
+                      setCurrentView('rx');
+                      return;
+                    }
+                    setIntakeIntent('start-consult');
+                    setCurrentView('reception');
+                  }}
+                  onAddStaff={() => setCurrentView('team')}
+                />
               )}
 
               {currentView === 'settings' && (
@@ -388,43 +454,38 @@ export default function ClinicianApp() {
               patients={patients}
               doctors={doctors}
               appointments={appointments}
+              firstRunHint={intakeIntent !== 'none' || patients.length === 0}
+              openRxAfterSave={intakeIntent === 'start-consult'}
               onSelectPatient={setCurrentPatient}
               onAddNewPatient={async (newPat) => {
                 try {
                   return await persistPatientCreate(newPat);
                 } catch (err) {
                   console.error('Failed to persist patient', err);
-                  setPatients((prev) => [newPat, ...prev.filter((p) => p.id !== newPat.id)]);
-                  return newPat;
+                  throw err instanceof Error ? err : new Error('Could not save patient');
                 }
               }}
               onCheckInPatient={async (pat, doc, type) => {
-                const newApt: Appointment = {
-                  id: 'apt-' + Date.now(),
-                  tokenNumber: appointments.length + 1,
-                  patientId: pat.id,
-                  patientName: pat.name,
-                  uhid: pat.uhid,
-                  patientPhone: pat.phone,
-                  doctorId: doc.id,
-                  doctorName: doc.name,
-                  specialty: doc.specialty as PolyclinicSpecialty,
-                  date: new Date().toISOString().split('T')[0],
-                  timeSlot: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
-                  status: 'Waiting',
-                  type: (type as Appointment['type']) || 'New Consultation',
-                  source: 'Walk-in',
-                  consultationFee: doc.consultationFee,
-                  isPaid: false,
-                };
-                setAppointments((prev) => [...prev, newApt]);
                 try {
-                  await persistAppointmentCreate(newApt);
+                  await persistAppointmentCreate({
+                    patientId: pat.id,
+                    doctorId: doc.id,
+                    date: new Date().toISOString().split('T')[0],
+                    timeSlot: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
+                    type: (type as Appointment['type']) || 'New Consultation',
+                    source: 'Walk-in',
+                  });
                 } catch (err) {
                   console.error('Failed to persist check-in', err);
+                  throw err instanceof Error ? err : new Error('Could not issue OPD token');
                 }
               }}
-              onSwitchToConsultation={() => setCurrentView('ambient')}
+              onSwitchToConsultation={() => setCurrentView('rx')}
+              onStartConsult={(pat) => {
+                setCurrentPatient(pat);
+                setIntakeIntent('none');
+                setCurrentView('rx');
+              }}
             />
           )}
 
@@ -493,11 +554,10 @@ export default function ClinicianApp() {
               doctors={doctors}
               patients={patients}
               onCheckInPatient={async (name, phone, specialty) => {
-                const newUHID = `UHID-2026-${Math.floor(1000 + Math.random() * 9000)}`;
                 const draftPat: Patient = {
-                  id: 'p-' + Date.now(),
+                  id: '',
                   name,
-                  uhid: newUHID,
+                  uhid: '',
                   age: 32,
                   gender: 'Female',
                   phone,
@@ -507,38 +567,22 @@ export default function ClinicianApp() {
                   emergencyContact: phone,
                   lastVisit: 'Today',
                 };
-                let newPat = draftPat;
                 try {
-                  newPat = await persistPatientCreate(draftPat);
+                  const newPat = await persistPatientCreate(draftPat);
+                  const doc =
+                    doctors.find((d) => d.specialty.toLowerCase().includes(specialty.toLowerCase())) ||
+                    currentDoctor;
+                  await persistAppointmentCreate({
+                    patientId: newPat.id,
+                    doctorId: doc.id,
+                    date: new Date().toISOString().split('T')[0],
+                    timeSlot: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
+                    type: 'New Consultation',
+                    source: 'Walk-in',
+                  });
                 } catch (err) {
-                  console.error('Failed to persist kiosk patient', err);
-                  setPatients((prev) => [draftPat, ...prev]);
+                  console.error('Failed to persist kiosk check-in', err);
                 }
-                const doc =
-                  doctors.find((d) => d.specialty.toLowerCase().includes(specialty.toLowerCase())) ||
-                  currentDoctor;
-                const newApt: Appointment = {
-                  id: 'apt-' + Date.now(),
-                  tokenNumber: appointments.length + 1,
-                  patientId: newPat.id,
-                  patientName: newPat.name,
-                  uhid: newPat.uhid,
-                  patientPhone: newPat.phone,
-                  doctorId: doc.id,
-                  doctorName: doc.name,
-                  specialty: doc.specialty as PolyclinicSpecialty,
-                  date: new Date().toISOString().split('T')[0],
-                  timeSlot: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
-                  status: 'Waiting',
-                  type: 'New Consultation',
-                  source: 'Walk-in',
-                  consultationFee: doc.consultationFee,
-                  isPaid: false,
-                };
-                setAppointments((prev) => [...prev, newApt]);
-                void persistAppointmentCreate(newApt).catch((err) => {
-                  console.error('Failed to persist kiosk token', err);
-                });
               }}
             />
           )}

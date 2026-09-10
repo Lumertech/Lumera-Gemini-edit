@@ -76,11 +76,20 @@ function getTenantPrescription(tenantId: string, id: string) {
     .get(id, tenantId) as Record<string, unknown> | undefined;
 }
 
-function uniqueUhid(requested?: string): string {
-  const candidate = String(requested || "").trim() || yearToken("LUM");
-  const taken = getDb().prepare("SELECT id FROM patients WHERE uhid = ?").get(candidate);
-  if (!taken) return candidate;
+function uniqueUhid(): string {
+  for (let i = 0; i < 4; i++) {
+    const candidate = yearToken("LUM");
+    const taken = getDb().prepare("SELECT id FROM patients WHERE uhid = ?").get(candidate);
+    if (!taken) return candidate;
+  }
   return yearToken("LUM");
+}
+
+function getDoctorById(id: string) {
+  if (!id) return undefined;
+  return getDb().prepare("SELECT * FROM doctors WHERE id = ?").get(id) as
+    | Record<string, unknown>
+    | undefined;
 }
 
 function uniqueRxNumber(requested?: string): string {
@@ -107,12 +116,8 @@ function insertPatient(tenantId: string, body: Record<string, unknown>) {
   if (!name || !phone) {
     throw Object.assign(new Error("name and phone are required"), { status: 400 });
   }
-  const id = String(body.id || "").trim() || shortId("pat");
-  const existing = getDb().prepare("SELECT id FROM patients WHERE id = ?").get(id);
-  if (existing) {
-    throw Object.assign(new Error("Patient id already exists"), { status: 409 });
-  }
-  const uhid = uniqueUhid(body.uhid as string | undefined);
+  const id = shortId("pat");
+  const uhid = uniqueUhid();
   const now = new Date().toISOString();
   const lastVisit = body.lastVisit ? String(body.lastVisit) : now.slice(0, 10);
   try {
@@ -177,6 +182,8 @@ function insertAppointment(tenantId: string, body: Record<string, unknown>, acto
   if (existing) {
     throw Object.assign(new Error("Appointment id already exists"), { status: 409 });
   }
+  const doctorId = String(body.doctorId || body.doctor_id || actor?.id || "");
+  const doctor = getDoctorById(doctorId);
   const now = new Date().toISOString();
   const vitals = body.vitals == null ? null : jsonText(body.vitals, "null");
   getDb()
@@ -192,12 +199,12 @@ function insertAppointment(tenantId: string, body: Record<string, unknown>, acto
       tenantId,
       tokenNumber,
       mappedPatient.id,
-      String(body.patientName || body.patient_name || mappedPatient.name),
-      String(body.patientPhone || body.patient_phone || mappedPatient.phone),
-      String(body.uhid || mappedPatient.uhid),
-      String(body.doctorId || body.doctor_id || actor?.id || ""),
-      String(body.doctorName || body.doctor_name || actor?.name || ""),
-      String(body.specialty || "General Medicine"),
+      mappedPatient.name,
+      mappedPatient.phone,
+      mappedPatient.uhid,
+      doctorId,
+      String(body.doctorName || body.doctor_name || doctor?.name || actor?.name || ""),
+      String(body.specialty || doctor?.specialty || "General Medicine"),
       date,
       String(body.timeSlot || body.time_slot || ""),
       String(body.type || "New Consultation"),
@@ -280,6 +287,25 @@ function insertPrescription(tenantId: string, body: Record<string, unknown>) {
   return getTenantPrescription(tenantId, id)!;
 }
 
+/**
+ * Wave 1A contract (patient / appointment). Auth = requireAuth (session JWT
+ * cookie or Authorization: Bearer). Tenant = req.user.tenantId.
+ *
+ * GET  /patients              → { patients: Patient[] }
+ * POST /patients              → { patient }  body { name, age, gender, phone, email?,
+ *   bloodGroup?, allergies?, chronicConditions?, emergencyContact?, address? }
+ *   server assigns id + uhid
+ * PATCH /patients/:id         → { patient }  partial
+ * PATCH /patients/:id/abha    → { success, id, abhaNumber, abhaAddress, kycStatus }
+ *   body { abhaNumber, abhaAddress, kycStatus? }
+ *
+ * GET  /appointments          → { appointments: Appointment[] } (tokenNumber, status, vitals)
+ * POST /appointments          → { appointment }  body { patientId, doctorId, date, timeSlot, type?, source? }
+ *   server fills names/uhid/phone, next tokenNumber, default status Waiting
+ * PATCH /appointments/:id     → { appointment }  body { status?, tokenNumber?, vitals?, isPaid? }
+ *
+ * Prescriptions CRUD is owned by Platform #13 — do not expand here.
+ */
 export function createClinicalRouter(): Router {
   const api = Router();
 
