@@ -10,6 +10,7 @@
 import { Router, type Request, type Response } from "express";
 import crypto from "node:crypto";
 import { getDb, writeAudit } from "./db.ts";
+import { allowOtpEcho } from "./auth.ts";
 import {
   createPrescriptionBundle,
   createOPConsultBundle,
@@ -25,7 +26,6 @@ import {
 // it accepts a fixed test OTP for local development convenience only. This
 // must never echo the OTP back to the client, or accept the fixed test OTP,
 // once NODE_ENV=production is set.
-const DEV_OTP_ECHO = process.env.NODE_ENV !== "production";
 
 // ABDM Sandbox Default Configuration
 const ABDM_CONFIG = {
@@ -339,7 +339,7 @@ export function createAbdmRouter(): Router {
         message: `OTP sent successfully to Aadhaar-registered mobile ending in ******${lastFour}`,
         // Only present in non-production local dev, where there is no real
         // ABDM/UIDAI OTP delivery channel wired up yet.
-        testOtp: DEV_OTP_ECHO ? "123456" : undefined,
+        testOtp: allowOtpEcho() ? "123456" : undefined,
         expiresInSeconds: 600,
       });
     } catch (err: any) {
@@ -363,10 +363,10 @@ export function createAbdmRouter(): Router {
         return res.status(400).json({ error: "Transaction session expired or invalid. Please request a new OTP." });
       }
 
-      const allowFixedTestOtp = DEV_OTP_ECHO && otp === "123456";
+      const allowFixedTestOtp = allowOtpEcho() && otp === "123456";
       if (otp !== session.otp && !allowFixedTestOtp) {
         return res.status(400).json({
-          error: DEV_OTP_ECHO ? "Incorrect OTP. Use 123456 in local Sandbox mode." : "Incorrect OTP.",
+          error: allowOtpEcho() ? "Incorrect OTP. Use 123456 in local Sandbox mode." : "Incorrect OTP.",
         });
       }
 

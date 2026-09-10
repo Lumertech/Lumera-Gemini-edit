@@ -23,10 +23,12 @@ import {
   ADMIN_ROLES,
   CLINICIAN_ROLES,
   CLINIC_MANAGER_ROLES,
+  allowSkipOtp,
   clearSessionCookie,
   createSession,
   destroySession,
   getSessionId,
+  otpEchoPayload,
   requireAuth,
   requireRole,
   setSessionCookie,
@@ -37,14 +39,6 @@ import { hashPassword, verifyPassword } from "./password.ts";
 
 const uploadDir = path.join(process.cwd(), "uploads");
 fs.mkdirSync(uploadDir, { recursive: true });
-
-// SECURITY: OTPs must never be echoed back to the client in a real deployment —
-// doing so lets anyone bypass verification by reading the network response
-// instead of the actual WhatsApp/SMS message. This only echoes the OTP when
-// NODE_ENV is explicitly non-production, purely for local development where
-// no live WhatsApp Business API is connected yet. It is always false once
-// NODE_ENV=production is set (e.g. in any real/staging/prod deployment).
-const DEV_OTP_ECHO = process.env.NODE_ENV !== "production";
 
 const upload = multer({
   storage: multer.diskStorage({
@@ -178,7 +172,7 @@ export function createApiRouter(): Router {
   api.post("/auth/login", (req: Request, res: Response) => {
     const email = String(req.body?.email || "").trim().toLowerCase();
     const password = String(req.body?.password || "");
-    const skipOtp = Boolean(req.body?.skipOtp);
+    const skipOtp = Boolean(req.body?.skipOtp) && allowSkipOtp();
 
     if (!email || !password) {
       return res.status(400).json({ error: "Email and password are required" });
@@ -191,7 +185,7 @@ export function createApiRouter(): Router {
       return res.status(403).json({ error: "This account has been disabled" });
     }
 
-    // If skipOtp requested (e.g. bypass explicitly configured)
+    // skipOtp is honored only when NODE_ENV !== "production" (local/demo).
     if (skipOtp) {
       const sid = createSession(user.id);
       setSessionCookie(res, sid);
@@ -228,7 +222,7 @@ export function createApiRouter(): Router {
       verificationId,
       phone,
       email: user.email,
-      demoOtp: DEV_OTP_ECHO ? otp : undefined,
+      ...otpEchoPayload(otp),
       expiresAt,
       user: publicUser(user),
       message: "Security code dispatched to your WhatsApp Business number.",
@@ -265,7 +259,7 @@ export function createApiRouter(): Router {
       return res.status(403).json({ error: "This account has been disabled" });
     }
 
-    if (req.body?.skipOtp) {
+    if (req.body?.skipOtp && allowSkipOtp()) {
       const sid = createSession(user.id);
       setSessionCookie(res, sid);
       getDb()
@@ -301,7 +295,7 @@ export function createApiRouter(): Router {
       verificationId,
       phone,
       email: user.email,
-      demoOtp: DEV_OTP_ECHO ? otp : undefined,
+      ...otpEchoPayload(otp),
       provider,
       user: publicUser(user),
       message: `Signed in with ${provider === "google" ? "Google" : "Facebook"}. Please verify your WhatsApp Business number.`,
@@ -335,7 +329,7 @@ export function createApiRouter(): Router {
       ok: true,
       verificationId,
       phone,
-      demoOtp: DEV_OTP_ECHO ? otp : undefined,
+      ...otpEchoPayload(otp),
       expiresAt,
       status: "delivered",
       channel: "WhatsApp Cloud Business API",
@@ -408,6 +402,7 @@ export function createApiRouter(): Router {
           .get(`%${last10}%`, record.phone) as unknown as DbUser | undefined;
       }
 
+      // Fail closed: never fall back to an arbitrary doctor/user (LIMIT 1) if lookup misses.
       if (!user) {
         return res.status(404).json({ error: "User profile could not be located." });
       }
@@ -737,7 +732,7 @@ export function createApiRouter(): Router {
       verificationId,
       phone,
       email,
-      demoOtp: DEV_OTP_ECHO ? otp : undefined,
+      ...otpEchoPayload(otp),
       tenantId,
       userId,
       hfrId,
@@ -895,7 +890,7 @@ export function createApiRouter(): Router {
       ok: true,
       verificationId,
       phone,
-      demoOtp: DEV_OTP_ECHO ? otp : undefined,
+      ...otpEchoPayload(otp),
       message: `Password reset verification code dispatched to WhatsApp number ${phone}.`,
     });
   });
@@ -1612,7 +1607,7 @@ export function createApiRouter(): Router {
   });
 
   // EMR Patients & Appointments live endpoints
-  api.get("/patients", (req, res) => {
+  api.get("/patients", requireAuth, (req, res) => {
     try {
       if (!req.user?.tenantId || !isDemoWorkspaceUser({ tenant_id: req.user.tenantId, id: req.user.id })) {
         return res.json({ patients: [] });
@@ -1643,7 +1638,7 @@ export function createApiRouter(): Router {
     }
   });
 
-  api.patch("/patients/:id/abha", (req, res) => {
+  api.patch("/patients/:id/abha", requireAuth, (req, res) => {
     try {
       const { id } = req.params;
       const { abhaNumber, abhaAddress, kycStatus = "VERIFIED" } = req.body;
@@ -1659,7 +1654,7 @@ export function createApiRouter(): Router {
     }
   });
 
-  api.get("/appointments", (req, res) => {
+  api.get("/appointments", requireAuth, (req, res) => {
     try {
       if (!req.user?.tenantId || !isDemoWorkspaceUser({ tenant_id: req.user.tenantId, id: req.user.id })) {
         return res.json({ appointments: [] });

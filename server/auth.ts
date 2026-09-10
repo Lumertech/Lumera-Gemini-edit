@@ -4,7 +4,32 @@ import { getDb, publicUser, type DbUser, type UserRole } from "./db.ts";
 
 const COOKIE = "lumera_sid";
 const SESSION_DAYS = 7;
-const JWT_SECRET = process.env.JWT_SECRET || "lumera-medical-suite-jwt-secret-key-2026";
+
+export function isProductionEnv(nodeEnv = process.env.NODE_ENV): boolean {
+  return nodeEnv === "production";
+}
+
+/** skipOtp is a local/demo convenience only — never honor it in production. */
+export function allowSkipOtp(nodeEnv = process.env.NODE_ENV): boolean {
+  return !isProductionEnv(nodeEnv);
+}
+
+/** Echo OTPs in JSON only outside production (no live WhatsApp/SMS in local). */
+export function allowOtpEcho(nodeEnv = process.env.NODE_ENV): boolean {
+  return !isProductionEnv(nodeEnv);
+}
+
+export function otpEchoPayload(otp: string): { demoOtp?: string } {
+  return allowOtpEcho() ? { demoOtp: otp } : {};
+}
+
+export function getJwtSecret(): string {
+  const secret = process.env.JWT_SECRET;
+  if (typeof secret !== "string" || secret.trim() === "") {
+    throw new Error("JWT_SECRET environment variable is required");
+  }
+  return secret;
+}
 
 export interface JwtTokenPayload {
   userId: string;
@@ -15,12 +40,12 @@ export interface JwtTokenPayload {
 }
 
 export function signJwtToken(payload: JwtTokenPayload): string {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: `${SESSION_DAYS}d` });
+  return jwt.sign(payload, getJwtSecret(), { expiresIn: `${SESSION_DAYS}d` });
 }
 
 export function verifyJwtToken(token: string): JwtTokenPayload | null {
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
+    const decoded = jwt.verify(token, getJwtSecret());
     if (decoded && typeof decoded === "object" && (decoded as any).userId) {
       return decoded as JwtTokenPayload;
     }

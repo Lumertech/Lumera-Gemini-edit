@@ -5,7 +5,7 @@ import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import { initDatabase } from "./server/db.ts";
-import { attachUser } from "./server/auth.ts";
+import { attachUser, requireAuth } from "./server/auth.ts";
 import { createApiRouter } from "./server/api.ts";
 import { createMetaRouter } from "./server/meta.ts";
 import { createAbdmRouter } from "./server/abdm.ts";
@@ -23,6 +23,7 @@ app.get("/healthz", (_req, res) => {
 });
 app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 app.use(attachUser);
+app.use("/api/gemini", requireAuth);
 app.use("/api/v3", createAbdmRouter());
 app.use("/v3", createAbdmRouter());
 app.use("/api", createApiRouter());
