@@ -34,7 +34,7 @@ import {
 } from "./auth.ts";
 import { hashPassword, verifyPassword } from "./password.ts";
 import { isProduction } from "./runtime.ts";
-import { resolveGraphCredentials, sendWhatsAppGraphMessage } from "./graph-whatsapp.ts";
+import { dispatchWhatsAppCloudMessage, isCloudDispatchFailure } from "./graph-whatsapp.ts";
 import {
   FacebookOAuthError,
   facebookLoginDialogUrl,
@@ -176,35 +176,41 @@ export type OtpDispatchResult =
   | { ok: false; error: string; channel: "none" | "graph" };
 
 async function dispatchWhatsAppOtpMessage(phone: string, name: string, otp: string, purpose: string): Promise<OtpDispatchResult> {
-  const creds = resolveGraphCredentials(getDb());
-  if (creds) {
-    const graph = await sendWhatsAppGraphMessage({ credentials: creds, to: phone, otp, purpose });
-    if (graph.ok) {
-      recordWhatsAppOtpEvent({
-        phone,
-        name,
-        otp,
-        purpose,
-        status: "sent",
-        details: `WhatsApp Cloud API OTP accepted for ${purpose}`,
-        payload: { purpose, channel: "graph", messageId: graph.messageId },
-      });
-      return { ok: true, channel: "graph", messageId: graph.messageId };
-    }
-    const graphError = "error" in graph ? graph.error : "Graph OTP send failed.";
+  const sent = await dispatchWhatsAppCloudMessage({
+    to: phone,
+    kind: "otp",
+    textBody: `Lumera verification code: ${otp}\nAction: ${purpose}\nValid for 5 minutes. Do not share this code.`,
+    otp,
+    purpose,
+    db: getDb(),
+  });
+
+  if (sent.ok && sent.channel === "graph") {
     recordWhatsAppOtpEvent({
       phone,
       name,
       otp,
       purpose,
-      status: "failed",
-      details: `Graph OTP send failed for ${purpose}: ${graphError}`,
-      payload: { purpose, channel: "graph", error: graphError },
+      status: "sent",
+      details: `WhatsApp Cloud API OTP accepted for ${purpose}`,
+      payload: { purpose, channel: "graph", messageId: sent.messageId },
     });
-    return { ok: false, error: graphError, channel: "graph" };
+    return { ok: true, channel: "graph", messageId: sent.messageId };
   }
 
-  if (isProduction()) {
+  if (isCloudDispatchFailure(sent)) {
+    if (sent.channel === "graph") {
+      recordWhatsAppOtpEvent({
+        phone,
+        name,
+        otp,
+        purpose,
+        status: "failed",
+        details: `Graph OTP send failed for ${purpose}: ${sent.error}`,
+        payload: { purpose, channel: "graph", error: sent.error },
+      });
+      return { ok: false, error: sent.error, channel: "graph" };
+    }
     recordWhatsAppOtpEvent({
       phone,
       name,

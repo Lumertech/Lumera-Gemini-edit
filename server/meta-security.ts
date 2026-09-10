@@ -151,7 +151,7 @@ export function buildMetaReadinessOverview(opts: {
       url: opts.webhookUrl,
     },
     {
-      item: "Graph API credentials for login OTP (token + phone_number_id)",
+      item: "Graph API credentials for OTP, reminders, confirmations, and receipts (token + phone_number_id)",
       passed: opts.graphOtpConfigured,
     },
     {
