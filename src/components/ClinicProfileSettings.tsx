@@ -305,7 +305,7 @@ export const ClinicProfileSettings: React.FC<ClinicProfileSettingsProps> = ({
         {busy ? "Saving..." : <><Save className="w-4 h-4" /> Save profile</>}
       </button>
       <p className="text-[11px] text-slate-400 mt-3 flex items-center gap-1">
-        <PenLine className="w-3 h-3" /> Practice type was set during onboarding and can be changed by completing setup again from this page after selecting type on the original wizard if needed.
+        <PenLine className="w-3 h-3" /> Practice type is chosen at account creation (Individual by default) and finished in the matching onboarding track. Roster and multi-specialty chrome stay hidden for individual practices.
       </p>
     </div>
   );

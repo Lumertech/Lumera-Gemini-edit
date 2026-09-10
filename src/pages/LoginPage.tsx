@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { destinationAfterAuth, useAuth } from "../auth/AuthContext";
 import { useNav } from "../nav/NavigationContext";
+import { DEFAULT_PRACTICE_TYPE, type PracticeType } from "../lib/practiceOnboarding";
 import { PolyclinicSpecialty } from "../types";
 
 const SPECIALTIES: PolyclinicSpecialty[] = [
@@ -94,7 +95,7 @@ export const LoginPage: React.FC = () => {
   } | null>(null);
 
   // Register Form States (Multi-Tenant Practice Creation)
-  const [regPracticeType, setRegPracticeType] = useState<"individual" | "multispecialty">("multispecialty");
+  const [regPracticeType, setRegPracticeType] = useState<PracticeType>(DEFAULT_PRACTICE_TYPE);
   const [clinicName, setClinicName] = useState("");
   const [specialty, setSpecialty] = useState<PolyclinicSpecialty>("General Medicine");
   const [selectedCountry, setSelectedCountry] = useState(COUNTRIES[0]);
@@ -1126,15 +1127,16 @@ export const LoginPage: React.FC = () => {
                     </div>
                   </div>
                 )}
-                {/* Practice Account Type Selector */}
+                {/* Practice Account Type — Individual is the default; multi-specialty is explicit opt-in */}
                 <div className="space-y-1.5 mb-3">
                   <label className="block text-xs font-semibold text-slate-300">
-                    Select Practice Account Type *
+                    Practice type *
                   </label>
                   <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
                       onClick={() => setRegPracticeType("individual")}
+                      data-testid="register-practice-individual"
                       className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
                         regPracticeType === "individual"
                           ? "bg-emerald-950/40 border-emerald-500 text-white shadow-sm"
@@ -1143,24 +1145,25 @@ export const LoginPage: React.FC = () => {
                     >
                       <div className="text-xs font-bold flex items-center gap-1.5">
                         <Stethoscope className="w-3.5 h-3.5 text-emerald-400" />
-                        Individual Practice
+                        Individual practice
                       </div>
-                      <div className="text-[10px] text-slate-500 mt-0.5">Solo practitioner account</div>
+                      <div className="text-[10px] text-emerald-400/80 mt-0.5 font-medium">Default — solo clinician</div>
                     </button>
                     <button
                       type="button"
-                      onClick={() => setRegPracticeType("multispecialty")}
+                      onClick={() => setRegPracticeType("polyclinic")}
+                      data-testid="register-practice-polyclinic"
                       className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
-                        regPracticeType === "multispecialty"
-                          ? "bg-emerald-950/40 border-emerald-500 text-white shadow-sm"
+                        regPracticeType === "polyclinic"
+                          ? "bg-indigo-950/50 border-indigo-400 text-white shadow-sm"
                           : "bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200"
                       }`}
                     >
                       <div className="text-xs font-bold flex items-center gap-1.5">
-                        <Building2 className="w-3.5 h-3.5 text-emerald-400" />
-                        Multispecialty Clinic
+                        <Building2 className="w-3.5 h-3.5 text-indigo-300" />
+                        Multi-specialty / polyclinic
                       </div>
-                      <div className="text-[10px] text-slate-500 mt-0.5">Admin + Doctor Invites</div>
+                      <div className="text-[10px] text-slate-500 mt-0.5">Opt-in — admin + roster</div>
                     </button>
                   </div>
                 </div>
@@ -1177,7 +1180,11 @@ export const LoginPage: React.FC = () => {
                       required
                       value={clinicName}
                       onChange={(e) => setClinicName(e.target.value)}
-                      placeholder="e.g. Apex Multispecialty Clinic"
+                      placeholder={
+                        regPracticeType === "polyclinic"
+                          ? "e.g. City Care Multispecialty Hospital"
+                          : "e.g. Dr. Mehta Clinic"
+                      }
                       className="w-full pl-9 pr-3.5 py-2 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
                     />
                   </div>
@@ -1187,7 +1194,7 @@ export const LoginPage: React.FC = () => {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-semibold text-slate-300 mb-1">
-                      Primary Specialty
+                      {regPracticeType === "polyclinic" ? "Primary department" : "Your specialty"}
                     </label>
                     <select
                       value={specialty}
@@ -1226,7 +1233,9 @@ export const LoginPage: React.FC = () => {
                 {/* Director Name */}
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1">
-                    Practice Director / Lead Clinician Name *
+                    {regPracticeType === "polyclinic"
+                      ? "Practice director / clinic admin *"
+                      : "Your name (as on medical registration) *"}
                   </label>
                   <div className="relative">
                     <Stethoscope className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
@@ -1325,7 +1334,10 @@ export const LoginPage: React.FC = () => {
                     </>
                   ) : (
                     <>
-                      Create Clinic Account <ArrowRight className="w-4 h-4" />
+                      {regPracticeType === "polyclinic"
+                        ? "Create multi-specialty clinic"
+                        : "Create individual practice"}{" "}
+                      <ArrowRight className="w-4 h-4" />
                     </>
                   )}
                 </button>
@@ -1337,6 +1349,7 @@ export const LoginPage: React.FC = () => {
         {/* Single Create Clinic Account Option at Bottom */}
         <div className="mt-6">
           {mode === "signin" ? (
+            <>
             <button
               type="button"
               onClick={() => {
@@ -1346,8 +1359,12 @@ export const LoginPage: React.FC = () => {
               className="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs sm:text-sm font-semibold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-emerald-600/30 group"
             >
               <Sparkles className="w-4 h-4 text-emerald-200 group-hover:text-white" />
-              <span>Create new clinic account</span>
+              <span>Create new practice account</span>
             </button>
+            <p className="mt-2 text-center text-[11px] text-slate-500">
+              New accounts start as an <span className="text-slate-300">individual practice</span>. Multi-specialty is an explicit opt-in.
+            </p>
+            </>
           ) : (
             <button
               type="button"

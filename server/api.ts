@@ -10,6 +10,7 @@ import {
   getDb,
   mapDoctor,
   mapSubscription,
+  assignedRoleForPracticeType,
   normalizePracticeType,
   publicUser,
   seedSubscriptionsIfMissing,
@@ -686,7 +687,7 @@ export function createApiRouter(): Router {
         hprId = hprId || `IN-HPR-${Math.floor(10000000 + Math.random() * 90000000)}`;
         getDb().prepare(`
           INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, clinic_name, avatar_url, whatsapp_verified, hpr_id, hfr_id, onboarding_completed, practice_type, specialty, last_login, created_at)
-          VALUES (?, ?, ?, ?, ?, 'CLINIC_ADMIN', 'active', ?, ?, ?, 1, ?, ?, 0, 'individual', ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, 'doctor', 'active', ?, ?, ?, 1, ?, ?, 0, 'individual', ?, ?, ?)
         `).run(
           userId,
           tenantId,
@@ -800,7 +801,7 @@ export function createApiRouter(): Router {
     const password = String(req.body?.password || "");
     const avatarUrl = String(req.body?.avatarUrl || "");
     const practiceType = normalizePracticeType(req.body?.practiceType);
-    const assignedRole = practiceType === "polyclinic" ? "CLINIC_ADMIN" : "doctor";
+    const assignedRole = assignedRoleForPracticeType(practiceType);
 
     if (!practiceName || !phone || !name || !email) {
       return res.status(400).json({ error: "Practice Name, Director Name, Email, and WhatsApp Phone are required." });
@@ -944,7 +945,7 @@ export function createApiRouter(): Router {
   api.post("/auth/register-practice", handleRegisterPractice);
   api.post("/auth/register-clinic", handleRegisterPractice);
 
-  // Guided Onboarding Completion: saves clinician doctor profile and sets onboarding_completed = 1
+  // Guided Onboarding Completion: saves clinician / facility profile and sets onboarding_completed = 1
   api.post("/auth/complete-onboarding", requireAuth, (req: Request, res: Response) => {
     const userId = req.user!.id;
     const doctorName = req.body?.doctorName ? String(req.body.doctorName).trim() : undefined;
@@ -963,6 +964,18 @@ export function createApiRouter(): Router {
       ? Number(req.body.slotDurationMinutes)
       : undefined;
     const rxTemplate = req.body?.rxTemplate ? String(req.body.rxTemplate).trim() : undefined;
+    const facilityAddress = req.body?.facilityAddress ? String(req.body.facilityAddress).trim() : undefined;
+    const facilityCity = req.body?.facilityCity ? String(req.body.facilityCity).trim() : undefined;
+    const departments = Array.isArray(req.body?.departments)
+      ? (req.body.departments as unknown[])
+          .map((item) => String(item || "").trim())
+          .filter(Boolean)
+      : [];
+    const frontDeskRaw = req.body?.frontDesk && typeof req.body.frontDesk === "object" ? req.body.frontDesk : {};
+    const rosterDoctors = Array.isArray(req.body?.rosterDoctors) ? req.body.rosterDoctors : [];
+    const nextRole = practiceType
+      ? assignedRoleForPracticeType(practiceType, req.user?.role)
+      : undefined;
 
     getDb().prepare(`
       UPDATE users
@@ -970,13 +983,42 @@ export function createApiRouter(): Router {
           practice_type = COALESCE(?, practice_type),
           specialty = COALESCE(?, specialty),
           name = COALESCE(?, name),
-          clinic_name = COALESCE(?, clinic_name)
+          clinic_name = COALESCE(?, clinic_name),
+          role = COALESCE(?, role)
       WHERE id = ?
-    `).run(practiceType || null, specialty || null, doctorName || null, clinicName || null, userId);
+    `).run(
+      practiceType || null,
+      specialty || null,
+      doctorName || null,
+      clinicName || null,
+      nextRole || null,
+      userId
+    );
 
-    if (clinicName && req.user?.tenantId) {
-      getDb().prepare("UPDATE tenants SET name = ?, updated_at = ? WHERE id = ?").run(
-        clinicName,
+    if (req.user?.tenantId) {
+      const tenantSpecialty = departments.length ? departments.join(", ") : specialty;
+      const practiceSettings = JSON.stringify({
+        walkInEnabled: frontDeskRaw.walkInEnabled !== false,
+        sharedQueue: frontDeskRaw.sharedQueue !== false,
+        tokenPrefix: String(frontDeskRaw.tokenPrefix || "OPD").trim() || "OPD",
+        departments,
+        slotDurationMinutes: slotDurationMinutes || 15,
+      });
+      getDb().prepare(`
+        UPDATE tenants
+        SET name = COALESCE(?, name),
+            specialty = COALESCE(?, specialty),
+            address = COALESCE(?, address),
+            city = COALESCE(?, city),
+            practice_settings = ?,
+            updated_at = ?
+        WHERE id = ?
+      `).run(
+        clinicName || null,
+        tenantSpecialty || null,
+        facilityAddress || null,
+        facilityCity || null,
+        practiceSettings,
         new Date().toISOString(),
         req.user.tenantId
       );
@@ -1034,6 +1076,31 @@ export function createApiRouter(): Router {
       );
     }
 
+    if (practiceType === "polyclinic") {
+      const founderName = (doctorName || req.user!.name || "").trim().toLowerCase();
+      for (const raw of rosterDoctors as Array<Record<string, unknown>>) {
+        const rosterName = String(raw?.name || "").trim();
+        const rosterSpecialty = String(raw?.specialty || "").trim();
+        if (!rosterName || !rosterSpecialty) continue;
+        if (rosterName.toLowerCase() === founderName && rosterSpecialty === (specialty || "")) continue;
+        const rosterId = `doc-${crypto.randomUUID().slice(0, 8)}`;
+        getDb().prepare(`
+          INSERT INTO doctors (id, user_id, name, qualification, reg_number, specialty, experience_years, consultation_fee, opd_room, available_days, opd_timing, avatar_url, bio, hpr_id, phone, email, signature_url, slot_duration_minutes, rx_template, active)
+          VALUES (?, NULL, ?, ?, ?, ?, 0, ?, '', '["Mon","Tue","Wed","Thu","Fri","Sat"]', ?, '', '', '', ?, '', '', ?, 'classic', 1)
+        `).run(
+          rosterId,
+          rosterName.startsWith("Dr.") ? rosterName : `Dr. ${rosterName}`,
+          String(raw?.qualification || "").trim(),
+          String(raw?.regNumber || "").trim(),
+          rosterSpecialty,
+          Number(raw?.consultationFee || consultationFee || 0),
+          String(raw?.opdTiming || opdTiming || ""),
+          String(raw?.phone || ""),
+          Number(raw?.slotDurationMinutes || slotDurationMinutes || 15)
+        );
+      }
+    }
+
     const updatedUserRow = getDb().prepare(`
       SELECT u.*,
              COALESCE(NULLIF(u.clinic_name, ''), t.name, '') AS clinic_name,
@@ -1043,11 +1110,20 @@ export function createApiRouter(): Router {
       WHERE u.id = ?
     `).get(userId) as unknown as DbUser;
 
-    writeAudit(getDb(), userId, req.user!.name, "Onboarding Completed", `Completed clinical setup for specialty: ${specialty || "General Medicine"}`);
+    const jwtToken = issueLumeraSession(res, updatedUserRow);
+    writeAudit(
+      getDb(),
+      userId,
+      req.user!.name,
+      "Onboarding Completed",
+      `Completed ${practiceType || "practice"} setup for specialty: ${specialty || "General Medicine"}`
+    );
 
     return res.json({
       ok: true,
       user: publicUser(updatedUserRow),
+      token: jwtToken,
+      homeView: practiceType === "polyclinic" ? "welcome" : "queue",
       message: "Clinical profile verified & practice suite activated successfully.",
     });
   });
