@@ -15,7 +15,35 @@ export type WorkflowView =
   | "portal"
   | "wellness"
   | "therapy-session"
-  | "consult-practice";
+  | "consult-practice"
+  | "physio-session"
+  | "dental-chart";
+
+export type NoteKind =
+  | "medical-rx"
+  | "physio-plan"
+  | "dental-chart"
+  | "service-ticket"
+  | "session-note"
+  | "consult-brief";
+
+export type BillingLens =
+  | "consult-and-pharmacy"
+  | "session-and-package"
+  | "procedure-fee"
+  | "service-and-package"
+  | "session-fee"
+  | "engagement-fee";
+
+export type FormularyLens = "who-eml" | "rehab-exercises" | "dental-materials" | "salon-menu" | "none";
+
+export type QueueSemantics =
+  | "opd-token"
+  | "rehab-session"
+  | "dental-chair"
+  | "treatment-board"
+  | "session-list"
+  | "meeting-board";
 
 export type WorkflowKind =
   | "medical"
@@ -61,6 +89,11 @@ export interface SpecialtyWorkflowPack {
   showMedicalRx: boolean;
   rxModule: PolyclinicSpecialty | null;
   sandboxNotice: string;
+  noteKind: NoteKind;
+  billingLens: BillingLens;
+  formularyLens: FormularyLens;
+  queueSemantics: QueueSemantics;
+  billingLabel: string;
 }
 
 const SANDBOX =
@@ -68,7 +101,7 @@ const SANDBOX =
 
 function medicalPack(specialty: PolyclinicSpecialty, extra: IntakeField[] = []): SpecialtyWorkflowPack {
   return {
-    id: specialty.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+    id: "gp",
     kind: "medical",
     specialty,
     practiceLine: "Doctors & Clinics",
@@ -92,6 +125,11 @@ function medicalPack(specialty: PolyclinicSpecialty, extra: IntakeField[] = []):
     showMedicalRx: true,
     rxModule: specialty,
     sandboxNotice: SANDBOX,
+    noteKind: "medical-rx",
+    billingLens: "consult-and-pharmacy",
+    formularyLens: "who-eml",
+    queueSemantics: "opd-token",
+    billingLabel: "Consult + pharmacy",
   };
 }
 
@@ -139,7 +177,7 @@ const PACKS: Record<string, SpecialtyWorkflowPack> = {
     kind: "dental",
     specialty: "Dental Surgery",
     practiceLine: "Dentists",
-    homeView: "queue",
+    homeView: "dental-chart",
     chartLabel: "Dental chart & visit",
     queueLabel: "Dental chair queue",
     receptionLabel: "Dental intake",
@@ -165,13 +203,18 @@ const PACKS: Record<string, SpecialtyWorkflowPack> = {
     showMedicalRx: true,
     rxModule: "Dental Surgery",
     sandboxNotice: SANDBOX,
+    noteKind: "dental-chart",
+    billingLens: "procedure-fee",
+    formularyLens: "dental-materials",
+    queueSemantics: "dental-chair",
+    billingLabel: "Chair procedures",
   },
   "physiotherapy & rehabilitation": {
     id: "physio",
     kind: "physio",
     specialty: "Physiotherapy & Rehabilitation",
     practiceLine: "Physiotherapists",
-    homeView: "queue",
+    homeView: "physio-session",
     chartLabel: "Physio assessment & session",
     queueLabel: "Rehab session board",
     receptionLabel: "Physio intake",
@@ -192,6 +235,11 @@ const PACKS: Record<string, SpecialtyWorkflowPack> = {
     showMedicalRx: true,
     rxModule: "Physiotherapy & Rehabilitation",
     sandboxNotice: SANDBOX,
+    noteKind: "physio-plan",
+    billingLens: "session-and-package",
+    formularyLens: "rehab-exercises",
+    queueSemantics: "rehab-session",
+    billingLabel: "Sessions & packages",
   },
   "psychiatry & mental health": {
     id: "therapy",
@@ -224,6 +272,11 @@ const PACKS: Record<string, SpecialtyWorkflowPack> = {
     showMedicalRx: false,
     rxModule: null,
     sandboxNotice: SANDBOX,
+    noteKind: "session-note",
+    billingLens: "session-fee",
+    formularyLens: "none",
+    queueSemantics: "session-list",
+    billingLabel: "Session fees",
   },
   "wellness & spas": {
     id: "wellness",
@@ -261,6 +314,11 @@ const PACKS: Record<string, SpecialtyWorkflowPack> = {
     showMedicalRx: false,
     rxModule: null,
     sandboxNotice: "SANDBOX / DEMO wellness desk — services and packages only. Not a medical chart. Not ABDM certified.",
+    noteKind: "service-ticket",
+    billingLens: "service-and-package",
+    formularyLens: "salon-menu",
+    queueSemantics: "treatment-board",
+    billingLabel: "Services & packages",
   },
   consulting: {
     id: "consultant",
@@ -288,6 +346,11 @@ const PACKS: Record<string, SpecialtyWorkflowPack> = {
     showMedicalRx: false,
     rxModule: null,
     sandboxNotice: "SANDBOX / DEMO consultant desk — meetings and invoices. Not a medical chart. Not ABDM certified.",
+    noteKind: "consult-brief",
+    billingLens: "engagement-fee",
+    formularyLens: "none",
+    queueSemantics: "meeting-board",
+    billingLabel: "Engagement fees",
   },
 };
 
@@ -313,6 +376,11 @@ const FRONT_DESK: SpecialtyWorkflowPack = {
   showMedicalRx: false,
   rxModule: null,
   sandboxNotice: SANDBOX,
+  noteKind: "medical-rx",
+  billingLens: "consult-and-pharmacy",
+  formularyLens: "none",
+  queueSemantics: "opd-token",
+  billingLabel: "Desk collections",
 };
 
 const PATIENT_PACK: SpecialtyWorkflowPack = {
@@ -333,6 +401,11 @@ const PATIENT_PACK: SpecialtyWorkflowPack = {
   showMedicalRx: false,
   rxModule: null,
   sandboxNotice: SANDBOX,
+  noteKind: "medical-rx",
+  billingLens: "consult-and-pharmacy",
+  formularyLens: "none",
+  queueSemantics: "opd-token",
+  billingLabel: "",
 };
 
 const ADMIN_PACK: SpecialtyWorkflowPack = {
@@ -353,6 +426,11 @@ const ADMIN_PACK: SpecialtyWorkflowPack = {
   showMedicalRx: false,
   rxModule: null,
   sandboxNotice: SANDBOX,
+  noteKind: "medical-rx",
+  billingLens: "consult-and-pharmacy",
+  formularyLens: "none",
+  queueSemantics: "opd-token",
+  billingLabel: "",
 };
 
 const DEFAULT_MEDICAL = PACKS["general medicine"];
@@ -444,11 +522,27 @@ export function allowedViewsForWorkflow<T extends string>(base: T[], pack: Speci
   if (pack.kind === "wellness") extra.add("wellness");
   if (pack.kind === "therapy") extra.add("therapy-session");
   if (pack.kind === "consultant") extra.add("consult-practice");
+  if (pack.kind === "physio") extra.add("physio-session");
+  if (pack.kind === "dental") extra.add("dental-chart");
   if (!pack.showMedicalRx) {
     extra.delete("rx");
     extra.delete("smart-rx");
   }
   return Array.from(extra) as T[];
+}
+
+/** Structural fingerprint — titles/labels must not be the only difference between verticals. */
+export function workflowFingerprint(pack: SpecialtyWorkflowPack) {
+  return {
+    kind: pack.kind,
+    homeView: pack.homeView,
+    noteKind: pack.noteKind,
+    billingLens: pack.billingLens,
+    formularyLens: pack.formularyLens,
+    queueSemantics: pack.queueSemantics,
+    showMedicalRx: pack.showMedicalRx,
+    intakeKeys: pack.intakeFields.map((f) => f.key).sort(),
+  };
 }
 
 export function specialtyMatchesDoctor(userSpecialty: string | undefined, doctorSpecialty: string): boolean {

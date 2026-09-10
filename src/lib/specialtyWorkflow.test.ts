@@ -4,6 +4,7 @@ import { DEMO_ACCOUNTS, DEMO_PASSWORD } from "./demoAccounts.ts";
 import {
   clinicianHomeView,
   resolveRxModule,
+  workflowFingerprint,
   workflowForUser,
 } from "./specialtyWorkflow.ts";
 import type { AppUser } from "../types.ts";
@@ -52,7 +53,6 @@ describe("specialty workflow packs", () => {
     assert.equal(therapist.kind, "therapy");
     assert.equal(consultant.kind, "consultant");
 
-    assert.notEqual(spa.homeView, gp.homeView);
     assert.equal(spa.showMedicalRx, false);
     assert.equal(consultant.showMedicalRx, false);
     assert.equal(therapist.showMedicalRx, false);
@@ -60,8 +60,47 @@ describe("specialty workflow packs", () => {
     assert.equal(dentist.rxModule, "Dental Surgery");
     assert.equal(clinicianHomeView(fakeUser("wellness@lumera.me", "spa_salon")), "wellness");
     assert.equal(clinicianHomeView(fakeUser("therapist@lumera.me", "therapist")), "therapy-session");
-    assert.equal(clinicianHomeView(fakeUser("dentist@lumera.me", "dentist")), "queue");
-    assert.equal(clinicianHomeView(fakeUser("physio@lumera.me", "physio")), "queue");
+    assert.equal(clinicianHomeView(fakeUser("dentist@lumera.me", "dentist")), "dental-chart");
+    assert.equal(clinicianHomeView(fakeUser("physio@lumera.me", "physio")), "physio-session");
+
+    const homes = new Set([gp.homeView, dentist.homeView, physio.homeView, spa.homeView, therapist.homeView, consultant.homeView]);
+    assert.equal(homes.size, 6, "each vertical must land a different role-home");
+
+    const fingerprints = [gp, dentist, physio, spa, therapist, consultant].map(workflowFingerprint);
+    for (let i = 0; i < fingerprints.length; i++) {
+      for (let j = i + 1; j < fingerprints.length; j++) {
+        assert.notDeepEqual(fingerprints[i], fingerprints[j], "packs must differ by workflow, not titles");
+      }
+    }
+    assert.equal(gp.noteKind, "medical-rx");
+    assert.equal(physio.noteKind, "physio-plan");
+    assert.equal(dentist.noteKind, "dental-chart");
+    assert.equal(spa.noteKind, "service-ticket");
+    assert.equal(gp.billingLens, "consult-and-pharmacy");
+    assert.equal(physio.billingLens, "session-and-package");
+    assert.equal(dentist.billingLens, "procedure-fee");
+    assert.equal(spa.billingLens, "service-and-package");
+    assert.equal(gp.formularyLens, "who-eml");
+    assert.equal(physio.formularyLens, "rehab-exercises");
+    assert.equal(dentist.formularyLens, "dental-materials");
+    assert.equal(spa.formularyLens, "salon-menu");
+    assert.ok(!physio.intakeFields.some((f) => gp.intakeFields.some((g) => g.key === f.key)));
+    assert.ok(!dentist.intakeFields.some((f) => gp.intakeFields.some((g) => g.key === f.key)));
+    assert.ok(!spa.intakeFields.some((f) => gp.intakeFields.some((g) => g.key === f.key)));
+  });
+
+  it("treats cardio/derma/peds as GP pack config, not forked verticals", () => {
+    const gp = workflowForUser(fakeUser("doctor@lumera.me", "gp"));
+    const cardioPack = workflowForUser(fakeUser("cardiology@lumera.me", "Cardiology"));
+    const dermaPack = workflowForUser(fakeUser("dermatology@lumera.me", "Dermatology"));
+    assert.equal(cardioPack.kind, "medical");
+    assert.equal(cardioPack.homeView, gp.homeView);
+    assert.equal(cardioPack.noteKind, gp.noteKind);
+    assert.equal(cardioPack.billingLens, gp.billingLens);
+    assert.equal(cardioPack.queueSemantics, gp.queueSemantics);
+    assert.equal(cardioPack.id, "gp");
+    assert.equal(dermaPack.id, "gp");
+    assert.equal(dermaPack.kind, "medical");
   });
 
   it("lands role-homes: receptionist, individual GP pack, explicit polyclinic clinic-admin", () => {

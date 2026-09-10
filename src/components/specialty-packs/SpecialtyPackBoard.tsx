@@ -26,12 +26,31 @@ export const SpecialtyPackBoard: React.FC<Props> = ({
   const today = appointments.filter((a) => a.doctorId === currentDoctor.id || a.specialty === pack.rxModule);
 
   const copy = useMemo(() => {
+    if (pack.kind === "physio") {
+      return {
+        title: "Physio session board",
+        lead: "VAS, ROM, procedures, and home-exercise packages — not a GP medicines pad.",
+        services: ["Initial assessment", "Rehab session", "Post-op protocol", "8-session package"],
+        noteLabel: "Session / HEP plan",
+        lens: "Exercises & procedures",
+      };
+    }
+    if (pack.kind === "dental") {
+      return {
+        title: "Dental chair & odontogram",
+        lead: "Tooth chart and chair procedures — not a GP Rx theatre.",
+        services: ["Examination", "Scaling", "Restoration", "RCT review", "Extraction"],
+        noteLabel: "Planned procedures",
+        lens: "Dental materials & chart",
+      };
+    }
     if (pack.kind === "wellness") {
       return {
         title: "Wellness & salon book",
         lead: "Services and packages — not a medical chart. Book a treatment, then collect payment.",
         services: ["Hair spa", "Cut & style", "Facial", "Deep tissue massage", "Manicure / pedicure"],
         noteLabel: "Guest / product notes",
+        lens: "Salon menu",
       };
     }
     if (pack.kind === "therapy") {
@@ -40,6 +59,7 @@ export const SpecialtyPackBoard: React.FC<Props> = ({
         lead: "Counseling notes and plan. Medicines are not the default path.",
         services: ["Intake session", "CBT", "Supportive", "Couple / family"],
         noteLabel: "Session note",
+        lens: "Session fees",
       };
     }
     return {
@@ -47,6 +67,7 @@ export const SpecialtyPackBoard: React.FC<Props> = ({
       lead: "Meetings, briefs, invoices — not a clinic EMR.",
       services: ["Discovery call", "Advisory meeting", "Document review", "Retainer check-in"],
       noteLabel: "Meeting brief",
+      lens: "Engagement fees",
     };
   }, [pack.kind]);
 
@@ -63,6 +84,9 @@ export const SpecialtyPackBoard: React.FC<Props> = ({
         <p className="text-sm text-slate-600">{copy.lead}</p>
         <p className="text-xs text-slate-500">
           Signed in as {currentDoctor.name} · {pack.practiceLine} · {pack.specialty}
+        </p>
+        <p className="text-[11px] font-semibold text-slate-700" data-testid="pack-workflow-lens">
+          {copy.lens} · {pack.billingLabel} · {pack.queueSemantics}
         </p>
       </div>
 

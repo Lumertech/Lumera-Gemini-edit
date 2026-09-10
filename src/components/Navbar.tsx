@@ -35,7 +35,9 @@ export type NavView =
   | 'settings'
   | 'wellness'
   | 'therapy-session'
-  | 'consult-practice';
+  | 'consult-practice'
+  | 'physio-session'
+  | 'dental-chart';
 
 interface NavbarProps {
   currentView: NavView;
@@ -95,6 +97,8 @@ export const Navbar: React.FC<NavbarProps> = ({
     wellness: 'Wellness & salon book',
     'therapy-session': 'Therapy session desk',
     'consult-practice': 'Consultant workspace',
+    'physio-session': 'Physio session board',
+    'dental-chart': 'Dental chair & odontogram',
   };
 
   return (

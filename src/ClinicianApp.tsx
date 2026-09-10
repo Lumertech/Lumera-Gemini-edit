@@ -389,7 +389,9 @@ export default function ClinicianApp() {
     currentView === 'settings' ||
     currentView === 'wellness' ||
     currentView === 'therapy-session' ||
-    currentView === 'consult-practice';
+    currentView === 'consult-practice' ||
+    currentView === 'physio-session' ||
+    currentView === 'dental-chart';
 
   useEffect(() => {
     if (!isPolyclinicPractice(user) && (currentView === 'polyclinic' || currentView === 'team')) {
@@ -480,7 +482,7 @@ export default function ClinicianApp() {
                 />
               )}
 
-              {(currentView === 'wellness' || currentView === 'therapy-session' || currentView === 'consult-practice') && (
+              {(currentView === 'wellness' || currentView === 'therapy-session' || currentView === 'consult-practice' || currentView === 'physio-session' || currentView === 'dental-chart') && (
                 <SpecialtyPackBoard
                   pack={pack}
                   patients={patients}
