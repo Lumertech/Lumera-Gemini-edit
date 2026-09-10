@@ -69,7 +69,11 @@ export const PolicyPage: React.FC<{ slug: string }> = ({ slug: initialSlug }) =>
     try {
       const res = await fetch(`/api/meta/data-deletion-status?code=${encodeURIComponent(checkCode.trim())}`);
       const data = await res.json();
-      setDeletionStatus(data);
+      setDeletionStatus({
+        ...data,
+        status: data.status || (res.ok ? "pending" : "not_found"),
+        httpStatus: res.status,
+      });
     } catch {
       setDeletionStatus({ error: "Failed to connect to compliance registry" });
     } finally {
@@ -232,9 +236,15 @@ export const PolicyPage: React.FC<{ slug: string }> = ({ slug: initialSlug }) =>
 
             {deletionStatus && (
               <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 text-xs font-mono text-slate-800 space-y-1">
-                <div className="text-emerald-700 font-bold flex items-center gap-1">
-                  <CheckCircle2 className="w-3.5 h-3.5" /> {deletionStatus.status || "CONFIRMED"}
-                </div>
+                {String(deletionStatus.status || "").toUpperCase() === "COMPLETED" ? (
+                  <div className="text-emerald-700 font-bold flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5" /> COMPLETED
+                  </div>
+                ) : (
+                  <div className="text-amber-700 font-bold flex items-center gap-1">
+                    <AlertCircle className="w-3.5 h-3.5" /> {String(deletionStatus.status || "not_found")}
+                  </div>
+                )}
                 <div className="text-[11px] text-slate-600">{deletionStatus.message}</div>
                 {deletionStatus.confirmationCode && (
                   <div className="text-[10px] text-slate-400">Code: {deletionStatus.confirmationCode}</div>

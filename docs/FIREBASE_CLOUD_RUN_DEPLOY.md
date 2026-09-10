@@ -133,10 +133,16 @@ curl -sI "https://www.mylumera.in/api/meta/webhook"
 
 Expect:
 
-- `/`, `/privacy-policy`, `/terms-of-service`, `/data-deletion-instructions` → **HTTP 200** (SPA `index.html`; no login wall).
+- `/` → **HTTP 200** (SPA landing; no login wall).
+- `/privacy-policy`, `/terms-of-service`, `/data-deletion-instructions` → **HTTP 200** HTML that **embeds the `cms_policies` body** (title + article). Meta crawlers must see “not a certified Meta Tech Provider” and WhatsApp **STOP** in the document, not an empty SPA shell.
 - `/healthz` → **200** `ok`.
-- `/api/public/policies/privacy-policy` → **200** JSON (CMS body, including WhatsApp STOP opt-out).
+- `/api/public/policies/privacy-policy` → **200** JSON (same honest CMS body, including WhatsApp STOP opt-out).
 - `GET /api/meta/webhook` without hub params → **403/500** until `META_VERIFY_TOKEN` is set. It must still be **reachable over HTTPS** (not a Firebase static 404 / cert mismatch).
+- `GET /api/meta/data-deletion-status?code=DEL-TEST` must **not** return `COMPLETED` for an unknown code.
+
+After a policy-seed merge, **Cloud Run must redeploy (or restart)** so live www picks up the force-upserted `cms_policies` rows. Production must set `APP_URL=https://www.mylumera.in` so deletion confirmation `url` values are not the `*.run.app` host.
+
+**Do not claim Dashboard-ready** until Compliance re-skims the live HTML.
 
 **Do not paste these URLs into Meta App Dashboard until the four document paths return HTTPS 200 with a cert for www.mylumera.in.**
 

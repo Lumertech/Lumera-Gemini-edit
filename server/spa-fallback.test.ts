@@ -14,7 +14,6 @@ import {
   attachProductionSpaFallback,
   isBackendPath,
   isSpaHistoryFallbackPath,
-  PUBLIC_SPA_PATHS,
   resolveClientDist,
 } from "./spa-fallback.ts";
 
@@ -60,9 +59,11 @@ describe("production listen / env helpers", () => {
 });
 
 describe("production SPA history fallback", () => {
-  it("classifies Meta policy URLs as SPA routes and API as backend", () => {
-    for (const p of PUBLIC_SPA_PATHS) {
-      assert.equal(isSpaHistoryFallbackPath(p), true, p);
+  it("classifies landing as SPA, policy URLs as HTML documents, and API as backend", () => {
+    assert.equal(isSpaHistoryFallbackPath("/"), true);
+    assert.equal(isBackendPath("/"), false);
+    for (const p of ["/privacy-policy", "/terms-of-service", "/data-deletion-instructions"]) {
+      assert.equal(isSpaHistoryFallbackPath(p), false, p);
       assert.equal(isBackendPath(p), false, p);
     }
     assert.equal(isSpaHistoryFallbackPath("/privacy"), true);
@@ -107,11 +108,12 @@ describe("production SPA history fallback", () => {
     const origin = `http://127.0.0.1:${port}`;
 
     try {
-      for (const p of PUBLIC_SPA_PATHS) {
+      const home = await fetch(`${origin}/`);
+      assert.equal(home.status, 200);
+      assert.match(await home.text(), /Lumera SPA/);
+      for (const p of ["/privacy-policy", "/terms-of-service", "/data-deletion-instructions"]) {
         const res = await fetch(`${origin}${p}`);
-        assert.equal(res.status, 200, p);
-        const body = await res.text();
-        assert.match(body, /Lumera SPA/);
+        assert.equal(res.status, 404, `${p} must not fall through to an empty SPA shell`);
       }
       const asset = await fetch(`${origin}/ok.txt`);
       assert.equal(asset.status, 200);

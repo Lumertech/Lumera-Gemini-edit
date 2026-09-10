@@ -73,10 +73,14 @@ describe("Compliance #18 honesty labeling (LandingPage / Admin Meta)", () => {
   });
 
   it("cms policy seed has WhatsApp STOP opt-out and stays sandbox-honest", () => {
+    const seed = readRepo("server/cms-policy-seed.ts");
     const db = readRepo("server/db.ts");
-    assert.match(db, /replying \*\*STOP\*\*/);
-    assert.match(db, /not a certified Meta Tech Provider/i);
-    assert.match(db, /App Review is not submitted/);
+    assert.match(seed, /replying \*\*STOP\*\*/);
+    assert.match(seed, /not a certified Meta Tech Provider/i);
+    assert.match(seed, /App Review is not submitted/);
+    assert.match(seed, /https:\/\/www\.mylumera\.in\/api\/meta\/data-deletion/);
+    assert.match(db, /ON CONFLICT\(slug\) DO UPDATE/);
+    assert.equal(/\bHIPAA\b/i.test(seed), false);
     assert.equal(/\bHIPAA\b/i.test(db), false);
   });
 
@@ -165,6 +169,7 @@ const ISSUE44_SURFACES = [
   ...walkSourceFiles("src/pages"),
   "server/abdm.ts",
   "server/db.ts",
+  "server/cms-policy-seed.ts",
 ];
 
 describe("Compliance #44 honesty gate (clinician / admin / DHIS / CMS / ABDM status)", () => {
@@ -217,6 +222,7 @@ describe("Compliance #44 honesty gate (clinician / admin / DHIS / CMS / ABDM sta
     assert.ok(ISSUE44_SURFACES.includes("src/pages/PolicyPage.tsx"));
     assert.ok(ISSUE44_SURFACES.includes("server/abdm.ts"));
     assert.ok(ISSUE44_SURFACES.includes("server/db.ts"));
+    assert.ok(ISSUE44_SURFACES.includes("server/cms-policy-seed.ts"));
 
     const leftovers: string[] = [];
     for (const rel of ISSUE44_SURFACES) {
