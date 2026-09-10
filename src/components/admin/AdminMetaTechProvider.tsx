@@ -280,7 +280,7 @@ export const AdminMetaTechProvider: React.FC = () => {
               <div className="flex items-center gap-2.5 flex-wrap">
                 <h1 className="text-2xl font-bold font-manrope tracking-tight">Meta WhatsApp Cloud API (sandbox readiness)</h1>
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-500/20 text-amber-200 border border-amber-500/40">
-                  <AlertCircle className="w-3.5 h-3.5" /> SANDBOX — not certified
+                  <AlertCircle className="w-3.5 h-3.5" /> SANDBOX — not a Tech Provider
                 </span>
               </div>
               <p className="text-sm text-slate-300 mt-1 max-w-2xl">
@@ -314,7 +314,7 @@ export const AdminMetaTechProvider: React.FC = () => {
               <AlertCircle className="w-4 h-4" /> {overview?.appReviewStatus?.status || "NOT_SUBMITTED"}
             </div>
             <div className="text-[11px] text-slate-400 mt-0.5">
-              {overview?.appReviewStatus?.passedCount ?? 0}/{overview?.appReviewStatus?.totalCount ?? 0} readiness items true — not certified
+              {overview?.appReviewStatus?.passedCount ?? 0}/{overview?.appReviewStatus?.totalCount ?? 0} readiness items true — not a Tech Provider
             </div>
           </div>
           <div className="bg-slate-900/60 p-3 rounded-xl border border-slate-800/80">
@@ -397,7 +397,7 @@ export const AdminMetaTechProvider: React.FC = () => {
                 </p>
               </div>
               <span className="px-3 py-1 bg-amber-50 text-amber-800 font-semibold text-xs rounded-full border border-amber-200 flex items-center gap-1.5">
-                <AlertCircle className="w-3.5 h-3.5" /> SANDBOX — not certified
+                <AlertCircle className="w-3.5 h-3.5" /> SANDBOX — not a Tech Provider
               </span>
             </div>
 
