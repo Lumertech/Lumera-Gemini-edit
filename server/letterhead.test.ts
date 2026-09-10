@@ -106,11 +106,11 @@ describe("Tenant letterhead API", () => {
     return token;
   }
 
-  it("requires authentication on letterhead GET and PUT", async () => {
+  it("requires authentication on letterhead GET and PATCH", async () => {
     const getRes = await jsonRequest(port, "GET", "/api/tenant/letterhead");
     assert.equal(getRes.status, 401);
-    const putRes = await jsonRequest(port, "PUT", "/api/tenant/letterhead", { gstin: "22AAAAA0000A1Z5" });
-    assert.equal(putRes.status, 401);
+    const patchRes = await jsonRequest(port, "PATCH", "/api/tenant/letterhead", { gstin: "22AAAAA0000A1Z5" });
+    assert.equal(patchRes.status, 401);
   });
 
   it("round-trips clinic letterhead for a real tenant without seed GSTIN/UPI", async () => {
@@ -120,52 +120,88 @@ describe("Tenant letterhead API", () => {
 
     const before = await jsonRequest(port, "GET", "/api/tenant/letterhead", undefined, auth);
     assert.equal(before.status, 200, String(before.json.error || ""));
-    const empty = before.json.letterhead as { gstin: string; upiId: string; name: string };
+    const empty = before.json.letterhead as { gstin: string; upiId: string; clinicName: string };
     assert.equal(empty.gstin, "");
     assert.equal(empty.upiId, "");
     assert.notEqual(empty.gstin, DEMO_LETTERHEAD.gstin);
     assert.notEqual(empty.upiId, DEMO_LETTERHEAD.upiId);
-    assert.match(empty.name, /^Clinic /);
+    assert.match(empty.clinicName, /^Clinic /);
+    assert.equal("name" in empty, false);
 
     const payload = {
-      name: "Meera Heart Clinic",
+      clinicName: "Meera Heart Clinic",
       address: "12 MG Road",
       city: "Pune, Maharashtra - 411001",
       email: "hello@meera.clinic",
-      website: "https://meera.clinic",
       gstin: "27AABCM1234D1Z5",
-      regId: "MH-CLINIC-2026/42",
       upiId: "meeraheart@okicici",
       sealText: "Digitally signed — Dr Meera Shah",
       signatureUrl: "data:image/png;base64,aaa",
+      tagline: "Cardiac OPD",
+      footerDisclaimer: "Digitally signed Rx — Meera Heart Clinic",
     };
-    const saved = await jsonRequest(port, "PUT", "/api/tenant/letterhead", payload, auth);
+    const saved = await jsonRequest(port, "PATCH", "/api/tenant/letterhead", payload, auth);
     assert.equal(saved.status, 200, String(saved.json.error || ""));
+    assert.equal("ok" in saved.json, false);
     const letterhead = saved.json.letterhead as Record<string, string>;
-    assert.equal(letterhead.name, payload.name);
+    assert.equal(letterhead.clinicName, payload.clinicName);
     assert.equal(letterhead.gstin, payload.gstin);
     assert.equal(letterhead.upiId, payload.upiId);
     assert.equal(letterhead.address, payload.address);
     assert.equal(letterhead.sealText, payload.sealText);
     assert.equal(letterhead.signatureUrl, payload.signatureUrl);
+    assert.equal(letterhead.footerDisclaimer, payload.footerDisclaimer);
 
     const again = await jsonRequest(port, "GET", "/api/tenant/letterhead", undefined, auth);
     const persisted = again.json.letterhead as Record<string, string>;
+    assert.equal(persisted.clinicName, payload.clinicName);
     assert.equal(persisted.gstin, payload.gstin);
     assert.equal(persisted.upiId, payload.upiId);
     assert.equal(persisted.signatureUrl, payload.signatureUrl);
 
+    const partial = await jsonRequest(
+      port,
+      "PATCH",
+      "/api/tenant/letterhead",
+      { gstin: "27PARTIAL0000Z1Z5" },
+      auth
+    );
+    const afterPartial = partial.json.letterhead as Record<string, string>;
+    assert.equal(afterPartial.gstin, "27PARTIAL0000Z1Z5");
+    assert.equal(afterPartial.clinicName, payload.clinicName);
+    assert.equal(afterPartial.upiId, payload.upiId);
+
+    const nestedBody = await jsonRequest(
+      port,
+      "PATCH",
+      "/api/tenant/letterhead",
+      { letterhead: { upiId: "nested@upi" } },
+      auth
+    );
+    assert.equal((nestedBody.json.letterhead as { upiId: string }).upiId, "nested@upi");
+    assert.equal((nestedBody.json.letterhead as { clinicName: string }).clinicName, payload.clinicName);
+
     const current = await jsonRequest(port, "GET", "/api/tenant/current", undefined, auth);
     assert.equal(current.status, 200);
-    const nested = current.json.letterhead as { gstin: string };
-    assert.equal(nested.gstin, payload.gstin);
+    const nested = current.json.letterhead as { gstin: string; clinicName: string };
+    assert.equal(nested.gstin, "27PARTIAL0000Z1Z5");
+    assert.equal(nested.clinicName, payload.clinicName);
+
+    const alias = await jsonRequest(
+      port,
+      "PUT",
+      "/api/tenant/letterhead",
+      { name: "Alias Name Clinic" },
+      auth
+    );
+    assert.equal((alias.json.letterhead as { clinicName: string }).clinicName, "Alias Name Clinic");
 
     const tenantRow = getDb()
       .prepare("SELECT name, gstin, upi_id FROM tenants WHERE id = ?")
       .get(clinic.tenantId) as { name: string; gstin: string; upi_id: string };
-    assert.equal(tenantRow.gstin, payload.gstin);
-    assert.equal(tenantRow.upi_id, payload.upiId);
-    assert.equal(tenantRow.name, payload.name);
+    assert.equal(tenantRow.name, "Alias Name Clinic");
+    assert.equal(tenantRow.gstin, "27PARTIAL0000Z1Z5");
+    assert.equal(tenantRow.upi_id, "nested@upi");
   });
 
   it("does not leak letterhead across tenants", async () => {
@@ -179,7 +215,7 @@ describe("Tenant letterhead API", () => {
       port,
       "PUT",
       "/api/tenant/letterhead",
-      { gstin: secretGstin, upiId: "clinic-a@upi", name: "Secret A Clinic" },
+      { gstin: secretGstin, upiId: "clinic-a@upi", clinicName: "Secret A Clinic" },
       { Authorization: `Bearer ${tokenA}` }
     );
     assert.equal(putA.status, 200, String(putA.json.error || ""));
@@ -188,10 +224,10 @@ describe("Tenant letterhead API", () => {
       Authorization: `Bearer ${tokenB}`,
     });
     assert.equal(getB.status, 200);
-    const letterheadB = getB.json.letterhead as { gstin: string; upiId: string; name: string };
+    const letterheadB = getB.json.letterhead as { gstin: string; upiId: string; clinicName: string };
     assert.notEqual(letterheadB.gstin, secretGstin);
     assert.notEqual(letterheadB.upiId, "clinic-a@upi");
-    assert.notEqual(letterheadB.name, "Secret A Clinic");
+    assert.notEqual(letterheadB.clinicName, "Secret A Clinic");
   });
 
   it("keeps Lumera seed branding on the demo tenant", async () => {
@@ -200,10 +236,10 @@ describe("Tenant letterhead API", () => {
       Authorization: `Bearer ${token}`,
     });
     assert.equal(getRes.status, 200, String(getRes.json.error || ""));
-    const letterhead = getRes.json.letterhead as { gstin: string; upiId: string; name: string };
+    const letterhead = getRes.json.letterhead as { gstin: string; upiId: string; clinicName: string };
     assert.equal(letterhead.gstin, DEMO_LETTERHEAD.gstin);
     assert.equal(letterhead.upiId, DEMO_LETTERHEAD.upiId);
-    assert.match(letterhead.name, /Lumera/i);
+    assert.match(letterhead.clinicName, /Lumera/i);
 
     const demoRow = getDb()
       .prepare("SELECT gstin, upi_id FROM tenants WHERE id = ?")
@@ -219,10 +255,10 @@ describe("Tenant letterhead API", () => {
 
     await jsonRequest(
       port,
-      "PUT",
+      "PATCH",
       "/api/tenant/letterhead",
       {
-        name: "Narmada Ortho Clinic",
+        clinicName: "Narmada Ortho Clinic",
         address: "88 Ring Road",
         city: "Indore",
         gstin: "23AABCN8899K1Z2",
@@ -278,7 +314,7 @@ describe("Tenant letterhead API", () => {
     const auth = { Authorization: `Bearer ${token}` };
     const getRes = await jsonRequest(port, "GET", "/api/tenant/letterhead", undefined, auth);
     assert.equal(getRes.status, 200);
-    const putRes = await jsonRequest(port, "PUT", "/api/tenant/letterhead", { gstin: "19LEAK" }, auth);
-    assert.equal(putRes.status, 403);
+    const patchRes = await jsonRequest(port, "PATCH", "/api/tenant/letterhead", { gstin: "19LEAK" }, auth);
+    assert.equal(patchRes.status, 403);
   });
 });

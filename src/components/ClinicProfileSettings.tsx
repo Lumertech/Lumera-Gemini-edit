@@ -70,7 +70,7 @@ export const ClinicProfileSettings: React.FC<ClinicProfileSettingsProps> = ({
     setClinicEmail(letterhead.email || user?.email || "");
     setWebsite(letterhead.website || "");
     setRegId(letterhead.regId || "");
-    if (letterhead.name) setClinicName(letterhead.name);
+    if (letterhead.clinicName) setClinicName(letterhead.clinicName);
     if (letterhead.signatureUrl) setSignatureUrl(letterhead.signatureUrl);
   }, [letterhead, user?.email]);
 
@@ -92,10 +92,10 @@ export const ClinicProfileSettings: React.FC<ClinicProfileSettingsProps> = ({
         slotDurationMinutes,
         rxTemplate,
       });
-      const saved = await apiFetch<{ ok: boolean; letterhead: TenantLetterhead }>("/api/tenant/letterhead", {
-        method: "PUT",
+      const saved = await apiFetch<{ letterhead: TenantLetterhead }>("/api/tenant/letterhead", {
+        method: "PATCH",
         body: JSON.stringify({
-          name: clinicName,
+          clinicName,
           address,
           city,
           email: clinicEmail,

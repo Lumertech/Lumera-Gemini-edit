@@ -1208,11 +1208,11 @@ export function createApiRouter(): Router {
       "Tenant Letterhead Updated",
       `Updated letterhead fields for tenant ${tenantId}`
     );
-    return res.json({ ok: true, letterhead });
+    return res.json({ letterhead });
   };
 
-  api.put("/tenant/letterhead", requireAuth, requireRole(...CLINIC_MANAGER_ROLES), saveTenantLetterhead);
   api.patch("/tenant/letterhead", requireAuth, requireRole(...CLINIC_MANAGER_ROLES), saveTenantLetterhead);
+  api.put("/tenant/letterhead", requireAuth, requireRole(...CLINIC_MANAGER_ROLES), saveTenantLetterhead);
 
   api.get("/public/site", (_req, res) => {
     res.json(assemblePublicSite());

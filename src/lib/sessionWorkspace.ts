@@ -100,7 +100,7 @@ export function clinicSettingsFromSession(
 
   return {
     ...base,
-    name: letterhead?.name || user?.clinicName || base.name,
+    name: letterhead?.clinicName || user?.clinicName || base.name,
     tagline: letterhead?.tagline || base.tagline,
     address: letterhead?.address || base.address,
     city: letterhead?.city || base.city,
@@ -114,6 +114,7 @@ export function clinicSettingsFromSession(
     sealText:
       letterhead?.sealText ||
       (doctor.signatureUrl ? "Digitally signed by treating clinician" : base.sealText),
+    footerDisclaimer: letterhead?.footerDisclaimer || base.footerDisclaimer,
   };
 }
 

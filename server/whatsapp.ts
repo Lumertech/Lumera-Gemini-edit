@@ -833,7 +833,7 @@ Output strictly in JSON:
       const tenantId = String((req as Request).user?.tenantId || "");
       const clinicName =
         String(req.body?.clinicName || "").trim() ||
-        (tenantId ? getTenantLetterhead(tenantId).name : "") ||
+        (tenantId ? getTenantLetterhead(tenantId).clinicName : "") ||
         "Lumera Healthcare Polyclinic";
 
       const db = getDb();
@@ -940,13 +940,14 @@ Output strictly in JSON:
       const tenantId = String(rx.tenant_id || "");
       const letterhead = getTenantLetterhead(tenantId || DEMO_TENANT_ID);
       const stamped = clinicLine(letterhead);
-      const clinicName = escapeHtml(String(rx.clinic_name || stamped.name || letterhead.name || "Clinic"));
+      const clinicName = escapeHtml(String(rx.clinic_name || stamped.name || letterhead.clinicName || "Clinic"));
       const clinicAddress = escapeHtml(String(rx.clinic_address || stamped.address || letterhead.address));
       const clinicPhone = escapeHtml(String(rx.clinic_phone || stamped.phone || letterhead.phone));
       const clinicEmail = escapeHtml(letterhead.email);
       const clinicGstin = escapeHtml(letterhead.gstin);
       const clinicUpi = escapeHtml(letterhead.upiId);
       const sealText = escapeHtml(letterhead.sealText);
+      const footerDisclaimer = escapeHtml(letterhead.footerDisclaimer);
       const signatureUrl = doctorSignatureByDoctorId(String(rx.doctor_id || "")) || letterhead.signatureUrl;
       const signatureBlock = signatureUrl
         ? `<img src="${escapeHtml(signatureUrl)}" alt="Doctor signature" style="max-height: 48px; object-fit: contain;" />`
@@ -1077,6 +1078,7 @@ Output strictly in JSON:
         <div style="font-size: 11px; color: #64748b;">${sealText || "Authorized Medical Signatory"}</div>
       </div>
     </div>
+    ${footerDisclaimer ? `<p style="margin-top: 16px; font-size: 11px; color: #64748b;">${footerDisclaimer}</p>` : ""}
   </div>
 </body>
 </html>`;

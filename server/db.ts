@@ -52,6 +52,8 @@ const DEMO_LETTERHEAD_SEED = {
   upiId: "lumerahealth@icici",
   whatsappNumber: "+91 98000 12345",
   sealText: "Authorized Medical Seal & Digital Signature Verified",
+  footerDisclaimer:
+    "This prescription is digitally verified under National Health Authority (NHA) & Telemedicine Practice Guidelines. Please report any adverse drug reactions immediately.",
 };
 
 function ensureDemoTenantLetterhead(database: DatabaseSync) {
@@ -79,6 +81,7 @@ function ensureDemoTenantLetterhead(database: DatabaseSync) {
   fill("upi_id", DEMO_LETTERHEAD_SEED.upiId);
   fill("whatsapp_number", DEMO_LETTERHEAD_SEED.whatsappNumber);
   fill("seal_text", DEMO_LETTERHEAD_SEED.sealText);
+  fill("footer_disclaimer", DEMO_LETTERHEAD_SEED.footerDisclaimer);
   if (!row.gstin) {
     fill("name", DEMO_LETTERHEAD_SEED.name);
   }
@@ -126,6 +129,7 @@ export interface DbTenant {
   upi_id?: string;
   whatsapp_number?: string;
   seal_text?: string;
+  footer_disclaimer?: string;
   created_at: string;
   updated_at: string;
 }
@@ -448,6 +452,7 @@ function migrate(database: DatabaseSync) {
       upi_id TEXT DEFAULT '',
       whatsapp_number TEXT DEFAULT '',
       seal_text TEXT DEFAULT '',
+      footer_disclaimer TEXT DEFAULT '',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -587,6 +592,9 @@ function migrate(database: DatabaseSync) {
   } catch {}
   try {
     database.exec("ALTER TABLE tenants ADD COLUMN seal_text TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE tenants ADD COLUMN footer_disclaimer TEXT DEFAULT ''");
   } catch {}
 
   ensureDemoTenantLetterhead(database);

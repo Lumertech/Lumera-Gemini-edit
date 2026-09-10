@@ -23,19 +23,20 @@ export interface AppUser {
 }
 
 export interface TenantLetterhead {
-  name: string;
-  tagline: string;
+  clinicName: string;
   address: string;
-  city: string;
-  phone: string;
-  email: string;
-  website: string;
+  city?: string;
+  phone?: string;
+  email?: string;
   gstin: string;
-  regId: string;
   upiId: string;
-  whatsappNumber: string;
   sealText: string;
   signatureUrl: string;
+  tagline?: string;
+  footerDisclaimer?: string;
+  website?: string;
+  regId?: string;
+  whatsappNumber?: string;
 }
 
 export interface Tenant {

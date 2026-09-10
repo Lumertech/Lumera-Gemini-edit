@@ -1,23 +1,25 @@
 import { DEMO_TENANT_ID, getDb } from "./db.ts";
 
+/** Canonical Wave 2 letterhead payload for Clinical UX. Extra keys are optional. */
 export interface TenantLetterhead {
-  name: string;
-  tagline: string;
+  clinicName: string;
   address: string;
   city: string;
   phone: string;
   email: string;
-  website: string;
   gstin: string;
-  regId: string;
   upiId: string;
-  whatsappNumber: string;
   sealText: string;
   signatureUrl: string;
+  tagline: string;
+  footerDisclaimer: string;
+  website: string;
+  regId: string;
+  whatsappNumber: string;
 }
 
 export const DEMO_LETTERHEAD: TenantLetterhead = {
-  name: "Lumera Healthcare & Polyclinic Institute",
+  clinicName: "Lumera Healthcare & Polyclinic Institute",
   tagline: "Precision AI-Powered Multi-Specialty Clinical Center",
   address: "Suite 401-405, Healthcare Towers, 14 Park Circus Avenue",
   city: "Kolkata, West Bengal - 700017",
@@ -30,10 +32,12 @@ export const DEMO_LETTERHEAD: TenantLetterhead = {
   whatsappNumber: "+91 98000 12345",
   sealText: "Authorized Medical Seal & Digital Signature Verified",
   signatureUrl: "",
+  footerDisclaimer:
+    "This prescription is digitally verified under National Health Authority (NHA) & Telemedicine Practice Guidelines. Please report any adverse drug reactions immediately.",
 };
 
 const EMPTY_LETTERHEAD: TenantLetterhead = {
-  name: "",
+  clinicName: "",
   tagline: "",
   address: "",
   city: "",
@@ -46,10 +50,11 @@ const EMPTY_LETTERHEAD: TenantLetterhead = {
   whatsappNumber: "",
   sealText: "",
   signatureUrl: "",
+  footerDisclaimer: "",
 };
 
 const WRITABLE_KEYS = [
-  "name",
+  "clinicName",
   "tagline",
   "address",
   "city",
@@ -62,9 +67,8 @@ const WRITABLE_KEYS = [
   "whatsappNumber",
   "sealText",
   "signatureUrl",
+  "footerDisclaimer",
 ] as const;
-
-type WritableKey = (typeof WRITABLE_KEYS)[number];
 
 function str(value: unknown): string {
   return typeof value === "string" ? value.trim() : value == null ? "" : String(value).trim();
@@ -75,7 +79,7 @@ function asLetterhead(row: Record<string, unknown> | undefined, signatureUrl = "
     return { ...EMPTY_LETTERHEAD, signatureUrl };
   }
   return {
-    name: str(row.name),
+    clinicName: str(row.name),
     tagline: str(row.tagline),
     address: str(row.address),
     city: str(row.city),
@@ -88,6 +92,7 @@ function asLetterhead(row: Record<string, unknown> | undefined, signatureUrl = "
     whatsappNumber: str(row.whatsapp_number) || str(row.phone),
     sealText: str(row.seal_text),
     signatureUrl,
+    footerDisclaimer: str(row.footer_disclaimer),
   };
 }
 
@@ -141,6 +146,10 @@ export function parseLetterheadPatch(body: unknown): Partial<TenantLetterhead> {
       patch[key] = str(nested[key]);
     }
   }
+  // Thin alias: older clients / onboarding used `name` for the clinic title.
+  if (nested.clinicName === undefined && nested.name !== undefined) {
+    patch.clinicName = str(nested.name);
+  }
   return patch;
 }
 
@@ -167,11 +176,12 @@ export function updateTenantLetterhead(
            upi_id = ?,
            whatsapp_number = ?,
            seal_text = ?,
+           footer_disclaimer = ?,
            updated_at = ?
        WHERE id = ?`
     )
     .run(
-      next.name,
+      next.clinicName,
       next.tagline,
       next.address,
       next.city,
@@ -183,12 +193,13 @@ export function updateTenantLetterhead(
       next.upiId,
       next.whatsappNumber,
       next.sealText,
+      next.footerDisclaimer,
       now,
       tenantId
     );
 
-  if (userId && next.name) {
-    getDb().prepare("UPDATE users SET clinic_name = ? WHERE id = ?").run(next.name, userId);
+  if (userId && next.clinicName) {
+    getDb().prepare("UPDATE users SET clinic_name = ? WHERE id = ?").run(next.clinicName, userId);
   }
 
   if (userId && patch.signatureUrl !== undefined) {
@@ -203,7 +214,7 @@ export function updateTenantLetterhead(
 export function clinicLine(letterhead: TenantLetterhead): { name: string; address: string; phone: string } {
   const address = [letterhead.address, letterhead.city].filter(Boolean).join(", ");
   return {
-    name: letterhead.name,
+    name: letterhead.clinicName,
     address,
     phone: letterhead.phone,
   };
