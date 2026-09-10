@@ -3,9 +3,12 @@ import { describe, it } from "node:test";
 import {
   DEFAULT_FRONT_DESK,
   DEFAULT_PRACTICE_TYPE,
+  initialRegisterPracticeType,
+  isExplicitPolyclinicChoice,
   normalizeUiPracticeType,
   onboardingTrackFromUser,
   postOnboardingHomeView,
+  registerPracticeTypePayload,
   shouldShowPolyclinicChrome,
 } from "./practiceOnboarding.ts";
 
@@ -45,5 +48,21 @@ describe("practice onboarding defaults", () => {
     assert.equal(DEFAULT_FRONT_DESK.walkInEnabled, true);
     assert.equal(DEFAULT_FRONT_DESK.sharedQueue, true);
     assert.equal(DEFAULT_FRONT_DESK.tokenPrefix, "OPD");
+  });
+
+  it("create-clinic / register first paint is Individual even if the URL asks for multi", () => {
+    assert.equal(initialRegisterPracticeType(undefined), "individual");
+    assert.equal(initialRegisterPracticeType(""), "individual");
+    assert.equal(initialRegisterPracticeType("?practiceType=multispecialty"), "individual");
+    assert.equal(initialRegisterPracticeType("?practice=polyclinic&type=multi-specialty"), "individual");
+    assert.equal(isExplicitPolyclinicChoice("multispecialty"), true);
+    assert.equal(isExplicitPolyclinicChoice(undefined), false);
+  });
+
+  it("register payload stays Individual until the user clicks Multispecialty", () => {
+    assert.equal(registerPracticeTypePayload("individual", false), "individual");
+    assert.equal(registerPracticeTypePayload("polyclinic", false), "individual");
+    assert.equal(registerPracticeTypePayload("polyclinic", true), "polyclinic");
+    assert.equal(registerPracticeTypePayload("individual", true), "individual");
   });
 });

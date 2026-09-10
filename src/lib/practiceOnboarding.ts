@@ -3,6 +3,39 @@ export type PracticeType = "individual" | "polyclinic";
 /** Founder lock: new accounts and Sign-in → register always start as individual. */
 export const DEFAULT_PRACTICE_TYPE: PracticeType = "individual";
 
+const EXPLICIT_POLYCLINIC_ALIASES = new Set([
+  "polyclinic",
+  "multispecialty",
+  "multi-specialty",
+  "multi_specialty",
+]);
+
+/** True only when the user (or an already-persisted account) named polyclinic. */
+export function isExplicitPolyclinicChoice(value?: string | null): boolean {
+  return EXPLICIT_POLYCLINIC_ALIASES.has(String(value || "").trim().toLowerCase());
+}
+
+/**
+ * Register / create-clinic first paint.
+ * URL query strings must never preselect Multispecialty — ignore them.
+ */
+export function initialRegisterPracticeType(_urlSearch?: string | null): PracticeType {
+  void _urlSearch;
+  return DEFAULT_PRACTICE_TYPE;
+}
+
+/**
+ * Payload sent to /auth/register-practice.
+ * Multispecialty is included only after an explicit UI click.
+ */
+export function registerPracticeTypePayload(
+  selected: PracticeType,
+  userClickedPolyclinic: boolean
+): PracticeType {
+  if (userClickedPolyclinic && selected === "polyclinic") return "polyclinic";
+  return DEFAULT_PRACTICE_TYPE;
+}
+
 export interface RosterDoctorDraft {
   name: string;
   specialty: string;

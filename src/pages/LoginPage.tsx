@@ -21,7 +21,12 @@ import {
 } from "lucide-react";
 import { destinationAfterAuth, useAuth } from "../auth/AuthContext";
 import { useNav } from "../nav/NavigationContext";
-import { DEFAULT_PRACTICE_TYPE, type PracticeType } from "../lib/practiceOnboarding";
+import {
+  DEFAULT_PRACTICE_TYPE,
+  initialRegisterPracticeType,
+  registerPracticeTypePayload,
+  type PracticeType,
+} from "../lib/practiceOnboarding";
 import { PolyclinicSpecialty } from "../types";
 
 const SPECIALTIES: PolyclinicSpecialty[] = [
@@ -65,13 +70,10 @@ export const LoginPage: React.FC = () => {
 
   // Mode: Sign In vs Create Clinic Account
   const [mode, setMode] = useState<"signin" | "register">(loginMode || "signin");
-
-  // Keep mode in sync if changed via navigation
-  useEffect(() => {
-    if (loginMode) {
-      setMode(loginMode);
-    }
-  }, [loginMode]);
+  const [regPracticeType, setRegPracticeType] = useState<PracticeType>(() =>
+    initialRegisterPracticeType(typeof window !== "undefined" ? window.location.search : "")
+  );
+  const [explicitPolyclinicChoice, setExplicitPolyclinicChoice] = useState(false);
 
   // Sign In Sub-Method: Email & Password vs WhatsApp Phone Number
   const [signInMethod, setSignInMethod] = useState<"email" | "whatsapp">("email");
@@ -95,7 +97,6 @@ export const LoginPage: React.FC = () => {
   } | null>(null);
 
   // Register Form States (Multi-Tenant Practice Creation)
-  const [regPracticeType, setRegPracticeType] = useState<PracticeType>(DEFAULT_PRACTICE_TYPE);
   const [clinicName, setClinicName] = useState("");
   const [specialty, setSpecialty] = useState<PolyclinicSpecialty>("General Medicine");
   const [selectedCountry, setSelectedCountry] = useState(COUNTRIES[0]);
@@ -139,6 +140,31 @@ export const LoginPage: React.FC = () => {
   const otpInputRefs = useRef<(HTMLInputElement | null)[]>([]);
   const facebookOauthSuccessHandled = useRef(false);
 
+  const openRegisterForm = () => {
+    setMode("register");
+    setRegPracticeType(DEFAULT_PRACTICE_TYPE);
+    setExplicitPolyclinicChoice(false);
+    setError("");
+  };
+
+  // Keep mode in sync if changed via navigation. Re-entering register always
+  // reseeds Individual — URL / last click must not leave Multispecialty selected.
+  useEffect(() => {
+    if (loginMode) {
+      setMode(loginMode);
+    }
+    if (loginMode === "register") {
+      setRegPracticeType(DEFAULT_PRACTICE_TYPE);
+      setExplicitPolyclinicChoice(false);
+    }
+  }, [loginMode]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setRegPracticeType(initialRegisterPracticeType(window.location.search));
+    setExplicitPolyclinicChoice(false);
+  }, []);
+
   // Auto-redirect if already authenticated and not verifying OTP / completing Facebook OAuth.
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -170,7 +196,7 @@ export const LoginPage: React.FC = () => {
       );
     }
     if (params.get("unregistered") === "1") {
-      setMode("register");
+      openRegisterForm();
       const fbEmail = params.get("email") || "";
       const fbName = params.get("name") || "";
       if (fbEmail) setAdminEmail(fbEmail);
@@ -388,7 +414,7 @@ export const LoginPage: React.FC = () => {
       );
 
       if (res.unregistered) {
-        setMode("register");
+        openRegisterForm();
         setAdminEmail(targetEmail);
         setAdminName(targetName);
         setVerifiedSsoNotice(
@@ -444,7 +470,7 @@ export const LoginPage: React.FC = () => {
         name: adminName.trim(),
         email: adminEmail.trim().toLowerCase(),
         password: adminPassword,
-        practiceType: regPracticeType,
+        practiceType: registerPracticeTypePayload(regPracticeType, explicitPolyclinicChoice),
       });
 
       if (res.requiresOtp && res.verificationId) {
@@ -1128,15 +1154,25 @@ export const LoginPage: React.FC = () => {
                   </div>
                 )}
                 {/* Practice Account Type — Individual is the default; multi-specialty is explicit opt-in */}
-                <div className="space-y-1.5 mb-3">
+                <div
+                  className="space-y-1.5 mb-3"
+                  data-testid="register-practice-type"
+                  data-default="individual"
+                  data-selected={regPracticeType}
+                >
                   <label className="block text-xs font-semibold text-slate-300">
                     Practice type *
                   </label>
                   <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
-                      onClick={() => setRegPracticeType("individual")}
+                      onClick={() => {
+                        setRegPracticeType("individual");
+                        setExplicitPolyclinicChoice(false);
+                      }}
                       data-testid="register-practice-individual"
+                      data-selected={regPracticeType === "individual" ? "true" : "false"}
+                      aria-pressed={regPracticeType === "individual"}
                       className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
                         regPracticeType === "individual"
                           ? "bg-emerald-950/40 border-emerald-500 text-white shadow-sm"
@@ -1151,8 +1187,13 @@ export const LoginPage: React.FC = () => {
                     </button>
                     <button
                       type="button"
-                      onClick={() => setRegPracticeType("polyclinic")}
+                      onClick={() => {
+                        setRegPracticeType("polyclinic");
+                        setExplicitPolyclinicChoice(true);
+                      }}
                       data-testid="register-practice-polyclinic"
+                      data-selected={regPracticeType === "polyclinic" ? "true" : "false"}
+                      aria-pressed={regPracticeType === "polyclinic"}
                       className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
                         regPracticeType === "polyclinic"
                           ? "bg-indigo-950/50 border-indigo-400 text-white shadow-sm"
@@ -1352,10 +1393,7 @@ export const LoginPage: React.FC = () => {
             <>
             <button
               type="button"
-              onClick={() => {
-                setMode("register");
-                setError("");
-              }}
+              onClick={openRegisterForm}
               className="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs sm:text-sm font-semibold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-emerald-600/30 group"
             >
               <Sparkles className="w-4 h-4 text-emerald-200 group-hover:text-white" />

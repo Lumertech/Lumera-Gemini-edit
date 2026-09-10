@@ -800,6 +800,7 @@ export function createApiRouter(): Router {
     const email = String(req.body?.email || "").trim().toLowerCase();
     const password = String(req.body?.password || "");
     const avatarUrl = String(req.body?.avatarUrl || "");
+    // Missing / empty / unknown → individual. Multispecialty only if the client sent an explicit alias.
     const practiceType = normalizePracticeType(req.body?.practiceType);
     const assignedRole = assignedRoleForPracticeType(practiceType);
 
