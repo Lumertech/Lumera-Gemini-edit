@@ -10,8 +10,9 @@ import {
   isUsablePhoneNumberId,
   verifyMetaHubSignature,
 } from "./meta-security.ts";
-import { resolveFederatedIdentity } from "./facebook-oauth.ts";
+import { facebookOAuthConfigured, resolveFederatedIdentity } from "./facebook-oauth.ts";
 import { resolveGraphCredentials } from "./graph-whatsapp.ts";
+import { isUnsetOrPlaceholder } from "./runtime.ts";
 
 function hmacSha256(secret: string, body: string): string {
   return "sha256=" + crypto.createHmac("sha256", secret).update(body).digest("hex");
@@ -41,7 +42,31 @@ describe("Meta webhook signatures", () => {
     if (!decision.ok) assert.equal(decision.status, 403);
   });
 
-  it("allows unsigned webhooks only with the explicit non-prod DEV flag", () => {
+  it("allows unsigned webhooks in non-prod when the secret is not provisioned", () => {
+    const allowed = decideWebhookSignature({
+      rawBody: body,
+      signatureHeader: undefined,
+      appSecret: "",
+      production: false,
+      allowUnsignedDevFlag: false,
+    });
+    assert.equal(allowed.ok, true);
+    if (allowed.ok) assert.equal(allowed.unsignedDevBypass, true);
+  });
+
+  it("hard-fails unsigned webhooks in production when META_APP_SECRET is absent", () => {
+    const decision = decideWebhookSignature({
+      rawBody: body,
+      signatureHeader: undefined,
+      appSecret: "",
+      production: true,
+      allowUnsignedDevFlag: true,
+    });
+    assert.equal(decision.ok, false);
+    if (!decision.ok) assert.equal(decision.status, 500);
+  });
+
+  it("allows unsigned webhooks with the explicit non-prod DEV flag even when a secret is set", () => {
     const allowed = decideWebhookSignature({
       rawBody: body,
       signatureHeader: undefined,
@@ -69,6 +94,24 @@ describe("Graph credential hygiene", () => {
     assert.equal(isUsablePhoneNumberId("phone_982345566701"), false);
     assert.equal(isUsableGraphToken("EAAGisAlongEnoughTokenWithoutEllipsis0123456789abcdef"), true);
     assert.equal(isUsablePhoneNumberId("123456789012345"), true);
+  });
+
+  it("treats .env.example placeholders as unset credentials", () => {
+    assert.equal(isUnsetOrPlaceholder(""), true);
+    assert.equal(isUnsetOrPlaceholder("replace-with-facebook-app-id"), true);
+    assert.equal(isUnsetOrPlaceholder("replace-with-meta-app-secret"), true);
+    assert.equal(isUnsetOrPlaceholder("EAAGisAlongEnoughTokenWithoutEllipsis0123456789abcdef"), false);
+
+    const prevId = process.env.FACEBOOK_APP_ID;
+    const prevSecret = process.env.FACEBOOK_APP_SECRET;
+    const prevMeta = process.env.META_APP_SECRET;
+    process.env.FACEBOOK_APP_ID = "replace-with-facebook-app-id";
+    process.env.FACEBOOK_APP_SECRET = "replace-with-facebook-app-secret";
+    process.env.META_APP_SECRET = "replace-with-meta-app-secret";
+    assert.equal(facebookOAuthConfigured(), false);
+    process.env.FACEBOOK_APP_ID = prevId;
+    process.env.FACEBOOK_APP_SECRET = prevSecret;
+    process.env.META_APP_SECRET = prevMeta;
   });
 
   it("ignores env placeholders when resolving Graph credentials", () => {
@@ -100,6 +143,7 @@ describe("Overview claims", () => {
     assert.equal(overview.certificationStatus, "NOT_CERTIFIED");
     assert.equal(overview.appReviewStatus.status, "NOT_SUBMITTED");
     assert.match(JSON.stringify(overview), /not a certified Meta Tech Provider/i);
+    assert.match(JSON.stringify(overview), /credentials are optional until provisioned/i);
     assert.equal(overview.appReviewStatus.checklist.every((c) => c.passed), false);
   });
 });

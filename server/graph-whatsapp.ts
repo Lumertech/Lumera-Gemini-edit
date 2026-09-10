@@ -1,5 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
-import { graphApiVersion } from "./runtime.ts";
+import { graphApiVersion, readSecret } from "./runtime.ts";
 import { isUsableGraphToken, isUsablePhoneNumberId } from "./meta-security.ts";
 
 export type GraphCredentials = {
@@ -9,8 +9,8 @@ export type GraphCredentials = {
 };
 
 export function resolveGraphCredentials(db?: DatabaseSync | null): GraphCredentials | null {
-  const envToken = String(process.env.META_ACCESS_TOKEN || process.env.WHATSAPP_ACCESS_TOKEN || "").trim();
-  const envPhone = String(process.env.META_PHONE_NUMBER_ID || process.env.WHATSAPP_PHONE_NUMBER_ID || "").trim();
+  const envToken = readSecret("META_ACCESS_TOKEN", "WHATSAPP_ACCESS_TOKEN");
+  const envPhone = readSecret("META_PHONE_NUMBER_ID", "WHATSAPP_PHONE_NUMBER_ID");
   if (isUsableGraphToken(envToken) && isUsablePhoneNumberId(envPhone)) {
     return { token: envToken, phoneNumberId: envPhone, source: "env" };
   }

@@ -1,15 +1,15 @@
 import crypto from "node:crypto";
 import jwt from "jsonwebtoken";
-import { appPublicUrl, graphApiVersion, isProduction } from "./runtime.ts";
+import { appPublicUrl, graphApiVersion, isProduction, readSecret } from "./runtime.ts";
 
-const STATE_SECRET = process.env.JWT_SECRET || process.env.FACEBOOK_OAUTH_STATE_SECRET || "lumera-facebook-oauth-state";
+const STATE_SECRET = readSecret("JWT_SECRET", "FACEBOOK_OAUTH_STATE_SECRET") || "lumera-facebook-oauth-state";
 
 export function facebookAppId(): string {
-  return String(process.env.FACEBOOK_APP_ID || process.env.META_APP_ID || "").trim();
+  return readSecret("FACEBOOK_APP_ID", "META_APP_ID");
 }
 
 export function facebookAppSecret(): string {
-  return String(process.env.FACEBOOK_APP_SECRET || process.env.META_APP_SECRET || "").trim();
+  return readSecret("FACEBOOK_APP_SECRET", "META_APP_SECRET");
 }
 
 export function facebookOAuthConfigured(): boolean {
@@ -266,7 +266,7 @@ export function oauthPublicConfig() {
     facebookRedirectUri: facebookOAuthConfigured() ? facebookRedirectUri() : null,
     sandboxClientOAuthAllowed: !isProduction(),
     notice: isProduction()
-      ? "Production requires Facebook Login server-side token exchange. Client-supplied emails are rejected."
-      : "SANDBOX / DEV-ONLY: client-supplied OAuth email is accepted only when NODE_ENV is not production.",
+      ? "Production requires Facebook Login server-side token exchange. Client-supplied emails are rejected. Missing FACEBOOK_APP_ID/SECRET is a hard configuration error."
+      : "SANDBOX / DEV-ONLY: Facebook App credentials are optional. Client-supplied OAuth email is accepted only when NODE_ENV is not production.",
   };
 }

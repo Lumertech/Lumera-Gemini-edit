@@ -1,15 +1,15 @@
 import crypto from "node:crypto";
 import type { Request, Response, NextFunction } from "express";
-import { envFlag, isProduction, sandboxSimulatorsEnabled } from "./runtime.ts";
+import { envFlag, isProduction, readSecret, sandboxSimulatorsEnabled } from "./runtime.ts";
 
 export const META_UNSIGNED_WEBHOOK_FLAG = "META_WEBHOOK_ALLOW_UNSIGNED";
 
 export function getMetaAppSecret(): string {
-  return String(process.env.META_APP_SECRET || process.env.WHATSAPP_APP_SECRET || "").trim();
+  return readSecret("META_APP_SECRET", "WHATSAPP_APP_SECRET");
 }
 
 export function getMetaVerifyToken(): string | undefined {
-  const fromEnv = String(process.env.META_VERIFY_TOKEN || "").trim();
+  const fromEnv = readSecret("META_VERIFY_TOKEN");
   if (fromEnv) return fromEnv;
   if (!isProduction()) return "lumera_meta_verify_token_2026_DEV_ONLY";
   return undefined;
@@ -54,8 +54,9 @@ export type WebhookSignatureDecision =
   | { ok: false; status: number; error: string };
 
 /**
- * Production always requires a valid X-Hub-Signature-256.
- * Non-prod may skip verification only when META_WEBHOOK_ALLOW_UNSIGNED is set.
+ * Production always requires a valid X-Hub-Signature-256 (missing secret is a hard fail).
+ * Non-prod: unsigned ingest is allowed when META_APP_SECRET is unset (credentials not
+ * provisioned yet) or when META_WEBHOOK_ALLOW_UNSIGNED is set.
  */
 export function decideWebhookSignature(opts: {
   rawBody: Buffer | string;
@@ -65,14 +66,19 @@ export function decideWebhookSignature(opts: {
   allowUnsignedDevFlag?: boolean;
 }): WebhookSignatureDecision {
   const production = opts.production ?? isProduction();
-  const allowUnsigned = !production && (opts.allowUnsignedDevFlag ?? envFlag(META_UNSIGNED_WEBHOOK_FLAG));
+  const allowUnsignedFlag = !production && (opts.allowUnsignedDevFlag ?? envFlag(META_UNSIGNED_WEBHOOK_FLAG));
   const header = Array.isArray(opts.signatureHeader) ? opts.signatureHeader[0] : opts.signatureHeader;
+  const secretMissing = !opts.appSecret;
 
-  if (allowUnsigned && !header) {
+  if (!production && secretMissing) {
     return { ok: true, unsignedDevBypass: true };
   }
 
-  if (!opts.appSecret) {
+  if (allowUnsignedFlag && !header) {
+    return { ok: true, unsignedDevBypass: true };
+  }
+
+  if (secretMissing) {
     return {
       ok: false,
       status: 500,
@@ -179,6 +185,6 @@ export function buildMetaReadinessOverview(opts: {
     facebookOAuthConfigured: opts.facebookOAuthConfigured,
     qualityRating: "UNKNOWN — not fetched from Graph (do not treat local GREEN as live)",
     notice:
-      "SANDBOX / DEV-ONLY readiness view. Lumera is not Meta Tech Provider certified and App Review is NOT_SUBMITTED. Do not use this payload for marketing claims.",
+      "SANDBOX / DEV-ONLY readiness view. Live Meta/Facebook app credentials are optional until provisioned separately. Lumera is not Meta Tech Provider certified and App Review is NOT_SUBMITTED. Do not use this payload for marketing claims.",
   };
 }

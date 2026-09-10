@@ -9,6 +9,27 @@ export function envFlag(name: string): boolean {
   return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
 }
 
+/**
+ * Live Meta / Facebook app values are provisioned separately.
+ * `.env.example` placeholders must not count as configured credentials.
+ */
+export function isUnsetOrPlaceholder(value?: string | null): boolean {
+  const v = String(value || "").trim();
+  if (!v) return true;
+  if (/^(replace-with-|changeme|change\.me|your-|todo\b|xxx+|placeholder)/i.test(v)) return true;
+  if (/replace-with-|not-a-secret|dummy-secret|example\.invalid/i.test(v)) return true;
+  return false;
+}
+
+/** First non-placeholder env var among the given names. */
+export function readSecret(...names: string[]): string {
+  for (const name of names) {
+    const value = String(process.env[name] || "").trim();
+    if (!isUnsetOrPlaceholder(value)) return value;
+  }
+  return "";
+}
+
 /** Non-prod simulators and fake-success Meta routes. Always false in production. */
 export function sandboxSimulatorsEnabled(): boolean {
   return !isProduction();
