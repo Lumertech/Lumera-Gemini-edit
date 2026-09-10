@@ -72,6 +72,9 @@ describe("public vs app surface routing (founder lock #48)", () => {
     assert.equal(pathToNav("/app").appView, "queue");
     assert.equal(pathToNav("/admin/users").surface, "admin");
     assert.equal(pathToNav("/admin/users").adminTab, "users");
+    assert.equal(pathToNav("/admin/people").adminTab, "people");
+    assert.equal(pathToNav("/admin/profile").adminTab, "profile");
+    assert.equal(pathToNav("/app/dental-chart").appView, "dental-chart");
     assert.equal(pathToNav("/admin/overview").adminTab, "overview");
     assert.equal(pathToNav("/admin").adminTab, "overview");
     assert.equal(pathToNav("/admin/not-a-tab").adminTab, "overview");
