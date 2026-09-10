@@ -67,6 +67,7 @@ export default function ClinicianApp() {
   const [activeSoapData, setActiveSoapData] = useState<SoapNote | null>(null);
   const [selectedSpecialty, setSelectedSpecialty] = useState<PolyclinicSpecialty | 'All'>('All');
   const [isHexaOpen, setIsHexaOpen] = useState(false);
+  const [intakeIntent, setIntakeIntent] = useState<'none' | 'register' | 'start-consult'>('none');
 
   const clinicSettings = useMemo(
     () => clinicSettingsFromSession(user, currentDoctor),
@@ -366,7 +367,23 @@ export default function ClinicianApp() {
           ) : (
             <>
               {currentView === 'welcome' && (
-                <WelcomeSetupDashboard onSelectView={setCurrentView} />
+                <WelcomeSetupDashboard
+                  hasPatients={patients.length > 0}
+                  hasSelectedPatient={Boolean(currentPatient.id)}
+                  onAddPatients={() => {
+                    setIntakeIntent('register');
+                    setCurrentView('reception');
+                  }}
+                  onStartFirstConsultation={() => {
+                    if (currentPatient.id) {
+                      setCurrentView('rx');
+                      return;
+                    }
+                    setIntakeIntent('start-consult');
+                    setCurrentView('reception');
+                  }}
+                  onAddStaff={() => setCurrentView('team')}
+                />
               )}
 
               {currentView === 'settings' && (
@@ -388,17 +405,19 @@ export default function ClinicianApp() {
               patients={patients}
               doctors={doctors}
               appointments={appointments}
+              firstRunHint={intakeIntent !== 'none' || patients.length === 0}
+              openRxAfterSave={intakeIntent === 'start-consult'}
               onSelectPatient={setCurrentPatient}
               onAddNewPatient={async (newPat) => {
                 try {
                   return await persistPatientCreate(newPat);
                 } catch (err) {
                   console.error('Failed to persist patient', err);
-                  setPatients((prev) => [newPat, ...prev.filter((p) => p.id !== newPat.id)]);
-                  return newPat;
+                  throw err instanceof Error ? err : new Error('Could not save patient');
                 }
               }}
               onCheckInPatient={async (pat, doc, type) => {
+                const status = intakeIntent === 'start-consult' ? 'In Consultation' : 'Waiting';
                 const newApt: Appointment = {
                   id: 'apt-' + Date.now(),
                   tokenNumber: appointments.length + 1,
@@ -411,20 +430,25 @@ export default function ClinicianApp() {
                   specialty: doc.specialty as PolyclinicSpecialty,
                   date: new Date().toISOString().split('T')[0],
                   timeSlot: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
-                  status: 'Waiting',
+                  status,
                   type: (type as Appointment['type']) || 'New Consultation',
                   source: 'Walk-in',
                   consultationFee: doc.consultationFee,
                   isPaid: false,
                 };
-                setAppointments((prev) => [...prev, newApt]);
                 try {
                   await persistAppointmentCreate(newApt);
                 } catch (err) {
                   console.error('Failed to persist check-in', err);
+                  throw err instanceof Error ? err : new Error('Could not issue OPD token');
                 }
               }}
-              onSwitchToConsultation={() => setCurrentView('ambient')}
+              onSwitchToConsultation={() => setCurrentView('rx')}
+              onStartConsult={(pat) => {
+                setCurrentPatient(pat);
+                setIntakeIntent('none');
+                setCurrentView('rx');
+              }}
             />
           )}
 

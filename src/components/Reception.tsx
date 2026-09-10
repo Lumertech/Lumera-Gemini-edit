@@ -31,6 +31,9 @@ interface ReceptionProps {
   onAddNewPatient: (patient: Patient) => void | Promise<Patient | void>;
   onCheckInPatient: (patient: Patient, doctor: Doctor, type: string) => void | Promise<void>;
   onSwitchToConsultation: () => void;
+  onStartConsult?: (patient: Patient) => void;
+  firstRunHint?: boolean;
+  openRxAfterSave?: boolean;
 }
 
 export const Reception: React.FC<ReceptionProps> = ({
@@ -40,7 +43,10 @@ export const Reception: React.FC<ReceptionProps> = ({
   onSelectPatient,
   onAddNewPatient,
   onCheckInPatient,
-  onSwitchToConsultation
+  onSwitchToConsultation,
+  onStartConsult,
+  firstRunHint = false,
+  openRxAfterSave = false,
 }) => {
   // Search & Filter
   const [searchQuery, setSearchQuery] = useState('');
@@ -78,6 +84,9 @@ export const Reception: React.FC<ReceptionProps> = ({
     selectedDoctorId: doctors[0]?.id || '',
     consultationType: 'Walk-in Consultation',
   });
+
+  const [savingIntake, setSavingIntake] = useState(false);
+  const [intakeError, setIntakeError] = useState<string | null>(null);
 
   // Filter patients on search
   useEffect(() => {
@@ -219,12 +228,12 @@ export const Reception: React.FC<ReceptionProps> = ({
   // Complete Intake & Check-in
   const handleCompleteIntake = async () => {
     if (!formData.name.trim() || !formData.phone.trim()) {
-      alert('Please fill out patient name and phone number');
+      setIntakeError('Please fill out patient name and phone number');
       return;
     }
 
     const doctor = doctors.find((d) => d.id === formData.selectedDoctorId) || doctors[0];
-    const generatedUHID = `LUM-2026-${Math.floor(1000 + Math.random() * 9000)}`;
+    const generatedUHID = `LUM-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
 
     const newPatient: Patient = {
       id: `pat-${Date.now()}`,
@@ -236,8 +245,8 @@ export const Reception: React.FC<ReceptionProps> = ({
       bloodGroup: formData.bloodGroup,
       allergies: ['None known'],
       chronicConditions: [],
-      emergencyContact: formData.phone,
-      address: formData.address || 'Bengaluru, India',
+      emergencyContact: formData.emergencyContact || formData.phone,
+      address: formData.address || '',
       lastVisit: 'Today',
       abhaNumber: verificationSuccess?.abhaNumber || '',
       abhaAddress: verificationSuccess?.abhaAddress || '',
@@ -245,25 +254,35 @@ export const Reception: React.FC<ReceptionProps> = ({
       hfrId: verificationSuccess ? 'HFR-IN-8829104' : '',
     };
 
-    const saved = (await onAddNewPatient(newPatient)) || newPatient;
-    await onCheckInPatient(saved, doctor, formData.consultationType);
-    onSelectPatient(saved);
+    setSavingIntake(true);
+    setIntakeError(null);
+    try {
+      const saved = (await onAddNewPatient(newPatient)) || newPatient;
+      await onCheckInPatient(saved, doctor, formData.consultationType);
+      onSelectPatient(saved);
+      if (openRxAfterSave && onStartConsult) {
+        onStartConsult(saved);
+      }
 
-    // Reset forms
-    setVerificationSuccess(null);
-    setOtpSentTxnId(null);
-    setAadhaarNumber('');
-    setFormData({
-      name: '',
-      phone: '',
-      age: 35,
-      gender: 'Male',
-      bloodGroup: 'B+',
-      address: '',
-      emergencyContact: '',
-      selectedDoctorId: doctors[0]?.id || '',
-      consultationType: 'Walk-in Consultation',
-    });
+      setVerificationSuccess(null);
+      setOtpSentTxnId(null);
+      setAadhaarNumber('');
+      setFormData({
+        name: '',
+        phone: '',
+        age: 35,
+        gender: 'Male',
+        bloodGroup: 'B+',
+        address: '',
+        emergencyContact: '',
+        selectedDoctorId: doctors[0]?.id || '',
+        consultationType: 'Walk-in Consultation',
+      });
+    } catch (err: any) {
+      setIntakeError(err?.message || 'Could not save patient. Please try again.');
+    } finally {
+      setSavingIntake(false);
+    }
   };
 
   return (
@@ -280,7 +299,9 @@ export const Reception: React.FC<ReceptionProps> = ({
             </span>
           </div>
           <p className="text-xs text-slate-500 mt-1">
-            Seamless patient registration with Government ABHA QR scanning, instant Aadhaar e-KYC verification, and token generation.
+            {firstRunHint
+              ? 'Register the first patient for this clinic. Saving writes a durable chart — it will still be here after refresh.'
+              : 'Seamless patient registration with Government ABHA QR scanning, instant Aadhaar e-KYC verification, and token generation.'}
           </p>
         </div>
 
@@ -409,7 +430,9 @@ export const Reception: React.FC<ReceptionProps> = ({
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">
             <div className="flex items-center gap-2">
               <UserPlus className="w-5 h-5 text-purple-600" />
-              <h3 className="font-bold text-sm text-slate-900">Patient Intake & Token Generation</h3>
+              <h3 className="font-bold text-sm text-slate-900">
+                {patients.length === 0 ? 'Add your first patient' : 'Patient Intake & Token Generation'}
+              </h3>
             </div>
             {verificationSuccess && (
               <span className="text-[11px] px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-medium">
@@ -504,6 +527,13 @@ export const Reception: React.FC<ReceptionProps> = ({
             </div>
           </div>
 
+          {intakeError && (
+            <div className="p-2.5 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-lg flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{intakeError}</span>
+            </div>
+          )}
+
           <div className="pt-4 border-t border-slate-100 flex items-center justify-between">
             <div className="text-xs text-slate-500">
               Consultation Fee:{' '}
@@ -514,10 +544,11 @@ export const Reception: React.FC<ReceptionProps> = ({
 
             <button
               onClick={handleCompleteIntake}
-              className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg shadow-sm transition-all flex items-center gap-2"
+              disabled={savingIntake}
+              className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg shadow-sm transition-all flex items-center gap-2 disabled:opacity-60"
             >
-              <CreditCard className="w-4 h-4" />
-              <span>Issue OPD Token & Check-In</span>
+              {savingIntake ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CreditCard className="w-4 h-4" />}
+              <span>{savingIntake ? 'Saving…' : 'Issue OPD Token & Check-In'}</span>
             </button>
           </div>
         </div>
@@ -548,6 +579,15 @@ export const Reception: React.FC<ReceptionProps> = ({
 
           {/* Patient Cards List */}
           <div className="space-y-2.5 max-h-[460px] overflow-y-auto pr-1">
+            {searchResults.length === 0 && (
+              <div className="p-6 text-center border border-dashed border-slate-200 rounded-lg bg-slate-50">
+                <UserPlus className="w-8 h-8 text-slate-400 mx-auto mb-2" />
+                <p className="text-sm font-semibold text-slate-800">No patients in this clinic yet</p>
+                <p className="text-xs text-slate-500 mt-1">
+                  Use the intake form to register the first patient. They will appear here after save and after refresh.
+                </p>
+              </div>
+            )}
             {searchResults.map((p) => {
               const isKyc = p.kycStatus === 'VERIFIED' || Boolean(p.abhaNumber);
               return (
@@ -587,7 +627,8 @@ export const Reception: React.FC<ReceptionProps> = ({
                     <button
                       onClick={() => {
                         onSelectPatient(p);
-                        onSwitchToConsultation();
+                        if (onStartConsult) onStartConsult(p);
+                        else onSwitchToConsultation();
                       }}
                       className="px-3 py-1.5 bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1"
                     >
