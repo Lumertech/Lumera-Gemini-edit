@@ -659,20 +659,18 @@ export default function ClinicianApp() {
               currentDoctor={currentDoctor}
               clinicSettings={clinicSettings}
               activePrescription={prescriptions.find((p) => p.patientId === currentPatient.id) || null}
+              appointmentId={
+                appointments.find((a) => a.patientId === currentPatient.id && !a.isPaid)?.id ||
+                appointments.find((a) => a.patientId === currentPatient.id)?.id
+              }
               onPaymentSuccess={(_invoiceNumber, _amount) => {
-                const open = appointments.find((a) => a.patientId === currentPatient.id && !a.isPaid);
-                setAppointments((prev) =>
-                  prev.map((a) =>
-                    a.patientId === currentPatient.id
-                      ? { ...a, isPaid: true, status: 'Completed' }
-                      : a
-                  )
-                );
-                if (open) {
-                  void persistAppointmentPatch(open.id, { isPaid: true, status: 'Completed' }).catch((err) => {
-                    console.error('Failed to persist payment status', err);
+                void apiFetch<{ appointments: Appointment[] }>('/api/appointments')
+                  .then((res) => {
+                    if (Array.isArray(res.appointments)) setAppointments(res.appointments);
+                  })
+                  .catch((err) => {
+                    console.error('Failed to refresh appointments after payment', err);
                   });
-                }
               }}
             />
           )}

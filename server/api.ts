@@ -19,6 +19,7 @@ import {
   type UserStatus,
 } from "./db.ts";
 import { createClinicalRouter } from "./clinical.ts";
+import { createBillingRouter } from "./billing.ts";
 import {
   getTenantLetterhead,
   parseLetterheadPatch,
@@ -1854,6 +1855,7 @@ export function createApiRouter(): Router {
   });
 
   api.use(createClinicalRouter());
+  api.use(createBillingRouter());
 
   return api;
 }

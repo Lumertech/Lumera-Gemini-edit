@@ -457,6 +457,41 @@ function migrate(database: DatabaseSync) {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS invoices (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      invoice_number TEXT NOT NULL,
+      appointment_id TEXT NOT NULL DEFAULT '',
+      patient_id TEXT NOT NULL DEFAULT '',
+      patient_name TEXT NOT NULL DEFAULT '',
+      patient_phone TEXT NOT NULL DEFAULT '',
+      patient_uhid TEXT NOT NULL DEFAULT '',
+      date TEXT NOT NULL,
+      items TEXT NOT NULL DEFAULT '[]',
+      subtotal INTEGER NOT NULL DEFAULT 0,
+      discount_amount INTEGER NOT NULL DEFAULT 0,
+      gstin TEXT NOT NULL DEFAULT '',
+      gst_percent REAL NOT NULL DEFAULT 0,
+      tax_amount INTEGER NOT NULL DEFAULT 0,
+      total_amount INTEGER NOT NULL DEFAULT 0,
+      paid_amount INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'Unpaid',
+      payment_mode TEXT NOT NULL DEFAULT '',
+      payment_ref TEXT NOT NULL DEFAULT '',
+      razorpay_order_id TEXT NOT NULL DEFAULT '',
+      razorpay_payment_id TEXT NOT NULL DEFAULT '',
+      razorpay_payment_link_id TEXT NOT NULL DEFAULT '',
+      pay_link TEXT NOT NULL DEFAULT '',
+      upi_id TEXT NOT NULL DEFAULT '',
+      issued_by TEXT NOT NULL DEFAULT '',
+      receipt_whatsapp_status TEXT NOT NULL DEFAULT 'unsent',
+      receipt_whatsapp_channel TEXT NOT NULL DEFAULT '',
+      receipt_whatsapp_message_id TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      paid_at TEXT,
+      UNIQUE (tenant_id, invoice_number)
+    );
+
     CREATE TABLE IF NOT EXISTS meta_templates (
       id TEXT PRIMARY KEY,
       tenant_id TEXT NOT NULL,
@@ -695,6 +730,15 @@ function migrate(database: DatabaseSync) {
   } catch {}
   try {
     database.exec("CREATE INDEX IF NOT EXISTS idx_prescriptions_patient ON prescriptions(tenant_id, patient_id)");
+  } catch {}
+  try {
+    database.exec("CREATE INDEX IF NOT EXISTS idx_invoices_tenant ON invoices(tenant_id, date)");
+  } catch {}
+  try {
+    database.exec("CREATE INDEX IF NOT EXISTS idx_invoices_razorpay_order ON invoices(razorpay_order_id)");
+  } catch {}
+  try {
+    database.exec("CREATE INDEX IF NOT EXISTS idx_invoices_payment_link ON invoices(razorpay_payment_link_id)");
   } catch {}
 }
 
@@ -1302,7 +1346,64 @@ export function mapDoctor(row: Record<string, unknown>) {
   };
 }
 
+export function getTenantBillingProfile(tenantId: string): {
+  name: string;
+  gstin: string;
+  upiId: string;
+} {
+  if (!tenantId) return { name: "", gstin: "", upiId: "" };
+  try {
+    const row = getDb()
+      .prepare("SELECT name, gstin, upi_id FROM tenants WHERE id = ?")
+      .get(tenantId) as { name?: string; gstin?: string; upi_id?: string } | undefined;
+    return {
+      name: String(row?.name || ""),
+      gstin: String(row?.gstin || ""),
+      upiId: String(row?.upi_id || ""),
+    };
+  } catch {
+    return { name: "", gstin: "", upiId: "" };
+  }
+}
+
+export function mapInvoice(row: Record<string, unknown>) {
+  return {
+    id: row.id as string,
+    tenantId: row.tenant_id as string,
+    invoiceNumber: row.invoice_number as string,
+    appointmentId: (row.appointment_id as string) || "",
+    patientId: (row.patient_id as string) || "",
+    patientName: (row.patient_name as string) || "",
+    patientPhone: (row.patient_phone as string) || "",
+    patientUhid: (row.patient_uhid as string) || "",
+    date: row.date as string,
+    items: parseJsonColumn(row.items, [] as unknown[]),
+    subtotal: Number(row.subtotal || 0),
+    discountAmount: Number(row.discount_amount || 0),
+    gstin: (row.gstin as string) || "",
+    gstPercent: Number(row.gst_percent || 0),
+    taxAmount: Number(row.tax_amount || 0),
+    totalAmount: Number(row.total_amount || 0),
+    paidAmount: Number(row.paid_amount || 0),
+    paymentStatus: (row.status as string) || "Unpaid",
+    paymentMode: (row.payment_mode as string) || undefined,
+    paymentRef: (row.payment_ref as string) || undefined,
+    razorpayOrderId: (row.razorpay_order_id as string) || "",
+    razorpayPaymentId: (row.razorpay_payment_id as string) || "",
+    razorpayPaymentLinkId: (row.razorpay_payment_link_id as string) || "",
+    payLink: (row.pay_link as string) || "",
+    upiId: (row.upi_id as string) || "",
+    issuedBy: (row.issued_by as string) || "",
+    receiptWhatsAppStatus: (row.receipt_whatsapp_status as string) || "unsent",
+    receiptWhatsAppChannel: (row.receipt_whatsapp_channel as string) || "",
+    receiptWhatsAppMessageId: (row.receipt_whatsapp_message_id as string) || "",
+    createdAt: row.created_at as string,
+    paidAt: (row.paid_at as string) || null,
+  };
+}
+
 export function publicUser(user: DbUser) {
+  const billing = getTenantBillingProfile(user.tenant_id || "");
   return {
     id: user.id,
     tenantId: user.tenant_id || "",
@@ -1314,7 +1415,7 @@ export function publicUser(user: DbUser) {
     lastLogin: user.last_login,
     createdAt: user.created_at,
     avatarUrl: user.avatar_url || "",
-    clinicName: user.clinic_name || "",
+    clinicName: user.clinic_name || billing.name || "",
     whatsappVerified: Boolean(user.whatsapp_verified),
     hprId: user.hpr_id || "",
     hfrId: user.hfr_id || "",
@@ -1322,6 +1423,8 @@ export function publicUser(user: DbUser) {
     practiceType: normalizePracticeType(user.practice_type),
     specialty: (user.specialty as string) || "",
     isDemoWorkspace: isDemoWorkspaceUser(user),
+    gstin: billing.gstin,
+    upiId: billing.upiId,
   };
 }
 
