@@ -379,7 +379,7 @@ describe("#35 dual onboard — same patientId + frozen link-abha", () => {
     assert.equal(status.json.abdmGateway, undefined);
   });
 
-  it("HIP + HIU + HRP stubs attach artefacts to the same patientId and 403 cross-tenant", async () => {
+  it("HIP + HIU freeze paths persist artefacts on the same patientId and 403 cross-tenant", async () => {
     const clinic = createClinicUser("hiu");
     const token = await login(clinic.email);
     const auth = { Authorization: `Bearer ${token}` };
@@ -391,13 +391,81 @@ describe("#35 dual onboard — same patientId + frozen link-abha", () => {
       { name: "HIU Patient", phone, age: 29, gender: "Male" },
       auth
     );
-    const patientId = (created.json.patient as { id: string }).id;
+    const patient = created.json.patient as { id: string; uhid: string };
+    const patientId = patient.id;
+    const linked = await jsonRequest(
+      port,
+      "POST",
+      "/api/patients/link-abha",
+      {
+        patientId,
+        phone,
+        abhaNumber: uniqueAbha("h"),
+        abhaAddress: "hiu.patient@sbx",
+        source: "aadhaar_otp",
+        abdmMode: "stub",
+      },
+      auth
+    );
+    assert.equal(linked.status, 200, String(linked.json.error || ""));
+    const abhaNumber = (linked.json.patient as { abhaNumber: string }).abhaNumber;
     const consentId = `hiu-${patientId}`;
+
+    const ctx = await jsonRequest(
+      port,
+      "POST",
+      "/api/abdm/hip/link/care-context",
+      { patientId, encounterId: "enc-1", hiTypes: ["Prescription"], display: "OPD" },
+      auth
+    );
+    assert.equal(ctx.status, 200, String(ctx.json.error || ""));
+    assert.equal(ctx.json.careContextReference, `CARE-CTX-${patient.uhid}-enc-1`);
+    assert.equal(ctx.json.abdmMode, "stub");
+
+    const discover = await jsonRequest(
+      port,
+      "POST",
+      "/api/abdm/hip/patient-discover",
+      { abhaNumber },
+      auth
+    );
+    assert.equal(discover.status, 200, String(discover.json.error || ""));
+    assert.equal(discover.json.abdmMode, "stub");
+    assert.equal((discover.json.patient as { patientId: string }).patientId, patientId);
+    const careContexts = discover.json.careContexts as Array<{ careContextReference: string }>;
+    assert.ok(careContexts.some((row) => row.careContextReference === `CARE-CTX-${patient.uhid}-enc-1`));
+
+    const confirm = await jsonRequest(
+      port,
+      "POST",
+      "/api/abdm/hip/link/on-confirm",
+      { patientId, careContextReference: ctx.json.careContextReference },
+      auth
+    );
+    assert.equal(confirm.status, 202, String(confirm.json.error || ""));
+    assert.equal(confirm.json.abdmMode, "stub");
+
+    const init = await jsonRequest(
+      port,
+      "POST",
+      "/api/abdm/hiu/consent-request/init",
+      {
+        patientId,
+        abhaAddress: "hiu.patient@sbx",
+        hiTypes: ["Prescription"],
+        dateRange: { from: "2026-01-01", to: "2026-12-31" },
+        purpose: "HIU init stub",
+      },
+      auth
+    );
+    assert.equal(init.status, 200, String(init.json.error || ""));
+    assert.ok(init.json.consentRequestId);
+    assert.equal(init.json.abdmMode, "stub");
 
     const notify = await jsonRequest(
       port,
       "POST",
-      "/api/abdm/hiu/consent/notify",
+      "/api/abdm/hiu/consent-request/on-status",
       {
         patientId,
         consentArtefact: {
@@ -415,51 +483,81 @@ describe("#35 dual onboard — same patientId + frozen link-abha", () => {
     assert.equal(notify.status, 202, String(notify.json.error || ""));
     assert.equal(notify.json.patientId, patientId);
     assert.equal(notify.json.kind, "hiu_consent");
+    assert.equal(notify.json.abdmMode, "stub");
     assert.match(String(notify.json.sandboxNotice || ""), /NHA sandbox/);
 
     const hip = await jsonRequest(
       port,
       "POST",
-      "/api/abdm/hip/notify",
+      "/api/abdm/hip/consent/on-notify",
       { patientId, consentId: `hip-${patientId}`, purpose: "HIP share stub" },
       auth
     );
     assert.equal(hip.status, 202, String(hip.json.error || ""));
-    assert.equal(hip.json.patientId, patientId);
     assert.equal(hip.json.kind, "hip_notify");
+    assert.equal(hip.json.abdmMode, "stub");
 
-    const hrp = await jsonRequest(
+    const requested = await jsonRequest(
       port,
       "POST",
-      "/api/abdm/hrp/registry",
-      { patientId, consentId: `hrp-${patientId}`, hfrId: "HFR-STUB-1", hprId: "HPR-STUB-1" },
+      "/api/abdm/hiu/health-information/request",
+      { patientId, consentId },
       auth
     );
-    assert.equal(hrp.status, 202, String(hrp.json.error || ""));
-    assert.equal(hrp.json.patientId, patientId);
-    assert.equal(hrp.json.kind, "hrp_registry");
+    assert.equal(requested.status, 200, String(requested.json.error || ""));
+    assert.equal(requested.json.kind, "hiu_fetch");
 
-    const fetched = await jsonRequest(port, "POST", "/api/abdm/hiu/fetch", { patientId, consentId }, auth);
-    assert.equal(fetched.status, 200, String(fetched.json.error || ""));
-    assert.equal(fetched.json.patientId, patientId);
-    const artefacts = fetched.json.artefacts as Array<{ patientId?: string; kind?: string; consentId?: string }>;
-    assert.ok(Array.isArray(artefacts) && artefacts.length >= 3);
-    assert.ok(artefacts.every((row) => !row.patientId || row.patientId === patientId));
+    const received = await jsonRequest(
+      port,
+      "POST",
+      "/api/abdm/hiu/health-information/on-receive",
+      { patientId, consentId },
+      auth
+    );
+    assert.equal(received.status, 200, String(received.json.error || ""));
+    assert.equal(received.json.kind, "hiu_receive");
+
+    const onRequest = await jsonRequest(
+      port,
+      "POST",
+      "/api/abdm/hip/health-information/on-request",
+      { patientId, consentId, encounterId: "enc-1", transactionId: "tx-1" },
+      auth
+    );
+    assert.equal(onRequest.status, 200, String(onRequest.json.error || ""));
+    assert.equal(onRequest.json.abdmMode, "stub");
+    assert.equal(onRequest.json.careContextReference, `CARE-CTX-${patient.uhid}-enc-1`);
+    assert.ok(Array.isArray(onRequest.json.entries));
+
+    const alias = await jsonRequest(
+      port,
+      "POST",
+      "/api/abdm/hip/data-notification",
+      { patientId, consentId, encounterId: "enc-1" },
+      auth
+    );
+    assert.equal(alias.status, 200, String(alias.json.error || ""));
+    assert.equal(alias.json.abdmMode, "stub");
+
+    const listed = await jsonRequest(port, "GET", `/api/abdm/hiu/consents?patientId=${patientId}`, undefined, auth);
+    assert.equal(listed.status, 200, String(listed.json.error || ""));
+    assert.equal(listed.json.abdmMode, "stub");
+    const artefacts = listed.json.artefacts as Array<{ patientId?: string; kind?: string; consentId?: string }>;
     assert.ok(artefacts.some((row) => row.kind === "hiu_consent" || row.consentId === consentId));
     assert.ok(artefacts.some((row) => row.kind === "hip_notify"));
-    assert.ok(artefacts.some((row) => row.kind === "hrp_registry"));
-
-    const detail = await jsonRequest(port, "GET", `/api/patients/${patientId}`, undefined, auth);
-    const stored = (detail.json.patient as { id: string; consentArtefacts: Array<{ kind?: string }> }).consentArtefacts;
-    assert.ok(stored.some((row) => row.kind === "hiu_consent"));
-    assert.ok(stored.some((row) => row.kind === "hip_notify"));
-    assert.ok(stored.some((row) => row.kind === "hrp_registry"));
+    assert.ok(artefacts.some((row) => row.kind === "hip_care_context"));
+    assert.ok(artefacts.some((row) => row.kind === "hiu_consent_init"));
+    assert.ok(artefacts.every((row) => !row.patientId || row.patientId === patientId));
 
     const clinicB = createClinicUser("hiuB");
     const tokenB = await login(clinicB.email);
     const authB = { Authorization: `Bearer ${tokenB}` };
-    for (const path of ["/api/abdm/hiu/fetch", "/api/abdm/hip/notify", "/api/abdm/hrp/registry"] as const) {
-      const stolen = await jsonRequest(port, "POST", path, { patientId, consentId }, authB);
+    for (const path of [
+      "/api/abdm/hiu/health-information/request",
+      "/api/abdm/hip/consent/on-notify",
+      "/api/abdm/hip/link/care-context",
+    ] as const) {
+      const stolen = await jsonRequest(port, "POST", path, { patientId, consentId, encounterId: "x" }, authB);
       assert.equal(stolen.status, 403, `${path} should 403 cross-tenant`);
     }
 
@@ -467,11 +565,17 @@ describe("#35 dual onboard — same patientId + frozen link-abha", () => {
     await jsonRequest(
       port,
       "POST",
-      "/api/abdm/hiu/consent/notify",
+      "/api/abdm/hiu/consent-request/on-status",
       { patientId, consentArtefact: { consentId: deniedId, status: "DENIED", purpose: "blocked" } },
       auth
     );
-    const blocked = await jsonRequest(port, "POST", "/api/abdm/hiu/fetch", { patientId, consentId: deniedId }, auth);
+    const blocked = await jsonRequest(
+      port,
+      "POST",
+      "/api/abdm/hiu/health-information/request",
+      { patientId, consentId: deniedId },
+      auth
+    );
     assert.equal(blocked.status, 403);
   });
 });
@@ -542,6 +646,16 @@ describe("#35 overclaim grep (Platform ABHA / ABDM)", () => {
     assert.match(clinical, /NHA sandbox/);
     assert.match(abdm, /NHA sandbox/);
     assert.match(clinical, /LINKED_SANDBOX/);
+    assert.match(abdm, /\/hip\/link\/care-context/);
+    assert.match(abdm, /\/hip\/patient-discover/);
+    assert.match(abdm, /\/hip\/link\/on-confirm/);
+    assert.match(abdm, /\/hip\/consent\/on-notify/);
+    assert.match(abdm, /\/hip\/health-information\/on-request/);
+    assert.match(abdm, /\/hiu\/consent-request\/init/);
+    assert.match(abdm, /\/hiu\/consent-request\/on-status/);
+    assert.match(abdm, /\/hiu\/health-information\/request/);
+    assert.match(abdm, /\/hiu\/health-information\/on-receive/);
+    assert.match(abdm, /\/hiu\/consents/);
   });
 
   it("demo patient ABHA seed is LINKED_SANDBOX, never an unlocked KYC value", () => {
