@@ -20,6 +20,11 @@ import {
 } from "./db.ts";
 import { createClinicalRouter } from "./clinical.ts";
 import {
+  getTenantLetterhead,
+  parseLetterheadPatch,
+  updateTenantLetterhead,
+} from "./letterhead.ts";
+import {
   ADMIN_ROLES,
   CLINICIAN_ROLES,
   CLINIC_MANAGER_ROLES,
@@ -1172,9 +1177,48 @@ export function createApiRouter(): Router {
 
     return res.json({
       tenant,
+      letterhead: getTenantLetterhead(tenantId, req.user?.id),
       dhis: dhis || { claims_count: 0, claims_threshold: 100, month_year: currentMonth, status: "active" },
     });
   });
+
+  api.get("/tenant/letterhead", requireAuth, (req: Request, res: Response) => {
+    const tenantId = req.user?.tenantId;
+    if (!tenantId) {
+      return res.status(404).json({ error: "No tenant associated with this account." });
+    }
+    const tenant = getDb().prepare("SELECT id FROM tenants WHERE id = ?").get(tenantId) as { id: string } | undefined;
+    if (!tenant) {
+      return res.status(404).json({ error: "Tenant record not found." });
+    }
+    return res.json({
+      letterhead: getTenantLetterhead(tenantId, req.user?.id),
+    });
+  });
+
+  const saveTenantLetterhead = (req: Request, res: Response) => {
+    const tenantId = req.user?.tenantId;
+    if (!tenantId) {
+      return res.status(404).json({ error: "No tenant associated with this account." });
+    }
+    const tenant = getDb().prepare("SELECT id FROM tenants WHERE id = ?").get(tenantId) as { id: string } | undefined;
+    if (!tenant) {
+      return res.status(404).json({ error: "Tenant record not found." });
+    }
+    const patch = parseLetterheadPatch(req.body);
+    const letterhead = updateTenantLetterhead(tenantId, patch, req.user?.id);
+    writeAudit(
+      getDb(),
+      req.user!.id,
+      req.user!.name,
+      "Tenant Letterhead Updated",
+      `Updated letterhead fields for tenant ${tenantId}`
+    );
+    return res.json({ letterhead });
+  };
+
+  api.patch("/tenant/letterhead", requireAuth, requireRole(...CLINIC_MANAGER_ROLES), saveTenantLetterhead);
+  api.put("/tenant/letterhead", requireAuth, requireRole(...CLINIC_MANAGER_ROLES), saveTenantLetterhead);
 
   api.get("/public/site", (_req, res) => {
     res.json(assemblePublicSite());

@@ -1325,6 +1325,7 @@ export const DEFAULT_CLINIC_SETTINGS: ClinicSettings = {
   city: 'Kolkata, West Bengal - 700017',
   phone: '+91 (033) 2289-9000 / +91 98000 12345',
   email: 'care@lumeraclinic.in',
+  website: 'https://lumeraclinic.in',
   gstin: '19AABCL8899K1Z5',
   regId: 'WB-CLINIC-REG-2023/8892',
   upiId: 'lumerahealth@icici',

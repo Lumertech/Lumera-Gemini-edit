@@ -1,4 +1,4 @@
-import { AppUser, ClinicSettings, Doctor, Patient, PolyclinicSpecialty, UserRole } from "../types";
+import { AppUser, ClinicSettings, Doctor, Patient, PolyclinicSpecialty, TenantLetterhead, UserRole } from "../types";
 import { DEFAULT_CLINIC_SETTINGS } from "../data/clinicalData";
 
 export const UNASSIGNED_PATIENT: Patient = {
@@ -70,17 +70,51 @@ export function doctorFromUser(user: AppUser | null | undefined, fallback?: Doct
   };
 }
 
-export function clinicSettingsFromSession(user: AppUser | null | undefined, doctor: Doctor): ClinicSettings {
-  if (user?.isDemoWorkspace) return DEFAULT_CLINIC_SETTINGS;
+export function clinicSettingsFromSession(
+  user: AppUser | null | undefined,
+  doctor: Doctor,
+  letterhead?: TenantLetterhead | null
+): ClinicSettings {
+  if (user?.isDemoWorkspace && !letterhead) return DEFAULT_CLINIC_SETTINGS;
+
+  const blank: ClinicSettings = {
+    name: "",
+    tagline: "",
+    address: "",
+    city: "",
+    phone: "",
+    email: "",
+    website: "",
+    gstin: "",
+    regId: "",
+    upiId: "",
+    whatsappNumber: "",
+    headerBgColor: DEFAULT_CLINIC_SETTINGS.headerBgColor,
+    accentColor: DEFAULT_CLINIC_SETTINGS.accentColor,
+    showLogo: true,
+    showQrCode: true,
+    sealText: "",
+    footerDisclaimer: DEFAULT_CLINIC_SETTINGS.footerDisclaimer,
+  };
+  const base = user?.isDemoWorkspace ? DEFAULT_CLINIC_SETTINGS : blank;
+
   return {
-    ...DEFAULT_CLINIC_SETTINGS,
-    name: user?.clinicName || DEFAULT_CLINIC_SETTINGS.name,
-    phone: user?.phone || doctor.phone || DEFAULT_CLINIC_SETTINGS.phone,
-    email: user?.email || doctor.email || DEFAULT_CLINIC_SETTINGS.email,
-    whatsappNumber: user?.phone || DEFAULT_CLINIC_SETTINGS.whatsappNumber,
-    sealText: doctor.signatureUrl
-      ? "Digitally signed by treating clinician"
-      : DEFAULT_CLINIC_SETTINGS.sealText,
+    ...base,
+    name: letterhead?.clinicName || user?.clinicName || base.name,
+    tagline: letterhead?.tagline || base.tagline,
+    address: letterhead?.address || base.address,
+    city: letterhead?.city || base.city,
+    phone: letterhead?.phone || user?.phone || doctor.phone || base.phone,
+    email: letterhead?.email || user?.email || doctor.email || base.email,
+    website: letterhead?.website || base.website,
+    gstin: letterhead?.gstin || base.gstin,
+    regId: letterhead?.regId || base.regId,
+    upiId: letterhead?.upiId || base.upiId,
+    whatsappNumber: letterhead?.whatsappNumber || user?.phone || base.whatsappNumber,
+    sealText:
+      letterhead?.sealText ||
+      (doctor.signatureUrl ? "Digitally signed by treating clinician" : base.sealText),
+    footerDisclaimer: letterhead?.footerDisclaimer || base.footerDisclaimer,
   };
 }
 

@@ -31,7 +31,8 @@ import {
   Prescription,
   SoapNote,
   Vitals,
-  PolyclinicSpecialty
+  PolyclinicSpecialty,
+  TenantLetterhead,
 } from './types';
 import { apiFetch } from './api/http';
 import { useAuth } from './auth/AuthContext';
@@ -67,11 +68,12 @@ export default function ClinicianApp() {
   const [activeSoapData, setActiveSoapData] = useState<SoapNote | null>(null);
   const [selectedSpecialty, setSelectedSpecialty] = useState<PolyclinicSpecialty | 'All'>('All');
   const [isHexaOpen, setIsHexaOpen] = useState(false);
+  const [letterhead, setLetterhead] = useState<TenantLetterhead | null>(null);
   const [intakeIntent, setIntakeIntent] = useState<'none' | 'register' | 'start-consult'>('none');
 
   const clinicSettings = useMemo(
-    () => clinicSettingsFromSession(user, currentDoctor),
-    [user, currentDoctor]
+    () => clinicSettingsFromSession(user, currentDoctor, letterhead),
+    [user, currentDoctor, letterhead]
   );
 
   // Specialty locking enforcement for doctor accounts
@@ -99,13 +101,16 @@ export default function ClinicianApp() {
 
     const loadWorkspace = async () => {
       try {
-        const [doctorRes, patientRes, appointmentRes, prescriptionRes] = await Promise.all([
+        const [doctorRes, patientRes, appointmentRes, prescriptionRes, letterheadRes] = await Promise.all([
           apiFetch<{ doctors: Doctor[] }>('/api/doctors'),
           apiFetch<{ patients: Patient[] }>('/api/patients'),
           apiFetch<{ appointments: Appointment[] }>('/api/appointments'),
           apiFetch<{ prescriptions: Prescription[] }>('/api/prescriptions'),
+          apiFetch<{ letterhead: TenantLetterhead }>('/api/tenant/letterhead').catch(() => ({ letterhead: null })),
         ]);
         if (cancelled) return;
+
+        if (letterheadRes.letterhead) setLetterhead(letterheadRes.letterhead);
 
         const nextDoctors = doctorRes.doctors || [];
         if (nextDoctors.length) {
@@ -438,6 +443,7 @@ export default function ClinicianApp() {
               {currentView === 'settings' && (
                 <ClinicProfileSettings
                   currentDoctor={currentDoctor}
+                  letterhead={letterhead}
                   onDoctorUpdated={(updated) => {
                     setCurrentDoctor(updated);
                     setDoctors((prev) => {
@@ -446,6 +452,7 @@ export default function ClinicianApp() {
                       return prev.map((d) => (d.id === updated.id ? updated : d));
                     });
                   }}
+                  onLetterheadSaved={setLetterhead}
                 />
               )}
 

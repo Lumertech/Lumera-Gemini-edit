@@ -22,6 +22,23 @@ export interface AppUser {
   isDemoWorkspace?: boolean;
 }
 
+export interface TenantLetterhead {
+  clinicName: string;
+  address: string;
+  city?: string;
+  phone?: string;
+  email?: string;
+  gstin: string;
+  upiId: string;
+  sealText: string;
+  signatureUrl: string;
+  tagline?: string;
+  footerDisclaimer?: string;
+  website?: string;
+  regId?: string;
+  whatsappNumber?: string;
+}
+
 export interface Tenant {
   id: string;
   name: string;
@@ -566,6 +583,7 @@ export interface ClinicSettings {
   city: string;
   phone: string;
   email: string;
+  website?: string;
   gstin: string;
   regId: string;
   upiId: string;
