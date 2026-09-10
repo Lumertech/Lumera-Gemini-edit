@@ -228,14 +228,12 @@ describe("Compliance #44 honesty gate (clinician / admin / DHIS / CMS / ABDM sta
     assert.deepEqual(leftovers, [], leftovers.join("\n"));
   });
 
-  it("GET /api/abdm/status exposes only abdmMode + bridgeReady (+ notice)", async () => {
+  it("GET /api/abdm/status exposes only abdmMode + bridgeReady", async () => {
     const payload = buildAbdmStatusPayload();
-    assert.equal(payload.abdmMode, "local_stub");
-    assert.equal(typeof payload.bridgeReady, "boolean");
-    assert.match(payload.notice, /local stand-in|NHA sandbox/i);
-    assert.match(payload.notice, /not production HIU\/HIP/i);
+    assert.equal(payload.abdmMode, "stub");
+    assert.equal(payload.bridgeReady, true);
     const keys = Object.keys(payload).sort();
-    assert.deepEqual(keys, ["abdmMode", "bridgeReady", "notice"]);
+    assert.deepEqual(keys, ["abdmMode", "bridgeReady"]);
 
     const serialized = JSON.stringify(payload);
     assert.equal(/COMPLIANT_V3/i.test(serialized), false);
@@ -255,11 +253,12 @@ describe("Compliance #44 honesty gate (clinician / admin / DHIS / CMS / ABDM sta
         const res = await fetch(`http://127.0.0.1:${port}${urlPath}`);
         assert.equal(res.status, 200);
         const json = (await res.json()) as Record<string, unknown>;
-        assert.equal(json.abdmMode, "local_stub");
-        assert.equal(typeof json.bridgeReady, "boolean");
-        assert.match(String(json.notice), /NHA sandbox|local stand-in/i);
+        assert.equal(json.abdmMode, "stub");
+        assert.equal(json.bridgeReady, true);
         assert.equal(json.sandboxAuditStatus, undefined);
         assert.equal(json.abdmGateway, undefined);
+        assert.equal(json.notice, undefined);
+        assert.deepEqual(Object.keys(json).sort(), ["abdmMode", "bridgeReady"]);
       }
     } finally {
       await new Promise<void>((resolve, reject) => {

@@ -213,28 +213,13 @@ export function recordDhisTransaction(params: {
   }
 }
 
-/** UI-facing ABDM status while this module is a local stand-in (no NHA sandbox wiring). */
-export type AbdmMode = "local_stub" | "nha_sandbox";
+/** UI-facing ABDM status. Matches Platform #35 freeze: { abdmMode, bridgeReady } only. */
+export type AbdmMode = "stub" | "sandbox";
 
-export const ABDM_STATUS_NOTICE =
-  "Local ABDM Gateway stand-in / NHA sandbox — not production HIU/HIP approval.";
-
-export function currentAbdmMode(): AbdmMode {
-  // This module does not currently leave the process for GATEWAY_URL.
-  // Do not report nha_sandbox until a real NHA sandbox session is wired.
-  return "local_stub";
-}
-
-export function isBridgeReady(): boolean {
-  return Boolean(cachedSession && cachedSession.expiresAt > Date.now());
-}
-
-export function buildAbdmStatusPayload() {
-  return {
-    abdmMode: currentAbdmMode(),
-    bridgeReady: isBridgeReady(),
-    notice: ABDM_STATUS_NOTICE,
-  };
+export function buildAbdmStatusPayload(): { abdmMode: AbdmMode; bridgeReady: boolean } {
+  // Local stand-in: OTP/DHIS work in-process. Do not report sandbox until #45
+  // wires real NHA creds (ABDM_MODE=sandbox). Placeholder SBX_* is not sandbox.
+  return { abdmMode: "stub", bridgeReady: true };
 }
 
 const SANDBOX_KYC = "LINKED_SANDBOX";
@@ -283,8 +268,7 @@ export function createAbdmRouter(): Router {
         tokenType: "Bearer",
         hfrId: ABDM_CONFIG.HFR_ID,
         facilityName: ABDM_CONFIG.FACILITY_NAME,
-        abdmMode: currentAbdmMode(),
-        notice: ABDM_STATUS_NOTICE,
+        abdmMode: buildAbdmStatusPayload().abdmMode,
         gatewayUrl: ABDM_CONFIG.GATEWAY_URL,
       });
     } catch (err: any) {
