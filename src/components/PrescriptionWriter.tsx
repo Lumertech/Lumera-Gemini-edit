@@ -1086,9 +1086,11 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
             <div>
               <div className="flex items-center space-x-2">
                 <span className="text-xl font-black text-slate-900 tracking-tight">{clinicSettings.name}</span>
-                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-teal-100 text-teal-800 uppercase tracking-wider">
-                  NABH Accredited Polyclinic
-                </span>
+                {clinicSettings.tagline ? (
+                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-teal-100 text-teal-800 uppercase tracking-wider">
+                    {clinicSettings.tagline}
+                  </span>
+                ) : null}
               </div>
               <p className="text-xs text-slate-500 mt-0.5">{clinicSettings.address}{clinicSettings.city ? `, ${clinicSettings.city}` : ""} | Tel: {clinicSettings.phone}</p>
               <p className="text-[11px] text-slate-400">Web: {clinicSettings.website} | Email: {clinicSettings.email}</p>
@@ -1624,8 +1626,12 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
 
           <div className="text-left sm:text-right">
             <div className="inline-block border-b border-dashed border-slate-400 pb-1 px-4 mb-1">
-              {currentDoctor.signatureUrl ? (
-                <img src={currentDoctor.signatureUrl} alt="Doctor signature" className="max-h-12 object-contain ml-auto" />
+              {(clinicSettings.signatureUrl || currentDoctor.signatureUrl) ? (
+                <img
+                  src={clinicSettings.signatureUrl || currentDoctor.signatureUrl}
+                  alt={`${currentDoctor.name} signature`}
+                  className="max-h-12 object-contain ml-auto"
+                />
               ) : (
                 <span className="font-serif italic font-bold text-slate-800 text-sm">{currentDoctor.name}</span>
               )}
@@ -1634,6 +1640,9 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
             <p className="text-[10px] text-slate-400">Reg No: {currentDoctor.regNumber}</p>
           </div>
         </div>
+        {clinicSettings.footerDisclaimer && (
+          <p className="text-[10px] text-slate-400 pt-2">{clinicSettings.footerDisclaimer}</p>
+        )}
       </div>
 
       {/* Doctor Consultation Signoff & Billing Action Bar (no-print) */}

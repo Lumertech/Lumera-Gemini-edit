@@ -24,7 +24,8 @@ import {
   Wallet
 } from 'lucide-react';
 import { BillItem, Patient, Doctor, ClinicSettings, PharmacyBatchItem, TherapyPackage, Prescription } from '../types';
-import { DEFAULT_CLINIC_SETTINGS, MOCK_PHARMACY_BATCHES, MOCK_THERAPY_PACKAGES } from '../data/clinicalData';
+import { MOCK_PHARMACY_BATCHES, MOCK_THERAPY_PACKAGES } from '../data/clinicalData';
+import { BLANK_CLINIC_SETTINGS } from '../lib/letterhead';
 
 interface BillingManagerProps {
   currentPatient: Patient;
@@ -37,7 +38,7 @@ interface BillingManagerProps {
 export const BillingManager: React.FC<BillingManagerProps> = ({
   currentPatient,
   currentDoctor,
-  clinicSettings = DEFAULT_CLINIC_SETTINGS,
+  clinicSettings = BLANK_CLINIC_SETTINGS,
   activePrescription,
   onPaymentSuccess,
 }) => {
@@ -272,14 +273,28 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
           {/* Clinic & GST Header */}
           <div className="border-b-2 border-slate-900 pb-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div>
-              <h2 className="text-xl font-bold text-slate-900">{clinicSettings.name}</h2>
-              <p className="text-xs text-slate-600 mt-0.5">{clinicSettings.address}, {clinicSettings.city}</p>
+              <h2 className="text-xl font-bold text-slate-900">{clinicSettings.name || 'Clinic name not set'}</h2>
+              <p className="text-xs text-slate-600 mt-0.5">
+                {[clinicSettings.address, clinicSettings.city].filter(Boolean).join(', ') || 'Address not set'}
+              </p>
               <p className="text-xs text-slate-500 font-mono">
-                GSTIN: {clinicSettings.gstin} • Clinic Reg: {clinicSettings.regId}
+                {[
+                  clinicSettings.gstin ? `GSTIN: ${clinicSettings.gstin}` : null,
+                  clinicSettings.regId ? `Clinic Reg: ${clinicSettings.regId}` : null,
+                  clinicSettings.phone ? `Tel: ${clinicSettings.phone}` : null,
+                  clinicSettings.email || null,
+                ].filter(Boolean).join(' • ') || 'GSTIN / clinic registration not set'}
               </p>
             </div>
 
             <div className="text-left sm:text-right">
+              {(clinicSettings.signatureUrl || currentDoctor.signatureUrl) && (
+                <img
+                  src={clinicSettings.signatureUrl || currentDoctor.signatureUrl}
+                  alt="Clinic signature"
+                  className="max-h-10 object-contain mb-1 ml-auto"
+                />
+              )}
               <span className="px-2.5 py-0.5 rounded text-[10px] font-bold bg-slate-900 text-white uppercase tracking-wider">
                 GST Tax Invoice / Cash Receipt
               </span>

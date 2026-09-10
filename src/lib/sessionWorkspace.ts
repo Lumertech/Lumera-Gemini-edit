@@ -1,5 +1,6 @@
 import { AppUser, ClinicSettings, Doctor, Patient, PolyclinicSpecialty, TenantLetterhead, UserRole } from "../types";
 import { DEFAULT_CLINIC_SETTINGS } from "../data/clinicalData";
+import { BLANK_CLINIC_SETTINGS } from "./letterhead";
 
 export const UNASSIGNED_PATIENT: Patient = {
   id: "",
@@ -75,28 +76,14 @@ export function clinicSettingsFromSession(
   doctor: Doctor,
   letterhead?: TenantLetterhead | null
 ): ClinicSettings {
-  if (user?.isDemoWorkspace && !letterhead) return DEFAULT_CLINIC_SETTINGS;
+  if (user?.isDemoWorkspace && !letterhead) {
+    return {
+      ...DEFAULT_CLINIC_SETTINGS,
+      signatureUrl: doctor.signatureUrl || DEFAULT_CLINIC_SETTINGS.signatureUrl || "",
+    };
+  }
 
-  const blank: ClinicSettings = {
-    name: "",
-    tagline: "",
-    address: "",
-    city: "",
-    phone: "",
-    email: "",
-    website: "",
-    gstin: "",
-    regId: "",
-    upiId: "",
-    whatsappNumber: "",
-    headerBgColor: DEFAULT_CLINIC_SETTINGS.headerBgColor,
-    accentColor: DEFAULT_CLINIC_SETTINGS.accentColor,
-    showLogo: true,
-    showQrCode: true,
-    sealText: "",
-    footerDisclaimer: DEFAULT_CLINIC_SETTINGS.footerDisclaimer,
-  };
-  const base = user?.isDemoWorkspace ? DEFAULT_CLINIC_SETTINGS : blank;
+  const base = user?.isDemoWorkspace ? DEFAULT_CLINIC_SETTINGS : BLANK_CLINIC_SETTINGS;
 
   return {
     ...base,
@@ -115,6 +102,7 @@ export function clinicSettingsFromSession(
       letterhead?.sealText ||
       (doctor.signatureUrl ? "Digitally signed by treating clinician" : base.sealText),
     footerDisclaimer: letterhead?.footerDisclaimer || base.footerDisclaimer,
+    signatureUrl: letterhead?.signatureUrl || doctor.signatureUrl || base.signatureUrl || "",
   };
 }
 
