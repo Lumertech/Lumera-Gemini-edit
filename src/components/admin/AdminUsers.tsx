@@ -5,6 +5,7 @@ import { PRACTICE_SPECIALTIES } from "../../lib/specialtyWorkflow";
 
 const ROLES: UserRole[] = ["super_admin", "polyclinic_admin", "CLINIC_ADMIN", "doctor", "receptionist", "patient"];
 const STATUSES: UserStatus[] = ["active", "invited", "disabled"];
+const PRACTICE_TYPES: Array<NonNullable<AppUser["practiceType"]>> = ["individual", "polyclinic"];
 
 const emptyForm = {
   name: "",
@@ -14,7 +15,12 @@ const emptyForm = {
   password: "",
   specialty: "",
   status: "active" as UserStatus,
+  practiceType: "individual" as NonNullable<AppUser["practiceType"]>,
 };
+
+function practiceLabel(value?: string | null) {
+  return value === "polyclinic" ? "Multi-specialty" : "Individual";
+}
 
 export const AdminUsers: React.FC = () => {
   const [users, setUsers] = useState<AppUser[]>([]);
@@ -94,6 +100,7 @@ export const AdminUsers: React.FC = () => {
           role: draft.role,
           status: draft.status,
           specialty: draft.specialty || "",
+          practiceType: draft.practiceType || "individual",
         }),
       });
       closeEdit();
@@ -145,7 +152,7 @@ export const AdminUsers: React.FC = () => {
       <div>
         <h1 className="text-xl font-extrabold">User management</h1>
         <p className="text-xs text-slate-500 mt-1">
-          Create, edit, and disable platform logins. Specialty is persisted and drives clinician workflow packs.
+          Create, edit, and disable platform logins. Name, email, role, specialty, and practice type persist via the API. New users default to Individual practice.
         </p>
       </div>
       <div className="flex flex-wrap gap-2">
@@ -166,7 +173,7 @@ export const AdminUsers: React.FC = () => {
       {error && <p className="text-xs text-red-600" data-testid="admin-users-error">{error}</p>}
       {notice && <p className="text-xs text-emerald-700" data-testid="admin-users-notice">{notice}</p>}
 
-      <form onSubmit={create} className="bg-white border rounded-xl p-4 grid sm:grid-cols-4 lg:grid-cols-7 gap-2 text-xs" data-testid="admin-create-user">
+      <form onSubmit={create} className="bg-white border rounded-xl p-4 grid sm:grid-cols-4 lg:grid-cols-8 gap-2 text-xs" data-testid="admin-create-user">
         <input required placeholder="Full name" className="border rounded px-2 py-1.5" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
         <input required type="email" placeholder="Email" className="border rounded px-2 py-1.5" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
         <select className="border rounded px-2 py-1.5" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value as UserRole })}>
@@ -175,6 +182,14 @@ export const AdminUsers: React.FC = () => {
         <select className="border rounded px-2 py-1.5" value={form.specialty} onChange={(e) => setForm({ ...form, specialty: e.target.value })}>
           <option value="">Specialty (clinicians)</option>
           {PRACTICE_SPECIALTIES.map((s) => <option key={s} value={s}>{s}</option>)}
+        </select>
+        <select
+          className="border rounded px-2 py-1.5"
+          value={form.practiceType}
+          onChange={(e) => setForm({ ...form, practiceType: e.target.value as NonNullable<AppUser["practiceType"]> })}
+          data-testid="admin-create-practice-type"
+        >
+          {PRACTICE_TYPES.map((p) => <option key={p} value={p}>{practiceLabel(p)}</option>)}
         </select>
         <input placeholder="Phone" className="border rounded px-2 py-1.5" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
         <input
@@ -201,6 +216,7 @@ export const AdminUsers: React.FC = () => {
               <th className="text-left px-3 py-2">Email</th>
               <th className="text-left px-3 py-2">Role</th>
               <th className="text-left px-3 py-2">Specialty</th>
+              <th className="text-left px-3 py-2">Practice</th>
               <th className="text-left px-3 py-2">Status</th>
               <th className="text-left px-3 py-2">Actions</th>
             </tr>
@@ -212,6 +228,7 @@ export const AdminUsers: React.FC = () => {
                 <td className="px-3 py-2">{u.email}</td>
                 <td className="px-3 py-2">{u.role}</td>
                 <td className="px-3 py-2">{u.specialty || "—"}</td>
+                <td className="px-3 py-2">{practiceLabel(u.practiceType)}</td>
                 <td className="px-3 py-2">{u.status}</td>
                 <td className="px-3 py-2 space-x-2 whitespace-nowrap">
                   <button type="button" className="text-blue-600 font-semibold" data-testid={`admin-user-edit-${u.email}`} onClick={() => openEdit(u)}>
@@ -269,6 +286,17 @@ export const AdminUsers: React.FC = () => {
               <select className="mt-1 border rounded px-2 py-1.5 w-full" value={draft.specialty || ""} onChange={(e) => setDraft({ ...draft, specialty: e.target.value })}>
                 <option value="">None</option>
                 {PRACTICE_SPECIALTIES.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </label>
+            <label className="block font-semibold">
+              Practice type
+              <select
+                className="mt-1 border rounded px-2 py-1.5 w-full"
+                value={draft.practiceType || "individual"}
+                onChange={(e) => setDraft({ ...draft, practiceType: e.target.value as NonNullable<AppUser["practiceType"]> })}
+                data-testid="admin-edit-practice-type"
+              >
+                {PRACTICE_TYPES.map((p) => <option key={p} value={p}>{practiceLabel(p)}</option>)}
               </select>
             </label>
             {error && <p className="text-red-600">{error}</p>}

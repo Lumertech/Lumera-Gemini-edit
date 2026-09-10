@@ -1617,10 +1617,16 @@ export function seedClinicalAndWhatsAppIfMissing(database: DatabaseSync) {
     database.exec(`
       UPDATE users
       SET tenant_id = '${DEMO_TENANT_ID}',
-          onboarding_completed = 1,
-          practice_type = 'polyclinic'
-      WHERE id IN ('user-admin', 'user-doctor', 'user-patient', 'user-reception')
+          onboarding_completed = 1
+      WHERE id IN ('user-admin', 'user-doctor', 'user-patient', 'user-reception', 'user-receptionist', 'user-clinic-admin')
          OR id LIKE 'test-user-%'
+    `);
+    // Legacy per-doctor test logins stay on the shared multi-specialty tenant.
+    // Persona @lumera.me demos keep practice_type from ensureDemoPersonaUsers.
+    database.exec(`
+      UPDATE users
+      SET practice_type = 'polyclinic'
+      WHERE id LIKE 'test-user-%'
     `);
   } catch {}
 

@@ -1548,7 +1548,7 @@ export function createApiRouter(): Router {
   });
 
   api.post("/users", requireAuth, requireRole(...ADMIN_ROLES), (req, res) => {
-    const { email, password, name, role, phone, status, specialty, tenantId } = req.body || {};
+    const { email, password, name, role, phone, status, specialty, tenantId, practiceType } = req.body || {};
     if (!email || !name || !role) {
       return res.status(400).json({ error: "name, email, and role are required" });
     }
@@ -1556,11 +1556,12 @@ export function createApiRouter(): Router {
     const pwd = password ? String(password) : `Temp${Math.random().toString(36).slice(2, 8)}!`;
     const spec = specialty != null ? String(specialty).trim() : "";
     const scopedTenant = String(tenantId || req.user?.tenantId || DEMO_TENANT_ID || "").trim();
+    const practice = normalizePracticeType(practiceType);
     try {
       getDb()
         .prepare(
-          `INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, specialty, last_login, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`
+          `INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, specialty, practice_type, last_login, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`
         )
         .run(
           id,
@@ -1572,6 +1573,7 @@ export function createApiRouter(): Router {
           (status as UserStatus) || "active",
           String(phone || ""),
           spec,
+          practice,
           new Date().toISOString()
         );
     } catch {
@@ -1595,14 +1597,18 @@ export function createApiRouter(): Router {
     const phone = req.body.phone ?? existing.phone;
     const email = req.body.email ? String(req.body.email).trim().toLowerCase() : existing.email;
     const specialty = req.body.specialty != null ? String(req.body.specialty) : existing.specialty || "";
+    const practice =
+      req.body.practiceType != null || req.body.practice_type != null
+        ? normalizePracticeType(req.body.practiceType ?? req.body.practice_type)
+        : normalizePracticeType(existing.practice_type);
     const tenantId =
       req.body.tenantId != null || req.body.tenant_id != null
         ? String(req.body.tenantId ?? req.body.tenant_id)
         : existing.tenant_id || "";
     try {
       getDb()
-        .prepare("UPDATE users SET name = ?, role = ?, status = ?, phone = ?, email = ?, specialty = ?, tenant_id = ? WHERE id = ?")
-        .run(name, role, status, phone, email, specialty, tenantId, existing.id);
+        .prepare("UPDATE users SET name = ?, role = ?, status = ?, phone = ?, email = ?, specialty = ?, practice_type = ?, tenant_id = ? WHERE id = ?")
+        .run(name, role, status, phone, email, specialty, practice, tenantId, existing.id);
     } catch {
       return res.status(409).json({ error: "Email already exists" });
     }

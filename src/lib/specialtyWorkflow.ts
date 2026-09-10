@@ -424,6 +424,11 @@ export function workflowForUser(user?: AppUser | null): SpecialtyWorkflowPack {
 }
 
 export function clinicianHomeView(user?: AppUser | null): WorkflowView {
+  if (!user) return "queue";
+  if (user.role === "receptionist") return "reception";
+  if (user.role === "CLINIC_ADMIN" || user.role === "polyclinic_admin") {
+    return user.practiceType === "polyclinic" ? "welcome" : "queue";
+  }
   return workflowForUser(user).homeView;
 }
 

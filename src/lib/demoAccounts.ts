@@ -55,7 +55,7 @@ export const DEMO_ACCOUNTS: DemoAccount[] = [
     specialty: "",
     phone: "+91 98200 44556",
     practiceLine: "Front desk",
-    practiceType: "polyclinic",
+    practiceType: "individual",
   },
   {
     id: "user-receptionist",
@@ -65,6 +65,16 @@ export const DEMO_ACCOUNTS: DemoAccount[] = [
     specialty: "",
     phone: "+91 98200 44556",
     practiceLine: "Front desk",
+    practiceType: "individual",
+  },
+  {
+    id: "user-clinic-admin",
+    email: "clinic.admin@lumera.me",
+    name: "Meera Iyer",
+    role: "CLINIC_ADMIN",
+    specialty: "General Medicine",
+    phone: "+91 98000 22222",
+    practiceLine: "Doctors & Clinics",
     practiceType: "polyclinic",
   },
   {

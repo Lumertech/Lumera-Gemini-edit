@@ -56,6 +56,23 @@ describe("specialty workflow packs", () => {
     assert.equal(dentist.rxModule, "Dental Surgery");
     assert.equal(clinicianHomeView(fakeUser("wellness@lumera.me", "Wellness & Spas")), "wellness");
     assert.equal(clinicianHomeView(fakeUser("therapist@lumera.me", "Psychiatry & Mental Health")), "therapy-session");
+    assert.equal(clinicianHomeView(fakeUser("dentist@lumera.me", "Dental Surgery")), "queue");
+    assert.equal(clinicianHomeView(fakeUser("physio@lumera.me", "Physiotherapy & Rehabilitation")), "queue");
+  });
+
+  it("lands role-homes: receptionist, individual GP pack, explicit polyclinic clinic-admin", () => {
+    const reception = fakeUser("receptionist@lumera.me", "", "receptionist");
+    reception.practiceType = "individual";
+    assert.equal(clinicianHomeView(reception), "reception");
+
+    const gp = fakeUser("doctor@lumera.me", "General Medicine");
+    gp.practiceType = "individual";
+    assert.equal(clinicianHomeView(gp), "queue");
+    assert.equal(workflowForUser(gp).kind, "medical");
+
+    const clinicAdmin = fakeUser("clinic.admin@lumera.me", "General Medicine", "CLINIC_ADMIN");
+    clinicAdmin.practiceType = "polyclinic";
+    assert.equal(clinicianHomeView(clinicAdmin), "welcome");
   });
 
   it("maps specialty strings onto existing Rx modules", () => {

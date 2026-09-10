@@ -75,6 +75,7 @@ describe("Admin console persist (founder audit 1–9)", () => {
       "wellness@lumera.me",
       "consultant@lumera.me",
       "receptionist@lumera.me",
+      "clinic.admin@lumera.me",
       "patient@lumera.me",
     ];
     for (const email of required) {
@@ -82,7 +83,11 @@ describe("Admin console persist (founder audit 1–9)", () => {
       assert.equal(String(user.email), email);
       const row = DEMO_ACCOUNTS.find((a) => a.email === email);
       if (row?.specialty) assert.equal(String(user.specialty || ""), row.specialty);
+      if (row?.practiceType) assert.equal(String(user.practiceType || ""), row.practiceType);
     }
+    const clinicAdmin = DEMO_ACCOUNTS.filter((a) => a.role === "CLINIC_ADMIN" && a.practiceType === "polyclinic");
+    assert.equal(clinicAdmin.length, 1);
+    assert.equal(clinicAdmin[0].email, "clinic.admin@lumera.me");
   });
 
   it("POST /api/users sets tenant_id + specialty and returns temp password when omitted", async () => {
@@ -92,20 +97,23 @@ describe("Admin console persist (founder audit 1–9)", () => {
       port,
       "POST",
       "/api/users",
-      { name: "Audit Create", email, role: "doctor", specialty: "Dental Surgery", phone: "+91 90000 00001" },
+      { name: "Audit Create", email, role: "doctor", specialty: "Dental Surgery", phone: "+91 90000 00001", practiceType: "individual" },
       auth
     );
     assert.equal(created.status, 201, String(created.json.error || "create"));
     const user = created.json.user as Record<string, unknown>;
     assert.equal(user.specialty, "Dental Surgery");
+    assert.equal(user.practiceType, "individual");
     assert.equal(user.tenantId, DEMO_TENANT_ID);
     assert.ok(created.json.temporaryPassword);
-    const dbRow = getDb().prepare("SELECT tenant_id, specialty FROM users WHERE email = ?").get(email) as {
+    const dbRow = getDb().prepare("SELECT tenant_id, specialty, practice_type FROM users WHERE email = ?").get(email) as {
       tenant_id: string;
       specialty: string;
+      practice_type: string;
     };
     assert.equal(dbRow.tenant_id, DEMO_TENANT_ID);
     assert.equal(dbRow.specialty, "Dental Surgery");
+    assert.equal(dbRow.practice_type, "individual");
   });
 
   it("PATCH /api/users/:id persists name/email/role/status/specialty and reload matches", async () => {
@@ -130,6 +138,7 @@ describe("Admin console persist (founder audit 1–9)", () => {
         status: "active",
         specialty: "Cardiology",
         phone: "+91 91111 22222",
+        practiceType: "polyclinic",
       },
       auth
     );
@@ -137,12 +146,14 @@ describe("Admin console persist (founder audit 1–9)", () => {
     const user = patched.json.user as Record<string, unknown>;
     assert.equal(user.name, "After Edit");
     assert.equal(user.specialty, "Cardiology");
+    assert.equal(user.practiceType, "polyclinic");
     const listed = await jsonRequest(port, "GET", `/api/users?q=${encodeURIComponent(email)}`, undefined, auth);
     const rows = listed.json.users as Array<Record<string, unknown>>;
     const found = rows.find((r) => r.id === id);
     assert.ok(found);
     assert.equal(found?.name, "After Edit");
     assert.equal(found?.specialty, "Cardiology");
+    assert.equal(found?.practiceType, "polyclinic");
   });
 
   it("PATCH /api/auth/me persists admin profile name/phone/avatar", async () => {
