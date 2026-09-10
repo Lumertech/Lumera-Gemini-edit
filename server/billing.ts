@@ -2,10 +2,11 @@ import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth.ts";
 import {
   getDb,
-  getTenantBillingProfile,
   mapInvoice,
   writeAudit,
 } from "./db.ts";
+import { getTenantLetterhead } from "./letterhead.ts";
+import { scrubSeedBillingIds } from "./seed-branding.ts";
 import { resolveGraphCredentials, sendWhatsAppGraphText } from "./graph-whatsapp.ts";
 import {
   createRazorpayCollectOrder,
@@ -83,11 +84,13 @@ function uniqueInvoiceNumber(tenantId: string, requested?: string): string {
   return yearToken("INV");
 }
 
-function billingSnapshot(tenantId: string, body: Record<string, unknown>) {
-  const profile = getTenantBillingProfile(tenantId);
-  const gstin = String(body.gstin ?? profile.gstin ?? "").trim();
-  const upiId = String(body.upiId ?? body.upi_id ?? profile.upiId ?? "").trim();
-  return { gstin, upiId, clinicName: profile.name };
+function billingSnapshot(tenantId: string, _body: Record<string, unknown>) {
+  const letterhead = getTenantLetterhead(tenantId);
+  const ids = scrubSeedBillingIds(tenantId, {
+    gstin: letterhead.gstin,
+    upiId: letterhead.upiId,
+  });
+  return { gstin: ids.gstin, upiId: ids.upiId, clinicName: letterhead.clinicName || letterhead.name };
 }
 
 function markInvoicePaid(opts: {
@@ -419,14 +422,16 @@ export function createBillingRouter(): Router {
 
   api.get("/billing/settings", requireAuth, (req, res) => {
     const tenantId = tenantIdOf(req);
-    const profile = getTenantBillingProfile(tenantId);
+    const letterhead = getTenantLetterhead(tenantId, req.user?.id);
+    const ids = scrubSeedBillingIds(tenantId, { gstin: letterhead.gstin, upiId: letterhead.upiId });
     res.json({
       psp: "razorpay",
       razorpayConfigured: razorpayKeysConfigured(),
       sandboxSimulatorsEnabled: sandboxSimulatorsEnabled(),
-      gstin: profile.gstin,
-      upiId: profile.upiId,
-      clinicName: profile.name,
+      gstin: ids.gstin,
+      upiId: ids.upiId,
+      clinicName: letterhead.clinicName || letterhead.name,
+      letterhead,
       notice:
         "Razorpay collect is not a PCI DSS certification and does not imply a certified payment-partner status.",
     });
@@ -631,15 +636,25 @@ export function createBillingRouter(): Router {
         invoice: updated,
         channel: result.channel,
         graphDelivered: false,
+        sandbox: false,
+        wamid: null,
+        messageId: null,
       });
     }
+    const graphDelivered = result.channel === "graph";
+    const wamid = graphDelivered ? result.messageId || null : null;
     res.json({
       ok: true,
       invoice: updated,
       channel: result.channel,
-      messageId: result.messageId,
-      graphDelivered: result.channel === "graph",
       sandbox: result.channel === "sandbox",
+      graphDelivered,
+      wamid,
+      messageId: wamid,
+      notice:
+        result.channel === "sandbox"
+          ? "SANDBOX / DEV-ONLY — recorded locally, not sent via Graph; no live wamid."
+          : undefined,
     });
   });
 

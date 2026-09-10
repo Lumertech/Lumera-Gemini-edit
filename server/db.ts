@@ -2,6 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 import { hashPassword } from "./password.ts";
+import { scrubSeedBillingIds } from "./seed-branding.ts";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const DB_PATH = path.join(DATA_DIR, "lumera.db");
@@ -1356,10 +1357,14 @@ export function getTenantBillingProfile(tenantId: string): {
     const row = getDb()
       .prepare("SELECT name, gstin, upi_id FROM tenants WHERE id = ?")
       .get(tenantId) as { name?: string; gstin?: string; upi_id?: string } | undefined;
-    return {
-      name: String(row?.name || ""),
+    const ids = scrubSeedBillingIds(tenantId, {
       gstin: String(row?.gstin || ""),
       upiId: String(row?.upi_id || ""),
+    });
+    return {
+      name: String(row?.name || ""),
+      gstin: ids.gstin,
+      upiId: ids.upiId,
     };
   } catch {
     return { name: "", gstin: "", upiId: "" };
@@ -1367,6 +1372,10 @@ export function getTenantBillingProfile(tenantId: string): {
 }
 
 export function mapInvoice(row: Record<string, unknown>) {
+  const ids = scrubSeedBillingIds(String(row.tenant_id || ""), {
+    gstin: (row.gstin as string) || "",
+    upiId: (row.upi_id as string) || "",
+  });
   return {
     id: row.id as string,
     tenantId: row.tenant_id as string,
@@ -1380,7 +1389,7 @@ export function mapInvoice(row: Record<string, unknown>) {
     items: parseJsonColumn(row.items, [] as unknown[]),
     subtotal: Number(row.subtotal || 0),
     discountAmount: Number(row.discount_amount || 0),
-    gstin: (row.gstin as string) || "",
+    gstin: ids.gstin,
     gstPercent: Number(row.gst_percent || 0),
     taxAmount: Number(row.tax_amount || 0),
     totalAmount: Number(row.total_amount || 0),
@@ -1392,7 +1401,7 @@ export function mapInvoice(row: Record<string, unknown>) {
     razorpayPaymentId: (row.razorpay_payment_id as string) || "",
     razorpayPaymentLinkId: (row.razorpay_payment_link_id as string) || "",
     payLink: (row.pay_link as string) || "",
-    upiId: (row.upi_id as string) || "",
+    upiId: ids.upiId,
     issuedBy: (row.issued_by as string) || "",
     receiptWhatsAppStatus: (row.receipt_whatsapp_status as string) || "unsent",
     receiptWhatsAppChannel: (row.receipt_whatsapp_channel as string) || "",

@@ -238,6 +238,8 @@ describe("Wave 2 Razorpay UPI collect", () => {
     assert.equal(create.status, 401);
     const report = await jsonRequest(port, "GET", "/api/billing/day-end");
     assert.equal(report.status, 401);
+    const letterhead = await jsonRequest(port, "GET", "/api/tenant/letterhead");
+    assert.equal(letterhead.status, 401);
   });
 
   it("happy path: create bill, sandbox pay link, webhook fail-closed, sandbox mock marks Paid", async () => {
@@ -352,6 +354,12 @@ describe("Wave 2 Razorpay UPI collect", () => {
     assert.equal(receipt.json.channel, "sandbox");
     assert.equal(receipt.json.graphDelivered, false);
     assert.equal(receipt.json.sandbox, true);
+    assert.equal(receipt.json.wamid, null);
+    assert.equal(receipt.json.messageId, null);
+    assert.match(String(receipt.json.notice || ""), /no live wamid/i);
+    const receiptInvoice = receipt.json.invoice as { receiptWhatsAppMessageId?: string; receiptWhatsAppChannel?: string };
+    assert.equal(receiptInvoice.receiptWhatsAppChannel, "sandbox");
+    assert.equal(receiptInvoice.receiptWhatsAppMessageId || "", "");
 
     const report = await jsonRequest(port, "GET", "/api/billing/day-end", undefined, auth);
     assert.equal(report.status, 200);
@@ -537,5 +545,79 @@ describe("Wave 2 Razorpay UPI collect", () => {
     assert.equal(blocked.status, 400);
     const still = await jsonRequest(port, "GET", `/api/invoices/${id}`, undefined, auth);
     assert.equal((still.json.invoice as { paymentStatus: string }).paymentStatus, "Unpaid");
+  });
+
+  it("real tenants never persist seed Lumera GSTIN/UPI even if the client sends them", async () => {
+    const clinic = createClinicUser("noseed");
+    const token = await login(clinic.email);
+    const auth = { Authorization: `Bearer ${token}` };
+    const { patient } = await seedVisit(auth, clinic.tenantId.slice(-4));
+
+    const letterhead = await jsonRequest(port, "GET", "/api/tenant/letterhead", undefined, auth);
+    assert.equal(letterhead.status, 200, String(letterhead.json.error || ""));
+    const lh = letterhead.json.letterhead as { gstin: string; upiId: string };
+    assert.equal(lh.gstin, "");
+    assert.equal(lh.upiId, "");
+
+    getDb()
+      .prepare("UPDATE tenants SET gstin = ?, upi_id = ? WHERE id = ?")
+      .run("19AABCL8899K1Z5", "lumerahealth@icici", clinic.tenantId);
+    const leaked = await jsonRequest(port, "GET", "/api/tenant/letterhead", undefined, auth);
+    const leakedLh = leaked.json.letterhead as { gstin: string; upiId: string };
+    assert.equal(leakedLh.gstin, "");
+    assert.equal(leakedLh.upiId, "");
+
+    const created = await jsonRequest(
+      port,
+      "POST",
+      "/api/invoices",
+      {
+        patientId: patient.id,
+        patientName: patient.name,
+        patientPhone: patient.phone,
+        items: [{ description: "Consult", quantity: 1, unitPrice: 500, total: 500 }],
+        gstin: "19AABCL8899K1Z5",
+        upiId: "lumerahealth@icici",
+      },
+      auth
+    );
+    assert.equal(created.status, 201, String(created.json.error || ""));
+    const invoice = created.json.invoice as { gstin: string; upiId: string };
+    assert.equal(invoice.gstin, "");
+    assert.equal(invoice.upiId, "");
+  });
+
+  it("prefers tenant letterhead GSTIN/UPI when present", async () => {
+    const clinic = createClinicUser("lhset");
+    const token = await login(clinic.email);
+    const auth = { Authorization: `Bearer ${token}` };
+    const { patient } = await seedVisit(auth, clinic.tenantId.slice(-4));
+    getDb()
+      .prepare("UPDATE tenants SET gstin = ?, upi_id = ? WHERE id = ?")
+      .run("27AAACL9999A1Z5", "realclinic@upi", clinic.tenantId);
+
+    const letterhead = await jsonRequest(port, "GET", "/api/tenant/letterhead", undefined, auth);
+    const lh = letterhead.json.letterhead as { gstin: string; upiId: string; clinicName: string };
+    assert.equal(lh.gstin, "27AAACL9999A1Z5");
+    assert.equal(lh.upiId, "realclinic@upi");
+    assert.ok(lh.clinicName);
+
+    const created = await jsonRequest(
+      port,
+      "POST",
+      "/api/invoices",
+      {
+        patientId: patient.id,
+        patientName: patient.name,
+        patientPhone: patient.phone,
+        items: [{ description: "Consult", quantity: 1, unitPrice: 550, total: 550 }],
+        gstin: "19AABCL8899K1Z5",
+        upiId: "lumerahealth@icici",
+      },
+      auth
+    );
+    const invoice = created.json.invoice as { gstin: string; upiId: string };
+    assert.equal(invoice.gstin, "27AAACL9999A1Z5");
+    assert.equal(invoice.upiId, "realclinic@upi");
   });
 });
