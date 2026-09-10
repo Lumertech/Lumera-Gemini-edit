@@ -177,6 +177,7 @@ if [[ -n "$FILE" ]]; then
     exit 1
   fi
   stripped="$(strip_export "$IMAGE" <"$FILE")"
+  [[ "$stripped" == *$'\n' || -z "$stripped" ]] || stripped+=$'\n'
   if [[ -n "$OUT" ]]; then
     printf '%s' "$stripped" >"$OUT"
   else
