@@ -107,6 +107,7 @@ describe("dual onboarding helpers (#40)", () => {
   it("Reception chrome: practice-simple default + Link ABHA CTA; grep gate", () => {
     const files = [
       "src/components/Reception.tsx",
+      "src/components/WelcomeSetupDashboard.tsx",
       "src/lib/patientOnboarding.ts",
       "src/ClinicianApp.tsx",
     ];
