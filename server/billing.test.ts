@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import type { Server } from "node:http";
 import { after, before, describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
 import express from "express";
 import { attachUser } from "./auth.ts";
 import { createApiRouter } from "./api.ts";
@@ -559,14 +562,6 @@ describe("Wave 2 Razorpay UPI collect", () => {
     assert.equal(lh.gstin, "");
     assert.equal(lh.upiId, "");
 
-    getDb()
-      .prepare("UPDATE tenants SET gstin = ?, upi_id = ? WHERE id = ?")
-      .run("19AABCL8899K1Z5", "lumerahealth@icici", clinic.tenantId);
-    const leaked = await jsonRequest(port, "GET", "/api/tenant/letterhead", undefined, auth);
-    const leakedLh = leaked.json.letterhead as { gstin: string; upiId: string };
-    assert.equal(leakedLh.gstin, "");
-    assert.equal(leakedLh.upiId, "");
-
     const created = await jsonRequest(
       port,
       "POST",
@@ -585,6 +580,27 @@ describe("Wave 2 Razorpay UPI collect", () => {
     const invoice = created.json.invoice as { gstin: string; upiId: string };
     assert.equal(invoice.gstin, "");
     assert.equal(invoice.upiId, "");
+
+    getDb()
+      .prepare("UPDATE tenants SET gstin = ?, upi_id = ? WHERE id = ?")
+      .run("19AABCL8899K1Z5", "lumerahealth@icici", clinic.tenantId);
+
+    const createdAfterSeedRow = await jsonRequest(
+      port,
+      "POST",
+      "/api/invoices",
+      {
+        patientId: patient.id,
+        patientName: patient.name,
+        patientPhone: patient.phone,
+        items: [{ description: "Follow-up", quantity: 1, unitPrice: 400, total: 400 }],
+      },
+      auth
+    );
+    assert.equal(createdAfterSeedRow.status, 201, String(createdAfterSeedRow.json.error || ""));
+    const scrubbed = createdAfterSeedRow.json.invoice as { gstin: string; upiId: string };
+    assert.equal(scrubbed.gstin, "");
+    assert.equal(scrubbed.upiId, "");
   });
 
   it("prefers tenant letterhead GSTIN/UPI when present", async () => {
@@ -619,5 +635,19 @@ describe("Wave 2 Razorpay UPI collect", () => {
     const invoice = created.json.invoice as { gstin: string; upiId: string };
     assert.equal(invoice.gstin, "27AAACL9999A1Z5");
     assert.equal(invoice.upiId, "realclinic@upi");
+  });
+
+  it("invoice receipts use Meta sendPaymentReceipt and do not ship a competing letterhead CRUD", () => {
+    const dir = path.dirname(fileURLToPath(import.meta.url));
+    const billing = fs.readFileSync(path.join(dir, "billing.ts"), "utf8");
+    const api = fs.readFileSync(path.join(dir, "api.ts"), "utf8");
+    const letterhead = fs.readFileSync(path.join(dir, "letterhead.ts"), "utf8");
+    assert.match(billing, /sendPaymentReceipt/);
+    assert.match(billing, /getTenantLetterhead/);
+    assert.equal(/sendWhatsAppGraphText/.test(billing), false);
+    assert.equal(/resolveGraphCredentials/.test(billing), false);
+    assert.equal(/createLetterheadReadRouter/.test(api), false);
+    assert.equal(/createLetterheadReadRouter/.test(letterhead), false);
+    assert.match(letterhead, /export function updateTenantLetterhead/);
   });
 });

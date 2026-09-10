@@ -7,7 +7,7 @@ import {
 } from "./db.ts";
 import { getTenantLetterhead } from "./letterhead.ts";
 import { scrubSeedBillingIds } from "./seed-branding.ts";
-import { resolveGraphCredentials, sendWhatsAppGraphText } from "./graph-whatsapp.ts";
+import { isCloudDispatchFailure, sendPaymentReceipt } from "./graph-whatsapp.ts";
 import {
   createRazorpayCollectOrder,
   decideRazorpayWebhookSignature,
@@ -90,7 +90,7 @@ function billingSnapshot(tenantId: string, _body: Record<string, unknown>) {
     gstin: letterhead.gstin,
     upiId: letterhead.upiId,
   });
-  return { gstin: ids.gstin, upiId: ids.upiId, clinicName: letterhead.clinicName || letterhead.name };
+  return { gstin: ids.gstin, upiId: ids.upiId, clinicName: letterhead.clinicName };
 }
 
 function markInvoicePaid(opts: {
@@ -262,83 +262,71 @@ async function dispatchInvoiceReceipt(
   invoiceRow: Record<string, unknown>
 ): Promise<{ ok: true; channel: "graph" | "sandbox"; messageId?: string } | { ok: false; error: string; channel: "none" | "graph" }> {
   const invoice = mapInvoice(invoiceRow);
-  const creds = resolveGraphCredentials(getDb());
-  if (creds) {
-    const graph = await sendWhatsAppGraphText({
-      credentials: creds,
-      to: invoice.patientPhone,
-      body: receiptBody(invoice, false),
-      previewUrl: Boolean(invoice.payLink),
-    });
-    if (graph.ok) {
-      recordReceiptEvent({
-        phone: invoice.patientPhone,
-        name: invoice.patientName,
-        status: "sent",
-        details: `WhatsApp Cloud API receipt accepted for ${invoice.invoiceNumber}`,
-        payload: { invoiceId: invoice.id, channel: "graph", messageId: graph.messageId },
-        conversationContent: receiptBody(invoice, false),
-      });
-      getDb()
-        .prepare(
-          `UPDATE invoices SET receipt_whatsapp_status = ?, receipt_whatsapp_channel = ?, receipt_whatsapp_message_id = ?
-           WHERE id = ?`
-        )
-        .run("sent", "graph", graph.messageId, invoice.id);
-      return { ok: true, channel: "graph", messageId: graph.messageId };
-    }
-    const graphError = "error" in graph ? graph.error : "Graph receipt send failed.";
+  // Dual-path Graph/sandbox lives in Meta #28. Billing records invoice events only.
+  const sent = await sendPaymentReceipt({
+    to: invoice.patientPhone,
+    patientName: invoice.patientName,
+    amount: invoice.totalAmount,
+    currency: "₹",
+    invoiceId: invoice.invoiceNumber,
+    date: invoice.date || todayDate(),
+    textBody: receiptBody(invoice, false),
+    previewUrl: Boolean(invoice.payLink),
+    db: getDb(),
+  });
+
+  if (isCloudDispatchFailure(sent)) {
     recordReceiptEvent({
       phone: invoice.patientPhone,
       name: invoice.patientName,
       status: "failed",
-      details: `Graph receipt send failed for ${invoice.invoiceNumber}: ${graphError}`,
-      payload: { invoiceId: invoice.id, channel: "graph", error: graphError },
+      details:
+        sent.channel === "graph"
+          ? `Graph receipt send failed for ${invoice.invoiceNumber}: ${sent.error}`
+          : `Receipt not delivered for ${invoice.invoiceNumber}: Graph credentials required in production.`,
+      payload: { invoiceId: invoice.id, channel: sent.channel, error: sent.error, sandbox: false },
     });
     getDb()
       .prepare(
         `UPDATE invoices SET receipt_whatsapp_status = ?, receipt_whatsapp_channel = ? WHERE id = ?`
       )
-      .run("failed", "graph", invoice.id);
-    return { ok: false, error: graphError, channel: "graph" };
+      .run("failed", sent.channel, invoice.id);
+    return sent;
   }
 
-  if (isProduction()) {
-    recordReceiptEvent({
-      phone: invoice.patientPhone,
-      name: invoice.patientName,
-      status: "failed",
-      details: `Receipt not delivered for ${invoice.invoiceNumber}: Graph credentials required in production.`,
-      payload: { invoiceId: invoice.id, channel: "none", sandbox: false },
-    });
-    getDb()
-      .prepare(
-        `UPDATE invoices SET receipt_whatsapp_status = ?, receipt_whatsapp_channel = ? WHERE id = ?`
-      )
-      .run("failed", "none", invoice.id);
-    return {
-      ok: false,
-      channel: "none",
-      error:
-        "WhatsApp Cloud API is not configured. Set META_ACCESS_TOKEN and META_PHONE_NUMBER_ID. Receipt was not delivered.",
-    };
-  }
-
-  const content = receiptBody(invoice, true);
+  const sandbox = sent.channel === "sandbox";
   recordReceiptEvent({
     phone: invoice.patientPhone,
     name: invoice.patientName,
-    status: "sandbox_recorded",
-    details: `SANDBOX / DEV-ONLY receipt recorded locally for ${invoice.invoiceNumber} (not Graph)`,
-    payload: { invoiceId: invoice.id, sandbox: true, channel: "sandbox" },
-    conversationContent: content,
+    status: sandbox ? "sandbox_recorded" : "sent",
+    details: sandbox
+      ? `SANDBOX / DEV-ONLY receipt recorded locally for ${invoice.invoiceNumber} (not Graph)`
+      : `WhatsApp Cloud API receipt accepted for ${invoice.invoiceNumber}`,
+    payload: {
+      invoiceId: invoice.id,
+      channel: sent.channel,
+      messageId: sent.messageId || null,
+      sandbox,
+    },
+    conversationContent: receiptBody(invoice, sandbox),
   });
+
+  if (sandbox) {
+    getDb()
+      .prepare(
+        `UPDATE invoices SET receipt_whatsapp_status = ?, receipt_whatsapp_channel = ? WHERE id = ?`
+      )
+      .run("sandbox_recorded", "sandbox", invoice.id);
+    return { ok: true, channel: "sandbox" };
+  }
+
   getDb()
     .prepare(
-      `UPDATE invoices SET receipt_whatsapp_status = ?, receipt_whatsapp_channel = ? WHERE id = ?`
+      `UPDATE invoices SET receipt_whatsapp_status = ?, receipt_whatsapp_channel = ?, receipt_whatsapp_message_id = ?
+       WHERE id = ?`
     )
-    .run("sandbox_recorded", "sandbox", invoice.id);
-  return { ok: true, channel: "sandbox" };
+    .run("sent", "graph", sent.messageId || "", invoice.id);
+  return { ok: true, channel: "graph", messageId: sent.messageId };
 }
 
 function insertInvoice(tenantId: string, body: Record<string, unknown>, actor?: { name?: string }) {
@@ -430,8 +418,8 @@ export function createBillingRouter(): Router {
       sandboxSimulatorsEnabled: sandboxSimulatorsEnabled(),
       gstin: ids.gstin,
       upiId: ids.upiId,
-      clinicName: letterhead.clinicName || letterhead.name,
-      letterhead,
+      clinicName: letterhead.clinicName,
+      letterhead: { ...letterhead, gstin: ids.gstin, upiId: ids.upiId },
       notice:
         "Razorpay collect is not a PCI DSS certification and does not imply a certified payment-partner status.",
     });
