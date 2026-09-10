@@ -17,7 +17,7 @@ export function isUnsetOrPlaceholder(value?: string | null): boolean {
   const v = String(value || "").trim();
   if (!v) return true;
   if (/^(undefined|null)$/i.test(v)) return true;
-  if (/^(replace-with-|changeme|change\.me|your-|todo\b|xxx+|placeholder)/i.test(v)) return true;
+  if (/^(replace-with-|changeme|change-me|change\.me|your-|todo\b|xxx+|placeholder)/i.test(v)) return true;
   if (/replace-with-|not-a-secret|dummy-secret|example\.invalid/i.test(v)) return true;
   return false;
 }
