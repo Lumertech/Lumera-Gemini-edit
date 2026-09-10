@@ -72,6 +72,9 @@ describe("production SPA history fallback", () => {
     assert.equal(isSpaHistoryFallbackPath("/signup"), true);
     assert.equal(isSpaHistoryFallbackPath("/register"), true);
     assert.equal(isSpaHistoryFallbackPath("/dashboard"), true);
+    assert.equal(isSpaHistoryFallbackPath("/app/rx"), true);
+    assert.equal(isSpaHistoryFallbackPath("/admin/users"), true);
+    assert.equal(isSpaHistoryFallbackPath("/app/billing"), true);
     assert.equal(isSpaHistoryFallbackPath("/api/public/policies/privacy-policy"), false);
     assert.equal(isSpaHistoryFallbackPath("/assets/index-abc.js"), false);
     assert.equal(isBackendPath("/healthz"), true);
@@ -113,6 +116,11 @@ describe("production SPA history fallback", () => {
       const home = await fetch(`${origin}/`);
       assert.equal(home.status, 200);
       assert.match(await home.text(), /Lumera SPA/);
+      for (const p of ["/app/rx", "/admin/users", "/signup", "/login"]) {
+        const res = await fetch(`${origin}${p}`);
+        assert.equal(res.status, 200, `${p} must rewrite to the SPA shell`);
+        assert.match(await res.text(), /Lumera SPA/);
+      }
       for (const p of ["/privacy-policy", "/terms-of-service", "/data-deletion-instructions"]) {
         const res = await fetch(`${origin}${p}`);
         assert.equal(res.status, 404, `${p} must not fall through to an empty SPA shell`);

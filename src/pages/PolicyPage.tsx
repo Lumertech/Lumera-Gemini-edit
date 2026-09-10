@@ -14,11 +14,13 @@ import {
   Mail,
   Building,
 } from "lucide-react";
+import { Link } from "react-router-dom";
 import { useNav } from "../nav/NavigationContext";
+import { surfaceToPath } from "../nav/surfaces";
 
 export const PolicyPage: React.FC<{ slug: string }> = ({ slug: initialSlug }) => {
-  const { go } = useNav();
-  const [currentSlug, setCurrentSlug] = useState(initialSlug || "privacy-policy");
+  const { go, policySlug } = useNav();
+  const currentSlug = policySlug || initialSlug || "privacy-policy";
   const [title, setTitle] = useState("Legal & Compliance");
   const [body, setBody] = useState("Loading policy documentation…");
   const [updatedAt, setUpdatedAt] = useState("");
@@ -154,9 +156,9 @@ export const PolicyPage: React.FC<{ slug: string }> = ({ slug: initialSlug }) =>
 
           {/* Policy Switcher Tabs */}
           <div className="mt-6 flex flex-wrap gap-2 border-b border-slate-200/60 pb-1">
-            <button
-              type="button"
-              onClick={() => setCurrentSlug("privacy-policy")}
+            <Link
+              to={surfaceToPath("legal", { policySlug: "privacy-policy" })}
+              data-testid="policy-tab-privacy"
               className={`inline-flex items-center gap-2 px-4 py-2 rounded-t-lg text-xs font-bold transition border-b-2 ${
                 activeTab === "privacy"
                   ? "border-emerald-600 text-emerald-700 bg-white shadow-xs"
@@ -164,10 +166,10 @@ export const PolicyPage: React.FC<{ slug: string }> = ({ slug: initialSlug }) =>
               }`}
             >
               <Lock className="w-3.5 h-3.5" /> Privacy Policy &amp; Meta Scope
-            </button>
-            <button
-              type="button"
-              onClick={() => setCurrentSlug("terms-of-service")}
+            </Link>
+            <Link
+              to={surfaceToPath("legal", { policySlug: "terms-of-service" })}
+              data-testid="policy-tab-terms"
               className={`inline-flex items-center gap-2 px-4 py-2 rounded-t-lg text-xs font-bold transition border-b-2 ${
                 activeTab === "terms"
                   ? "border-emerald-600 text-emerald-700 bg-white shadow-xs"
@@ -175,10 +177,10 @@ export const PolicyPage: React.FC<{ slug: string }> = ({ slug: initialSlug }) =>
               }`}
             >
               <FileText className="w-3.5 h-3.5" /> Terms of Service
-            </button>
-            <button
-              type="button"
-              onClick={() => setCurrentSlug("data-deletion-instructions")}
+            </Link>
+            <Link
+              to={surfaceToPath("legal", { policySlug: "data-deletion-instructions" })}
+              data-testid="policy-tab-deletion"
               className={`inline-flex items-center gap-2 px-4 py-2 rounded-t-lg text-xs font-bold transition border-b-2 ${
                 activeTab === "data-deletion"
                   ? "border-emerald-600 text-emerald-700 bg-white shadow-xs"
@@ -186,7 +188,7 @@ export const PolicyPage: React.FC<{ slug: string }> = ({ slug: initialSlug }) =>
               }`}
             >
               <Trash2 className="w-3.5 h-3.5" /> Data Deletion Instructions
-            </button>
+            </Link>
           </div>
         </div>
       </div>

@@ -33,7 +33,9 @@ import {
   ShieldAlert,
   Award
 } from "lucide-react";
+import { Link } from "react-router-dom";
 import { useNav } from "../nav/NavigationContext";
+import { surfaceToPath } from "../nav/surfaces";
 
 interface SitePayload {
   settings: {
@@ -282,16 +284,15 @@ export const LandingPage: React.FC = () => {
 
         {/* Consolidated Single Sign In Button */}
         <div className="flex items-center gap-3">
-          <button
-            type="button"
+          <Link
+            to={surfaceToPath("login", { loginNext: "app", loginMode: "signin" })}
             data-testid="landing-signin"
             data-default-practice="individual"
-            onClick={() => go("login", { loginNext: "app", loginMode: "signin" })}
             className="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold shadow-md shadow-blue-500/20 transition-all cursor-pointer flex items-center gap-2"
           >
             <Lock className="w-3.5 h-3.5" />
             <span>Sign In</span>
-          </button>
+          </Link>
         </div>
       </header>
 
@@ -319,17 +320,16 @@ export const LandingPage: React.FC = () => {
 
         {/* HERO CTA BUTTON: Direct routing to single-card auth */}
         <div className="mt-8 flex flex-col items-center justify-center">
-          <button
-            type="button"
+          <Link
+            to={surfaceToPath("login", { loginNext: "app", loginMode: "register" })}
             data-testid="landing-try-free"
             data-default-practice="individual"
-            onClick={() => go("login", { loginNext: "app", loginMode: "register" })}
             className="inline-flex items-center gap-2.5 px-9 py-4 rounded-xl bg-blue-600 hover:bg-blue-500 font-manrope font-bold text-base text-white shadow-xl shadow-blue-600/30 hover:shadow-blue-600/50 hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer"
           >
             <Stethoscope className="w-5 h-5 text-blue-200" />
             <span>Try for free</span>
             <ArrowRight className="w-4 h-4 text-blue-200" />
-          </button>
+          </Link>
 
           <div className="mt-4 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-xs text-slate-400">
             <span className="flex items-center gap-1.5">
@@ -905,16 +905,15 @@ export const LandingPage: React.FC = () => {
             Get instant sandbox access in 30 seconds. No credit card required. Designed for ABDM M1–M3 &amp; DPDP (sandbox path).
           </p>
           <div className="pt-2">
-            <button
-              type="button"
+            <Link
+              to={surfaceToPath("login", { loginNext: "app", loginMode: "register" })}
               data-default-practice="individual"
-              onClick={() => go("login", { loginNext: "app", loginMode: "register" })}
               className="inline-flex items-center gap-2 px-8 py-3.5 rounded-xl bg-blue-600 hover:bg-blue-500 font-manrope font-bold text-sm text-white shadow-xl shadow-blue-600/40 hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer"
             >
               <Stethoscope className="w-4 h-4" />
               <span>Try for free</span>
               <ArrowRight className="w-4 h-4" />
-            </button>
+            </Link>
           </div>
         </div>
       </section>

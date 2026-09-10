@@ -1,13 +1,19 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  adminTabToPath,
+  appViewToPath,
+  canonicalizeAppView,
+  canonicalizeAdminTab,
   decideChrome,
+  destinationNavAfterAuth,
   isExplicitPublicPath,
   isProtectedSurface,
   isSmartHomePath,
   nextAuthenticatedSurface,
   loginModeFromPath,
   pathToNav,
+  safeNextPath,
   surfaceToPath,
 } from "./surfaces.ts";
 
@@ -21,11 +27,10 @@ describe("public vs app surface routing (founder lock #48)", () => {
   });
 
   it("keeps Meta / compliance policy URLs on the public legal surface", () => {
-    assert.deepEqual(pathToNav("/privacy-policy"), {
-      surface: "legal",
-      policySlug: "privacy-policy",
-      adminTab: "overview",
-    });
+    const privacy = pathToNav("/privacy-policy");
+    assert.equal(privacy.surface, "legal");
+    assert.equal(privacy.policySlug, "privacy-policy");
+    assert.equal(privacy.adminTab, "overview");
     assert.equal(pathToNav("/terms-of-service").policySlug, "terms-of-service");
     assert.equal(pathToNav("/data-deletion-instructions").policySlug, "data-deletion-instructions");
     assert.equal(pathToNav("/privacy").surface, "legal");
@@ -57,6 +62,49 @@ describe("public vs app surface routing (founder lock #48)", () => {
     assert.equal(loginModeFromPath("/register"), "register");
     assert.equal(loginModeFromPath("/login"), "signin");
     assert.equal(surfaceToPath("legal", { policySlug: "privacy-policy" }), "/privacy-policy");
+  });
+
+  it("maps clinician and admin tabs to distinct History-API paths (not HashRouter)", () => {
+    assert.equal(pathToNav("/app/rx").surface, "app");
+    assert.equal(pathToNav("/app/rx").appView, "rx");
+    assert.equal(pathToNav("/app/queue").appView, "queue");
+    assert.equal(pathToNav("/app/smart-rx").appView, "rx");
+    assert.equal(pathToNav("/app").appView, "queue");
+    assert.equal(pathToNav("/admin/users").surface, "admin");
+    assert.equal(pathToNav("/admin/users").adminTab, "users");
+    assert.equal(pathToNav("/admin/people").adminTab, "people");
+    assert.equal(pathToNav("/admin/profile").adminTab, "profile");
+    assert.equal(pathToNav("/app/dental-chart").appView, "dental-chart");
+    assert.equal(pathToNav("/admin/overview").adminTab, "overview");
+    assert.equal(pathToNav("/admin").adminTab, "overview");
+    assert.equal(pathToNav("/admin/not-a-tab").adminTab, "overview");
+    assert.equal(canonicalizeAppView("smart-rx"), "rx");
+    assert.equal(canonicalizeAdminTab("media"), "media");
+    assert.equal(appViewToPath("rx"), "/app/rx");
+    assert.equal(adminTabToPath("users"), "/admin/users");
+    assert.equal(surfaceToPath("app", { appView: "billing" }), "/app/billing");
+    assert.equal(surfaceToPath("admin", { adminTab: "site" }), "/admin/site");
+    assert.notEqual(pathToNav("/app/rx").surface, "landing");
+  });
+
+  it("keeps auth URLs honest and restores nested next after login", () => {
+    const loginNext = pathToNav("/login", "?next=%2Fapp%2Frx");
+    assert.equal(loginNext.surface, "login");
+    assert.equal(loginNext.loginMode, "signin");
+    assert.equal(loginNext.loginNext, "app");
+    assert.equal(loginNext.loginNextPath, "/app/rx");
+    assert.equal(
+      surfaceToPath("login", { loginNextPath: "/app/rx", loginMode: "register" }),
+      "/signup?next=%2Fapp%2Frx"
+    );
+    assert.equal(safeNextPath("https://evil.example/app"), "");
+    assert.equal(safeNextPath("//evil.example"), "");
+    assert.deepEqual(destinationNavAfterAuth("app", "/app/rx"), {
+      surface: "app",
+      appView: "rx",
+      adminTab: "overview",
+    });
+    assert.deepEqual(destinationNavAfterAuth("admin", "/app/rx"), { surface: "admin" });
   });
 
   it("never shows app chrome for anonymous visitors, including protected deep links", () => {

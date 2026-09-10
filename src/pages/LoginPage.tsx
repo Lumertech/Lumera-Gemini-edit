@@ -30,7 +30,9 @@ import {
   REGISTER_PASSWORD_PLACEHOLDER,
   sanitizePhoneDigits,
 } from "../lib/loginFormDefaults";
-import { useNav } from "../nav/NavigationContext";
+import { Link } from "react-router-dom";
+import { goAfterAuth, useNav } from "../nav/NavigationContext";
+import { surfaceToPath } from "../nav/surfaces";
 import {
   DEFAULT_PRACTICE_TYPE,
   initialRegisterPracticeType,
@@ -77,7 +79,7 @@ export const LoginPage: React.FC = () => {
     loading: authLoading,
     refreshSession,
   } = useAuth();
-  const { go, loginNext, loginMode } = useNav();
+  const { go, loginNext, loginNextPath, loginMode } = useNav();
   // Empty on first render so the public form never mounts with seeded demo credentials.
   const publicLoginDefaults = emptyPublicLoginFields();
   const rememberedEmail = readRememberedLoginEmail();
@@ -186,8 +188,7 @@ export const LoginPage: React.FC = () => {
       if (params.get("oauth") === "facebook" && params.get("status") === "ok") return;
     }
     if (!user || busy || showOtpView) return;
-    const dest = destinationAfterAuth(user, loginNext);
-    go(dest, { replace: true });
+    goAfterAuth(go, destinationAfterAuth(user, loginNext), loginNextPath);
   }, [user, busy, showOtpView, loginNext, go]);
 
   useEffect(() => {
@@ -245,7 +246,7 @@ export const LoginPage: React.FC = () => {
         if (cancelled) return;
         stripOauthQuery();
         if (hydrated) {
-          go(destinationAfterAuth(hydrated, loginNext), { replace: true });
+          goAfterAuth(go, destinationAfterAuth(hydrated, loginNext), loginNextPath);
         } else {
           setSuccessMsg("");
           setError("Facebook sign-in succeeded but the session could not be restored. Please try again.");
@@ -306,8 +307,7 @@ export const LoginPage: React.FC = () => {
         setOtpError("");
         setShowOtpView(true);
       } else if (res.user) {
-        const dest = destinationAfterAuth(res.user, loginNext);
-        go(dest, { replace: true });
+        goAfterAuth(go, destinationAfterAuth(res.user, loginNext), loginNextPath);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Authentication failed. Please check your credentials.");
@@ -359,8 +359,7 @@ export const LoginPage: React.FC = () => {
     try {
       const res = await login("doctor@lumera.me", "Lumera@2026", true);
       if (res.user) {
-        const dest = destinationAfterAuth(res.user, loginNext);
-        go(dest, { replace: true });
+        goAfterAuth(go, destinationAfterAuth(res.user, loginNext), loginNextPath);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Demo sign in failed.");
@@ -435,8 +434,7 @@ export const LoginPage: React.FC = () => {
         setOtpError("");
         setShowOtpView(true);
       } else if (res.user) {
-        const dest = destinationAfterAuth(res.user, loginNext);
-        go(dest, { replace: true });
+        goAfterAuth(go, destinationAfterAuth(res.user, loginNext), loginNextPath);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "SSO Authorization failed. Please try again.");
@@ -539,8 +537,7 @@ export const LoginPage: React.FC = () => {
         );
         setTimeout(() => {
           setShowOtpView(false);
-          const dest = destinationAfterAuth(res.user!, loginNext);
-          go(dest, { replace: true });
+          goAfterAuth(go, destinationAfterAuth(res.user!, loginNext), loginNextPath);
         }, 500);
       } else {
         setOtpError(res.message || "Verification failed. Please check your code.");
@@ -1460,17 +1457,15 @@ export const LoginPage: React.FC = () => {
         {/* Sign-in: create-account CTA. Register: sticky on phone so submit stays in view. */}
         {mode === "signin" && !showOtpView && !showForgot ? (
         <div className="mt-6">
-            <button
-              type="button"
-              onClick={() => {
-                openRegisterForm();
-                go("login", { loginMode: "register" });
-              }}
+            <Link
+              to={surfaceToPath("login", { loginMode: "register", loginNextPath })}
+              data-testid="auth-tab-register"
+              onClick={openRegisterForm}
               className="w-full min-h-11 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs sm:text-sm font-semibold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-emerald-600/30 group"
             >
               <Sparkles className="w-4 h-4 text-emerald-200 group-hover:text-white" />
               <span>Create new practice account</span>
-            </button>
+            </Link>
             <p className="mt-2 text-center text-[11px] text-slate-500">
               New accounts start as an <span className="text-slate-300">individual practice</span>. Multi-specialty is an explicit opt-in.
             </p>
@@ -1499,18 +1494,18 @@ export const LoginPage: React.FC = () => {
                 </>
               )}
             </button>
-            <button
-              type="button"
+            <Link
+              to={surfaceToPath("login", { loginMode: "signin", loginNextPath })}
+              data-testid="auth-tab-signin"
               onClick={() => {
                 setMode("signin");
                 setError("");
-                go("login", { loginMode: "signin" });
               }}
               className="w-full min-h-11 mt-2 py-2.5 rounded-xl bg-slate-950 hover:bg-slate-900 border border-slate-800 hover:border-emerald-500/50 text-slate-300 hover:text-white text-xs sm:text-sm font-semibold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm group"
             >
               <span>Already have an account?</span>
               <span className="text-emerald-400 group-hover:text-emerald-300">Sign In</span>
-            </button>
+            </Link>
         </div>
         ) : null}
 
