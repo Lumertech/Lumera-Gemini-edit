@@ -46,6 +46,57 @@ function overclaimWithoutHonesty(src: string): string[] {
   return leftovers;
 }
 
+/** #18/#47 theatre this PR must not reintroduce on landing/CMS/policy surfaces. */
+const RESKIM_THEATRE: Array<{ id: string; re: RegExp }> = [
+  { id: "Certified M1-M3", re: /Certified M1.?M3|ABDM M1,\s*M2,\s*M3 Certified|M1.?M3 Certified/i },
+  { id: "Official TP", re: /Official Tech Provider|Official Meta WhatsApp Tech Provider|official Meta Tech Provider/i },
+  { id: "HIPAA Grade", re: /HIPAA Grade|HIPAA-grade|\bHIPAA\b/i },
+  { id: "feat-6 ABDM Compliant", re: /ABDM Compliant/i },
+];
+
+const RESKIM_SURFACES = [
+  "src/components/LandingPage.tsx",
+  "src/pages/PolicyPage.tsx",
+  "server/cms-policy-seed.ts",
+  "server/db.ts",
+  "server/policy-html.ts",
+  "server/meta.ts",
+];
+
+describe("Compliance #26 re-skim bar", () => {
+  it("1. does not reintroduce #18/#47 Certified M1-M3 / Official TP / HIPAA Grade / feat-6 ABDM Compliant", () => {
+    const leftovers: string[] = [];
+    for (const rel of RESKIM_SURFACES) {
+      const lines = readRepo(rel).split(/\n/);
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        for (const rule of RESKIM_THEATRE) {
+          if (!rule.re.test(line)) continue;
+          leftovers.push(`${rel}:${i + 1} [${rule.id}] ${line.trim()}`);
+        }
+      }
+    }
+    assert.deepEqual(leftovers, [], leftovers.join("\n"));
+
+    const feat6 = readRepo("server/db.ts");
+    assert.match(feat6, /id = 'feat-6'/);
+    assert.match(feat6, /ABDM-aligned \(NHA sandbox\)/);
+    assert.equal(/feat-6[\s\S]{0,400}ABDM Compliant/i.test(feat6), false);
+  });
+
+  it("4. documents APP_URL=https://www.mylumera.in so deletion callback urls use www", () => {
+    const envEx = readRepo(".env.example");
+    const runbook = readRepo("docs/FIREBASE_CLOUD_RUN_DEPLOY.md");
+    const meta = readRepo("server/meta.ts");
+    assert.match(envEx, /APP_URL=https:\/\/www\.mylumera\.in/);
+    assert.match(envEx, /data-deletion confirmation URLs/);
+    assert.match(runbook, /APP_URL=https:\/\/www\.mylumera\.in/);
+    assert.match(runbook, /deletion confirmation/);
+    assert.match(meta, /APP_URL=https:\/\/www\.mylumera\.in/);
+    assert.match(meta, /appPublicUrl/);
+  });
+});
+
 describe("Compliance #26 policy seed grep", () => {
   it("fails overclaim phrases without not-certified honesty; requires STOP and absolute deletion URL", () => {
     const src = policySeedSource();
