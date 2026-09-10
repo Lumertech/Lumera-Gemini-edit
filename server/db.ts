@@ -1107,12 +1107,12 @@ function seedCms(database: DatabaseSync, now: string) {
     { title: "Smart Scheduling", desc: "AI manages your calendar, prevents double-bookings, and optimizes appointment slots." },
     { title: "Automated Reminders", desc: "WhatsApp & voice reminders reduce no-shows by up to 95%. Smart follow-ups included." },
     { title: "Instant Payments", desc: "Send payment links via WhatsApp. Accept UPI, cards, or Razorpay. Get paid faster." },
-    { title: "ABDM Compliant", desc: "ABHA ID integration, digital consent management, and secure health records." },
+    { title: "ABDM-aligned (NHA sandbox)", desc: "ABHA ID integration path, digital consent, and sandbox-unverified health records — not production HIU/HIP approval." },
   ];
   features.forEach((f, i) => insertSection.run(`feat-${i + 1}`, "feature", i, JSON.stringify(f)));
 
   const personas = [
-    { title: "Doctors & Clinics", desc: "AI prescriptions, patient records, ABDM compliance" },
+    { title: "Doctors & Clinics", desc: "AI prescriptions, patient records, ABDM sandbox path" },
     { title: "Dentists", desc: "Treatment plans, follow-up reminders, payment tracking" },
     { title: "Therapists", desc: "Session notes, secure storage, appointment reminders" },
     { title: "Wellness & Spas", desc: "Service catalog, packages, loyalty management" },
@@ -2552,11 +2552,27 @@ Upon execution of a data deletion request:
 /**
  * Ensures existing clinical patients have verified ABHA numbers & addresses,
  * and seeds qualifying DHIS transactions for current month progress meter.
+ * CMS feat-6 / persona-1 copy is upserted so live DBs keep NHA sandbox labeling.
  */
 export function ensureAbdmAndDhisSeeding(database: DatabaseSync) {
   const now = new Date().toISOString();
   const currentMonth = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
   const defaultHfrId = "HFR-IN-8829104";
+
+  try {
+    database.prepare(
+      "UPDATE cms_sections SET payload = ? WHERE id = 'feat-6'"
+    ).run(JSON.stringify({
+      title: "ABDM-aligned (NHA sandbox)",
+      desc: "ABHA ID integration path, digital consent, and sandbox-unverified health records — not production HIU/HIP approval.",
+    }));
+    database.prepare(
+      "UPDATE cms_sections SET payload = ? WHERE id = 'persona-1'"
+    ).run(JSON.stringify({
+      title: "Doctors & Clinics",
+      desc: "AI prescriptions, patient records, ABDM sandbox path",
+    }));
+  } catch {}
 
   // 1. Enrich existing patients with ABHA details
   const updatePatientAbha = database.prepare(`

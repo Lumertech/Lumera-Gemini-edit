@@ -56,7 +56,7 @@ export const AdminSettings: React.FC = () => {
           <input type="checkbox" checked={settings.auto_soap === "true"} onChange={(e) => setSettings({ ...settings, auto_soap: String(e.target.checked) })} />
         </label>
         <label className="flex items-center justify-between border rounded-lg px-3 py-2 text-xs">
-          ABDM / ABHA gateway
+          ABDM / ABHA gateway (local stub)
           <input type="checkbox" checked={settings.abdm_enabled === "true"} onChange={(e) => setSettings({ ...settings, abdm_enabled: String(e.target.checked) })} />
         </label>
         <button onClick={save} className="px-4 py-2 bg-blue-600 text-white text-xs font-semibold rounded-lg">

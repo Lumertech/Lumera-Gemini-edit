@@ -213,6 +213,15 @@ export function recordDhisTransaction(params: {
   }
 }
 
+/** UI-facing ABDM status. Matches Platform #35 freeze: { abdmMode, bridgeReady } only. */
+export type AbdmMode = "stub" | "sandbox";
+
+export function buildAbdmStatusPayload(): { abdmMode: AbdmMode; bridgeReady: boolean } {
+  // Local stand-in: OTP/DHIS work in-process. Do not report sandbox until #45
+  // wires real NHA creds (ABDM_MODE=sandbox). Placeholder SBX_* is not sandbox.
+  return { abdmMode: "stub", bridgeReady: true };
+}
+
 /**
  * Creates the ABDM v3 Gateway and Identity Express Router
  */
@@ -257,7 +266,7 @@ export function createAbdmRouter(): Router {
         tokenType: "Bearer",
         hfrId: ABDM_CONFIG.HFR_ID,
         facilityName: ABDM_CONFIG.FACILITY_NAME,
-        sandboxStatus: "AUDIT_READY_PASSING",
+        abdmMode: buildAbdmStatusPayload().abdmMode,
         gatewayUrl: ABDM_CONFIG.GATEWAY_URL,
       });
     } catch (err: any) {
@@ -267,23 +276,9 @@ export function createAbdmRouter(): Router {
 
   router.post(["/v3/bridgesession", "/bridgesession", "/v3/sessions", "/sessions"], handleBridgeSession);
 
-  // Status check for ABDM connectivity
+  // Status check — operational flags only while this router is a local stub
   router.get("/status", (_req, res) => {
-    res.json({
-      abdmGateway: "CONNECTED",
-      sandboxAuditStatus: "COMPLIANT_V3",
-      hfrId: ABDM_CONFIG.HFR_ID,
-      facilityName: ABDM_CONFIG.FACILITY_NAME,
-      bridgeSessionActive: Boolean(cachedSession && cachedSession.expiresAt > Date.now()),
-      supportedProfiles: [
-        "https://nrces.in/ndhm/fhir/r4/StructureDefinition/PrescriptionRecord",
-        "https://nrces.in/ndhm/fhir/r4/StructureDefinition/DiagnosticReportRecord",
-        "https://nrces.in/ndhm/fhir/r4/StructureDefinition/OPConsultRecord",
-        "https://nrces.in/ndhm/fhir/r4/StructureDefinition/DischargeSummaryRecord",
-      ],
-      crypto: "ECDH (prime256v1) + AES-256-GCM",
-      activeConsentsCount: consentStore.size,
-    });
+    res.json(buildAbdmStatusPayload());
   });
 
   // -------------------------------------------------------------
@@ -740,7 +735,8 @@ export function createAbdmRouter(): Router {
           schemeName: "NHA Digital Health Incentive Scheme (DHIS v3)",
           baseRate: "₹20 / Qualifying Transaction",
           splitRatio: "70% Facility (₹14) / 30% Lumera Digital Solution (₹6)",
-          disbursementSchedule: "Monthly direct bank transfer via PFMS / NHA",
+          disbursementSchedule: "Simulated ledger only (local stub — not a live incentive rail)",
+          notice: "DHIS meter is a local stub / NHA sandbox simulation — not a live incentive claim.",
         },
       });
     } catch (err: any) {

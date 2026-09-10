@@ -19,7 +19,7 @@ import {
   Info,
   ShieldCheck
 } from 'lucide-react';
-import { SoapNote, Patient, Doctor } from '../types';
+import { SoapNote, Patient, Doctor, isAbhaLinked } from '../types';
 
 interface AmbientAIStudioProps {
   currentPatient: Patient;
@@ -225,10 +225,10 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
           <div className="text-xs">
             <div className="flex items-center gap-2">
               <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Active Patient</span>
-              {(currentPatient.kycStatus === 'VERIFIED' || currentPatient.abhaNumber) && (
+              {isAbhaLinked(currentPatient) && (
                 <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-0.5">
                   <ShieldCheck className="w-3 h-3 text-emerald-600" />
-                  <span>KYC-Verified ABHA</span>
+                  <span>ABHA · NHA sandbox</span>
                 </span>
               )}
             </div>

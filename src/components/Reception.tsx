@@ -21,7 +21,7 @@ import {
   Upload,
   X
 } from 'lucide-react';
-import { Patient, Doctor, Appointment, PolyclinicSpecialty } from '../types';
+import { Patient, Doctor, Appointment, PolyclinicSpecialty, isAbhaLinked } from '../types';
 
 interface ReceptionProps {
   patients: Patient[];
@@ -250,7 +250,7 @@ export const Reception: React.FC<ReceptionProps> = ({
       lastVisit: 'Today',
       abhaNumber: verificationSuccess?.abhaNumber || '',
       abhaAddress: verificationSuccess?.abhaAddress || '',
-      kycStatus: verificationSuccess ? 'VERIFIED' : 'PENDING',
+      kycStatus: verificationSuccess ? 'LINKED_SANDBOX' : 'PENDING',
       hfrId: verificationSuccess ? 'HFR-IN-8829104' : '',
     };
 
@@ -295,13 +295,13 @@ export const Reception: React.FC<ReceptionProps> = ({
               OPD Reception & ABHA Intake Desk
             </h1>
             <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1">
-              <BadgeCheck className="w-3.5 h-3.5" /> ABDM Fast-Track
+              <BadgeCheck className="w-3.5 h-3.5" /> NHA sandbox
             </span>
           </div>
           <p className="text-xs text-slate-500 mt-1">
             {firstRunHint
               ? 'Register the first patient for this clinic. Saving writes a durable chart and a Waiting OPD token — both survive refresh.'
-              : 'Seamless patient registration with Government ABHA QR scanning, instant Aadhaar e-KYC verification, and token generation.'}
+              : 'Patient registration with ABHA QR scanning and Aadhaar e-KYC in NHA sandbox (local stub — not government-registry KYC).'}
           </p>
         </div>
 
@@ -326,7 +326,7 @@ export const Reception: React.FC<ReceptionProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <span className="text-xs font-bold uppercase tracking-wider text-purple-200">
-                  Government Aadhaar e-KYC & ABHA Registry
+                  NHA sandbox Aadhaar e-KYC & ABHA (local stub)
                 </span>
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 font-mono">
                   Sandbox v3
@@ -409,7 +409,7 @@ export const Reception: React.FC<ReceptionProps> = ({
               <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
               <div>
                 <span className="font-bold text-emerald-300">
-                  Aadhaar e-KYC Verified: {verificationSuccess.name}
+                  Aadhaar e-KYC linked (NHA sandbox): {verificationSuccess.name}
                 </span>
                 <span className="block text-emerald-200/80 font-mono text-[11px]">
                   ABHA: {verificationSuccess.abhaNumber} • {verificationSuccess.abhaAddress}
@@ -417,7 +417,7 @@ export const Reception: React.FC<ReceptionProps> = ({
               </div>
             </div>
             <span className="px-2.5 py-1 bg-emerald-500/30 text-emerald-200 rounded font-semibold text-[11px] border border-emerald-400/30">
-              KYC-Verified ABHA Active
+              ABHA · NHA sandbox
             </span>
           </div>
         )}
@@ -436,7 +436,7 @@ export const Reception: React.FC<ReceptionProps> = ({
             </div>
             {verificationSuccess && (
               <span className="text-[11px] px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-medium">
-                Auto-filled from Government KYC
+                Auto-filled from NHA sandbox KYC
               </span>
             )}
           </div>
@@ -589,7 +589,7 @@ export const Reception: React.FC<ReceptionProps> = ({
               </div>
             )}
             {searchResults.map((p) => {
-              const isKyc = p.kycStatus === 'VERIFIED' || Boolean(p.abhaNumber);
+              const isKyc = isAbhaLinked(p);
               return (
                 <div
                   key={p.id}
@@ -601,7 +601,7 @@ export const Reception: React.FC<ReceptionProps> = ({
                       <span className="text-slate-500 font-mono text-[11px]">{p.uhid}</span>
                       {isKyc ? (
                         <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1">
-                          <BadgeCheck className="w-3 h-3" /> KYC-Verified ABHA
+                          <BadgeCheck className="w-3 h-3" /> ABHA · NHA sandbox
                         </span>
                       ) : (
                         <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
@@ -653,7 +653,7 @@ export const Reception: React.FC<ReceptionProps> = ({
                   <QrCode className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-base text-slate-900">ABDM Government QR Scanner</h3>
+                  <h3 className="font-bold text-base text-slate-900">ABHA QR Scanner (NHA sandbox)</h3>
                   <p className="text-xs text-slate-500">Scan physical card or select simulated sandbox patient</p>
                 </div>
               </div>
