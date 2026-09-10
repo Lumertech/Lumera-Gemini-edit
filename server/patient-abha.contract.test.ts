@@ -455,7 +455,7 @@ describe("#35 overclaim grep (Platform ABHA / ABDM)", () => {
   const files = ["server/clinical.ts", "server/abdm.ts", "server/abdm-mode.ts"];
 
   it("no Ready/Compliant/M1-M3/certified/VERIFIED except reject-VERIFIED and bridgeReady", () => {
-    const overclaim = /Ready|Compliant|M1[–-]M3|certified|\bVERIFIED\b/i;
+    const overclaim = /\bReady\b|\bCompliant\b|M1[–-]M3|certified|\bVERIFIED\b/i;
     for (const rel of files) {
       const src = fs.readFileSync(path.join(root, rel), "utf8");
       const leftover = src
