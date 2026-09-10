@@ -1276,6 +1276,15 @@ export const PRESCRIPTION_SPECIALTY_KEYS = [
   "gynecologyAssessment",
 ] as const;
 
+/** Patient JSON never presents unlocked KYC. Leftover rows remap to LINKED_SANDBOX. */
+export function presentPatientKyc(raw: unknown): string {
+  const kyc = String(raw || "").trim() || "PENDING";
+  if (/^verified$/i.test(kyc) || /government|unlocked/i.test(kyc)) {
+    return "LINKED_SANDBOX";
+  }
+  return kyc;
+}
+
 export function mapPatient(row: Record<string, unknown>) {
   return {
     id: row.id as string,
@@ -1293,7 +1302,7 @@ export function mapPatient(row: Record<string, unknown>) {
     lastVisit: (row.last_visit as string) || undefined,
     abhaNumber: (row.abha_number as string) || "",
     abhaAddress: (row.abha_address as string) || "",
-    kycStatus: (row.kyc_status as string) || "PENDING",
+    kycStatus: presentPatientKyc(row.kyc_status),
     hfrId: (row.hfr_id as string) || "",
     abhaLinkedAt: (row.abha_linked_at as string) || "",
   };

@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import express from "express";
 import { attachUser } from "./auth.ts";
 import { createApiRouter } from "./api.ts";
-import { getDb, initDatabase } from "./db.ts";
+import { getDb, initDatabase, presentPatientKyc } from "./db.ts";
 import { getAbdmBridgeStatus } from "./abdm-mode.ts";
 import { hashPassword } from "./password.ts";
 
@@ -378,6 +378,8 @@ describe("#35 dual onboard — same patientId + frozen link-abha", () => {
     assert.equal(otp.status, 200, String(otp.json.error || ""));
     const txnId = String(otp.json.txnId || "");
     assert.ok(txnId);
+    assert.match(String(otp.json.sandboxNotice || ""), /NHA sandbox/);
+    assert.equal(otp.json.kycStatus, undefined);
 
     const verify = await jsonRequest(port, "POST", "/api/abdm/registration/aadhaar/verifyOTP", {
       txnId,
@@ -426,6 +428,32 @@ describe("#35 dual onboard — same patientId + frozen link-abha", () => {
     const rxList = (rxs.json.prescriptions as Array<{ doctorName?: string; patientName?: string }>) || [];
     assert.equal(rxList.length, 0);
     assert.equal(rxList.some((rx) => /Vikram/i.test(String(rx.doctorName || ""))), false);
+  });
+
+  it("patient JSON never presents leftover unlocked KYC", async () => {
+    assert.equal(presentPatientKyc("VERIFIED"), "LINKED_SANDBOX");
+    assert.equal(presentPatientKyc("Government"), "LINKED_SANDBOX");
+    assert.equal(presentPatientKyc("PENDING"), "PENDING");
+
+    const clinic = createClinicUser("legacykyc");
+    const token = await login(clinic.email);
+    const auth = { Authorization: `Bearer ${token}` };
+    const phone = uniquePhone("legacy");
+    const created = await jsonRequest(
+      port,
+      "POST",
+      "/api/patients",
+      { name: "Legacy KYC", phone, age: 41, gender: "Male" },
+      auth
+    );
+    const id = String((created.json.patient as { id: string }).id);
+    getDb().prepare("UPDATE patients SET kyc_status = 'VERIFIED', abha_number = '91-0000-0000-0001' WHERE id = ?").run(id);
+
+    const one = await jsonRequest(port, "GET", `/api/patients/${id}`, undefined, auth);
+    assert.equal(one.status, 200);
+    const patient = one.json.patient as { kycStatus: string };
+    assert.equal(patient.kycStatus, "LINKED_SANDBOX");
+    assert.notEqual(patient.kycStatus, "VERIFIED");
   });
 
   it("GET /api/abdm/status is { abdmMode, bridgeReady } only", async () => {

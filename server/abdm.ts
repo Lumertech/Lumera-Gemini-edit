@@ -397,6 +397,7 @@ export function createAbdmRouter(): Router {
         testOtp: allowOtpEcho() && abdmMode === "stub" ? "123456" : undefined,
         expiresInSeconds: 600,
         abdmMode,
+        sandboxNotice: NHA_SANDBOX_NOTICE,
       });
     } catch (err: any) {
       res.status(500).json({ error: "Failed to generate Aadhaar OTP: " + err.message });
