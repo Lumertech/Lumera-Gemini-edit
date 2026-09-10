@@ -39,6 +39,51 @@ export interface DbUser {
 
 export const DEMO_TENANT_ID = "tenant-lumera-main";
 
+const DEMO_LETTERHEAD_SEED = {
+  name: "Lumera Healthcare & Polyclinic Institute",
+  tagline: "Precision AI-Powered Multi-Specialty Clinical Center",
+  address: "Suite 401-405, Healthcare Towers, 14 Park Circus Avenue",
+  city: "Kolkata, West Bengal - 700017",
+  phone: "+91 (033) 2289-9000 / +91 98000 12345",
+  email: "care@lumeraclinic.in",
+  website: "https://lumeraclinic.in",
+  gstin: "19AABCL8899K1Z5",
+  regId: "WB-CLINIC-REG-2023/8892",
+  upiId: "lumerahealth@icici",
+  whatsappNumber: "+91 98000 12345",
+  sealText: "Authorized Medical Seal & Digital Signature Verified",
+};
+
+function ensureDemoTenantLetterhead(database: DatabaseSync) {
+  const row = database
+    .prepare("SELECT id, gstin FROM tenants WHERE id = ?")
+    .get(DEMO_TENANT_ID) as { id: string; gstin?: string } | undefined;
+  if (!row) return;
+  const fill = (column: string, value: string) => {
+    try {
+      database
+        .prepare(`UPDATE tenants SET ${column} = ? WHERE id = ? AND (${column} IS NULL OR ${column} = '')`)
+        .run(value, DEMO_TENANT_ID);
+    } catch {
+      /* column added in the same migrate() pass */
+    }
+  };
+  fill("tagline", DEMO_LETTERHEAD_SEED.tagline);
+  fill("address", DEMO_LETTERHEAD_SEED.address);
+  fill("city", DEMO_LETTERHEAD_SEED.city);
+  fill("phone", DEMO_LETTERHEAD_SEED.phone);
+  fill("email", DEMO_LETTERHEAD_SEED.email);
+  fill("website", DEMO_LETTERHEAD_SEED.website);
+  fill("gstin", DEMO_LETTERHEAD_SEED.gstin);
+  fill("reg_id", DEMO_LETTERHEAD_SEED.regId);
+  fill("upi_id", DEMO_LETTERHEAD_SEED.upiId);
+  fill("whatsapp_number", DEMO_LETTERHEAD_SEED.whatsappNumber);
+  fill("seal_text", DEMO_LETTERHEAD_SEED.sealText);
+  if (!row.gstin) {
+    fill("name", DEMO_LETTERHEAD_SEED.name);
+  }
+}
+
 export function normalizePracticeType(value?: string | null): "individual" | "polyclinic" {
   const raw = String(value || "").trim().toLowerCase();
   if (raw === "polyclinic" || raw === "multispecialty" || raw === "multi-specialty" || raw === "multi_specialty") {
@@ -71,6 +116,16 @@ export interface DbTenant {
   meta_waba_name?: string;
   meta_quality_rating?: string;
   meta_onboarding_status?: string;
+  tagline?: string;
+  address?: string;
+  city?: string;
+  email?: string;
+  website?: string;
+  gstin?: string;
+  reg_id?: string;
+  upi_id?: string;
+  whatsapp_number?: string;
+  seal_text?: string;
   created_at: string;
   updated_at: string;
 }
@@ -383,6 +438,16 @@ function migrate(database: DatabaseSync) {
       meta_waba_name TEXT DEFAULT '',
       meta_quality_rating TEXT DEFAULT 'GREEN',
       meta_onboarding_status TEXT DEFAULT 'pending',
+      tagline TEXT DEFAULT '',
+      address TEXT DEFAULT '',
+      city TEXT DEFAULT '',
+      email TEXT DEFAULT '',
+      website TEXT DEFAULT '',
+      gstin TEXT DEFAULT '',
+      reg_id TEXT DEFAULT '',
+      upi_id TEXT DEFAULT '',
+      whatsapp_number TEXT DEFAULT '',
+      seal_text TEXT DEFAULT '',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -493,6 +558,38 @@ function migrate(database: DatabaseSync) {
   try {
     database.exec("ALTER TABLE tenants ADD COLUMN meta_onboarding_status TEXT DEFAULT 'pending'");
   } catch {}
+  try {
+    database.exec("ALTER TABLE tenants ADD COLUMN tagline TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE tenants ADD COLUMN address TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE tenants ADD COLUMN city TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE tenants ADD COLUMN email TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE tenants ADD COLUMN website TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE tenants ADD COLUMN gstin TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE tenants ADD COLUMN reg_id TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE tenants ADD COLUMN upi_id TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE tenants ADD COLUMN whatsapp_number TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE tenants ADD COLUMN seal_text TEXT DEFAULT ''");
+  } catch {}
+
+  ensureDemoTenantLetterhead(database);
 
   // ABDM & DHIS Schema Extensions
   try {
@@ -1260,6 +1357,8 @@ export function seedClinicalAndWhatsAppIfMissing(database: DatabaseSync) {
       database.exec("UPDATE users SET hpr_id = 'HPR-IN-9024819' WHERE role IN ('doctor', 'polyclinic_admin', 'CLINIC_ADMIN') AND (hpr_id IS NULL OR hpr_id = '')");
     } catch {}
   }
+
+  ensureDemoTenantLetterhead(database);
 
   // Keep the shared demo roster on the demo tenant even after test-doctor logins are created.
   try {

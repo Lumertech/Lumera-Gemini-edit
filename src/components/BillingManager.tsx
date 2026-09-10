@@ -416,7 +416,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
                   <QrCode className="w-12 h-12 text-slate-900" />
                 </div>
                 <div className="text-xs">
-                  <strong className="text-slate-900 block font-mono">UPI: lumerahealth@icici</strong>
+                  <strong className="text-slate-900 block font-mono">UPI: {clinicSettings.upiId || "—"}</strong>
                   <span className="text-slate-500 text-[11px] block">Scan via GPay, PhonePe, Paytm, BHIM</span>
                   <span className="text-emerald-700 font-semibold text-[11px]">Instant Automated Reconciliation</span>
                 </div>
@@ -664,7 +664,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
                     </div>
                     <div className="text-xs space-y-1">
                       <span className="text-teal-900 font-bold block text-sm">Dynamic UPI QR Code</span>
-                      <p className="font-mono text-[11px] text-slate-700 font-semibold">VPA: lumerahealth@icici</p>
+                      <p className="font-mono text-[11px] text-slate-700 font-semibold">VPA: {clinicSettings.upiId || "—"}</p>
                       <p className="text-[11px] text-slate-600">Amount: <strong>₹{totalAmount}</strong></p>
                       <p className="text-[10px] text-slate-500">Supports GPay, PhonePe, Paytm, BHIM, CRED</p>
                     </div>

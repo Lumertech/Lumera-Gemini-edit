@@ -1090,8 +1090,15 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
                   NABH Accredited Polyclinic
                 </span>
               </div>
-              <p className="text-xs text-slate-500 mt-0.5">{clinicSettings.address} | Tel: {clinicSettings.phone}</p>
+              <p className="text-xs text-slate-500 mt-0.5">{clinicSettings.address}{clinicSettings.city ? `, ${clinicSettings.city}` : ""} | Tel: {clinicSettings.phone}</p>
               <p className="text-[11px] text-slate-400">Web: {clinicSettings.website} | Email: {clinicSettings.email}</p>
+              {(clinicSettings.gstin || clinicSettings.upiId) && (
+                <p className="text-[11px] text-slate-500 font-mono mt-0.5">
+                  {clinicSettings.gstin ? `GSTIN: ${clinicSettings.gstin}` : ""}
+                  {clinicSettings.gstin && clinicSettings.upiId ? " • " : ""}
+                  {clinicSettings.upiId ? `UPI: ${clinicSettings.upiId}` : ""}
+                </p>
+              )}
             </div>
 
             <div className="text-left sm:text-right">
@@ -1617,9 +1624,13 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
 
           <div className="text-left sm:text-right">
             <div className="inline-block border-b border-dashed border-slate-400 pb-1 px-4 mb-1">
-              <span className="font-serif italic font-bold text-slate-800 text-sm">{currentDoctor.name}</span>
+              {currentDoctor.signatureUrl ? (
+                <img src={currentDoctor.signatureUrl} alt="Doctor signature" className="max-h-12 object-contain ml-auto" />
+              ) : (
+                <span className="font-serif italic font-bold text-slate-800 text-sm">{currentDoctor.name}</span>
+              )}
             </div>
-            <p className="text-[11px] font-bold text-slate-700">Authorized Medical Signature</p>
+            <p className="text-[11px] font-bold text-slate-700">{clinicSettings.sealText || "Authorized Medical Signature"}</p>
             <p className="text-[10px] text-slate-400">Reg No: {currentDoctor.regNumber}</p>
           </div>
         </div>
