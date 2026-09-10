@@ -98,10 +98,11 @@ export default function ClinicianApp() {
 
     const loadWorkspace = async () => {
       try {
-        const [doctorRes, patientRes, appointmentRes] = await Promise.all([
+        const [doctorRes, patientRes, appointmentRes, prescriptionRes] = await Promise.all([
           apiFetch<{ doctors: Doctor[] }>('/api/doctors'),
           apiFetch<{ patients: Patient[] }>('/api/patients'),
           apiFetch<{ appointments: Appointment[] }>('/api/appointments'),
+          apiFetch<{ prescriptions: Prescription[] }>('/api/prescriptions'),
         ]);
         if (cancelled) return;
 
@@ -126,14 +127,19 @@ export default function ClinicianApp() {
           setCurrentDoctor(fallback);
         }
 
+        const nextPatients = patientRes.patients || [];
+        const nextAppointments = appointmentRes.appointments || [];
+        const nextPrescriptions = prescriptionRes.prescriptions || [];
+
         if (!isDemo) {
-          const nextPatients = patientRes.patients || [];
           setPatients(nextPatients);
           setCurrentPatient((prev) => nextPatients.find((p) => p.id === prev.id) || UNASSIGNED_PATIENT);
-          setAppointments(appointmentRes.appointments || []);
+          setAppointments(nextAppointments);
+          setPrescriptions(nextPrescriptions);
         } else {
-          if (patientRes.patients?.length) setPatients(patientRes.patients);
-          if (appointmentRes.appointments?.length) setAppointments(appointmentRes.appointments);
+          if (nextPatients.length) setPatients(nextPatients);
+          if (nextAppointments.length) setAppointments(nextAppointments);
+          setPrescriptions(nextPrescriptions);
         }
       } catch {
         if (cancelled || isDemo) return;
@@ -143,6 +149,7 @@ export default function ClinicianApp() {
         setPatients([]);
         setCurrentPatient(UNASSIGNED_PATIENT);
         setAppointments([]);
+        setPrescriptions([]);
       }
     };
 
@@ -178,9 +185,35 @@ export default function ClinicianApp() {
     setCurrentView('rx');
   };
 
+  const persistAppointmentPatch = async (id: string, body: Partial<Appointment>) => {
+    const { appointment } = await apiFetch<{ appointment: Appointment }>(`/api/appointments/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    });
+    setAppointments((prev) => prev.map((a) => (a.id === id ? appointment : a)));
+    return appointment;
+  };
+
+  const persistAppointmentCreate = async (input: Partial<Appointment>) => {
+    const { appointment } = await apiFetch<{ appointment: Appointment }>('/api/appointments', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+    setAppointments((prev) => [appointment, ...prev.filter((a) => a.id !== appointment.id)]);
+    return appointment;
+  };
+
+  const persistPatientCreate = async (input: Patient) => {
+    const { patient } = await apiFetch<{ patient: Patient }>('/api/patients', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+    setPatients((prev) => [patient, ...prev.filter((p) => p.id !== patient.id)]);
+    return patient;
+  };
+
   const handleSavePrescription = (newRx: Prescription) => {
     setPrescriptions((prev) => [newRx, ...prev.filter((p) => p.id !== newRx.id)]);
-    // Mark patient's current appointment in consultation as Completed
     setAppointments((prev) =>
       prev.map((a) =>
         a.patientId === newRx.patientId && a.status === 'In Consultation'
@@ -188,18 +221,41 @@ export default function ClinicianApp() {
           : a
       )
     );
+    void (async () => {
+      try {
+        const { prescription } = await apiFetch<{ prescription: Prescription }>('/api/prescriptions', {
+          method: 'POST',
+          body: JSON.stringify(newRx),
+        });
+        setPrescriptions((prev) => [prescription, ...prev.filter((p) => p.id !== prescription.id && p.id !== newRx.id)]);
+        const inConsult = appointments.find(
+          (a) => a.patientId === newRx.patientId && (a.status === 'In Consultation' || a.status === 'Completed')
+        );
+        if (inConsult) {
+          await persistAppointmentPatch(inConsult.id, { status: 'Completed' });
+        }
+      } catch (err) {
+        console.error('Failed to persist prescription', err);
+      }
+    })();
   };
 
   const handleUpdateAppointmentStatus = (id: string, status: Appointment['status']) => {
     setAppointments((prev) =>
       prev.map((a) => (a.id === id ? { ...a, status: status } : a))
     );
+    void persistAppointmentPatch(id, { status }).catch((err) => {
+      console.error('Failed to persist appointment status', err);
+    });
   };
 
   const handleUpdateVitals = (id: string, vitals: Vitals) => {
     setAppointments((prev) =>
       prev.map((a) => (a.id === id ? { ...a, vitals: vitals } : a))
     );
+    void persistAppointmentPatch(id, { vitals }).catch((err) => {
+      console.error('Failed to persist vitals', err);
+    });
   };
 
   const handleStartConsultation = (apt: Appointment) => {
@@ -220,10 +276,16 @@ export default function ClinicianApp() {
 
   const handleAddNewToken = (newToken: Partial<Appointment>) => {
     setAppointments((prev) => [newToken as Appointment, ...prev]);
+    void persistAppointmentCreate(newToken).catch((err) => {
+      console.error('Failed to persist token', err);
+    });
   };
 
   const handleBookAppointment = (newApt: Partial<Appointment>) => {
     setAppointments((prev) => [newApt as Appointment, ...prev]);
+    void persistAppointmentCreate(newApt).catch((err) => {
+      console.error('Failed to persist appointment', err);
+    });
   };
 
   const handleSelectDoctor = (doctor: Doctor) => {
@@ -327,10 +389,16 @@ export default function ClinicianApp() {
               doctors={doctors}
               appointments={appointments}
               onSelectPatient={setCurrentPatient}
-              onAddNewPatient={(newPat) => {
-                setPatients((prev) => [newPat, ...prev]);
+              onAddNewPatient={async (newPat) => {
+                try {
+                  return await persistPatientCreate(newPat);
+                } catch (err) {
+                  console.error('Failed to persist patient', err);
+                  setPatients((prev) => [newPat, ...prev.filter((p) => p.id !== newPat.id)]);
+                  return newPat;
+                }
               }}
-              onCheckInPatient={(pat, doc, type) => {
+              onCheckInPatient={async (pat, doc, type) => {
                 const newApt: Appointment = {
                   id: 'apt-' + Date.now(),
                   tokenNumber: appointments.length + 1,
@@ -344,12 +412,17 @@ export default function ClinicianApp() {
                   date: new Date().toISOString().split('T')[0],
                   timeSlot: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
                   status: 'Waiting',
-                  type: type || 'New Consultation',
+                  type: (type as Appointment['type']) || 'New Consultation',
                   source: 'Walk-in',
                   consultationFee: doc.consultationFee,
                   isPaid: false,
                 };
                 setAppointments((prev) => [...prev, newApt]);
+                try {
+                  await persistAppointmentCreate(newApt);
+                } catch (err) {
+                  console.error('Failed to persist check-in', err);
+                }
               }}
               onSwitchToConsultation={() => setCurrentView('ambient')}
             />
@@ -419,9 +492,9 @@ export default function ClinicianApp() {
               appointments={appointments}
               doctors={doctors}
               patients={patients}
-              onCheckInPatient={(name, phone, specialty) => {
+              onCheckInPatient={async (name, phone, specialty) => {
                 const newUHID = `UHID-2026-${Math.floor(1000 + Math.random() * 9000)}`;
-                const newPat: Patient = {
+                const draftPat: Patient = {
                   id: 'p-' + Date.now(),
                   name,
                   uhid: newUHID,
@@ -434,7 +507,13 @@ export default function ClinicianApp() {
                   emergencyContact: phone,
                   lastVisit: 'Today',
                 };
-                setPatients((prev) => [newPat, ...prev]);
+                let newPat = draftPat;
+                try {
+                  newPat = await persistPatientCreate(draftPat);
+                } catch (err) {
+                  console.error('Failed to persist kiosk patient', err);
+                  setPatients((prev) => [draftPat, ...prev]);
+                }
                 const doc =
                   doctors.find((d) => d.specialty.toLowerCase().includes(specialty.toLowerCase())) ||
                   currentDoctor;
@@ -457,6 +536,9 @@ export default function ClinicianApp() {
                   isPaid: false,
                 };
                 setAppointments((prev) => [...prev, newApt]);
+                void persistAppointmentCreate(newApt).catch((err) => {
+                  console.error('Failed to persist kiosk token', err);
+                });
               }}
             />
           )}
@@ -516,6 +598,7 @@ export default function ClinicianApp() {
               clinicSettings={clinicSettings}
               activePrescription={prescriptions.find((p) => p.patientId === currentPatient.id) || null}
               onPaymentSuccess={(_invoiceNumber, _amount) => {
+                const open = appointments.find((a) => a.patientId === currentPatient.id && !a.isPaid);
                 setAppointments((prev) =>
                   prev.map((a) =>
                     a.patientId === currentPatient.id
@@ -523,6 +606,11 @@ export default function ClinicianApp() {
                       : a
                   )
                 );
+                if (open) {
+                  void persistAppointmentPatch(open.id, { isPaid: true, status: 'Completed' }).catch((err) => {
+                    console.error('Failed to persist payment status', err);
+                  });
+                }
               }}
             />
           )}

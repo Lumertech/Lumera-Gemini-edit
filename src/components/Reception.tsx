@@ -28,8 +28,8 @@ interface ReceptionProps {
   doctors: Doctor[];
   appointments: Appointment[];
   onSelectPatient: (patient: Patient) => void;
-  onAddNewPatient: (patient: Patient) => void;
-  onCheckInPatient: (patient: Patient, doctor: Doctor, type: string) => void;
+  onAddNewPatient: (patient: Patient) => void | Promise<Patient | void>;
+  onCheckInPatient: (patient: Patient, doctor: Doctor, type: string) => void | Promise<void>;
   onSwitchToConsultation: () => void;
 }
 
@@ -217,7 +217,7 @@ export const Reception: React.FC<ReceptionProps> = ({
   };
 
   // Complete Intake & Check-in
-  const handleCompleteIntake = () => {
+  const handleCompleteIntake = async () => {
     if (!formData.name.trim() || !formData.phone.trim()) {
       alert('Please fill out patient name and phone number');
       return;
@@ -239,15 +239,15 @@ export const Reception: React.FC<ReceptionProps> = ({
       emergencyContact: formData.phone,
       address: formData.address || 'Bengaluru, India',
       lastVisit: 'Today',
-      abhaNumber: verificationSuccess?.abhaNumber || '91-4428-9102-3841',
-      abhaAddress: verificationSuccess?.abhaAddress || `${formData.name.toLowerCase().replace(/[^a-z]/g, '.')}@abdm`,
-      kycStatus: 'VERIFIED',
-      hfrId: 'HFR-IN-8829104',
+      abhaNumber: verificationSuccess?.abhaNumber || '',
+      abhaAddress: verificationSuccess?.abhaAddress || '',
+      kycStatus: verificationSuccess ? 'VERIFIED' : 'PENDING',
+      hfrId: verificationSuccess ? 'HFR-IN-8829104' : '',
     };
 
-    onAddNewPatient(newPatient);
-    onCheckInPatient(newPatient, doctor, formData.consultationType);
-    onSelectPatient(newPatient);
+    const saved = (await onAddNewPatient(newPatient)) || newPatient;
+    await onCheckInPatient(saved, doctor, formData.consultationType);
+    onSelectPatient(saved);
 
     // Reset forms
     setVerificationSuccess(null);
