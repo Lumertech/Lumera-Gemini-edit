@@ -169,8 +169,10 @@ describe("#35 dual onboard — same patientId + frozen link-abha", () => {
     assert.equal(patient.id, p1.id);
     assert.equal(patient.abhaNumber, abhaNumber);
     assert.equal(patient.kycStatus, "LINKED_SANDBOX");
+    assert.notEqual(patient.kycStatus, "VERIFIED");
     assert.ok(patient.abhaLinkedAt);
     assert.equal(linked.json.abdmMode, "stub");
+    assert.match(String(linked.json.sandboxNotice || ""), /NHA sandbox/);
     assert.ok(patient.consentArtefacts.some((c) => c.consentId === `consent-a-${p1.id}`));
 
     const list = await jsonRequest(port, "GET", "/api/patients", undefined, auth);
@@ -367,6 +369,63 @@ describe("#35 dual onboard — same patientId + frozen link-abha", () => {
       assert.equal(again.status, 400, unlocked);
       assert.match(String(again.json.error || ""), /NHA sandbox/);
     }
+  });
+
+  it("OTP verify / QR share never emit unlocked KYC and carry NHA sandbox notices", async () => {
+    const otp = await jsonRequest(port, "POST", "/api/abdm/registration/aadhaar/generateOtp", {
+      aadhaar: "999988887777",
+    });
+    assert.equal(otp.status, 200, String(otp.json.error || ""));
+    const txnId = String(otp.json.txnId || "");
+    assert.ok(txnId);
+
+    const verify = await jsonRequest(port, "POST", "/api/abdm/registration/aadhaar/verifyOTP", {
+      txnId,
+      otp: "123456",
+    });
+    assert.equal(verify.status, 200, String(verify.json.error || ""));
+    assert.equal(verify.json.kycStatus, "LINKED_SANDBOX");
+    assert.notEqual(verify.json.kycStatus, "VERIFIED");
+    assert.match(String(verify.json.sandboxNotice || ""), /NHA sandbox/);
+    assert.equal(verify.json.patient, undefined);
+
+    const qr = await jsonRequest(port, "POST", "/api/abdm/profile/share", {
+      qrPayload: {
+        hidn: "91-1111-2222-3333",
+        hid: "qr.share@sbx",
+        name: "QR Patient",
+        gender: "F",
+        dob: "1990-01-01",
+        mobile: "+91 90000 00000",
+        address: "Pune",
+        pincode: "411001",
+      },
+    });
+    assert.equal(qr.status, 200, String(qr.json.error || ""));
+    assert.equal(qr.json.kycStatus, "LINKED_SANDBOX");
+    assert.notEqual(qr.json.kycStatus, "VERIFIED");
+    assert.match(String(qr.json.sandboxNotice || ""), /NHA sandbox/);
+  });
+
+  it("new clinic tenant does not inherit demo patients or Vikram charts", async () => {
+    const clinic = createClinicUser("noinherit");
+    const token = await login(clinic.email);
+    const auth = { Authorization: `Bearer ${token}` };
+
+    const patients = await jsonRequest(port, "GET", "/api/patients", undefined, auth);
+    assert.equal(patients.status, 200);
+    const list = (patients.json.patients as Array<{ id: string; name: string }>) || [];
+    assert.equal(list.length, 0);
+    assert.equal(
+      list.some((p) => p.id === "pat-6" || /Rajiv Saxena|Vikram Malhotra/i.test(p.name)),
+      false
+    );
+
+    const rxs = await jsonRequest(port, "GET", "/api/prescriptions", undefined, auth);
+    assert.equal(rxs.status, 200);
+    const rxList = (rxs.json.prescriptions as Array<{ doctorName?: string; patientName?: string }>) || [];
+    assert.equal(rxList.length, 0);
+    assert.equal(rxList.some((rx) => /Vikram/i.test(String(rx.doctorName || ""))), false);
   });
 
   it("GET /api/abdm/status is { abdmMode, bridgeReady } only", async () => {
@@ -627,6 +686,10 @@ describe("#35 overclaim grep (Platform ABHA / ABDM)", () => {
         .map((line, i) => ({ line, n: i + 1 }))
         .filter(({ line }) => {
           if (/\/\^verified\$\/i/.test(line)) {
+            return false;
+          }
+          // #47 chrome helper on Patient — not an API KYC write.
+          if (/kycStatus === ['"]VERIFIED['"]/.test(line)) {
             return false;
           }
           const stripped = line.replace(/bridgeReady/g, "");

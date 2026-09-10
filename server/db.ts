@@ -2631,7 +2631,7 @@ export function ensureAbdmAndDhisSeeding(database: DatabaseSync) {
   const updatePatientAbha = database.prepare(`
     UPDATE patients 
     SET abha_number = ?, abha_address = ?, kyc_status = ?, hfr_id = ?
-    WHERE id = ?
+    WHERE id = ? AND tenant_id = ?
   `);
 
   const abhaSeedMap: Record<string, { abhaNumber: string; abhaAddress: string; kycStatus: string }> = {
@@ -2645,7 +2645,7 @@ export function ensureAbdmAndDhisSeeding(database: DatabaseSync) {
 
   for (const [id, data] of Object.entries(abhaSeedMap)) {
     try {
-      updatePatientAbha.run(data.abhaNumber, data.abhaAddress, data.kycStatus, defaultHfrId, id);
+      updatePatientAbha.run(data.abhaNumber, data.abhaAddress, data.kycStatus, defaultHfrId, id, DEMO_TENANT_ID);
     } catch {}
   }
   try {

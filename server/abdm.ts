@@ -604,7 +604,7 @@ export function createAbdmRouter(): Router {
         clinicShare,
         lumeraShare,
         breakdown,
-        kycLinkedPatients: kycRow?.c || 0,
+        kycVerifiedPatients: kycRow?.c || 0,
         recentTransactions,
         schemeDetails: {
           schemeName: "NHA Digital Health Incentive Scheme (DHIS v3)",
