@@ -184,7 +184,8 @@ export function storeConsentArtefact(
     throw httpError(404, "Patient not found");
   }
   const now = new Date().toISOString();
-  const payload = JSON.stringify({ ...artefact, consentId });
+  const kind = String(artefact.kind || artefact.artefactKind || "consent").trim() || "consent";
+  const payload = JSON.stringify({ ...artefact, consentId, kind });
   const existing = getDb()
     .prepare("SELECT id FROM abdm_consent_artefacts WHERE tenant_id = ? AND consent_id = ?")
     .get(tenantId, consentId) as { id: string } | undefined;

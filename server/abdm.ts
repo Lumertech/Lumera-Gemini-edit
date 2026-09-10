@@ -12,7 +12,8 @@ import crypto from "node:crypto";
 import { getDb, writeAudit } from "./db.ts";
 import { allowOtpEcho, requireAuth } from "./auth.ts";
 import { getAbdmBridgeStatus, resolveAbdmMode } from "./abdm-mode.ts";
-import { getTenantPatient, storeConsentArtefact } from "./clinical.ts";
+import { decideAbdmCallbackSignature } from "./abdm-hmac.ts";
+import { getTenantPatient, listTenantConsentArtefacts, storeConsentArtefact } from "./clinical.ts";
 import {
   createPrescriptionBundle,
   createOPConsultBundle,
@@ -51,7 +52,8 @@ function callbackTenantId(req: { user?: { tenantId?: string }; headers: Record<s
   if (sessionTenant) return sessionTenant;
   const hip = String(req.headers["x-hip-id"] || req.headers["X-HIP-ID"] || "").trim();
   const hiu = String(req.headers["x-hiu-id"] || req.headers["X-HIU-ID"] || "").trim();
-  const headerId = hip || hiu;
+  const hrp = String(req.headers["x-hrp-id"] || req.headers["X-HRP-ID"] || "").trim();
+  const headerId = hip || hiu || hrp;
   if (headerId) {
     const tenant = getDb()
       .prepare("SELECT id FROM tenants WHERE hfr_id = ? AND TRIM(hfr_id) != ''")
@@ -866,48 +868,96 @@ export function createAbdmRouter(): Router {
   // Thin HIP notify + HIU consent/fetch stubs (#35 / #39)
   // Persist artefacts on tenant-scoped patientId. NHA sandbox only.
   // -------------------------------------------------------------
-  const persistCallbackArtefact = (req: Request, res: Response, kind: "hip_notify" | "hiu_consent" | "hiu_fetch") => {
-    const tenantId = callbackTenantId(req as unknown as { user?: { tenantId?: string }; headers: Record<string, unknown>; body?: Record<string, unknown> });
+  const persistCallbackArtefact = (
+    req: Request,
+    res: Response,
+    kind: "hip_notify" | "hiu_consent" | "hiu_fetch" | "hrp_registry"
+  ) => {
+    const rawBody = (req as Request & { rawBody?: Buffer }).rawBody ?? Buffer.from(JSON.stringify(req.body || {}));
+    const hmac = decideAbdmCallbackSignature({
+      rawBody,
+      signatureHeader: req.headers["x-abdm-signature"],
+    });
+    if (!hmac.ok) {
+      return res.status(hmac.status).json({ error: hmac.error, sandboxNotice: NHA_SANDBOX_NOTICE });
+    }
+
+    const tenantId = callbackTenantId(
+      req as unknown as { user?: { tenantId?: string }; headers: Record<string, unknown>; body?: Record<string, unknown> }
+    );
     if (!tenantId) {
-      return res.status(401).json({ error: "Authentication required" });
+      return res.status(401).json({ error: "Authentication required", sandboxNotice: NHA_SANDBOX_NOTICE });
     }
     const patientId = String(req.body?.patientId || req.body?.patient_id || "").trim();
-    if (!patientId || !getTenantPatient(tenantId, patientId)) {
-      return res.status(404).json({ error: "Patient not found" });
+    if (!patientId) {
+      return res.status(400).json({ error: "patientId is required", sandboxNotice: NHA_SANDBOX_NOTICE });
     }
+    if (!getTenantPatient(tenantId, patientId)) {
+      return res.status(403).json({ error: "Patient not found", sandboxNotice: NHA_SANDBOX_NOTICE });
+    }
+
+    const existing = listTenantConsentArtefacts(tenantId, patientId);
+    const grantId = String(
+      req.body?.consentId || req.body?.consent_id || req.body?.consentArtefact?.consentId || ""
+    ).trim();
+    if (kind === "hiu_fetch") {
+      const consent = existing.find((row) => !grantId || String(row.consentId) === grantId);
+      const status = String(consent?.status || "").toUpperCase();
+      const until = String((consent?.dateRange as { to?: string } | undefined)?.to || "");
+      const expired = Boolean(until && new Date(until).getTime() < Date.now());
+      if (status === "DENIED" || status === "REVOKED" || expired) {
+        return res.status(403).json({
+          error: "HIU fetch blocked: consent is not granted",
+          sandboxNotice: NHA_SANDBOX_NOTICE,
+        });
+      }
+    }
+
     const raw = req.body?.consentArtefact || req.body?.consent_artefact || req.body?.consent;
+    const persistId =
+      kind === "hiu_fetch"
+        ? String(req.body?.fetchId || `fetch-${grantId || crypto.randomUUID().slice(0, 8)}`)
+        : String(
+            (raw && typeof raw === "object" && (raw as Record<string, unknown>).consentId) ||
+              req.body?.consentId ||
+              req.body?.consentRequestId ||
+              `${kind}-${crypto.randomUUID().slice(0, 8)}`
+          );
     const artefact =
       raw && typeof raw === "object"
-        ? { ...(raw as Record<string, unknown>) }
+        ? { ...(raw as Record<string, unknown>), kind, consentId: persistId, grantId: grantId || undefined }
         : {
-            consentId: String(req.body?.consentId || req.body?.consentRequestId || `${kind}-${crypto.randomUUID().slice(0, 8)}`),
-            status: req.body?.status || "GRANTED",
+            consentId: persistId,
+            grantId: grantId || undefined,
+            status: req.body?.status || (kind === "hiu_fetch" ? "FETCHED" : "GRANTED"),
             hiTypes: req.body?.hiTypes,
             dateRange: req.body?.dateRange,
             purpose: req.body?.purpose || kind,
             requesterName: req.body?.requesterName,
             grantedAt: req.body?.grantedAt || new Date().toISOString(),
+            hfrId: req.body?.hfrId || req.body?.hfr_id,
+            hprId: req.body?.hprId || req.body?.hpr_id,
+            kind,
           };
-    if (!artefact.consentId) {
-      artefact.consentId = `${kind}-${crypto.randomUUID().slice(0, 8)}`;
-    }
+    artefact.kind = kind;
+    artefact.consentId = persistId;
     storeConsentArtefact(tenantId, patientId, artefact, { id: req.user?.id, name: req.user?.name || "ABDM callback" });
     writeAudit(
       getDb(),
       req.user?.id || null,
       req.user?.name || "ABDM callback",
       `ABDM ${kind} (NHA sandbox)`,
-      `patient ${patientId} consent ${artefact.consentId}`
+      `patient ${patientId} artefact ${artefact.consentId}`
     );
-    const artefacts = getDb()
-      .prepare("SELECT * FROM abdm_consent_artefacts WHERE tenant_id = ? AND patient_id = ?")
-      .all(tenantId, patientId);
+    const artefacts = listTenantConsentArtefacts(tenantId, patientId);
     return res.status(kind === "hiu_fetch" ? 200 : 202).json({
       status: kind === "hiu_fetch" ? "OK" : "ACKNOWLEDGED",
       abdmMode: resolveAbdmMode(),
       patientId,
       consentId: artefact.consentId,
-      artefacts: kind === "hiu_fetch" ? artefacts.map((row) => ({ ...(row as object) })) : undefined,
+      kind,
+      signatureOk: hmac.ok && hmac.matched === true,
+      artefacts,
       sandboxNotice: NHA_SANDBOX_NOTICE,
     });
   };
@@ -920,6 +970,9 @@ export function createAbdmRouter(): Router {
   });
   router.post(["/hiu/fetch", "/callbacks/hiu/fetch", "/v3/hiu/fetch"], (req, res) => {
     persistCallbackArtefact(req, res, "hiu_fetch");
+  });
+  router.post(["/hrp/registry", "/callbacks/hrp/registry", "/v3/hrp/registry"], (req, res) => {
+    persistCallbackArtefact(req, res, "hrp_registry");
   });
 
   return router;

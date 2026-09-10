@@ -360,7 +360,7 @@ describe("#35 dual onboard — same patientId + frozen link-abha", () => {
     assert.equal(status.json.abdmGateway, undefined);
   });
 
-  it("HIP notify + HIU consent/fetch persist tenant-scoped artefacts", async () => {
+  it("HIP + HIU + HRP stubs attach artefacts to the same patientId and 403 cross-tenant", async () => {
     const clinic = createClinicUser("hiu");
     const token = await login(clinic.email);
     const auth = { Authorization: `Bearer ${token}` };
@@ -394,7 +394,9 @@ describe("#35 dual onboard — same patientId + frozen link-abha", () => {
       auth
     );
     assert.equal(notify.status, 202, String(notify.json.error || ""));
-    assert.equal(notify.json.abdmMode, "stub");
+    assert.equal(notify.json.patientId, patientId);
+    assert.equal(notify.json.kind, "hiu_consent");
+    assert.match(String(notify.json.sandboxNotice || ""), /NHA sandbox/);
 
     const hip = await jsonRequest(
       port,
@@ -404,22 +406,54 @@ describe("#35 dual onboard — same patientId + frozen link-abha", () => {
       auth
     );
     assert.equal(hip.status, 202, String(hip.json.error || ""));
+    assert.equal(hip.json.patientId, patientId);
+    assert.equal(hip.json.kind, "hip_notify");
+
+    const hrp = await jsonRequest(
+      port,
+      "POST",
+      "/api/abdm/hrp/registry",
+      { patientId, consentId: `hrp-${patientId}`, hfrId: "HFR-STUB-1", hprId: "HPR-STUB-1" },
+      auth
+    );
+    assert.equal(hrp.status, 202, String(hrp.json.error || ""));
+    assert.equal(hrp.json.patientId, patientId);
+    assert.equal(hrp.json.kind, "hrp_registry");
 
     const fetched = await jsonRequest(port, "POST", "/api/abdm/hiu/fetch", { patientId, consentId }, auth);
     assert.equal(fetched.status, 200, String(fetched.json.error || ""));
-    assert.ok(Array.isArray(fetched.json.artefacts));
-    assert.ok((fetched.json.artefacts as unknown[]).length >= 1);
+    assert.equal(fetched.json.patientId, patientId);
+    const artefacts = fetched.json.artefacts as Array<{ patientId?: string; kind?: string; consentId?: string }>;
+    assert.ok(Array.isArray(artefacts) && artefacts.length >= 3);
+    assert.ok(artefacts.every((row) => !row.patientId || row.patientId === patientId));
+    assert.ok(artefacts.some((row) => row.kind === "hiu_consent" || row.consentId === consentId));
+    assert.ok(artefacts.some((row) => row.kind === "hip_notify"));
+    assert.ok(artefacts.some((row) => row.kind === "hrp_registry"));
+
+    const detail = await jsonRequest(port, "GET", `/api/patients/${patientId}`, undefined, auth);
+    const stored = (detail.json.patient as { id: string; consentArtefacts: Array<{ kind?: string }> }).consentArtefacts;
+    assert.ok(stored.some((row) => row.kind === "hiu_consent"));
+    assert.ok(stored.some((row) => row.kind === "hip_notify"));
+    assert.ok(stored.some((row) => row.kind === "hrp_registry"));
 
     const clinicB = createClinicUser("hiuB");
     const tokenB = await login(clinicB.email);
-    const stolen = await jsonRequest(
+    const authB = { Authorization: `Bearer ${tokenB}` };
+    for (const path of ["/api/abdm/hiu/fetch", "/api/abdm/hip/notify", "/api/abdm/hrp/registry"] as const) {
+      const stolen = await jsonRequest(port, "POST", path, { patientId, consentId }, authB);
+      assert.equal(stolen.status, 403, `${path} should 403 cross-tenant`);
+    }
+
+    const deniedId = `denied-${patientId}`;
+    await jsonRequest(
       port,
       "POST",
-      "/api/abdm/hiu/fetch",
-      { patientId, consentId },
-      { Authorization: `Bearer ${tokenB}` }
+      "/api/abdm/hiu/consent/notify",
+      { patientId, consentArtefact: { consentId: deniedId, status: "DENIED", purpose: "blocked" } },
+      auth
     );
-    assert.ok([403, 404].includes(stolen.status));
+    const blocked = await jsonRequest(port, "POST", "/api/abdm/hiu/fetch", { patientId, consentId: deniedId }, auth);
+    assert.equal(blocked.status, 403);
   });
 });
 
@@ -452,7 +486,7 @@ describe("#38 ABDM_MODE stub|sandbox", () => {
 });
 
 describe("#35 overclaim grep (Platform ABHA / ABDM)", () => {
-  const files = ["server/clinical.ts", "server/abdm.ts", "server/abdm-mode.ts"];
+  const files = ["server/clinical.ts", "server/abdm.ts", "server/abdm-mode.ts", "server/abdm-hmac.ts"];
 
   it("no Ready/Compliant/M1-M3/certified/VERIFIED except reject-VERIFIED and bridgeReady", () => {
     const overclaim = /\bReady\b|\bCompliant\b|M1[–-]M3|certified|\bVERIFIED\b/i;
