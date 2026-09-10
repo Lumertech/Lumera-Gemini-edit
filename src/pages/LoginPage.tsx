@@ -631,7 +631,7 @@ export const LoginPage: React.FC = () => {
   return (
     <div
       data-testid="public-login"
-      className="h-full w-full overflow-y-auto overflow-x-hidden bg-slate-950 text-slate-100 relative font-sans"
+      className="h-full min-h-0 w-full overflow-y-auto overflow-x-hidden overscroll-y-contain bg-slate-950 text-slate-100 relative font-sans"
     >
       {/* Background Glow Accents — clipped so they never create horizontal scroll */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none" aria-hidden>
@@ -640,12 +640,18 @@ export const LoginPage: React.FC = () => {
       </div>
 
       <div
-        className={`min-h-full w-full flex justify-center px-3 py-5 sm:px-6 sm:py-8 ${
+        className={`min-h-full w-full flex justify-center px-3 py-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:px-6 sm:py-8 ${
           mode === "register" || showOtpView || showForgot ? "items-start" : "items-center"
         }`}
       >
       {/* Main Single-Card Container */}
-      <div className="w-full max-w-lg min-w-0 rounded-2xl border border-slate-800/90 bg-slate-900/90 shadow-2xl shadow-purple-950/40 backdrop-blur-xl p-4 sm:p-6 md:p-8 relative z-10">
+      <div
+        data-testid="auth-card"
+        data-mode={mode}
+        className={`w-full min-w-0 rounded-2xl border border-slate-800/90 bg-slate-900/90 shadow-2xl shadow-purple-950/40 backdrop-blur-xl p-4 sm:p-6 md:p-8 relative z-10 ${
+          mode === "register" ? "max-w-lg md:max-w-xl xl:max-w-2xl" : "max-w-lg"
+        }`}
+      >
         
         {/* Brand Header */}
         <div className="flex flex-col items-center text-center mb-5 sm:mb-6">
@@ -1148,7 +1154,12 @@ export const LoginPage: React.FC = () => {
               </div>
             ) : (
               /* 2. CREATE CLINIC ACCOUNT FORM */
-              <form onSubmit={handleRegisterSubmit} className="space-y-3.5 min-w-0 w-full">
+              <form
+                id="create-clinic-form"
+                data-testid="create-clinic-form"
+                onSubmit={handleRegisterSubmit}
+                className="space-y-3.5 min-w-0 w-full"
+              >
                 {verifiedSsoNotice && (
                   <div className="p-3 rounded-xl bg-purple-950/40 border border-purple-600/40 text-purple-300 text-xs flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 shadow-sm">
                     <div className="flex items-start gap-2 min-w-0">
@@ -1171,7 +1182,7 @@ export const LoginPage: React.FC = () => {
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-slate-400 font-medium">Or pre-fill with single sign-on:</span>
                     </div>
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-1 min-[400px]:grid-cols-2 gap-2">
                       <button
                         type="button"
                         onClick={() => handleOAuthSignIn("google")}
@@ -1208,7 +1219,7 @@ export const LoginPage: React.FC = () => {
                   <label className="block text-xs font-semibold text-slate-300">
                     Practice type *
                   </label>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                     <button
                       type="button"
                       onClick={() => {
@@ -1277,8 +1288,8 @@ export const LoginPage: React.FC = () => {
                 </div>
 
                 {/* Primary Specialty & Country */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                  <div className="min-w-0">
                     <label className="block text-xs font-semibold text-slate-300 mb-1">
                       {regPracticeType === "polyclinic" ? "Primary department" : "Your specialty"}
                     </label>
@@ -1295,7 +1306,7 @@ export const LoginPage: React.FC = () => {
                     </select>
                   </div>
 
-                  <div>
+                  <div className="min-w-0">
                     <label className="block text-xs font-semibold text-slate-300 mb-1">
                       Country & Timezone
                     </label>
@@ -1340,8 +1351,8 @@ export const LoginPage: React.FC = () => {
                 </div>
 
                 {/* Email & Phone */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                  <div className="min-w-0">
                     <label className="block text-xs font-semibold text-slate-300 mb-1">
                       Work Email *
                     </label>
@@ -1361,7 +1372,7 @@ export const LoginPage: React.FC = () => {
                     </div>
                   </div>
 
-                  <div>
+                  <div className="min-w-0">
                     <label className="block text-xs font-semibold text-slate-300 mb-1">
                       WhatsApp Phone *
                     </label>
@@ -1422,11 +1433,11 @@ export const LoginPage: React.FC = () => {
                   <span className="font-mono text-xs text-emerald-400 font-bold shrink-0">NHA sandbox</span>
                 </div>
 
-                {/* Submit Button */}
+                {/* Desktop submit — phone uses the sticky action bar so the CTA is never clipped */}
                 <button
                   type="submit"
                   disabled={busy}
-                  className="w-full min-h-11 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-semibold text-xs sm:text-sm transition-all shadow-md shadow-purple-600/30 flex items-center justify-center gap-2 disabled:opacity-50"
+                  className="hidden md:flex w-full min-h-11 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-semibold text-xs sm:text-sm transition-all shadow-md shadow-purple-600/30 items-center justify-center gap-2 disabled:opacity-50"
                 >
                   {busy ? (
                     <>
@@ -1446,10 +1457,9 @@ export const LoginPage: React.FC = () => {
           </div>
         )}
 
-        {/* Single Create Clinic Account Option at Bottom */}
+        {/* Sign-in: create-account CTA. Register: sticky on phone so submit stays in view. */}
+        {mode === "signin" && !showOtpView && !showForgot ? (
         <div className="mt-6">
-          {mode === "signin" ? (
-            <>
             <button
               type="button"
               onClick={() => {
@@ -1464,8 +1474,31 @@ export const LoginPage: React.FC = () => {
             <p className="mt-2 text-center text-[11px] text-slate-500">
               New accounts start as an <span className="text-slate-300">individual practice</span>. Multi-specialty is an explicit opt-in.
             </p>
-            </>
-          ) : (
+        </div>
+        ) : mode === "register" && !showOtpView && !showForgot ? (
+        <div
+          data-testid="register-sticky-actions"
+          className="sticky bottom-0 z-20 -mx-4 mt-4 px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] bg-gradient-to-t from-slate-900 via-slate-900/95 to-slate-900/70 border-t border-slate-800/80 md:static md:mx-0 md:mt-6 md:px-0 md:pt-0 md:pb-0 md:bg-none md:border-0"
+        >
+            <button
+              type="submit"
+              form="create-clinic-form"
+              disabled={busy}
+              className="md:hidden w-full min-h-11 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-semibold text-xs sm:text-sm transition-all shadow-md shadow-purple-600/30 flex items-center justify-center gap-2 disabled:opacity-50"
+            >
+              {busy ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" /> Provisioning Practice...
+                </>
+              ) : (
+                <>
+                  {regPracticeType === "polyclinic"
+                    ? "Create multi-specialty clinic"
+                    : "Create individual practice"}{" "}
+                  <ArrowRight className="w-4 h-4" />
+                </>
+              )}
+            </button>
             <button
               type="button"
               onClick={() => {
@@ -1473,16 +1506,15 @@ export const LoginPage: React.FC = () => {
                 setError("");
                 go("login", { loginMode: "signin" });
               }}
-              className="w-full min-h-11 py-2.5 rounded-xl bg-slate-950 hover:bg-slate-900 border border-slate-800 hover:border-emerald-500/50 text-slate-300 hover:text-white text-xs sm:text-sm font-semibold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm group"
+              className="w-full min-h-11 mt-2 py-2.5 rounded-xl bg-slate-950 hover:bg-slate-900 border border-slate-800 hover:border-emerald-500/50 text-slate-300 hover:text-white text-xs sm:text-sm font-semibold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm group"
             >
               <span>Already have an account?</span>
               <span className="text-emerald-400 group-hover:text-emerald-300">Sign In</span>
             </button>
-          )}
         </div>
+        ) : null}
 
-        {/* Footer Note */}
-        <div className="mt-6 pt-4 border-t border-slate-800/80 text-center text-[11px] sm:text-xs text-slate-500 flex items-center justify-center gap-2 px-1">
+        <div className={`mt-6 pt-4 border-t border-slate-800/80 text-center text-[11px] sm:text-xs text-slate-500 items-center justify-center gap-2 px-1 ${mode === "register" ? "hidden md:flex" : "flex"}`}>
           <span className="leading-relaxed">Protected by AES-256 GCM · Designed for ABDM (NHA sandbox path)</span>
         </div>
       </div>

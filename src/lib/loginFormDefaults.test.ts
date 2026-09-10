@@ -108,12 +108,21 @@ describe("public login form defaults", () => {
     assert.match(landingPage, /Try for free/);
   });
 
-  it("keeps the create-clinic card fluid on narrow viewports", () => {
+  it("keeps the create-clinic card fluid on phone, tablet, and desktop", () => {
+    const appShell = fs.readFileSync(path.join(__dirname, "../App.tsx"), "utf8");
+    assert.match(appShell, /h-dvh/);
+    assert.match(appShell, /min-h-0/);
     assert.match(loginPage, /overflow-x-hidden/);
+    assert.match(loginPage, /overscroll-y-contain/);
     assert.match(loginPage, /mode === "register".*items-start/s);
-    assert.match(loginPage, /grid grid-cols-1 sm:grid-cols-2 gap-2/);
+    assert.match(loginPage, /grid grid-cols-1 md:grid-cols-2 gap-2/);
+    assert.match(loginPage, /grid grid-cols-1 lg:grid-cols-2 gap-3/);
     assert.match(loginPage, /flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1.5/);
     assert.match(loginPage, /min-h-11/);
-    assert.match(loginPage, /max-w-lg min-w-0/);
+    assert.match(loginPage, /max-w-lg md:max-w-xl xl:max-w-2xl/);
+    assert.match(loginPage, /register-sticky-actions/);
+    assert.match(loginPage, /sticky bottom-0/);
+    assert.match(loginPage, /safe-area-inset-bottom/);
+    assert.match(loginPage, /form="create-clinic-form"/);
   });
 });
