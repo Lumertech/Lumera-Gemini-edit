@@ -208,6 +208,8 @@ export function requireRole(...roles: UserRole[]) {
 export const ADMIN_ROLES: UserRole[] = ["super_admin"];
 /** Admin desk Users API — matches AdminShell admin/super_admin gates. */
 export const USER_MANAGER_ROLES: UserRole[] = ["super_admin", "polyclinic_admin", "CLINIC_ADMIN"];
+/** Password login completes without WhatsApp OTP — Admin / clinic admin must not block on Graph. */
+export const PASSWORD_SESSION_ROLES: UserRole[] = ["super_admin", "polyclinic_admin", "CLINIC_ADMIN"];
 export const CLINIC_MANAGER_ROLES: UserRole[] = ["doctor", "polyclinic_admin", "CLINIC_ADMIN"];
 export const CLINICIAN_ROLES: UserRole[] = [
   "doctor",

@@ -16,6 +16,7 @@ import {
 } from "./auth.ts";
 import { createApiRouter } from "./api.ts";
 import { getDb, initDatabase } from "./db.ts";
+import { hashPassword } from "./password.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -198,7 +199,7 @@ describe("Wave 1A PHI / auth lock", () => {
     assert.equal(me.json.token, token);
   });
 
-  it("OTP-safe super_admin login issues a session in production without skipOtp", async () => {
+  it("admin@lumera.me / Lumera@2026 logs in without an OTP step", async () => {
     const prev = process.env.NODE_ENV;
     process.env.NODE_ENV = "production";
     try {
@@ -209,8 +210,45 @@ describe("Wave 1A PHI / auth lock", () => {
       assert.equal(login.status, 200);
       assert.equal(login.json.requiresOtp, false);
       assert.ok(login.json.token);
-      assert.equal((login.json.user as { role?: string } | undefined)?.role, "super_admin");
+      assert.equal((login.json.user as { role?: string; email?: string } | undefined)?.role, "super_admin");
+      assert.equal((login.json.user as { email?: string } | undefined)?.email, "admin@lumera.me");
       assert.equal(login.json.demoOtp, undefined);
+      assert.equal(login.json.verificationId, undefined);
+    } finally {
+      if (prev === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = prev;
+    }
+  });
+
+  it("CLINIC_ADMIN password login is not blocked on WhatsApp OTP", async () => {
+    const stamp = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    const email = `clinic.admin.${stamp}@um-test.example`;
+    const now = new Date().toISOString();
+    getDb()
+      .prepare(
+        `INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, onboarding_completed, practice_type, last_login, created_at)
+         VALUES (?, ?, ?, ?, ?, 'CLINIC_ADMIN', 'active', ?, 1, 'polyclinic', ?, ?)`
+      )
+      .run(
+        `user-ca-${stamp}`,
+        "tenant-lumera-main",
+        email,
+        hashPassword("Lumera@2026"),
+        "Clinic Admin Smoke",
+        "+91 97000 00000",
+        now,
+        now
+      );
+    const prev = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+    try {
+      const login = await jsonRequest(port, "POST", "/api/auth/login", {
+        email,
+        password: "Lumera@2026",
+      });
+      assert.equal(login.status, 200);
+      assert.equal(login.json.requiresOtp, false);
+      assert.ok(login.json.token);
     } finally {
       if (prev === undefined) delete process.env.NODE_ENV;
       else process.env.NODE_ENV = prev;

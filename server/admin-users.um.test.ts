@@ -88,6 +88,19 @@ describe("Admin UM users API (UM-1…6)", () => {
     });
   });
 
+  it("live smoke: admin@lumera.me / Lumera@2026 completes login without WhatsApp OTP", async () => {
+    const res = await jsonRequest(port, "POST", "/api/auth/login", {
+      email: "admin@lumera.me",
+      password: "Lumera@2026",
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.json.requiresOtp, false);
+    assert.ok(res.json.token);
+    assert.equal((res.json.user as Record<string, unknown>).email, "admin@lumera.me");
+    assert.equal((res.json.user as Record<string, unknown>).role, "super_admin");
+    assert.equal(res.json.verificationId, undefined);
+  });
+
   async function login(email: string, password = "Lumera@2026"): Promise<{ token: string; user: Record<string, unknown> }> {
     const loginRes = await jsonRequest(port, "POST", "/api/auth/login", {
       email,
@@ -150,6 +163,24 @@ describe("Admin UM users API (UM-1…6)", () => {
     for (const a of audits) {
       assert.equal(a.details.includes(temp), false, "temporary password must never be audited");
     }
+
+    const withPassword = await jsonRequest(
+      port,
+      "POST",
+      "/api/users",
+      {
+        name: "Explicit Pwd",
+        email: `explicit.${stamp}@um-test.example`,
+        role: "doctor",
+        specialty: "gp",
+        tenantId: DEMO_TENANT_ID,
+        password: "Lumera@2026",
+      },
+      { Authorization: `Bearer ${admin.token}` }
+    );
+    assert.equal(withPassword.status, 201);
+    assert.equal(withPassword.json.temporaryPassword, undefined);
+    assert.equal((withPassword.json.user as Record<string, unknown>).specialty, "gp");
 
     const dup = await jsonRequest(
       port,

@@ -30,6 +30,7 @@ import {
   ADMIN_ROLES,
   CLINICIAN_ROLES,
   CLINIC_MANAGER_ROLES,
+  PASSWORD_SESSION_ROLES,
   USER_MANAGER_ROLES,
   allowSkipOtp,
   clearSessionCookie,
@@ -336,7 +337,6 @@ export function createApiRouter(): Router {
   api.post("/auth/login", async (req: Request, res: Response) => {
     const email = String(req.body?.email || "").trim().toLowerCase();
     const password = String(req.body?.password || "");
-    const skipOtp = Boolean(req.body?.skipOtp) && allowSkipOtp();
 
     if (!email || !password) {
       return res.status(400).json({ error: "Email and password are required" });
@@ -358,15 +358,13 @@ export function createApiRouter(): Router {
       return res.json({ user: publicUser(user), token: jwtToken, requiresOtp: false });
     };
 
-    // Platform operator: password session is OTP-safe (Graph/WhatsApp must not lock out Admin).
-    // This is role-gated on the server — not the client skipOtp flag.
-    if (user.role === "super_admin") {
-      return issuePasswordSession("super_admin password session");
-    }
-
-    // skipOtp is honored only when NODE_ENV !== "production" (local/demo).
-    if (skipOtp) {
-      return issuePasswordSession("direct session");
+    // Admin / clinic-admin password login must not block on WhatsApp OTP (live smoke).
+    // Roles match existing strings: super_admin, polyclinic_admin, CLINIC_ADMIN (+ "admin" alias).
+    const passwordSessionRole =
+      PASSWORD_SESSION_ROLES.includes(user.role) || String(user.role) === "admin";
+    const skipOtp = Boolean(req.body?.skipOtp) && (allowSkipOtp() || passwordSessionRole);
+    if (passwordSessionRole || skipOtp) {
+      return issuePasswordSession(passwordSessionRole ? "admin password session" : "direct session");
     }
 
     // Mandatory WhatsApp Business Phone Binding & Verification
