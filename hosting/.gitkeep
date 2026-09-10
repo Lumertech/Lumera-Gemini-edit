@@ -1,0 +1,3 @@
+# Firebase Hosting public dir (required by the CLI).
+# Intentionally empty of index.html so `/` and all other paths hit the
+# `**` → Cloud Run rewrite in firebase.json. Do not copy Vite `dist/` here.

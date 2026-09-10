@@ -2193,11 +2193,14 @@ Lumera operates a clinical practice operating system with a WhatsApp Cloud API i
 
 ### 2. Scope of WhatsApp & User Data Handled
 When clinics connect their WhatsApp Business Accounts (WABA) or when patients interact via the Lumera WhatsApp Desk, we process:
-- **Phone Numbers & Identifiers:** Patient mobile numbers (E.164 standard), Unique Healthcare Identifiers (UHID), and Meta Phone Number IDs.
-- **Transactional Messages:** Appointment tokens, schedule changes, OPD reminders, and doctor follow-up notices.
-- **Clinical Artifacts:** Encrypted PDF links for diagnostic reports and physician-authorized digital prescriptions.
-- **Opt-In & Consent Records:** Timestamped affirmative patient consents collected during clinic intake or conversational opt-in.
+- **Phone Numbers & Identifiers:** Patient mobile numbers (E.164 standard), Unique Healthcare Identifiers (UHID), and Meta Phone Number IDs / WABA ids when a clinic connects WhatsApp.
+- **Transactional Messages:** Appointment tokens, schedule changes, OPD reminders, OTP login codes, and doctor follow-up notices.
+- **Clinical Artifacts:** Encrypted PDF links for diagnostic reports and physician-authorized digital prescriptions when sent at a clinician’s instruction.
+- **Facebook Login profile fields** (only if a user signs in with Facebook): Facebook user id, name, email, and profile picture URL if provided.
+- **Opt-In & Consent Records:** Timestamped affirmative patient consents collected during clinic intake or conversational opt-in, plus STOP / opt-out records.
 - **Technical Telemetry:** Webhook delivery receipts (sent, delivered, read), quality indicators, and error diagnostics.
+
+We do **not** use WhatsApp or Facebook Login data to sell ads, build advertising audiences, or sell personal data to brokers.
 
 ### 3. Purpose of Processing & Meta Terms Compliance
 All WhatsApp messaging is processed strictly in accordance with:
@@ -2206,6 +2209,12 @@ All WhatsApp messaging is processed strictly in accordance with:
 3. **India Digital Personal Data Protection (DPDP) Act & ABDM Health Data Management Policy**
 
 We **NEVER** sell personal or medical data to third parties, advertising brokers, or unauthorized entities. Data is processed solely to fulfill requested clinical operations, facilitate physician-patient communication, and maintain regulatory compliance.
+
+### 3b. Opt-in, opt-out, and STOP
+- Clinics must obtain valid patient consent before outbound WhatsApp notifications beyond what Meta policy allows.
+- Patients can opt out of further clinic WhatsApp messages by replying **STOP** (or the clinic’s documented opt-out phrase) on WhatsApp, or by asking the clinic front desk.
+- After opt-out, Lumera instructs the product path to suppress further non-essential outbound templates to that number for that clinic. Transactional or security messages may still be limited to what law or Meta policy requires.
+- Users who signed in with Facebook can remove Lumera under Facebook **Settings → Apps and Websites**, which can trigger our data deletion callback.
 
 ### 4. Data Storage, Encryption & Security
 - **Encryption in Transit:** All communications between Meta Graph API, Lumera edge nodes, and clinic servers are encrypted via TLS 1.3.
@@ -2253,6 +2262,10 @@ Upon account termination or cancellation, Clinics may export all patient records
 **Applicable For:** Meta WhatsApp Embedded Signup, Facebook Login & Lumera Patient Portal  
 **Compliance Authority:** Meta Platform Terms §4.b & GDPR / India DPDP Act  
 **Direct Data Protection Office:** dpo@lumera.me | compliance@lumera.health  
+**Human page:** /data-deletion-instructions  
+**Automated callback (Meta App Dashboard → Data Deletion Request URL):** POST /api/meta/data-deletion  
+**Status check:** GET /api/meta/data-deletion-status?code=YOUR_CODE  
+**Intended production host (paste into Meta only after HTTPS 200):** https://www.mylumera.in  
 
 ---
 

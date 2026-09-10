@@ -1,0 +1,5 @@
+{
+  "status": "retired",
+  "canonicalRunbook": "docs/FIREBASE_CLOUD_RUN_DEPLOY.md",
+  "note": "Founder pivot 2026-09-10: keep Gemini AI Studio + Firebase. www.mylumera.in DNS already points at Firebase Hosting (A 199.36.158.100). Do not buy Hostinger. Do not remove Firebase DNS. Optional leftover if someone later runs Node on a VPS — not the www path."
+}

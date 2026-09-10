@@ -17,7 +17,7 @@ export function isUnsetOrPlaceholder(value?: string | null): boolean {
   const v = String(value || "").trim();
   if (!v) return true;
   if (/^(undefined|null)$/i.test(v)) return true;
-  if (/^(replace-with-|changeme|change\.me|your-|todo\b|xxx+|placeholder)/i.test(v)) return true;
+  if (/^(replace-with-|changeme|change-me|change\.me|your-|todo\b|xxx+|placeholder)/i.test(v)) return true;
   if (/replace-with-|not-a-secret|dummy-secret|example\.invalid/i.test(v)) return true;
   return false;
 }
@@ -49,4 +49,49 @@ export function appPublicUrl(reqHost?: string, reqProto?: string): string {
     return `${proto}://${reqHost}`;
   }
   return "http://localhost:3000";
+}
+
+/** Cloud Run (and most Node hosts) inject PORT. Default 3000 for local production smoke. */
+export function resolveListenPort(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = String(env.PORT || "").trim();
+  if (!raw) return 3000;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1 || n > 65535) {
+    throw new Error(`PORT must be an integer 1–65535 (got ${JSON.stringify(raw)})`);
+  }
+  return n;
+}
+
+/**
+ * Cloud Run / `npm start` entry is `dist/server.cjs` and may omit NODE_ENV.
+ * Treat a bundled server start as production unless NODE_ENV is already set.
+ */
+export function applyBundledServerNodeEnv(
+  argv1 = process.argv[1],
+  env: NodeJS.ProcessEnv = process.env
+): void {
+  if (String(env.NODE_ENV || "").trim()) return;
+  if (/(^|[\\/])server\.cjs$/.test(String(argv1 || ""))) {
+    env.NODE_ENV = "production";
+  }
+}
+
+/**
+ * Production hosting (App Review URL stage) requires JWT_SECRET.
+ * Meta / Facebook / Razorpay secrets stay optional until the founder provisions them.
+ */
+export function assertRequiredProductionEnv(env: NodeJS.ProcessEnv = process.env): void {
+  if (env.NODE_ENV !== "production") return;
+  const jwt = String(env.JWT_SECRET || "").trim();
+  if (!jwt || isUnsetOrPlaceholder(jwt)) {
+    throw new Error(
+      "JWT_SECRET is required in production (no weak default). Set it in Cloud Run environment variables (or AI Studio secrets)."
+    );
+  }
+  const appUrl = String(env.APP_URL || "").trim().replace(/\/$/, "");
+  if (!appUrl) {
+    console.warn(
+      "[Lumera] APP_URL is unset. Set APP_URL=https://www.mylumera.in for Meta OAuth and policy links."
+    );
+  }
 }

@@ -103,6 +103,7 @@ describe("Graph credential hygiene", () => {
     assert.equal(isUnsetOrPlaceholder(""), true);
     assert.equal(isUnsetOrPlaceholder("replace-with-facebook-app-id"), true);
     assert.equal(isUnsetOrPlaceholder("replace-with-meta-app-secret"), true);
+    assert.equal(isUnsetOrPlaceholder("change-me-to-a-long-random-secret"), true);
     assert.equal(isUnsetOrPlaceholder("EAAGisAlongEnoughTokenWithoutEllipsis0123456789abcdef"), false);
 
     const prevId = process.env.FACEBOOK_APP_ID;
