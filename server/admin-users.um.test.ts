@@ -354,6 +354,14 @@ describe("Admin UM users API (UM-1…6)", () => {
       { Authorization: `Bearer ${clinicAuth.token}` }
     );
     assert.equal(steal.status, 403);
+    const stealSnake = await jsonRequest(
+      port,
+      "PATCH",
+      `/api/users/${id}`,
+      { tenant_id: DEMO_TENANT_ID },
+      { Authorization: `Bearer ${clinicAuth.token}` }
+    );
+    assert.equal(stealSnake.status, 403);
     const row = getDb().prepare("SELECT tenant_id, pack_id FROM users WHERE id = ?").get(id) as {
       tenant_id: string;
       pack_id: string;

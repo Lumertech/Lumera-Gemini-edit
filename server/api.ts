@@ -30,8 +30,8 @@ import {
   ADMIN_ROLES,
   CLINICIAN_ROLES,
   CLINIC_MANAGER_ROLES,
-  PASSWORD_SESSION_ROLES,
   USER_MANAGER_ROLES,
+  allowPasswordLoginWithoutOtp,
   allowSkipOtp,
   clearSessionCookie,
   destroySession,
@@ -358,13 +358,11 @@ export function createApiRouter(): Router {
       return res.json({ user: publicUser(user), token: jwtToken, requiresOtp: false });
     };
 
-    // Admin / clinic-admin password login must not block on WhatsApp OTP (live smoke).
-    // Roles match existing strings: super_admin, polyclinic_admin, CLINIC_ADMIN (+ "admin" alias).
-    const passwordSessionRole =
-      PASSWORD_SESSION_ROLES.includes(user.role) || String(user.role) === "admin";
-    const skipOtp = Boolean(req.body?.skipOtp) && (allowSkipOtp() || passwordSessionRole);
-    if (passwordSessionRole || skipOtp) {
-      return issuePasswordSession(passwordSessionRole ? "admin password session" : "direct session");
+    // MUST: super_admin / admin email+password is a production session — not skipOtp.
+    const passwordSession = allowPasswordLoginWithoutOtp(user);
+    const skipOtp = Boolean(req.body?.skipOtp) && (allowSkipOtp() || passwordSession);
+    if (passwordSession || skipOtp) {
+      return issuePasswordSession(passwordSession ? "admin password session" : "direct session");
     }
 
     // Mandatory WhatsApp Business Phone Binding & Verification
@@ -1670,11 +1668,14 @@ export function createApiRouter(): Router {
     const email = body.email ? String(body.email).trim().toLowerCase() : existing.email;
 
     let tenantId = existing.tenant_id || "";
+    const wantsTenant =
+      Object.prototype.hasOwnProperty.call(body, "tenantId") ||
+      Object.prototype.hasOwnProperty.call(body, "tenant_id");
+    if (wantsTenant && !isSuperAdmin(req)) {
+      return res.status(403).json({ error: "Only super_admin can reassign tenantId" });
+    }
     const requestedTenant = requestedTenantId(body);
-    if (requestedTenant && requestedTenant !== tenantId) {
-      if (!isSuperAdmin(req)) {
-        return res.status(403).json({ error: "Clinic admins cannot move users across tenants" });
-      }
+    if (wantsTenant && requestedTenant && requestedTenant !== tenantId) {
       const tenant = getDb().prepare("SELECT id FROM tenants WHERE id = ?").get(requestedTenant) as { id: string } | undefined;
       if (!tenant) return res.status(404).json({ error: "Tenant not found" });
       tenantId = requestedTenant;
