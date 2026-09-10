@@ -1,0 +1,85 @@
+# Image-only Cloud Run deploy for lumera-gemini-edit.
+#
+# Do not mix this pipeline with `gcloud run deploy --source` or AI Studio
+# Publish on the same service without clearing run.googleapis.com/sources.
+# That leftover annotation is why Console Cloud Build failed with:
+#   spec.template.metadata.annotations[run.googleapis.com/sources]:
+#   Source annotation has sources that are not referenced by a container.
+#
+# Point the Cloud Build trigger at this file (repo root /cloudbuild.yaml).
+# Override substitutions in the trigger if the registry path differs.
+
+substitutions:
+  _SERVICE: lumera-gemini-edit
+  _REGION: asia-south1
+  # Full image URI including tag. Override for Artifact Registry, e.g.
+  # asia-south1-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/lumera-gemini-edit:${SHORT_SHA}
+  _IMAGE: gcr.io/${PROJECT_ID}/lumera-gemini-edit:${SHORT_SHA}
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: E2_HIGHCPU_8
+
+timeout: 1200s
+
+steps:
+  # 1. Build the repo Dockerfile (Node 22, npm run build / npm start, PORT).
+  - name: gcr.io/cloud-builders/docker
+    id: build
+    args:
+      - build
+      - -t
+      - ${_IMAGE}
+      - .
+
+  # 2. Push before deploy — Cloud Build's `images:` push happens after steps.
+  - name: gcr.io/cloud-builders/docker
+    id: push
+    args:
+      - push
+      - ${_IMAGE}
+
+  # 3. Clear AI Studio / --source annotation (and scratch placeholder).
+  #    CoS one-liner is attempted first; || true covers missing flag / first deploy.
+  #    Helper then export-strips template annotations so the image deploy below
+  #    is not rejected. Existing env (JWT_SECRET, META_VERIFY_TOKEN, …) is kept.
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    id: clear-source-annotation
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        chmod +x deploy/clear-cloud-run-source-annotation.sh
+        gcloud run services update "${_SERVICE}" \
+          --region="${_REGION}" \
+          --project="${PROJECT_ID}" \
+          --remove-annotations=run.googleapis.com/sources \
+          || true
+        deploy/clear-cloud-run-source-annotation.sh \
+          --service="${_SERVICE}" \
+          --region="${_REGION}" \
+          --project="${PROJECT_ID}" \
+          --image="${_IMAGE}"
+
+  # 4. Deploy the built image only. Never pass --source here.
+  #    --update-env-vars pins public production values without wiping secrets.
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    id: deploy
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE}
+      - --image=${_IMAGE}
+      - --region=${_REGION}
+      - --project=${PROJECT_ID}
+      - --allow-unauthenticated
+      - --update-env-vars=NODE_ENV=production,APP_URL=https://www.mylumera.in
+
+images:
+  - ${_IMAGE}
+
+tags:
+  - lumera-gemini-edit
+  - cloud-run-image
