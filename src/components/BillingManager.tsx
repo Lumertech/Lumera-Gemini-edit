@@ -80,7 +80,6 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
   const [collectError, setCollectError] = useState('');
 
   const [items, setItems] = useState<BillItem[]>([]);
-  const gstinLabel = clinicSettings.gstin?.trim() || 'Not set';
   const upiLabel = clinicSettings.upiId?.trim() || 'Not set';
 
   useEffect(() => {
