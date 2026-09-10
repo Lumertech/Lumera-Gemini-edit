@@ -104,7 +104,7 @@ const FALLBACK: SitePayload = {
     ctaPrimary: "Experience Doctor EHR",
     ctaSecondary: "Open Clinical Demo",
     ctaBannerTitle: "Ready to Supercharge Your Practice?",
-    ctaBannerSubtitle: "Experience seamless AI receptionist calls, smart prescriptions, and compliant ABDM records.",
+    ctaBannerSubtitle: "Experience seamless AI receptionist calls, smart prescriptions, and ABDM-aligned records (sandbox path).",
     logoUrl: "",
     clinicName: "Lumera Health Systems",
   },

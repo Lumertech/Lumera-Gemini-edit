@@ -13,19 +13,24 @@ const WAVE0_FILES = [
   "src/components/admin/AdminShell.tsx",
 ];
 
-/** Theatre phrases removed by #12 / PR #18. Must not return on rebase. */
+/** Pre-#18 overclaims CoS listed as Compliance BLOCK. Must not return on LandingPage. */
 const THEATRE = [
   /ABDM M1,\s*M2,\s*M3 Certified/i,
+  /ABDM certified/i,
   /Official Meta WhatsApp Tech Provider/i,
   /official Meta Tech Provider/i,
+  /official Meta WhatsApp Business API/i,
+  /official Meta API/i,
   /HIPAA Grade/i,
   /HIPAA-grade/i,
+  /\bHIPAA\b/i,
   /Certified for ABDM/i,
   /Certified compliant with NHA/i,
   /government-certified/i,
   /Official Tech Provider/i,
   /All Endpoints Verified Live/i,
   /Meta Tech Provider Verified/i,
+  /Jan Aushadhi finder/i,
 ];
 
 function readRepo(rel: string): string {
@@ -33,17 +38,27 @@ function readRepo(rel: string): string {
 }
 
 describe("Compliance #18 honesty labeling (LandingPage / Admin Meta)", () => {
-  it("Wave 0 files keep #18 sandbox / path copy and do not reintroduce theatre", () => {
+  it("LandingPage keeps #18 sandbox copy and has none of the CoS overclaims", () => {
     const landing = readRepo("src/components/LandingPage.tsx");
     assert.match(landing, /ABDM M1–M3 · NHA sandbox path/);
     assert.match(landing, /ABDM sandbox milestone path/);
     assert.match(landing, /Built for DPDP Act 2023/);
-    assert.match(landing, /Jan Aushadhi planned/);
     assert.match(landing, /WhatsApp Cloud API · Meta Tech Provider path/);
     assert.match(landing, /building toward Meta Tech Provider/i);
     assert.match(landing, /Designed for ABDM M1–M3/);
     assert.match(landing, /App Review is not submitted/);
+    assert.match(landing, /ABDM-aligned records \(sandbox path\)/);
+
+    assert.equal(/ABDM certified/i.test(landing), false);
     assert.equal(/HIPAA/i.test(landing), false);
+    assert.equal(/official Meta API/i.test(landing), false);
+    assert.equal(/official Meta WhatsApp/i.test(landing), false);
+    assert.equal(/Official Tech Provider/i.test(landing), false);
+    assert.equal(/certified Tech Provider/i.test(landing), false);
+    const janLines = landing.split(/\n/).filter((line) => /jan aushadhi/i.test(line));
+    assert.equal(janLines.length, 1);
+    assert.match(janLines[0], /Jan Aushadhi planned/);
+    assert.equal(/Jan Aushadhi finder/i.test(landing), false);
 
     const adminMeta = readRepo("src/components/admin/AdminMetaTechProvider.tsx");
     assert.match(adminMeta, /SANDBOX/);
