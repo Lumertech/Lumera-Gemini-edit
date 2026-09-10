@@ -7,7 +7,6 @@ import {
   PRESCRIPTION_SPECIALTY_KEYS,
   writeAudit,
 } from "./db.ts";
-import { clinicLine, getTenantLetterhead } from "./letterhead.ts";
 import { requireAuth } from "./auth.ts";
 
 function tenantIdOf(req: Request): string {
@@ -49,7 +48,7 @@ function yearToken(prefix: string): string {
   return `${prefix}-${year}-${crypto.randomUUID().replace(/-/g, "").slice(0, 6).toUpperCase()}`;
 }
 
-function nextTokenNumber(tenantId: string, date: string): number {
+export function nextTokenNumber(tenantId: string, date: string): number {
   const row = getDb()
     .prepare(
       `SELECT COALESCE(MAX(token_number), 0) AS max_token
@@ -59,13 +58,13 @@ function nextTokenNumber(tenantId: string, date: string): number {
   return Number(row?.max_token || 0) + 1;
 }
 
-function getTenantPatient(tenantId: string, id: string) {
+export function getTenantPatient(tenantId: string, id: string) {
   return getDb()
     .prepare("SELECT * FROM patients WHERE id = ? AND tenant_id = ?")
     .get(id, tenantId) as Record<string, unknown> | undefined;
 }
 
-function getTenantAppointment(tenantId: string, id: string) {
+export function getTenantAppointment(tenantId: string, id: string) {
   return getDb()
     .prepare("SELECT * FROM appointments WHERE id = ? AND tenant_id = ?")
     .get(id, tenantId) as Record<string, unknown> | undefined;
@@ -111,7 +110,7 @@ function specialtyModulesFromBody(body: Record<string, unknown>): string {
   return JSON.stringify(modules);
 }
 
-function insertPatient(tenantId: string, body: Record<string, unknown>) {
+export function insertPatient(tenantId: string, body: Record<string, unknown>) {
   const name = String(body.name || "").trim();
   const phone = String(body.phone || "").trim();
   if (!name || !phone) {
@@ -161,7 +160,7 @@ function insertPatient(tenantId: string, body: Record<string, unknown>) {
   return getTenantPatient(tenantId, id)!;
 }
 
-function insertAppointment(tenantId: string, body: Record<string, unknown>, actor?: { id?: string; name?: string }) {
+export function insertAppointment(tenantId: string, body: Record<string, unknown>, actor?: { id?: string; name?: string }) {
   const patientId = String(body.patientId || body.patient_id || "").trim();
   if (!patientId) {
     throw Object.assign(new Error("patientId is required"), { status: 400 });
@@ -222,6 +221,65 @@ function insertAppointment(tenantId: string, body: Record<string, unknown>, acto
   return getTenantAppointment(tenantId, id)!;
 }
 
+export function updateAppointment(
+  tenantId: string,
+  appointmentId: string,
+  body: Record<string, unknown>
+): Record<string, unknown> {
+  const existing = getTenantAppointment(tenantId, appointmentId);
+  if (!existing) {
+    throw Object.assign(new Error("Appointment not found"), { status: 404 });
+  }
+  const mapped = mapAppointment(existing);
+  const status = body.status !== undefined ? String(body.status) : mapped.status;
+  const tokenNumber =
+    body.tokenNumber !== undefined
+      ? Number(body.tokenNumber)
+      : body.token_number !== undefined
+        ? Number(body.token_number)
+        : mapped.tokenNumber;
+  let vitalsText: string | null;
+  if (body.vitals === null) {
+    vitalsText = null;
+  } else if (body.vitals !== undefined) {
+    vitalsText = jsonText(body.vitals, "null");
+  } else {
+    vitalsText = existing.vitals == null ? null : String(existing.vitals);
+  }
+  const isPaid =
+    body.isPaid !== undefined
+      ? body.isPaid
+        ? 1
+        : 0
+      : body.is_paid !== undefined
+        ? body.is_paid
+          ? 1
+          : 0
+        : existing.is_paid;
+  getDb()
+    .prepare(
+      `UPDATE appointments SET
+        status = ?, token_number = ?, vitals = ?, is_paid = ?,
+        type = ?, time_slot = ?, date = ?, doctor_id = ?, doctor_name = ?, specialty = ?
+       WHERE id = ? AND tenant_id = ?`
+    )
+    .run(
+      status,
+      tokenNumber,
+      vitalsText,
+      Number(isPaid),
+      String(body.type ?? mapped.type),
+      String(body.timeSlot ?? body.time_slot ?? mapped.timeSlot),
+      String(body.date ?? mapped.date),
+      String(body.doctorId ?? body.doctor_id ?? mapped.doctorId),
+      String(body.doctorName ?? body.doctor_name ?? mapped.doctorName),
+      String(body.specialty ?? mapped.specialty),
+      appointmentId,
+      tenantId
+    );
+  return getTenantAppointment(tenantId, appointmentId)!;
+}
+
 function insertPrescription(tenantId: string, body: Record<string, unknown>) {
   const patientId = String(body.patientId || body.patient_id || "").trim();
   const diagnosis = String(body.diagnosis || "").trim();
@@ -240,8 +298,6 @@ function insertPrescription(tenantId: string, body: Record<string, unknown>) {
   const rxNumber = uniqueRxNumber(String(body.rxNumber || body.rx_number || ""));
   const now = new Date().toISOString();
   const date = String(body.date || now.slice(0, 10));
-  const letterhead = getTenantLetterhead(tenantId);
-  const stamped = clinicLine(letterhead);
   getDb()
     .prepare(
       `INSERT INTO prescriptions (
@@ -279,9 +335,9 @@ function insertPrescription(tenantId: string, body: Record<string, unknown>) {
       String(body.pdfUrl || body.pdf_url || `/api/emr/prescription/${id}/pdf`),
       now,
       body.vitals == null ? null : jsonText(body.vitals, "null"),
-      String(body.clinicName || body.clinic_name || stamped.name || ""),
-      String(body.clinicAddress || body.clinic_address || stamped.address || ""),
-      String(body.clinicPhone || body.clinic_phone || stamped.phone || ""),
+      String(body.clinicName || body.clinic_name || ""),
+      String(body.clinicAddress || body.clinic_address || ""),
+      String(body.clinicPhone || body.clinic_phone || ""),
       String(body.qrVerificationUrl || body.qr_verification_url || `https://lumera.health/rx/${rxNumber}`),
       String(body.whatsappSentStatus || body.whatsapp_sent_status || "unsent"),
       String(body.specialtyType || body.specialty_type || ""),
@@ -450,57 +506,14 @@ export function createClinicalRouter(): Router {
   api.patch("/appointments/:id", requireAuth, (req, res) => {
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
-    const existing = getTenantAppointment(tenantId, req.params.id);
-    if (!existing) return res.status(404).json({ error: "Appointment not found" });
-    const mapped = mapAppointment(existing);
-    const body = req.body || {};
-    const status = body.status !== undefined ? String(body.status) : mapped.status;
-    const tokenNumber =
-      body.tokenNumber !== undefined
-        ? Number(body.tokenNumber)
-        : body.token_number !== undefined
-          ? Number(body.token_number)
-          : mapped.tokenNumber;
-    let vitalsText: string | null;
-    if (body.vitals === null) {
-      vitalsText = null;
-    } else if (body.vitals !== undefined) {
-      vitalsText = jsonText(body.vitals, "null");
-    } else {
-      vitalsText = existing.vitals == null ? null : String(existing.vitals);
+    try {
+      const row = updateAppointment(tenantId, req.params.id, req.body || {});
+      res.json({ appointment: mapAppointment(row) });
+    } catch (err: unknown) {
+      const status = typeof err === "object" && err && "status" in err ? Number((err as { status: number }).status) : 500;
+      const message = err instanceof Error ? err.message : "Failed to update appointment";
+      res.status(status || 500).json({ error: message });
     }
-    const isPaid =
-      body.isPaid !== undefined
-        ? body.isPaid
-          ? 1
-          : 0
-        : body.is_paid !== undefined
-          ? body.is_paid
-            ? 1
-            : 0
-          : existing.is_paid;
-    getDb()
-      .prepare(
-        `UPDATE appointments SET
-          status = ?, token_number = ?, vitals = ?, is_paid = ?,
-          type = ?, time_slot = ?, date = ?, doctor_id = ?, doctor_name = ?, specialty = ?
-         WHERE id = ? AND tenant_id = ?`
-      )
-      .run(
-        status,
-        tokenNumber,
-        vitalsText,
-        Number(isPaid),
-        String(body.type ?? mapped.type),
-        String(body.timeSlot ?? body.time_slot ?? mapped.timeSlot),
-        String(body.date ?? mapped.date),
-        String(body.doctorId ?? body.doctor_id ?? mapped.doctorId),
-        String(body.doctorName ?? body.doctor_name ?? mapped.doctorName),
-        String(body.specialty ?? mapped.specialty),
-        req.params.id,
-        tenantId
-      );
-    res.json({ appointment: mapAppointment(getTenantAppointment(tenantId, req.params.id)!) });
   });
 
   api.get("/prescriptions", requireAuth, (req, res) => {

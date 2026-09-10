@@ -43,7 +43,7 @@ export const OutboundTriggerPanel: React.FC<OutboundTriggerPanelProps> = ({
   const fetchEvents = async () => {
     try {
       setLoading(true);
-      const res = await fetch('/api/whatsapp/outbound-events');
+      const res = await fetch('/api/whatsapp/outbound/events');
       if (res.ok) {
         const data = await res.json();
         setEvents(data.events || []);
@@ -64,7 +64,7 @@ export const OutboundTriggerPanel: React.FC<OutboundTriggerPanelProps> = ({
       setSending(eventType);
       setStatusMessage(null);
 
-      const res = await fetch('/api/whatsapp/outbound-trigger', {
+      const res = await fetch('/api/whatsapp/outbound/trigger', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

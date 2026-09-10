@@ -5,6 +5,7 @@ import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import { initDatabase } from "./server/db.ts";
+import { startAppointmentReminderScheduler } from "./server/whatsapp-calendar.ts";
 import { attachUser, requireAuth } from "./server/auth.ts";
 import { createApiRouter } from "./server/api.ts";
 import { createMetaRouter } from "./server/meta.ts";
@@ -620,6 +621,7 @@ async function startServer() {
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Lumera AI Server running on http://0.0.0.0:${PORT}`);
+    startAppointmentReminderScheduler();
   });
 }
 
