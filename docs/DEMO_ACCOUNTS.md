@@ -33,6 +33,12 @@ Every specialty doctor above is an **individual** practice login. They land the 
 
 `users.specialty` / `users.pack_id` persist pack ids only: `gp` | `physio` | `dentist` | `spa_salon` | `therapist` | `consultant`. Admin Create/Edit dropdowns write those ids (human labels are display-only).
 
+### Suspended-tenant QA fixture (#54)
+
+| Email | Tenant | Status | Notes |
+|---|---|---|---|
+| `suspended.clinic@lumera.me` | `tenant-suspended-demo` | **suspended** | Seeded so Superadmin Tenants shows a suspended row. Clinic login is **rejected** (403). Password would be `Lumera@2026` after reinstate. Not shown in the login picker. |
+
 Pack-id smoke aliases (same password; seeded by `#56`, listed in the login demo picker):
 
 | Email | Pack |

@@ -38,10 +38,27 @@ import {
   destroySession,
   getSessionId,
   issueLumeraSession,
+  isPlatformAdminRole,
   otpEchoPayload,
   requireAuth,
+  requirePlatformAdmin,
   requireRole,
 } from "./auth.ts";
+import {
+  createAdminTenant,
+  ensureTenantSubscription,
+  findPlan,
+  getAdminTenant,
+  getAdminTenantSubscription,
+  listAdminTenants,
+  listPublicPlans,
+  normalizeBillingSource,
+  patchAdminTenant,
+  patchAdminTenantSubscription,
+  clinicTenantAccessError,
+  resolvePlanCode,
+  upsertTenantSubscription,
+} from "./platform-tenants.ts";
 import { generateTemporaryPassword, hashPassword, passwordRuleError, verifyPassword } from "./password.ts";
 import { parseSpecialtyPackInput, resolveSpecialtyPack } from "./specialty-packs.ts";
 import { isProduction } from "./runtime.ts";
@@ -80,7 +97,20 @@ function audit(req: Request, action: string, details: string) {
 }
 
 function isSuperAdmin(req: Request): boolean {
-  return req.user?.role === "super_admin";
+  return req.user?.role === "super_admin" || isPlatformAdminRole(req.user?.role);
+}
+
+function httpStatusError(err: unknown, fallback: string): { status: number; error: string } {
+  const status = typeof err === "object" && err && "status" in err ? Number((err as { status?: number }).status) || 500 : 500;
+  const error = err instanceof Error ? err.message : fallback;
+  return { status, error };
+}
+
+function rejectClinicTenantBlocked(user: { role?: string; tenant_id?: string; tenantId?: string } | null | undefined, res: Response): boolean {
+  const blocked = clinicTenantAccessError(user);
+  if (!blocked) return false;
+  res.status(403).json({ error: blocked });
+  return true;
 }
 
 function requestedTenantId(body: Record<string, unknown> | undefined): string {
@@ -349,6 +379,7 @@ export function createApiRouter(): Router {
     if (user.status === "disabled") {
       return res.status(403).json({ error: "This account has been disabled" });
     }
+    if (rejectClinicTenantBlocked(user, res)) return;
 
     const issuePasswordSession = (reason: string) => {
       const jwtToken = issueLumeraSession(res, user);
@@ -453,6 +484,8 @@ export function createApiRouter(): Router {
         return res.redirect(`${appUrl}/login?${params.toString()}`);
       }
       if (user.status === "disabled") return fail("account_disabled");
+      const tenantBlocked = clinicTenantAccessError(user);
+      if (tenantBlocked) return fail("tenant_suspended");
 
       issueLumeraSession(res, user);
       getDb()
@@ -510,6 +543,7 @@ export function createApiRouter(): Router {
     if (user.status === "disabled") {
       return res.status(403).json({ error: "This account has been disabled" });
     }
+    if (rejectClinicTenantBlocked(user, res)) return;
 
     const skipOtp = Boolean(req.body?.skipOtp) && allowSkipOtp();
     const graphVerifiedFacebook = identity.provider === "facebook" && !identity.sandbox;
@@ -679,6 +713,7 @@ export function createApiRouter(): Router {
       if (!user) {
         return res.status(404).json({ error: "User profile could not be located." });
       }
+      if (rejectClinicTenantBlocked(user, res)) return;
 
       const activePhone = updatedPhone || record.phone || user.phone;
       const avatarUrl = payload.avatarUrl || user.avatar_url || "";
@@ -833,6 +868,7 @@ export function createApiRouter(): Router {
           activeStatus: true,
         })
       );
+      ensureTenantSubscription(getDb(), tenantId, { planCode: "trial", status: "trial", billingSource: "sandbox" });
 
       const updatedUser = getDb().prepare("SELECT * FROM users WHERE id = ?").get(userId) as unknown as DbUser;
       const jwtToken = issueLumeraSession(res, updatedUser);
@@ -900,9 +936,9 @@ export function createApiRouter(): Router {
     const hfrId = `IN-HFR-${Math.floor(10000000 + Math.random() * 90000000)}`;
 
     getDb().prepare(`
-      INSERT INTO tenants (id, name, specialty, country, timezone, phone, trial_ends_at, ai_scribe_minutes_limit, ai_scribe_minutes_used, active_status, hfr_id, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 500, 0, 1, ?, ?, ?)
-    `).run(tenantId, practiceName, specialty, country, timezone, phone, trialEndsAt, hfrId, now, now);
+      INSERT INTO tenants (id, name, specialty, country, timezone, phone, trial_ends_at, ai_scribe_minutes_limit, ai_scribe_minutes_used, active_status, hfr_id, created_at, updated_at, practice_type, lifecycle_status, owner_name, owner_email, owner_phone, email)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 500, 0, 1, ?, ?, ?, ?, 'trial', ?, ?, ?, ?)
+    `).run(tenantId, practiceName, specialty, country, timezone, phone, trialEndsAt, hfrId, now, now, practiceType, name, email, phone, email);
 
     // 2. PRIMARY USER CREATION (doctor for individual practice, CLINIC_ADMIN for multispecialty clinic) mapped to new tenant ID:
     const userId = `user-${crypto.randomUUID().slice(0, 8)}`;
@@ -962,8 +998,9 @@ export function createApiRouter(): Router {
         dhisTransactionsLimit: 100,
         trialDays: 30,
         activeStatus: true,
-      })
-    );
+        })
+      );
+    ensureTenantSubscription(getDb(), tenantId, { planCode: "trial", status: "trial", billingSource: "sandbox" });
 
     // 6. WHATSAPP OTP TRIGGER:
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
@@ -1318,6 +1355,7 @@ export function createApiRouter(): Router {
 
   api.get("/auth/me", (req: Request, res: Response) => {
     if (!req.user) return res.json({ user: null });
+    if (rejectClinicTenantBlocked(req.user, res)) return;
     let tenant = null;
     if (req.user.tenantId) {
       tenant = getDb().prepare("SELECT * FROM tenants WHERE id = ?").get(req.user.tenantId) as any;
@@ -1583,6 +1621,73 @@ export function createApiRouter(): Router {
     res.json({ ok: true, temporaryPassword: req.body?.password ? undefined : password });
   });
 
+  api.get("/admin/plans", requireAuth, requirePlatformAdmin, (_req, res) => {
+    res.json({ plans: listPublicPlans() });
+  });
+
+  api.get("/admin/tenants", requireAuth, requirePlatformAdmin, (req, res) => {
+    const includeDeleted = String(req.query.includeDeleted || req.query.include_deleted || "") === "1";
+    res.json({
+      tenants: listAdminTenants({
+        q: String(req.query.q || req.query.search || ""),
+        status: String(req.query.status || ""),
+        type: String(req.query.type || req.query.practiceType || ""),
+        includeDeleted,
+      }),
+    });
+  });
+
+  api.post("/admin/tenants", requireAuth, requirePlatformAdmin, (req, res) => {
+    try {
+      const tenant = createAdminTenant((req.body || {}) as Record<string, unknown>, {
+        id: req.user?.id,
+        name: req.user?.name,
+      });
+      res.status(201).json({ tenant });
+    } catch (err) {
+      const { status, error } = httpStatusError(err, "Could not create tenant");
+      res.status(status === 500 ? 400 : status).json({ error });
+    }
+  });
+
+  api.get("/admin/tenants/:id", requireAuth, requirePlatformAdmin, (req, res) => {
+    const tenant = getAdminTenant(req.params.id);
+    if (!tenant) return res.status(404).json({ error: "Tenant not found" });
+    res.json({ tenant });
+  });
+
+  api.patch("/admin/tenants/:id", requireAuth, requirePlatformAdmin, (req, res) => {
+    try {
+      const tenant = patchAdminTenant(req.params.id, (req.body || {}) as Record<string, unknown>, {
+        id: req.user?.id,
+        name: req.user?.name,
+      });
+      res.json({ tenant });
+    } catch (err) {
+      const { status, error } = httpStatusError(err, "Could not update tenant");
+      res.status(status === 500 ? 400 : status).json({ error });
+    }
+  });
+
+  api.get("/admin/tenants/:id/subscription", requireAuth, requirePlatformAdmin, (req, res) => {
+    const subscription = getAdminTenantSubscription(req.params.id);
+    if (!subscription) return res.status(404).json({ error: "Tenant not found" });
+    res.json({ subscription });
+  });
+
+  api.patch("/admin/tenants/:id/subscription", requireAuth, requirePlatformAdmin, (req, res) => {
+    try {
+      const subscription = patchAdminTenantSubscription(req.params.id, (req.body || {}) as Record<string, unknown>, {
+        id: req.user?.id,
+        name: req.user?.name,
+      });
+      res.json({ subscription });
+    } catch (err) {
+      const { status, error } = httpStatusError(err, "Could not update subscription");
+      res.status(status === 500 ? 400 : status).json({ error });
+    }
+  });
+
   api.get("/admin/overview", requireAuth, requireRole(...ADMIN_ROLES), (_req, res) => {
     const count = (sql: string) => (getDb().prepare(sql).get() as { c: number }).c;
     const recent = getDb()
@@ -1744,7 +1849,7 @@ export function createApiRouter(): Router {
 
     const practiceType =
       body.practiceType != null || body.practice_type != null
-        ? normalizePracticeType(body.practiceType ?? body.practice_type)
+        ? normalizePracticeType(String(body.practiceType ?? body.practice_type))
         : normalizePracticeType(existing.practice_type);
 
     try {
@@ -1796,7 +1901,7 @@ export function createApiRouter(): Router {
     res.json({ ok: true, temporaryPassword: provided ? undefined : password });
   });
 
-  api.get("/admin/subscriptions", requireAuth, requireRole(...ADMIN_ROLES), (_req, res) => {
+  api.get("/admin/subscriptions", requireAuth, requirePlatformAdmin, (_req, res) => {
     const rows = getDb()
       .prepare(
         `SELECT s.*, u.name, u.email, u.phone
@@ -1811,7 +1916,7 @@ export function createApiRouter(): Router {
     });
   });
 
-  api.get("/admin/subscriptions/summary", requireAuth, requireRole(...ADMIN_ROLES), (_req, res) => {
+  api.get("/admin/subscriptions/summary", requireAuth, requirePlatformAdmin, (_req, res) => {
     const totalUsers = (getDb().prepare("SELECT COUNT(*) AS c FROM users").get() as { c: number }).c;
     const statuses = getDb()
       .prepare("SELECT status, COUNT(*) AS c FROM subscriptions GROUP BY status")
@@ -1826,14 +1931,22 @@ export function createApiRouter(): Router {
     res.json({ totalUsers, counts, mrr });
   });
 
-  api.patch("/admin/subscriptions/:id", requireAuth, requireRole(...ADMIN_ROLES), (req, res) => {
+  api.patch("/admin/subscriptions/:id", requireAuth, requirePlatformAdmin, (req, res) => {
     const existing = getDb().prepare("SELECT * FROM subscriptions WHERE id = ?").get(req.params.id) as
       | Record<string, unknown>
       | undefined;
     if (!existing) return res.status(404).json({ error: "Subscription not found" });
+    const requestedPlan = req.body.planCode ?? req.body.plan_code ?? req.body.planType ?? req.body.plan_type ?? existing.plan_type;
+    const planCode = resolvePlanCode(String(requestedPlan));
+    if ((req.body.planCode || req.body.plan_code || req.body.planType || req.body.plan_type) && !planCode) {
+      return res.status(400).json({
+        error: `Unknown plan code "${requestedPlan}". Assign from the catalog only.`,
+      });
+    }
+    const plan = planCode ? findPlan(planCode) : undefined;
     const status = String(req.body.status || existing.status);
-    const planType = String(req.body.planType || req.body.plan_type || existing.plan_type);
-    const monthlyPrice = Number(req.body.monthlyPrice ?? req.body.monthly_price ?? existing.monthly_price);
+    const planType = plan?.code || String(requestedPlan);
+    const monthlyPrice = Number(req.body.monthlyPrice ?? req.body.monthly_price ?? plan?.monthlyPrice ?? existing.monthly_price);
     const autoFlag = req.body.autoRenew ?? req.body.auto_renew;
     const autoRenew = autoFlag === undefined ? existing.auto_renew : autoFlag ? 1 : 0;
     const notes = req.body.notes ?? existing.notes;
@@ -1845,12 +1958,36 @@ export function createApiRouter(): Router {
       endsAt = base.toISOString();
     }
     if (req.body.endsAt || req.body.ends_at) endsAt = String(req.body.endsAt || req.body.ends_at);
+    const billing = normalizeBillingSource(req.body.billingSource ?? req.body.billing_source, "manual");
+    if (typeof billing === "object") {
+      return res.status(400).json({ error: billing.error });
+    }
     getDb()
       .prepare(
-        `UPDATE subscriptions SET status = ?, plan_type = ?, monthly_price = ?, auto_renew = ?, ends_at = ?, notes = ? WHERE id = ?`
+        `UPDATE subscriptions SET status = ?, plan_type = ?, monthly_price = ?, auto_renew = ?, ends_at = ?, notes = ?, plan_code = ?, billing_source = ? WHERE id = ?`
       )
-      .run(status, planType, monthlyPrice, Number(autoRenew), endsAt, String(notes || ""), req.params.id);
-    audit(req, "Subscription updated", `${req.params.id} ${status} ${planType}`);
+      .run(
+        status,
+        planType,
+        monthlyPrice,
+        Number(autoRenew),
+        endsAt,
+        String(notes ?? ""),
+        plan?.code || String(existing.plan_code || ""),
+        billing,
+        req.params.id
+      );
+    const tenantId = String(existing.tenant_id || "");
+    if (tenantId && plan) {
+      upsertTenantSubscription(getDb(), tenantId, {
+        planCode: plan.code,
+        status,
+        billingSource: billing,
+        endsAt,
+        notes: String(notes || ""),
+      });
+    }
+    audit(req, "Subscription updated", `${req.params.id} ${status} ${planType} billingSource=${billing}`);
     const row = getDb()
       .prepare(
         `SELECT s.*, u.name, u.email, u.phone FROM subscriptions s JOIN users u ON u.id = s.user_id WHERE s.id = ?`

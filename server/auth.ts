@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
 import jwt from "jsonwebtoken";
 import { getDb, publicUser, type DbUser, type UserRole } from "./db.ts";
+import { clinicTenantAccessError } from "./platform-tenants.ts";
 
 const COOKIE = "lumera_sid";
 const SESSION_DAYS = 7;
@@ -190,6 +191,10 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
   if (!req.user) {
     return res.status(401).json({ error: "Authentication required" });
   }
+  const blocked = clinicTenantAccessError(req.user);
+  if (blocked) {
+    return res.status(403).json({ error: blocked });
+  }
   next();
 }
 
@@ -198,11 +203,29 @@ export function requireRole(...roles: UserRole[]) {
     if (!req.user) {
       return res.status(401).json({ error: "Authentication required" });
     }
-    if (!roles.includes(req.user.role)) {
+    const allowed = (roles as readonly string[]).includes(req.user.role) ||
+      (isPlatformAdminRole(req.user.role) && (roles as readonly string[]).includes("super_admin"));
+    if (!allowed) {
       return res.status(403).json({ error: "Insufficient permissions" });
     }
     next();
   };
+}
+
+/** Platform Superadmin. Legacy role alias `admin` is accepted where #56 treated it as platform admin. */
+export function isPlatformAdminRole(role?: string | null): boolean {
+  const r = String(role || "").trim();
+  return r === "super_admin" || r === "admin";
+}
+
+export function requirePlatformAdmin(req: Request, res: Response, next: NextFunction) {
+  if (!req.user) {
+    return res.status(401).json({ error: "Authentication required" });
+  }
+  if (!isPlatformAdminRole(req.user.role)) {
+    return res.status(403).json({ error: "Insufficient permissions" });
+  }
+  next();
 }
 
 export const ADMIN_ROLES: UserRole[] = ["super_admin"];

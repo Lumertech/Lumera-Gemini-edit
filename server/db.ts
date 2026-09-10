@@ -13,6 +13,7 @@ import {
   resolveSpecialtyPack,
   roleHomeForAccount,
 } from "./specialty-packs.ts";
+import { ensurePlatformTenantSchema, seedPlatformTenantData } from "./platform-tenants.ts";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const DB_PATH = path.join(DATA_DIR, "lumera.db");
@@ -198,6 +199,7 @@ export function initDatabase(): DatabaseSync {
   assignDemoTenantToUnscopedClinicalRows(db);
   ensureMetaTechProviderAndPolicies(db);
   ensureAbdmAndDhisSeeding(db);
+  seedPlatformTenantData(db);
   return db;
 }
 
@@ -579,6 +581,30 @@ function migrate(database: DatabaseSync) {
       updated_at TEXT NOT NULL,
       UNIQUE (tenant_id, consent_id)
     );
+
+    CREATE TABLE IF NOT EXISTS plans (
+      code TEXT PRIMARY KEY,
+      display_name TEXT NOT NULL,
+      price_copy TEXT NOT NULL DEFAULT '',
+      monthly_price INTEGER NOT NULL DEFAULT 0,
+      description TEXT NOT NULL DEFAULT '',
+      sort_order INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS tenant_subscriptions (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL UNIQUE,
+      plan_code TEXT NOT NULL,
+      status TEXT NOT NULL,
+      billing_source TEXT NOT NULL DEFAULT 'manual',
+      started_at TEXT NOT NULL,
+      ends_at TEXT,
+      renews_at TEXT,
+      monthly_price INTEGER NOT NULL DEFAULT 0,
+      notes TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `);
 
   try {
@@ -689,6 +715,8 @@ function migrate(database: DatabaseSync) {
   try {
     database.exec("ALTER TABLE tenants ADD COLUMN practice_settings TEXT DEFAULT '{}'");
   } catch {}
+
+  ensurePlatformTenantSchema(database);
 
   ensureDemoTenantLetterhead(database);
 
@@ -1103,20 +1131,26 @@ export function mapSubscription(row: Record<string, unknown>, user?: { name: str
   if (ends) {
     daysRemaining = Math.ceil((new Date(ends).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
   }
+  const billingSource = String(row.billing_source || "manual");
   return {
     id: row.id as string,
     userId: row.user_id as string,
+    tenantId: (row.tenant_id as string) || "",
     name: user?.name || "",
     email: user?.email || "",
     phone: user?.phone || "",
     status: row.status as string,
     planType: row.plan_type as string,
+    planCode: (row.plan_code as string) || "",
     monthlyPrice: Number(row.monthly_price),
     autoRenew: Boolean(row.auto_renew),
     startedAt: row.started_at as string,
     endsAt: ends,
     notes: (row.notes as string) || "",
     daysRemaining,
+    billingSource,
+    honestyLabel: billingSource,
+    paymentCollected: false,
   };
 }
 

@@ -69,7 +69,7 @@ export function ensureDemoPersonaUsers(database: DatabaseSync) {
     if (acct.doctorId) {
       insertDoc.run(
         acct.doctorId,
-        acct.id,
+        existing?.id || acct.id,
         acct.name,
         acct.qualification || "",
         acct.regNumber || "",
