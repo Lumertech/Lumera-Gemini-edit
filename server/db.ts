@@ -34,6 +34,22 @@ export interface DbUser {
   hfr_id?: string;
   onboarding_completed?: number;
   practice_type?: string;
+  specialty?: string;
+}
+
+export const DEMO_TENANT_ID = "tenant-lumera-main";
+
+export function normalizePracticeType(value?: string | null): "individual" | "polyclinic" {
+  const raw = String(value || "").trim().toLowerCase();
+  if (raw === "polyclinic" || raw === "multispecialty" || raw === "multi-specialty" || raw === "multi_specialty") {
+    return "polyclinic";
+  }
+  return "individual";
+}
+
+export function isDemoWorkspaceUser(user: { id?: string; tenant_id?: string; email?: string }): boolean {
+  if (user.tenant_id === DEMO_TENANT_ID) return true;
+  return ["user-admin", "user-doctor", "user-patient", "user-reception"].includes(String(user.id || ""));
 }
 
 export interface DbTenant {
@@ -109,7 +125,15 @@ function migrate(database: DatabaseSync) {
       phone TEXT NOT NULL DEFAULT '',
       last_login TEXT,
       created_at TEXT NOT NULL,
-      practice_type TEXT DEFAULT 'individual'
+      tenant_id TEXT DEFAULT '',
+      clinic_name TEXT DEFAULT '',
+      avatar_url TEXT DEFAULT '',
+      whatsapp_verified INTEGER DEFAULT 0,
+      hpr_id TEXT DEFAULT '',
+      hfr_id TEXT DEFAULT '',
+      onboarding_completed INTEGER DEFAULT 0,
+      practice_type TEXT DEFAULT 'individual',
+      specialty TEXT DEFAULT ''
     );
 
     CREATE TABLE IF NOT EXISTS sessions (
@@ -431,6 +455,18 @@ function migrate(database: DatabaseSync) {
   } catch {}
   try {
     database.exec("ALTER TABLE users ADD COLUMN practice_type TEXT DEFAULT 'individual'");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE users ADD COLUMN specialty TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE doctors ADD COLUMN signature_url TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE doctors ADD COLUMN slot_duration_minutes INTEGER DEFAULT 15");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE doctors ADD COLUMN rx_template TEXT DEFAULT 'classic'");
   } catch {}
   try {
     database.exec("ALTER TABLE tenants ADD COLUMN waba_id TEXT DEFAULT ''");
@@ -983,6 +1019,9 @@ export function mapDoctor(row: Record<string, unknown>) {
     avatarUrl: (row.avatar_url as string) || "",
     bio: (row.bio as string) || "",
     hprId: (row.hpr_id as string) || "",
+    signatureUrl: (row.signature_url as string) || "",
+    slotDurationMinutes: Number(row.slot_duration_minutes || 15),
+    rxTemplate: ((row.rx_template as string) || "classic") as "classic" | "compact" | "detailed",
     active: Boolean(row.active),
   };
 }
@@ -1004,7 +1043,9 @@ export function publicUser(user: DbUser) {
     hprId: user.hpr_id || "",
     hfrId: user.hfr_id || "",
     onboardingCompleted: Boolean(user.onboarding_completed),
-    practiceType: (user.practice_type as string) || 'individual',
+    practiceType: normalizePracticeType(user.practice_type),
+    specialty: (user.specialty as string) || "",
+    isDemoWorkspace: isDemoWorkspaceUser(user),
   };
 }
 
@@ -1049,6 +1090,18 @@ export function seedClinicalAndWhatsAppIfMissing(database: DatabaseSync) {
     } catch {}
   }
 
+  // Keep the shared demo roster on the demo tenant even after test-doctor logins are created.
+  try {
+    database.exec(`
+      UPDATE users
+      SET tenant_id = '${DEMO_TENANT_ID}',
+          onboarding_completed = 1,
+          practice_type = 'polyclinic'
+      WHERE id IN ('user-admin', 'user-doctor', 'user-patient', 'user-reception')
+         OR id LIKE 'test-user-%'
+    `);
+  } catch {}
+
   const patientCount = database.prepare("SELECT COUNT(*) AS c FROM patients").get() as { c: number };
 
   // SECURITY: this block creates a "Test {DoctorName}" login for every seeded
@@ -1068,11 +1121,15 @@ export function seedClinicalAndWhatsAppIfMissing(database: DatabaseSync) {
       const existingUser = database.prepare("SELECT id FROM users WHERE email = ? OR id = ?").get(testEmail, testUserId) as { id: string } | undefined;
       if (!existingUser) {
         database.prepare(`
-          INSERT OR REPLACE INTO users (id, email, password_hash, name, role, status, phone, last_login, created_at, onboarding_completed, practice_type)
-          VALUES (?, ?, ?, ?, 'doctor', 'active', ?, NULL, ?, 1, 'polyclinic')
-        `).run(testUserId, testEmail, testUserPasswordHash, testName, d.phone, now);
+          INSERT OR REPLACE INTO users (id, tenant_id, email, password_hash, name, role, status, phone, last_login, created_at, onboarding_completed, practice_type)
+          VALUES (?, ?, ?, ?, ?, 'doctor', 'active', ?, NULL, ?, 1, 'polyclinic')
+        `).run(testUserId, DEMO_TENANT_ID, testEmail, testUserPasswordHash, testName, d.phone, now);
       } else {
-        database.prepare("UPDATE users SET name = ? WHERE id = ?").run(testName, existingUser.id);
+        database.prepare("UPDATE users SET name = ?, tenant_id = COALESCE(NULLIF(tenant_id, ''), ?), onboarding_completed = 1 WHERE id = ?").run(
+          testName,
+          DEMO_TENANT_ID,
+          existingUser.id
+        );
       }
 
       database.prepare("UPDATE doctors SET user_id = ? WHERE id = ?").run(testUserId, d.id);

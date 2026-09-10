@@ -10,37 +10,33 @@ import {
   MessageSquare, 
   PhoneCall, 
   Users, 
-  User, 
-  Stethoscope,
+  User,
   ChevronLeft,
   ChevronRight,
-  ShieldCheck,
-  Zap,
   Award,
   UserCheck,
-  LogOut
+  LogOut,
+  Plus,
+  Settings,
+  Shield
 } from 'lucide-react';
 import { NavView } from './Navbar';
 import { Patient, Doctor } from '../types';
 import { useAuth } from '../auth/AuthContext';
 import { useNav } from '../nav/NavigationContext';
+import { isPolyclinicPractice } from '../lib/sessionWorkspace';
 
-// Which nav items each role actually needs day-to-day. This is deliberately
-// conservative for `receptionist`, `nurse`, `lab_technician`, and
-// `pharmacist`: clinical documentation tools (Ambient Scribe, Smart Rx
-// Studio) write directly into a patient's medical record and shouldn't be a
-// click away for a role that isn't authorized to author clinical notes.
 export const ROLE_VISIBLE_VIEWS: Record<string, NavView[]> = {
-  doctor: ['queue', 'opd-queue', 'rx', 'smart-rx', 'ambient', 'reports', 'appointments', 'polyclinic', 'whatsapp', 'voicebot', 'billing', 'portal', 'dhis', 'team', 'reception', 'kiosk'],
-  receptionist: ['reception', 'queue', 'opd-queue', 'appointments', 'kiosk', 'billing', 'whatsapp', 'portal'],
-  polyclinic_admin: ['queue', 'opd-queue', 'reception', 'appointments', 'polyclinic', 'billing', 'reports', 'whatsapp', 'voicebot', 'dhis', 'portal', 'team', 'kiosk'],
-  CLINIC_ADMIN: ['queue', 'opd-queue', 'reception', 'appointments', 'polyclinic', 'billing', 'reports', 'whatsapp', 'voicebot', 'dhis', 'portal', 'team', 'kiosk'],
-  super_admin: ['queue', 'opd-queue', 'reception', 'rx', 'smart-rx', 'ambient', 'reports', 'appointments', 'polyclinic', 'whatsapp', 'voicebot', 'billing', 'portal', 'dhis', 'team', 'kiosk'],
+  doctor: ['welcome', 'queue', 'opd-queue', 'rx', 'smart-rx', 'ambient', 'reports', 'appointments', 'polyclinic', 'whatsapp', 'voicebot', 'billing', 'dhis', 'team', 'reception', 'kiosk', 'settings'],
+  receptionist: ['welcome', 'reception', 'queue', 'opd-queue', 'appointments', 'kiosk', 'billing', 'whatsapp', 'settings'],
+  polyclinic_admin: ['welcome', 'queue', 'opd-queue', 'reception', 'appointments', 'polyclinic', 'billing', 'reports', 'whatsapp', 'voicebot', 'dhis', 'team', 'kiosk', 'settings'],
+  CLINIC_ADMIN: ['welcome', 'queue', 'opd-queue', 'reception', 'appointments', 'polyclinic', 'billing', 'reports', 'whatsapp', 'voicebot', 'dhis', 'portal', 'team', 'kiosk', 'settings'],
+  super_admin: ['welcome', 'queue', 'opd-queue', 'reception', 'rx', 'smart-rx', 'ambient', 'reports', 'appointments', 'polyclinic', 'whatsapp', 'voicebot', 'billing', 'dhis', 'team', 'kiosk', 'settings'],
   patient: ['portal'],
-  nurse: ['reception', 'queue', 'opd-queue', 'reports', 'portal'],
-  lab_technician: ['reports', 'queue', 'opd-queue', 'portal'],
-  pharmacist: ['billing', 'queue', 'opd-queue', 'portal'],
-  default: ['queue', 'opd-queue', 'reception', 'appointments', 'portal', 'billing']
+  nurse: ['reception', 'queue', 'opd-queue', 'reports', 'settings'],
+  lab_technician: ['reports', 'queue', 'opd-queue', 'settings'],
+  pharmacist: ['billing', 'queue', 'opd-queue', 'settings'],
+  default: ['welcome', 'queue', 'opd-queue', 'reception', 'appointments', 'billing', 'settings']
 };
 
 interface SidebarProps {
@@ -68,13 +64,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const { go } = useNav();
   const userRole = user?.role || 'doctor';
   let allowedViews = ROLE_VISIBLE_VIEWS[userRole] || ROLE_VISIBLE_VIEWS.doctor;
-  if (user?.practiceType === 'individual') {
-    allowedViews = allowedViews.filter(v => v !== 'team');
+  const polyclinic = isPolyclinicPractice(user);
+  if (!polyclinic) {
+    allowedViews = allowedViews.filter(v => v !== 'team' && v !== 'polyclinic');
   }
+
+  const canStartConsult = allowedViews.includes('rx') || allowedViews.includes('smart-rx');
+  const canOpenAdminCms = userRole === 'super_admin';
 
   const NAV_SECTIONS = [
     {
-      title: 'Clinical AI & Consultation',
+      title: '1. Clinical Suite',
       items: [
         {
           id: 'rx' as NavView,
@@ -92,7 +92,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         },
         {
           id: 'reports' as NavView,
-          label: 'AI Lab OCR & Trends',
+          label: 'AI Lab OCR & Diagnostic Trends',
           icon: Activity,
           badge: 'OCR',
           badgeColor: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30',
@@ -100,23 +100,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
       ],
     },
     {
-      title: 'OPD Flow & Diagnostics',
+      title: '2. OPD Flow & Queue',
       items: [
         {
+          id: 'queue' as NavView,
+          label: 'Live OPD Queue & Triage',
+          icon: Users,
+        },
+        {
           id: 'reception' as NavView,
-          label: 'OPD Reception & ABHA',
+          label: 'OPD Reception & ABHA (ABDM)',
           icon: UserCheck,
           badge: 'ABDM',
           badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
         },
         {
-          id: 'queue' as NavView,
-          label: 'OPD Queue & Vitals',
-          icon: Users,
-        },
-        {
           id: 'appointments' as NavView,
-          label: 'Appointments',
+          label: 'Appointments & Schedule',
           icon: Calendar,
         },
         {
@@ -126,34 +126,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
         },
         {
           id: 'kiosk' as NavView,
-          label: 'TV Waiting Kiosk',
+          label: 'TV Waiting Kiosk Display',
           icon: Monitor,
         },
       ],
     },
     {
-      title: 'Practice & Engagement',
+      title: '3. Practice & Financial Management',
       items: [
         {
-          id: 'dhis' as NavView,
-          label: 'DHIS Incentive Meter',
-          icon: Award,
-          badge: '₹20/tx',
-          badgeColor: 'bg-purple-500/20 text-purple-300 border-purple-500/30',
-        },
-        {
-          id: 'portal' as NavView,
-          label: 'Patient EMR Portal',
-          icon: ShieldCheck,
-        },
-        {
           id: 'billing' as NavView,
-          label: 'Billing & Payments',
+          label: 'Billing, Claims & E-Invoicing',
           icon: Receipt,
         },
         {
           id: 'whatsapp' as NavView,
-          label: 'WhatsApp Suite',
+          label: 'WhatsApp Suite & Patient Engagement',
           icon: MessageSquare,
         },
         {
@@ -162,11 +150,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
           icon: PhoneCall,
         },
         {
-          id: 'team' as NavView,
-          label: 'Clinic Team Staff',
-          icon: Stethoscope,
-          badge: 'Staff',
-          badgeColor: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30',
+          id: 'dhis' as NavView,
+          label: 'DHIS Incentive & Analytics Meter',
+          icon: Award,
+          badge: '₹20/tx',
+          badgeColor: 'bg-purple-500/20 text-purple-300 border-purple-500/30',
         },
       ],
     },
@@ -181,14 +169,29 @@ export const Sidebar: React.FC<SidebarProps> = ({
     )
   })).filter(section => section.items.length > 0);
 
+  const selectablePatients = allPatients.filter((p) => p.id);
+
   return (
     <aside
       className={`${
         isCollapsed ? 'w-16' : 'w-64'
       } flex-shrink-0 bg-slate-900 border-r border-slate-800 text-slate-300 flex flex-col justify-between transition-all duration-200 select-none z-20 overflow-hidden`}
     >
-      {/* Top Section: Navigation Links */}
       <div className="flex-1 overflow-y-auto p-3 space-y-5 scrollbar-thin scrollbar-thumb-slate-800">
+        {canStartConsult && (
+          <button
+            type="button"
+            onClick={() => onSelectView('rx')}
+            title={isCollapsed ? 'Start New Consultation' : undefined}
+            className={`w-full flex items-center ${
+              isCollapsed ? 'justify-center px-2' : 'justify-center gap-2 px-3'
+            } py-2.5 rounded-xl text-xs font-bold bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-lg shadow-blue-600/30 hover:from-cyan-400 hover:to-blue-500`}
+          >
+            <Plus className="w-4 h-4 shrink-0" />
+            {!isCollapsed && <span>+ Start New Consultation</span>}
+          </button>
+        )}
+
         {filteredSections.map((section, idx) => (
           <div key={idx} className="space-y-1">
             {!isCollapsed && (
@@ -244,8 +247,47 @@ export const Sidebar: React.FC<SidebarProps> = ({
         ))}
       </div>
 
-      {/* Bottom Section: Active Patient & Doctor Context + Collapse Toggle */}
       <div className="p-3 border-t border-slate-800 bg-slate-950/60 space-y-2.5 shrink-0">
+        {!isCollapsed && (
+          <div className="space-y-0.5 pb-1">
+            <h3 className="px-3 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+              4. Settings & Profile
+            </h3>
+            <button
+              type="button"
+              onClick={() => onSelectView('settings')}
+              className={`w-full flex items-center px-3 py-2 rounded-lg text-xs font-medium ${
+                currentView === 'settings'
+                  ? 'bg-blue-600 text-white font-semibold'
+                  : 'text-slate-300 hover:text-white hover:bg-slate-800/80'
+              }`}
+            >
+              <Settings className="w-4 h-4 shrink-0 mr-2.5" />
+              Clinic & Doctor Profile Settings
+            </button>
+            {canOpenAdminCms && (
+              <button
+                type="button"
+                onClick={() => go('admin')}
+                className="w-full flex items-center px-3 py-2 rounded-lg text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800/80"
+              >
+                <Shield className="w-4 h-4 shrink-0 mr-2.5" />
+                Admin CMS
+              </button>
+            )}
+          </div>
+        )}
+        {isCollapsed && (
+          <button
+            type="button"
+            onClick={() => onSelectView('settings')}
+            className="w-full flex justify-center py-2 rounded-lg text-slate-300 hover:bg-slate-800"
+            title="Clinic & Doctor Profile Settings"
+          >
+            <Settings className="w-4 h-4" />
+          </button>
+        )}
+
         {!isCollapsed ? (
           <div className="bg-slate-800/80 rounded-lg p-2.5 border border-slate-700/80 space-y-2">
             <div className="flex items-center justify-between">
@@ -258,7 +300,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </span>
             </div>
 
-            <div>
+            {selectablePatients.length > 0 ? (
               <select
                 aria-label="Quick Select Active Patient"
                 value={currentPatient.id}
@@ -268,13 +310,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 }}
                 className="w-full bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded px-2 py-1 focus:ring-1 focus:ring-blue-500 focus:outline-none cursor-pointer"
               >
-                {allPatients.map((p) => (
+                {!currentPatient.id && (
+                  <option value="" className="bg-slate-900 text-white">
+                    No patient selected
+                  </option>
+                )}
+                {selectablePatients.map((p) => (
                   <option key={p.id} value={p.id} className="bg-slate-900 text-white">
                     {p.name} ({p.age}y/{p.gender.charAt(0)})
                   </option>
                 ))}
               </select>
-            </div>
+            ) : (
+              <p className="text-[11px] text-slate-400">No patients registered yet.</p>
+            )}
 
             <div className="text-[10px] text-slate-400 flex items-center justify-between pt-0.5">
               <span>Doctor:</span>
@@ -292,7 +341,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
         )}
 
-        {/* Logout Button */}
         <button
           onClick={() => logout().then(() => go("landing"))}
           className={`w-full flex items-center ${isCollapsed ? 'justify-center' : 'space-x-2 px-3'} py-2 text-xs text-rose-300 hover:text-white hover:bg-rose-500/20 rounded-md transition-colors border border-rose-500/20`}
@@ -302,7 +350,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {!isCollapsed && <span className="font-medium">Logout</span>}
         </button>
 
-        {/* Collapse / Expand Toggle Button */}
         <button
           onClick={onToggleCollapse}
           className="w-full flex items-center justify-center space-x-1.5 py-1.5 text-xs text-slate-400 hover:text-white hover:bg-slate-800/80 rounded-md transition-colors"

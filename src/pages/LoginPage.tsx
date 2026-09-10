@@ -19,7 +19,7 @@ import {
   ArrowLeft,
   Zap,
 } from "lucide-react";
-import { homeSurfaceForRole, useAuth } from "../auth/AuthContext";
+import { destinationAfterAuth, useAuth } from "../auth/AuthContext";
 import { useNav } from "../nav/NavigationContext";
 import { PolyclinicSpecialty } from "../types";
 
@@ -133,7 +133,7 @@ export const LoginPage: React.FC = () => {
   // Auto-redirect if already authenticated and not verifying OTP
   useEffect(() => {
     if (!user || busy || showOtpView) return;
-    const dest = allowedNext(loginNext, user.role) ? loginNext : homeSurfaceForRole(user.role);
+    const dest = destinationAfterAuth(user, loginNext);
     go(dest);
   }, [user, busy, showOtpView, loginNext, go]);
 
@@ -176,7 +176,7 @@ export const LoginPage: React.FC = () => {
         setOtpError("");
         setShowOtpView(true);
       } else if (res.user) {
-        const dest = allowedNext(loginNext, res.user.role) ? loginNext : homeSurfaceForRole(res.user.role);
+        const dest = destinationAfterAuth(res.user, loginNext);
         go(dest);
       }
     } catch (err) {
@@ -229,7 +229,7 @@ export const LoginPage: React.FC = () => {
     try {
       const res = await login("doctor@lumera.me", "Lumera@2026", true);
       if (res.user) {
-        const dest = allowedNext(loginNext, res.user.role) ? loginNext : homeSurfaceForRole(res.user.role);
+        const dest = destinationAfterAuth(res.user, loginNext);
         go(dest);
       }
     } catch (err) {
@@ -312,9 +312,7 @@ export const LoginPage: React.FC = () => {
         setOtpError("");
         setShowOtpView(true);
       } else if (res.user) {
-        const dest = allowedNext(loginNext, res.user.role)
-          ? loginNext
-          : homeSurfaceForRole(res.user.role, res.user.onboardingCompleted);
+        const dest = destinationAfterAuth(res.user, loginNext);
         go(dest);
       }
     } catch (err) {
@@ -411,10 +409,14 @@ export const LoginPage: React.FC = () => {
       const res = await verifyWhatsAppOtp(otpVerificationId, fullOtp);
 
       if (res.ok && res.user) {
-        setOtpSuccess("WhatsApp Verified! Directing to workspace...");
+        setOtpSuccess(
+          otpPurpose === "register"
+            ? "WhatsApp verified. Opening your practice onboarding wizard..."
+            : "WhatsApp verified. Opening your workspace..."
+        );
         setTimeout(() => {
           setShowOtpView(false);
-          const dest = allowedNext(loginNext, res.user!.role) ? loginNext : homeSurfaceForRole(res.user!.role);
+          const dest = destinationAfterAuth(res.user!, loginNext);
           go(dest);
         }, 500);
       } else {
@@ -1274,11 +1276,4 @@ export const LoginPage: React.FC = () => {
       </div>
     </div>
   );
-};
-
-function allowedNext(next: string, role: string) {
-  if (next === "admin") return role === "super_admin";
-  if (next === "app") return ["doctor", "receptionist", "polyclinic_admin", "CLINIC_ADMIN"].includes(role);
-  if (next === "portal") return role === "patient";
-  return true;
 }

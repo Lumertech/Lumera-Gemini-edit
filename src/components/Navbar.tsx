@@ -15,6 +15,7 @@ import { useAuth } from '../auth/AuthContext';
 import { useNav } from '../nav/NavigationContext';
 
 export type NavView = 
+  | 'welcome'
   | 'reception'
   | 'ambient' 
   | 'rx' 
@@ -30,7 +31,8 @@ export type NavView =
   | 'billing' 
   | 'portal'
   | 'dhis'
-  | 'team';
+  | 'team'
+  | 'settings';
 
 interface NavbarProps {
   currentView: NavView;
@@ -69,6 +71,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   const { logout } = useAuth();
   const { go } = useNav();
   const VIEW_TITLES: Record<NavView, string> = {
+    welcome: 'Welcome & Initial Setup',
     reception: 'OPD Reception & ABHA Intake',
     ambient: 'Ambient AI Scribe & SOAP',
     rx: 'Smart Rx & Specialty Studio',
@@ -76,15 +79,16 @@ export const Navbar: React.FC<NavbarProps> = ({
     queue: 'Live OPD Queue & Triage',
     'opd-queue': 'Live OPD Queue & Triage',
     kiosk: 'Waiting Room TV Kiosk',
-    reports: 'AI Lab OCR & Biomarker Trends',
-    appointments: 'Appointments Calendar',
+    reports: 'AI Lab OCR & Diagnostic Trends',
+    appointments: 'Appointments & Schedule',
     polyclinic: 'Polyclinic Specialty Roster',
-    billing: 'Billing & GST Invoices',
-    whatsapp: 'WhatsApp AI Suite',
+    billing: 'Billing, Claims & E-Invoicing',
+    whatsapp: 'WhatsApp Suite & Patient Engagement',
     voicebot: 'AI Voice Receptionist',
     portal: 'Patient EMR Portal',
-    dhis: 'ABDM v3 & DHIS Incentive Meter',
+    dhis: 'DHIS Incentive & Analytics Meter',
     team: 'Clinic Team & Staff',
+    settings: 'Clinic & Doctor Profile Settings',
   };
 
   return (
