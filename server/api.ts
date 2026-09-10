@@ -8,7 +8,6 @@ import { createAbdmRouter } from "./abdm.ts";
 import {
   DEMO_TENANT_ID,
   getDb,
-  isDemoWorkspaceUser,
   mapDoctor,
   mapSubscription,
   normalizePracticeType,
@@ -19,6 +18,7 @@ import {
   type UserRole,
   type UserStatus,
 } from "./db.ts";
+import { createClinicalRouter } from "./clinical.ts";
 import {
   ADMIN_ROLES,
   CLINICIAN_ROLES,
@@ -1048,10 +1048,19 @@ export function createApiRouter(): Router {
     try {
       getDb()
         .prepare(
-          `INSERT INTO users (id, email, password_hash, name, role, status, phone, last_login, created_at)
-           VALUES (?, ?, ?, ?, ?, 'active', ?, NULL, ?)`
+          `INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, last_login, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, 'active', ?, NULL, ?)`
         )
-        .run(id, String(email).trim().toLowerCase(), hashPassword(pwd), String(name), role, String(phone || ""), new Date().toISOString());
+        .run(
+          id,
+          req.user?.tenantId || "",
+          String(email).trim().toLowerCase(),
+          hashPassword(pwd),
+          String(name),
+          role,
+          String(phone || ""),
+          new Date().toISOString()
+        );
     } catch {
       return res.status(409).json({ error: "Email already exists" });
     }
@@ -1606,84 +1615,7 @@ export function createApiRouter(): Router {
     res.redirect(`/api/whatsapp/lab-report/${req.params.id}/pdf`);
   });
 
-  // EMR Patients & Appointments live endpoints
-  api.get("/patients", requireAuth, (req, res) => {
-    try {
-      if (!req.user?.tenantId || !isDemoWorkspaceUser({ tenant_id: req.user.tenantId, id: req.user.id })) {
-        return res.json({ patients: [] });
-      }
-      const rows = getDb().prepare("SELECT * FROM patients ORDER BY name ASC").all() as Record<string, unknown>[];
-      const patients = rows.map((p) => ({
-        id: p.id,
-        uhid: p.uhid,
-        name: p.name,
-        age: p.age,
-        gender: p.gender,
-        phone: p.phone,
-        email: p.email,
-        bloodGroup: p.blood_group,
-        allergies: JSON.parse((p.allergies as string) || "[]"),
-        chronicConditions: JSON.parse((p.chronic_conditions as string) || "[]"),
-        emergencyContact: p.emergency_contact,
-        address: p.address,
-        lastVisit: p.last_visit,
-        abhaNumber: (p.abha_number as string) || "",
-        abhaAddress: (p.abha_address as string) || "",
-        kycStatus: (p.kyc_status as string) || "PENDING",
-        hfrId: (p.hfr_id as string) || "",
-      }));
-      res.json({ patients });
-    } catch {
-      res.status(500).json({ error: "Failed to fetch patients" });
-    }
-  });
-
-  api.patch("/patients/:id/abha", requireAuth, (req, res) => {
-    try {
-      const { id } = req.params;
-      const { abhaNumber, abhaAddress, kycStatus = "VERIFIED" } = req.body;
-      const db = getDb();
-      db.prepare(`
-        UPDATE patients 
-        SET abha_number = ?, abha_address = ?, kyc_status = ?, hfr_id = 'HFR-IN-8829104'
-        WHERE id = ?
-      `).run(abhaNumber, abhaAddress, kycStatus, id);
-      res.json({ success: true, id, abhaNumber, abhaAddress, kycStatus });
-    } catch (err: any) {
-      res.status(500).json({ error: "Failed to update ABHA details: " + err.message });
-    }
-  });
-
-  api.get("/appointments", requireAuth, (req, res) => {
-    try {
-      if (!req.user?.tenantId || !isDemoWorkspaceUser({ tenant_id: req.user.tenantId, id: req.user.id })) {
-        return res.json({ appointments: [] });
-      }
-      const rows = getDb().prepare("SELECT * FROM appointments ORDER BY token_number ASC").all() as Record<string, unknown>[];
-      const appointments = rows.map((a) => ({
-        id: a.id,
-        tokenNumber: a.token_number,
-        patientId: a.patient_id,
-        patientName: a.patient_name,
-        patientPhone: a.patient_phone,
-        uhid: a.uhid,
-        doctorId: a.doctor_id,
-        doctorName: a.doctor_name,
-        specialty: a.specialty,
-        date: a.date,
-        timeSlot: a.time_slot,
-        type: a.type,
-        status: a.status,
-        source: a.source,
-        consultationFee: a.consultation_fee,
-        isPaid: Boolean(a.is_paid),
-        vitals: a.vitals ? JSON.parse(a.vitals as string) : null,
-      }));
-      res.json({ appointments });
-    } catch {
-      res.status(500).json({ error: "Failed to fetch appointments" });
-    }
-  });
+  api.use(createClinicalRouter());
 
   return api;
 }

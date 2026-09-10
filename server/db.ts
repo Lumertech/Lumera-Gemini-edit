@@ -108,6 +108,7 @@ export function initDatabase(): DatabaseSync {
   seedIfEmpty(db);
   seedSubscriptionsIfMissing(db);
   seedClinicalAndWhatsAppIfMissing(db);
+  assignDemoTenantToUnscopedClinicalRows(db);
   ensureMetaTechProviderAndPolicies(db);
   ensureAbdmAndDhisSeeding(db);
   return db;
@@ -241,6 +242,7 @@ function migrate(database: DatabaseSync) {
 
     CREATE TABLE IF NOT EXISTS patients (
       id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT '',
       uhid TEXT NOT NULL UNIQUE,
       name TEXT NOT NULL,
       age INTEGER NOT NULL DEFAULT 30,
@@ -258,6 +260,7 @@ function migrate(database: DatabaseSync) {
 
     CREATE TABLE IF NOT EXISTS appointments (
       id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT '',
       token_number INTEGER NOT NULL,
       patient_id TEXT NOT NULL,
       patient_name TEXT NOT NULL,
@@ -279,6 +282,7 @@ function migrate(database: DatabaseSync) {
 
     CREATE TABLE IF NOT EXISTS prescriptions (
       id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT '',
       rx_number TEXT NOT NULL UNIQUE,
       patient_id TEXT NOT NULL,
       patient_name TEXT NOT NULL,
@@ -533,6 +537,67 @@ function migrate(database: DatabaseSync) {
   } catch {}
   try {
     database.exec("ALTER TABLE dhis_transactions ADD COLUMN lumera_share INTEGER DEFAULT 6");
+  } catch {}
+
+  try {
+    database.exec("ALTER TABLE patients ADD COLUMN tenant_id TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE appointments ADD COLUMN tenant_id TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE prescriptions ADD COLUMN tenant_id TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE prescriptions ADD COLUMN patient_age INTEGER DEFAULT 0");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE prescriptions ADD COLUMN patient_gender TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE prescriptions ADD COLUMN vitals TEXT");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE prescriptions ADD COLUMN clinic_name TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE prescriptions ADD COLUMN clinic_address TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE prescriptions ADD COLUMN clinic_phone TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE prescriptions ADD COLUMN qr_verification_url TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE prescriptions ADD COLUMN whatsapp_sent_status TEXT DEFAULT 'unsent'");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE prescriptions ADD COLUMN specialty_type TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE prescriptions ADD COLUMN specialty_modules TEXT DEFAULT '{}'");
+  } catch {}
+
+  try {
+    database.exec("CREATE INDEX IF NOT EXISTS idx_patients_tenant ON patients(tenant_id)");
+  } catch {}
+  try {
+    database.exec("CREATE INDEX IF NOT EXISTS idx_appointments_tenant ON appointments(tenant_id)");
+  } catch {}
+  try {
+    database.exec("CREATE INDEX IF NOT EXISTS idx_prescriptions_tenant ON prescriptions(tenant_id)");
+  } catch {}
+  try {
+    database.exec("CREATE INDEX IF NOT EXISTS idx_prescriptions_patient ON prescriptions(tenant_id, patient_id)");
+  } catch {}
+}
+
+export function assignDemoTenantToUnscopedClinicalRows(database: DatabaseSync) {
+  try {
+    database.exec(`UPDATE patients SET tenant_id = '${DEMO_TENANT_ID}' WHERE tenant_id IS NULL OR tenant_id = ''`);
+    database.exec(`UPDATE appointments SET tenant_id = '${DEMO_TENANT_ID}' WHERE tenant_id IS NULL OR tenant_id = ''`);
+    database.exec(`UPDATE prescriptions SET tenant_id = '${DEMO_TENANT_ID}' WHERE tenant_id IS NULL OR tenant_id = ''`);
   } catch {}
 }
 
@@ -999,6 +1064,112 @@ export function writeAudit(database: DatabaseSync, userId: string | null, userNa
   database.prepare(
     "INSERT INTO audit_logs (id, timestamp, user_id, user_name, action, details) VALUES (?, ?, ?, ?, ?, ?)"
   ).run(crypto.randomUUID(), new Date().toISOString(), userId, userName, action, details);
+}
+
+export function parseJsonColumn<T>(value: unknown, fallback: T): T {
+  if (value == null || value === "") return fallback;
+  if (typeof value !== "string") return value as T;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+export const PRESCRIPTION_SPECIALTY_KEYS = [
+  "physiotherapyAssessment",
+  "performedTherapies",
+  "prescribedExercises",
+  "cardiologyAssessment",
+  "dermatologyAssessment",
+  "pediatricAssessment",
+  "orthopedicAssessment",
+  "ophthalmologyAssessment",
+  "dentalAssessment",
+  "gynecologyAssessment",
+] as const;
+
+export function mapPatient(row: Record<string, unknown>) {
+  return {
+    id: row.id as string,
+    uhid: row.uhid as string,
+    name: row.name as string,
+    age: Number(row.age || 0),
+    gender: (row.gender as string) || "Other",
+    phone: row.phone as string,
+    email: (row.email as string) || "",
+    bloodGroup: (row.blood_group as string) || "",
+    allergies: parseJsonColumn<string[]>(row.allergies, []),
+    chronicConditions: parseJsonColumn<string[]>(row.chronic_conditions, []),
+    emergencyContact: (row.emergency_contact as string) || "",
+    address: (row.address as string) || "",
+    lastVisit: (row.last_visit as string) || undefined,
+    abhaNumber: (row.abha_number as string) || "",
+    abhaAddress: (row.abha_address as string) || "",
+    kycStatus: (row.kyc_status as string) || "PENDING",
+    hfrId: (row.hfr_id as string) || "",
+  };
+}
+
+export function mapAppointment(row: Record<string, unknown>) {
+  return {
+    id: row.id as string,
+    tokenNumber: Number(row.token_number || 0),
+    patientId: row.patient_id as string,
+    patientName: row.patient_name as string,
+    patientPhone: row.patient_phone as string,
+    uhid: row.uhid as string,
+    doctorId: row.doctor_id as string,
+    doctorName: row.doctor_name as string,
+    specialty: row.specialty as string,
+    date: row.date as string,
+    timeSlot: row.time_slot as string,
+    type: row.type as string,
+    status: row.status as string,
+    source: row.source as string,
+    consultationFee: Number(row.consultation_fee || 0),
+    isPaid: Boolean(row.is_paid),
+    vitals: row.vitals ? parseJsonColumn(row.vitals, null) : null,
+  };
+}
+
+export function mapPrescription(row: Record<string, unknown>) {
+  const modules = parseJsonColumn<Record<string, unknown>>(row.specialty_modules, {});
+  return {
+    id: row.id as string,
+    rxNumber: row.rx_number as string,
+    patientId: (row.patient_id as string) || "",
+    patientName: row.patient_name as string,
+    patientAge: Number(row.patient_age || 0),
+    patientGender: (row.patient_gender as string) || "",
+    patientPhone: row.patient_phone as string,
+    patientUhid: (row.patient_uhid as string) || "",
+    doctorId: (row.doctor_id as string) || "",
+    doctorName: row.doctor_name as string,
+    doctorSpecialty: (row.doctor_specialty as string) || "",
+    doctorRegNumber: (row.doctor_reg_number as string) || "",
+    date: row.date as string,
+    diagnosis: (row.diagnosis as string) || "",
+    icd10Code: (row.icd10_code as string) || undefined,
+    chiefComplaints: parseJsonColumn<string[]>(row.chief_complaints, []),
+    medicines: parseJsonColumn(row.medicines, []),
+    labTests: parseJsonColumn(row.lab_tests, []),
+    advice: parseJsonColumn<string[]>(row.advice, []),
+    dietInstructions: (row.diet_instructions as string) || undefined,
+    followUpDate: (row.follow_up_date as string) || "",
+    vitals: row.vitals ? parseJsonColumn(row.vitals, undefined) : undefined,
+    clinicName: (row.clinic_name as string) || "",
+    clinicAddress: (row.clinic_address as string) || "",
+    clinicPhone: (row.clinic_phone as string) || "",
+    qrVerificationUrl: (row.qr_verification_url as string) || undefined,
+    whatsappSentStatus: ((row.whatsapp_sent_status as string) || "unsent") as
+      | "unsent"
+      | "queued"
+      | "delivered"
+      | "read",
+    specialtyType: (row.specialty_type as string) || undefined,
+    ...modules,
+  };
 }
 
 export function mapDoctor(row: Record<string, unknown>) {

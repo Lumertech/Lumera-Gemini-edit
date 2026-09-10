@@ -135,6 +135,10 @@ describe("Wave 1A PHI / auth lock", () => {
       abhaAddress: "attacker@abha",
     });
     assert.equal(abha.status, 401);
+
+    const prescriptions = await jsonRequest(port, "GET", "/api/prescriptions");
+    assert.equal(prescriptions.status, 401);
+    assert.equal(prescriptions.json.prescriptions, undefined);
   });
 
   it("unauthenticated clients cannot call Gemini clinical routes", async () => {
