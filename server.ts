@@ -12,6 +12,7 @@ import { createMetaRouter } from "./server/meta.ts";
 import { createAbdmRouter } from "./server/abdm.ts";
 import { applyBundledServerNodeEnv, assertRequiredProductionEnv, resolveListenPort } from "./server/runtime.ts";
 import { attachProductionSpaFallback } from "./server/spa-fallback.ts";
+import { attachPublicPolicyHtml, isPublicPolicyHtmlPath } from "./server/policy-html.ts";
 
 dotenv.config();
 applyBundledServerNodeEnv();
@@ -45,6 +46,7 @@ app.post("/data-deletion-callback", (req, res, next) => {
   req.url = "/data-deletion";
   createMetaRouter()(req, res, next);
 });
+attachPublicPolicyHtml(app);
 
 // Lazy Google GenAI initialization
 let genAIClient: GoogleGenAI | null = null;
@@ -615,7 +617,7 @@ async function startServer() {
         p.startsWith("/src") ||
         p.startsWith("/node_modules") ||
         p.includes(".");
-      if ((req.method === "GET" || req.method === "HEAD") && !isAsset) {
+      if ((req.method === "GET" || req.method === "HEAD") && !isAsset && !isPublicPolicyHtmlPath(p)) {
         req.url = "/index.html";
       }
       next();

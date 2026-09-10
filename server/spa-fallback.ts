@@ -2,15 +2,14 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Express, NextFunction, Request, Response } from "express";
 import express from "express";
+import { isPublicPolicyHtmlPath, PUBLIC_POLICY_HTML_PATHS } from "./policy-html.ts";
 
-/** Public Meta App Review SPA routes that must 200 without login. */
+/** Public paths that must 200 without login. Policy slugs are SSR HTML, not SPA shells. */
 export const PUBLIC_SPA_PATHS = [
   "/",
   "/landing",
   "/login",
-  "/privacy-policy",
-  "/terms-of-service",
-  "/data-deletion-instructions",
+  ...PUBLIC_POLICY_HTML_PATHS,
   "/app",
   "/admin",
   "/dashboard",
@@ -38,6 +37,7 @@ export function isBackendPath(pathname: string): boolean {
  */
 export function isSpaHistoryFallbackPath(pathname: string): boolean {
   if (isBackendPath(pathname)) return false;
+  if (isPublicPolicyHtmlPath(pathname)) return false;
   const clean = (pathname.split("?")[0] || "/").replace(/\/+$/, "") || "/";
   const last = clean.split("/").pop() || "";
   if (last.includes(".")) return false;

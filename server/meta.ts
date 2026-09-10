@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from "express";
-import { getDb } from "./db.ts";
-import { isProduction, sandboxSimulatorsEnabled } from "./runtime.ts";
+import { findDataDeletionRequest, getDb, insertDataDeletionRequest } from "./db.ts";
+import { appPublicUrl, isProduction, sandboxSimulatorsEnabled } from "./runtime.ts";
 import { resolveGraphCredentials } from "./graph-whatsapp.ts";
 import { facebookOAuthConfigured } from "./facebook-oauth.ts";
 import {
@@ -142,16 +142,18 @@ export function createMetaRouter(): Router {
   // ----------------------------------------------------
 
   // POST /api/meta/data-deletion - Callback endpoint for Meta App Review & User Data Erasure
+  // Production must set APP_URL=https://www.mylumera.in so confirmation links are not the Cloud Run host.
   router.post("/data-deletion", (req: Request, res: Response) => {
+    const host = req.get("host") || undefined;
+    const proto = req.protocol === "https" || req.get("x-forwarded-proto") === "https" ? "https" : req.protocol;
+    const origin = appPublicUrl(host, proto);
+    const code = `DEL-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+    const userIdOrPhone = String(req.body?.user_id || req.body?.phone || req.body?.id || "meta_user_session");
+
     try {
       const db = getDb();
+      insertDataDeletionRequest(db, code, userIdOrPhone);
       const now = new Date().toISOString();
-      const code = `DEL-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
-
-      // In real Meta flow, signed_request is parsed to get user_id
-      const userIdOrPhone = req.body?.user_id || req.body?.phone || req.body?.id || "meta_user_session";
-
-      // Log in audit table
       try {
         db.prepare(`
           INSERT INTO audit_logs (id, user_id, user_name, action, details, timestamp)
@@ -163,43 +165,64 @@ export function createMetaRouter(): Router {
           `Data erasure request code ${code} initialized for ${userIdOrPhone}`,
           now
         );
-      } catch {}
+      } catch {
+        /* audit is best-effort */
+      }
 
-      // Build confirmation URL matching Meta specification
-      const host = req.get("host") || "localhost:3000";
-      const protocol = req.protocol === "https" || req.get("x-forwarded-proto") === "https" ? "https" : "http";
-      const confirmationUrl = `${protocol}://${host}/data-deletion-instructions?code=${code}`;
-
-      // Return strictly compliant Meta response schema
       return res.status(200).json({
-        url: confirmationUrl,
+        url: `${origin}/data-deletion-instructions?code=${encodeURIComponent(code)}`,
         confirmation_code: code,
       });
     } catch (err) {
       console.error("[Meta Data Deletion Callback Error]", err);
-      const fallbackCode = `DEL-${Date.now().toString(36).toUpperCase()}`;
+      try {
+        insertDataDeletionRequest(getDb(), code, userIdOrPhone);
+      } catch {
+        /* persist fallback is best-effort */
+      }
       return res.status(200).json({
-        url: `https://lumera.health/data-deletion-instructions?code=${fallbackCode}`,
-        confirmation_code: fallbackCode,
+        url: `${origin}/data-deletion-instructions?code=${encodeURIComponent(code)}`,
+        confirmation_code: code,
       });
     }
   });
 
-  // GET /api/meta/data-deletion-status - Status query for user tracking
+  // GET /api/meta/data-deletion-status — only COMPLETED for codes that exist and are completed.
   router.get("/data-deletion-status", (req: Request, res: Response) => {
-    const code = req.query.code as string || "DEL-VERIFIED-2026";
-    res.json({
-      confirmationCode: code,
-      status: "COMPLETED",
-      complianceAuthority: "Meta Platform Terms §4.b & GDPR / India DPDP Act",
-      recordsPurged: [
-        "Authentication tokens & session secrets",
-        "WhatsApp phone binding cached records",
-        "Non-clinical conversational logs",
-        "Temporary diagnostic upload caches"
-      ],
-      processedAt: new Date().toISOString(),
-      message: "Data deletion successfully executed. No further personal data is retained for this account token."
+    const code = String(req.query.code || "").trim();
+    if (!code) {
+      return res.status(400).json({
+        confirmationCode: "",
+        status: "not_found",
+        message: "A confirmation code is required.",
+      });
+    }
+
+    let row: ReturnType<typeof findDataDeletionRequest>;
+    try {
+      row = findDataDeletionRequest(getDb(), code);
+    } catch {
+      row = undefined;
+    }
+
+    if (!row) {
+      return res.status(404).json({
+        confirmationCode: code,
+        status: "not_found",
+        message: "No deletion request found for this confirmation code.",
+      });
+    }
+
+    const stored = String(row.status || "pending");
+    const completed = stored.toUpperCase() === "COMPLETED";
+    return res.status(200).json({
+      confirmationCode: row.confirmation_code,
+      status: completed ? "COMPLETED" : stored === "pending" ? "pending" : stored,
+      createdAt: row.created_at,
+      processedAt: row.processed_at,
+      message: completed
+        ? "Data deletion completed for this confirmation code."
+        : "Deletion request received and is pending processing.",
     });
   });
 

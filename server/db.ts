@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { hashPassword } from "./password.ts";
 import { scrubSeedBillingIds } from "./seed-branding.ts";
+import { CMS_POLICY_UPSERTS } from "./cms-policy-seed.ts";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const DB_PATH = path.join(DATA_DIR, "lumera.db");
@@ -222,6 +223,14 @@ function migrate(database: DatabaseSync) {
       title TEXT NOT NULL,
       body TEXT NOT NULL,
       updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS meta_data_deletion_requests (
+      confirmation_code TEXT PRIMARY KEY,
+      status TEXT NOT NULL DEFAULT 'pending',
+      user_ref TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      processed_at TEXT
     );
 
     CREATE TABLE IF NOT EXISTS cms_media (
@@ -1247,6 +1256,47 @@ Report suspected incidents to ravee@lumer.me.`,
   );
 }
 
+export type DataDeletionRequestRow = {
+  confirmation_code: string;
+  status: string;
+  user_ref: string;
+  created_at: string;
+  processed_at: string | null;
+};
+
+export function insertDataDeletionRequest(
+  database: DatabaseSync,
+  confirmationCode: string,
+  userRef = ""
+): DataDeletionRequestRow {
+  const now = new Date().toISOString();
+  database
+    .prepare(
+      `INSERT INTO meta_data_deletion_requests (confirmation_code, status, user_ref, created_at, processed_at)
+       VALUES (?, 'pending', ?, ?, NULL)`
+    )
+    .run(confirmationCode, userRef, now);
+  return {
+    confirmation_code: confirmationCode,
+    status: "pending",
+    user_ref: userRef,
+    created_at: now,
+    processed_at: null,
+  };
+}
+
+export function findDataDeletionRequest(
+  database: DatabaseSync,
+  confirmationCode: string
+): DataDeletionRequestRow | undefined {
+  return database
+    .prepare(
+      `SELECT confirmation_code, status, user_ref, created_at, processed_at
+       FROM meta_data_deletion_requests WHERE confirmation_code = ?`
+    )
+    .get(confirmationCode) as DataDeletionRequestRow | undefined;
+}
+
 export function writeAudit(database: DatabaseSync, userId: string | null, userName: string, action: string, details: string) {
   database.prepare(
     "INSERT INTO audit_logs (id, timestamp, user_id, user_name, action, details) VALUES (?, ?, ?, ?, ?, ?)"
@@ -2234,156 +2284,16 @@ export function seedClinicalAndWhatsAppIfMissing(database: DatabaseSync) {
 export function ensureMetaTechProviderAndPolicies(database: DatabaseSync) {
   const now = new Date().toISOString();
 
-  // 1. Ensure Meta Compliance Policies exist in cms_policies
+  // Force-upsert Meta App Review policy slugs on every boot so pre-#26
+  // certification overclaim rows cannot persist.
   const insertOrReplacePolicy = database.prepare(`
     INSERT INTO cms_policies (slug, title, body, updated_at)
     VALUES (?, ?, ?, ?)
     ON CONFLICT(slug) DO UPDATE SET title = excluded.title, body = excluded.body, updated_at = excluded.updated_at
   `);
-
-  const privacyPolicyContent = `# Lumera Privacy Policy & WhatsApp Cloud API Notice
-
-**Last Updated:** September 2026  
-**Effective Date:** January 1, 2026  
-**Provider:** Lumera Solutions LLP (“Lumera”, “we”, “our”, or “us”)  
-**Designated Compliance Contact:** dpo@lumera.me | privacy@lumera.health  
-
----
-
-### 1. Overview & WhatsApp Cloud API status
-Lumera operates a clinical practice operating system with a WhatsApp Cloud API integration path. **Lumera is not a certified Meta Tech Provider or Business Solution Provider, and Meta App Review is not submitted.** Copy in this policy describes intended processing once Cloud API credentials are configured; it is not a certification claim.
-
-### 2. Scope of WhatsApp & User Data Handled
-When clinics connect their WhatsApp Business Accounts (WABA) or when patients interact via the Lumera WhatsApp Desk, we process:
-- **Phone Numbers & Identifiers:** Patient mobile numbers (E.164 standard), Unique Healthcare Identifiers (UHID), and Meta Phone Number IDs / WABA ids when a clinic connects WhatsApp.
-- **Transactional Messages:** Appointment tokens, schedule changes, OPD reminders, OTP login codes, and doctor follow-up notices.
-- **Clinical Artifacts:** Encrypted PDF links for diagnostic reports and physician-authorized digital prescriptions when sent at a clinician’s instruction.
-- **Facebook Login profile fields** (only if a user signs in with Facebook): Facebook user id, name, email, and profile picture URL if provided.
-- **Opt-In & Consent Records:** Timestamped affirmative patient consents collected during clinic intake or conversational opt-in, plus STOP / opt-out records.
-- **Technical Telemetry:** Webhook delivery receipts (sent, delivered, read), quality indicators, and error diagnostics.
-
-We do **not** use WhatsApp or Facebook Login data to sell ads, build advertising audiences, or sell personal data to brokers.
-
-### 3. Purpose of Processing & Meta Terms Compliance
-All WhatsApp messaging is processed strictly in accordance with:
-1. **Meta WhatsApp Business Messaging Policy**
-2. **Meta Commerce Policy & Developer Terms**
-3. **India Digital Personal Data Protection (DPDP) Act & ABDM Health Data Management Policy**
-
-We **NEVER** sell personal or medical data to third parties, advertising brokers, or unauthorized entities. Data is processed solely to fulfill requested clinical operations, facilitate physician-patient communication, and maintain regulatory compliance.
-
-### 3b. Opt-in, opt-out, and STOP
-- Clinics must obtain valid patient consent before outbound WhatsApp notifications beyond what Meta policy allows.
-- Patients can opt out of further clinic WhatsApp messages by replying **STOP** (or the clinic’s documented opt-out phrase) on WhatsApp, or by asking the clinic front desk.
-- After opt-out, Lumera instructs the product path to suppress further non-essential outbound templates to that number for that clinic. Transactional or security messages may still be limited to what law or Meta policy requires.
-- Users who signed in with Facebook can remove Lumera under Facebook **Settings → Apps and Websites**, which can trigger our data deletion callback.
-
-### 4. Data Storage, Encryption & Security
-- **Encryption in Transit:** All communications between Meta Graph API, Lumera edge nodes, and clinic servers are encrypted via TLS 1.3.
-- **Encryption at Rest:** Patient identifiers, access tokens, and clinical notes are safeguarded using AES-256-GCM encryption with periodic key rotation.
-- **Access Control:** Role-Based Access Control (RBAC) isolates super-admins, clinicians, reception desks, and patient portal sessions.
-
-### 5. Subprocessors
-- **Meta Platforms, Inc. / Meta Platforms Ireland Ltd:** WhatsApp Business Platform API and Webhook infrastructure.
-- **Google Cloud Platform:** Secure container hosting and cloud infrastructure.
-- **Google Gemini API:** Server-side clinical transcription and note structuring (runs with zero data retention for training).
-
-### 6. Data Deletion & User Rights
-Patients and clinic administrators retain full rights to request access, rectification, or complete erasure of their data. See our dedicated [Data Deletion Instructions](/data-deletion-instructions) or email our Data Protection Officer directly at **dpo@lumera.me**.`;
-
-  const termsOfServiceContent = `# Lumera Enterprise Clinical Terms of Service & Meta WhatsApp Usage Terms
-
-**Last Updated:** September 2026  
-**Jurisdiction:** India & Global Healthcare Cloud  
-**Contact:** legal@lumera.health  
-
----
-
-### 1. Agreement to Terms
-These Terms of Service (“Terms”) constitute a binding legal agreement between Lumera Solutions LLP (“Lumera”) and the registered healthcare facility or medical practitioner (“Tenant”, “Clinic”, or “You”). By utilizing the Lumera Clinician Suite, Admin CMS, or WhatsApp Embedded Signup, you agree to be bound by these Terms.
-
-### 2. WhatsApp Business Account (WABA) & Cloud API governance
-- **Integration role:** Lumera may act as software that calls Meta Graph APIs on behalf of a clinic after the clinic connects a WABA. This is not Meta Tech Provider certification.
-- **Account Ownership:** The Clinic retains full ownership and control of its WhatsApp Business Account, verified phone numbers, and display names.
-- **Acceptable Use & Anti-Spam:** Clinics must strictly adhere to the Meta WhatsApp Business Messaging Policy. Unsolicited promotional broadcasts, deceptive advertising, or non-consented bulk messages are strictly prohibited and constitute grounds for immediate service suspension.
-- **Prior Patient Consent:** The Clinic warrants that it has collected valid, revocable patient consent prior to initiating outbound WhatsApp notifications.
-
-### 3. Clinical Responsibility & AI Assistive Scope
-- Lumera provides assistive decision-support tools, including ambient SOAP transcription, triage drafting, and prescription generation.
-- **Licensed Practitioner Prerogative:** All AI-generated suggestions, diagnostic summaries, and prescription drafts are strictly advisory. The licensed treating clinician remains solely responsible for medical diagnosis, treatment plans, and clinical record accuracy.
-
-### 4. Service Availability & SLA
-Lumera targets 99.9% platform availability for core clinical and WhatsApp webhook processing. Scheduled maintenance windows are announced in advance in the Admin Audit Log.
-
-### 5. Termination & Data Portability
-Upon account termination or cancellation, Clinics may export all patient records, EMR notes, and appointment histories in standard FHIR / HL7 compliant formats within thirty (30) days.`;
-
-  const dataDeletionContent = `# Lumera Data Deletion Instructions (Meta App Review Compliance)
-
-**Last Updated:** September 2026  
-**Applicable For:** Meta WhatsApp Embedded Signup, Facebook Login & Lumera Patient Portal  
-**Compliance Authority:** Meta Platform Terms §4.b & GDPR / India DPDP Act  
-**Direct Data Protection Office:** dpo@lumera.me | compliance@lumera.health  
-**Human page:** /data-deletion-instructions  
-**Automated callback (Meta App Dashboard → Data Deletion Request URL):** POST /api/meta/data-deletion  
-**Status check:** GET /api/meta/data-deletion-status?code=YOUR_CODE  
-**Intended production host (paste into Meta only after HTTPS 200):** https://www.mylumera.in  
-
----
-
-### Overview
-In accordance with Meta Platform Terms, GDPR, and India's Digital Personal Data Protection (DPDP) Act, all users, clinicians, and patients have the unconditional right to request the complete deletion of their personal data, WhatsApp message records, and account credentials collected through the Lumera application.
-
-Below are the step-by-step instructions on how to request and confirm data erasure.
-
----
-
-### Option 1: Automated Self-Service Deletion (Within Facebook / Meta Account)
-If you connected Lumera through Facebook Login or WhatsApp Embedded Signup:
-1. Log into your **Facebook** or **Meta Business Suite** account.
-2. Navigate to **Settings & Privacy** > **Settings**.
-3. In the left navigation menu, click **Apps and Websites**.
-4. Search for or locate **Lumera Health** in your connected applications list.
-5. Click **Remove** to revoke Lumera's access to your profile and business assets.
-6. Click **View removed apps and websites**, find Lumera, and click **Send Request** to trigger Meta's automated data deletion callback.
-7. Meta will invoke Lumera's Automated Deletion Endpoint (\`/api/meta/data-deletion\`), which will immediately generate a unique **Confirmation Code** for tracking.
-
----
-
-### Option 2: Automated Direct API Request
-Patients and developers can trigger or verify data deletion directly via our verified compliance endpoint:
-- **Deletion Endpoint:** \`POST /api/meta/data-deletion\`
-- **Status Verification Endpoint:** \`GET /api/meta/data-deletion-status?code={CONFIRMATION_CODE}\`
-- Response provides an instant JSON tracking object with confirmation code, timestamp, and audit trail.
-
----
-
-### Option 3: Manual Deletion Request via Data Protection Officer
-You may submit a written deletion request directly to our Data Protection Office:
-- **Email:** \`dpo@lumera.me\` or \`compliance@lumera.health\`
-- **Subject Line:** \`Meta Data Deletion Request - [Your Phone Number / Email]\`
-- **Required Details:**
-  1. Your full name or Clinic practice name.
-  2. Registered phone number (with country code) or email address.
-  3. WhatsApp Business Account ID (WABA ID) if you are a clinic administrator.
-- **SLA:** Our team processes and verifies manual requests within **24 to 48 business hours**, permanently purging database entries, session tokens, and cached media. A formal Certificate of Erasure will be emailed to you upon completion.
-
----
-
-### Scope of Data Erased
-Upon execution of a data deletion request:
-- All authentication sessions, passwords, and Meta Access Tokens are invalidated and deleted.
-- WhatsApp conversation threads and cached media files under \`/uploads\` are permanently erased.
-- Non-clinical contact entries and marketing preferences are purged.
-- *Note:* Legally mandated medical records governed by statutory clinical retention regulations (e.g. state medical council archives) will be anonymized in compliance with applicable healthcare statutes.`;
-
-  // Seed both short and long slug forms for seamless navigation
-  insertOrReplacePolicy.run("privacy-policy", "Privacy Policy", privacyPolicyContent, now);
-  insertOrReplacePolicy.run("privacy", "Privacy Policy", privacyPolicyContent, now);
-  insertOrReplacePolicy.run("terms-of-service", "Terms of Service", termsOfServiceContent, now);
-  insertOrReplacePolicy.run("terms", "Terms of Service", termsOfServiceContent, now);
-  insertOrReplacePolicy.run("data-deletion-instructions", "Data Deletion Instructions", dataDeletionContent, now);
-  insertOrReplacePolicy.run("data-deletion", "Data Deletion Instructions", dataDeletionContent, now);
+  for (const row of CMS_POLICY_UPSERTS) {
+    insertOrReplacePolicy.run(row.slug, row.title, row.body, now);
+  }
 
   // 2. Ensure Primary Tenant has WABA credentials configured
   const mainTenant = database.prepare("SELECT * FROM tenants WHERE id = 'tenant-lumera-main'").get() as any;
