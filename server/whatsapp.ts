@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from "express";
-import { DEMO_TENANT_ID, getDb } from "./db.ts";
+import { DEMO_TENANT_ID, getDb, mapAppointment } from "./db.ts";
 import {
   clinicLine,
   doctorSignatureByDoctorId,
@@ -7,6 +7,18 @@ import {
   getTenantLetterhead,
 } from "./letterhead.ts";
 import { GoogleGenAI } from "@google/genai";
+import {
+  bookWhatsAppAppointment,
+  dispatchAppointmentReminder,
+  dispatchWhatsAppBookConfirmation,
+  findActiveAppointment,
+  getWhatsAppQueue,
+  httpErrorStatus,
+  patchWhatsAppAppointment,
+  resolveWhatsAppTenantId,
+  runAppointmentReminders,
+} from "./whatsapp-calendar.ts";
+import { isProduction } from "./runtime.ts";
 
 let defaultGenAIClient: GoogleGenAI | null = null;
 function getDefaultGenAI(): GoogleGenAI | null {
@@ -245,7 +257,11 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
         buttons = null,
         media = null,
         targetLanguage, // for staff auto-translation
+        tenantId: bodyTenantId,
+        phoneNumberId,
+        wabaId,
       } = req.body;
+      const sessionTenantId = String(req.user?.tenantId || "").trim();
 
       if (!content && !media && !buttons) {
         return res.status(400).json({ error: "Message content or media required" });
@@ -344,7 +360,12 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
       // AUTOMATED BOT ENGINE (Runs ONLY if sender === 'user' AND handover_mode === 'bot')
       // ----------------------------------------------------
       if (sender === "user" && !isStaffTakeover) {
-        const botReply = await processBotActionOrQuery(content, patientPhone, patientName, conv, db, getGenAI);
+        const botReply = await processBotActionOrQuery(content, patientPhone, patientName, conv, db, getGenAI, {
+          tenantId: bodyTenantId,
+          sessionTenantId,
+          phoneNumberId,
+          wabaId,
+        });
         if (botReply) {
           const botMsgId = `bot-${crypto.randomUUID().slice(0, 8)}`;
           const botTime = getDisplayTime();
@@ -395,25 +416,40 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
   // ----------------------------------------------------
   // 3. DYNAMIC EMR & DATABASE ACTIONS (Live Queries)
   // ----------------------------------------------------
-  router.post("/emr-action", (req: Request, res: Response) => {
+  router.post("/emr-action", async (req: Request, res: Response) => {
     try {
-      const { action, patientPhone = "+91 98234 55667", payload = {} } = req.body;
+      const { action, patientPhone = "+91 98234 55667", payload = {}, tenantId: bodyTenantId, phoneNumberId, wabaId } = req.body;
       const db = getDb();
-
-      // Find patient
-      let patient = db.prepare("SELECT * FROM patients WHERE phone = ?").get(patientPhone) as Record<string, unknown> | undefined;
-      if (!patient) {
-        patient = db.prepare("SELECT * FROM patients LIMIT 1").get() as Record<string, unknown>;
+      const sessionTenantId = String(req.user?.tenantId || "").trim();
+      const tenantId = resolveWhatsAppTenantId({
+        tenantId: bodyTenantId || payload.tenantId,
+        sessionTenantId,
+        phoneNumberId: phoneNumberId || payload.phoneNumberId,
+        wabaId: wabaId || payload.wabaId,
+        patientPhone,
+      });
+      if (!tenantId) {
+        return res.status(400).json({
+          error: "Unable to resolve clinic tenant for this WhatsApp action. Pass tenantId or connect a WABA phone_number_id.",
+        });
       }
 
-      const patientId = patient?.id ? String(patient.id) : "pat-6";
+      let patient = db
+        .prepare("SELECT * FROM patients WHERE tenant_id = ? AND phone = ?")
+        .get(tenantId, patientPhone) as Record<string, unknown> | undefined;
+      if (!patient) {
+        const tenantPatients = db.prepare("SELECT * FROM patients WHERE tenant_id = ?").all(tenantId) as Record<string, unknown>[];
+        patient = tenantPatients.find((row) => String(row.phone || "").replace(/\D/g, "").slice(-10) === String(patientPhone).replace(/\D/g, "").slice(-10));
+      }
+
+      const patientId = patient?.id ? String(patient.id) : "";
 
       if (action === "get_prescription") {
         const rx = db.prepare(`
           SELECT * FROM prescriptions
-          WHERE patient_phone = ? OR patient_id = ?
+          WHERE tenant_id = ? AND (patient_phone = ? OR patient_id = ?)
           ORDER BY created_at DESC LIMIT 1
-        `).get(patientPhone, patientId) as Record<string, unknown> | undefined;
+        `).get(tenantId, patientPhone, patientId) as Record<string, unknown> | undefined;
 
         if (!rx) {
           return res.json({ found: false, message: "No active prescription record found for this patient" });
@@ -481,111 +517,154 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
       }
 
       if (action === "get_queue") {
-        const currentAppt = db.prepare(`
-          SELECT * FROM appointments
-          WHERE (patient_phone = ? OR patient_id = ?)
-          ORDER BY created_at DESC LIMIT 1
-        `).get(patientPhone, patientId) as Record<string, unknown> | undefined;
-
-        if (!currentAppt) {
-          return res.json({ hasAppointment: false, message: "No active OPD booking found for today." });
-        }
-
-        // Count how many patients are ahead in 'Waiting' status for same doctor
-        const ahead = db.prepare(`
-          SELECT COUNT(*) as count FROM appointments
-          WHERE doctor_id = ? AND status = 'Waiting' AND token_number < ?
-        `).get(String(currentAppt.doctor_id), Number(currentAppt.token_number)) as { count: number };
-
-        return res.json({
-          hasAppointment: true,
-          appointment: {
-            id: currentAppt.id,
-            tokenNumber: currentAppt.token_number,
-            doctorName: currentAppt.doctor_name,
-            specialty: currentAppt.specialty,
-            timeSlot: currentAppt.time_slot,
-            status: currentAppt.status,
-            patientsAhead: ahead.count,
-            estimatedWaitMins: ahead.count * 12 + 5,
-          },
+        const queue = getWhatsAppQueue({
+          tenantId,
+          patientPhone,
+          patientId: patientId || undefined,
         });
+        return res.json(queue);
       }
 
       if (action === "book_appointment") {
-        const doctorId = payload.doctorId || "doc-6";
-        const date = payload.date || new Date().toISOString().split("T")[0];
-        const timeSlot = payload.timeSlot || "11:30 AM";
-
-        const doc = db.prepare("SELECT * FROM doctors WHERE id = ?").get(doctorId) as Record<string, unknown> | undefined;
-        if (!doc) return res.status(404).json({ error: "Doctor not found" });
-
-        // Calculate next token number
-        const maxToken = db.prepare(`
-          SELECT MAX(token_number) as max_token FROM appointments
-          WHERE doctor_id = ? AND date = ?
-        `).get(doctorId, date) as { max_token: number | null };
-
-        const nextToken = (maxToken.max_token || 0) + 1;
-        const apptId = `apt-${crypto.randomUUID().slice(0, 8)}`;
-        const now = new Date().toISOString();
-
-        db.prepare(`
-          INSERT INTO appointments (id, token_number, patient_id, patient_name, patient_phone, uhid, doctor_id, doctor_name, specialty, date, time_slot, type, status, source, consultation_fee, is_paid, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'New Consultation', 'Waiting', 'WhatsApp Bot', ?, 1, ?)
-        `).run(
-          apptId,
-          nextToken,
-          String(patient?.id || "pat-6"),
-          String(patient?.name || "Rajiv Saxena"),
+        const booked = bookWhatsAppAppointment({
+          tenantId,
           patientPhone,
-          String(patient?.uhid || "LUM-2026-0106"),
-          String(doc.id),
-          String(doc.name),
-          String(doc.specialty),
-          date,
-          timeSlot,
-          Number(doc.consultation_fee || 600),
-          now
-        );
-
+          patientName: String(payload.patientName || patient?.name || ""),
+          doctorId: payload.doctorId,
+          doctorName: payload.doctorName,
+          date: payload.date,
+          timeSlot: payload.timeSlot,
+          type: payload.type,
+        });
+        const confirmation = booked.reused
+          ? undefined
+          : await dispatchWhatsAppBookConfirmation({
+              tenantId,
+              appointment: booked.appointment,
+            });
         return res.json({
           success: true,
-          appointment: {
-            id: apptId,
-            tokenNumber: nextToken,
-            doctorName: doc.name,
-            specialty: doc.specialty,
-            opdRoom: doc.opd_room,
-            date,
-            timeSlot,
-            consultationFee: doc.consultation_fee,
-            patientName: patient?.name || "Rajiv Saxena",
-            uhid: patient?.uhid || "LUM-2026-0106",
+          reused: booked.reused,
+          appointment: booked.appointment,
+          confirmation: confirmation
+            ? { ok: confirmation.ok, channel: confirmation.channel, messageId: confirmation.ok ? confirmation.messageId : undefined }
+            : { skipped: true, reason: "existing_appointment" },
+        });
+      }
+
+      if (action === "cancel_appointment") {
+        const appointment = patchWhatsAppAppointment({
+          tenantId,
+          appointmentId: payload.appointmentId,
+          patientPhone,
+          patientId: patientId || undefined,
+          body: { status: "Cancelled" },
+        });
+        return res.json({ success: true, appointment });
+      }
+
+      if (action === "reschedule_appointment") {
+        if (!payload.date && !payload.timeSlot && !payload.time_slot) {
+          return res.status(400).json({ error: "date or timeSlot is required to reschedule" });
+        }
+        const appointment = patchWhatsAppAppointment({
+          tenantId,
+          appointmentId: payload.appointmentId,
+          patientPhone,
+          patientId: patientId || undefined,
+          body: {
+            ...(payload.date ? { date: payload.date } : {}),
+            ...(payload.timeSlot || payload.time_slot
+              ? { timeSlot: payload.timeSlot || payload.time_slot }
+              : {}),
+            status: "Waiting",
           },
         });
+        return res.json({ success: true, appointment });
+      }
+
+      if (action === "mark_no_show") {
+        const appointment = patchWhatsAppAppointment({
+          tenantId,
+          appointmentId: payload.appointmentId,
+          patientPhone,
+          patientId: patientId || undefined,
+          body: { status: "No-Show" },
+        });
+        return res.json({ success: true, appointment });
       }
 
       res.status(400).json({ error: "Unknown action" });
     } catch (err: unknown) {
       console.error("Error executing EMR action:", err);
-      res.status(500).json({ error: "Failed to execute EMR action" });
+      const status = httpErrorStatus(err);
+      const message = err instanceof Error ? err.message : "Failed to execute EMR action";
+      res.status(status).json({ error: message });
     }
   });
 
   // ----------------------------------------------------
   // 4. OUTBOUND AUTOMATED TRIGGER ENGINE
   // ----------------------------------------------------
-  router.post("/outbound/trigger", (req: Request, res: Response) => {
+  const handleOutboundTrigger = async (req: Request, res: Response) => {
     try {
       const {
         eventType, // 'appointment_reminder' | 'post_consultation_dispatch' | 'queue_token_update'
         patientPhone = "+91 98234 55667",
         patientName = "Rajiv Saxena",
         customPayload = {},
+        tenantId: bodyTenantId,
+        phoneNumberId,
+        wabaId,
       } = req.body;
 
       if (!eventType) return res.status(400).json({ error: "eventType is required" });
+
+      const reminderEvent =
+        eventType === "appointment_reminder" || eventType === "appointment_reminder_24h" || eventType === "appointment_reminder_2h";
+      if (reminderEvent) {
+        const tenantId = resolveWhatsAppTenantId({
+          tenantId: bodyTenantId || customPayload.tenantId,
+          sessionTenantId: String(req.user?.tenantId || "").trim(),
+          phoneNumberId,
+          wabaId,
+          patientPhone,
+        });
+        if (!tenantId) {
+          return res.status(400).json({ error: "Unable to resolve clinic tenant for appointment reminder." });
+        }
+        const existing = findActiveAppointment({
+          tenantId,
+          appointmentId: customPayload.appointmentId,
+          patientPhone,
+        });
+        if (!existing) {
+          return res.status(404).json({ error: "No upcoming appointment found for this patient." });
+        }
+        const window = eventType === "appointment_reminder_2h" ? "2h" : "24h";
+        const result = await dispatchAppointmentReminder({
+          tenantId,
+          appointment: mapAppointment(existing),
+          window,
+        });
+        if (result.ok === false) {
+          const status = result.channel === "none" && isProduction() ? 503 : 502;
+          return res.status(status).json({
+            ok: false,
+            error: result.error,
+            channel: result.channel,
+            eventId: result.eventId,
+          });
+        }
+        return res.status(201).json({
+          ok: true,
+          eventId: result.eventId,
+          eventType: "appointment_reminder",
+          channel: result.channel,
+          messageId: result.messageId,
+          appointment: mapAppointment(existing),
+        });
+      }
 
       const db = getDb();
       const now = new Date().toISOString();
@@ -597,11 +676,7 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
       let buttons: string[] | null = null;
       let media: Record<string, unknown> | null = null;
 
-      if (eventType === "appointment_reminder") {
-        details = `Pre-visit alert sent to ${patientName} (${patientPhone}) for scheduled consultation.`;
-        messageContent = `⏰ *Appointment Reminder - Lumera Polyclinic*\n\nNamaste ${patientName},\nThis is a confirmation that your consultation with *Dr. Siddharth Varma (PT)* is scheduled for today at *09:00 AM*.\n\n📍 *Room*: Rehab Suite 105\n🎫 *Your Token Number*: *#01*\n\nPlease tap below to confirm your arrival at the front desk or request a reschedule.`;
-        buttons = ["✅ Confirm Arrival", "🔄 Reschedule Slot", "📍 Get Clinic Directions"];
-      } else if (eventType === "post_consultation_dispatch") {
+      if (eventType === "post_consultation_dispatch") {
         details = `Post-consultation digital packet dispatched: Prescription & Diagnostic invoice.`;
         messageContent = `📋 *Consultation Summary & Prescription Signed*\n\nNamaste ${patientName},\nDr. Siddharth Varma has signed your clinical prescription (*RX-2026-0106*).\n\nYour digital consultation receipt (#INV-9921 for ₹700) has been generated. You can preview or download your verified medical documents below.`;
         buttons = ["📄 View Prescription Slip", "📥 Download PDF", "💊 Order Medicine Home Delivery"];
@@ -621,13 +696,11 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
         messageContent = customPayload.message || "Important health notification from Lumera Polyclinic.";
       }
 
-      // Record outbound event
       db.prepare(`
         INSERT INTO whatsapp_outbound_events (id, event_type, patient_phone, patient_name, status, details, action_payload, sent_at)
         VALUES (?, ?, ?, ?, 'delivered', ?, ?, ?)
       `).run(eventId, eventType, patientPhone, patientName, details, JSON.stringify(customPayload), now);
 
-      // Also deliver message into the patient's active WhatsApp chat
       let conv = db.prepare("SELECT id FROM whatsapp_conversations WHERE patient_phone = ?").get(patientPhone) as { id: string } | undefined;
       const convId = conv ? conv.id : "conv-rajiv";
 
@@ -658,15 +731,19 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
         eventType,
         details,
         messageDispatched: messageContent,
+        channel: "sandbox",
       });
     } catch (err: unknown) {
       console.error("Error triggering outbound notification:", err);
-      res.status(500).json({ error: "Failed to dispatch outbound notification" });
+      const status = httpErrorStatus(err);
+      res.status(status).json({ error: err instanceof Error ? err.message : "Failed to dispatch outbound notification" });
     }
-  });
+  };
 
-  // Get Outbound Event Logs
-  router.get("/outbound/events", (_req: Request, res: Response) => {
+  router.post("/outbound/trigger", handleOutboundTrigger);
+  router.post("/outbound-trigger", handleOutboundTrigger);
+
+  const handleOutboundEvents = (_req: Request, res: Response) => {
     try {
       const db = getDb();
       const events = db.prepare(`
@@ -677,6 +754,42 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
       res.json({ events });
     } catch (err: unknown) {
       res.status(500).json({ error: "Failed to fetch outbound events" });
+    }
+  };
+
+  router.get("/outbound/events", handleOutboundEvents);
+  router.get("/outbound-events", handleOutboundEvents);
+
+  router.post("/reminders/run", async (req: Request, res: Response) => {
+    try {
+      const tenantId = resolveWhatsAppTenantId({
+        tenantId: req.body?.tenantId,
+        sessionTenantId: String(req.user?.tenantId || "").trim(),
+        phoneNumberId: req.body?.phoneNumberId,
+        wabaId: req.body?.wabaId,
+      });
+      const result = await runAppointmentReminders({
+        tenantId: tenantId || undefined,
+        appointmentId: req.body?.appointmentId,
+        now: req.body?.now ? new Date(req.body.now) : undefined,
+      });
+      const missingCreds = result.failed.some((item) => !item.result.ok && item.result.channel === "none");
+      if (missingCreds && isProduction()) {
+        return res.status(503).json({
+          ok: false,
+          error:
+            "WhatsApp Cloud API is not configured. Set META_ACCESS_TOKEN and META_PHONE_NUMBER_ID (or a real tenant phone_number_id + token). Reminder was not delivered.",
+          channel: "none",
+          ...result,
+        });
+      }
+      res.json({
+        ok: result.failed.length === 0,
+        ...result,
+      });
+    } catch (err: unknown) {
+      const status = httpErrorStatus(err);
+      res.status(status).json({ error: err instanceof Error ? err.message : "Failed to run appointment reminders" });
     }
   });
 
@@ -1216,13 +1329,21 @@ async function processBotActionOrQuery(
   patientName: string,
   conv: Record<string, unknown>,
   db: any,
-  getGenAI: () => GoogleGenAI | null
+  getGenAI: () => GoogleGenAI | null,
+  tenantHints: { tenantId?: string; sessionTenantId?: string; phoneNumberId?: string; wabaId?: string } = {}
 ): Promise<{
   content: string;
   buttons?: string[];
   media?: Record<string, unknown>;
 } | null> {
   const q = text.toLowerCase().trim();
+  const tenantId = resolveWhatsAppTenantId({
+    tenantId: tenantHints.tenantId,
+    sessionTenantId: tenantHints.sessionTenantId,
+    phoneNumberId: tenantHints.phoneNumberId,
+    wabaId: tenantHints.wabaId,
+    patientPhone: phone,
+  });
 
   // 1. Prescription Request
   if (q.includes("prescription") || q.includes("rx") || q.includes("refill") || q.includes("medicine") || q.includes("दवा") || q.includes("औषध")) {
@@ -1279,7 +1400,51 @@ async function processBotActionOrQuery(
     }
   }
 
-  // 3. Book Doctor Appointment
+  // 3. Book Doctor Appointment (specific consultant first so it writes the shared calendar)
+  const specificBook =
+    q.includes("book dr.") ||
+    q.includes("book dr ") ||
+    q.includes("dr. siddharth") ||
+    q.includes("dr. vikram") ||
+    q.includes("dr. ananya") ||
+    (q.includes("book") && q.includes("slot"));
+  if (specificBook) {
+    if (!tenantId) {
+      return {
+        content: "We could not match this chat to a clinic calendar, so the booking was not created.",
+        buttons: ["👤 Speak with Receptionist"],
+      };
+    }
+    try {
+      const doctorName = q.includes("siddharth")
+        ? "Siddharth"
+        : q.includes("vikram")
+          ? "Vikram"
+          : q.includes("ananya")
+            ? "Ananya"
+            : undefined;
+      const booked = bookWhatsAppAppointment({
+        tenantId,
+        patientPhone: phone,
+        patientName,
+        doctorName,
+      });
+      const appt = booked.appointment;
+      if (!booked.reused) {
+        await dispatchWhatsAppBookConfirmation({ tenantId, appointment: appt });
+      }
+      return {
+        content: `${booked.reused ? "📌 *Existing booking found*" : "🎉 *Appointment Confirmed!*"}\n\n*Token*: *#${appt.tokenNumber}*\n*Doctor*: ${appt.doctorName}\n*Specialty*: ${appt.specialty}\n*Date*: ${appt.date}\n*Slot*: ${appt.timeSlot || "OPD hours"}\n*UHID*: ${appt.uhid}\n*Source*: ${appt.source}\n\nThis token is on the clinician OPD calendar for your clinic.`,
+        buttons: ["🎫 View My Queue", "🔄 Reschedule Slot", "❌ Cancel Appointment"],
+      };
+    } catch (err: unknown) {
+      return {
+        content: err instanceof Error ? err.message : "Could not book this appointment. Please contact reception.",
+        buttons: ["👤 Speak with Receptionist"],
+      };
+    }
+  }
+
   if (q.includes("book") || q.includes("appointment") || q.includes("schedule") || q.includes("अपॉइंटमेंट") || q.includes("डॉक्टर")) {
     const doctors = db.prepare("SELECT * FROM doctors WHERE active = 1 LIMIT 4").all() as Record<string, unknown>[];
     const docOptions = doctors.map((d) => `• *${d.name}* (${d.specialty}) - OPD Room ${d.opd_room}, Fee ₹${d.consultation_fee}`).join("\n");
@@ -1303,39 +1468,46 @@ async function processBotActionOrQuery(
 
   // 5. Queue Status
   if (q.includes("queue") || q.includes("token") || q.includes("wait") || q.includes("कतार") || q.includes("नंबर")) {
-    const appt = db.prepare(`
-      SELECT * FROM appointments
-      WHERE patient_phone = ? OR patient_name = ?
-      ORDER BY created_at DESC LIMIT 1
-    `).get(phone, patientName) as Record<string, unknown> | undefined;
-
-    if (appt) {
-      const ahead = db.prepare(`
-        SELECT COUNT(*) as count FROM appointments
-        WHERE doctor_id = ? AND status = 'Waiting' AND token_number < ?
-      `).get(appt.doctor_id, appt.token_number) as { count: number };
-
+    if (!tenantId) {
       return {
-        content: `🎫 *Live OPD Token & Queue Status*\n\n*Patient*: ${appt.patient_name}\n*Token Number*: *#0${appt.token_number}*\n*Consultant*: ${appt.doctor_name} (${appt.specialty})\n*Status*: ${appt.status}\n\n👥 *Patients Ahead of You*: *${ahead.count}*\n⏳ *Estimated Wait*: *~${ahead.count * 12 + 5} minutes*\n\nPlease remain in Waiting Lounge A. We will notify you on WhatsApp when you are next.`,
-        buttons: ["🔄 Refresh Queue", "📍 Room Location", "💬 Message Staff"],
+        content: "We could not match this chat to a clinic calendar. Please ask reception to link your WhatsApp number.",
+        buttons: ["📅 Book Appointment", "👤 Speak with Receptionist"],
+      };
+    }
+    const queue = getWhatsAppQueue({ tenantId, patientPhone: phone });
+    if (queue.hasAppointment && queue.appointment) {
+      const appt = queue.appointment;
+      return {
+        content: `🎫 *Live OPD Token & Queue Status*\n\n*Patient*: ${appt.patientName}\n*Token Number*: *#${appt.tokenNumber}*\n*Consultant*: ${appt.doctorName} (${appt.specialty})\n*Status*: ${appt.status}\n\n👥 *Patients Ahead of You*: *${appt.patientsAhead}*\n⏳ *Estimated Wait*: *~${appt.estimatedWaitMins} minutes*\n\nPlease remain in the waiting lounge. We will notify you on WhatsApp when you are next.`,
+        buttons: ["🔄 Refresh Queue", "🔄 Reschedule Slot", "❌ Cancel Appointment"],
       };
     }
   }
 
-  // 6. Direct quick button clicks
-  if (q.includes("book dr. siddharth") || q.includes("dr. siddharth")) {
-    // Book into appointments table
-    const nextToken = 7;
-    const now = new Date().toISOString();
-    const apptId = `apt-${crypto.randomUUID().slice(0, 8)}`;
-    db.prepare(`
-      INSERT INTO appointments (id, token_number, patient_id, patient_name, patient_phone, uhid, doctor_id, doctor_name, specialty, date, time_slot, type, status, source, consultation_fee, is_paid, created_at)
-      VALUES (?, ?, 'pat-6', ?, ?, 'LUM-2026-0106', 'doc-6', 'Dr. Siddharth Varma (PT)', 'Physiotherapy & Rehabilitation', '2026-09-03', '11:30 AM', 'Follow-up', 'Waiting', 'WhatsApp Bot', 700, 1, ?)
-    `).run(apptId, nextToken, patientName, phone, now);
+  // 6. Cancel / reschedule — same appointments row as ClinicianApp PATCH
+  if (tenantId && (q.includes("cancel appointment") || q.includes("cancel my appointment") || q.includes("❌ cancel"))) {
+    try {
+      const appointment = patchWhatsAppAppointment({
+        tenantId,
+        patientPhone: phone,
+        body: { status: "Cancelled" },
+      });
+      return {
+        content: `Your appointment (token #${appointment.tokenNumber}) has been *Cancelled* on the clinic calendar.`,
+        buttons: ["📅 Book Appointment", "👤 Speak with Receptionist"],
+      };
+    } catch {
+      return {
+        content: "No active appointment was found to cancel.",
+        buttons: ["📅 Book Appointment"],
+      };
+    }
+  }
 
+  if (tenantId && q.includes("reschedule")) {
     return {
-      content: `🎉 *Appointment Confirmed!*\n\n*Token*: *#0${nextToken}*\n*Doctor*: Dr. Siddharth Varma (PT)\n*Specialty*: Physiotherapy & Rehabilitation\n*Slot*: Today at 11:30 AM\n*Room*: Rehab Suite 105\n*UHID*: LUM-2026-0106\n\nYour digital token slip has been generated and saved to your Lumera EMR chart.`,
-      buttons: ["🎫 View My Queue", "💊 View Prescription", "📍 Directions to Suite 105"],
+      content: "Please share your preferred date (YYYY-MM-DD) and time slot, or ask reception to reschedule on the clinic calendar.",
+      buttons: ["📅 Book Appointment", "👤 Speak with Receptionist"],
     };
   }
 
