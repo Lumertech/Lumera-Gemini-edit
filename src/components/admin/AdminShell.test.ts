@@ -9,12 +9,18 @@ const src = readFileSync(join(here, "AdminShell.tsx"), "utf8");
 
 describe("AdminShell tab remounts", () => {
   it("remounts Profile, People, Branches, Settings (and other tabs) on adminTab change", () => {
-    assert.match(src, /key=\{adminTab\}/);
+    assert.match(src, /key=\{safeTab\}/);
     assert.match(src, /data-testid="admin-tab-remount"/);
     assert.match(src, /profile: <AdminProfile \/>/);
     assert.match(src, /people: <AdminPeople \/>/);
     assert.match(src, /branches: <AdminBranches \/>/);
     assert.match(src, /settings: <AdminSettings \/>/);
     assert.match(src, /users: <AdminUsers \/>/);
+  });
+
+  it("hides CMS/Meta/DHIS platform tabs for CLINIC_ADMIN", () => {
+    assert.match(src, /PLATFORM_TABS/);
+    assert.match(src, /isPlatformAdmin/);
+    assert.match(src, /NAV\.filter/);
   });
 });

@@ -33,6 +33,9 @@ import { AdminAudit } from "./AdminAudit";
 import { AdminMetaTechProvider } from "./AdminMetaTechProvider";
 import { DhisMeter } from "../dhis/DhisMeter";
 
+/** Platform / Meta / CMS — super_admin only. Clinic admins keep desk tabs. */
+const PLATFORM_TABS = new Set<AdminTab>(["dhis", "meta", "site", "policies", "media"]);
+
 const NAV: { id: AdminTab; label: string; icon: typeof Users; badge?: string }[] = [
   { id: "overview", label: "Dashboard", icon: LayoutDashboard },
   { id: "dhis", label: "ABDM & DHIS Meter", icon: Award },
@@ -53,7 +56,10 @@ export const AdminShell: React.FC = () => {
   const { user, logout } = useAuth();
   const { go, adminTab } = useNav();
 
-  const isAdmin = user && (user.role === 'super_admin' || user.role === 'polyclinic_admin' || user.role === 'CLINIC_ADMIN');
+  const isAdmin = user && (user.role === "super_admin" || user.role === "polyclinic_admin" || user.role === "CLINIC_ADMIN");
+  const isPlatformAdmin = user?.role === "super_admin";
+  const navItems = isPlatformAdmin ? NAV : NAV.filter((item) => !PLATFORM_TABS.has(item.id));
+  const safeTab = navItems.some((item) => item.id === adminTab) ? adminTab : "overview";
 
   if (!isAdmin) {
     return (
@@ -99,7 +105,7 @@ export const AdminShell: React.FC = () => {
     media: <AdminMedia />,
     settings: <AdminSettings />,
     audit: <AdminAudit />,
-  }[adminTab];
+  }[safeTab];
 
   return (
     <div className="h-screen flex bg-slate-50 text-slate-900">
@@ -114,9 +120,9 @@ export const AdminShell: React.FC = () => {
           </div>
         </div>
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
-          {NAV.map((item) => {
+          {navItems.map((item) => {
             const Icon = item.icon;
-            const isActive = adminTab === item.id;
+            const isActive = safeTab === item.id;
             return (
               <button
                 key={item.id}
@@ -161,7 +167,7 @@ export const AdminShell: React.FC = () => {
         </div>
       </aside>
       <main className="flex-1 overflow-y-auto p-8">
-        <div key={adminTab} data-testid="admin-tab-remount">
+        <div key={safeTab} data-testid="admin-tab-remount">
           {panel}
         </div>
       </main>
