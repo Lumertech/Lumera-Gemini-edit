@@ -60,3 +60,43 @@ export function stripSeededPublicLoginValue(
   if (kind === "phone" && isSeededDemoPhone(value)) return "";
   return value;
 }
+
+/** WhatsApp / tel fields: digits only, optional leading `+`. Letters never persist. */
+export function sanitizePhoneDigits(raw: string): string {
+  const trimmed = raw.trimStart();
+  const leadingPlus = trimmed.startsWith("+");
+  const digits = raw.replace(/\D/g, "");
+  if (!digits) return leadingPlus ? "+" : "";
+  return leadingPlus ? `+${digits}` : digits;
+}
+
+export const REMEMBER_EMAIL_KEY = "lumera.rememberEmail";
+
+export function readRememberedLoginEmail(): string {
+  if (typeof window === "undefined") return "";
+  try {
+    const raw = (window.localStorage.getItem(REMEMBER_EMAIL_KEY) || "").trim();
+    if (!raw || isSeededDemoEmail(raw)) {
+      if (raw) window.localStorage.removeItem(REMEMBER_EMAIL_KEY);
+      return "";
+    }
+    return raw;
+  } catch {
+    return "";
+  }
+}
+
+/** Persist work email only when the user opts in. Never store demo seeds or passwords. */
+export function persistRememberedLoginEmail(email: string, remember: boolean): void {
+  if (typeof window === "undefined") return;
+  try {
+    const next = email.trim().toLowerCase();
+    if (!remember || !next || isSeededDemoEmail(next)) {
+      window.localStorage.removeItem(REMEMBER_EMAIL_KEY);
+      return;
+    }
+    window.localStorage.setItem(REMEMBER_EMAIL_KEY, next);
+  } catch {
+    /* private mode / quota */
+  }
+}
