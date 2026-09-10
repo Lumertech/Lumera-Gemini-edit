@@ -9,6 +9,8 @@ export const PUBLIC_SPA_PATHS = [
   "/",
   "/landing",
   "/login",
+  "/signup",
+  "/register",
   ...PUBLIC_POLICY_HTML_PATHS,
   "/app",
   "/admin",

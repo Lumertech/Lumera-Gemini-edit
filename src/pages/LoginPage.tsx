@@ -2,7 +2,6 @@ import React, { useEffect, useRef, useState } from "react";
 import {
   Sparkles,
   ShieldCheck,
-  Shield,
   Stethoscope,
   Eye,
   EyeOff,
@@ -20,6 +19,17 @@ import {
   Zap,
 } from "lucide-react";
 import { destinationAfterAuth, useAuth } from "../auth/AuthContext";
+import {
+  emptyPublicLoginFields,
+  LOGIN_EMAIL_PLACEHOLDER,
+  LOGIN_PASSWORD_PLACEHOLDER,
+  LOGIN_WHATSAPP_PLACEHOLDER,
+  persistRememberedLoginEmail,
+  readRememberedLoginEmail,
+  REGISTER_EMAIL_PLACEHOLDER,
+  REGISTER_PASSWORD_PLACEHOLDER,
+  sanitizePhoneDigits,
+} from "../lib/loginFormDefaults";
 import { useNav } from "../nav/NavigationContext";
 import {
   DEFAULT_PRACTICE_TYPE,
@@ -66,7 +76,10 @@ export const LoginPage: React.FC = () => {
     loading: authLoading,
     refreshSession,
   } = useAuth();
-  const { go, loginNext, loginDemo, loginMode } = useNav();
+  const { go, loginNext, loginMode } = useNav();
+  // Empty on first render so the public form never mounts with seeded demo credentials.
+  const publicLoginDefaults = emptyPublicLoginFields();
+  const rememberedEmail = readRememberedLoginEmail();
 
   // Mode: Sign In vs Create Clinic Account
   const [mode, setMode] = useState<"signin" | "register">(loginMode || "signin");
@@ -78,17 +91,17 @@ export const LoginPage: React.FC = () => {
   // Sign In Sub-Method: Email & Password vs WhatsApp Phone Number
   const [signInMethod, setSignInMethod] = useState<"email" | "whatsapp">("email");
 
-  // Sign In Form States
-  const [email, setEmail] = useState(loginDemo ? "doctor@lumera.me" : "doctor@lumera.me");
-  const [password, setPassword] = useState("Lumera@2026");
-  const [whatsappPhone, setWhatsappPhone] = useState("+91 98234 55667");
+  // Sign In Form States — empty values so hint copy is placeholder-only (not a prefilled value).
+  const [email, setEmail] = useState(rememberedEmail || publicLoginDefaults.email);
+  const [password, setPassword] = useState(publicLoginDefaults.password);
+  const [whatsappPhone, setWhatsappPhone] = useState(publicLoginDefaults.whatsappPhone);
   const [showPassword, setShowPassword] = useState(false);
-  const [rememberMe, setRememberMe] = useState(true);
+  const [rememberMe, setRememberMe] = useState(Boolean(rememberedEmail));
 
   // SSO States
   const [oauthPrompt, setOauthPrompt] = useState<null | { provider: "google" | "facebook" }>(null);
-  const [oauthEmail, setOauthEmail] = useState("rdp9999973271@gmail.com");
-  const [oauthName, setOauthName] = useState("Dr. Rajiv Saxena");
+  const [oauthEmail, setOauthEmail] = useState(publicLoginDefaults.oauthEmail);
+  const [oauthName, setOauthName] = useState(publicLoginDefaults.oauthName);
   const [verifiedSsoNotice, setVerifiedSsoNotice] = useState<string | null>(null);
   const [oauthConfig, setOauthConfig] = useState<{
     facebookConfigured: boolean;
@@ -103,7 +116,7 @@ export const LoginPage: React.FC = () => {
   const [adminName, setAdminName] = useState("");
   const [adminEmail, setAdminEmail] = useState("");
   const [adminPhone, setAdminPhone] = useState("");
-  const [adminPassword, setAdminPassword] = useState("Lumera@2026");
+  const [adminPassword, setAdminPassword] = useState(publicLoginDefaults.adminPassword);
   const [showRegisterPassword, setShowRegisterPassword] = useState(false);
 
   // General Status & Loading
@@ -278,6 +291,7 @@ export const LoginPage: React.FC = () => {
 
     try {
       const res = await login(email.trim().toLowerCase(), password, skipOtp);
+      persistRememberedLoginEmail(email, rememberMe);
 
       if (res.requiresOtp && res.verificationId) {
         setOtpVerificationId(res.verificationId);
@@ -304,7 +318,7 @@ export const LoginPage: React.FC = () => {
   // Handle WhatsApp Phone Sign In
   const handleWhatsAppSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!whatsappPhone.trim()) {
+    if (!sanitizePhoneDigits(whatsappPhone).replace(/\D/g, "")) {
       setError("Please enter your registered WhatsApp phone number.");
       return;
     }
@@ -349,25 +363,6 @@ export const LoginPage: React.FC = () => {
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Demo sign in failed.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  // Dedicated Admin Login Access
-  const handleAdminLogin = async () => {
-    setEmail("admin@lumera.me");
-    setPassword("Lumera@2026");
-    setBusy(true);
-    setError("");
-
-    try {
-      const res = await login("admin@lumera.me", "Lumera@2026", true);
-      if (res.user) {
-        go("admin");
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Admin authentication failed.");
     } finally {
       setBusy(false);
     }
@@ -635,28 +630,35 @@ export const LoginPage: React.FC = () => {
   return (
     <div
       data-testid="public-login"
-      className="h-full overflow-y-auto bg-slate-950 text-slate-100 flex items-center justify-center p-4 sm:p-6 relative font-sans"
+      className="h-full w-full overflow-y-auto overflow-x-hidden bg-slate-950 text-slate-100 relative font-sans"
     >
-      {/* Background Glow Accents */}
-      <div className="absolute -top-32 -left-32 w-80 h-80 bg-purple-600/15 rounded-full blur-3xl pointer-events-none" />
-      <div className="absolute -bottom-32 -right-32 w-80 h-80 bg-indigo-600/15 rounded-full blur-3xl pointer-events-none" />
+      {/* Background Glow Accents — clipped so they never create horizontal scroll */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none" aria-hidden>
+        <div className="absolute -top-32 -left-32 w-80 h-80 bg-purple-600/15 rounded-full blur-3xl" />
+        <div className="absolute -bottom-32 -right-32 w-80 h-80 bg-indigo-600/15 rounded-full blur-3xl" />
+      </div>
 
+      <div
+        className={`min-h-full w-full flex justify-center px-3 py-5 sm:px-6 sm:py-8 ${
+          mode === "register" || showOtpView || showForgot ? "items-start" : "items-center"
+        }`}
+      >
       {/* Main Single-Card Container */}
-      <div className="w-full max-w-lg rounded-2xl border border-slate-800/90 bg-slate-900/90 shadow-2xl shadow-purple-950/40 backdrop-blur-xl p-6 sm:p-8 relative z-10">
+      <div className="w-full max-w-lg min-w-0 rounded-2xl border border-slate-800/90 bg-slate-900/90 shadow-2xl shadow-purple-950/40 backdrop-blur-xl p-4 sm:p-6 md:p-8 relative z-10">
         
         {/* Brand Header */}
-        <div className="flex flex-col items-center text-center mb-6">
+        <div className="flex flex-col items-center text-center mb-5 sm:mb-6">
           <button
             type="button"
             onClick={() => go("landing", { explicitPublic: true })}
-            className="flex items-center gap-3 group focus:outline-none mb-2"
+            className="flex items-center gap-2.5 sm:gap-3 group focus:outline-none mb-2 min-w-0 max-w-full"
           >
-            <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-purple-500 via-indigo-600 to-blue-600 flex items-center justify-center shadow-lg shadow-purple-500/30 group-hover:scale-105 transition-transform p-1.5">
+            <div className="h-10 w-10 shrink-0 rounded-xl bg-gradient-to-br from-purple-500 via-indigo-600 to-blue-600 flex items-center justify-center shadow-lg shadow-purple-500/30 group-hover:scale-105 transition-transform p-1.5">
               <img src="/lumera-logo.svg" alt="Lumera Logo" className="h-full w-full object-contain" />
             </div>
-            <div className="text-left">
-              <span className="font-extrabold text-xl tracking-tight text-white block">Lumera Health</span>
-              <span className="text-[10px] uppercase font-bold tracking-wider text-purple-400 block -mt-0.5">
+            <div className="text-left min-w-0">
+              <span className="font-extrabold text-lg sm:text-xl tracking-tight text-white block">Lumera Health</span>
+              <span className="text-[10px] uppercase font-bold tracking-wider text-purple-400 block -mt-0.5 leading-tight">
                 Enterprise Clinical & Practice Suite
               </span>
             </div>
@@ -725,7 +727,7 @@ export const LoginPage: React.FC = () => {
             )}
 
             {/* 6 Digit Input Boxes */}
-            <div className="flex justify-center gap-2 sm:gap-2.5 py-1">
+            <div className="flex justify-center gap-1.5 sm:gap-2.5 py-1 max-w-full">
               {otpDigits.map((digit, index) => (
                 <input
                   key={index}
@@ -737,7 +739,7 @@ export const LoginPage: React.FC = () => {
                   onChange={(e) => handleOtpDigitChange(index, e.target.value)}
                   onKeyDown={(e) => handleOtpKeyDown(index, e)}
                   autoFocus={index === 0}
-                  className="w-11 h-12 sm:w-12 sm:h-14 text-center text-lg sm:text-xl font-mono font-bold bg-slate-950 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500 transition-all"
+                  className="h-12 w-9 min-w-0 max-w-12 flex-1 sm:w-12 sm:h-14 sm:flex-none text-center text-lg sm:text-xl font-mono font-bold bg-slate-950 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500 transition-all"
                 />
               ))}
             </div>
@@ -825,12 +827,15 @@ export const LoginPage: React.FC = () => {
                     Registered Work Email
                   </label>
                   <input
+                    id="forgot-email"
+                    name="email"
                     type="email"
+                    autoComplete="email"
                     required
                     value={forgotEmail}
                     onChange={(e) => setForgotEmail(e.target.value)}
-                    placeholder="doctor@clinic.com"
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white focus:outline-none focus:border-purple-500"
+                    placeholder={REGISTER_EMAIL_PLACEHOLDER}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
                   />
                 </div>
                 <button
@@ -863,13 +868,16 @@ export const LoginPage: React.FC = () => {
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1">New Password</label>
                   <input
+                    id="forgot-new-password"
+                    name="new-password"
                     type="password"
+                    autoComplete="new-password"
                     required
                     minLength={6}
                     value={forgotNewPassword}
                     onChange={(e) => setForgotNewPassword(e.target.value)}
-                    placeholder="Minimum 6 characters"
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white focus:outline-none focus:border-purple-500"
+                    placeholder={REGISTER_PASSWORD_PLACEHOLDER}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
                   />
                 </div>
                 <button
@@ -928,11 +936,14 @@ export const LoginPage: React.FC = () => {
                       <div className="relative">
                         <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
                         <input
+                          id="login-email"
+                          name="email"
                           type="email"
+                          autoComplete="username"
                           required
                           value={email}
                           onChange={(e) => setEmail(e.target.value)}
-                          placeholder="doctor@lumera.me"
+                          placeholder={LOGIN_EMAIL_PLACEHOLDER}
                           className="w-full pl-9 pr-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
                         />
                       </div>
@@ -957,11 +968,14 @@ export const LoginPage: React.FC = () => {
                       <div className="relative">
                         <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
                         <input
+                          id="login-password"
+                          name="password"
                           type={showPassword ? "text" : "password"}
+                          autoComplete="current-password"
                           required
                           value={password}
                           onChange={(e) => setPassword(e.target.value)}
-                          placeholder="••••••••"
+                          placeholder={LOGIN_PASSWORD_PLACEHOLDER}
                           className="w-full pl-9 pr-10 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
                         />
                         <button
@@ -979,10 +993,14 @@ export const LoginPage: React.FC = () => {
                         <input
                           type="checkbox"
                           checked={rememberMe}
-                          onChange={(e) => setRememberMe(e.target.checked)}
+                          onChange={(e) => {
+                            const next = e.target.checked;
+                            setRememberMe(next);
+                            if (!next) persistRememberedLoginEmail("", false);
+                          }}
                           className="rounded bg-slate-950 border-slate-700 text-purple-600 focus:ring-purple-500"
                         />
-                        <span>Remember credentials</span>
+                        <span>Remember email</span>
                       </label>
                     </div>
 
@@ -1011,11 +1029,16 @@ export const LoginPage: React.FC = () => {
                       <div className="relative">
                         <Phone className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
                         <input
+                          id="login-whatsapp"
+                          name="tel"
                           type="tel"
+                          autoComplete="tel"
                           required
+                          inputMode="numeric"
+                          pattern="[0-9+]*"
                           value={whatsappPhone}
-                          onChange={(e) => setWhatsappPhone(e.target.value)}
-                          placeholder="+91 98234 55667"
+                          onChange={(e) => setWhatsappPhone(sanitizePhoneDigits(e.target.value))}
+                          placeholder={LOGIN_WHATSAPP_PLACEHOLDER}
                           className="w-full pl-9 pr-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-green-500"
                         />
                       </div>
@@ -1103,17 +1126,17 @@ export const LoginPage: React.FC = () => {
               </div>
             ) : (
               /* 2. CREATE CLINIC ACCOUNT FORM */
-              <form onSubmit={handleRegisterSubmit} className="space-y-3.5">
+              <form onSubmit={handleRegisterSubmit} className="space-y-3.5 min-w-0 w-full">
                 {verifiedSsoNotice && (
-                  <div className="p-3 rounded-xl bg-purple-950/40 border border-purple-600/40 text-purple-300 text-xs flex items-center justify-between gap-2 shadow-sm">
-                    <div className="flex items-center gap-2">
-                      <CheckCircle2 className="w-4 h-4 text-purple-400 shrink-0" />
-                      <span>{verifiedSsoNotice}</span>
+                  <div className="p-3 rounded-xl bg-purple-950/40 border border-purple-600/40 text-purple-300 text-xs flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 shadow-sm">
+                    <div className="flex items-start gap-2 min-w-0">
+                      <CheckCircle2 className="w-4 h-4 text-purple-400 shrink-0 mt-0.5" />
+                      <span className="break-words">{verifiedSsoNotice}</span>
                     </div>
                     <button
                       type="button"
                       onClick={() => setVerifiedSsoNotice(null)}
-                      className="text-slate-400 hover:text-white text-[11px] underline"
+                      className="text-slate-400 hover:text-white text-[11px] underline self-start sm:self-auto shrink-0 min-h-11 sm:min-h-0 px-1"
                     >
                       Dismiss
                     </button>
@@ -1130,7 +1153,7 @@ export const LoginPage: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => handleOAuthSignIn("google")}
-                        className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg bg-slate-900 hover:bg-slate-850 border border-slate-700 text-[11px] font-medium text-slate-200"
+                        className="flex items-center justify-center gap-1.5 min-h-11 py-2 px-2 rounded-lg bg-slate-900 hover:bg-slate-850 border border-slate-700 text-[11px] font-medium text-slate-200"
                       >
                         <svg className="w-3.5 h-3.5" viewBox="0 0 24 24">
                           <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
@@ -1143,7 +1166,7 @@ export const LoginPage: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => handleOAuthSignIn("facebook")}
-                        className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg bg-slate-900 hover:bg-slate-850 border border-slate-700 text-[11px] font-medium text-slate-200"
+                        className="flex items-center justify-center gap-1.5 min-h-11 py-2 px-2 rounded-lg bg-slate-900 hover:bg-slate-850 border border-slate-700 text-[11px] font-medium text-slate-200"
                       >
                         <svg className="w-3.5 h-3.5 fill-[#1877F2]" viewBox="0 0 24 24">
                           <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z" />
@@ -1163,7 +1186,7 @@ export const LoginPage: React.FC = () => {
                   <label className="block text-xs font-semibold text-slate-300">
                     Practice type *
                   </label>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     <button
                       type="button"
                       onClick={() => {
@@ -1173,7 +1196,7 @@ export const LoginPage: React.FC = () => {
                       data-testid="register-practice-individual"
                       data-selected={regPracticeType === "individual" ? "true" : "false"}
                       aria-pressed={regPracticeType === "individual"}
-                      className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                      className={`p-3 min-h-11 rounded-xl border text-left transition-all cursor-pointer ${
                         regPracticeType === "individual"
                           ? "bg-emerald-950/40 border-emerald-500 text-white shadow-sm"
                           : "bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200"
@@ -1194,7 +1217,7 @@ export const LoginPage: React.FC = () => {
                       data-testid="register-practice-polyclinic"
                       data-selected={regPracticeType === "polyclinic" ? "true" : "false"}
                       aria-pressed={regPracticeType === "polyclinic"}
-                      className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                      className={`p-3 min-h-11 rounded-xl border text-left transition-all cursor-pointer ${
                         regPracticeType === "polyclinic"
                           ? "bg-indigo-950/50 border-indigo-400 text-white shadow-sm"
                           : "bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200"
@@ -1226,7 +1249,7 @@ export const LoginPage: React.FC = () => {
                           ? "e.g. City Care Multispecialty Hospital"
                           : "e.g. Dr. Mehta Clinic"
                       }
-                      className="w-full pl-9 pr-3.5 py-2 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
+                      className="w-full min-h-11 pl-9 pr-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
                     />
                   </div>
                 </div>
@@ -1240,7 +1263,7 @@ export const LoginPage: React.FC = () => {
                     <select
                       value={specialty}
                       onChange={(e) => setSpecialty(e.target.value as PolyclinicSpecialty)}
-                      className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white focus:outline-none focus:border-purple-500"
+                      className="w-full min-h-11 min-w-0 px-3 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white focus:outline-none focus:border-purple-500"
                     >
                       {SPECIALTIES.map((s) => (
                         <option key={s} value={s} className="bg-slate-900 text-white">
@@ -1260,7 +1283,7 @@ export const LoginPage: React.FC = () => {
                         const found = COUNTRIES.find((c) => c.name === e.target.value);
                         if (found) setSelectedCountry(found);
                       }}
-                      className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white focus:outline-none focus:border-purple-500"
+                      className="w-full min-h-11 min-w-0 px-3 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white focus:outline-none focus:border-purple-500"
                     >
                       {COUNTRIES.map((c) => (
                         <option key={c.name} value={c.name} className="bg-slate-900 text-white">
@@ -1281,12 +1304,15 @@ export const LoginPage: React.FC = () => {
                   <div className="relative">
                     <Stethoscope className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
                     <input
+                      id="register-name"
+                      name="name"
                       type="text"
+                      autoComplete="name"
                       required
                       value={adminName}
                       onChange={(e) => setAdminName(e.target.value)}
                       placeholder="Dr. Vikram Malhotra"
-                      className="w-full pl-9 pr-3.5 py-2 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
+                      className="w-full min-h-11 pl-9 pr-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
                     />
                   </div>
                 </div>
@@ -1300,12 +1326,15 @@ export const LoginPage: React.FC = () => {
                     <div className="relative">
                       <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
                       <input
+                        id="register-email"
+                        name="email"
                         type="email"
+                        autoComplete="email"
                         required
                         value={adminEmail}
                         onChange={(e) => setAdminEmail(e.target.value)}
-                        placeholder="doctor@clinic.com"
-                        className="w-full pl-9 pr-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
+                        placeholder={REGISTER_EMAIL_PLACEHOLDER}
+                        className="w-full min-h-11 min-w-0 pl-9 pr-3 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
                       />
                     </div>
                   </div>
@@ -1317,12 +1346,17 @@ export const LoginPage: React.FC = () => {
                     <div className="relative">
                       <Phone className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
                       <input
+                        id="register-phone"
+                        name="tel"
                         type="tel"
+                        autoComplete="tel"
                         required
+                        inputMode="numeric"
+                        pattern="[0-9+]*"
                         value={adminPhone}
-                        onChange={(e) => setAdminPhone(e.target.value)}
+                        onChange={(e) => setAdminPhone(sanitizePhoneDigits(e.target.value))}
                         placeholder={`${selectedCountry.code} 98234 55667`}
-                        className="w-full pl-9 pr-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
+                        className="w-full min-h-11 min-w-0 pl-9 pr-3 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
                       />
                     </div>
                   </div>
@@ -1336,18 +1370,21 @@ export const LoginPage: React.FC = () => {
                   <div className="relative">
                     <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
                     <input
+                      id="register-password"
+                      name="new-password"
                       type={showRegisterPassword ? "text" : "password"}
+                      autoComplete="new-password"
                       required
                       minLength={6}
                       value={adminPassword}
                       onChange={(e) => setAdminPassword(e.target.value)}
-                      placeholder="Minimum 6 characters"
-                      className="w-full pl-9 pr-10 py-2 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
+                      placeholder={REGISTER_PASSWORD_PLACEHOLDER}
+                      className="w-full min-h-11 pl-9 pr-10 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
                     />
                     <button
                       type="button"
                       onClick={() => setShowRegisterPassword(!showRegisterPassword)}
-                      className="absolute right-3 top-3 text-slate-400 hover:text-white"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 min-h-11 min-w-11 flex items-center justify-center text-slate-400 hover:text-white"
                     >
                       {showRegisterPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
@@ -1355,19 +1392,19 @@ export const LoginPage: React.FC = () => {
                 </div>
 
                 {/* Quota Highlights Card */}
-                <div className="p-2.5 rounded-xl bg-purple-500/10 border border-purple-500/20 text-[11px] text-purple-200 flex items-center justify-between">
-                  <span className="flex items-center gap-1.5 font-medium">
-                    <Sparkles className="w-3.5 h-3.5 text-purple-400" />
-                    Starter Enterprise Tier • 30-Day Free Trial • 500 AI Scribe Mins
+                <div className="p-2.5 rounded-xl bg-purple-500/10 border border-purple-500/20 text-[11px] text-purple-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1.5">
+                  <span className="flex items-start sm:items-center gap-1.5 font-medium min-w-0">
+                    <Sparkles className="w-3.5 h-3.5 text-purple-400 shrink-0 mt-0.5 sm:mt-0" />
+                    <span className="leading-snug">Starter Enterprise Tier • 30-Day Free Trial • 500 AI Scribe Mins</span>
                   </span>
-                  <span className="font-mono text-xs text-emerald-400 font-bold">NHA sandbox</span>
+                  <span className="font-mono text-xs text-emerald-400 font-bold shrink-0">NHA sandbox</span>
                 </div>
 
                 {/* Submit Button */}
                 <button
                   type="submit"
                   disabled={busy}
-                  className="w-full py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-semibold text-xs sm:text-sm transition-all shadow-md shadow-purple-600/30 flex items-center justify-center gap-2 disabled:opacity-50"
+                  className="w-full min-h-11 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-semibold text-xs sm:text-sm transition-all shadow-md shadow-purple-600/30 flex items-center justify-center gap-2 disabled:opacity-50"
                 >
                   {busy ? (
                     <>
@@ -1393,8 +1430,11 @@ export const LoginPage: React.FC = () => {
             <>
             <button
               type="button"
-              onClick={openRegisterForm}
-              className="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs sm:text-sm font-semibold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-emerald-600/30 group"
+              onClick={() => {
+                openRegisterForm();
+                go("login", { loginMode: "register" });
+              }}
+              className="w-full min-h-11 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs sm:text-sm font-semibold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-emerald-600/30 group"
             >
               <Sparkles className="w-4 h-4 text-emerald-200 group-hover:text-white" />
               <span>Create new practice account</span>
@@ -1409,8 +1449,9 @@ export const LoginPage: React.FC = () => {
               onClick={() => {
                 setMode("signin");
                 setError("");
+                go("login", { loginMode: "signin" });
               }}
-              className="w-full py-2.5 rounded-xl bg-slate-950 hover:bg-slate-900 border border-slate-800 hover:border-emerald-500/50 text-slate-300 hover:text-white text-xs sm:text-sm font-semibold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm group"
+              className="w-full min-h-11 py-2.5 rounded-xl bg-slate-950 hover:bg-slate-900 border border-slate-800 hover:border-emerald-500/50 text-slate-300 hover:text-white text-xs sm:text-sm font-semibold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm group"
             >
               <span>Already have an account?</span>
               <span className="text-emerald-400 group-hover:text-emerald-300">Sign In</span>
@@ -1418,24 +1459,11 @@ export const LoginPage: React.FC = () => {
           )}
         </div>
 
-        {/* Dedicated Admin Option at Bottom */}
-        <div className="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between px-1">
-          <span className="text-[11px] text-slate-500">System Administrator</span>
-          <button
-            type="button"
-            onClick={handleAdminLogin}
-            disabled={busy}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700/80 hover:border-purple-500/50 text-slate-300 hover:text-purple-300 text-xs font-semibold transition-all cursor-pointer shadow-sm"
-          >
-            <Shield className="w-3.5 h-3.5 text-purple-400" />
-            <span>Admin</span>
-          </button>
-        </div>
-
         {/* Footer Note */}
-        <div className="mt-6 pt-4 border-t border-slate-800/80 text-center text-xs text-slate-500 flex items-center justify-center gap-2">
-          <span>Protected by AES-256 GCM · Designed for ABDM (NHA sandbox path)</span>
+        <div className="mt-6 pt-4 border-t border-slate-800/80 text-center text-[11px] sm:text-xs text-slate-500 flex items-center justify-center gap-2 px-1">
+          <span className="leading-relaxed">Protected by AES-256 GCM · Designed for ABDM (NHA sandbox path)</span>
         </div>
+      </div>
       </div>
     </div>
   );

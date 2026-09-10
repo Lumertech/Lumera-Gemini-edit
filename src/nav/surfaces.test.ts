@@ -6,6 +6,7 @@ import {
   isProtectedSurface,
   isSmartHomePath,
   nextAuthenticatedSurface,
+  loginModeFromPath,
   pathToNav,
   surfaceToPath,
 } from "./surfaces.ts";
@@ -49,6 +50,12 @@ describe("public vs app surface routing (founder lock #48)", () => {
     assert.equal(surfaceToPath("landing"), "/");
     assert.equal(surfaceToPath("app"), "/app");
     assert.equal(surfaceToPath("login"), "/login");
+    assert.equal(surfaceToPath("login", { loginMode: "register" }), "/signup");
+    assert.equal(pathToNav("/signup").surface, "login");
+    assert.equal(pathToNav("/register").surface, "login");
+    assert.equal(loginModeFromPath("/signup"), "register");
+    assert.equal(loginModeFromPath("/register"), "register");
+    assert.equal(loginModeFromPath("/login"), "signin");
     assert.equal(surfaceToPath("legal", { policySlug: "privacy-policy" }), "/privacy-policy");
   });
 
