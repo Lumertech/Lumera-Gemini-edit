@@ -1,8 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Award, Building2, Clock, IndianRupee, MapPin, PenLine, Save, ShieldCheck, Timer, Upload } from "lucide-react";
+import { Award, Building2, Clock, IndianRupee, MapPin, PenLine, Save, ShieldCheck, Stamp, Timer, Upload } from "lucide-react";
 import { Doctor, PolyclinicSpecialty, TenantLetterhead } from "../types";
 import { useAuth } from "../auth/AuthContext";
-import { apiFetch } from "../api/http";
+import { patchTenantLetterhead } from "../lib/letterhead";
 
 const SPECIALTIES: PolyclinicSpecialty[] = [
   "General Medicine",
@@ -35,7 +35,7 @@ export const ClinicProfileSettings: React.FC<ClinicProfileSettingsProps> = ({
   const { user, completeOnboarding } = useAuth();
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [doctorName, setDoctorName] = useState(currentDoctor.name || user?.name || "");
-  const [clinicName, setClinicName] = useState(user?.clinicName || "");
+  const [clinicName, setClinicName] = useState(letterhead?.clinicName || user?.clinicName || "");
   const [regNumber, setRegNumber] = useState(currentDoctor.regNumber || "");
   const [qualification, setQualification] = useState(currentDoctor.qualification || "");
   const [specialty, setSpecialty] = useState<PolyclinicSpecialty>(
@@ -47,32 +47,38 @@ export const ClinicProfileSettings: React.FC<ClinicProfileSettingsProps> = ({
   const [rxTemplate, setRxTemplate] = useState<"classic" | "compact" | "detailed">(
     currentDoctor.rxTemplate || "classic"
   );
-  const [signatureUrl, setSignatureUrl] = useState(currentDoctor.signatureUrl || "");
+  const [signatureUrl, setSignatureUrl] = useState(letterhead?.signatureUrl || currentDoctor.signatureUrl || "");
   const [address, setAddress] = useState(letterhead?.address || "");
   const [city, setCity] = useState(letterhead?.city || "");
+  const [phone, setPhone] = useState(letterhead?.phone || user?.phone || "");
+  const [clinicEmail, setClinicEmail] = useState(letterhead?.email || user?.email || "");
   const [gstin, setGstin] = useState(letterhead?.gstin || "");
   const [upiId, setUpiId] = useState(letterhead?.upiId || "");
   const [sealText, setSealText] = useState(letterhead?.sealText || "");
-  const [clinicEmail, setClinicEmail] = useState(letterhead?.email || user?.email || "");
   const [website, setWebsite] = useState(letterhead?.website || "");
   const [regId, setRegId] = useState(letterhead?.regId || "");
+  const [tagline, setTagline] = useState(letterhead?.tagline || "");
+  const [footerDisclaimer, setFooterDisclaimer] = useState(letterhead?.footerDisclaimer || "");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => {
     if (!letterhead) return;
+    setClinicName(letterhead.clinicName || user?.clinicName || "");
     setAddress(letterhead.address || "");
     setCity(letterhead.city || "");
+    setPhone(letterhead.phone || user?.phone || "");
+    setClinicEmail(letterhead.email || user?.email || "");
     setGstin(letterhead.gstin || "");
     setUpiId(letterhead.upiId || "");
     setSealText(letterhead.sealText || "");
-    setClinicEmail(letterhead.email || user?.email || "");
     setWebsite(letterhead.website || "");
     setRegId(letterhead.regId || "");
-    if (letterhead.clinicName) setClinicName(letterhead.clinicName);
+    setTagline(letterhead.tagline || "");
+    setFooterDisclaimer(letterhead.footerDisclaimer || "");
     if (letterhead.signatureUrl) setSignatureUrl(letterhead.signatureUrl);
-  }, [letterhead, user?.email]);
+  }, [letterhead, user?.clinicName, user?.email, user?.phone]);
 
   const handleSave = async () => {
     setBusy(true);
@@ -92,24 +98,6 @@ export const ClinicProfileSettings: React.FC<ClinicProfileSettingsProps> = ({
         slotDurationMinutes,
         rxTemplate,
       });
-      const saved = await apiFetch<{ letterhead: TenantLetterhead }>("/api/tenant/letterhead", {
-        method: "PATCH",
-        body: JSON.stringify({
-          clinicName,
-          address,
-          city,
-          email: clinicEmail,
-          website,
-          gstin,
-          regId,
-          upiId,
-          phone: user?.phone || "",
-          whatsappNumber: user?.phone || "",
-          sealText,
-          signatureUrl,
-        }),
-      });
-      if (saved.letterhead) onLetterheadSaved?.(saved.letterhead);
       if (res.user) {
         onDoctorUpdated({
           ...currentDoctor,
@@ -124,7 +112,25 @@ export const ClinicProfileSettings: React.FC<ClinicProfileSettingsProps> = ({
           rxTemplate,
         });
       }
-      setMessage("Clinic and doctor profile saved.");
+
+      const saved = await patchTenantLetterhead({
+        clinicName: clinicName.trim(),
+        address: address.trim(),
+        city: city.trim(),
+        phone: phone.trim(),
+        email: clinicEmail.trim(),
+        website: website.trim(),
+        gstin: gstin.trim(),
+        regId: regId.trim(),
+        upiId: upiId.trim(),
+        whatsappNumber: phone.trim() || user?.phone || "",
+        sealText: sealText.trim(),
+        signatureUrl,
+        tagline: tagline.trim(),
+        footerDisclaimer: footerDisclaimer.trim(),
+      });
+      onLetterheadSaved?.(saved);
+      setMessage("Clinic letterhead and doctor profile saved.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save profile");
     } finally {
@@ -135,7 +141,9 @@ export const ClinicProfileSettings: React.FC<ClinicProfileSettingsProps> = ({
   return (
     <div className="max-w-3xl mx-auto bg-white border border-slate-200 rounded-2xl shadow-sm p-6">
       <h2 className="text-lg font-bold text-slate-900 mb-1">Clinic & Doctor Profile Settings</h2>
-      <p className="text-xs text-slate-500 mb-5">Update credentials used on prescriptions, billing, and OPD slips.</p>
+      <p className="text-xs text-slate-500 mb-5">
+        Letterhead on printed Rx and GST invoices uses this clinic&apos;s name, address, GSTIN, UPI, seal, and signature — not Lumera seed branding.
+      </p>
 
       {error && <div className="mb-3 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg p-2">{error}</div>}
       {message && <div className="mb-3 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg p-2">{message}</div>}
@@ -154,41 +162,6 @@ export const ClinicProfileSettings: React.FC<ClinicProfileSettingsProps> = ({
             <Building2 className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
             <input className="w-full pl-9 pr-3 py-2 rounded-lg border border-slate-300" value={clinicName} onChange={(e) => setClinicName(e.target.value)} />
           </div>
-        </label>
-        <label className="block text-xs font-semibold text-slate-600 md:col-span-2">
-          Clinic address
-          <div className="relative mt-1">
-            <MapPin className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-            <input className="w-full pl-9 pr-3 py-2 rounded-lg border border-slate-300" value={address} onChange={(e) => setAddress(e.target.value)} />
-          </div>
-        </label>
-        <label className="block text-xs font-semibold text-slate-600">
-          City
-          <input className="mt-1 w-full px-3 py-2 rounded-lg border border-slate-300" value={city} onChange={(e) => setCity(e.target.value)} />
-        </label>
-        <label className="block text-xs font-semibold text-slate-600">
-          Clinic email
-          <input className="mt-1 w-full px-3 py-2 rounded-lg border border-slate-300" value={clinicEmail} onChange={(e) => setClinicEmail(e.target.value)} />
-        </label>
-        <label className="block text-xs font-semibold text-slate-600">
-          GSTIN
-          <input className="mt-1 w-full px-3 py-2 rounded-lg border border-slate-300 font-mono uppercase" value={gstin} onChange={(e) => setGstin(e.target.value)} placeholder="22AAAAA0000A1Z5" />
-        </label>
-        <label className="block text-xs font-semibold text-slate-600">
-          UPI ID
-          <input className="mt-1 w-full px-3 py-2 rounded-lg border border-slate-300 font-mono" value={upiId} onChange={(e) => setUpiId(e.target.value)} placeholder="clinic@upi" />
-        </label>
-        <label className="block text-xs font-semibold text-slate-600">
-          Clinic registration ID
-          <input className="mt-1 w-full px-3 py-2 rounded-lg border border-slate-300 font-mono" value={regId} onChange={(e) => setRegId(e.target.value)} />
-        </label>
-        <label className="block text-xs font-semibold text-slate-600">
-          Website
-          <input className="mt-1 w-full px-3 py-2 rounded-lg border border-slate-300" value={website} onChange={(e) => setWebsite(e.target.value)} />
-        </label>
-        <label className="block text-xs font-semibold text-slate-600 md:col-span-2">
-          Seal text (printed on Rx / invoice)
-          <input className="mt-1 w-full px-3 py-2 rounded-lg border border-slate-300" value={sealText} onChange={(e) => setSealText(e.target.value)} />
         </label>
         <label className="block text-xs font-semibold text-slate-600">
           Registration number
@@ -261,6 +234,65 @@ export const ClinicProfileSettings: React.FC<ClinicProfileSettingsProps> = ({
               <img src={signatureUrl} alt="Signature" className="max-h-10 object-contain" />
             </div>
           )}
+        </div>
+      </div>
+
+      <div className="mt-6 pt-5 border-t border-slate-200">
+        <h3 className="text-sm font-bold text-slate-900 mb-1">Clinic letterhead</h3>
+        <p className="text-[11px] text-slate-500 mb-3">
+          Shown on printed prescriptions and invoices. Saved via <span className="font-mono">PATCH /api/tenant/letterhead</span>.
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+          <label className="block text-xs font-semibold text-slate-600 md:col-span-2">
+            Address
+            <div className="relative mt-1">
+              <MapPin className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+              <input className="w-full pl-9 pr-3 py-2 rounded-lg border border-slate-300" value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Street, building, area" />
+            </div>
+          </label>
+          <label className="block text-xs font-semibold text-slate-600">
+            City
+            <input className="mt-1 w-full px-3 py-2 rounded-lg border border-slate-300" value={city} onChange={(e) => setCity(e.target.value)} placeholder="City, state, PIN" />
+          </label>
+          <label className="block text-xs font-semibold text-slate-600">
+            Phone
+            <input className="mt-1 w-full px-3 py-2 rounded-lg border border-slate-300" value={phone} onChange={(e) => setPhone(e.target.value)} />
+          </label>
+          <label className="block text-xs font-semibold text-slate-600">
+            Email
+            <input className="mt-1 w-full px-3 py-2 rounded-lg border border-slate-300" value={clinicEmail} onChange={(e) => setClinicEmail(e.target.value)} />
+          </label>
+          <label className="block text-xs font-semibold text-slate-600">
+            GSTIN
+            <input className="mt-1 w-full px-3 py-2 rounded-lg border border-slate-300 font-mono uppercase" value={gstin} onChange={(e) => setGstin(e.target.value)} placeholder="Clinic GSTIN" />
+          </label>
+          <label className="block text-xs font-semibold text-slate-600">
+            UPI ID
+            <input className="mt-1 w-full px-3 py-2 rounded-lg border border-slate-300 font-mono" value={upiId} onChange={(e) => setUpiId(e.target.value)} placeholder="clinic@bank" />
+          </label>
+          <label className="block text-xs font-semibold text-slate-600">
+            Clinic registration ID
+            <input className="mt-1 w-full px-3 py-2 rounded-lg border border-slate-300 font-mono" value={regId} onChange={(e) => setRegId(e.target.value)} />
+          </label>
+          <label className="block text-xs font-semibold text-slate-600">
+            Website
+            <input className="mt-1 w-full px-3 py-2 rounded-lg border border-slate-300" value={website} onChange={(e) => setWebsite(e.target.value)} />
+          </label>
+          <label className="block text-xs font-semibold text-slate-600">
+            Tagline
+            <input className="mt-1 w-full px-3 py-2 rounded-lg border border-slate-300" value={tagline} onChange={(e) => setTagline(e.target.value)} />
+          </label>
+          <label className="block text-xs font-semibold text-slate-600">
+            Seal text
+            <div className="relative mt-1">
+              <Stamp className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+              <input className="w-full pl-9 pr-3 py-2 rounded-lg border border-slate-300" value={sealText} onChange={(e) => setSealText(e.target.value)} />
+            </div>
+          </label>
+          <label className="block text-xs font-semibold text-slate-600 md:col-span-2">
+            Footer disclaimer
+            <textarea className="mt-1 w-full px-3 py-2 rounded-lg border border-slate-300 text-xs" rows={2} value={footerDisclaimer} onChange={(e) => setFooterDisclaimer(e.target.value)} />
+          </label>
         </div>
       </div>
 

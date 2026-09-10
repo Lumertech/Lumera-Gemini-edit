@@ -594,6 +594,7 @@ export interface ClinicSettings {
   showQrCode: boolean;
   sealText: string;
   footerDisclaimer: string;
+  signatureUrl?: string;
 }
 
 export interface SafetyCheckResult {

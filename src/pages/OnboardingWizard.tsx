@@ -20,6 +20,7 @@ import { useAuth } from "../auth/AuthContext";
 import { useNav } from "../nav/NavigationContext";
 import { PolyclinicSpecialty } from "../types";
 import { displayDoctorName, markWelcomeDashboard } from "../lib/sessionWorkspace";
+import { letterheadFromSessionHints, patchTenantLetterhead } from "../lib/letterhead";
 
 const SPECIALTIES: PolyclinicSpecialty[] = [
   "General Medicine",
@@ -140,6 +141,18 @@ export const OnboardingWizard: React.FC = () => {
         slotDurationMinutes,
         rxTemplate,
       });
+
+      try {
+        await patchTenantLetterhead(
+          letterheadFromSessionHints(clinicName.trim(), {
+            phone: user?.phone || "",
+            email: user?.email || "",
+            signatureUrl,
+          })
+        );
+      } catch {
+        // Persistence is owned by Platform GET/PATCH /api/tenant/letterhead.
+      }
 
       try {
         localStorage.setItem("lumera_queue_clean_start", "true");

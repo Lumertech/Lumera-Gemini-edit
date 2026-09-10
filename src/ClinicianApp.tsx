@@ -110,7 +110,13 @@ export default function ClinicianApp() {
         ]);
         if (cancelled) return;
 
-        if (letterheadRes.letterhead) setLetterhead(letterheadRes.letterhead);
+        if (letterheadRes.letterhead) {
+          setLetterhead(letterheadRes.letterhead);
+          if (letterheadRes.letterhead.signatureUrl) {
+            const sig = letterheadRes.letterhead.signatureUrl;
+            setCurrentDoctor((prev) => (prev.signatureUrl ? prev : { ...prev, signatureUrl: sig }));
+          }
+        }
 
         const nextDoctors = doctorRes.doctors || [];
         if (nextDoctors.length) {
@@ -452,7 +458,12 @@ export default function ClinicianApp() {
                       return prev.map((d) => (d.id === updated.id ? updated : d));
                     });
                   }}
-                  onLetterheadSaved={setLetterhead}
+                  onLetterheadSaved={(saved) => {
+                    setLetterhead(saved);
+                    if (saved.signatureUrl) {
+                      setCurrentDoctor((prev) => ({ ...prev, signatureUrl: saved.signatureUrl }));
+                    }
+                  }}
                 />
               )}
 
