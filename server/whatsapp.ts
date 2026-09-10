@@ -1,5 +1,11 @@
 import { Router, type Request, type Response } from "express";
-import { getDb, mapAppointment } from "./db.ts";
+import { DEMO_TENANT_ID, getDb, mapAppointment } from "./db.ts";
+import {
+  clinicLine,
+  doctorSignatureByDoctorId,
+  escapeHtml,
+  getTenantLetterhead,
+} from "./letterhead.ts";
 import { GoogleGenAI } from "@google/genai";
 import {
   bookWhatsAppAppointment,
@@ -935,9 +941,13 @@ Output strictly in JSON:
         diagnosis = "Clinical Consultation",
         medicines = [],
         advice = [],
-        clinicName = "Lumera Healthcare Polyclinic",
         language = "en",
       } = req.body;
+      const tenantId = String((req as Request).user?.tenantId || "");
+      const clinicName =
+        String(req.body?.clinicName || "").trim() ||
+        (tenantId ? getTenantLetterhead(tenantId).clinicName : "") ||
+        "Lumera Healthcare Polyclinic";
 
       const db = getDb();
       const now = new Date().toISOString();
@@ -1040,6 +1050,27 @@ Output strictly in JSON:
       const medicines = JSON.parse((rx.medicines as string) || "[]");
       const labTests = JSON.parse((rx.lab_tests as string) || "[]");
       const advice = JSON.parse((rx.advice as string) || "[]");
+      const tenantId = String(rx.tenant_id || "");
+      const letterhead = getTenantLetterhead(tenantId || DEMO_TENANT_ID);
+      const stamped = clinicLine(letterhead);
+      const clinicName = escapeHtml(String(rx.clinic_name || stamped.name || letterhead.clinicName || "Clinic"));
+      const clinicAddress = escapeHtml(String(rx.clinic_address || stamped.address || letterhead.address));
+      const clinicPhone = escapeHtml(String(rx.clinic_phone || stamped.phone || letterhead.phone));
+      const clinicEmail = escapeHtml(letterhead.email);
+      const clinicGstin = escapeHtml(letterhead.gstin);
+      const clinicUpi = escapeHtml(letterhead.upiId);
+      const sealText = escapeHtml(letterhead.sealText);
+      const footerDisclaimer = escapeHtml(letterhead.footerDisclaimer);
+      const signatureUrl = doctorSignatureByDoctorId(String(rx.doctor_id || "")) || letterhead.signatureUrl;
+      const signatureBlock = signatureUrl
+        ? `<img src="${escapeHtml(signatureUrl)}" alt="Doctor signature" style="max-height: 48px; object-fit: contain;" />`
+        : `<div style="font-family: 'Brush Script MT', cursive, sans-serif; font-size: 26px; color: #0369a1;">${escapeHtml(String(rx.doctor_name || ""))}</div>`;
+      const subLine = [clinicAddress, clinicPhone ? `Phone: ${clinicPhone}` : "", clinicEmail]
+        .filter(Boolean)
+        .join(" • ");
+      const gstinLine = [clinicGstin ? `GSTIN: ${clinicGstin}` : "", clinicUpi ? `UPI: ${clinicUpi}` : ""]
+        .filter(Boolean)
+        .join(" • ");
 
       const medsHtml = medicines.map((m: any, idx: number) => `
         <tr style="border-bottom: 1px solid #e2e8f0;">
@@ -1089,8 +1120,8 @@ Output strictly in JSON:
   <div class="sheet">
     <div class="header">
       <div>
-        <div class="clinic-brand">LUMERA HEALTHCARE POLYCLINIC</div>
-        <div class="clinic-sub">Integrated Multispecialty OPD, Diagnostic Pathology & Rehabilitation<br>100ft Road Indiranagar, Bengaluru • Phone: +91 80 4123 4567 • emr@lumera.health</div>
+        <div class="clinic-brand">${clinicName}</div>
+        <div class="clinic-sub">${subLine}${gstinLine ? `<br>${gstinLine}` : ""}</div>
       </div>
       <div style="text-align: right;">
         <div style="font-size: 16px; font-weight: 700; color: #0f172a;">${rx.doctor_name}</div>
@@ -1155,11 +1186,12 @@ Output strictly in JSON:
         <div style="color: #64748b; font-size: 10px; margin-top: 4px;">Digitally signed & verified on Lumera Health Cloud</div>
       </div>
       <div style="text-align: right;">
-        <div style="font-family: 'Brush Script MT', cursive, sans-serif; font-size: 26px; color: #0369a1;">${rx.doctor_name}</div>
-        <div style="font-weight: 600; color: #1e293b; margin-top: 2px;">${rx.doctor_name}</div>
-        <div style="font-size: 11px; color: #64748b;">Authorized Medical Signatory</div>
+        ${signatureBlock}
+        <div style="font-weight: 600; color: #1e293b; margin-top: 2px;">${escapeHtml(String(rx.doctor_name || ""))}</div>
+        <div style="font-size: 11px; color: #64748b;">${sealText || "Authorized Medical Signatory"}</div>
       </div>
     </div>
+    ${footerDisclaimer ? `<p style="margin-top: 16px; font-size: 11px; color: #64748b;">${footerDisclaimer}</p>` : ""}
   </div>
 </body>
 </html>`;
