@@ -148,7 +148,7 @@ describe("Admin UM users API (UM-1…6)", () => {
     assert.equal(row.specialty, "physio");
     assert.equal(row.practice_type, "individual");
 
-    const doc = getDb().prepare("SELECT specialty FROM doctors WHERE user_id = ?").get(user.id) as {
+    const doc = getDb().prepare("SELECT specialty FROM doctors WHERE user_id = ?").get(String(user.id)) as {
       specialty: string;
     };
     assert.equal(doc.specialty, "physio");
