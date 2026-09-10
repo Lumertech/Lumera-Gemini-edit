@@ -1115,6 +1115,9 @@ export const LoginPage: React.FC = () => {
                 {/* SANDBOX demo matrix */}
                 <div className="pt-2 border-t border-slate-800/60 space-y-2">
                   <p className="text-[10px] uppercase tracking-wider text-amber-400/90 font-semibold">SANDBOX / DEMO logins · password {DEMO_PASSWORD}</p>
+                  <p className="text-[10px] text-slate-500" data-testid="admin-password-login-note">
+                    `admin@lumera.me` / super_admin completes on email+password (no WhatsApp OTP). Clinician and patient logins still require OTP on production.
+                  </p>
                   <select
                     className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-[11px] text-slate-200"
                     onChange={(e) => {

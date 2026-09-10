@@ -2,18 +2,19 @@ export type Surface = "landing" | "login" | "app" | "admin" | "portal" | "policy
 
 export type AdminTab =
   | "overview"
-  | "dhis"
   | "users"
-  | "profile"
   | "people"
   | "branches"
+  | "tenants"
+  | "profile"
+  | "settings"
   | "subscriptions"
+  | "audit"
+  | "dhis"
   | "meta"
   | "site"
   | "policies"
-  | "media"
-  | "settings"
-  | "audit";
+  | "media";
 
 export interface NavLocation {
   surface: Surface;

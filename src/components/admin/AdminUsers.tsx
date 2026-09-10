@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { apiFetch } from "../../api/http";
+import { useAuth } from "../../auth/AuthContext";
 import { AppUser, UserRole, UserStatus } from "../../types";
 import { PACK_ID_OPTIONS, packIdLabel } from "../../lib/specialtyPack";
 
@@ -23,6 +24,7 @@ function practiceLabel(value?: string | null) {
 }
 
 export const AdminUsers: React.FC = () => {
+  const { user: actor } = useAuth();
   const [users, setUsers] = useState<AppUser[]>([]);
   const [q, setQ] = useState("");
   const [role, setRole] = useState("");
@@ -68,7 +70,17 @@ export const AdminUsers: React.FC = () => {
     try {
       const res = await apiFetch<{ user: AppUser; temporaryPassword?: string }>("/api/users", {
         method: "POST",
-        body: JSON.stringify(form),
+        body: JSON.stringify({
+          name: form.name,
+          email: form.email,
+          role: form.role,
+          phone: form.phone,
+          password: form.password,
+          status: form.status,
+          specialty: form.specialty,
+          practiceType: form.practiceType,
+          tenantId: actor?.tenantId || undefined,
+        }),
       });
       setForm(emptyForm);
       load();
@@ -184,8 +196,9 @@ export const AdminUsers: React.FC = () => {
           value={form.specialty}
           onChange={(e) => setForm({ ...form, specialty: e.target.value })}
           data-testid="admin-create-specialty"
+          aria-label="Specialty pack"
         >
-          <option value="">Specialty (clinicians)</option>
+          <option value="">Specialty / pack</option>
           {PACK_ID_OPTIONS.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
         </select>
         <select
@@ -204,6 +217,8 @@ export const AdminUsers: React.FC = () => {
           value={form.password}
           onChange={(e) => setForm({ ...form, password: e.target.value })}
           autoComplete="new-password"
+          data-testid="admin-create-password"
+          aria-label="Password"
         />
         <button type="submit" disabled={saving} className="bg-purple-600 text-white rounded font-semibold disabled:opacity-60">
           {saving ? "Saving…" : "Create user"}

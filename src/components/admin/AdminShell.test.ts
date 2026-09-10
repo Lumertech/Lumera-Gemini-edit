@@ -16,11 +16,17 @@ describe("AdminShell tab remounts", () => {
     assert.match(src, /branches: <AdminBranches \/>/);
     assert.match(src, /settings: <AdminSettings \/>/);
     assert.match(src, /users: <AdminUsers \/>/);
+    assert.match(src, /tenants: <AdminTenants \/>/);
+    assert.match(src, /people: <AdminPeople \/>/);
+    assert.match(src, /branches: <AdminBranches \/>/);
   });
 
-  it("hides CMS/Meta/DHIS platform tabs for CLINIC_ADMIN", () => {
+  it("lists desk tabs before CMS/Meta/DHIS and hides platform tabs for CLINIC_ADMIN", () => {
     assert.match(src, /PLATFORM_TABS/);
     assert.match(src, /isPlatformAdmin/);
-    assert.match(src, /NAV\.filter/);
+    assert.match(src, /group: "platform"/);
+    const usersAt = src.indexOf('{ id: "users"');
+    const dhisAt = src.indexOf('{ id: "dhis"');
+    assert.ok(usersAt > 0 && dhisAt > usersAt, "User management must appear before DHIS in the nav source");
   });
 });

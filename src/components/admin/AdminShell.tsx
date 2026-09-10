@@ -16,6 +16,7 @@ import {
   Stethoscope,
   Building2,
   Settings,
+  Network,
 } from "lucide-react";
 import { useAuth } from "../../auth/AuthContext";
 import { AdminTab, useNav } from "../../nav/NavigationContext";
@@ -24,6 +25,7 @@ import { AdminUsers } from "./AdminUsers";
 import { AdminProfile } from "./AdminProfile";
 import { AdminPeople } from "./AdminPeople";
 import { AdminBranches } from "./AdminBranches";
+import { AdminTenants } from "./AdminTenants";
 import { AdminSubscriptions } from "./AdminSubscriptions";
 import { AdminCmsSite } from "./AdminCmsSite";
 import { AdminPolicies } from "./AdminPolicies";
@@ -33,23 +35,24 @@ import { AdminAudit } from "./AdminAudit";
 import { AdminMetaTechProvider } from "./AdminMetaTechProvider";
 import { DhisMeter } from "../dhis/DhisMeter";
 
-/** Platform / Meta / CMS — super_admin only. Clinic admins keep desk tabs. */
+/** Platform / Meta / CMS — super_admin only, listed after desk tabs. */
 const PLATFORM_TABS = new Set<AdminTab>(["dhis", "meta", "site", "policies", "media"]);
 
-const NAV: { id: AdminTab; label: string; icon: typeof Users; badge?: string }[] = [
-  { id: "overview", label: "Dashboard", icon: LayoutDashboard },
-  { id: "dhis", label: "ABDM & DHIS Meter", icon: Award },
-  { id: "meta", label: "Meta WhatsApp", icon: Share2, badge: "SANDBOX" },
-  { id: "users", label: "User management", icon: Users },
-  { id: "profile", label: "Admin profile", icon: UserCircle },
-  { id: "people", label: "Doctors & staff", icon: Stethoscope },
-  { id: "branches", label: "Branches", icon: Building2 },
-  { id: "subscriptions", label: "Subscriptions", icon: KeyRound },
-  { id: "site", label: "Website CMS", icon: Globe },
-  { id: "policies", label: "Pages & policies", icon: FileText },
-  { id: "media", label: "Media library", icon: Image },
-  { id: "settings", label: "Clinic & AI settings", icon: Settings },
-  { id: "audit", label: "Audit log", icon: History },
+const NAV: { id: AdminTab; label: string; icon: typeof Users; badge?: string; group?: "desk" | "platform" }[] = [
+  { id: "overview", label: "Dashboard", icon: LayoutDashboard, group: "desk" },
+  { id: "users", label: "User management", icon: Users, group: "desk" },
+  { id: "people", label: "Doctors & staff", icon: Stethoscope, group: "desk" },
+  { id: "branches", label: "Branches", icon: Building2, group: "desk" },
+  { id: "tenants", label: "Tenants", icon: Network, group: "desk" },
+  { id: "profile", label: "Admin profile", icon: UserCircle, group: "desk" },
+  { id: "settings", label: "Clinic & AI settings", icon: Settings, group: "desk" },
+  { id: "subscriptions", label: "Subscriptions", icon: KeyRound, group: "desk" },
+  { id: "audit", label: "Audit log", icon: History, group: "desk" },
+  { id: "dhis", label: "ABDM & DHIS Meter", icon: Award, group: "platform" },
+  { id: "meta", label: "Meta WhatsApp", icon: Share2, badge: "SANDBOX", group: "platform" },
+  { id: "site", label: "Website CMS", icon: Globe, group: "platform" },
+  { id: "policies", label: "Pages & policies", icon: FileText, group: "platform" },
+  { id: "media", label: "Media library", icon: Image, group: "platform" },
 ];
 
 export const AdminShell: React.FC = () => {
@@ -58,7 +61,11 @@ export const AdminShell: React.FC = () => {
 
   const isAdmin = user && (user.role === "super_admin" || user.role === "polyclinic_admin" || user.role === "CLINIC_ADMIN");
   const isPlatformAdmin = user?.role === "super_admin";
-  const navItems = isPlatformAdmin ? NAV : NAV.filter((item) => !PLATFORM_TABS.has(item.id));
+  const navItems = NAV.filter((item) => {
+    if (PLATFORM_TABS.has(item.id) && !isPlatformAdmin) return false;
+    if (item.id === "tenants" && !isPlatformAdmin) return false;
+    return true;
+  });
   const safeTab = navItems.some((item) => item.id === adminTab) ? adminTab : "overview";
 
   if (!isAdmin) {
@@ -99,6 +106,7 @@ export const AdminShell: React.FC = () => {
     profile: <AdminProfile />,
     people: <AdminPeople />,
     branches: <AdminBranches />,
+    tenants: <AdminTenants />,
     subscriptions: <AdminSubscriptions />,
     site: <AdminCmsSite />,
     policies: <AdminPolicies />,
@@ -120,32 +128,45 @@ export const AdminShell: React.FC = () => {
           </div>
         </div>
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = safeTab === item.id;
+          {(["desk", "platform"] as const).map((group) => {
+            const items = navItems.filter((item) => (item.group || "desk") === group);
+            if (!items.length) return null;
             return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => go("admin", { adminTab: item.id })}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium text-left ${
-                  isActive ? "bg-purple-600 text-white" : "text-slate-300 hover:bg-slate-700"
-                }`}
-              >
-                <Icon className="w-5 h-5 shrink-0" />
-                <span className="flex-1">{item.label}</span>
-                {item.badge && (
-                  <span
-                    className={`text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded border ${
-                      isActive
-                        ? "bg-white/15 text-amber-100 border-amber-200/40"
-                        : "bg-amber-500/20 text-amber-300 border-amber-500/40"
-                    }`}
-                  >
-                    {item.badge}
-                  </span>
+              <div key={group} className="space-y-1">
+                {group === "platform" && (
+                  <div className="px-4 pt-3 pb-1 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">
+                    Platform
+                  </div>
                 )}
-              </button>
+                {items.map((item) => {
+                  const Icon = item.icon;
+                  const isActive = safeTab === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => go("admin", { adminTab: item.id })}
+                      className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium text-left ${
+                        isActive ? "bg-purple-600 text-white" : "text-slate-300 hover:bg-slate-700"
+                      }`}
+                    >
+                      <Icon className="w-5 h-5 shrink-0" />
+                      <span className="flex-1">{item.label}</span>
+                      {item.badge && (
+                        <span
+                          className={`text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded border ${
+                            isActive
+                              ? "bg-white/15 text-amber-100 border-amber-200/40"
+                              : "bg-amber-500/20 text-amber-300 border-amber-500/40"
+                          }`}
+                        >
+                          {item.badge}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
             );
           })}
         </nav>
