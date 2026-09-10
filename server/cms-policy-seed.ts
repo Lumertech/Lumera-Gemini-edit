@@ -58,7 +58,7 @@ We do **not** use WhatsApp or Facebook Login data to sell ads, build advertising
 #### Retention
 - WhatsApp operational logs and conversation copies are retained only as needed for clinic care continuity, security, and legal retention, then deleted or anonymised
 - Meta access tokens are stored for the connected clinic WABA and revoked/deleted when the clinic disconnects WhatsApp or requests deletion
-- See [Data Deletion Instructions](${PRODUCTION_POLICY_ORIGIN}/data-deletion-instructions) for how to request erasure
+- See [Data Deletion Instructions](https://www.mylumera.in/data-deletion-instructions) for how to request erasure
 
 #### Contact
 Data Protection / privacy requests: **dpo@lumera.me** | **compliance@lumera.health**
@@ -113,9 +113,9 @@ export const DATA_DELETION_INSTRUCTIONS_BODY = `# Data Deletion Instructions (Me
 
 **Last updated:** September 2026  
 **Controller / product:** Lumera Solutions LLP — clinic software with optional WhatsApp Cloud API and Facebook Login  
-**Public status page:** ${PRODUCTION_POLICY_ORIGIN}/data-deletion-instructions  
-**Automated callback (Meta App Dashboard → Data Deletion Request URL):** ${PRODUCTION_POLICY_ORIGIN}/api/meta/data-deletion  
-**Status check:** ${PRODUCTION_POLICY_ORIGIN}/api/meta/data-deletion-status?code=YOUR_CODE  
+**Public status page:** https://www.mylumera.in/data-deletion-instructions  
+**Automated callback (Meta App Dashboard → Data Deletion Request URL):** https://www.mylumera.in/api/meta/data-deletion  
+**Status check:** https://www.mylumera.in/api/meta/data-deletion-status?code=YOUR_CODE  
 **Email:** dpo@lumera.me | compliance@lumera.health
 
 **Lumera is not a certified Meta Tech Provider. Meta App Review is not submitted.**
@@ -129,9 +129,9 @@ You can request deletion of personal data Lumera stored because you used Faceboo
 3. Select **Lumera** (or the Lumera app name shown in Dashboard)
 4. Choose **Remove**
 5. Open **View removed apps and websites** → find Lumera → **Send request** for data deletion
-6. Meta calls our callback at \`${PRODUCTION_POLICY_ORIGIN}/api/meta/data-deletion\`. You receive a **confirmation code** (and a link back to this page). Keep that code.
+6. Meta calls our callback at \`https://www.mylumera.in/api/meta/data-deletion\`. You receive a **confirmation code** (and a link back to this page). Keep that code.
 7. Check status anytime: paste the code in the checker on this page, or open  
-   \`${PRODUCTION_POLICY_ORIGIN}/api/meta/data-deletion-status?code=YOUR_CODE\`
+   \`https://www.mylumera.in/api/meta/data-deletion-status?code=YOUR_CODE\`
 
 ## Option 2 — Email the Data Protection Office
 Email **dpo@lumera.me** with subject \`Data deletion request\` and include:
@@ -152,7 +152,7 @@ We aim to confirm within **48 business hours** and send a confirmation code or c
 - Records a clinic is legally required to keep (anonymised where possible)
 
 ## App Review note
-Until Meta App Review is approved and live secrets are configured, some environments may still be labelled SANDBOX in-product. The **URLs above are the production policy surfaces**. Do not treat this page as Dashboard-ready until hosting, \`APP_URL=${PRODUCTION_POLICY_ORIGIN}\`, and a Compliance re-skim are complete.
+Until Meta App Review is approved and live secrets are configured, some environments may still be labelled SANDBOX in-product. The **URLs above are the production policy surfaces**. Do not treat this page as Dashboard-ready until hosting, \`APP_URL=https://www.mylumera.in\`, and a Compliance re-skim are complete.
 `;
 
 /** Canonical slugs plus short aliases used by the public policy UI. */
