@@ -136,6 +136,13 @@ describe("Wave 1A PHI / auth lock", () => {
     });
     assert.equal(abha.status, 401);
 
+    const linkAbha = await jsonRequest(port, "POST", "/api/patients/link-abha", {
+      abhaNumber: "91-0000-0000-0000",
+      source: "aadhaar_otp",
+      abdmMode: "stub",
+    });
+    assert.equal(linkAbha.status, 401);
+
     const prescriptions = await jsonRequest(port, "GET", "/api/prescriptions");
     assert.equal(prescriptions.status, 401);
     assert.equal(prescriptions.json.prescriptions, undefined);

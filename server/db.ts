@@ -531,6 +531,18 @@ function migrate(database: DatabaseSync) {
       expires_at TEXT NOT NULL,
       verified_at TEXT
     );
+
+    -- NHA sandbox: tenant-scoped ABDM consent artefacts.
+    CREATE TABLE IF NOT EXISTS abdm_consent_artefacts (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      patient_id TEXT NOT NULL,
+      consent_id TEXT NOT NULL,
+      artefact_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE (tenant_id, consent_id)
+    );
   `);
 
   try {
@@ -647,6 +659,31 @@ function migrate(database: DatabaseSync) {
   } catch {}
   try {
     database.exec("ALTER TABLE patients ADD COLUMN hfr_id TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE patients ADD COLUMN abha_linked_at TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS abdm_consent_artefacts (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        patient_id TEXT NOT NULL,
+        consent_id TEXT NOT NULL,
+        artefact_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE (tenant_id, consent_id)
+      )
+    `);
+  } catch {}
+  try {
+    database.exec(
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_patients_tenant_abha ON patients(tenant_id, abha_number) WHERE abha_number IS NOT NULL AND TRIM(abha_number) != ''"
+    );
+  } catch {}
+  try {
+    database.exec("CREATE INDEX IF NOT EXISTS idx_abdm_consent_tenant_patient ON abdm_consent_artefacts(tenant_id, patient_id)");
   } catch {}
 
   try {
@@ -1239,6 +1276,15 @@ export const PRESCRIPTION_SPECIALTY_KEYS = [
   "gynecologyAssessment",
 ] as const;
 
+/** Patient JSON never presents unlocked KYC. Leftover rows remap to LINKED_SANDBOX. */
+export function presentPatientKyc(raw: unknown): string {
+  const kyc = String(raw || "").trim() || "PENDING";
+  if (/^verified$/i.test(kyc) || /government|unlocked/i.test(kyc)) {
+    return "LINKED_SANDBOX";
+  }
+  return kyc;
+}
+
 export function mapPatient(row: Record<string, unknown>) {
   return {
     id: row.id as string,
@@ -1256,8 +1302,24 @@ export function mapPatient(row: Record<string, unknown>) {
     lastVisit: (row.last_visit as string) || undefined,
     abhaNumber: (row.abha_number as string) || "",
     abhaAddress: (row.abha_address as string) || "",
-    kycStatus: (row.kyc_status as string) || "PENDING",
+    kycStatus: presentPatientKyc(row.kyc_status),
     hfrId: (row.hfr_id as string) || "",
+    abhaLinkedAt: (row.abha_linked_at as string) || "",
+  };
+}
+
+export function mapConsentArtefact(row: Record<string, unknown>) {
+  const parsed = parseJsonColumn<Record<string, unknown>>(row.artefact_json, {});
+  return {
+    id: row.id as string,
+    tenantId: row.tenant_id as string,
+    patientId: row.patient_id as string,
+    consentId: (row.consent_id as string) || String(parsed.consentId || ""),
+    createdAt: (row.created_at as string) || "",
+    updatedAt: (row.updated_at as string) || "",
+    status: parsed.status,
+    dateRange: parsed.dateRange as { from?: string; to?: string } | undefined,
+    ...parsed,
   };
 }
 
@@ -2578,23 +2640,33 @@ export function ensureAbdmAndDhisSeeding(database: DatabaseSync) {
   const updatePatientAbha = database.prepare(`
     UPDATE patients 
     SET abha_number = ?, abha_address = ?, kyc_status = ?, hfr_id = ?
-    WHERE id = ?
+    WHERE id = ? AND tenant_id = ?
   `);
 
   const abhaSeedMap: Record<string, { abhaNumber: string; abhaAddress: string; kycStatus: string }> = {
-    "pat-6": { abhaNumber: "91-4428-9102-3841", abhaAddress: "rajiv.saxena@abdm", kycStatus: "VERIFIED" },
-    "pat-7": { abhaNumber: "91-7291-0384-9182", abhaAddress: "priyanka.m@abdm", kycStatus: "VERIFIED" },
-    "pat-1": { abhaNumber: "91-8840-2910-4491", abhaAddress: "sunita.roy@abdm", kycStatus: "VERIFIED" },
-    "pat-2": { abhaNumber: "91-5519-3829-1048", abhaAddress: "rohan.deshmukh@abdm", kycStatus: "VERIFIED" },
-    "pat-4": { abhaNumber: "91-9928-1029-4820", abhaAddress: "mohd.tariq@abdm", kycStatus: "VERIFIED" },
+    "pat-6": { abhaNumber: "91-4428-9102-3841", abhaAddress: "rajiv.saxena@abdm", kycStatus: "LINKED_SANDBOX" },
+    "pat-7": { abhaNumber: "91-7291-0384-9182", abhaAddress: "priyanka.m@abdm", kycStatus: "LINKED_SANDBOX" },
+    "pat-1": { abhaNumber: "91-8840-2910-4491", abhaAddress: "sunita.roy@abdm", kycStatus: "LINKED_SANDBOX" },
+    "pat-2": { abhaNumber: "91-5519-3829-1048", abhaAddress: "rohan.deshmukh@abdm", kycStatus: "LINKED_SANDBOX" },
+    "pat-4": { abhaNumber: "91-9928-1029-4820", abhaAddress: "mohd.tariq@abdm", kycStatus: "LINKED_SANDBOX" },
     "pat-3": { abhaNumber: "91-3829-4019-2810", abhaAddress: "aarav.gupta@abdm", kycStatus: "PENDING" },
   };
 
   for (const [id, data] of Object.entries(abhaSeedMap)) {
     try {
-      updatePatientAbha.run(data.abhaNumber, data.abhaAddress, data.kycStatus, defaultHfrId, id);
+      updatePatientAbha.run(data.abhaNumber, data.abhaAddress, data.kycStatus, defaultHfrId, id, DEMO_TENANT_ID);
     } catch {}
   }
+  try {
+    database
+      .prepare(
+        `UPDATE patients SET kyc_status = 'LINKED_SANDBOX'
+         WHERE TRIM(abha_number) != ''
+           AND TRIM(kyc_status) != ''
+           AND kyc_status NOT IN ('LINKED_SANDBOX', 'PENDING', 'FAILED')`
+      )
+      .run();
+  } catch {}
 
   // 2. Set HPR ID for doctors if missing
   try {
@@ -2651,7 +2723,7 @@ export function ensureAbdmAndDhisSeeding(database: DatabaseSync) {
           p.id,
           p.abha,
           p.num,
-          "VERIFIED",
+          "LINKED_SANDBOX",
           `rec-abdm-${i}`,
           `bundle-nrc-r4-${String(i).padStart(4, "0")}`,
           20, // ₹20 total incentive

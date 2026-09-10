@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from "express";
 import {
   getDb,
   mapAppointment,
+  mapConsentArtefact,
   mapPatient,
   mapPrescription,
   PRESCRIPTION_SPECIALTY_KEYS,
@@ -9,6 +10,7 @@ import {
 } from "./db.ts";
 import { clinicLine, getTenantLetterhead } from "./letterhead.ts";
 import { requireAuth } from "./auth.ts";
+import { resolveAbdmMode, type AbdmMode } from "./abdm-mode.ts";
 
 function tenantIdOf(req: Request): string {
   return String(req.user?.tenantId || "").trim();
@@ -65,6 +67,268 @@ export function getTenantPatient(tenantId: string, id: string) {
     .get(id, tenantId) as Record<string, unknown> | undefined;
 }
 
+/** NHA sandbox notice — Platform persists ABHA/consent for the sandbox path only. */
+export const ABHA_SANDBOX_NOTICE =
+  "NHA sandbox: ABHA link and consent artefact storage until NHA credentials are provisioned.";
+
+export function digitsOnly(value: string): string {
+  return String(value || "").replace(/\D/g, "");
+}
+
+export function phoneMatchKey(phone: string): string {
+  const digits = digitsOnly(phone);
+  return digits.length >= 10 ? digits.slice(-10) : digits;
+}
+
+export function normalizeAbhaNumber(value: string): string {
+  return digitsOnly(value);
+}
+
+function readAbhaNumber(body: Record<string, unknown>): string {
+  return String(body.abhaNumber || body.abha_number || body.abhaId || body.abha_id || "").trim();
+}
+
+function readAbhaAddress(body: Record<string, unknown>): string {
+  return String(body.abhaAddress || body.abha_address || "").trim();
+}
+
+function readConsentArtefact(body: Record<string, unknown>): Record<string, unknown> | null {
+  const raw = body.consentArtefact ?? body.consent_artefact ?? body.consent;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const artefact = raw as Record<string, unknown>;
+  const consentId = String(artefact.consentId || artefact.consent_id || "").trim();
+  if (!consentId) return null;
+  return { ...artefact, consentId };
+}
+
+export function findTenantPatientByPhone(tenantId: string, phone: string) {
+  const key = phoneMatchKey(phone);
+  if (!tenantId || !key) return undefined;
+  const exact = getDb()
+    .prepare("SELECT * FROM patients WHERE tenant_id = ? AND phone = ?")
+    .get(tenantId, String(phone || "").trim()) as Record<string, unknown> | undefined;
+  if (exact) return exact;
+  const rows = getDb()
+    .prepare("SELECT * FROM patients WHERE tenant_id = ?")
+    .all(tenantId) as Record<string, unknown>[];
+  return rows.find((row) => phoneMatchKey(String(row.phone || "")) === key);
+}
+
+export function findTenantPatientByAbha(tenantId: string, abhaNumber?: string, abhaAddress?: string) {
+  const digits = normalizeAbhaNumber(abhaNumber || "");
+  const address = String(abhaAddress || "").trim().toLowerCase();
+  if (!tenantId || (!digits && !address)) return undefined;
+  if (abhaNumber) {
+    const exact = getDb()
+      .prepare("SELECT * FROM patients WHERE tenant_id = ? AND abha_number = ? AND TRIM(abha_number) != ''")
+      .get(tenantId, String(abhaNumber).trim()) as Record<string, unknown> | undefined;
+    if (exact) return exact;
+  }
+  if (address) {
+    const exactAddr = getDb()
+      .prepare("SELECT * FROM patients WHERE tenant_id = ? AND LOWER(TRIM(abha_address)) = ? AND TRIM(abha_address) != ''")
+      .get(tenantId, address) as Record<string, unknown> | undefined;
+    if (exactAddr) return exactAddr;
+  }
+  const rows = getDb()
+    .prepare("SELECT * FROM patients WHERE tenant_id = ? AND (TRIM(abha_number) != '' OR TRIM(abha_address) != '')")
+    .all(tenantId) as Record<string, unknown>[];
+  return rows.find((row) => {
+    const rowDigits = normalizeAbhaNumber(String(row.abha_number || ""));
+    const rowAddr = String(row.abha_address || "").trim().toLowerCase();
+    return Boolean((digits && rowDigits && rowDigits === digits) || (address && rowAddr && rowAddr === address));
+  });
+}
+
+export function listTenantConsentArtefacts(tenantId: string, patientId: string) {
+  if (!tenantId || !patientId) return [];
+  const rows = getDb()
+    .prepare(
+      `SELECT * FROM abdm_consent_artefacts
+       WHERE tenant_id = ? AND patient_id = ?
+       ORDER BY created_at ASC`
+    )
+    .all(tenantId, patientId) as Record<string, unknown>[];
+  return rows.map(mapConsentArtefact);
+}
+
+function patientWithConsents(row: Record<string, unknown>, tenantId: string) {
+  const patient = mapPatient(row);
+  return { ...patient, consentArtefacts: listTenantConsentArtefacts(tenantId, patient.id) };
+}
+
+function httpError(status: number, message: string): Error & { status: number } {
+  return Object.assign(new Error(message), { status });
+}
+
+function errorStatus(err: unknown, fallback = 500): number {
+  return typeof err === "object" && err && "status" in err ? Number((err as { status: number }).status) : fallback;
+}
+
+/**
+ * Persist an NHA sandbox consent artefact for the ABDM path only.
+ * The practice-simple onboard path must not call this.
+ */
+export function storeConsentArtefact(
+  tenantId: string,
+  patientId: string,
+  artefact: Record<string, unknown>,
+  actor?: { id?: string | null; name?: string }
+) {
+  const consentId = String(artefact.consentId || artefact.consent_id || "").trim();
+  if (!consentId) {
+    throw httpError(400, "consentArtefact.consentId is required");
+  }
+  const patient = getTenantPatient(tenantId, patientId);
+  if (!patient) {
+    throw httpError(404, "Patient not found");
+  }
+  const now = new Date().toISOString();
+  const kind = String(artefact.kind || artefact.artefactKind || "consent").trim() || "consent";
+  const payload = JSON.stringify({ ...artefact, consentId, kind });
+  const existing = getDb()
+    .prepare("SELECT id FROM abdm_consent_artefacts WHERE tenant_id = ? AND consent_id = ?")
+    .get(tenantId, consentId) as { id: string } | undefined;
+  if (existing) {
+    getDb()
+      .prepare(
+        `UPDATE abdm_consent_artefacts
+         SET patient_id = ?, artefact_json = ?, updated_at = ?
+         WHERE id = ? AND tenant_id = ?`
+      )
+      .run(patientId, payload, now, existing.id, tenantId);
+  } else {
+    getDb()
+      .prepare(
+        `INSERT INTO abdm_consent_artefacts (
+          id, tenant_id, patient_id, consent_id, artefact_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(shortId("consent"), tenantId, patientId, consentId, payload, now, now);
+  }
+  writeAudit(
+    getDb(),
+    actor?.id || null,
+    actor?.name || "Clinician",
+    "ABHA consent stored (NHA sandbox)",
+    `patient ${patientId} consent ${consentId}`
+  );
+  return listTenantConsentArtefacts(tenantId, patientId);
+}
+
+export const KYC_LINKED_SANDBOX = "LINKED_SANDBOX";
+
+const LINK_SOURCES = new Set(["aadhaar_otp", "abha_search", "qr"]);
+
+export function rejectUnlockedKyc(body: Record<string, unknown>) {
+  const kyc = String(body.kycStatus || body.kyc_status || "");
+  if (/^verified$/i.test(kyc) || /government|unlocked/i.test(kyc)) {
+    throw httpError(400, "NHA sandbox kycStatus must be LINKED_SANDBOX");
+  }
+}
+
+function ageFromDob(dob: string): number | undefined {
+  const raw = String(dob || "").trim();
+  if (!raw) return undefined;
+  const born = new Date(raw);
+  if (Number.isNaN(born.getTime())) return undefined;
+  const now = new Date();
+  let age = now.getFullYear() - born.getFullYear();
+  const month = now.getMonth() - born.getMonth();
+  if (month < 0 || (month === 0 && now.getDate() < born.getDate())) age -= 1;
+  return age >= 0 ? age : undefined;
+}
+
+function flattenLinkBody(body: Record<string, unknown>): Record<string, unknown> {
+  const demo =
+    body.demographics && typeof body.demographics === "object" && !Array.isArray(body.demographics)
+      ? (body.demographics as Record<string, unknown>)
+      : {};
+  const dob = String(body.dob || demo.dob || "");
+  const pincode = String(body.pincode || demo.pincode || "").trim();
+  const address = String(body.address || demo.address || "").trim();
+  return {
+    ...body,
+    name: body.name || demo.name,
+    gender: body.gender || demo.gender,
+    dob,
+    pincode,
+    address: pincode && address && !address.includes(pincode) ? `${address} ${pincode}`.trim() : address,
+    phone: body.phone || demo.mobile || demo.phone,
+    age: body.age ?? demo.age ?? ageFromDob(dob),
+  };
+}
+
+function applyAbhaFields(
+  tenantId: string,
+  patientId: string,
+  fields: {
+    abhaNumber?: string;
+    abhaAddress?: string;
+    hfrId?: string;
+  }
+) {
+  const existing = getTenantPatient(tenantId, patientId);
+  if (!existing) {
+    throw httpError(404, "Patient not found");
+  }
+  const mapped = mapPatient(existing);
+  const abhaNumber = String(fields.abhaNumber || mapped.abhaNumber || "").trim();
+  const abhaAddress = String(fields.abhaAddress || mapped.abhaAddress || "").trim();
+  const hfrId = String(fields.hfrId || mapped.hfrId || "").trim();
+  const alreadyLinked = String(existing.abha_linked_at || mapped.abhaLinkedAt || "").trim();
+  const abhaLinkedAt = alreadyLinked || (abhaNumber || abhaAddress ? new Date().toISOString() : "");
+  getDb()
+    .prepare(
+      `UPDATE patients
+       SET abha_number = ?, abha_address = ?, kyc_status = ?,
+           hfr_id = COALESCE(NULLIF(?, ''), NULLIF(hfr_id, ''), ''),
+           abha_linked_at = ?
+       WHERE id = ? AND tenant_id = ?`
+    )
+    .run(abhaNumber, abhaAddress, KYC_LINKED_SANDBOX, hfrId, abhaLinkedAt, patientId, tenantId);
+  return getTenantPatient(tenantId, patientId)!;
+}
+
+function enrichPatientDemographics(tenantId: string, patientId: string, body: Record<string, unknown>) {
+  const existing = getTenantPatient(tenantId, patientId);
+  if (!existing) return;
+  const mapped = mapPatient(existing);
+  const name = String(body.name || mapped.name).trim() || mapped.name;
+  const age = body.age !== undefined && body.age !== null && body.age !== "" ? Number(body.age) : mapped.age;
+  const gender = body.gender !== undefined ? String(body.gender) : mapped.gender;
+  const email = body.email !== undefined ? String(body.email) : mapped.email;
+  const address = body.address !== undefined ? String(body.address) : mapped.address;
+  getDb()
+    .prepare(
+      `UPDATE patients SET name = ?, age = ?, gender = ?, email = ?, address = ?
+       WHERE id = ? AND tenant_id = ?`
+    )
+    .run(name, Number(age || 0), String(gender || "Other"), String(email || ""), String(address || ""), patientId, tenantId);
+}
+
+function resolveExistingPatient(
+  tenantId: string,
+  body: Record<string, unknown>,
+  options?: { patientId?: string }
+): Record<string, unknown> | undefined {
+  const abhaNumber = readAbhaNumber(body);
+  const abhaAddress = readAbhaAddress(body);
+  const phone = String(body.phone || "").trim();
+  const byId = options?.patientId ? getTenantPatient(tenantId, options.patientId) : undefined;
+  if (options?.patientId && !byId) {
+    throw httpError(404, "Patient not found");
+  }
+  const byAbha = findTenantPatientByAbha(tenantId, abhaNumber, abhaAddress);
+  const byPhone = phone ? findTenantPatientByPhone(tenantId, phone) : undefined;
+  const matches = [byId, byAbha, byPhone].filter(Boolean) as Record<string, unknown>[];
+  const ids = new Set(matches.map((row) => String(row.id)));
+  if (ids.size > 1) {
+    throw httpError(409, "Phone and ABHA resolve to different patients in this tenant");
+  }
+  return matches[0];
+}
+
 export function getTenantAppointment(tenantId: string, id: string) {
   return getDb()
     .prepare("SELECT * FROM appointments WHERE id = ? AND tenant_id = ?")
@@ -111,24 +375,59 @@ function specialtyModulesFromBody(body: Record<string, unknown>): string {
   return JSON.stringify(modules);
 }
 
-export function insertPatient(tenantId: string, body: Record<string, unknown>) {
+export function insertPatient(
+  tenantId: string,
+  body: Record<string, unknown>,
+  options?: { allowAbha?: boolean }
+) {
+  rejectUnlockedKyc(body);
   const name = String(body.name || "").trim();
   const phone = String(body.phone || "").trim();
+  const allowAbha = Boolean(options?.allowAbha);
+  const abhaNumber = allowAbha ? readAbhaNumber(body) : "";
+  const abhaAddress = allowAbha ? readAbhaAddress(body) : "";
+  const existing = findTenantPatientByPhone(tenantId, phone);
+  if (existing) {
+    const existingId = String(existing.id);
+    enrichPatientDemographics(tenantId, existingId, body);
+    if (allowAbha && (abhaNumber || abhaAddress)) {
+      const other = findTenantPatientByAbha(tenantId, abhaNumber, abhaAddress);
+      if (other && String(other.id) !== existingId) {
+        throw httpError(409, "Phone and ABHA resolve to different patients in this tenant");
+      }
+      applyAbhaFields(tenantId, existingId, { abhaNumber, abhaAddress });
+    }
+    const reused = getTenantPatient(tenantId, existingId)!;
+    (reused as Record<string, unknown>).__reused = true;
+    return reused;
+  }
+  if (allowAbha && (abhaNumber || abhaAddress)) {
+    const byAbha = findTenantPatientByAbha(tenantId, abhaNumber, abhaAddress);
+    if (byAbha) {
+      enrichPatientDemographics(tenantId, String(byAbha.id), body);
+      applyAbhaFields(tenantId, String(byAbha.id), { abhaNumber, abhaAddress });
+      const reused = getTenantPatient(tenantId, String(byAbha.id))!;
+      (reused as Record<string, unknown>).__reused = true;
+      return reused;
+    }
+  }
   if (!name || !phone) {
-    throw Object.assign(new Error("name and phone are required"), { status: 400 });
+    throw httpError(400, "name and phone are required");
   }
   const id = shortId("pat");
   const uhid = uniqueUhid();
   const now = new Date().toISOString();
   const lastVisit = body.lastVisit ? String(body.lastVisit) : now.slice(0, 10);
+  const kycStatus = allowAbha && (abhaNumber || abhaAddress) ? KYC_LINKED_SANDBOX : "PENDING";
+  const abhaLinkedAt = allowAbha && (abhaNumber || abhaAddress) ? now : "";
   try {
     getDb()
       .prepare(
         `INSERT INTO patients (
           id, tenant_id, uhid, name, age, gender, phone, email, blood_group, allergies,
           chronic_conditions, emergency_contact, address, last_visit, created_at,
-          abha_number, abha_address, kyc_status, hfr_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          abha_number, abha_address, kyc_status, hfr_id, abha_linked_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -146,19 +445,104 @@ export function insertPatient(tenantId: string, body: Record<string, unknown>) {
         String(body.address || ""),
         lastVisit,
         now,
-        String(body.abhaNumber || body.abha_number || ""),
-        String(body.abhaAddress || body.abha_address || ""),
-        String(body.kycStatus || body.kyc_status || "PENDING"),
-        String(body.hfrId || body.hfr_id || "")
+        abhaNumber,
+        abhaAddress,
+        kycStatus,
+        String(body.hfrId || body.hfr_id || ""),
+        abhaLinkedAt
       );
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     if (/unique/i.test(message)) {
-      throw Object.assign(new Error("A patient with this phone or UHID already exists"), { status: 409 });
+      const raced = findTenantPatientByPhone(tenantId, phone);
+      if (raced) {
+        (raced as Record<string, unknown>).__reused = true;
+        return raced;
+      }
+      throw httpError(409, "A patient with this phone or ABHA already exists");
     }
     throw err;
   }
   return getTenantPatient(tenantId, id)!;
+}
+
+function parseLinkSource(body: Record<string, unknown>): string {
+  const source = String(body.source || "aadhaar_otp").trim();
+  if (!LINK_SOURCES.has(source)) {
+    throw httpError(400, "source must be aadhaar_otp, abha_search, or qr");
+  }
+  return source;
+}
+
+function parseLinkAbdmMode(body: Record<string, unknown>): AbdmMode {
+  const requested = String(body.abdmMode || resolveAbdmMode()).trim();
+  if (requested !== "stub" && requested !== "sandbox") {
+    throw httpError(400, "abdmMode must be stub or sandbox");
+  }
+  return requested;
+}
+
+/**
+ * POST /api/patients/link-abha — frozen #35 field names.
+ * NHA sandbox attach/find-or-create. Never a second EMR row for tenant+phone
+ * or tenant+abhaNumber. Practice-simple POST /patients must not call this.
+ */
+export function linkPatientAbha(
+  tenantId: string,
+  body: Record<string, unknown>,
+  actor?: { id?: string | null; name?: string }
+) {
+  rejectUnlockedKyc(body);
+  const flat = flattenLinkBody(body);
+  const patientId = String(flat.patientId || "").trim();
+  const abhaNumber = readAbhaNumber(flat);
+  const abhaAddress = readAbhaAddress(flat);
+  const consent = readConsentArtefact(flat);
+  const source = parseLinkSource(flat);
+  const abdmMode = parseLinkAbdmMode(flat);
+  if (!abhaNumber) {
+    throw httpError(400, "abhaNumber is required");
+  }
+  if (patientId && !getTenantPatient(tenantId, patientId)) {
+    throw httpError(403, "Patient not found");
+  }
+  let row: Record<string, unknown>;
+  try {
+    row = resolveExistingPatient(tenantId, flat, patientId ? { patientId } : undefined) as Record<string, unknown>;
+  } catch (err: unknown) {
+    if (errorStatus(err, 0) === 404 && patientId) {
+      throw httpError(403, "Patient not found");
+    }
+    throw err;
+  }
+  if (!row) {
+    const name = String(flat.name || "").trim();
+    const phone = String(flat.phone || "").trim();
+    if (!name || !phone) {
+      throw httpError(404, "Patient not found");
+    }
+    row = insertPatient(tenantId, flat, { allowAbha: true });
+  } else {
+    enrichPatientDemographics(tenantId, String(row.id), flat);
+  }
+  const id = String(row.id);
+  applyAbhaFields(tenantId, id, { abhaNumber, abhaAddress });
+  if (consent) {
+    storeConsentArtefact(tenantId, id, consent, actor);
+  }
+  const mapped = mapPatient(getTenantPatient(tenantId, id)!);
+  writeAudit(
+    getDb(),
+    actor?.id || null,
+    actor?.name || "Clinician",
+    "ABHA linked (NHA sandbox)",
+    `patient ${id} ABHA ${mapped.abhaNumber} source ${source} mode ${abdmMode}`
+  );
+  return {
+    abdmMode,
+    source,
+    row: getTenantPatient(tenantId, id)!,
+  };
 }
 
 export function insertAppointment(tenantId: string, body: Record<string, unknown>, actor?: { id?: string; name?: string }) {
@@ -350,16 +734,18 @@ function insertPrescription(tenantId: string, body: Record<string, unknown>) {
 }
 
 /**
- * Wave 1A contract (patient / appointment). Auth = requireAuth (session JWT
- * cookie or Authorization: Bearer). Tenant = req.user.tenantId.
+ * Wave 1A + #35 freeze (patient / appointment). Auth = requireAuth.
+ * Tenant = req.user.tenantId.
  *
  * GET  /patients              → { patients: Patient[] }
- * POST /patients              → { patient }  body { name, age, gender, phone, email?,
- *   bloodGroup?, allergies?, chronicConditions?, emergencyContact?, address? }
- *   server assigns id + uhid
+ * POST /patients              → { patient }  practice-simple; phone-idempotent per tenant
+ *   Does not invent ABDM consent or ABHA KYC.
+ * POST /patients/link-abha    → { patient, abdmMode }  frozen #35 field names
+ *   body { patientId?, phone?, abhaNumber, abhaAddress?, demographics?,
+ *          consentArtefact?, source, abdmMode }
+ *   kycStatus is always LINKED_SANDBOX (NHA sandbox)
  * PATCH /patients/:id         → { patient }  partial
- * PATCH /patients/:id/abha    → { success, id, abhaNumber, abhaAddress, kycStatus }
- *   body { abhaNumber, abhaAddress, kycStatus? }
+ * PATCH /patients/:id/abha    → same as link-abha for an existing id
  *
  * GET  /appointments          → { appointments: Appointment[] } (tokenNumber, status, vitals)
  * POST /appointments          → { appointment }  body { patientId, doctorId, date, timeSlot, type?, source? }
@@ -389,42 +775,78 @@ export function createClinicalRouter(): Router {
     if (!tenantId) return;
     const row = getTenantPatient(tenantId, req.params.id);
     if (!row) return res.status(404).json({ error: "Patient not found" });
-    res.json({ patient: mapPatient(row) });
+    res.json({ patient: patientWithConsents(row, tenantId) });
   });
 
   api.post("/patients", requireAuth, (req, res) => {
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     try {
-      const row = insertPatient(tenantId, req.body || {});
-      writeAudit(getDb(), req.user?.id || null, req.user?.name || "Clinician", "Patient created", mapPatient(row).name);
-      res.status(201).json({ patient: mapPatient(row) });
+      const incoming = { ...(req.body || {}) } as Record<string, unknown>;
+      delete incoming.abhaNumber;
+      delete incoming.abha_number;
+      delete incoming.abhaId;
+      delete incoming.abha_id;
+      delete incoming.abhaAddress;
+      delete incoming.abha_address;
+      delete incoming.consentArtefact;
+      delete incoming.consent_artefact;
+      delete incoming.consent;
+      const row = insertPatient(tenantId, incoming);
+      const reused = Boolean((row as Record<string, unknown>).__reused);
+      if (!reused) {
+        writeAudit(getDb(), req.user?.id || null, req.user?.name || "Clinician", "Patient created", mapPatient(row).name);
+      }
+      res.status(reused ? 200 : 201).json({ patient: mapPatient(getTenantPatient(tenantId, String(row.id))!) });
     } catch (err: unknown) {
-      const status = typeof err === "object" && err && "status" in err ? Number((err as { status: number }).status) : 500;
+      const status = errorStatus(err);
       const message = err instanceof Error ? err.message : "Failed to create patient";
       res.status(status || 500).json({ error: message });
     }
   });
 
-  api.patch("/patients/:id/abha", requireAuth, (req, res) => {
+  api.post("/patients/link-abha", requireAuth, (req, res) => {
+    const tenantId = requireTenant(req, res);
+    if (!tenantId) return;
     try {
-      const tenantId = requireTenant(req, res);
-      if (!tenantId) return;
-      const existing = getTenantPatient(tenantId, req.params.id);
-      if (!existing) return res.status(404).json({ error: "Patient not found" });
-      const { abhaNumber, abhaAddress, kycStatus = "VERIFIED" } = req.body || {};
-      getDb()
-        .prepare(
-          `UPDATE patients
-           SET abha_number = ?, abha_address = ?, kyc_status = ?, hfr_id = COALESCE(NULLIF(hfr_id, ''), 'HFR-IN-8829104')
-           WHERE id = ? AND tenant_id = ?`
-        )
-        .run(abhaNumber || "", abhaAddress || "", kycStatus, req.params.id, tenantId);
-      const row = getTenantPatient(tenantId, req.params.id)!;
-      res.json({ success: true, patient: mapPatient(row), id: req.params.id, abhaNumber, abhaAddress, kycStatus });
+      const linked = linkPatientAbha(tenantId, req.body || {}, { id: req.user?.id, name: req.user?.name });
+      const patient = patientWithConsents(linked.row, tenantId);
+      res.json({
+        patient,
+        abdmMode: linked.abdmMode,
+        sandboxNotice: ABHA_SANDBOX_NOTICE,
+      });
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "unknown error";
-      res.status(500).json({ error: "Failed to update ABHA details: " + message });
+      const status = errorStatus(err);
+      const message = err instanceof Error ? err.message : "Failed to link ABHA";
+      res.status(status || 500).json({ error: message });
+    }
+  });
+
+  api.patch("/patients/:id/abha", requireAuth, (req, res) => {
+    const tenantId = requireTenant(req, res);
+    if (!tenantId) return;
+    try {
+      const linked = linkPatientAbha(
+        tenantId,
+        { ...(req.body || {}), patientId: req.params.id },
+        { id: req.user?.id, name: req.user?.name }
+      );
+      const patient = patientWithConsents(linked.row, tenantId);
+      res.json({
+        success: true,
+        patient,
+        id: patient.id,
+        abhaNumber: patient.abhaNumber,
+        abhaAddress: patient.abhaAddress,
+        kycStatus: patient.kycStatus,
+        abdmMode: linked.abdmMode,
+        sandboxNotice: ABHA_SANDBOX_NOTICE,
+      });
+    } catch (err: unknown) {
+      const status = errorStatus(err);
+      const message = err instanceof Error ? err.message : "Failed to update ABHA details";
+      res.status(status || 500).json({ error: message });
     }
   });
 
@@ -433,6 +855,12 @@ export function createClinicalRouter(): Router {
     if (!tenantId) return;
     const existing = getTenantPatient(tenantId, req.params.id);
     if (!existing) return res.status(404).json({ error: "Patient not found" });
+    try {
+      rejectUnlockedKyc((req.body || {}) as Record<string, unknown>);
+    } catch (err: unknown) {
+      const status = errorStatus(err);
+      return res.status(status || 400).json({ error: err instanceof Error ? err.message : "Invalid KYC status" });
+    }
     const mapped = mapPatient(existing);
     const next = { ...mapped, ...req.body };
     getDb()
