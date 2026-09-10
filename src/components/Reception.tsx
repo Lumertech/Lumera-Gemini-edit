@@ -13,11 +13,13 @@ import {
 import { Patient, Doctor, Appointment } from '../types';
 import {
   BRIDGE_DOWN_MESSAGE,
+  BACK_TO_PRACTICE_SIMPLE,
   LINK_ABHA_CTA,
   LINKED_SANDBOX_CHIP,
   NHA_SANDBOX_BADGE,
   NHA_SANDBOX_NOTICE,
   PRACTICE_SIMPLE_ABHA_LATER,
+  SIMULATOR_BADGE,
   abhaStatusChip,
   ageFromDob,
   findMatchingPatient,
@@ -251,7 +253,7 @@ export const Reception: React.FC<ReceptionProps> = ({
           txnId: otpSentTxnId || undefined,
         });
         if (!onLinkAbha) {
-          throw new Error('ABHA link is unavailable until Platform POST /api/patients/link-abha is reachable.');
+          throw new Error('ABHA link is unavailable. Use practice-simple intake, or retry Link ABHA (NHA sandbox).');
         }
         const result = await onLinkAbha(body);
         saved = result.patient;
@@ -282,6 +284,7 @@ export const Reception: React.FC<ReceptionProps> = ({
 
       finishHandoff(saved);
       resetAbhaFlow();
+      setPath('practice-simple');
       setFormData({
         name: '',
         phone: '',
@@ -310,38 +313,44 @@ export const Reception: React.FC<ReceptionProps> = ({
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-xl font-bold text-slate-900 font-manrope">OPD Reception</h1>
             {path === 'abha-sandbox' && (
-              <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200">
-                {NHA_SANDBOX_BADGE}
-              </span>
+              <>
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200">
+                  {NHA_SANDBOX_BADGE}
+                </span>
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200">
+                  {SIMULATOR_BADGE}
+                </span>
+              </>
             )}
           </div>
           <p className="text-xs text-slate-500 mt-1">
             {firstRunHint
-              ? 'Register the first patient for this clinic. Saving writes a durable chart and an optional Waiting OPD token.'
-              : 'Practice-simple intake is the default. Link ABHA is a secondary NHA sandbox path that converges on the same patientId.'}
+              ? 'Practice-simple default: name, phone, age/sex. Saving writes a durable chart and an optional Waiting OPD token.'
+              : 'Practice-simple is the default landing. Link ABHA is an optional NHA sandbox step on the same patientId.'}
           </p>
         </div>
 
-        <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-lg">
-          <button
-            type="button"
-            onClick={() => setPath('practice-simple')}
-            className={`px-3 py-2 text-xs font-semibold rounded-md ${
-              path === 'practice-simple' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'
-            }`}
-          >
-            Practice-simple
-          </button>
+        {path === 'practice-simple' ? (
           <button
             type="button"
             onClick={() => setPath('abha-sandbox')}
-            className={`px-3 py-2 text-xs font-semibold rounded-md flex items-center gap-1.5 ${
-              path === 'abha-sandbox' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'
-            }`}
+            className="self-start px-3 py-2 text-xs font-semibold rounded-lg border border-amber-200 bg-amber-50 text-amber-900 hover:bg-amber-100 flex items-center gap-1.5"
           >
+            <ShieldCheck className="w-3.5 h-3.5" />
             {LINK_ABHA_CTA}
           </button>
-        </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => {
+              resetAbhaFlow();
+              setPath('practice-simple');
+            }}
+            className="self-start px-3 py-2 text-xs font-semibold rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+          >
+            {BACK_TO_PRACTICE_SIMPLE}
+          </button>
+        )}
       </div>
 
       {path === 'abha-sandbox' && (
@@ -351,6 +360,9 @@ export const Reception: React.FC<ReceptionProps> = ({
             <span className="text-xs font-bold uppercase tracking-wider text-amber-200">{LINK_ABHA_CTA}</span>
             <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-200 border border-amber-400/30">
               {NHA_SANDBOX_BADGE}
+            </span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-slate-200 border border-white/20">
+              {SIMULATOR_BADGE}
             </span>
           </div>
           <p className="text-xs text-slate-300 mb-4">{NHA_SANDBOX_NOTICE}</p>

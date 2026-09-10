@@ -26,14 +26,16 @@ export type OnboardingPath = "practice-simple" | "abha-sandbox";
 export type ClinicalHandoffView = "queue" | "rx" | "billing";
 
 export const NHA_SANDBOX_BADGE = "NHA sandbox";
+export const SIMULATOR_BADGE = "Simulator";
 export const LINK_ABHA_CTA = "Link ABHA (NHA sandbox)";
 export const LINKED_SANDBOX_CHIP = "LINKED_SANDBOX";
 export const NHA_SANDBOX_NOTICE =
-  "ABHA linking uses the NHA sandbox. Production ABDM is out of scope on this track.";
+  "ABHA linking uses the NHA sandbox simulator. Production ABDM is out of scope on this track.";
 export const BRIDGE_DOWN_MESSAGE =
   "NHA sandbox bridge is not ready (bridgeReady=false or the ABDM bridge is down). ABHA cannot be linked. Use practice-simple intake, or retry when the sandbox bridge is up.";
 export const PRACTICE_SIMPLE_ABHA_LATER =
   "ABHA can be linked later via Link ABHA (NHA sandbox). This path does not collect ABDM consent.";
+export const BACK_TO_PRACTICE_SIMPLE = "Back to practice-simple";
 
 export type LinkAbhaSource = "aadhaar_otp" | "abha_search" | "qr";
 export type LinkAbdmMode = "stub" | "sandbox";

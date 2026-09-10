@@ -5,9 +5,11 @@ import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import type { Patient } from "../types";
 import {
+  BACK_TO_PRACTICE_SIMPLE,
   LINK_ABHA_CTA,
   LINKED_SANDBOX_CHIP,
   NHA_SANDBOX_BADGE,
+  SIMULATOR_BADGE,
   abhaStatusChip,
   ageFromDob,
   consentFromVerify,
@@ -121,14 +123,23 @@ describe("dual onboarding helpers (#40)", () => {
     const reception = fs.readFileSync(path.join(root, "src/components/Reception.tsx"), "utf8");
     assert.equal(LINK_ABHA_CTA, "Link ABHA (NHA sandbox)");
     assert.equal(NHA_SANDBOX_BADGE, "NHA sandbox");
+    assert.equal(SIMULATOR_BADGE, "Simulator");
+    assert.equal(BACK_TO_PRACTICE_SIMPLE, "Back to practice-simple");
+    assert.match(reception, /useState<OnboardingPath>\('practice-simple'\)/);
     assert.match(reception, /LINK_ABHA_CTA/);
     assert.match(reception, /NHA_SANDBOX_BADGE/);
+    assert.match(reception, /SIMULATOR_BADGE/);
+    assert.match(reception, /BACK_TO_PRACTICE_SIMPLE/);
     assert.match(reception, /practice-simple/);
     assert.match(reception, /generateAbhaSandboxOtp/);
     assert.match(reception, /verifyAbhaSandboxOtp/);
     assert.match(reception, /link-abha|onLinkAbha/);
     assert.match(reception, new RegExp(LINKED_SANDBOX_CHIP));
     assert.equal(/Scan ABHA QR|handleSampleQrScan/.test(reception), false);
+    assert.equal(/bg-slate-100 p-1 rounded-lg/.test(reception), false);
+    const welcome = fs.readFileSync(path.join(root, "src/components/WelcomeSetupDashboard.tsx"), "utf8");
+    assert.match(welcome, /Practice-simple is the default/);
+    assert.equal(/LINK_ABHA_CTA/.test(welcome), false);
     const clinician = fs.readFileSync(path.join(root, "src/ClinicianApp.tsx"), "utf8");
     assert.match(clinician, /\/api\/patients\/link-abha/);
     assert.match(clinician, /setCurrentPatient\(patient\)/);

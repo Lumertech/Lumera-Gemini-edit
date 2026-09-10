@@ -72,7 +72,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   const { go } = useNav();
   const VIEW_TITLES: Record<NavView, string> = {
     welcome: 'Welcome & Initial Setup',
-    reception: 'OPD Reception & ABHA Intake',
+    reception: 'OPD Reception',
     ambient: 'Ambient AI Scribe & SOAP',
     rx: 'Smart Rx & Specialty Studio',
     'smart-rx': 'Smart Rx & Specialty Studio',
