@@ -1117,7 +1117,6 @@ export const LoginPage: React.FC = () => {
                   <p className="text-[10px] uppercase tracking-wider text-amber-400/90 font-semibold">SANDBOX / DEMO logins · password {DEMO_PASSWORD}</p>
                   <select
                     className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-[11px] text-slate-200"
-                    defaultValue=""
                     onChange={(e) => {
                       const acct = DEMO_LOGIN_MATRIX.find((a) => a.email === e.target.value);
                       if (!acct) return;

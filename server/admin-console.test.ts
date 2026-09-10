@@ -199,6 +199,13 @@ describe("Admin console persist (founder audit 1–9)", () => {
       auth
     );
     const id = String((created.json.user as { id: string }).id);
+    const now = new Date().toISOString();
+    getDb()
+      .prepare(
+        `INSERT OR IGNORE INTO tenants (id, name, specialty, country, timezone, phone, trial_ends_at, ai_scribe_minutes_limit, ai_scribe_minutes_used, active_status, hfr_id, created_at, updated_at)
+         VALUES (?, 'Reassign Audit', 'General Medicine', 'India', 'IST (UTC+5:30)', '+910000000000', ?, 500, 0, 1, '', ?, ?)`
+      )
+      .run("tenant-reassign-audit", now, now, now);
     const asAdmin = await jsonRequest(
       port,
       "PATCH",
