@@ -1,0 +1,27 @@
+{
+  "comment": "Copy these into Hostinger hPanel → Node.js Web App deploy settings. Not auto-read by Hostinger.",
+  "frameworkPreset": "express",
+  "nodeVersion": "22",
+  "packageManager": "npm",
+  "rootDirectory": "/",
+  "buildCommand": "npm run build",
+  "startCommand": "npm start",
+  "outputDirectory": "dist",
+  "entryFile": "dist/server.cjs",
+  "publicDirectory": "none — Express serves dist; do NOT deploy as Vite/React static",
+  "requiredEnv": {
+    "NODE_ENV": "production",
+    "APP_URL": "https://www.mylumera.in",
+    "JWT_SECRET": "<long-random-secret>"
+  },
+  "optionalEnvForAppReviewUrlStage": [
+    "META_VERIFY_TOKEN",
+    "META_APP_SECRET",
+    "FACEBOOK_APP_ID",
+    "FACEBOOK_APP_SECRET",
+    "FACEBOOK_REDIRECT_URI",
+    "META_ACCESS_TOKEN",
+    "META_PHONE_NUMBER_ID",
+    "GEMINI_API_KEY"
+  ]
+}

@@ -69,6 +69,14 @@ describe("Compliance #18 honesty labeling (LandingPage / Admin Meta)", () => {
     assert.match(adminShell, /SANDBOX|Simulator/);
   });
 
+  it("cms policy seed has WhatsApp STOP opt-out and stays sandbox-honest", () => {
+    const db = readRepo("server/db.ts");
+    assert.match(db, /replying \*\*STOP\*\*/);
+    assert.match(db, /not a certified Meta Tech Provider/i);
+    assert.match(db, /App Review is not submitted/);
+    assert.equal(/\bHIPAA\b/i.test(db), false);
+  });
+
   it("grep gate: no certified / official Meta / HIPAA / live Jan Aushadhi on Wave 0 files", () => {
     const gate = /certified|official meta|hipaa|jan aushadhi/i;
     for (const rel of WAVE0_FILES) {

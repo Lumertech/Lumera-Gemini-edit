@@ -10,12 +10,17 @@ import { attachUser, requireAuth } from "./server/auth.ts";
 import { createApiRouter } from "./server/api.ts";
 import { createMetaRouter } from "./server/meta.ts";
 import { createAbdmRouter } from "./server/abdm.ts";
+import { applyBundledServerNodeEnv, assertRequiredProductionEnv, resolveListenPort } from "./server/runtime.ts";
+import { attachProductionSpaFallback } from "./server/spa-fallback.ts";
 
 dotenv.config();
+applyBundledServerNodeEnv();
+assertRequiredProductionEnv();
 initDatabase();
 
 const app = express();
-const PORT = 3000;
+const PORT = resolveListenPort();
+app.set("trust proxy", 1);
 
 app.use(
   express.json({
@@ -586,6 +591,9 @@ For query "${query}":
 // Start Server with Vite Middleware
 // ----------------------------------------------------
 async function startServer() {
+  applyBundledServerNodeEnv();
+  assertRequiredProductionEnv();
+
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: {
@@ -601,6 +609,8 @@ async function startServer() {
         p === "/healthz" ||
         p.startsWith("/api") ||
         p.startsWith("/uploads") ||
+        p.startsWith("/meta") ||
+        p.startsWith("/v3") ||
         p.startsWith("/@") ||
         p.startsWith("/src") ||
         p.startsWith("/node_modules") ||
@@ -612,11 +622,7 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
-    app.get("*", (_req: Request, res: Response) => {
-      res.sendFile(path.join(distPath, "index.html"));
-    });
+    attachProductionSpaFallback(app);
   }
 
   app.listen(PORT, "0.0.0.0", () => {
@@ -625,4 +631,7 @@ async function startServer() {
   });
 }
 
-startServer();
+startServer().catch((err) => {
+  console.error("[Lumera] Server failed to start:", err);
+  process.exit(1);
+});
