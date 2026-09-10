@@ -33,7 +33,7 @@ export const LINKED_SANDBOX_CHIP = "LINKED_SANDBOX";
 export const NHA_SANDBOX_NOTICE =
   "ABHA linking uses the NHA sandbox simulator. Production ABDM is out of scope on this track.";
 export const BRIDGE_DOWN_MESSAGE =
-  "NHA sandbox bridge is not ready (bridgeReady=false or the ABDM bridge is down). ABHA cannot be linked. Use practice-simple intake, or retry when the sandbox bridge is up.";
+  "NHA sandbox bridge is not ready (bridgeReady and abdmMode). ABHA cannot be linked. Use practice-simple intake, or retry when the sandbox bridge is up.";
 export const PRACTICE_SIMPLE_ABHA_LATER =
   "ABHA can be linked later via Link ABHA (NHA sandbox). This path does not collect ABDM consent.";
 export const BACK_TO_PRACTICE_SIMPLE = "Back to practice-simple";
@@ -113,13 +113,15 @@ export type AbhaSandboxVerifyResponse = {
 
 export type AbdmBridgeStatus = {
   bridgeReady: boolean;
-  abdmMode?: string;
+  abdmMode?: LinkAbdmMode | string;
 };
 
-/** Fail-closed: only an explicit bridgeReady === true is ready. */
+/** Ready only when both frozen status fields are present: bridgeReady === true and abdmMode is stub|sandbox. */
 export function interpretAbdmStatus(data: { bridgeReady?: boolean; abdmMode?: string } | null | undefined): AbdmBridgeStatus {
-  const abdmMode = data && typeof data.abdmMode === "string" ? data.abdmMode : undefined;
-  if (!data || data.bridgeReady !== true) {
+  const rawMode = data && typeof data.abdmMode === "string" ? data.abdmMode.trim() : "";
+  const abdmMode = rawMode === "stub" || rawMode === "sandbox" ? rawMode : rawMode || undefined;
+  const modeOk = rawMode === "stub" || rawMode === "sandbox";
+  if (!data || data.bridgeReady !== true || !modeOk) {
     return { bridgeReady: false, abdmMode };
   }
   return { bridgeReady: true, abdmMode };
@@ -275,11 +277,6 @@ export function consentFromVerify(
     status: existing?.status || "GRANTED",
     purpose: existing?.purpose || "ABHA link",
     grantedAt: now,
-    granted: true,
-    capturedAt: now,
-    sandbox: true,
-    source: "nha-sandbox",
-    txnId: existing?.txnId || txnId || undefined,
   };
 }
 

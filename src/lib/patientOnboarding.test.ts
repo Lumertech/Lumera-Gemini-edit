@@ -50,14 +50,17 @@ describe("dual onboarding helpers (#40)", () => {
     assert.equal(findMatchingPatient([existing], { phone: "9000000000" }), null);
   });
 
-  it("fail-closes ABDM status unless bridgeReady is explicitly true", () => {
+  it("fail-closes ABDM status unless bridgeReady and abdmMode are both ready", () => {
     assert.equal(interpretAbdmStatus(null).bridgeReady, false);
     assert.equal(interpretAbdmStatus({}).bridgeReady, false);
+    assert.equal(interpretAbdmStatus({ bridgeReady: true }).bridgeReady, false);
     assert.equal(interpretAbdmStatus({ bridgeReady: false, abdmMode: "sandbox" }).bridgeReady, false);
     assert.equal(interpretAbdmStatus({ abdmMode: "stub" }).bridgeReady, false);
+    assert.equal(interpretAbdmStatus({ bridgeReady: true, abdmMode: "live" }).bridgeReady, false);
     const ready = interpretAbdmStatus({ bridgeReady: true, abdmMode: "stub" });
     assert.equal(ready.bridgeReady, true);
     assert.equal(ready.abdmMode, "stub");
+    assert.equal(interpretAbdmStatus({ bridgeReady: true, abdmMode: "sandbox" }).bridgeReady, true);
   });
 
   it("never labels ABHA as Verified — LINKED_SANDBOX only", () => {
@@ -101,7 +104,16 @@ describe("dual onboarding helpers (#40)", () => {
     assert.equal(body.abdmMode, "sandbox");
     assert.equal(body.consentArtefact?.consentId, "consent-txn-1");
     assert.equal(body.consentArtefact?.status, "GRANTED");
-    assert.equal(body.consentArtefact?.sandbox, true);
+    assert.deepEqual(Object.keys(body).sort(), [
+      "abdmMode",
+      "abhaAddress",
+      "abhaNumber",
+      "consentArtefact",
+      "demographics",
+      "patientId",
+      "phone",
+      "source",
+    ]);
     assert.equal((body as { consent?: unknown }).consent, undefined);
   });
 
@@ -109,9 +121,8 @@ describe("dual onboarding helpers (#40)", () => {
     const consent = consentFromVerify("txn-9", { abhaNumber: "91-1" });
     assert.equal(consent.consentId, "consent-txn-9");
     assert.equal(consent.status, "GRANTED");
-    assert.equal(consent.sandbox, true);
-    assert.equal(consent.source, "nha-sandbox");
-    assert.equal(consent.txnId, "txn-9");
+    assert.equal(consent.purpose, "ABHA link");
+    assert.ok(consent.grantedAt);
     assert.equal(genderFromAbdm("M"), "Male");
     assert.ok((ageFromDob("1990-01-01") || 0) >= 30);
   });
