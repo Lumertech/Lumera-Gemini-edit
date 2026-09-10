@@ -264,7 +264,10 @@ export const LandingPage: React.FC = () => {
   };
 
   return (
-    <div className="h-full overflow-y-auto text-white font-sans selection:bg-purple-600 selection:text-white bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 scroll-smooth">
+    <div
+      data-testid="public-landing"
+      className="h-full overflow-y-auto text-white font-sans selection:bg-purple-600 selection:text-white bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 scroll-smooth"
+    >
       {/* 1. TOP NAVIGATION BAR: Consolidated Single "Sign In" Button */}
       <header className="max-w-6xl mx-auto px-4 sm:px-6 py-5 flex items-center justify-between border-b border-white/10">
         <button type="button" onClick={() => go("landing")} className="flex items-center gap-3">

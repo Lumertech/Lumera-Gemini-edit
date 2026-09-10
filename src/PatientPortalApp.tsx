@@ -16,7 +16,7 @@ export default function PatientPortalApp() {
         <span className="font-bold">Lumera Patient Portal</span>
         <div className="flex items-center gap-3">
           <span className="text-slate-400">{user?.name}</span>
-          <button type="button" onClick={() => go("landing")} className="hover:text-blue-300">
+          <button type="button" onClick={() => go("landing", { explicitPublic: true })} className="hover:text-blue-300">
             Site
           </button>
           <button type="button" onClick={() => logout().then(() => go("landing"))}>

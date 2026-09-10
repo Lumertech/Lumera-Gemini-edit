@@ -161,7 +161,7 @@ export const OnboardingWizard: React.FC = () => {
       }
 
       markWelcomeDashboard();
-      go("app");
+      go("app", { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to finalize practice onboarding");
       setBusy(false);

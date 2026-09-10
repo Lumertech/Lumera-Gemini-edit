@@ -92,7 +92,10 @@ export const Navbar: React.FC<NavbarProps> = ({
   };
 
   return (
-    <header className="h-14 bg-slate-900 border-b border-slate-800 text-white flex items-center justify-between px-4 sm:px-6 shrink-0 select-none z-30 shadow-sm">
+    <header
+      data-testid="app-topbar"
+      className="h-14 bg-slate-900 border-b border-slate-800 text-white flex items-center justify-between px-4 sm:px-6 shrink-0 select-none z-30 shadow-sm"
+    >
       {/* Left: Sidebar Toggle + Brand Logo + View Breadcrumb */}
       <div className="flex items-center space-x-3 sm:space-x-4">
         {onToggleSidebar && (
@@ -225,7 +228,7 @@ export const Navbar: React.FC<NavbarProps> = ({
         )}
         <button
           type="button"
-          onClick={() => go('landing')}
+          onClick={() => go('landing', { explicitPublic: true })}
           className="hidden md:inline text-[11px] text-slate-400 hover:text-white"
         >
           Exit to site

@@ -382,8 +382,15 @@ export default function ClinicianApp() {
   const showRxStudio = (currentView === 'rx' || currentView === 'smart-rx') && Boolean(currentPatient.id);
   const showRxEmptyGuard = (currentView === 'rx' || currentView === 'smart-rx') && !currentPatient.id;
 
+  if (!user) {
+    return null;
+  }
+
   return (
-    <div className="h-screen w-screen overflow-hidden flex flex-col bg-slate-100 text-slate-900 font-sans selection:bg-blue-600 selection:text-white">
+    <div
+      data-testid="clinician-app"
+      className="h-screen w-screen overflow-hidden flex flex-col bg-slate-100 text-slate-900 font-sans selection:bg-blue-600 selection:text-white"
+    >
       <Navbar
         currentView={currentView}
         onSelectView={setCurrentView}
