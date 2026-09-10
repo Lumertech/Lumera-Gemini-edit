@@ -3,6 +3,7 @@ import { Camera, Edit3, CheckCircle2, ShieldCheck, Award } from "lucide-react";
 import { apiFetch } from "../../api/http";
 import { Doctor, PolyclinicSpecialty } from "../../types";
 import { DoctorProfileModal } from "../DoctorProfileModal";
+import { PRACTICE_SPECIALTIES } from "../../lib/specialtyWorkflow";
 
 interface StaffRow {
   id: string;
@@ -15,20 +16,7 @@ interface StaffRow {
   shift: string;
 }
 
-const SPECIALTIES: PolyclinicSpecialty[] = [
-  "General Medicine",
-  "Cardiology",
-  "Pediatrics",
-  "Dermatology",
-  "Orthopedics",
-  "Physiotherapy & Rehabilitation",
-  "Gynecology",
-  "ENT",
-  "Neurology",
-  "Ophthalmology",
-  "Dental Surgery",
-  "Psychiatry & Mental Health",
-];
+const SPECIALTIES = PRACTICE_SPECIALTIES as PolyclinicSpecialty[];
 
 export const AdminPeople: React.FC = () => {
   const [doctors, setDoctors] = useState<Doctor[]>([]);
@@ -52,6 +40,9 @@ export const AdminPeople: React.FC = () => {
     email: "",
     shift: "Morning",
   });
+  const [editingStaff, setEditingStaff] = useState<StaffRow | null>(null);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
 
   const load = () => {
     apiFetch<{ doctors: Doctor[] }>("/api/doctors")
@@ -66,19 +57,45 @@ export const AdminPeople: React.FC = () => {
 
   const addDoctor = async (e: React.FormEvent) => {
     e.preventDefault();
-    await apiFetch("/api/doctors", {
-      method: "POST",
-      body: JSON.stringify({ ...docForm, availableDays: ["Mon", "Tue", "Wed", "Thu", "Fri"], active: true }),
-    });
-    setDocForm({ ...docForm, name: "", qualification: "", regNumber: "", email: "" });
-    load();
+    setError("");
+    try {
+      await apiFetch("/api/doctors", {
+        method: "POST",
+        body: JSON.stringify({ ...docForm, availableDays: ["Mon", "Tue", "Wed", "Thu", "Fri"], active: true }),
+      });
+      setDocForm({ ...docForm, name: "", qualification: "", regNumber: "", email: "" });
+      setNotice("Doctor added");
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not add doctor");
+    }
   };
 
   const addStaff = async (e: React.FormEvent) => {
     e.preventDefault();
-    await apiFetch("/api/staff", { method: "POST", body: JSON.stringify(staffForm) });
-    setStaffForm({ ...staffForm, name: "", phone: "", email: "" });
-    load();
+    setError("");
+    try {
+      await apiFetch("/api/staff", { method: "POST", body: JSON.stringify(staffForm) });
+      setStaffForm({ ...staffForm, name: "", phone: "", email: "" });
+      setNotice("Staff added");
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not add staff");
+    }
+  };
+
+  const saveStaff = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingStaff) return;
+    setError("");
+    try {
+      await apiFetch(`/api/staff/${editingStaff.id}`, { method: "PATCH", body: JSON.stringify(editingStaff) });
+      setEditingStaff(null);
+      setNotice("Staff saved");
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save staff");
+    }
   };
 
   const handleEditDoctor = (doc: Doctor) => {
@@ -97,6 +114,8 @@ export const AdminPeople: React.FC = () => {
         <p className="text-xs text-slate-500 mt-0.5">
           Platform-level doctor license directory, credential verification, and facility staff roster.
         </p>
+        {error && <p className="text-xs text-red-600 mt-2">{error}</p>}
+        {notice && <p className="text-xs text-emerald-700 mt-2">{notice}</p>}
       </div>
 
       <section className="bg-white border rounded-2xl p-5 space-y-4 shadow-sm">
@@ -228,11 +247,20 @@ export const AdminPeople: React.FC = () => {
                   <td className="py-2.5 px-3">{s.shift}</td>
                   <td className="py-2.5 px-3 text-slate-500">{s.email || s.phone}</td>
                   <td className="py-2.5 px-3 text-right">
+                    <button type="button" className="text-blue-600 font-semibold mr-3" onClick={() => setEditingStaff({ ...s })}>
+                      Edit
+                    </button>
                     <button
+                      type="button"
                       className="text-red-600 hover:text-red-700"
                       onClick={async () => {
-                        await apiFetch(`/api/staff/${s.id}`, { method: "DELETE" });
-                        load();
+                        try {
+                          await apiFetch(`/api/staff/${s.id}`, { method: "DELETE" });
+                          setNotice("Staff removed");
+                          load();
+                        } catch (err) {
+                          setError(err instanceof Error ? err.message : "Remove failed");
+                        }
                       }}
                     >
                       Remove
@@ -256,6 +284,24 @@ export const AdminPeople: React.FC = () => {
           }}
           onSave={handleDoctorSaved}
         />
+      )}
+
+      {editingStaff && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4">
+          <form onSubmit={saveStaff} className="bg-white rounded-2xl p-5 w-full max-w-md space-y-2 text-xs">
+            <h2 className="font-bold text-sm">Edit staff</h2>
+            <input required className="border rounded px-2 py-1.5 w-full" value={editingStaff.name} onChange={(e) => setEditingStaff({ ...editingStaff, name: e.target.value })} />
+            <input className="border rounded px-2 py-1.5 w-full" value={editingStaff.role} onChange={(e) => setEditingStaff({ ...editingStaff, role: e.target.value })} />
+            <input className="border rounded px-2 py-1.5 w-full" value={editingStaff.department} onChange={(e) => setEditingStaff({ ...editingStaff, department: e.target.value })} />
+            <input className="border rounded px-2 py-1.5 w-full" value={editingStaff.phone} onChange={(e) => setEditingStaff({ ...editingStaff, phone: e.target.value })} />
+            <input className="border rounded px-2 py-1.5 w-full" value={editingStaff.email} onChange={(e) => setEditingStaff({ ...editingStaff, email: e.target.value })} />
+            <input className="border rounded px-2 py-1.5 w-full" value={editingStaff.shift} onChange={(e) => setEditingStaff({ ...editingStaff, shift: e.target.value })} />
+            <div className="flex gap-2 pt-1">
+              <button type="submit" className="bg-purple-600 text-white px-3 py-1.5 rounded font-semibold">Save</button>
+              <button type="button" className="px-3 py-1.5 rounded border" onClick={() => setEditingStaff(null)}>Cancel</button>
+            </div>
+          </form>
+        </div>
       )}
     </div>
   );

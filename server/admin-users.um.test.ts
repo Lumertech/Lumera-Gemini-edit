@@ -500,7 +500,7 @@ describe("Admin UM users API (UM-1…6)", () => {
     const siblingSeeds = getDb()
       .prepare(`SELECT email FROM users WHERE email IN (${SIBLING_PR55_DEMO_EMAILS.map(() => "?").join(", ")})`)
       .all(...SIBLING_PR55_DEMO_EMAILS) as { email: string }[];
-    assert.equal(siblingSeeds.length, 0, "must not insert #55 UI demo emails");
+    assert.equal(siblingSeeds.length, SIBLING_PR55_DEMO_EMAILS.length, "boot must seed #55 UI demo emails");
   });
 
   it("adopts #55 overlapping emails as pack ids without rewriting persona fields", () => {
@@ -533,10 +533,16 @@ describe("Admin UM users API (UM-1…6)", () => {
     assert.equal(consultant.pack_id, "consultant");
     assert.equal(consultant.name, "Aarav Mehta");
 
-    const extras = getDb()
-      .prepare(`SELECT email FROM users WHERE email IN (${SIBLING_PR55_DEMO_EMAILS.map(() => "?").join(", ")})`)
-      .all(...SIBLING_PR55_DEMO_EMAILS) as { email: string }[];
-    assert.equal(extras.length, 0);
+    const dentist = getDb()
+      .prepare("SELECT name, specialty, pack_id FROM users WHERE email = ?")
+      .get("dentist@lumera.me") as { name: string; specialty: string; pack_id: string };
+    assert.equal(dentist.specialty, "dentist");
+    assert.ok(dentist.name);
+    seedDemoSpecialtyPackUsers(getDb());
+    const dentistAfter = getDb()
+      .prepare("SELECT name FROM users WHERE email = ?")
+      .get("dentist@lumera.me") as { name: string };
+    assert.equal(dentistAfter.name, dentist.name, "#56 seed must not rewrite #55 persona names");
   });
 
   it("does not change public register Individual default (UM-2 / #52)", async () => {

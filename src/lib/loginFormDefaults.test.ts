@@ -94,6 +94,7 @@ describe("public login form defaults", () => {
     assert.match(loginPage, /autoComplete="new-password"/);
     assert.match(loginPage, /autoComplete="tel"/);
     assert.match(loginPage, /sanitizePhoneDigits/);
+    assert.match(loginPage, /data-testid="admin-password-login-note"/);
   });
 
   it("keeps Remember email opt-in and hides public Admin chrome", () => {

@@ -80,6 +80,8 @@ describe("Wave 1A PHI / auth lock", () => {
     assert.equal(allowSkipOtp("production"), false);
     assert.equal(allowSkipOtp("development"), true);
     assert.equal(allowSkipOtp("test"), true);
+    assert.equal(allowPasswordLoginWithoutOtp({ role: "super_admin", email: "admin@lumera.me" }), true);
+    assert.equal(allowPasswordLoginWithoutOtp({ role: "doctor", email: "doctor@lumera.me" }), false);
   });
 
   it("password session without OTP is reserved for admin roles", () => {
@@ -355,6 +357,25 @@ describe("Wave 1A PHI / auth lock", () => {
       assert.equal(login.json.user, undefined);
       assert.equal(login.json.demoOtp, undefined);
       assert.equal(login.json.otpDelivered, false);
+    } finally {
+      if (prev === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = prev;
+    }
+  });
+
+  it("production email+password login for super_admin mints a session without WhatsApp OTP", async () => {
+    const prev = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+    try {
+      const login = await jsonRequest(port, "POST", "/api/auth/login", {
+        email: "admin@lumera.me",
+        password: "Lumera@2026",
+      });
+      assert.equal(login.status, 200, String(login.json.error || "admin prod login"));
+      assert.equal(login.json.requiresOtp, false);
+      assert.ok(login.json.token);
+      assert.equal((login.json.user as { role?: string } | undefined)?.role, "super_admin");
+      assert.equal(login.json.otpDelivered, undefined);
     } finally {
       if (prev === undefined) delete process.env.NODE_ENV;
       else process.env.NODE_ENV = prev;

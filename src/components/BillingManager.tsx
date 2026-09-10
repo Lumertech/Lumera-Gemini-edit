@@ -39,6 +39,8 @@ import {
   shouldShowSandboxPay,
   todayIsoDate,
 } from '../lib/billingCollect';
+import { useAuth } from '../auth/AuthContext';
+import { workflowForUser } from '../lib/specialtyWorkflow';
 
 interface BillingManagerProps {
   currentPatient: Patient;
@@ -135,6 +137,8 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
   appointmentIsPaid = false,
   onPaymentSuccess,
 }) => {
+  const { user } = useAuth();
+  const pack = workflowForUser(user);
   const [invoiceNumber, setInvoiceNumber] = useState(`INV-2026-${Math.floor(1000 + Math.random() * 9000)}`);
   const [activeTab, setActiveTab] = useState<'invoice' | 'pharmacy_batches' | 'rehab_packages'>('invoice');
   const [pharmacyStock, setPharmacyStock] = useState<PharmacyBatchItem[]>(MOCK_PHARMACY_BATCHES);
@@ -477,6 +481,12 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-6 space-y-6">
+      <div
+        className="no-print px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-700"
+        data-testid="pack-billing-lens"
+      >
+        {pack.billingLabel} · {pack.billingLens} · {pack.formularyLens === "who-eml" ? "WHO-EML / pharmacy" : pack.formularyLens === "rehab-exercises" ? "exercises & packages" : pack.formularyLens === "dental-materials" ? "chair procedures" : pack.formularyLens === "salon-menu" ? "salon menu" : "no clinical formulary"}
+      </div>
       {dayEnd && (
         <div className="no-print bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>

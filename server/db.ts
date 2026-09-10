@@ -4,6 +4,7 @@ import path from "node:path";
 import { hashPassword } from "./password.ts";
 import { scrubSeedBillingIds } from "./seed-branding.ts";
 import { CMS_POLICY_UPSERTS } from "./cms-policy-seed.ts";
+import { ensureDemoPersonaUsers } from "./demo-seed.ts";
 import {
   DEMO_SPECIALTY_MATRIX,
   assertPacksDifferByMoreThanLabel,
@@ -119,7 +120,9 @@ export function assignedRoleForPracticeType(
 
 export function isDemoWorkspaceUser(user: { id?: string; tenant_id?: string; email?: string }): boolean {
   if (user.tenant_id === DEMO_TENANT_ID) return true;
-  return ["user-admin", "user-doctor", "user-patient", "user-reception"].includes(String(user.id || ""));
+  const email = String(user.email || "").toLowerCase();
+  if (email.endsWith("@lumera.me")) return true;
+  return String(user.id || "").startsWith("user-") && ["user-admin", "user-doctor", "user-patient", "user-reception", "user-receptionist"].includes(String(user.id || ""));
 }
 
 export interface DbTenant {
@@ -190,6 +193,7 @@ export function initDatabase(): DatabaseSync {
   seedSubscriptionsIfMissing(db);
   seedClinicalAndWhatsAppIfMissing(db);
   seedDemoSpecialtyPackUsers(db);
+  ensureDemoPersonaUsers(db);
   seedSubscriptionsIfMissing(db);
   assignDemoTenantToUnscopedClinicalRows(db);
   ensureMetaTechProviderAndPolicies(db);
@@ -1631,10 +1635,16 @@ export function seedClinicalAndWhatsAppIfMissing(database: DatabaseSync) {
     database.exec(`
       UPDATE users
       SET tenant_id = '${DEMO_TENANT_ID}',
-          onboarding_completed = 1,
-          practice_type = 'polyclinic'
-      WHERE id IN ('user-admin', 'user-doctor', 'user-patient', 'user-reception')
+          onboarding_completed = 1
+      WHERE id IN ('user-admin', 'user-doctor', 'user-patient', 'user-reception', 'user-receptionist', 'user-clinic-admin')
          OR id LIKE 'test-user-%'
+    `);
+    // Legacy per-doctor test logins stay on the shared multi-specialty tenant.
+    // Persona @lumera.me demos keep practice_type from ensureDemoPersonaUsers.
+    database.exec(`
+      UPDATE users
+      SET practice_type = 'polyclinic'
+      WHERE id LIKE 'test-user-%'
     `);
   } catch {}
 

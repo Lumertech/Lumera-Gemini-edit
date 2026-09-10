@@ -25,9 +25,10 @@ import { Patient, Doctor } from '../types';
 import { useAuth } from '../auth/AuthContext';
 import { useNav } from '../nav/NavigationContext';
 import { isPolyclinicPractice } from '../lib/sessionWorkspace';
+import { allowedViewsForWorkflow, workflowForUser } from '../lib/specialtyWorkflow';
 
 export const ROLE_VISIBLE_VIEWS: Record<string, NavView[]> = {
-  doctor: ['welcome', 'queue', 'opd-queue', 'rx', 'smart-rx', 'ambient', 'reports', 'appointments', 'polyclinic', 'whatsapp', 'voicebot', 'billing', 'dhis', 'team', 'reception', 'kiosk', 'settings'],
+  doctor: ['welcome', 'queue', 'opd-queue', 'rx', 'smart-rx', 'ambient', 'reports', 'appointments', 'polyclinic', 'whatsapp', 'voicebot', 'billing', 'dhis', 'team', 'reception', 'kiosk', 'settings', 'wellness', 'therapy-session', 'consult-practice', 'physio-session', 'dental-chart'],
   receptionist: ['welcome', 'reception', 'queue', 'opd-queue', 'appointments', 'kiosk', 'billing', 'whatsapp', 'settings'],
   polyclinic_admin: ['welcome', 'queue', 'opd-queue', 'reception', 'appointments', 'polyclinic', 'billing', 'reports', 'whatsapp', 'voicebot', 'dhis', 'team', 'kiosk', 'settings'],
   CLINIC_ADMIN: ['welcome', 'queue', 'opd-queue', 'reception', 'appointments', 'polyclinic', 'billing', 'reports', 'whatsapp', 'voicebot', 'dhis', 'portal', 'team', 'kiosk', 'settings'],
@@ -68,55 +69,79 @@ export const Sidebar: React.FC<SidebarProps> = ({
   if (!polyclinic) {
     allowedViews = allowedViews.filter(v => v !== 'team' && v !== 'polyclinic');
   }
+  const pack = workflowForUser(user);
+  allowedViews = allowedViewsForWorkflow(allowedViews, pack);
 
-  const canStartConsult = allowedViews.includes('rx') || allowedViews.includes('smart-rx');
+  const canStartConsult = allowedViews.includes('rx') || allowedViews.includes('smart-rx') || allowedViews.includes(pack.homeView as NavView);
+  const startView = (pack.showMedicalRx ? 'rx' : pack.homeView) as NavView;
   const canOpenAdminCms = userRole === 'super_admin';
+
+  const suiteTitle =
+    pack.kind === 'physio' ? '1. Rehab suite' :
+    pack.kind === 'dental' ? '1. Dental operatory' :
+    pack.kind === 'wellness' ? '1. Salon / spa book' :
+    pack.kind === 'therapy' ? '1. Therapy desk' :
+    pack.kind === 'consultant' ? '1. Consulting desk' :
+    '1. Clinical Suite';
+  const flowTitle =
+    pack.kind === 'physio' ? '2. Sessions' :
+    pack.kind === 'dental' ? '2. Chair flow' :
+    pack.kind === 'wellness' ? '2. Bookings' :
+    pack.kind === 'therapy' ? '2. Calendar' :
+    pack.kind === 'consultant' ? '2. Meetings' :
+    '2. OPD Flow & Queue';
 
   const NAV_SECTIONS = [
     {
-      title: '1. Clinical Suite',
+      title: suiteTitle,
       items: [
-        {
-          id: 'rx' as NavView,
-          label: 'Smart Rx Studio',
-          icon: FileText,
-          badge: 'Rx',
-          badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
-        },
-        {
-          id: 'ambient' as NavView,
-          label: 'Ambient AI Scribe',
-          icon: Sparkles,
-          badge: 'Live',
-          badgeColor: 'bg-blue-500/20 text-blue-300 border-blue-500/30',
-        },
-        {
-          id: 'reports' as NavView,
-          label: 'AI Lab OCR & Diagnostic Trends',
-          icon: Activity,
-          badge: 'OCR',
-          badgeColor: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30',
-        },
+        ...(pack.homeView !== 'queue' && pack.homeView !== 'rx'
+          ? [{ id: pack.homeView as NavView, label: pack.chartLabel, icon: Sparkles }]
+          : []),
+        ...(pack.showMedicalRx
+          ? [{
+              id: 'rx' as NavView,
+              label: pack.kind === 'physio' ? 'Exercises & procedures' : pack.kind === 'dental' ? 'Odontogram / visit' : 'Smart Rx Studio',
+              icon: FileText,
+              badge: pack.kind === 'medical' ? 'Rx' : pack.kind === 'physio' ? 'HEP' : 'Chart',
+              badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
+            }]
+          : []),
+        ...(pack.kind === 'medical'
+          ? [{
+              id: 'ambient' as NavView,
+              label: 'Ambient AI Scribe',
+              icon: Sparkles,
+              badge: 'Live',
+              badgeColor: 'bg-blue-500/20 text-blue-300 border-blue-500/30',
+            }, {
+              id: 'reports' as NavView,
+              label: 'AI Lab OCR & Diagnostic Trends',
+              icon: Activity,
+              badge: 'OCR',
+              badgeColor: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30',
+            }]
+          : []),
       ],
     },
     {
-      title: '2. OPD Flow & Queue',
+      title: flowTitle,
       items: [
         {
           id: 'queue' as NavView,
-          label: 'Live OPD Queue & Triage',
+          label: pack.queueLabel || 'Live OPD Queue & Triage',
           icon: Users,
         },
         {
           id: 'reception' as NavView,
-          label: 'OPD Reception & ABHA (ABDM)',
+          label: pack.receptionLabel || 'OPD Reception & ABHA (ABDM)',
           icon: UserCheck,
-          badge: 'ABDM',
+          badge: pack.kind === 'medical' ? 'ABDM' : undefined,
           badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
         },
         {
           id: 'appointments' as NavView,
-          label: 'Appointments & Schedule',
+          label: pack.appointmentsLabel || 'Appointments & Schedule',
           icon: Calendar,
         },
         {
@@ -136,7 +161,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       items: [
         {
           id: 'billing' as NavView,
-          label: 'Billing, Claims & E-Invoicing',
+          label: pack.billingLabel || 'Billing, Claims & E-Invoicing',
           icon: Receipt,
         },
         {
@@ -174,6 +199,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   return (
     <aside
       data-testid="app-sidebar"
+      data-pack-kind={pack.kind}
       className={`${
         isCollapsed ? 'w-16' : 'w-64'
       } flex-shrink-0 bg-slate-900 border-r border-slate-800 text-slate-300 flex flex-col justify-between transition-all duration-200 select-none z-20 overflow-hidden`}
@@ -182,14 +208,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {canStartConsult && (
           <button
             type="button"
-            onClick={() => onSelectView('rx')}
-            title={isCollapsed ? 'Start New Consultation' : undefined}
+            onClick={() => onSelectView(startView)}
+            title={isCollapsed ? pack.primaryCta : undefined}
             className={`w-full flex items-center ${
               isCollapsed ? 'justify-center px-2' : 'justify-center gap-2 px-3'
             } py-2.5 rounded-xl text-xs font-bold bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-lg shadow-blue-600/30 hover:from-cyan-400 hover:to-blue-500`}
           >
             <Plus className="w-4 h-4 shrink-0" />
-            {!isCollapsed && <span>+ Start New Consultation</span>}
+            {!isCollapsed && <span>+ {pack.primaryCta}</span>}
           </button>
         )}
 

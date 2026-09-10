@@ -19,6 +19,7 @@ import {
   type UserRole,
   type UserStatus,
 } from "./db.ts";
+import { persistSpecialtyPackId } from "../src/lib/specialtyPack.ts";
 import { createClinicalRouter } from "./clinical.ts";
 import { createBillingRouter } from "./billing.ts";
 import {
@@ -702,7 +703,8 @@ export function createApiRouter(): Router {
 
     if (record.purpose === "register") {
       const practiceName = payload.practiceName || payload.clinicName || "New Clinic";
-      const specialty = payload.specialty || "General Medicine";
+      const mappedRegisterSpecialty = persistSpecialtyPackId(payload.specialty || "General Medicine", { required: true });
+      const specialty = mappedRegisterSpecialty.ok ? mappedRegisterSpecialty.id : "gp";
       const country = payload.country || "India";
       const timezone = payload.timezone || "IST (UTC+5:30)";
       const phone = record.phone || payload.phone || "";
@@ -754,8 +756,8 @@ export function createApiRouter(): Router {
         userId = `user-${crypto.randomUUID().slice(0, 8)}`;
         hprId = hprId || `IN-HPR-${Math.floor(10000000 + Math.random() * 90000000)}`;
         getDb().prepare(`
-          INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, clinic_name, avatar_url, whatsapp_verified, hpr_id, hfr_id, onboarding_completed, practice_type, specialty, last_login, created_at)
-          VALUES (?, ?, ?, ?, ?, 'doctor', 'active', ?, ?, ?, 1, ?, ?, 0, 'individual', ?, ?, ?)
+          INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, clinic_name, avatar_url, whatsapp_verified, hpr_id, hfr_id, onboarding_completed, practice_type, specialty, pack_id, last_login, created_at)
+          VALUES (?, ?, ?, ?, ?, 'doctor', 'active', ?, ?, ?, 1, ?, ?, 0, 'individual', ?, ?, ?, ?)
         `).run(
           userId,
           tenantId,
@@ -767,6 +769,7 @@ export function createApiRouter(): Router {
           avatarUrl,
           hprId,
           hfrId,
+          specialty,
           specialty,
           now,
           now
@@ -860,7 +863,11 @@ export function createApiRouter(): Router {
   // Practice Registration Endpoint: Creates Tenant, CLINIC_ADMIN, ABDM HFR/HPR, DHIS threshold, and dispatches WhatsApp OTP
   const handleRegisterPractice = async (req: Request, res: Response) => {
     const practiceName = String(req.body?.practiceName || req.body?.clinicName || "").trim();
-    const specialty = String(req.body?.specialty || "General Medicine").trim();
+    const mappedSpecialty = persistSpecialtyPackId(req.body?.specialty || "General Medicine", { required: true });
+    if (!mappedSpecialty.ok) {
+      return res.status(400).json({ error: mappedSpecialty.error });
+    }
+    const specialty = mappedSpecialty.id;
     const country = String(req.body?.country || "India").trim();
     const timezone = String(req.body?.timezone || "IST (UTC+5:30)").trim();
     const phone = String(req.body?.phone || "").trim();
@@ -904,9 +911,9 @@ export function createApiRouter(): Router {
     const passwordHash = password ? hashPassword(password) : hashPassword("Lumera@2026");
 
     getDb().prepare(`
-      INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, clinic_name, avatar_url, whatsapp_verified, hpr_id, hfr_id, onboarding_completed, practice_type, specialty, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, 0, ?, ?, 0, ?, ?, ?)
-    `).run(userId, tenantId, email, passwordHash, name, assignedRole, phone, practiceName, avatarUrl, hprId, hfrId, practiceType, specialty, now);
+      INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, clinic_name, avatar_url, whatsapp_verified, hpr_id, hfr_id, onboarding_completed, practice_type, specialty, pack_id, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, 0, ?, ?, 0, ?, ?, ?, ?)
+    `).run(userId, tenantId, email, passwordHash, name, assignedRole, phone, practiceName, avatarUrl, hprId, hfrId, practiceType, specialty, specialty, now);
 
     // 3. DHIS TRANSACTIONS INITIALIZATION (0/100 threshold for current month):
     const dhisId = `dhis-${crypto.randomUUID().slice(0, 8)}`;
@@ -1019,7 +1026,14 @@ export function createApiRouter(): Router {
     const userId = req.user!.id;
     const doctorName = req.body?.doctorName ? String(req.body.doctorName).trim() : undefined;
     const clinicName = req.body?.clinicName ? String(req.body.clinicName).trim() : undefined;
-    const specialty = req.body?.specialty ? String(req.body.specialty).trim() : undefined;
+    let specialty: string | undefined;
+    if (req.body?.specialty != null && String(req.body.specialty).trim()) {
+      const mappedOnboarding = persistSpecialtyPackId(req.body.specialty, { required: true });
+      if (!mappedOnboarding.ok) {
+        return res.status(400).json({ error: mappedOnboarding.error });
+      }
+      specialty = mappedOnboarding.id;
+    }
     const regNumber = req.body?.regNumber ? String(req.body.regNumber).trim() : undefined;
     const consultationFee = req.body?.consultationFee !== undefined && req.body?.consultationFee !== null
       ? Number(req.body.consultationFee)
@@ -1051,12 +1065,14 @@ export function createApiRouter(): Router {
       SET onboarding_completed = 1,
           practice_type = COALESCE(?, practice_type),
           specialty = COALESCE(?, specialty),
+          pack_id = COALESCE(?, pack_id),
           name = COALESCE(?, name),
           clinic_name = COALESCE(?, clinic_name),
           role = COALESCE(?, role)
       WHERE id = ?
     `).run(
       practiceType || null,
+      specialty || null,
       specialty || null,
       doctorName || null,
       clinicName || null,
@@ -1307,6 +1323,42 @@ export function createApiRouter(): Router {
       tenant = getDb().prepare("SELECT * FROM tenants WHERE id = ?").get(req.user.tenantId) as any;
     }
     return res.json({ user: req.user, tenant, token: getSessionId(req) });
+  });
+
+  api.patch("/auth/me", requireAuth, (req: Request, res: Response) => {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ error: "Authentication required" });
+    const existing = getDb().prepare("SELECT * FROM users WHERE id = ?").get(userId) as unknown as DbUser | undefined;
+    if (!existing) return res.status(404).json({ error: "User not found" });
+
+    const name = req.body?.name != null ? String(req.body.name).trim() : existing.name;
+    const phone = req.body?.phone != null ? String(req.body.phone).trim() : existing.phone;
+    const email = req.body?.email ? String(req.body.email).trim().toLowerCase() : existing.email;
+    const avatarUrl = req.body?.avatarUrl != null ? String(req.body.avatarUrl).trim() : existing.avatar_url || "";
+    if (!name) return res.status(400).json({ error: "Name is required" });
+    if (!email || !email.includes("@")) return res.status(400).json({ error: "A valid email is required" });
+
+    try {
+      getDb()
+        .prepare("UPDATE users SET name = ?, phone = ?, email = ?, avatar_url = ? WHERE id = ?")
+        .run(name, phone, email, avatarUrl, existing.id);
+    } catch {
+      return res.status(409).json({ error: "Email already exists" });
+    }
+
+    const newPassword = req.body?.newPassword != null ? String(req.body.newPassword) : "";
+    const currentPassword = req.body?.currentPassword != null ? String(req.body.currentPassword) : "";
+    if (newPassword) {
+      if (newPassword.length < 8) return res.status(400).json({ error: "New password must be at least 8 characters" });
+      if (!currentPassword || !verifyPassword(currentPassword, existing.password_hash)) {
+        return res.status(400).json({ error: "Current password is incorrect" });
+      }
+      getDb().prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(hashPassword(newPassword), existing.id);
+    }
+
+    audit(req, "Profile updated", `${email}${newPassword ? " (password changed)" : ""}`);
+    const user = getDb().prepare("SELECT * FROM users WHERE id = ?").get(existing.id) as unknown as DbUser;
+    res.json({ user: publicUser(user) });
   });
 
   api.get("/tenant/current", requireAuth, (req: Request, res: Response) => {
@@ -1690,12 +1742,17 @@ export function createApiRouter(): Router {
       specialty = packParsed && "specialty" in packParsed ? packParsed.specialty : "";
     }
 
+    const practiceType =
+      body.practiceType != null || body.practice_type != null
+        ? normalizePracticeType(body.practiceType ?? body.practice_type)
+        : normalizePracticeType(existing.practice_type);
+
     try {
       getDb()
         .prepare(
-          "UPDATE users SET name = ?, role = ?, status = ?, phone = ?, email = ?, tenant_id = ?, specialty = ?, pack_id = ? WHERE id = ?"
+          "UPDATE users SET name = ?, role = ?, status = ?, phone = ?, email = ?, tenant_id = ?, specialty = ?, pack_id = ?, practice_type = ? WHERE id = ?"
         )
-        .run(name, role, status, phone, email, tenantId, specialty, specialty, existing.id);
+        .run(name, role, status, phone, email, tenantId, specialty, specialty, practiceType, existing.id);
     } catch {
       return res.status(409).json({ error: "Email already exists" });
     }
@@ -1704,6 +1761,24 @@ export function createApiRouter(): Router {
     syncDoctorPackProfile(user);
     const updated = loadUserRow(existing.id)!;
     res.json({ user: publicUser(updated) });
+  });
+
+  api.delete("/users/:id", requireAuth, requireRole(...USER_MANAGER_ROLES), (req, res) => {
+    const existing = loadUserRow(req.params.id);
+    if (!existing) return res.status(404).json({ error: "User not found" });
+    if (!canManageUser(req, existing)) {
+      return res.status(403).json({ error: "User not found" });
+    }
+    if (existing.id === req.user?.id) {
+      return res.status(400).json({ error: "You cannot delete your own account from User management. Use profile or disable instead." });
+    }
+    if (existing.role === "super_admin") {
+      const admins = (getDb().prepare("SELECT COUNT(*) AS c FROM users WHERE role = 'super_admin' AND status != 'disabled'").get() as { c: number }).c;
+      if (admins <= 1) return res.status(400).json({ error: "Cannot delete the last active super_admin" });
+    }
+    getDb().prepare("DELETE FROM users WHERE id = ?").run(existing.id);
+    audit(req, "User deleted", `${existing.email} (${existing.role})`);
+    res.json({ ok: true });
   });
 
   api.post("/users/:id/password", requireAuth, requireRole(...USER_MANAGER_ROLES), (req, res) => {
