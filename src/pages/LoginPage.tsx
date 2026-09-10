@@ -20,6 +20,14 @@ import {
   Zap,
 } from "lucide-react";
 import { destinationAfterAuth, useAuth } from "../auth/AuthContext";
+import {
+  emptyPublicLoginFields,
+  LOGIN_EMAIL_PLACEHOLDER,
+  LOGIN_PASSWORD_PLACEHOLDER,
+  LOGIN_WHATSAPP_PLACEHOLDER,
+  REGISTER_EMAIL_PLACEHOLDER,
+  REGISTER_PASSWORD_PLACEHOLDER,
+} from "../lib/loginFormDefaults";
 import { useNav } from "../nav/NavigationContext";
 import {
   DEFAULT_PRACTICE_TYPE,
@@ -66,7 +74,9 @@ export const LoginPage: React.FC = () => {
     loading: authLoading,
     refreshSession,
   } = useAuth();
-  const { go, loginNext, loginDemo, loginMode } = useNav();
+  const { go, loginNext, loginMode } = useNav();
+  // Empty on first render so the public form never mounts with seeded demo credentials.
+  const publicLoginDefaults = emptyPublicLoginFields();
 
   // Mode: Sign In vs Create Clinic Account
   const [mode, setMode] = useState<"signin" | "register">(loginMode || "signin");
@@ -78,17 +88,17 @@ export const LoginPage: React.FC = () => {
   // Sign In Sub-Method: Email & Password vs WhatsApp Phone Number
   const [signInMethod, setSignInMethod] = useState<"email" | "whatsapp">("email");
 
-  // Sign In Form States
-  const [email, setEmail] = useState(loginDemo ? "doctor@lumera.me" : "doctor@lumera.me");
-  const [password, setPassword] = useState("Lumera@2026");
-  const [whatsappPhone, setWhatsappPhone] = useState("+91 98234 55667");
+  // Sign In Form States — empty values so hint copy is placeholder-only (not a prefilled value).
+  const [email, setEmail] = useState(publicLoginDefaults.email);
+  const [password, setPassword] = useState(publicLoginDefaults.password);
+  const [whatsappPhone, setWhatsappPhone] = useState(publicLoginDefaults.whatsappPhone);
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
 
   // SSO States
   const [oauthPrompt, setOauthPrompt] = useState<null | { provider: "google" | "facebook" }>(null);
-  const [oauthEmail, setOauthEmail] = useState("rdp9999973271@gmail.com");
-  const [oauthName, setOauthName] = useState("Dr. Rajiv Saxena");
+  const [oauthEmail, setOauthEmail] = useState(publicLoginDefaults.oauthEmail);
+  const [oauthName, setOauthName] = useState(publicLoginDefaults.oauthName);
   const [verifiedSsoNotice, setVerifiedSsoNotice] = useState<string | null>(null);
   const [oauthConfig, setOauthConfig] = useState<{
     facebookConfigured: boolean;
@@ -103,7 +113,7 @@ export const LoginPage: React.FC = () => {
   const [adminName, setAdminName] = useState("");
   const [adminEmail, setAdminEmail] = useState("");
   const [adminPhone, setAdminPhone] = useState("");
-  const [adminPassword, setAdminPassword] = useState("Lumera@2026");
+  const [adminPassword, setAdminPassword] = useState(publicLoginDefaults.adminPassword);
   const [showRegisterPassword, setShowRegisterPassword] = useState(false);
 
   // General Status & Loading
@@ -825,12 +835,15 @@ export const LoginPage: React.FC = () => {
                     Registered Work Email
                   </label>
                   <input
+                    id="forgot-email"
+                    name="email"
                     type="email"
+                    autoComplete="email"
                     required
                     value={forgotEmail}
                     onChange={(e) => setForgotEmail(e.target.value)}
-                    placeholder="doctor@clinic.com"
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white focus:outline-none focus:border-purple-500"
+                    placeholder={REGISTER_EMAIL_PLACEHOLDER}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
                   />
                 </div>
                 <button
@@ -863,13 +876,16 @@ export const LoginPage: React.FC = () => {
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1">New Password</label>
                   <input
+                    id="forgot-new-password"
+                    name="new-password"
                     type="password"
+                    autoComplete="new-password"
                     required
                     minLength={6}
                     value={forgotNewPassword}
                     onChange={(e) => setForgotNewPassword(e.target.value)}
-                    placeholder="Minimum 6 characters"
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white focus:outline-none focus:border-purple-500"
+                    placeholder={REGISTER_PASSWORD_PLACEHOLDER}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
                   />
                 </div>
                 <button
@@ -928,11 +944,14 @@ export const LoginPage: React.FC = () => {
                       <div className="relative">
                         <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
                         <input
+                          id="login-email"
+                          name="email"
                           type="email"
+                          autoComplete="username"
                           required
                           value={email}
                           onChange={(e) => setEmail(e.target.value)}
-                          placeholder="doctor@lumera.me"
+                          placeholder={LOGIN_EMAIL_PLACEHOLDER}
                           className="w-full pl-9 pr-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
                         />
                       </div>
@@ -957,11 +976,14 @@ export const LoginPage: React.FC = () => {
                       <div className="relative">
                         <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
                         <input
+                          id="login-password"
+                          name="password"
                           type={showPassword ? "text" : "password"}
+                          autoComplete="current-password"
                           required
                           value={password}
                           onChange={(e) => setPassword(e.target.value)}
-                          placeholder="••••••••"
+                          placeholder={LOGIN_PASSWORD_PLACEHOLDER}
                           className="w-full pl-9 pr-10 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
                         />
                         <button
@@ -1011,11 +1033,14 @@ export const LoginPage: React.FC = () => {
                       <div className="relative">
                         <Phone className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
                         <input
+                          id="login-whatsapp"
+                          name="tel"
                           type="tel"
+                          autoComplete="tel"
                           required
                           value={whatsappPhone}
                           onChange={(e) => setWhatsappPhone(e.target.value)}
-                          placeholder="+91 98234 55667"
+                          placeholder={LOGIN_WHATSAPP_PLACEHOLDER}
                           className="w-full pl-9 pr-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-green-500"
                         />
                       </div>
@@ -1281,7 +1306,10 @@ export const LoginPage: React.FC = () => {
                   <div className="relative">
                     <Stethoscope className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
                     <input
+                      id="register-name"
+                      name="name"
                       type="text"
+                      autoComplete="name"
                       required
                       value={adminName}
                       onChange={(e) => setAdminName(e.target.value)}
@@ -1300,11 +1328,14 @@ export const LoginPage: React.FC = () => {
                     <div className="relative">
                       <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
                       <input
+                        id="register-email"
+                        name="email"
                         type="email"
+                        autoComplete="email"
                         required
                         value={adminEmail}
                         onChange={(e) => setAdminEmail(e.target.value)}
-                        placeholder="doctor@clinic.com"
+                        placeholder={REGISTER_EMAIL_PLACEHOLDER}
                         className="w-full pl-9 pr-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
                       />
                     </div>
@@ -1317,7 +1348,10 @@ export const LoginPage: React.FC = () => {
                     <div className="relative">
                       <Phone className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
                       <input
+                        id="register-phone"
+                        name="tel"
                         type="tel"
+                        autoComplete="tel"
                         required
                         value={adminPhone}
                         onChange={(e) => setAdminPhone(e.target.value)}
@@ -1336,12 +1370,15 @@ export const LoginPage: React.FC = () => {
                   <div className="relative">
                     <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
                     <input
+                      id="register-password"
+                      name="new-password"
                       type={showRegisterPassword ? "text" : "password"}
+                      autoComplete="new-password"
                       required
                       minLength={6}
                       value={adminPassword}
                       onChange={(e) => setAdminPassword(e.target.value)}
-                      placeholder="Minimum 6 characters"
+                      placeholder={REGISTER_PASSWORD_PLACEHOLDER}
                       className="w-full pl-9 pr-10 py-2 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
                     />
                     <button
