@@ -51,7 +51,7 @@ export function appPublicUrl(reqHost?: string, reqProto?: string): string {
   return "http://localhost:3000";
 }
 
-/** Hostinger (and most Node hosts) inject PORT. Default 3000 for local production smoke. */
+/** Cloud Run (and most Node hosts) inject PORT. Default 3000 for local production smoke. */
 export function resolveListenPort(env: NodeJS.ProcessEnv = process.env): number {
   const raw = String(env.PORT || "").trim();
   if (!raw) return 3000;
@@ -63,7 +63,7 @@ export function resolveListenPort(env: NodeJS.ProcessEnv = process.env): number 
 }
 
 /**
- * Hostinger's entry file is `dist/server.cjs` and may omit NODE_ENV.
+ * Cloud Run / `npm start` entry is `dist/server.cjs` and may omit NODE_ENV.
  * Treat a bundled server start as production unless NODE_ENV is already set.
  */
 export function applyBundledServerNodeEnv(
@@ -85,7 +85,7 @@ export function assertRequiredProductionEnv(env: NodeJS.ProcessEnv = process.env
   const jwt = String(env.JWT_SECRET || "").trim();
   if (!jwt || isUnsetOrPlaceholder(jwt)) {
     throw new Error(
-      "JWT_SECRET is required in production (no weak default). Set it in Hostinger environment variables."
+      "JWT_SECRET is required in production (no weak default). Set it in Cloud Run environment variables (or AI Studio secrets)."
     );
   }
   const appUrl = String(env.APP_URL || "").trim().replace(/\/$/, "");

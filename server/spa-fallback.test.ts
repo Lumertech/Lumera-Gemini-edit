@@ -19,7 +19,7 @@ import {
 } from "./spa-fallback.ts";
 
 describe("production listen / env helpers", () => {
-  it("uses PORT from the environment for Hostinger", () => {
+  it("uses PORT from the environment for Cloud Run", () => {
     assert.equal(resolveListenPort({} as NodeJS.ProcessEnv), 3000);
     assert.equal(resolveListenPort({ PORT: "8080" } as NodeJS.ProcessEnv), 8080);
     assert.throws(() => resolveListenPort({ PORT: "nope" } as NodeJS.ProcessEnv), /PORT/);
@@ -27,7 +27,7 @@ describe("production listen / env helpers", () => {
 
   it("treats bundled dist/server.cjs as production when NODE_ENV is unset", () => {
     const env: NodeJS.ProcessEnv = {};
-    applyBundledServerNodeEnv("/home/user/hbuilds/current/nodejs/dist/server.cjs", env);
+    applyBundledServerNodeEnv("/app/dist/server.cjs", env);
     assert.equal(env.NODE_ENV, "production");
 
     const already: NodeJS.ProcessEnv = { NODE_ENV: "development" };
@@ -48,7 +48,7 @@ describe("production listen / env helpers", () => {
       assert.throws(() => assertRequiredProductionEnv(), /JWT_SECRET/);
       process.env.JWT_SECRET = "change-me-to-a-long-random-secret";
       assert.throws(() => assertRequiredProductionEnv(), /JWT_SECRET/);
-      process.env.JWT_SECRET = "a-sufficiently-long-hostinger-secret";
+      process.env.JWT_SECRET = "a-sufficiently-long-cloud-run-secret";
       assert.doesNotThrow(() => assertRequiredProductionEnv());
     } finally {
       if (prevJwt === undefined) delete process.env.JWT_SECRET;

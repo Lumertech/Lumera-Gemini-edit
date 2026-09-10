@@ -40,7 +40,7 @@ export function isSpaHistoryFallbackPath(pathname: string): boolean {
 }
 
 /**
- * Hostinger may start the process with cwd at the app root (`dist/index.html`)
+ * Cloud Run may start with cwd at the app root (`dist/index.html`)
  * or already inside `dist/` (`./index.html`). Prefer a directory that actually
  * contains the Vite client build.
  */

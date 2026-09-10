@@ -1,4 +1,7 @@
-/** PM2 process file for a Hostinger VPS / SSH Node host. Do not put secrets here. */
+/** Optional PM2 file for a generic VPS. Not the www.mylumera.in path.
+ *  Production is Firebase Hosting → Cloud Run (docs/FIREBASE_CLOUD_RUN_DEPLOY.md).
+ *  Do not put secrets here.
+ */
 module.exports = {
   apps: [
     {
