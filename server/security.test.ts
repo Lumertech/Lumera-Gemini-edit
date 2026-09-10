@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import express from "express";
 import {
   allowOtpEcho,
+  allowPasswordLoginWithoutOtp,
   allowSkipOtp,
   attachUser,
   getJwtSecret,
@@ -16,6 +17,7 @@ import {
 } from "./auth.ts";
 import { createApiRouter } from "./api.ts";
 import { getDb, initDatabase } from "./db.ts";
+import { hashPassword } from "./password.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -78,6 +80,17 @@ describe("Wave 1A PHI / auth lock", () => {
     assert.equal(allowSkipOtp("production"), false);
     assert.equal(allowSkipOtp("development"), true);
     assert.equal(allowSkipOtp("test"), true);
+  });
+
+  it("password session without OTP is reserved for admin roles", () => {
+    assert.equal(allowPasswordLoginWithoutOtp({ role: "super_admin" }), true);
+    assert.equal(allowPasswordLoginWithoutOtp({ role: "admin" }), true);
+    assert.equal(allowPasswordLoginWithoutOtp({ email: "admin@lumera.me", role: "doctor" }), true);
+    assert.equal(allowPasswordLoginWithoutOtp({ role: "CLINIC_ADMIN" }), true);
+    assert.equal(allowPasswordLoginWithoutOtp({ role: "polyclinic_admin" }), true);
+    assert.equal(allowPasswordLoginWithoutOtp({ role: "doctor" }), false);
+    assert.equal(allowPasswordLoginWithoutOtp({ role: "receptionist" }), false);
+    assert.equal(allowPasswordLoginWithoutOtp({ role: "patient" }), false);
   });
 
   it("does not echo OTP codes in production", () => {
@@ -196,6 +209,134 @@ describe("Wave 1A PHI / auth lock", () => {
     assert.equal(me.status, 200);
     assert.equal((me.json.user as { email?: string } | null)?.email, "doctor@lumera.me");
     assert.equal(me.json.token, token);
+  });
+
+  it("admin@lumera.me / Lumera@2026 logs in without an OTP step", async () => {
+    const prev = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+    try {
+      const login = await jsonRequest(port, "POST", "/api/auth/login", {
+        email: "admin@lumera.me",
+        password: "Lumera@2026",
+      });
+      assert.equal(login.status, 200);
+      assert.equal(login.json.requiresOtp, false);
+      assert.ok(login.json.token);
+      assert.equal((login.json.user as { role?: string; email?: string } | undefined)?.role, "super_admin");
+      assert.equal((login.json.user as { email?: string } | undefined)?.email, "admin@lumera.me");
+      assert.equal(login.json.demoOtp, undefined);
+      assert.equal(login.json.verificationId, undefined);
+    } finally {
+      if (prev === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = prev;
+    }
+  });
+
+  it("role alias admin completes production password login without OTP", async () => {
+    const stamp = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    const email = `alias.admin.${stamp}@um-test.example`;
+    const now = new Date().toISOString();
+    getDb()
+      .prepare(
+        `INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, onboarding_completed, practice_type, last_login, created_at)
+         VALUES (?, ?, ?, ?, ?, 'admin', 'active', ?, 1, 'polyclinic', ?, ?)`
+      )
+      .run(
+        `user-alias-admin-${stamp}`,
+        "tenant-lumera-main",
+        email,
+        hashPassword("Lumera@2026"),
+        "Alias Admin Smoke",
+        "+91 97000 00002",
+        now,
+        now
+      );
+    const prev = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+    try {
+      const login = await jsonRequest(port, "POST", "/api/auth/login", {
+        email,
+        password: "Lumera@2026",
+      });
+      assert.equal(login.status, 200);
+      assert.equal(login.json.requiresOtp, false);
+      assert.ok(login.json.token);
+      assert.equal(login.json.verificationId, undefined);
+    } finally {
+      if (prev === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = prev;
+    }
+  });
+
+  it("CLINIC_ADMIN password login is not blocked on WhatsApp OTP", async () => {
+    const stamp = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    const email = `clinic.admin.${stamp}@um-test.example`;
+    const now = new Date().toISOString();
+    getDb()
+      .prepare(
+        `INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, onboarding_completed, practice_type, last_login, created_at)
+         VALUES (?, ?, ?, ?, ?, 'CLINIC_ADMIN', 'active', ?, 1, 'polyclinic', ?, ?)`
+      )
+      .run(
+        `user-ca-${stamp}`,
+        "tenant-lumera-main",
+        email,
+        hashPassword("Lumera@2026"),
+        "Clinic Admin Smoke",
+        "+91 97000 00000",
+        now,
+        now
+      );
+    const prev = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+    try {
+      const login = await jsonRequest(port, "POST", "/api/auth/login", {
+        email,
+        password: "Lumera@2026",
+      });
+      assert.equal(login.status, 200);
+      assert.equal(login.json.requiresOtp, false);
+      assert.ok(login.json.token);
+    } finally {
+      if (prev === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = prev;
+    }
+  });
+
+  it("polyclinic_admin password login is not blocked on WhatsApp OTP", async () => {
+    const stamp = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    const email = `poly.admin.${stamp}@um-test.example`;
+    const now = new Date().toISOString();
+    getDb()
+      .prepare(
+        `INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, onboarding_completed, practice_type, last_login, created_at)
+         VALUES (?, ?, ?, ?, ?, 'polyclinic_admin', 'active', ?, 1, 'polyclinic', ?, ?)`
+      )
+      .run(
+        `user-pa-${stamp}`,
+        "tenant-lumera-main",
+        email,
+        hashPassword("Lumera@2026"),
+        "Poly Admin Smoke",
+        "+91 97000 00001",
+        now,
+        now
+      );
+    const prev = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+    try {
+      const login = await jsonRequest(port, "POST", "/api/auth/login", {
+        email,
+        password: "Lumera@2026",
+      });
+      assert.equal(login.status, 200);
+      assert.equal(login.json.requiresOtp, false);
+      assert.ok(login.json.token);
+      assert.equal(login.json.verificationId, undefined);
+    } finally {
+      if (prev === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = prev;
+    }
   });
 
   it("production login ignores skipOtp and does not mint a session", async () => {

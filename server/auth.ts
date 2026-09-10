@@ -84,6 +84,9 @@ export interface AuthUser {
   onboardingCompleted?: boolean;
   practiceType?: "individual" | "polyclinic";
   specialty?: string;
+  packId?: string;
+  roleHome?: "admin" | "app" | "portal" | "login";
+  homeView?: string;
   isDemoWorkspace?: boolean;
 }
 
@@ -203,6 +206,22 @@ export function requireRole(...roles: UserRole[]) {
 }
 
 export const ADMIN_ROLES: UserRole[] = ["super_admin"];
+/** Admin desk Users API — matches AdminShell admin/super_admin gates. */
+export const USER_MANAGER_ROLES: UserRole[] = ["super_admin", "polyclinic_admin", "CLINIC_ADMIN"];
+/** Password login completes without WhatsApp OTP — Admin / clinic admin must not block on Graph. */
+export const PASSWORD_SESSION_ROLES: UserRole[] = ["super_admin", "polyclinic_admin", "CLINIC_ADMIN"];
+
+/**
+ * Production email+password session — no WhatsApp OTP required.
+ * MUST: super_admin / admin (role alias + admin@lumera.me). Clinic admins included so desk login is not Graph-gated.
+ */
+export function allowPasswordLoginWithoutOtp(user?: { role?: string; email?: string } | null): boolean {
+  const role = String(user?.role || "");
+  const email = String(user?.email || "").trim().toLowerCase();
+  if (email === "admin@lumera.me") return true;
+  if (role === "admin") return true;
+  return (PASSWORD_SESSION_ROLES as readonly string[]).includes(role);
+}
 export const CLINIC_MANAGER_ROLES: UserRole[] = ["doctor", "polyclinic_admin", "CLINIC_ADMIN"];
 export const CLINICIAN_ROLES: UserRole[] = [
   "doctor",
