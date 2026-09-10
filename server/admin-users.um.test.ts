@@ -221,6 +221,57 @@ describe("Admin UM users API (UM-1…6)", () => {
     assert.ok(found);
     assert.equal(found?.name, "Patched Dentist");
     assert.equal(found?.specialty, "dentist");
+
+    const patchLabel = await jsonRequest(
+      port,
+      "PATCH",
+      `/api/users/${id}`,
+      { specialty: "Dental Surgery" },
+      { Authorization: `Bearer ${admin.token}` }
+    );
+    assert.equal(patchLabel.status, 200);
+    assert.equal((patchLabel.json.user as Record<string, unknown>).specialty, "dentist");
+
+    const patchBad = await jsonRequest(
+      port,
+      "PATCH",
+      `/api/users/${id}`,
+      { specialty: "veterinary" },
+      { Authorization: `Bearer ${admin.token}` }
+    );
+    assert.equal(patchBad.status, 400);
+
+    const labeled = await jsonRequest(
+      port,
+      "POST",
+      "/api/users",
+      {
+        name: "Label Physio",
+        email: `label.${stamp}@um-test.example`,
+        role: "doctor",
+        tenantId: DEMO_TENANT_ID,
+        specialty: "Physiotherapy & Rehabilitation",
+        password: "Lumera@2026",
+      },
+      { Authorization: `Bearer ${admin.token}` }
+    );
+    assert.equal(labeled.status, 201, String(labeled.json.error || "label create failed"));
+    assert.equal((labeled.json.user as Record<string, unknown>).specialty, "physio");
+
+    const unmapped = await jsonRequest(
+      port,
+      "POST",
+      "/api/users",
+      {
+        name: "Unknown Spec",
+        email: `unknown.${stamp}@um-test.example`,
+        role: "doctor",
+        specialty: "veterinary",
+        password: "Lumera@2026",
+      },
+      { Authorization: `Bearer ${admin.token}` }
+    );
+    assert.equal(unmapped.status, 400);
   });
 
   it("UM-1/tenant: non-super_admin cannot reassign tenant; wrong-tenant is 403/404", async () => {
@@ -277,6 +328,18 @@ describe("Admin UM users API (UM-1…6)", () => {
     const emails = ((listed.json.users || []) as Array<Record<string, unknown>>).map((u) => u.email);
     assert.equal(emails.includes("gp.doctor@lumera.me"), false);
     assert.ok(emails.includes(email));
+
+    const moved = await jsonRequest(
+      port,
+      "PATCH",
+      `/api/users/${id}`,
+      { tenantId: DEMO_TENANT_ID },
+      { Authorization: `Bearer ${admin.token}` }
+    );
+    assert.equal(moved.status, 200, String(moved.json.error || "super_admin tenant move failed"));
+    assert.equal((moved.json.user as Record<string, unknown>).tenantId, DEMO_TENANT_ID);
+    const afterMove = getDb().prepare("SELECT tenant_id FROM users WHERE id = ?").get(id) as { tenant_id: string };
+    assert.equal(afterMove.tenant_id, DEMO_TENANT_ID);
   });
 
   it("UM-4: disabled status rejects login; reset issues a usable credential and writes audit", async () => {

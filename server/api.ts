@@ -349,14 +349,24 @@ export function createApiRouter(): Router {
       return res.status(403).json({ error: "This account has been disabled" });
     }
 
-    // skipOtp is honored only when NODE_ENV !== "production" (local/demo).
-    if (skipOtp) {
+    const issuePasswordSession = (reason: string) => {
       const jwtToken = issueLumeraSession(res, user);
       getDb()
         .prepare("UPDATE users SET last_login = ?, whatsapp_verified = 1 WHERE id = ?")
         .run(new Date().toISOString(), user.id);
-      writeAudit(getDb(), user.id, user.name, "Login", `${user.email} signed in (direct session)`);
+      writeAudit(getDb(), user.id, user.name, "Login", `${user.email} signed in (${reason})`);
       return res.json({ user: publicUser(user), token: jwtToken, requiresOtp: false });
+    };
+
+    // Platform operator: password session is OTP-safe (Graph/WhatsApp must not lock out Admin).
+    // This is role-gated on the server — not the client skipOtp flag.
+    if (user.role === "super_admin") {
+      return issuePasswordSession("super_admin password session");
+    }
+
+    // skipOtp is honored only when NODE_ENV !== "production" (local/demo).
+    if (skipOtp) {
+      return issuePasswordSession("direct session");
     }
 
     // Mandatory WhatsApp Business Phone Binding & Verification

@@ -198,6 +198,25 @@ describe("Wave 1A PHI / auth lock", () => {
     assert.equal(me.json.token, token);
   });
 
+  it("OTP-safe super_admin login issues a session in production without skipOtp", async () => {
+    const prev = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+    try {
+      const login = await jsonRequest(port, "POST", "/api/auth/login", {
+        email: "admin@lumera.me",
+        password: "Lumera@2026",
+      });
+      assert.equal(login.status, 200);
+      assert.equal(login.json.requiresOtp, false);
+      assert.ok(login.json.token);
+      assert.equal((login.json.user as { role?: string } | undefined)?.role, "super_admin");
+      assert.equal(login.json.demoOtp, undefined);
+    } finally {
+      if (prev === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = prev;
+    }
+  });
+
   it("production login ignores skipOtp and does not mint a session", async () => {
     const prev = process.env.NODE_ENV;
     process.env.NODE_ENV = "production";
