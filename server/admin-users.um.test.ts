@@ -4,9 +4,9 @@ import { after, before, describe, it } from "node:test";
 import express from "express";
 import { attachUser } from "./auth.ts";
 import { createApiRouter } from "./api.ts";
-import { DEMO_TENANT_ID, getDb, initDatabase } from "./db.ts";
+import { DEMO_TENANT_ID, getDb, initDatabase, seedDemoSpecialtyPackUsers } from "./db.ts";
 import { hashPassword } from "./password.ts";
-import { DEMO_SPECIALTY_MATRIX, roleHomeForAccount } from "./specialty-packs.ts";
+import { DEMO_SPECIALTY_MATRIX, SIBLING_PR55_DEMO_EMAILS, roleHomeForAccount } from "./specialty-packs.ts";
 
 async function jsonRequest(
   port: number,
@@ -289,6 +289,23 @@ describe("Admin UM users API (UM-1…6)", () => {
     assert.equal(labeled.status, 201, String(labeled.json.error || "label create failed"));
     assert.equal((labeled.json.user as Record<string, unknown>).specialty, "physio");
 
+    const wellnessLabel = await jsonRequest(
+      port,
+      "POST",
+      "/api/users",
+      {
+        name: "Label Spa",
+        email: `spa-label.${stamp}@um-test.example`,
+        role: "doctor",
+        tenantId: DEMO_TENANT_ID,
+        specialty: "Wellness & Spas",
+        password: "Lumera@2026",
+      },
+      { Authorization: `Bearer ${admin.token}` }
+    );
+    assert.equal(wellnessLabel.status, 201, String(wellnessLabel.json.error || "wellness label create failed"));
+    assert.equal((wellnessLabel.json.user as Record<string, unknown>).specialty, "spa_salon");
+
     const unmapped = await jsonRequest(
       port,
       "POST",
@@ -471,6 +488,47 @@ describe("Admin UM users API (UM-1…6)", () => {
       .prepare("SELECT COUNT(*) AS c FROM users WHERE tenant_id = ? AND email IN ('gp.doctor@lumera.me', 'physio.doctor@lumera.me')")
       .get(other.tenantId) as { c: number };
     assert.equal(stolen.c, 0);
+
+    const siblingSeeds = getDb()
+      .prepare(`SELECT email FROM users WHERE email IN (${SIBLING_PR55_DEMO_EMAILS.map(() => "?").join(", ")})`)
+      .all(...SIBLING_PR55_DEMO_EMAILS) as { email: string }[];
+    assert.equal(siblingSeeds.length, 0, "must not insert #55 UI demo emails");
+  });
+
+  it("adopts #55 overlapping emails as pack ids without rewriting persona fields", () => {
+    getDb()
+      .prepare("UPDATE users SET name = ?, phone = ?, specialty = ?, pack_id = '' WHERE email = ?")
+      .run(
+        "Anika Bose, MPhil (Clinical Psychology)",
+        "+91 98177 22001",
+        "Psychiatry & Mental Health",
+        "therapist@lumera.me"
+      );
+    getDb()
+      .prepare("UPDATE users SET name = ?, specialty = ?, pack_id = '' WHERE email = ?")
+      .run("Aarav Mehta", "Consulting", "consultant@lumera.me");
+
+    seedDemoSpecialtyPackUsers(getDb());
+
+    const therapist = getDb()
+      .prepare("SELECT name, phone, specialty, pack_id FROM users WHERE email = ?")
+      .get("therapist@lumera.me") as { name: string; phone: string; specialty: string; pack_id: string };
+    assert.equal(therapist.specialty, "therapist");
+    assert.equal(therapist.pack_id, "therapist");
+    assert.equal(therapist.name, "Anika Bose, MPhil (Clinical Psychology)");
+    assert.equal(therapist.phone, "+91 98177 22001");
+
+    const consultant = getDb()
+      .prepare("SELECT name, specialty, pack_id FROM users WHERE email = ?")
+      .get("consultant@lumera.me") as { name: string; specialty: string; pack_id: string };
+    assert.equal(consultant.specialty, "consultant");
+    assert.equal(consultant.pack_id, "consultant");
+    assert.equal(consultant.name, "Aarav Mehta");
+
+    const extras = getDb()
+      .prepare(`SELECT email FROM users WHERE email IN (${SIBLING_PR55_DEMO_EMAILS.map(() => "?").join(", ")})`)
+      .all(...SIBLING_PR55_DEMO_EMAILS) as { email: string }[];
+    assert.equal(extras.length, 0);
   });
 
   it("does not change public register Individual default (UM-2 / #52)", async () => {

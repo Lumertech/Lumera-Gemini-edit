@@ -31,8 +31,11 @@ describe("specialty packs (Admin UM)", () => {
     assert.equal(resolveSpecialtyPack("physio")?.id, "physio");
     assert.equal(resolveSpecialtyPack("Dental Surgery")?.id, "dentist");
     assert.equal(resolveSpecialtyPack("spa_salon")?.id, "spa_salon");
+    assert.equal(resolveSpecialtyPack("Wellness & Spas")?.id, "spa_salon");
+    assert.equal(resolveSpecialtyPack("Psychiatry & Mental Health")?.id, "therapist");
     assert.equal(resolveSpecialtyPack("therapist")?.id, "therapist");
     assert.equal(resolveSpecialtyPack("consultant")?.id, "consultant");
+    assert.equal(resolveSpecialtyPack("Consulting")?.id, "consultant");
     const parsed = parseSpecialtyPackInput("physio");
     assert.ok(parsed && "specialty" in parsed);
     assert.equal(parsed.specialty, "physio");

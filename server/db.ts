@@ -2337,6 +2337,10 @@ function backfillUserSpecialtyEnum(database: DatabaseSync) {
 /**
  * Demo UM-5 matrix on tenant-lumera-main only. Never copies these logins onto real tenants.
  * Existing emails on a non-demo tenant are left untouched.
+ *
+ * Complementary to #55 AdminShell seeds: if therapist@ / consultant@ already exist,
+ * only canonicalize users.specialty + pack_id. Do not overwrite #55 persona name/role/phone
+ * or clinical doctors.specialty display labels.
  */
 export function seedDemoSpecialtyPackUsers(database: DatabaseSync) {
   assertPacksDifferByMoreThanLabel();
@@ -2354,18 +2358,12 @@ export function seedDemoSpecialtyPackUsers(database: DatabaseSync) {
     INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, last_login, created_at, onboarding_completed, practice_type, specialty, pack_id)
     VALUES (?, ?, ?, ?, ?, ?, 'active', ?, NULL, ?, 1, 'individual', ?, ?)
   `);
-  const updateDemoUser = database.prepare(`
-    UPDATE users
-    SET tenant_id = ?, name = ?, role = ?, status = 'active', onboarding_completed = 1,
-        practice_type = 'individual', specialty = ?, pack_id = ?
-    WHERE id = ?
+  const canonicalizeSpecialty = database.prepare(`
+    UPDATE users SET specialty = ?, pack_id = ? WHERE id = ?
   `);
   const insertDoc = database.prepare(`
     INSERT INTO doctors (id, user_id, name, qualification, reg_number, specialty, experience_years, consultation_fee, opd_room, available_days, opd_timing, phone, email, avatar_url, bio, hpr_id, pack_id, active)
     VALUES (?, ?, ?, '', '', ?, 0, 0, '', '[]', '', ?, ?, '', '', '', ?, 1)
-  `);
-  const updateDoc = database.prepare(`
-    UPDATE doctors SET specialty = ?, pack_id = ?, name = ?, phone = ?, email = ? WHERE user_id = ?
   `);
 
   for (const row of DEMO_SPECIALTY_MATRIX) {
@@ -2378,31 +2376,29 @@ export function seedDemoSpecialtyPackUsers(database: DatabaseSync) {
       if (existing.tenant_id && existing.tenant_id !== DEMO_TENANT_ID) {
         continue;
       }
-      updateDemoUser.run(DEMO_TENANT_ID, row.name, row.role, pack.id, pack.id, existing.id);
-    } else {
-      insertUser.run(
-        row.id,
-        DEMO_TENANT_ID,
-        row.email,
-        passwordHash,
-        row.name,
-        row.role,
-        row.phone,
-        now,
-        pack.id,
-        pack.id
-      );
+      canonicalizeSpecialty.run(pack.id, pack.id, existing.id);
+      continue;
     }
 
-    const userId = existing?.id || row.id;
+    insertUser.run(
+      row.id,
+      DEMO_TENANT_ID,
+      row.email,
+      passwordHash,
+      row.name,
+      row.role,
+      row.phone,
+      now,
+      pack.id,
+      pack.id
+    );
+
     const docId = `doc-${row.id}`;
-    const existingDoc = database.prepare("SELECT id FROM doctors WHERE user_id = ? OR id = ?").get(userId, docId) as
+    const existingDoc = database.prepare("SELECT id FROM doctors WHERE user_id = ? OR id = ?").get(row.id, docId) as
       | { id: string }
       | undefined;
-    if (existingDoc) {
-      updateDoc.run(pack.id, pack.id, row.name, row.phone, row.email, userId);
-    } else {
-      insertDoc.run(docId, userId, row.name, pack.id, row.phone, row.email, pack.id);
+    if (!existingDoc) {
+      insertDoc.run(docId, row.id, row.name, pack.id, row.phone, row.email, pack.id);
     }
   }
 

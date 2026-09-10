@@ -28,11 +28,16 @@ export const SPECIALTY_PACKS: Record<SpecialtyPackId, SpecialtyPack> = {
       "gp",
       "general practice",
       "general medicine",
+      "doctors and clinics",
+      "physician",
       "cardiology",
       "pediatrics",
+      "paediatrics",
       "dermatology",
       "orthopedics",
+      "orthopaedics",
       "gynecology",
+      "gynaecology",
       "ent",
       "neurology",
       "ophthalmology",
@@ -66,7 +71,16 @@ export const SPECIALTY_PACKS: Record<SpecialtyPackId, SpecialtyPack> = {
     id: "spa_salon",
     label: "Spa / Salon",
     defaultSpecialty: "Spa & Salon",
-    aliases: ["spa_salon", "spa", "salon", "spa & salon", "spa/salon"],
+    aliases: [
+      "spa_salon",
+      "spa",
+      "salon",
+      "spa & salon",
+      "spa/salon",
+      "wellness",
+      "wellness and spas",
+      "wellness & spas",
+    ],
     roleHome: "app",
     homeView: "spa",
     modules: ["service_menu", "wellness_notes", "appointment_slot"],
@@ -76,7 +90,17 @@ export const SPECIALTY_PACKS: Record<SpecialtyPackId, SpecialtyPack> = {
     id: "therapist",
     label: "Therapist",
     defaultSpecialty: "Psychiatry & Mental Health",
-    aliases: ["therapist", "therapy", "psychiatry", "psychiatry & mental health", "mental health", "counsellor"],
+    aliases: [
+      "therapist",
+      "therapy",
+      "psychiatry",
+      "psychiatry & mental health",
+      "mental health",
+      "counsellor",
+      "counselor",
+      "counseling",
+      "counselling",
+    ],
     roleHome: "app",
     homeView: "therapy",
     modules: ["session_notes", "mental_health", "care_plan"],
@@ -98,7 +122,8 @@ function normalizePackKey(raw: string): string {
   return String(raw || "")
     .trim()
     .toLowerCase()
-    .replace(/[&/]+/g, " ")
+    .replace(/&/g, " and ")
+    .replace(/[/]+/g, " ")
     .replace(/[_-]+/g, " ")
     .replace(/\s+/g, " ");
 }
@@ -185,6 +210,11 @@ export function roleHomeForAccount(
   return { roleHome: "login", homeView: "login", packId: packId || "" };
 }
 
+/**
+ * CoS B pack-id smoke logins owned by this API PR.
+ * Complementary to #55 (`dentist@` / `physio@` / `wellness@` / major-medical `@lumera.me`).
+ * Shared emails `therapist@` and `consultant@` are adopted (specialty enum only) if #55 already seeded them.
+ */
 export const DEMO_SPECIALTY_MATRIX: ReadonlyArray<{
   id: string;
   email: string;
@@ -242,3 +272,19 @@ export const DEMO_SPECIALTY_MATRIX: ReadonlyArray<{
     phone: "+91 98001 11006",
   },
 ];
+
+/** Emails #55 seeds for AdminShell UI. This PR must not insert them. */
+export const SIBLING_PR55_DEMO_EMAILS = [
+  "dentist@lumera.me",
+  "physio@lumera.me",
+  "wellness@lumera.me",
+  "receptionist@lumera.me",
+  "clinic.admin@lumera.me",
+  "cardiology@lumera.me",
+  "dermatology@lumera.me",
+  "orthopedics@lumera.me",
+  "pediatrics@lumera.me",
+  "gynecology@lumera.me",
+  "ent@lumera.me",
+  "ophthalmology@lumera.me",
+] as const;
