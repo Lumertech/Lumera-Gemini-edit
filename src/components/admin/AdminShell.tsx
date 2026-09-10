@@ -25,10 +25,10 @@ import { AdminAudit } from "./AdminAudit";
 import { AdminMetaTechProvider } from "./AdminMetaTechProvider";
 import { DhisMeter } from "../dhis/DhisMeter";
 
-const NAV: { id: AdminTab; label: string; icon: typeof Users }[] = [
+const NAV: { id: AdminTab; label: string; icon: typeof Users; badge?: string }[] = [
   { id: "overview", label: "Dashboard", icon: LayoutDashboard },
   { id: "dhis", label: "ABDM & DHIS Meter", icon: Award },
-  { id: "meta", label: "Meta Tech Provider", icon: Share2 },
+  { id: "meta", label: "Meta Tech Provider", icon: Share2, badge: "Simulator" },
   { id: "users", label: "User management", icon: Users },
   { id: "subscriptions", label: "Subscriptions", icon: KeyRound },
   { id: "site", label: "Website CMS", icon: Globe },
@@ -110,8 +110,19 @@ export const AdminShell: React.FC = () => {
                   isActive ? "bg-purple-600 text-white" : "text-slate-300 hover:bg-slate-700"
                 }`}
               >
-                <Icon className="w-5 h-5" />
-                {item.label}
+                <Icon className="w-5 h-5 shrink-0" />
+                <span className="flex-1">{item.label}</span>
+                {item.badge && (
+                  <span
+                    className={`text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded border ${
+                      isActive
+                        ? "bg-white/15 text-amber-100 border-amber-200/40"
+                        : "bg-amber-500/20 text-amber-300 border-amber-500/40"
+                    }`}
+                  >
+                    {item.badge}
+                  </span>
+                )}
               </button>
             );
           })}

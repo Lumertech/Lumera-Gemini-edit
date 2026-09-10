@@ -51,6 +51,16 @@ interface WabaItem {
   updatedAt: string;
 }
 
+/** Real Cloud API send responses include messaging_product + a Graph message id. Local simulator payloads do not. */
+function isGraphAcceptedDelivery(data: unknown): boolean {
+  if (!data || typeof data !== "object") return false;
+  const payload = data as {
+    messaging_product?: string;
+    messages?: Array<{ id?: string }>;
+  };
+  return payload.messaging_product === "whatsapp" && Boolean(payload.messages?.[0]?.id);
+}
+
 export const AdminMetaTechProvider: React.FC = () => {
   const { go } = useNav();
   const [overview, setOverview] = useState<MetaOverview | null>(null);
@@ -138,7 +148,7 @@ export const AdminMetaTechProvider: React.FC = () => {
       });
       const data = await res.json();
       if (data.success) {
-        alert("Meta Embedded Signup completed! Co-existence WABA permissions granted.");
+        alert("Local simulator: embedded signup recorded. No Meta Graph call was made.");
         loadData();
       }
     } catch (err) {
@@ -219,7 +229,7 @@ export const AdminMetaTechProvider: React.FC = () => {
       });
       const data = await res.json();
       if (data.success) {
-        alert("Template registered with Meta Graph API!");
+        alert("Template saved in the local simulator. Not submitted to Meta Graph.");
         setShowNewTemplateModal(false);
         loadData();
       }
@@ -257,12 +267,12 @@ export const AdminMetaTechProvider: React.FC = () => {
             <div>
               <div className="flex items-center gap-2.5">
                 <h1 className="text-2xl font-bold font-manrope tracking-tight">Meta Tech Provider & WhatsApp Suite</h1>
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
-                  <CheckCircle2 className="w-3.5 h-3.5" /> Official Tech Provider
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-500/20 text-amber-200 border border-amber-500/40 uppercase tracking-wide">
+                  Simulator
                 </span>
               </div>
               <p className="text-sm text-slate-300 mt-1 max-w-2xl">
-                Centralized management for Meta WhatsApp Business Platform, Embedded Signup multi-tenancy, Graph API Webhooks, and Meta App Review compliance endpoints.
+                Local simulator for WhatsApp Cloud API onboarding, webhooks, and App Review URL checklist. Traffic stays in this sandbox until live WABA credentials exist.
               </p>
             </div>
           </div>
@@ -279,7 +289,7 @@ export const AdminMetaTechProvider: React.FC = () => {
               onClick={() => go("legal", { policySlug: "privacy-policy" })}
               className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-sm font-semibold text-white shadow-md transition"
             >
-              <FileCheck className="w-4 h-4" /> View Live Policies
+              <FileCheck className="w-4 h-4" /> View Policies
             </button>
           </div>
         </div>
@@ -288,10 +298,10 @@ export const AdminMetaTechProvider: React.FC = () => {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-6 pt-6 border-t border-slate-800">
           <div className="bg-slate-900/60 p-3 rounded-xl border border-slate-800/80">
             <div className="text-xs text-slate-400 font-medium">App Review Readiness</div>
-            <div className="text-lg font-bold text-emerald-400 flex items-center gap-1.5 mt-0.5">
-              <CheckCircle2 className="w-4 h-4" /> 100% Compliant
+            <div className="text-lg font-bold text-amber-300 flex items-center gap-1.5 mt-0.5">
+              Sandbox path
             </div>
-            <div className="text-[11px] text-slate-400 mt-0.5">All 5 Meta requirements satisfied</div>
+            <div className="text-[11px] text-slate-400 mt-0.5">Local URL checklist — not Meta App Review</div>
           </div>
           <div className="bg-slate-900/60 p-3 rounded-xl border border-slate-800/80">
             <div className="text-xs text-slate-400 font-medium">Connected Clinic WABAs</div>
@@ -308,7 +318,7 @@ export const AdminMetaTechProvider: React.FC = () => {
             <div className="text-lg font-bold text-emerald-400 flex items-center gap-1.5 mt-0.5">
               <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" /> GREEN Tier
             </div>
-            <div className="text-[11px] text-slate-400 mt-0.5">Unlimited 24h utility quota</div>
+            <div className="text-[11px] text-slate-400 mt-0.5">Simulator display — not live Graph quality</div>
           </div>
         </div>
       </div>
@@ -357,7 +367,7 @@ export const AdminMetaTechProvider: React.FC = () => {
               : "border-transparent text-slate-500 hover:text-slate-800"
           }`}
         >
-          <Smartphone className="w-4 h-4" /> Live Message Tester & Simulator
+          <Smartphone className="w-4 h-4" /> Message Tester & Simulator
         </button>
       </div>
 
@@ -369,11 +379,11 @@ export const AdminMetaTechProvider: React.FC = () => {
               <div>
                 <h2 className="text-lg font-bold text-slate-900">Meta App Review Submission Parameters</h2>
                 <p className="text-sm text-slate-500">
-                  Provide these verified URLs and endpoints in your Meta App Dashboard under <strong>Settings &gt; Basic</strong> and <strong>WhatsApp &gt; Configuration</strong>.
+                  Local policy and webhook URLs for this sandbox. Paste them into Meta App Dashboard only after real App Review — they are not live Graph endpoints yet.
                 </p>
               </div>
-              <span className="px-3 py-1 bg-emerald-50 text-emerald-700 font-semibold text-xs rounded-full border border-emerald-200 flex items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5" /> All Endpoints Verified Live
+              <span className="px-3 py-1 bg-amber-50 text-amber-800 font-semibold text-xs rounded-full border border-amber-200 flex items-center gap-1.5">
+                Local simulator endpoints
               </span>
             </div>
 
@@ -452,7 +462,7 @@ export const AdminMetaTechProvider: React.FC = () => {
                     <span className="text-[11px] bg-emerald-100 text-emerald-800 font-semibold px-2 py-0.5 rounded">Meta Platform §4.b</span>
                   </div>
                   <p className="text-xs text-slate-500">
-                    Dual implementation: Serves both step-by-step user deletion instructions and live JSON callback returning confirmation codes.
+                    Dual implementation: Serves both step-by-step user deletion instructions and a local JSON callback that returns confirmation codes.
                   </p>
                   <div className="flex flex-col sm:flex-row sm:items-center gap-2 pt-1">
                     <div>
@@ -757,14 +767,14 @@ export const AdminMetaTechProvider: React.FC = () => {
         </div>
       )}
 
-      {/* ----------------- TAB 4: LIVE MESSAGE TESTER & SIMULATOR ----------------- */}
+      {/* ----------------- TAB 4: MESSAGE TESTER & SIMULATOR ----------------- */}
       {activeSubTab === "tester" && (
         <div className="space-y-6">
           <div className="bg-white rounded-xl p-6 border border-slate-200 shadow-sm space-y-5">
             <div>
-              <h2 className="text-lg font-bold text-slate-900">WhatsApp Message Dispatch Tester</h2>
+              <h2 className="text-lg font-bold text-slate-900">WhatsApp Message Tester & Simulator</h2>
               <p className="text-sm text-slate-500">
-                Send a live test clinical message to verify WABA credentials, template parameter hydration, and webhook delivery status.
+                Sends through the local sandbox only. Delivery is not accepted on Meta Graph unless a live WABA is connected and Graph returns an accepted message id.
               </p>
             </div>
 
@@ -815,7 +825,7 @@ export const AdminMetaTechProvider: React.FC = () => {
                   className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-sm transition shadow-sm disabled:opacity-50"
                 >
                   <Send className="w-4 h-4" />
-                  {testLog.status === "sending" ? "Dispatching via Meta Graph API..." : "Send Test WhatsApp Message"}
+                  {testLog.status === "sending" ? "Dispatching via local simulator..." : "Send Test WhatsApp Message"}
                 </button>
               </div>
 
@@ -823,29 +833,35 @@ export const AdminMetaTechProvider: React.FC = () => {
               <div className="bg-slate-900 rounded-xl p-4 border border-slate-800 text-slate-200 font-mono text-xs flex flex-col justify-between">
                 <div>
                   <div className="flex items-center justify-between pb-2 border-b border-slate-800 mb-3">
-                    <span className="text-slate-400 font-semibold">Meta Cloud API Telemetry</span>
-                    <span className="text-[10px] text-emerald-400 bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-800">
-                      TLS 1.3 Active
+                    <span className="text-slate-400 font-semibold">Local simulator telemetry</span>
+                    <span className="text-[10px] text-amber-300 bg-amber-950/80 px-2 py-0.5 rounded border border-amber-800">
+                      Simulator
                     </span>
                   </div>
 
                   {testLog.status === "idle" && (
                     <div className="text-slate-500 py-10 text-center">
-                      Configure recipient above and click "Send Test" to inspect live response.
+                      Configure recipient above and click "Send Test" to inspect the local simulator response.
                     </div>
                   )}
 
                   {testLog.status === "sending" && (
                     <div className="text-amber-400 py-10 text-center animate-pulse">
-                      Contacting Meta WhatsApp Cloud Platform...
+                      Contacting local WhatsApp simulator...
                     </div>
                   )}
 
                   {testLog.status === "success" && (
                     <div className="space-y-2">
-                      <div className="text-emerald-400 font-bold flex items-center gap-1.5">
-                        <CheckCircle2 className="w-4 h-4" /> Message Accepted for Delivery
-                      </div>
+                      {isGraphAcceptedDelivery(testLog.data) ? (
+                        <div className="text-emerald-400 font-bold flex items-center gap-1.5">
+                          <CheckCircle2 className="w-4 h-4" /> Message Accepted for Delivery
+                        </div>
+                      ) : (
+                        <div className="text-amber-300 font-bold flex items-center gap-1.5">
+                          <Info className="w-4 h-4" /> Local simulator response (not Graph delivery)
+                        </div>
+                      )}
                       <pre className="bg-slate-950 p-3 rounded border border-slate-800 text-emerald-300 overflow-x-auto">
                         {JSON.stringify(testLog.data, null, 2)}
                       </pre>
@@ -968,7 +984,7 @@ export const AdminMetaTechProvider: React.FC = () => {
                     });
                     const data = await res.json();
                     if (data.success) {
-                      alert("WABA credentials verified and connected!");
+                      alert("WABA credentials saved in the local simulator. Not verified with Meta Graph.");
                       setShowConnectModal(false);
                       loadData();
                     } else {
