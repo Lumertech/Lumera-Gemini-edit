@@ -129,7 +129,8 @@ export function clinicSettingsFromLetterhead(
 
 export function letterheadFromSessionHints(
   clinicName?: string,
-  doctor?: Pick<Doctor, "phone" | "email" | "signatureUrl"> | null
+  doctor?: Pick<Doctor, "phone" | "email" | "signatureUrl"> | null,
+  extras?: { address?: string; city?: string }
 ): Partial<TenantLetterhead> {
   return {
     clinicName: (clinicName || "").trim(),
@@ -137,6 +138,8 @@ export function letterheadFromSessionHints(
     email: doctor?.email || "",
     signatureUrl: doctor?.signatureUrl || "",
     sealText: doctor?.signatureUrl ? "Digitally signed by treating clinician" : "",
+    address: extras?.address?.trim() || "",
+    city: extras?.city?.trim() || "",
   };
 }
 

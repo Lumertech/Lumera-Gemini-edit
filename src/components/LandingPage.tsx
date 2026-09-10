@@ -285,6 +285,8 @@ export const LandingPage: React.FC = () => {
         <div className="flex items-center gap-3">
           <button
             type="button"
+            data-testid="landing-signin"
+            data-default-practice="individual"
             onClick={() => go("login", { loginNext: "app", loginMode: "signin" })}
             className="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold shadow-md shadow-blue-500/20 transition-all cursor-pointer flex items-center gap-2"
           >
@@ -320,7 +322,9 @@ export const LandingPage: React.FC = () => {
         <div className="mt-8 flex flex-col items-center justify-center">
           <button
             type="button"
-            onClick={() => go("login", { loginNext: "app", loginMode: "signin" })}
+            data-testid="landing-try-free"
+            data-default-practice="individual"
+            onClick={() => go("login", { loginNext: "app", loginMode: "register" })}
             className="inline-flex items-center gap-2.5 px-9 py-4 rounded-xl bg-blue-600 hover:bg-blue-500 font-manrope font-bold text-base text-white shadow-xl shadow-blue-600/30 hover:shadow-blue-600/50 hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer"
           >
             <Stethoscope className="w-5 h-5 text-blue-200" />
@@ -904,7 +908,8 @@ export const LandingPage: React.FC = () => {
           <div className="pt-2">
             <button
               type="button"
-              onClick={() => go("login", { loginNext: "app", loginMode: "signin" })}
+              data-default-practice="individual"
+              onClick={() => go("login", { loginNext: "app", loginMode: "register" })}
               className="inline-flex items-center gap-2 px-8 py-3.5 rounded-xl bg-blue-600 hover:bg-blue-500 font-manrope font-bold text-sm text-white shadow-xl shadow-blue-600/40 hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer"
             >
               <Stethoscope className="w-4 h-4" />

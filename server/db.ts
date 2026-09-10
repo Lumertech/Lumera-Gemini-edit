@@ -97,6 +97,17 @@ export function normalizePracticeType(value?: string | null): "individual" | "po
   return "individual";
 }
 
+/** Individual founders are clinicians; multi-specialty founders are clinic admins. */
+export function assignedRoleForPracticeType(
+  practiceType: "individual" | "polyclinic",
+  currentRole?: string | null
+): UserRole {
+  if (currentRole === "super_admin" || currentRole === "patient" || currentRole === "receptionist") {
+    return currentRole;
+  }
+  return practiceType === "polyclinic" ? "CLINIC_ADMIN" : "doctor";
+}
+
 export function isDemoWorkspaceUser(user: { id?: string; tenant_id?: string; email?: string }): boolean {
   if (user.tenant_id === DEMO_TENANT_ID) return true;
   return ["user-admin", "user-doctor", "user-patient", "user-reception"].includes(String(user.id || ""));
@@ -463,6 +474,7 @@ function migrate(database: DatabaseSync) {
       whatsapp_number TEXT DEFAULT '',
       seal_text TEXT DEFAULT '',
       footer_disclaimer TEXT DEFAULT '',
+      practice_settings TEXT DEFAULT '{}',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -652,6 +664,9 @@ function migrate(database: DatabaseSync) {
   } catch {}
   try {
     database.exec("ALTER TABLE tenants ADD COLUMN footer_disclaimer TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE tenants ADD COLUMN practice_settings TEXT DEFAULT '{}'");
   } catch {}
 
   ensureDemoTenantLetterhead(database);

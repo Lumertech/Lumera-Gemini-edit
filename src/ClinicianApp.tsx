@@ -44,6 +44,7 @@ import {
   isPolyclinicPractice,
   resolveSessionDoctor,
 } from './lib/sessionWorkspace';
+import { postOnboardingHomeView } from './lib/practiceOnboarding';
 
 export default function ClinicianApp() {
   const { user } = useAuth();
@@ -81,8 +82,10 @@ export default function ClinicianApp() {
   const lockedSpecialty = user?.specialty || (user?.role === 'doctor' ? currentDoctor.specialty : undefined);
 
   useEffect(() => {
-    if (consumeWelcomeDashboard()) setCurrentView('welcome');
-  }, []);
+    if (!user) return;
+    if (!consumeWelcomeDashboard()) return;
+    setCurrentView(postOnboardingHomeView(user.practiceType === 'polyclinic' ? 'polyclinic' : 'individual'));
+  }, [user?.id, user?.practiceType]);
 
   useEffect(() => {
     if (!user) return;
@@ -374,7 +377,7 @@ export default function ClinicianApp() {
     currentView === 'settings';
 
   useEffect(() => {
-    if (!isPolyclinicPractice(user) && currentView === 'polyclinic') {
+    if (!isPolyclinicPractice(user) && (currentView === 'polyclinic' || currentView === 'team')) {
       setCurrentView('queue');
     }
   }, [user?.practiceType, currentView]);
@@ -396,7 +399,7 @@ export default function ClinicianApp() {
         onSelectView={setCurrentView}
         currentDoctor={currentDoctor}
         onSelectDoctor={handleSelectDoctor}
-        allDoctors={doctors}
+        allDoctors={isPolyclinicPractice(user) ? doctors : [currentDoctor]}
         onToggleHexa={() => setIsHexaOpen(!isHexaOpen)}
         onToggleSidebar={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
         isSidebarCollapsed={isSidebarCollapsed}

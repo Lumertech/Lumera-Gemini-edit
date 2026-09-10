@@ -47,6 +47,22 @@ export interface OnboardingPayload {
   signatureUrl?: string;
   slotDurationMinutes?: number;
   rxTemplate?: "classic" | "compact" | "detailed";
+  facilityAddress?: string;
+  facilityCity?: string;
+  departments?: string[];
+  rosterDoctors?: Array<{
+    name: string;
+    specialty: string;
+    qualification?: string;
+    regNumber?: string;
+    consultationFee?: number;
+    opdTiming?: string;
+  }>;
+  frontDesk?: {
+    walkInEnabled?: boolean;
+    sharedQueue?: boolean;
+    tokenPrefix?: string;
+  };
 }
 
 interface AuthContextValue {
@@ -61,7 +77,7 @@ interface AuthContextValue {
   sendWhatsAppOtp: (phone: string, email?: string, purpose?: string, name?: string) => Promise<{ ok: boolean; verificationId: string; phone: string; demoOtp?: string; expiresAt: string; message?: string }>;
   verifyWhatsAppOtp: (verificationId: string, otp: string, updatedPhone?: string) => Promise<{ ok: boolean; user?: AppUser; token?: string; tenantId?: string; message?: string }>;
   registerClinic: (data: RegisterClinicData) => Promise<{ requiresOtp: boolean; verificationId: string; phone: string; email: string; demoOtp?: string; tenantId?: string; userId?: string; hfrId?: string; hprId?: string; message: string }>;
-  completeOnboarding: (data: OnboardingPayload) => Promise<{ ok: boolean; user?: AppUser; message?: string }>;
+  completeOnboarding: (data: OnboardingPayload) => Promise<{ ok: boolean; user?: AppUser; token?: string; homeView?: string; message?: string }>;
   requestPasswordReset: (email: string) => Promise<{ ok: boolean; verificationId: string; phone: string; demoOtp?: string; message: string }>;
   resetPassword: (verificationId: string, otp: string, newPassword: string) => Promise<{ ok: boolean; message: string }>;
   logout: () => Promise<void>;
@@ -159,10 +175,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const completeOnboarding = useCallback(async (data: OnboardingPayload) => {
-    const res = await apiFetch<{ ok: boolean; user?: AppUser; message?: string }>("/api/auth/complete-onboarding", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
+    const res = await apiFetch<{ ok: boolean; user?: AppUser; token?: string; homeView?: string; message?: string }>(
+      "/api/auth/complete-onboarding",
+      {
+        method: "POST",
+        body: JSON.stringify(data),
+      }
+    );
+    if (res.token) {
+      setStoredToken(res.token);
+    }
     if (res.user) {
       setUser(res.user);
     }
