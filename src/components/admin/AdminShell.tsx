@@ -19,7 +19,9 @@ import {
   Network,
 } from "lucide-react";
 import { useAuth } from "../../auth/AuthContext";
+import { Link } from "react-router-dom";
 import { AdminTab, useNav } from "../../nav/NavigationContext";
+import { adminTabToPath } from "../../nav/surfaces";
 import { AdminOverview } from "./AdminOverview";
 import { AdminUsers } from "./AdminUsers";
 import { AdminProfile } from "./AdminProfile";
@@ -142,10 +144,10 @@ export const AdminShell: React.FC = () => {
                   const Icon = item.icon;
                   const isActive = safeTab === item.id;
                   return (
-                    <button
+                    <Link
                       key={item.id}
-                      type="button"
-                      onClick={() => go("admin", { adminTab: item.id })}
+                      to={adminTabToPath(item.id)}
+                      data-testid={`admin-nav-${item.id}`}
                       className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium text-left ${
                         isActive ? "bg-purple-600 text-white" : "text-slate-300 hover:bg-slate-700"
                       }`}
@@ -163,7 +165,7 @@ export const AdminShell: React.FC = () => {
                           {item.badge}
                         </span>
                       )}
-                    </button>
+                    </Link>
                   );
                 })}
               </div>

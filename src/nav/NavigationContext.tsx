@@ -1,20 +1,25 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import React, { createContext, useCallback, useContext, useMemo, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   type AdminTab,
+  type AppView,
+  type LoginMode,
   type Surface,
-  loginModeFromPath,
+  destinationNavAfterAuth,
   pathToNav,
   surfaceToPath,
 } from "./surfaces";
 
-export type { AdminTab, Surface } from "./surfaces";
+export type { AdminTab, AppView, LoginMode, Surface } from "./surfaces";
 
 export interface GoOptions {
   adminTab?: AdminTab;
+  appView?: AppView | string;
   policySlug?: string;
   loginNext?: Surface;
+  loginNextPath?: string;
   loginDemo?: boolean;
-  loginMode?: "signin" | "register";
+  loginMode?: LoginMode;
   replace?: boolean;
   /** Stay on the marketing site even if a session exists (`/landing`). */
   explicitPublic?: boolean;
@@ -23,76 +28,67 @@ export interface GoOptions {
 interface NavContextValue {
   surface: Surface;
   adminTab: AdminTab;
+  appView: AppView;
   policySlug: string;
   loginNext: Surface;
+  loginNextPath: string;
   loginDemo: boolean;
-  loginMode: "signin" | "register";
+  loginMode: LoginMode;
+  pathname: string;
+  search: string;
   go: (surface: Surface, opts?: GoOptions) => void;
 }
 
 const NavContext = createContext<NavContextValue | null>(null);
 
-function detectInitialNav() {
-  if (typeof window === "undefined") {
-    return pathToNav("/");
-  }
-  return pathToNav(window.location.pathname, window.location.search);
-}
-
-function syncHistory(path: string, replace: boolean) {
-  if (typeof window === "undefined") return;
-  if (window.location.pathname === path) return;
-  if (replace) {
-    window.history.replaceState({}, "", path);
-  } else {
-    window.history.pushState({}, "", path);
-  }
-}
-
+/**
+ * History-API router (BrowserRouter), not HashRouter.
+ * Firebase Hosting `**` → Cloud Run + Express SPA fallback serve index.html
+ * for extensionless paths so `/app/rx` and `/admin/users` deep-link without 404.
+ */
 export const NavigationProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const initial = useMemo(() => detectInitialNav(), []);
-  const [surface, setSurface] = useState<Surface>(initial.surface);
-  const [adminTab, setAdminTab] = useState<AdminTab>(initial.adminTab);
-  const [policySlug, setPolicySlug] = useState(initial.policySlug);
-  const [loginNext, setLoginNext] = useState<Surface>("app");
+  const location = useLocation();
+  const navigate = useNavigate();
+  const parsed = useMemo(
+    () => pathToNav(location.pathname, location.search),
+    [location.pathname, location.search]
+  );
   const [loginDemo, setLoginDemo] = useState(false);
-  const [loginMode, setLoginMode] = useState<"signin" | "register">(
-    loginModeFromPath(typeof window !== "undefined" ? window.location.pathname : "/")
+
+  const go = useCallback(
+    (next: Surface, opts?: GoOptions) => {
+      if (typeof opts?.loginDemo === "boolean") setLoginDemo(opts.loginDemo);
+      const targetPath = surfaceToPath(next, {
+        policySlug: opts?.policySlug,
+        explicitPublic: opts?.explicitPublic,
+        loginMode: opts?.loginMode ?? (next === "login" ? parsed.loginMode : undefined),
+        loginNext: opts?.loginNext ?? (next === "login" ? parsed.loginNext : undefined),
+        loginNextPath: opts?.loginNextPath ?? (next === "login" ? parsed.loginNextPath : undefined),
+        adminTab: opts?.adminTab ?? (next === "admin" && !opts?.adminTab ? undefined : opts?.adminTab),
+        appView: opts?.appView,
+      });
+      const current = `${location.pathname}${location.search}`;
+      if (current === targetPath) return;
+      navigate(targetPath, { replace: Boolean(opts?.replace) });
+    },
+    [navigate, location.pathname, location.search, parsed.loginMode, parsed.loginNext, parsed.loginNextPath]
   );
 
-  const go = useCallback((next: Surface, opts?: GoOptions) => {
-    if (opts?.adminTab) setAdminTab(opts.adminTab);
-    if (opts?.policySlug) setPolicySlug(opts.policySlug);
-    if (opts?.loginNext) setLoginNext(opts.loginNext);
-    if (typeof opts?.loginDemo === "boolean") setLoginDemo(opts.loginDemo);
-    if (opts?.loginMode) setLoginMode(opts.loginMode);
-    if (next === "admin") setAdminTab(opts?.adminTab || "overview");
-    const nextLoginMode = next === "login" ? opts?.loginMode || loginMode : opts?.loginMode;
-    const targetPath = surfaceToPath(next, {
-      policySlug: opts?.policySlug,
-      explicitPublic: opts?.explicitPublic,
-      loginMode: nextLoginMode,
-    });
-    syncHistory(targetPath, Boolean(opts?.replace));
-    setSurface(next);
-  }, [loginMode]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const onPop = () => {
-      const next = pathToNav(window.location.pathname, window.location.search);
-      setSurface(next.surface);
-      setPolicySlug(next.policySlug);
-      setAdminTab(next.adminTab);
-      setLoginMode(loginModeFromPath(window.location.pathname));
-    };
-    window.addEventListener("popstate", onPop);
-    return () => window.removeEventListener("popstate", onPop);
-  }, []);
-
   const value = useMemo(
-    () => ({ surface, adminTab, policySlug, loginNext, loginDemo, loginMode, go }),
-    [surface, adminTab, policySlug, loginNext, loginDemo, loginMode, go]
+    () => ({
+      surface: parsed.surface,
+      adminTab: parsed.adminTab,
+      appView: parsed.appView,
+      policySlug: parsed.policySlug,
+      loginNext: parsed.loginNext,
+      loginNextPath: parsed.loginNextPath,
+      loginDemo,
+      loginMode: parsed.loginMode,
+      pathname: location.pathname,
+      search: location.search,
+      go,
+    }),
+    [parsed, loginDemo, location.pathname, location.search, go]
   );
 
   return <NavContext.Provider value={value}>{children}</NavContext.Provider>;
@@ -102,4 +98,13 @@ export function useNav() {
   const ctx = useContext(NavContext);
   if (!ctx) throw new Error("useNav must be used within NavigationProvider");
   return ctx;
+}
+
+export function goAfterAuth(
+  go: NavContextValue["go"],
+  dest: Surface,
+  loginNextPath?: string
+) {
+  const next = destinationNavAfterAuth(dest, loginNextPath);
+  go(next.surface, { replace: true, appView: next.appView, adminTab: next.adminTab });
 }

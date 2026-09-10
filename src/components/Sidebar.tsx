@@ -20,10 +20,12 @@ import {
   Settings,
   Shield
 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { NavView } from './Navbar';
 import { Patient, Doctor } from '../types';
 import { useAuth } from '../auth/AuthContext';
 import { useNav } from '../nav/NavigationContext';
+import { appViewToPath } from '../nav/surfaces';
 import { isPolyclinicPractice } from '../lib/sessionWorkspace';
 import { allowedViewsForWorkflow, workflowForUser } from '../lib/specialtyWorkflow';
 
@@ -206,9 +208,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
     >
       <div className="flex-1 overflow-y-auto p-3 space-y-5 scrollbar-thin scrollbar-thumb-slate-800">
         {canStartConsult && (
-          <button
-            type="button"
-            onClick={() => onSelectView(startView)}
+          <Link
+            to={appViewToPath(startView)}
             title={isCollapsed ? pack.primaryCta : undefined}
             className={`w-full flex items-center ${
               isCollapsed ? 'justify-center px-2' : 'justify-center gap-2 px-3'
@@ -216,7 +217,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           >
             <Plus className="w-4 h-4 shrink-0" />
             {!isCollapsed && <span>+ {pack.primaryCta}</span>}
-          </button>
+          </Link>
         )}
 
         {filteredSections.map((section, idx) => (
@@ -234,9 +235,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   (item.id === 'queue' && currentView === 'opd-queue') ||
                   (item.id === 'rx' && currentView === 'smart-rx');
                 return (
-                  <button
+                  <Link
                     key={item.id}
-                    onClick={() => onSelectView(item.id)}
+                    to={appViewToPath(item.id)}
+                    data-testid={`app-nav-${item.id}`}
                     title={isCollapsed ? item.label : undefined}
                     className={`w-full flex items-center ${
                       isCollapsed ? 'justify-center px-2' : 'justify-between px-3'
@@ -266,7 +268,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         {item.badge}
                       </span>
                     )}
-                  </button>
+                  </Link>
                 );
               })}
             </div>
@@ -280,9 +282,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <h3 className="px-3 text-[10px] font-bold uppercase tracking-wider text-slate-400">
               4. Settings & Profile
             </h3>
-            <button
-              type="button"
-              onClick={() => onSelectView('settings')}
+            <Link
+              to={appViewToPath('settings')}
+              data-testid="app-nav-settings"
               className={`w-full flex items-center px-3 py-2 rounded-lg text-xs font-medium ${
                 currentView === 'settings'
                   ? 'bg-blue-600 text-white font-semibold'
@@ -291,28 +293,26 @@ export const Sidebar: React.FC<SidebarProps> = ({
             >
               <Settings className="w-4 h-4 shrink-0 mr-2.5" />
               Clinic & Doctor Profile Settings
-            </button>
+            </Link>
             {canOpenAdminCms && (
-              <button
-                type="button"
-                onClick={() => go('admin')}
+              <Link
+                to="/admin"
                 className="w-full flex items-center px-3 py-2 rounded-lg text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800/80"
               >
                 <Shield className="w-4 h-4 shrink-0 mr-2.5" />
                 Admin CMS
-              </button>
+              </Link>
             )}
           </div>
         )}
         {isCollapsed && (
-          <button
-            type="button"
-            onClick={() => onSelectView('settings')}
+          <Link
+            to={appViewToPath('settings')}
             className="w-full flex justify-center py-2 rounded-lg text-slate-300 hover:bg-slate-800"
             title="Clinic & Doctor Profile Settings"
           >
             <Settings className="w-4 h-4" />
-          </button>
+          </Link>
         )}
 
         {!isCollapsed ? (

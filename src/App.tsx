@@ -1,8 +1,9 @@
 import React, { useEffect } from "react";
+import { BrowserRouter } from "react-router-dom";
 import { Sparkles } from "lucide-react";
 import { AuthProvider, destinationAfterAuth, homeSurfaceForRole, useAuth } from "./auth/AuthContext";
-import { NavigationProvider, useNav } from "./nav/NavigationContext";
-import { decideChrome, nextAuthenticatedSurface } from "./nav/surfaces";
+import { NavigationProvider, goAfterAuth, useNav } from "./nav/NavigationContext";
+import { decideChrome, nextAuthenticatedSurface, surfaceToPath } from "./nav/surfaces";
 import { LandingPage } from "./components/LandingPage";
 import { LoginPage } from "./pages/LoginPage";
 import { PolicyPage } from "./pages/PolicyPage";
@@ -28,10 +29,9 @@ function PublicBootSplash() {
 }
 
 function SurfaceRoot() {
-  const { surface, policySlug, loginNext, go } = useNav();
+  const { surface, policySlug, loginNext, loginNextPath, appView, adminTab, go, pathname } = useNav();
   const { user, loading } = useAuth();
   const forceOnboarding = needsOnboarding(user);
-  const pathname = typeof window !== "undefined" ? window.location.pathname : "/";
   const roleHome = user ? destinationAfterAuth(user, loginNext) : "app";
   const chrome = decideChrome({
     loading,
@@ -47,7 +47,12 @@ function SurfaceRoot() {
 
     if (!user) {
       if (chrome.renderSurface === "login" && surface !== "login") {
-        go("login", { loginNext: surface, replace: true });
+        go("login", {
+          loginNext: surface,
+          loginNextPath: surfaceToPath(surface, { appView, adminTab }),
+          loginMode: "signin",
+          replace: true,
+        });
       }
       return;
     }
@@ -60,9 +65,25 @@ function SurfaceRoot() {
     });
 
     if (next !== surface) {
+      if (surface === "login") {
+        goAfterAuth(go, next, loginNextPath);
+        return;
+      }
       go(next, { replace: true });
     }
-  }, [loading, user, forceOnboarding, surface, loginNext, go, pathname, chrome.renderSurface]);
+  }, [
+    loading,
+    user,
+    forceOnboarding,
+    surface,
+    loginNext,
+    loginNextPath,
+    appView,
+    adminTab,
+    go,
+    pathname,
+    chrome.renderSurface,
+  ]);
 
   if (chrome.boot) {
     return <PublicBootSplash />;
@@ -92,15 +113,17 @@ function SurfaceRoot() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <NavigationProvider>
-        <div className="flex flex-col h-dvh max-h-dvh w-full overflow-hidden">
-          <div className="flex-1 min-h-0 overflow-hidden relative">
-            <SurfaceRoot />
+    <BrowserRouter>
+      <AuthProvider>
+        <NavigationProvider>
+          <div className="flex flex-col h-dvh max-h-dvh w-full overflow-hidden">
+            <div className="flex-1 min-h-0 overflow-hidden relative">
+              <SurfaceRoot />
+            </div>
           </div>
-        </div>
-      </NavigationProvider>
-    </AuthProvider>
+        </NavigationProvider>
+      </AuthProvider>
+    </BrowserRouter>
   );
 }
 

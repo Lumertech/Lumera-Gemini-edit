@@ -36,6 +36,8 @@ import {
 } from './types';
 import { apiFetch } from './api/http';
 import { useAuth } from './auth/AuthContext';
+import { useNav } from './nav/NavigationContext';
+import { canonicalizeAppView } from './nav/surfaces';
 import {
   UNASSIGNED_PATIENT,
   clinicSettingsFromSession,
@@ -55,11 +57,14 @@ import { SpecialtyPackBoard } from './components/specialty-packs/SpecialtyPackBo
 
 export default function ClinicianApp() {
   const { user } = useAuth();
+  const { go, appView, pathname } = useNav();
   const isDemo = Boolean(user?.isDemoWorkspace);
   const sessionDoctor = doctorFromUser(user);
   const pack = workflowForUser(user);
-
-  const [currentView, setCurrentView] = useState<NavView>(() => (clinicianHomeView(user) as NavView) || 'queue');
+  const currentView = appView;
+  const setCurrentView = (view: NavView) => {
+    go('app', { appView: canonicalizeAppView(view) });
+  };
   const [currentDoctor, setCurrentDoctor] = useState<Doctor>(() =>
     isDemo ? MOCK_DOCTORS[0] : sessionDoctor
   );
@@ -92,11 +97,16 @@ export default function ClinicianApp() {
   useEffect(() => {
     if (!user) return;
     if (consumeWelcomeDashboard()) {
-      setCurrentView(postOnboardingHomeView(user.practiceType === 'polyclinic' ? 'polyclinic' : 'individual'));
+      go('app', {
+        appView: postOnboardingHomeView(user.practiceType === 'polyclinic' ? 'polyclinic' : 'individual'),
+        replace: true,
+      });
       return;
     }
-    setCurrentView(clinicianHomeView(user) as NavView);
-  }, [user?.id, user?.practiceType, user?.specialty]);
+    if (pathname === '/app' || pathname === '/app/') {
+      go('app', { appView: canonicalizeAppView(clinicianHomeView(user)), replace: true });
+    }
+  }, [user?.id, user?.practiceType, user?.specialty, pathname, go]);
 
   useEffect(() => {
     if (!user) return;
