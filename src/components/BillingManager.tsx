@@ -26,12 +26,23 @@ import {
 import { BillItem, Patient, Doctor, ClinicSettings, PharmacyBatchItem, TherapyPackage, Prescription } from '../types';
 import { MOCK_PHARMACY_BATCHES, MOCK_THERAPY_PACKAGES } from '../data/clinicalData';
 import { BLANK_CLINIC_SETTINGS } from '../lib/letterhead';
+import { apiFetch } from '../api/http';
+
+type PersistedInvoice = {
+  id: string;
+  invoiceNumber: string;
+  paymentStatus: string;
+  payLink?: string;
+  receiptWhatsAppChannel?: string;
+  receiptWhatsAppStatus?: string;
+};
 
 interface BillingManagerProps {
   currentPatient: Patient;
   currentDoctor: Doctor;
   clinicSettings?: ClinicSettings;
   activePrescription?: Prescription | null;
+  appointmentId?: string;
   onPaymentSuccess?: (invoiceNumber: string, amount: number) => void;
 }
 
@@ -40,9 +51,10 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
   currentDoctor,
   clinicSettings = BLANK_CLINIC_SETTINGS,
   activePrescription,
+  appointmentId,
   onPaymentSuccess,
 }) => {
-  const [invoiceNumber] = useState(`INV-2026-${Math.floor(1000 + Math.random() * 9000)}`);
+  const [invoiceNumber, setInvoiceNumber] = useState(`INV-2026-${Math.floor(1000 + Math.random() * 9000)}`);
   const [activeTab, setActiveTab] = useState<'invoice' | 'pharmacy_batches' | 'rehab_packages'>('invoice');
   const [pharmacyStock, setPharmacyStock] = useState<PharmacyBatchItem[]>(MOCK_PHARMACY_BATCHES);
 
@@ -53,6 +65,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
   const [isReceiptIssued, setIsReceiptIssued] = useState(false);
   const [isSendingWhatsAppReceipt, setIsSendingWhatsAppReceipt] = useState(false);
   const [whatsAppReceiptSent, setWhatsAppReceiptSent] = useState(false);
+  const [whatsAppReceiptSandbox, setWhatsAppReceiptSandbox] = useState(false);
 
   const [paymentMode, setPaymentMode] = useState<'UPI' | 'Cash' | 'Card' | 'Insurance'>('UPI');
   const [discountAmount, setDiscountAmount] = useState<number>(0);
@@ -60,8 +73,14 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
   const [newItemDesc, setNewItemDesc] = useState('');
   const [newItemPrice, setNewItemPrice] = useState<number>(500);
   const [newItemCat, setNewItemCat] = useState<BillItem['category']>('Procedure');
+  const [persistedInvoice, setPersistedInvoice] = useState<PersistedInvoice | null>(null);
+  const [payLink, setPayLink] = useState('');
+  const [sandboxPay, setSandboxPay] = useState(false);
+  const [collectBusy, setCollectBusy] = useState(false);
+  const [collectError, setCollectError] = useState('');
 
   const [items, setItems] = useState<BillItem[]>([]);
+  const upiLabel = clinicSettings.upiId?.trim() || 'Not set';
 
   useEffect(() => {
     const defaultConsultation: BillItem = {
@@ -141,10 +160,128 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
     }
 
     setItems(newItems);
+    setPersistedInvoice(null);
+    setPayLink('');
+    setSandboxPay(false);
+    setIsPaid(false);
+    setIsReceiptIssued(false);
+    setWhatsAppReceiptSent(false);
+    setCollectError('');
   }, [activePrescription, currentDoctor, currentPatient.id]);
 
   const subtotal = items.reduce((sum, item) => sum + item.total, 0);
   const totalAmount = Math.max(0, subtotal - discountAmount);
+
+  const applyPaidInvoice = (invoice: PersistedInvoice) => {
+    setPersistedInvoice(invoice);
+    setInvoiceNumber(invoice.invoiceNumber);
+    if (invoice.payLink) setPayLink(invoice.payLink);
+    const paid = invoice.paymentStatus === 'Paid';
+    setIsPaid(paid);
+    setIsReceiptIssued(paid);
+    if (paid) onPaymentSuccess?.(invoice.invoiceNumber, totalAmount);
+  };
+
+  const ensureInvoice = async (): Promise<PersistedInvoice> => {
+    if (persistedInvoice?.id && persistedInvoice.paymentStatus !== 'Paid') return persistedInvoice;
+    if (persistedInvoice?.paymentStatus === 'Paid') return persistedInvoice;
+    const created = await apiFetch<{ invoice: PersistedInvoice & { invoiceNumber: string; paymentStatus: string; payLink?: string } }>(
+      '/api/invoices',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          invoiceNumber,
+          appointmentId: appointmentId || '',
+          patientId: currentPatient.id,
+          patientName: currentPatient.name,
+          patientPhone: currentPatient.phone,
+          patientUhid: currentPatient.uhid,
+          items,
+          subtotal,
+          discountAmount,
+          taxAmount: 0,
+          gstPercent: 0,
+          gstin: clinicSettings.gstin || '',
+          upiId: clinicSettings.upiId || '',
+          issuedBy: currentDoctor.name,
+        }),
+      }
+    );
+    const invoice = created.invoice;
+    setPersistedInvoice(invoice);
+    setInvoiceNumber(invoice.invoiceNumber);
+    return invoice;
+  };
+
+  const refreshInvoice = async (id: string) => {
+    const res = await apiFetch<{ invoice: PersistedInvoice }>(`/api/invoices/${id}`);
+    applyPaidInvoice(res.invoice);
+    return res.invoice;
+  };
+
+  const startUpiCollect = async () => {
+    setCollectBusy(true);
+    setCollectError('');
+    try {
+      const invoice = await ensureInvoice();
+      const order = await apiFetch<{
+        invoice: PersistedInvoice;
+        payLink?: string;
+        sandbox?: boolean;
+        error?: string;
+      }>(`/api/invoices/${invoice.id}/pay-order`, { method: 'POST' });
+      setPersistedInvoice(order.invoice);
+      setInvoiceNumber(order.invoice.invoiceNumber);
+      setPayLink(order.payLink || order.invoice.payLink || '');
+      setSandboxPay(Boolean(order.sandbox));
+    } catch (err) {
+      setCollectError(err instanceof Error ? err.message : 'Failed to create Razorpay pay link');
+    } finally {
+      setCollectBusy(false);
+    }
+  };
+
+  const simulateSandboxCapture = async () => {
+    if (!persistedInvoice?.id) return;
+    setCollectBusy(true);
+    setCollectError('');
+    try {
+      const res = await apiFetch<{ invoice: PersistedInvoice }>(
+        `/api/invoices/${persistedInvoice.id}/sandbox-pay`,
+        { method: 'POST' }
+      );
+      applyPaidInvoice(res.invoice);
+    } catch (err) {
+      setCollectError(err instanceof Error ? err.message : 'Sandbox capture failed');
+    } finally {
+      setCollectBusy(false);
+    }
+  };
+
+  const collectDeskPayment = async () => {
+    setCollectBusy(true);
+    setCollectError('');
+    try {
+      const invoice = await ensureInvoice();
+      const res = await apiFetch<{ invoice: PersistedInvoice }>(`/api/invoices/${invoice.id}/desk-collect`, {
+        method: 'POST',
+        body: JSON.stringify({ paymentMode }),
+      });
+      applyPaidInvoice(res.invoice);
+    } catch (err) {
+      setCollectError(err instanceof Error ? err.message : 'Desk collect failed');
+    } finally {
+      setCollectBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!persistedInvoice?.id || isPaid || !payLink) return;
+    const timer = window.setInterval(() => {
+      void refreshInvoice(persistedInvoice.id).catch(() => undefined);
+    }, 2500);
+    return () => window.clearInterval(timer);
+  }, [persistedInvoice?.id, isPaid, payLink]);
 
   const handleAddItem = () => {
     if (!newItemDesc.trim()) return;
@@ -431,9 +568,13 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
                   <QrCode className="w-12 h-12 text-slate-900" />
                 </div>
                 <div className="text-xs">
-                  <strong className="text-slate-900 block font-mono">UPI: {clinicSettings.upiId || "—"}</strong>
-                  <span className="text-slate-500 text-[11px] block">Scan via GPay, PhonePe, Paytm, BHIM</span>
-                  <span className="text-emerald-700 font-semibold text-[11px]">Instant Automated Reconciliation</span>
+                  <strong className="text-slate-900 block font-mono">UPI: {upiLabel}</strong>
+                  <span className="text-slate-500 text-[11px] block">
+                    {payLink ? 'Razorpay UPI / cards / netbanking pay link' : 'Scan via GPay, PhonePe, Paytm, BHIM'}
+                  </span>
+                  <span className="text-emerald-700 font-semibold text-[11px]">
+                    Paid only after verified Razorpay webhook
+                  </span>
                 </div>
               </div>
             </div>
@@ -678,10 +819,16 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
                       <QrCode className="w-20 h-20 text-slate-900" />
                     </div>
                     <div className="text-xs space-y-1">
-                      <span className="text-teal-900 font-bold block text-sm">Dynamic UPI QR Code</span>
-                      <p className="font-mono text-[11px] text-slate-700 font-semibold">VPA: {clinicSettings.upiId || "—"}</p>
+                      <span className="text-teal-900 font-bold block text-sm">Razorpay UPI collect</span>
+                      <p className="font-mono text-[11px] text-slate-700 font-semibold">VPA: {upiLabel}</p>
                       <p className="text-[11px] text-slate-600">Amount: <strong>₹{totalAmount}</strong></p>
-                      <p className="text-[10px] text-slate-500">Supports GPay, PhonePe, Paytm, BHIM, CRED</p>
+                      {payLink ? (
+                        <a href={payLink} target="_blank" rel="noreferrer" className="text-[11px] text-teal-800 font-semibold underline break-all">
+                          {payLink}
+                        </a>
+                      ) : (
+                        <p className="text-[10px] text-slate-500">Generate a Razorpay pay link. Invoice stays Unpaid until webhook.</p>
+                      )}
                     </div>
                   </div>
                 )}
@@ -759,18 +906,41 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
                   </div>
                 )}
 
+                {collectError && (
+                  <p className="text-[11px] text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{collectError}</p>
+                )}
+
                 {/* Confirm Pay Button */}
-                <button
-                  onClick={() => {
-                    setIsPaid(true);
-                    setIsReceiptIssued(true);
-                    onPaymentSuccess?.(invoiceNumber, totalAmount);
-                  }}
-                  className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-sm shadow-emerald-200 transition-all cursor-pointer"
-                >
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>Confirm Payment of ₹{totalAmount} &amp; Issue GST Receipt</span>
-                </button>
+                {paymentMode === 'UPI' ? (
+                  <div className="space-y-2">
+                    <button
+                      onClick={() => void startUpiCollect()}
+                      disabled={collectBusy || Boolean(payLink)}
+                      className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-sm shadow-emerald-200 transition-all cursor-pointer"
+                    >
+                      {collectBusy ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                      <span>{payLink ? 'Waiting for verified Razorpay webhook…' : `Create Razorpay pay link for ₹${totalAmount}`}</span>
+                    </button>
+                    {sandboxPay && payLink && (
+                      <button
+                        onClick={() => void simulateSandboxCapture()}
+                        disabled={collectBusy}
+                        className="w-full py-2 rounded-xl bg-amber-100 hover:bg-amber-200 text-amber-900 font-bold text-[11px] border border-amber-300 cursor-pointer"
+                      >
+                        Simulate Razorpay webhook (SANDBOX / DEV-ONLY)
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => void collectDeskPayment()}
+                    disabled={collectBusy}
+                    className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-sm shadow-emerald-200 transition-all cursor-pointer"
+                  >
+                    {collectBusy ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                    <span>Record {paymentMode} collection of ₹{totalAmount}</span>
+                  </button>
+                )}
               </div>
             ) : (
               <div className="space-y-4">
@@ -817,34 +987,26 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
                   {whatsAppReceiptSent ? (
                     <div className="bg-emerald-100 text-emerald-800 p-2 rounded-lg text-[11px] font-medium flex items-center gap-1.5">
                       <Check className="w-3.5 h-3.5 text-emerald-700" />
-                      GST E-Receipt sent to {currentPatient.phone} via WhatsApp!
+                      GST E-Receipt {whatsAppReceiptSandbox ? 'recorded in SANDBOX / DEV-ONLY (not Graph)' : `sent to ${currentPatient.phone} via WhatsApp`}
                     </div>
                   ) : (
                     <button
                       onClick={async () => {
+                        if (!persistedInvoice?.id) return;
                         setIsSendingWhatsAppReceipt(true);
                         try {
-                          await fetch('/api/whatsapp/send-rx', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                              patientPhone: currentPatient.phone,
-                              patientName: currentPatient.name,
-                              uhid: currentPatient.uhid,
-                              rxNumber: invoiceNumber,
-                              doctorName: currentDoctor.name,
-                              doctorSpecialty: currentDoctor.specialty,
-                              diagnosis: `GST Payment Receipt: ₹${totalAmount} via ${paymentMode}`,
-                              medicines: [],
-                              advice: [`Receipt Number: ${receiptNumber}`, `Payment Mode: ${paymentMode}`, `Total Amount: ₹${totalAmount}`],
-                              clinicName: clinicSettings.name,
-                              language: 'English',
-                            }),
-                          });
+                          const res = await apiFetch<{
+                            ok?: boolean;
+                            sandbox?: boolean;
+                            graphDelivered?: boolean;
+                            channel?: string;
+                          }>(`/api/invoices/${persistedInvoice.id}/receipt`, { method: 'POST' });
                           setWhatsAppReceiptSent(true);
+                          setWhatsAppReceiptSandbox(Boolean(res.sandbox) || res.channel === 'sandbox');
                         } catch (err) {
                           console.error(err);
-                          setWhatsAppReceiptSent(true);
+                          setWhatsAppReceiptSent(false);
+                          setCollectError(err instanceof Error ? err.message : 'WhatsApp receipt failed');
                         } finally {
                           setIsSendingWhatsAppReceipt(false);
                         }

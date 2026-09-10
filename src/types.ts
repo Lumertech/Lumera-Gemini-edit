@@ -20,6 +20,8 @@ export interface AppUser {
   specialty?: string;
   practiceType?: 'individual' | 'polyclinic';
   isDemoWorkspace?: boolean;
+  gstin?: string;
+  upiId?: string;
 }
 
 export interface TenantLetterhead {
@@ -548,6 +550,9 @@ export interface Invoice {
   paymentStatus: 'Paid' | 'Partially Paid' | 'Unpaid';
   paymentMode?: 'UPI / QR' | 'Razorpay' | 'Cash' | 'Card' | 'Insurance';
   paymentRef?: string;
+  gstin?: string;
+  upiId?: string;
+  payLink?: string;
   issuedBy: string;
 }
 

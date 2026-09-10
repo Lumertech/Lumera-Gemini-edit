@@ -112,9 +112,12 @@ describe("Graph credential hygiene", () => {
     process.env.FACEBOOK_APP_SECRET = "replace-with-facebook-app-secret";
     process.env.META_APP_SECRET = "replace-with-meta-app-secret";
     assert.equal(facebookOAuthConfigured(), false);
-    process.env.FACEBOOK_APP_ID = prevId;
-    process.env.FACEBOOK_APP_SECRET = prevSecret;
-    process.env.META_APP_SECRET = prevMeta;
+    if (prevId === undefined) delete process.env.FACEBOOK_APP_ID;
+    else process.env.FACEBOOK_APP_ID = prevId;
+    if (prevSecret === undefined) delete process.env.FACEBOOK_APP_SECRET;
+    else process.env.FACEBOOK_APP_SECRET = prevSecret;
+    if (prevMeta === undefined) delete process.env.META_APP_SECRET;
+    else process.env.META_APP_SECRET = prevMeta;
   });
 
   it("ignores env placeholders when resolving Graph credentials", () => {
