@@ -162,6 +162,7 @@ describe("production SPA history fallback", () => {
     assert.equal(isSpaHistoryFallbackPath("/app/rx"), true);
     assert.equal(isSpaHistoryFallbackPath("/admin/users"), true);
     assert.equal(isSpaHistoryFallbackPath("/app/billing"), true);
+    assert.equal(isSpaHistoryFallbackPath("/w/dr-demo-physio/whatsapp"), true);
     assert.equal(isSpaHistoryFallbackPath("/api/public/policies/privacy-policy"), false);
     assert.equal(isSpaHistoryFallbackPath("/assets/index-abc.js"), false);
     assert.equal(isBackendPath("/healthz"), true);

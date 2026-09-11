@@ -30,7 +30,7 @@ function PublicBootSplash() {
 }
 
 function SurfaceRoot() {
-  const { surface, policySlug, loginNext, loginNextPath, appView, adminTab, go, pathname } = useNav();
+  const { surface, policySlug, loginNext, loginNextPath, appView, adminTab, workspaceSlug, go, pathname } = useNav();
   const { user, loading } = useAuth();
   const forceOnboarding = needsOnboarding(user);
   const roleHome = user ? destinationAfterAuth(user, loginNext) : "app";
@@ -50,7 +50,7 @@ function SurfaceRoot() {
       if (chrome.renderSurface === "login" && surface !== "login") {
         go("login", {
           loginNext: surface,
-          loginNextPath: surfaceToPath(surface, { appView, adminTab }),
+          loginNextPath: surfaceToPath(surface, { appView, adminTab, workspaceSlug }),
           loginMode: "signin",
           replace: true,
         });
