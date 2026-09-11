@@ -59,6 +59,7 @@ describe("Firebase Hosting → Cloud Run config (#26)", () => {
     assert.match(runbook, /lumera-gemini-edit/);
     assert.match(runbook, /asia-south1/);
     assert.match(runbook, /https:\/\/www\.mylumera\.in\/api\/auth\/facebook\/callback/);
+    assert.match(runbook, /https:\/\/www\.mylumera\.in\/api\/auth\/google\/callback/);
     assert.match(runbook, /https:\/\/www\.mylumera\.in\/api\/meta\/webhook/);
     assert.equal(/do not (point the domain at|leave Gemini).*(Firebase|AI Studio)/i.test(runbook), false);
     const retired = JSON.parse(readRepo("deploy/hostinger-webapp.settings.json")) as { status: string };

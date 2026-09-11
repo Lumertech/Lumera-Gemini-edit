@@ -61,7 +61,7 @@ import {
 } from "./platform-tenants.ts";
 import { generateTemporaryPassword, hashPassword, passwordRuleError, verifyPassword } from "./password.ts";
 import { parseSpecialtyPackInput, resolveSpecialtyPack } from "./specialty-packs.ts";
-import { isProduction } from "./runtime.ts";
+import { appPublicUrl, isProduction } from "./runtime.ts";
 import { dispatchWhatsAppCloudMessage, isCloudDispatchFailure } from "./graph-whatsapp.ts";
 import {
   FacebookOAuthError,
@@ -73,6 +73,14 @@ import {
   signFacebookOAuthState,
   verifyFacebookOAuthState,
 } from "./facebook-oauth.ts";
+import {
+  GoogleOAuthError,
+  googleLoginDialogUrl,
+  googleOAuthConfigured,
+  googleRedirectUri,
+  signGoogleOAuthState,
+  verifyGoogleOAuthState,
+} from "./google-oauth.ts";
 
 const uploadDir = path.join(process.cwd(), "uploads");
 fs.mkdirSync(uploadDir, { recursive: true });
@@ -453,10 +461,70 @@ export function createApiRouter(): Router {
     return res.redirect(facebookLoginDialogUrl({ redirectUri, state }));
   });
 
+  api.get("/auth/google", (req: Request, res: Response) => {
+    if (!googleOAuthConfigured()) {
+      if (isProduction()) {
+        return res.status(503).json({ error: "Google Sign-in is not configured (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET)." });
+      }
+      return res.redirect("/login?oauth=google&error=not_configured");
+    }
+    const host = req.get("host") || undefined;
+    const proto = req.get("x-forwarded-proto") || req.protocol;
+    const redirectUri = googleRedirectUri(host, proto);
+    const state = signGoogleOAuthState();
+    return res.redirect(googleLoginDialogUrl({ redirectUri, state }));
+  });
+
+  api.get("/auth/google/callback", async (req: Request, res: Response) => {
+    const host = req.get("host") || undefined;
+    const proto = req.get("x-forwarded-proto") || req.protocol;
+    const appUrl = appPublicUrl(host, proto);
+    const fail = (reason: string) => res.redirect(`${appUrl}/login?oauth=google&error=${encodeURIComponent(reason)}`);
+
+    const errorParam = String(req.query.error || "").trim();
+    if (errorParam) return fail(errorParam);
+
+    const code = String(req.query.code || "").trim();
+    const state = String(req.query.state || "").trim();
+    if (!code) return fail("missing_code");
+    if (!verifyGoogleOAuthState(state)) return fail("invalid_state");
+
+    try {
+      const identity = await resolveFederatedIdentity({
+        provider: "google",
+        code,
+        redirectUri: googleRedirectUri(host, proto),
+      });
+      const user = getDb().prepare("SELECT * FROM users WHERE email = ?").get(identity.email) as unknown as DbUser | undefined;
+      if (!user) {
+        const params = new URLSearchParams({
+          oauth: "google",
+          unregistered: "1",
+          email: identity.email,
+          name: identity.name,
+        });
+        return res.redirect(`${appUrl}/login?${params.toString()}`);
+      }
+      if (user.status === "disabled") return fail("account_disabled");
+      const tenantBlocked = clinicTenantAccessError(user);
+      if (tenantBlocked) return fail("tenant_suspended");
+
+      issueLumeraSession(res, user);
+      getDb()
+        .prepare("UPDATE users SET last_login = ?, whatsapp_verified = 1, avatar_url = COALESCE(NULLIF(?, ''), avatar_url) WHERE id = ?")
+        .run(new Date().toISOString(), identity.avatarUrl, user.id);
+      writeAudit(getDb(), user.id, user.name, "OAuth Sign In", `${user.email} signed in via google (Google-verified)`);
+      return res.redirect(`${appUrl}/login?oauth=google&status=ok`);
+    } catch (err) {
+      const message = err instanceof GoogleOAuthError || err instanceof FacebookOAuthError ? err.message : "google_oauth_failed";
+      return fail(message);
+    }
+  });
+
   api.get("/auth/facebook/callback", async (req: Request, res: Response) => {
     const host = req.get("host") || undefined;
     const proto = req.get("x-forwarded-proto") || req.protocol;
-    const appUrl = (process.env.APP_URL || `${proto === "https" ? "https" : "http"}://${host || "localhost:3000"}`).replace(/\/$/, "");
+    const appUrl = appPublicUrl(host, proto);
     const fail = (reason: string) => res.redirect(`${appUrl}/login?oauth=facebook&error=${encodeURIComponent(reason)}`);
 
     const errorParam = String(req.query.error || "").trim();
@@ -499,13 +567,15 @@ export function createApiRouter(): Router {
     }
   });
 
-  // Federated OAuth: Facebook requires Graph-verified identity in production.
+  // Federated OAuth: Google/Facebook require provider-verified identity in production.
   api.post("/auth/oauth", async (req: Request, res: Response) => {
     const provider = String(req.body?.provider || "google").toLowerCase();
     const profile = req.body?.profile || {};
     const host = req.get("host") || undefined;
     const proto = req.get("x-forwarded-proto") || req.protocol;
-    const redirectUri = String(req.body?.redirectUri || facebookRedirectUri(host, proto)).trim();
+    const defaultRedirect =
+      provider === "google" ? googleRedirectUri(host, proto) : facebookRedirectUri(host, proto);
+    const redirectUri = String(req.body?.redirectUri || defaultRedirect).trim();
 
     let identity;
     try {
@@ -519,12 +589,13 @@ export function createApiRouter(): Router {
         clientAvatarUrl: String(profile?.avatarUrl || "").trim(),
       });
     } catch (err) {
-      const status = err instanceof FacebookOAuthError ? err.status : 401;
+      const status = err instanceof FacebookOAuthError || err instanceof GoogleOAuthError ? err.status : 401;
       const message = err instanceof Error ? err.message : "OAuth verification failed.";
       return res.status(status).json({ error: message });
     }
 
     const user = getDb().prepare("SELECT * FROM users WHERE email = ?").get(identity.email) as unknown as DbUser | undefined;
+    const providerLabel = identity.provider === "google" ? "Google" : "Facebook";
 
     if (!user) {
       return res.json({
@@ -536,7 +607,7 @@ export function createApiRouter(): Router {
         sandbox: Boolean(identity.sandbox),
         message: identity.sandbox
           ? "SANDBOX / DEV-ONLY: no clinic account for this email. Complete clinic registration."
-          : "No existing clinic account found with this verified Facebook email. Please complete clinic registration.",
+          : `No existing clinic account found with this verified ${providerLabel} email. Please complete clinic registration.`,
       });
     }
 
@@ -546,8 +617,9 @@ export function createApiRouter(): Router {
     if (rejectClinicTenantBlocked(user, res)) return;
 
     const skipOtp = Boolean(req.body?.skipOtp) && allowSkipOtp();
-    const graphVerifiedFacebook = identity.provider === "facebook" && !identity.sandbox;
-    if (graphVerifiedFacebook || skipOtp) {
+    const federatedVerified =
+      (identity.provider === "facebook" || identity.provider === "google") && !identity.sandbox;
+    if (federatedVerified || skipOtp) {
       const jwtToken = issueLumeraSession(res, user);
       getDb()
         .prepare("UPDATE users SET last_login = ?, whatsapp_verified = 1, avatar_url = COALESCE(NULLIF(?, ''), avatar_url) WHERE id = ?")
@@ -557,7 +629,7 @@ export function createApiRouter(): Router {
         user.id,
         user.name,
         "OAuth Sign In",
-        `${user.email} signed in via ${identity.provider}${identity.sandbox ? " (SANDBOX / DEV-ONLY client email)" : " (Graph-verified)"}`
+        `${user.email} signed in via ${identity.provider}${identity.sandbox ? " (SANDBOX / DEV-ONLY client email)" : " (provider-verified)"}`
       );
       return res.json({
         user: publicUser(user),

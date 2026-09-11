@@ -27,6 +27,13 @@ describe("LoginPage create-clinic / register defaults (founder P0)", () => {
     assert.match(loginSrc, /setExplicitPolyclinicChoice\(true\)/);
   });
 
+  it("starts Google Sign-in at /api/auth/google when credentials are configured", () => {
+    assert.match(loginSrc, /oauthConfig\?\.googleConfigured/);
+    assert.match(loginSrc, /window\.location\.href = "\/api\/auth\/google"/);
+    assert.match(loginSrc, /GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET/);
+    assert.match(loginSrc, /oauth !== "google"/);
+  });
+
   it("does not read URL params to select Multispecialty", () => {
     assert.equal(loginSrc.includes('params.get("practiceType")'), false);
     assert.equal(loginSrc.includes('searchParams.get("practice")'), false);
