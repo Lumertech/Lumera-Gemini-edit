@@ -54,7 +54,8 @@ import {
   OphthalmologyAssessment,
   DentalAssessment,
   GynecologyAssessment,
-  isAbhaLinked
+  isAbhaLinked,
+  Appointment
 } from '../types';
 import { 
   INDIAN_DRUG_DATABASE, 
@@ -74,7 +75,10 @@ import { OphthalmologyRxModule } from './specialty-rx/OphthalmologyRxModule';
 import { DentalSurgeryRxModule } from './specialty-rx/DentalSurgeryRxModule';
 import { GynecologyRxModule } from './specialty-rx/GynecologyRxModule';
 import { PhysioProgressTracker } from './specialty-rx/PhysioProgressTracker';
-import { CompactAmbientScribe } from './CompactAmbientScribe';
+import { CompactAmbientScribe, AmbientScribeStatus } from './CompactAmbientScribe';
+import { FollowUpSlotPicker, ReservedFollowUp } from './FollowUpSlotPicker';
+import { clonePresetExercises, presetHepToastMessage } from '../lib/rxPresetHep';
+import { followUpBookingRef } from '../lib/followUpSlots';
 
 interface PrescriptionWriterProps {
   currentPatient: Patient;
@@ -85,6 +89,8 @@ interface PrescriptionWriterProps {
   isSpecialtyLocked?: boolean;
   lockedSpecialty?: string;
   onProceedToBilling?: () => void;
+  appointments?: Appointment[];
+  onBookFollowUp?: (input: Partial<Appointment>) => Promise<Appointment | void>;
 }
 
 export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
@@ -96,6 +102,8 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
   isSpecialtyLocked,
   lockedSpecialty,
   onProceedToBilling,
+  appointments = [],
+  onBookFollowUp,
 }) => {
   // Determine initial specialty from current doctor
   const getInitialSpecialty = (doctorSpec: string): PolyclinicSpecialty => {
@@ -119,7 +127,12 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     getInitialSpecialty(lockedSpecialty || currentDoctor.specialty)
   );
 
-  const [isAmbientScribeOpen, setIsAmbientScribeOpen] = useState(false);
+  const [isAmbientScribeOpen, setIsAmbientScribeOpen] = useState(true);
+  const [scribeStatus, setScribeStatus] = useState<AmbientScribeStatus>('idle');
+  const [hepToast, setHepToast] = useState<string | null>(null);
+  const [physioSubTab, setPhysioSubTab] = useState<'assessment' | 'procedures' | 'exercises'>('assessment');
+  const [hepRevision, setHepRevision] = useState(0);
+  const [followUpReservation, setFollowUpReservation] = useState<ReservedFollowUp | null>(null);
 
   // Dynamic patient intake: when active patient changes or is called from queue, update context
   useEffect(() => {
@@ -154,6 +167,14 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     }
     if (soap.physiotherapyAssessment) {
       setPhysioAssessment(soap.physiotherapyAssessment);
+    }
+    if (soap.prescribedExercises?.length) {
+      setPrescribedExercises(clonePresetExercises(soap.prescribedExercises));
+      setPhysioSubTab('exercises');
+      setHepRevision((n) => n + 1);
+    }
+    if (soap.plan?.followUpDays) {
+      setFollowUpDays(soap.plan.followUpDays);
     }
   };
 
@@ -567,7 +588,15 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     // If preset contains physiotherapy modules
     if (preset.physiotherapyAssessment) setPhysioAssessment(preset.physiotherapyAssessment);
     if (preset.performedTherapies) setPerformedProcedures(preset.performedTherapies);
-    if (preset.prescribedExercises) setPrescribedExercises(preset.prescribedExercises);
+    if (preset.prescribedExercises) {
+      const nextHep = clonePresetExercises(preset.prescribedExercises);
+      setPrescribedExercises(nextHep);
+      setPhysioSubTab('exercises');
+      setHepRevision((n) => n + 1);
+      const message = presetHepToastMessage(nextHep.length);
+      setHepToast(message);
+      window.setTimeout(() => setHepToast(null), 3500);
+    }
     if (preset.id === 'preset-physio-lumbar-radiculopathy') {
       setSelectedTherapyPackage(MOCK_THERAPY_PACKAGES[0]);
     } else if (preset.id === 'preset-physio-frozen-shoulder') {
@@ -722,7 +751,10 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     medicines: medicines,
     labTests: labTests,
     advice: adviceList,
-    followUpDate: new Date(Date.now() + followUpDays * 86400000).toISOString().split('T')[0],
+    followUpDate: followUpReservation?.date || new Date(Date.now() + followUpDays * 86400000).toISOString().split('T')[0],
+    followUpTimeSlot: followUpReservation?.timeSlot,
+    followUpAppointmentId: followUpReservation?.appointmentId,
+    followUpBookingRef: followUpReservation?.bookingRef,
     clinicName: clinicSettings.name,
     clinicAddress: clinicSettings.address,
     clinicPhone: clinicSettings.phone,
@@ -808,6 +840,24 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
 
   return (
     <div className="space-y-4 max-w-6xl mx-auto pb-16">
+      {hepToast && (
+        <div
+          role="status"
+          className="no-print fixed top-4 right-4 z-50 px-4 py-2.5 rounded-lg bg-teal-700 text-white text-xs font-bold shadow-lg"
+        >
+          {hepToast}
+        </div>
+      )}
+
+      <CompactAmbientScribe
+        currentPatient={currentPatient}
+        currentDoctor={currentDoctor}
+        onApplyToRx={handleApplySoapToRx}
+        isOpen={isAmbientScribeOpen}
+        onClose={() => setIsAmbientScribeOpen(false)}
+        onStatusChange={setScribeStatus}
+      />
+
       {/* Specialty Selector Toolbar */}
       <SpecialtyToolbar
         currentSpecialty={activeSpecialty}
@@ -870,16 +920,31 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
 
           {/* Embedded Ambient Scribe Toggle */}
           <button
-            onClick={() => setIsAmbientScribeOpen(!isAmbientScribeOpen)}
+            onClick={() => {
+              setIsAmbientScribeOpen(true);
+              document.getElementById('ambient-scribe-top')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }}
             className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition-all shadow-xs cursor-pointer ${
-              isAmbientScribeOpen
-                ? 'bg-purple-700 text-white ring-2 ring-purple-300'
-                : 'bg-purple-50 hover:bg-purple-100 text-purple-900 border border-purple-200'
+              scribeStatus === 'listening'
+                ? 'bg-rose-600 text-white'
+                : scribeStatus === 'processing'
+                  ? 'bg-amber-500 text-white'
+                  : isAmbientScribeOpen
+                    ? 'bg-purple-700 text-white ring-2 ring-purple-300'
+                    : 'bg-purple-50 hover:bg-purple-100 text-purple-900 border border-purple-200'
             }`}
-            title="Toggle Embedded Ambient AI Clinical Scribe"
+            title="Ambient AI Clinical Scribe status"
           >
-            <Mic className="w-3.5 h-3.5 text-purple-600" />
-            <span>{isAmbientScribeOpen ? 'Hide AI Scribe' : '🎙️ Ambient AI Scribe'}</span>
+            <Mic className={`w-3.5 h-3.5 ${scribeStatus === 'listening' ? 'animate-pulse' : ''}`} />
+            <span>
+              {scribeStatus === 'listening'
+                ? 'Listening'
+                : scribeStatus === 'processing'
+                  ? 'Processing'
+                  : isAmbientScribeOpen
+                    ? 'Scribe Idle'
+                    : 'Show Ambient AI'}
+            </span>
           </button>
 
           {/* AI Safety Check button */}
@@ -933,18 +998,6 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
           )}
         </div>
       </div>
-
-      {/* Embedded Ambient AI Scribe Widget */}
-      {isAmbientScribeOpen && (
-        <div className="no-print">
-          <CompactAmbientScribe
-            currentPatient={currentPatient}
-            currentDoctor={currentDoctor}
-            onApplyToRx={handleApplySoapToRx}
-            onClose={() => setIsAmbientScribeOpen(false)}
-          />
-        </div>
-      )}
 
       {/* AI Drug Safety Alert Panel */}
       {safetyResult && (
@@ -1022,6 +1075,8 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
             onUpdateAssessment={(newAss) => setPhysioAssessment(newAss)}
             onUpdateProcedures={(newProcs) => setPerformedProcedures(newProcs)}
             onUpdateExercises={(newExs) => setPrescribedExercises(newExs)}
+            preferredSubTab={physioSubTab}
+            hepRevision={hepRevision}
           />
           <PhysioProgressTracker
             therapyPackage={selectedTherapyPackage}
@@ -1593,27 +1648,45 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
             </div>
           </div>
 
-          <div className="bg-blue-50/60 p-3 rounded-lg border border-blue-200 text-xs space-y-2">
-            <span className="text-slate-500 block text-[10px] uppercase font-bold tracking-wider">Next Clinical Review:</span>
-            <div className="flex items-center gap-2">
-              <strong className="text-slate-900 text-xs">
-                In {followUpDays} Days ({new Date(Date.now() + followUpDays * 86400000).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })})
-              </strong>
-            </div>
-            <div className="flex gap-1 no-print">
-              {[3, 5, 7, 14, 21, 30].map((d) => (
-                <button
-                  key={d}
-                  onClick={() => setFollowUpDays(d)}
-                  className={`px-2 py-0.5 rounded text-[11px] font-bold ${
-                    followUpDays === d ? 'bg-blue-600 text-white' : 'bg-white border border-blue-200 text-blue-800'
-                  }`}
-                >
-                  {d}d
-                </button>
-              ))}
-            </div>
-          </div>
+          <FollowUpSlotPicker
+            doctor={currentDoctor}
+            appointments={appointments}
+            followUpDays={followUpDays}
+            onFollowUpDaysChange={setFollowUpDays}
+            reserved={followUpReservation}
+            onReserve={async ({ date, timeSlot }) => {
+              if (onBookFollowUp) {
+                const booked = await onBookFollowUp({
+                  patientId: currentPatient.id,
+                  patientName: currentPatient.name,
+                  patientPhone: currentPatient.phone,
+                  uhid: currentPatient.uhid,
+                  doctorId: currentDoctor.id,
+                  doctorName: currentDoctor.name,
+                  specialty: currentDoctor.specialty,
+                  date,
+                  timeSlot,
+                  type: 'Follow-up',
+                  source: 'Walk-in',
+                });
+                const appointmentId = booked?.id || `apt-${Date.now()}`;
+                setFollowUpReservation({
+                  date,
+                  timeSlot,
+                  appointmentId,
+                  bookingRef: followUpBookingRef(appointmentId, date, timeSlot),
+                });
+                return;
+              }
+              const appointmentId = `apt-${Date.now()}`;
+              setFollowUpReservation({
+                date,
+                timeSlot,
+                appointmentId,
+                bookingRef: followUpBookingRef(appointmentId, date, timeSlot),
+              });
+            }}
+          />
         </div>
 
         {/* Footer with QR Code & Digital Signature Stamp */}
@@ -1643,6 +1716,11 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
             </div>
             <p className="text-[11px] font-bold text-slate-700">{clinicSettings.sealText || "Authorized Medical Signature"}</p>
             <p className="text-[10px] text-slate-400">Reg No: {currentDoctor.regNumber}</p>
+            {followUpReservation && (
+              <p className="text-[10px] font-mono text-blue-800 mt-1">
+                Follow-up booking {followUpReservation.bookingRef} · {followUpReservation.date} {followUpReservation.timeSlot}
+              </p>
+            )}
           </div>
         </div>
         {clinicSettings.footerDisclaimer && (
@@ -1789,7 +1867,12 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
                 </div>
                 <div className="bg-white p-2 rounded-lg border border-slate-200">
                   <span className="text-slate-400 block text-[10px] font-bold">FOLLOW UP</span>
-                  <strong className="text-slate-900 text-sm">{followUpDays}d</strong>
+                  <strong className="text-slate-900 text-sm">
+                    {followUpReservation ? followUpReservation.timeSlot : `${followUpDays}d`}
+                  </strong>
+                  {followUpReservation && (
+                    <span className="block text-[9px] font-mono text-slate-500 mt-0.5">{followUpReservation.bookingRef}</span>
+                  )}
                 </div>
               </div>
             </div>

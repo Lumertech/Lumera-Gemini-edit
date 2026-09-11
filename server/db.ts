@@ -1397,6 +1397,9 @@ export const PRESCRIPTION_SPECIALTY_KEYS = [
   "ophthalmologyAssessment",
   "dentalAssessment",
   "gynecologyAssessment",
+  "followUpTimeSlot",
+  "followUpAppointmentId",
+  "followUpBookingRef",
 ] as const;
 
 /** Patient JSON never presents unlocked KYC. Leftover rows remap to LINKED_SANDBOX. */
