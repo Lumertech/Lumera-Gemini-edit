@@ -126,7 +126,6 @@ describe("Wave 1A PHI / auth lock", () => {
       assert.equal(allowPasswordLoginWithoutOtp(acct), true, acct.email);
       const adminDesk =
         acct.email === "admin@lumera.me" ||
-        acct.role === "admin" ||
         acct.role === "super_admin" ||
         acct.role === "CLINIC_ADMIN" ||
         acct.role === "polyclinic_admin";
