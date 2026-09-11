@@ -112,6 +112,29 @@ describe("Compliance #26 policy seed grep", () => {
     assert.match(DATA_DELETION_INSTRUCTIONS_BODY, /https:\/\/www\.mylumera\.in\/api\/meta\/data-deletion/);
     assert.ok(CMS_POLICY_UPSERTS.some((row) => row.slug === "privacy-policy"));
   });
+
+  it("founder lock: public policy contacts are ravee@lumer.me only", () => {
+    const seed = readRepo("server/cms-policy-seed.ts");
+    const policyPage = readRepo("src/pages/PolicyPage.tsx");
+    const retired = [
+      "dpo@lumera.me",
+      "compliance@lumera.health",
+      "privacy@lumera.health",
+      "legal@lumera.health",
+    ];
+    for (const email of retired) {
+      assert.equal(seed.includes(email), false, `seed still lists ${email}`);
+      assert.equal(policyPage.includes(email), false, `PolicyPage still lists ${email}`);
+    }
+    assert.match(PRIVACY_POLICY_BODY, /ravee@lumer\.me/);
+    assert.match(TERMS_OF_SERVICE_BODY, /ravee@lumer\.me/);
+    assert.match(DATA_DELETION_INSTRUCTIONS_BODY, /ravee@lumer\.me/);
+    assert.match(policyPage, /ravee@lumer\.me/);
+    assert.equal(
+      /dpo@|compliance@lumera|privacy@lumera|legal@lumera/i.test(`${seed}\n${policyPage}`),
+      false
+    );
+  });
 });
 
 describe("Compliance #26 public policy HTML + deletion-status", () => {
@@ -159,6 +182,8 @@ describe("Compliance #26 public policy HTML + deletion-status", () => {
     assert.equal(/official Meta Tech Provider/i.test(row.body), false);
     assert.equal(/Authorized Tech Provider/i.test(row.body), false);
     assert.match(row.body, /\bSTOP\b/);
+    assert.match(row.body, /ravee@lumer\.me/);
+    assert.equal(/dpo@lumera\.me|compliance@lumera\.health|privacy@lumera\.health|legal@lumera\.health/.test(row.body), false);
   });
 
   it("GET policy HTML embeds cms body (not an empty SPA shell)", async () => {
@@ -169,6 +194,8 @@ describe("Compliance #26 public policy HTML + deletion-status", () => {
       const html = await res.text();
       assert.match(html, /not a certified Meta Tech Provider/i);
       assert.equal(/id="root"/.test(html), false, `${p} should not be the Vite SPA shell`);
+      assert.match(html, /ravee@lumer\.me/);
+      assert.equal(/dpo@lumera\.me|compliance@lumera\.health|privacy@lumera\.health|legal@lumera\.health/.test(html), false);
       if (p === "/privacy-policy") {
         assert.match(html, /\bSTOP\b/);
         assert.match(html, /DPDP/i);
@@ -188,6 +215,8 @@ describe("Compliance #26 public policy HTML + deletion-status", () => {
       const json = (await res.json()) as { slug: string; body: string; title: string };
       assert.equal(json.slug, slug);
       assert.match(json.body, /not a certified Meta Tech Provider/i);
+      assert.match(json.body, /ravee@lumer\.me/);
+      assert.equal(/dpo@lumera\.me|compliance@lumera\.health|privacy@lumera\.health|legal@lumera\.health/.test(json.body), false);
       if (slug === "privacy-policy") assert.match(json.body, /\bSTOP\b/);
       if (slug === "data-deletion-instructions") {
         assert.match(json.body, /https:\/\/www\.mylumera\.in\/api\/meta\/data-deletion/);

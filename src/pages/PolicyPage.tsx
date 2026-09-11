@@ -50,7 +50,7 @@ export const PolicyPage: React.FC<{ slug: string }> = ({ slug: initialSlug }) =>
       })
       .catch(() => {
         setTitle("Policy Document");
-        setBody("Documentation is currently being refreshed. Please check back shortly or email compliance@lumera.health.");
+        setBody("Documentation is currently being refreshed. Please check back shortly or email ravee@lumer.me.");
       });
   };
 
@@ -297,8 +297,7 @@ export const PolicyPage: React.FC<{ slug: string }> = ({ slug: initialSlug }) =>
             <div className="space-y-1">
               <div className="text-slate-900 font-medium">Data Protection Office (DPO)</div>
               <div>Lumera Solutions LLP</div>
-              <div className="text-emerald-700 font-mono">dpo@lumera.me</div>
-              <div className="text-slate-500 font-mono">compliance@lumera.health</div>
+              <div className="text-emerald-700 font-mono">ravee@lumer.me</div>
             </div>
             <div className="pt-2 border-t border-slate-100 text-[11px] text-slate-400">
               SLA for regulatory data requests: Under 48 hours.

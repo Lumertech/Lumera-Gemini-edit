@@ -21,7 +21,7 @@ export const PRIVACY_POLICY_BODY = `# Privacy Policy
 
 **Last updated:** September 2026  
 **Controller / product:** Lumera Solutions LLP (“Lumera”) — clinic software with optional WhatsApp Cloud API and Facebook Login  
-**Contact:** dpo@lumera.me | compliance@lumera.health | privacy@lumera.health
+**Contact:** ravee@lumer.me
 
 ---
 
@@ -61,7 +61,7 @@ We do **not** use WhatsApp or Facebook Login data to sell ads, build advertising
 - See [Data Deletion Instructions](https://www.mylumera.in/data-deletion-instructions) for how to request erasure
 
 #### Contact
-Data Protection / privacy requests: **dpo@lumera.me** | **compliance@lumera.health**
+Data Protection / privacy requests: **ravee@lumer.me**
 
 ---
 
@@ -80,7 +80,7 @@ export const TERMS_OF_SERVICE_BODY = `# Lumera Terms of Service
 
 **Last updated:** September 2026  
 **Jurisdiction:** India  
-**Contact:** legal@lumera.health | dpo@lumera.me
+**Contact:** ravee@lumer.me
 
 **Lumera is not a certified Meta Tech Provider. Meta App Review is not submitted.** These Terms describe the clinic software product and the optional WhatsApp Cloud API / Facebook Login path. They are not a certification or App Review approval claim.
 
@@ -116,7 +116,7 @@ export const DATA_DELETION_INSTRUCTIONS_BODY = `# Data Deletion Instructions (Me
 **Public status page:** https://www.mylumera.in/data-deletion-instructions  
 **Automated callback (Meta App Dashboard → Data Deletion Request URL):** https://www.mylumera.in/api/meta/data-deletion  
 **Status check:** https://www.mylumera.in/api/meta/data-deletion-status?code=YOUR_CODE  
-**Email:** dpo@lumera.me | compliance@lumera.health
+**Email:** ravee@lumer.me
 
 **Lumera is not a certified Meta Tech Provider. Meta App Review is not submitted.**
 
@@ -134,7 +134,7 @@ You can request deletion of personal data Lumera stored because you used Faceboo
    \`https://www.mylumera.in/api/meta/data-deletion-status?code=YOUR_CODE\`
 
 ## Option 2 — Email the Data Protection Office
-Email **dpo@lumera.me** with subject \`Data deletion request\` and include:
+Email **ravee@lumer.me** with subject \`Data deletion request\` and include:
 - Full name (or clinic name)
 - Email and/or WhatsApp phone number (with country code)
 - Facebook user id or WABA id if you have it
