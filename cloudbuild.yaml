@@ -57,10 +57,10 @@ steps:
           --remove-annotations=run.googleapis.com/sources \
           || true
         deploy/clear-cloud-run-source-annotation.sh \
-          --service="${_SERVICE}" \
-          --region="${_REGION}" \
-          --project="${PROJECT_ID}" \
-          --image="${_IMAGE}"
+          --service "${_SERVICE}" \
+          --region "${_REGION}" \
+          --project "${PROJECT_ID}" \
+          --image "${_IMAGE}"
 
   # 4. Deploy the built image only. Never pass --source here.
   #    --update-env-vars pins public production values without wiping secrets.
