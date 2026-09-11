@@ -109,18 +109,10 @@ ERROR: (gcloud.run.deploy) spec.template.metadata.annotations[run.googleapis.com
 
 **Cause.** Service `lumera-gemini-edit` (`asia-south1`, project `gen-lang-client-0108182367`) was first published via AI Studio / `gcloud run deploy --source`. That writes `run.googleapis.com/sources` on the revision template (often with `image: scratch`). A later **image-only** Cloud Build copies that annotation onto a container that does not reference those sources, and the API rejects the revision. Do **not** delete the Cloud Run service to fix this.
 
-**One-time Console / gcloud unblock (CoS):**
-
-```bash
-gcloud run services update lumera-gemini-edit \
-  --region=asia-south1 \
-  --project=gen-lang-client-0108182367 \
-  --remove-annotations=run.googleapis.com/sources
-```
-
-Then retry Cloud Build, with the trigger pointed at repo `cloudbuild.yaml`. The pipeline runs that same `--remove-annotations` (`|| true` if the service is new or the flag is missing) and then export-strips the **template** annotation / `image: scratch` via `deploy/clear-cloud-run-source-annotation.sh` before `gcloud run deploy --image`.
-
-If the one-liner is `unrecognized arguments: --remove-annotations` (some `gcloud` builds have no generic annotation flag) or image deploy still fails, the annotation is on `spec.template.metadata` and may be paired with `image: scratch`. After an image exists:
+**One-time Console / gcloud unblock (CoS):** do **not** run
+`gcloud run services update --remove-annotations=run.googleapis.com/sources`.
+That flag is not on the Cloud SDK CLI (`unrecognized arguments`; it suggests
+`--remove-env-vars`). After an image exists:
 
 ```bash
 export PROJECT=gen-lang-client-0108182367
@@ -132,7 +124,15 @@ deploy/clear-cloud-run-source-annotation.sh \
   --image="${IMAGE}"
 ```
 
-That is `describe --format=export` → drop `run.googleapis.com/sources` (and companion `run.googleapis.com/base-images`) → rewrite `scratch` → `gcloud run services replace`. Env vars on the current spec are preserved. Then `gcloud run deploy --image` succeeds.
+That is `describe --format=export` → drop `run.googleapis.com/sources` and
+`run.googleapis.com/base-images` → delete `runtimeClassName:
+run.googleapis.com/linux-base-image-update` → rewrite `scratch` →
+`gcloud run services replace`. Env vars and unrelated annotations
+(autoscaling, etc.) are preserved. Then `gcloud run deploy --image` succeeds.
+
+`cloudbuild.yaml` step `clear-source-annotation` runs the same helper before
+the image deploy. Retry Cloud Build with the trigger pointed at repo
+`cloudbuild.yaml`.
 
 **Going forward:** image via `cloudbuild.yaml` only. Avoid mixing AI Studio Publish with Cloud Build image deploys without clearing the annotation first.
 
@@ -291,6 +291,7 @@ Until those exist, treat www as **not live** even if this PR is merged.
 | Webhook GET 500 | Expected until `META_VERIFY_TOKEN` is set. |
 | Hosting rewrite 404 from Cloud Run | Wrong `serviceId` / `region` (must be `lumera-gemini-edit` / `asia-south1`), Hosting site not created (Console still on **Get started**), or region not in Firebase’s rewrite allow-list. |
 | Cloud Build / `gcloud run deploy --image` fails: `run.googleapis.com/sources` “not referenced by a container” | Service still has AI Studio / `--source` template annotation (sometimes `image: scratch`). Clear it (§2b) and deploy **image only** from `cloudbuild.yaml`. Do not add `--source` to the same pipeline. |
+| Cloud Build `clear-source-annotation` fails: `runtimeClassName can only be set … when annotation [run.googleapis.com/base-images] is also set` | Export-strip dropped `base-images` but left `runtimeClassName: run.googleapis.com/linux-base-image-update`. The helper must delete that field too (§2b). Do not call `--remove-annotations`. |
 
 ---
 
