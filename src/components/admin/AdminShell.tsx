@@ -228,17 +228,14 @@ const AdminShellInner: React.FC = () => {
                 {scope.id}
               </div>
             </div>
-            <button
-              type="button"
-              onClick={() => {
-                clearScope();
-                go("admin", { adminTab: "tenants" });
-              }}
+            <Link
+              to={adminTabToPath("tenants")}
+              onClick={() => clearScope()}
               className="px-3 py-1.5 rounded-lg border border-purple-300 text-purple-800 font-semibold bg-white"
               data-testid="tenant-context-exit"
             >
               Exit to platform
-            </button>
+            </Link>
           </div>
         )}
         <div key={safeTab} data-testid="admin-tab-remount">

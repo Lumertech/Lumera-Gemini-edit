@@ -32,5 +32,7 @@ describe("AdminShell tab remounts", () => {
     const dhisAt = src.indexOf('{ id: "dhis"');
     assert.ok(usersAt > 0 && dhisAt > usersAt, "User management must appear before DHIS in the nav source");
     assert.ok(tenantsAt > 0 && dhisAt > tenantsAt, "Tenants must appear before DHIS in the nav source");
+    assert.match(src, /data-testid=\{\`admin-nav-\$\{item\.id\}\`\}/);
+    assert.match(src, /adminTabToPath\(item\.id\)/);
   });
 });
