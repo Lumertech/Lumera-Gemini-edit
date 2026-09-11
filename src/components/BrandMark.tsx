@@ -26,6 +26,7 @@ export interface BrandMarkProps {
 
 /**
  * Canonical product mark: the same SVG used as the favicon, plus the display name "Lumera".
+ * The asset is a white four-pointed Sparkles star on a purple→indigo→blue rounded tile.
  * Do not wrap this in a second gradient tile — the asset already is the tile.
  */
 export const BrandMark: React.FC<BrandMarkProps> = ({
