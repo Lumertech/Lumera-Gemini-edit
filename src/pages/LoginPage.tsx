@@ -40,6 +40,7 @@ import {
   type PracticeType,
 } from "../lib/practiceOnboarding";
 import { PolyclinicSpecialty } from "../types";
+import { BrandMark } from "../components/BrandMark";
 import { DEMO_LOGIN_MATRIX, DEMO_PASSWORD } from "../lib/demoAccounts";
 import { showGoogleOAuthButton } from "../lib/oauthUi";
 
@@ -678,18 +679,15 @@ export const LoginPage: React.FC = () => {
         <div className="flex flex-col items-center text-center mb-5 sm:mb-6">
           <button
             type="button"
-            onClick={() => go("landing", { explicitPublic: true })}
-            className="flex items-center gap-2.5 sm:gap-3 group focus:outline-none mb-2 min-w-0 max-w-full"
+            onClick={() => go("landing")}
+            className="flex items-center group focus:outline-none mb-2 min-w-0 max-w-full"
           >
-            <div className="h-10 w-10 shrink-0 rounded-xl bg-gradient-to-br from-purple-500 via-indigo-600 to-blue-600 flex items-center justify-center shadow-lg shadow-purple-500/30 group-hover:scale-105 transition-transform p-1.5">
-              <img src="/lumera-logo.svg" alt="Lumera Logo" className="h-full w-full object-contain" />
-            </div>
-            <div className="text-left min-w-0">
-              <span className="font-extrabold text-lg sm:text-xl tracking-tight text-white block">Lumera Health</span>
-              <span className="text-[10px] uppercase font-bold tracking-wider text-purple-400 block -mt-0.5 leading-tight">
-                Enterprise Clinical & Practice Suite
-              </span>
-            </div>
+            <BrandMark
+              size="md"
+              showTagline
+              className="group-hover:opacity-90 transition-opacity"
+              wordmarkClassName="font-extrabold text-lg sm:text-xl tracking-tight text-white"
+            />
           </button>
         </div>
 
@@ -997,6 +995,7 @@ export const LoginPage: React.FC = () => {
                         <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
                         <input
                           id="login-password"
+                          data-testid="login-password"
                           name="password"
                           type={showPassword ? "text" : "password"}
                           autoComplete="current-password"
@@ -1058,6 +1057,7 @@ export const LoginPage: React.FC = () => {
                         <Phone className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
                         <input
                           id="login-whatsapp"
+                          data-testid="login-whatsapp"
                           name="tel"
                           type="tel"
                           autoComplete="tel"

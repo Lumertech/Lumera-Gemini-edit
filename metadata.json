@@ -1,5 +1,5 @@
 {
-  "name": "Lumera Health — Enterprise Clinical & Practice Suite",
+  "name": "Lumera — Enterprise Clinical & Practice Suite",
   "description": "Enterprise Clinical & Practice Suite with Pulse AI Ambient Scribe, Smart Rx Studio, Token Queue, Appointments, WhatsApp Bot, and Polyclinic Management.",
   "requestFramePermissions": ["microphone"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]

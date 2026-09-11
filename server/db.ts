@@ -14,6 +14,7 @@ import {
   roleHomeForAccount,
 } from "./specialty-packs.ts";
 import { ensurePlatformTenantSchema, seedPlatformTenantData } from "./platform-tenants.ts";
+import { PRODUCT_NAME } from "../src/brand.ts";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const DB_PATH = path.join(DATA_DIR, "lumera.db");
@@ -1157,7 +1158,7 @@ export function mapSubscription(row: Record<string, unknown>, user?: { name: str
 function seedCms(database: DatabaseSync, now: string) {
   const set = database.prepare("INSERT INTO cms_settings (key, value) VALUES (?, ?)");
   const settings: Record<string, string> = {
-    brand_name: "Lumera",
+    brand_name: PRODUCT_NAME,
     badge_text: "AI-Powered Practice Management for Healthcare Professionals",
     hero_title: "Your AI Receptionist for 24/7 Appointment Booking",
     hero_subtitle:

@@ -34,6 +34,8 @@ import {
   Award
 } from "lucide-react";
 import { Link } from "react-router-dom";
+import { LEGAL_ENTITY_NAME, PRODUCT_NAME } from "../brand";
+import { BrandMark } from "./BrandMark";
 import { useNav } from "../nav/NavigationContext";
 import { surfaceToPath } from "../nav/surfaces";
 
@@ -96,7 +98,7 @@ export const REGIONAL_LANGUAGES = [
 
 const FALLBACK: SitePayload = {
   settings: {
-    brandName: "Lumera",
+    brandName: PRODUCT_NAME,
     badgeText: "ABDM-aligned AI Healthcare OS & Voice Receptionist (sandbox path)",
     heroTitle: "Next-Gen AI Receptionist & Ambient Clinical Scribe",
     heroSubtitle:
@@ -107,7 +109,7 @@ const FALLBACK: SitePayload = {
     ctaBannerTitle: "Ready to Supercharge Your Practice?",
     ctaBannerSubtitle: "Experience seamless AI receptionist calls, smart prescriptions, and ABDM-aligned records (sandbox path).",
     logoUrl: "",
-    clinicName: "Lumera Health Systems",
+    clinicName: PRODUCT_NAME,
   },
   stats: [
     { icon: "calendar", value: "50K+", label: "Appointments Booked" },
@@ -271,15 +273,11 @@ export const LandingPage: React.FC = () => {
     >
       {/* 1. TOP NAVIGATION BAR: Consolidated Single "Sign In" Button */}
       <header className="max-w-6xl mx-auto px-4 sm:px-6 py-5 flex items-center justify-between border-b border-white/10">
-        <button type="button" onClick={() => go("landing")} className="flex items-center gap-3">
-          {s.logoUrl ? (
-            <img src={s.logoUrl} alt={s.brandName} className="h-10 w-10 rounded-xl object-cover shadow-lg shadow-purple-500/30" />
-          ) : (
-            <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-purple-500/30">
-              <Sparkles className="w-6 h-6 text-white" />
-            </div>
-          )}
-          <span className="font-manrope text-2xl font-bold tracking-tight text-white">{s.brandName}</span>
+        <button type="button" onClick={() => go("landing")} className="flex items-center">
+          <BrandMark
+            size="md"
+            wordmarkClassName="font-manrope text-2xl font-bold tracking-tight text-white"
+          />
         </button>
 
         {/* Consolidated Single Sign In Button */}
@@ -747,7 +745,7 @@ export const LandingPage: React.FC = () => {
                 {/* Bot Response */}
                 <div className="flex justify-start">
                   <div className="bg-slate-800 text-slate-100 rounded-2xl rounded-tl-xs p-2.5 max-w-[90%] text-[11px] space-y-1.5 shadow-sm">
-                    <p className="font-semibold text-emerald-400">Namaste! 🙏 Welcome to Lumera Health.</p>
+                    <p className="font-semibold text-emerald-400">Namaste! 🙏 Welcome to {PRODUCT_NAME}.</p>
                     <p>Dr. Siddharth Varma (Physiotherapy &amp; Rehab) has 2 slots available tomorrow:</p>
                     <div className="space-y-1 pt-1">
                       <div className="p-1 rounded bg-slate-900/60 font-mono text-[10px] text-blue-300">
@@ -922,9 +920,11 @@ export const LandingPage: React.FC = () => {
       <footer className="border-t border-white/10 px-4 py-12 text-center text-xs text-slate-400 bg-slate-950">
         <div className="max-w-5xl mx-auto space-y-6">
           {/* Brand & Mission Statement */}
-          <div className="flex items-center justify-center gap-2 text-white font-manrope font-bold text-lg">
-            <Sparkles className="w-5 h-5 text-blue-400" />
-            <span>Lumera Health</span>
+          <div className="flex items-center justify-center text-white">
+            <BrandMark
+              size="sm"
+              wordmarkClassName="font-manrope font-bold text-lg text-white"
+            />
           </div>
           <p className="text-xs text-slate-400 max-w-2xl mx-auto">
             Empowering Indian healthcare with multilingual ambient scribing, automated WhatsApp patient self-service, and ABDM-aligned interoperability (sandbox path).
@@ -965,13 +965,13 @@ export const LandingPage: React.FC = () => {
           {/* Compliance declaration */}
           <div className="pt-2 text-[11px] text-slate-500 space-y-1">
             <p>
-              Lumera Health Systems is building toward Meta Tech Provider. App Review is not submitted.
+              {PRODUCT_NAME} is building toward Meta Tech Provider. App Review is not submitted.
             </p>
             <p>
               Designed for ABDM M1–M3 &amp; DPDP (sandbox path).
             </p>
             <p className="text-slate-600 pt-2">
-              © {new Date().getFullYear()} Lumera Solutions LLP. All rights reserved.
+              © {new Date().getFullYear()} {LEGAL_ENTITY_NAME}. All rights reserved.
             </p>
           </div>
         </div>

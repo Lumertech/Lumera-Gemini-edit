@@ -15,11 +15,13 @@ import {
   Building,
 } from "lucide-react";
 import { Link } from "react-router-dom";
+import { PRODUCT_NAME } from "../brand";
+import { BrandMark } from "../components/BrandMark";
 import { useNav } from "../nav/NavigationContext";
 import { surfaceToPath } from "../nav/surfaces";
 
 export const PolicyPage: React.FC<{ slug: string }> = ({ slug: initialSlug }) => {
-  const { go, policySlug } = useNav();
+  const { policySlug } = useNav();
   const currentSlug = policySlug || initialSlug || "privacy-policy";
   const [title, setTitle] = useState("Legal & Compliance");
   const [body, setBody] = useState("Loading policy documentation…");
@@ -98,19 +100,25 @@ export const PolicyPage: React.FC<{ slug: string }> = ({ slug: initialSlug }) =>
       <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
         <div className="max-w-5xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={() => go("landing", { explicitPublic: true })}
+            <Link
+              to="/"
+              data-testid="policy-back"
               className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-md transition"
             >
-              <ArrowLeft className="w-3.5 h-3.5" /> Back to Lumera
-            </button>
+              <ArrowLeft className="w-3.5 h-3.5" /> Back
+            </Link>
+            <Link to="/" className="inline-flex items-center" data-testid="policy-brand">
+              <BrandMark
+                size="sm"
+                wordmarkClassName="font-bold text-sm text-slate-900 tracking-tight"
+              />
+            </Link>
             <div className="h-4 w-px bg-slate-200" />
             <div className="flex items-center gap-2">
               <div className="w-6 h-6 rounded bg-emerald-600 flex items-center justify-center text-white">
                 <Shield className="w-3.5 h-3.5" />
               </div>
-              <span className="font-bold text-sm text-slate-900 tracking-tight">Lumera Compliance Hub</span>
+              <span className="font-bold text-sm text-slate-900 tracking-tight">{PRODUCT_NAME} Compliance Hub</span>
               <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
                 <AlertCircle className="w-3 h-3" /> Meta WhatsApp — not Tech Provider certified
               </span>
@@ -145,7 +153,7 @@ export const PolicyPage: React.FC<{ slug: string }> = ({ slug: initialSlug }) =>
           <div className="max-w-2xl">
             <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900">{title}</h1>
             <p className="mt-2 text-sm text-slate-600 leading-relaxed">
-              Governance documentation for Lumera Health Clinical OS, WhatsApp Cloud API integration (not Tech Provider certified), and data protection.
+              Governance documentation for {PRODUCT_NAME}, WhatsApp Cloud API integration (not Tech Provider certified), and data protection.
             </p>
             {updatedAt && (
               <div className="mt-3 text-xs text-slate-400">
@@ -262,7 +270,7 @@ export const PolicyPage: React.FC<{ slug: string }> = ({ slug: initialSlug }) =>
               <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">Statutory Notice</span>
             </div>
             <p className="text-xs text-slate-300 leading-relaxed">
-              Lumera Health is building a WhatsApp Cloud API integration. This is not Meta Tech Provider certification and App Review is not submitted. Policies below describe intended processing:
+              {PRODUCT_NAME} is building a WhatsApp Cloud API integration. This is not Meta Tech Provider certification and App Review is not submitted. Policies below describe intended processing:
             </p>
             <ul className="text-xs space-y-1.5 text-slate-200">
               <li className="flex items-center gap-1.5">
