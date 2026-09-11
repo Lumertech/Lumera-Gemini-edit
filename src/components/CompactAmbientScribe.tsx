@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from "react";
 import {
   Mic,
   MicOff,
@@ -7,10 +7,16 @@ import {
   CheckCircle2,
   Zap,
   X,
-} from 'lucide-react';
-import { SoapNote, Patient, Doctor } from '../types';
+  Eraser,
+  AlertTriangle,
+  ArrowRight,
+} from "lucide-react";
+import { SoapNote, Patient, Doctor } from "../types";
+import { isSpeechRecognitionAvailable, micErrorMessage, startAmbientMic } from "../lib/ambientMic";
+import { extractClinicalTokens, type PulseExtractSource } from "../lib/pulseClinicalTokens";
+import { flashPopulatedRxFields } from "../lib/flashPopulatedRxFields";
 
-export type AmbientScribeStatus = 'idle' | 'listening' | 'processing';
+export type AmbientScribeStatus = "idle" | "listening" | "processing";
 
 interface CompactAmbientScribeProps {
   currentPatient: Patient;
@@ -21,142 +27,24 @@ interface CompactAmbientScribeProps {
   onStatusChange?: (status: AmbientScribeStatus) => void;
 }
 
-const REGIONAL_SAMPLES = [
+const DEMO_CONSULTS = [
   {
-    id: 'sample-hinglish',
-    label: 'Hinglish (Fever & Cough)',
-    flag: '🇮🇳 Hinglish',
-    specialty: 'General Medicine',
-    text: `Doctor: Namaste ${'patientName'}, kya takleef ho rahi hai aapko?
-Patient: Doctor saab, 2 din se bohot tez fever hai, throat me severe pain hai khana nigalte waqt, aur continuous sneezing and runny nose ho rahi hai. Body ache bhi bohot zyada hai.
-Doctor: Khansi ya saans lene me koi dikkat?
-Patient: Mild dry cough hai doctor, breathlessness nahi hai. Lekin chills aur weakness bohot zyada hai.
-Doctor: Aaiye checkup karte hain. Temperature is 100.4°F, throat examine kiya - posterior pharyngeal wall congested hai with tonsillar erythema. Lungs clear hain, bilateral vesicular breath sounds. Blood pressure 122/80 mmHg, SpO2 98%, Pulse 84 bpm.
-Doctor: Yeh viral upper respiratory infection (acute pharyngitis) hai. Hum aapko Dolo 650mg (Paracetamol) denge fever ke liye, Montair-LC (Montelukast + Levocetirizine) congestion ke liye night me, aur Pan-40 before breakfast. Warm salt water gargles 3 times a day kijiye.`,
-  },
-  {
-    id: 'sample-marathi',
-    label: 'Marathi (Knee Osteoarthritis / Physio)',
-    flag: '🇮🇳 मराठी',
-    specialty: 'Physiotherapy & Rehabilitation',
+    id: "demo-knee",
+    label: "Demo: knee OA (Marathi)",
     text: `Doctor: नमस्कार, गुडघ्याचा त्रास कसा आहे?
-Patient: डॉक्टर, गेल्या आठवड्यापासून डाव्या गुडघ्यात खूप तीव्र वेदना (pain) होत आहेत. जिने चढताना आणि खाली बसताना गुडघा कडक होतो (stiffness) आणि कट-कट आवाज येतो.
-Doctor: तपासणी करूया. Left knee examination: Medial joint line tenderness present, Crepitus on passive flexion, Active ROM limited to 105 degrees with pain on terminal extension.
-Doctor: हा Grade II Osteoarthritis आहे. आम्ही तुम्हाला Tab. Aceclofenac + Paracetamol 5 दिवसांसाठी SOS, Diacerein + Glucosamine कॅप्सूल आणि फिजिओथेरपी सेशन (Quadriceps strengthening exercises + Hot pack) सुरू करू.`,
+Patient: डॉक्टर, गेल्या आठवड्यापासून डाव्या गुडघ्यात खूप तीव्र वेदना आहेत. जिने चढताना आणि खाली बसताना stiffness आणि कट-कट आवाज येतो. VAS 7/10.
+Doctor: Left knee examination: Medial joint line tenderness, crepitus on passive flexion, Active ROM limited to 105 degrees with pain on terminal extension.
+Doctor: Grade II osteoarthritis. Quadriceps strengthening, hot pack, Aceclofenac after food for 5 days. Home exercise program 3 times daily.`,
   },
   {
-    id: 'sample-hindi',
-    label: 'Hindi (Diabetes & Neuropathy)',
-    flag: '🇮🇳 हिन्दी',
-    specialty: 'General Medicine',
-    text: `Doctor: नमस्ते, आपकी सेहत कैसी है?
-Patient: डॉक्टर साहब, पैरों के तलवों में हल्की झनझनाहट (tingling) और जलन महसूस होती है। दिन में थकान रहती है।
-Doctor: BP 134/86 mmHg, Random Blood Sugar 152 mg/dL है। यह डायबिटिक पेरिफेरल न्यूरोपैथी के शुरुआती लक्षण हैं। हम HbA1c जांच लिखेंगे। मेटफॉर्मिन 500mg जारी रखें और नसों की ताक़त के लिए मिथाइलकोबालामिन कैप्सूल रोज़ लें।`,
+    id: "demo-shoulder",
+    label: "Demo: frozen shoulder",
+    text: `Doctor: How is the left shoulder this week?
+Patient: Severe pain and stiffness for 3 weeks. I cannot reach overhead or fasten clothes. Night pain, VAS 8/10.
+Doctor: Abduction 75 degrees with capsular end-feel, external rotation 25 degrees. Neer and Hawkins positive.
+Doctor: Adhesive capsulitis stage II. Pendulum swings, external rotation with yellow band, wand flexion. Volini gel twice daily.`,
   },
-  {
-    id: 'sample-tamil',
-    label: 'Tamil (Pediatric Viral Pyrexia)',
-    flag: '🇮🇳 தமிழ்',
-    specialty: 'Pediatrics',
-    text: `Doctor: Vanakkam, papa-ku enna aachu?
-Patient: Doctor, papa-ku 3 years aagudhu. Nethu night-la irundhu romba high fever 101°F irukku doctor. Romba continuous dry cough and vomiting sensation irukku.
-Doctor: Temp 100.8°F. Chest clear, throat congested. This is acute viral fever. Syrup Paracetamol (250mg/5ml) 3.5 ml SOS for fever, Syrup Levocetirizine 2.5 ml at bedtime, and ORS hydration.`,
-  },
-  {
-    id: 'sample-telugu',
-    label: 'Telugu (Gastroenteritis)',
-    flag: '🇮🇳 తెలుగు',
-    specialty: 'General Medicine',
-    text: `Doctor: Namaskaram, em problem undi?
-Patient: Doctor garu, ninna function food thinnanu. Morning nunchi watery loose motions, severe stomach cramping around belly button.
-Doctor: BP 106/70 mmHg, Pulse 92 bpm. Idi acute infective gastroenteritis. Tab O2 (Ofloxacin + Ornidazole) twice daily for 5 days, Ondansetron 4mg SOS, and Electral ORS hydration.`,
-  },
-  {
-    id: 'sample-english',
-    label: 'English (Cardiology / HTN)',
-    flag: '🌐 English',
-    specialty: 'Cardiology',
-    text: `Doctor: Good morning. How have you been feeling since starting the blood pressure medications?
-Patient: Doctor, over the past 2 weeks I feel mild retrosternal chest heaviness during brisk walking, which relieves within 3 minutes of rest.
-Doctor: Blood Pressure is 142/88 mmHg, Pulse 74 regular. Normal sinus rhythm on ECG with mild lateral flattening. Increasing Telmisartan to 40mg + Amlodipine 5mg, adding Aspirin 75mg at bedtime. Ordering 2D Echocardiogram.`,
-  }
 ];
-
-function fallbackSoap(patient: Patient, doctor: Doctor, recordingSeconds: number): SoapNote {
-  return {
-    id: 'soap-' + Date.now(),
-    patientId: patient.id,
-    uhid: patient.uhid,
-    doctorId: doctor.id,
-    date: new Date().toISOString().split('T')[0],
-    subjective: {
-      chiefComplaints: [
-        'High grade fever & chills for 2 days',
-        'Severe pharyngeal pain during swallowing',
-        'Nasal congestion and body fatigue'
-      ],
-      historyOfPresentIllness: 'Acute onset of upper respiratory symptoms with fever up to 100.4°F.',
-    },
-    objective: {
-      vitals: {
-        bloodPressureSystolic: 122,
-        bloodPressureDiastolic: 80,
-        heartRate: 78,
-        temperature: 100.4,
-        spO2: 98,
-        respiratoryRate: 18,
-        weightKg: 68,
-        heightCm: 172,
-        bmi: 23.0,
-        recordedAt: new Date().toISOString()
-      },
-      physicalExamination: 'Posterior pharyngeal wall congested, tonsillar erythema, lungs clear bilaterally.',
-      clinicalFindings: ['Pharyngeal congestion', 'Bilateral vesicular breath sounds', 'No neck stiffness']
-    },
-    assessment: {
-      primaryDiagnosis: 'Acute Viral Upper Respiratory Infection (Pharyngitis)',
-      icd10Code: 'J06.9',
-      differentialDiagnoses: ['Streptococcal Tonsillitis', 'Allergic Rhinitis'],
-      riskLevel: 'Low'
-    },
-    plan: {
-      medicines: [
-        {
-          id: 'med-' + Date.now(),
-          drugName: 'Dolo 650mg Tablet',
-          composition: 'Paracetamol 650mg',
-          dosage: '1 Tablet',
-          form: 'Tablet',
-          frequency: '1-0-1',
-          timing: 'After Food',
-          durationDays: 3,
-          instructions: 'Take for fever & body ache SOS'
-        },
-        {
-          id: 'med-' + (Date.now() + 1),
-          drugName: 'Montair-LC Tablet',
-          composition: 'Montelukast 10mg + Levocetirizine 5mg',
-          dosage: '1 Tablet',
-          form: 'Tablet',
-          frequency: '0-0-1',
-          timing: 'At Bedtime',
-          durationDays: 5,
-          instructions: 'Take at night for throat allergy & nasal congestion'
-        }
-      ],
-      labTests: [],
-      lifestyleAdvice: [
-        'Warm saline gargles 3 times a day',
-        'Steam inhalation for 5 minutes twice daily',
-        'Adequate oral hydration and rest'
-      ],
-      redFlags: ['High fever persisting beyond 3 days', 'Difficulty in breathing'],
-      followUpDays: 4,
-      followUpDate: new Date(Date.now() + 4 * 86400000).toISOString().split('T')[0]
-    },
-    ambientRecordingDurationSec: recordingSeconds > 0 ? recordingSeconds : 95,
-  };
-}
 
 export const CompactAmbientScribe: React.FC<CompactAmbientScribeProps> = ({
   currentPatient,
@@ -168,31 +56,32 @@ export const CompactAmbientScribe: React.FC<CompactAmbientScribeProps> = ({
 }) => {
   const [isRecording, setIsRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
-  const [transcript, setTranscript] = useState('');
+  const [finalTranscript, setFinalTranscript] = useState("");
+  const [interimTranscript, setInterimTranscript] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedSoap, setGeneratedSoap] = useState<SoapNote | null>(null);
+  const [extractSource, setExtractSource] = useState<PulseExtractSource | null>(null);
   const [appliedSuccess, setAppliedSuccess] = useState(false);
-  const [streamQueue, setStreamQueue] = useState<string[]>([]);
+  const [micError, setMicError] = useState<string | null>(null);
+  const [audioLevel, setAudioLevel] = useState(0);
+  const sessionRef = useRef<{ stop: () => void } | null>(null);
+  const transcriptRef = useRef("");
 
-  const status: AmbientScribeStatus = isGenerating ? 'processing' : isRecording ? 'listening' : 'idle';
+  const transcript = [finalTranscript, interimTranscript].filter(Boolean).join(interimTranscript ? " " : "");
+  const status: AmbientScribeStatus = isGenerating ? "processing" : isRecording ? "listening" : "idle";
+
+  useEffect(() => {
+    transcriptRef.current = finalTranscript;
+  }, [finalTranscript]);
 
   useEffect(() => {
     onStatusChange?.(status);
   }, [status, onStatusChange]);
 
   useEffect(() => {
-    if (!transcript) {
-      const template = REGIONAL_SAMPLES[0].text.replace(/patientName/g, currentPatient.name);
-      setTranscript(template);
-    }
-  }, [currentPatient.name]);
-
-  useEffect(() => {
     let interval: ReturnType<typeof setInterval> | undefined;
     if (isRecording) {
-      interval = setInterval(() => {
-        setRecordingSeconds((prev) => prev + 1);
-      }, 1000);
+      interval = setInterval(() => setRecordingSeconds((prev) => prev + 1), 1000);
     } else {
       setRecordingSeconds(0);
     }
@@ -202,99 +91,92 @@ export const CompactAmbientScribe: React.FC<CompactAmbientScribeProps> = ({
   }, [isRecording]);
 
   useEffect(() => {
-    if (!isRecording || streamQueue.length === 0) return;
-    const interval = setInterval(() => {
-      setStreamQueue((queue) => {
-        if (queue.length === 0) return queue;
-        const [next, ...rest] = queue;
-        setTranscript((prev) => (prev ? `${prev} ${next}` : next));
-        return rest;
-      });
-    }, 280);
-    return () => clearInterval(interval);
-  }, [isRecording, streamQueue.length]);
+    return () => {
+      sessionRef.current?.stop();
+      sessionRef.current = null;
+    };
+  }, []);
 
-  const handleToggleRecording = () => {
-    if (!isRecording) {
+  const stopMic = () => {
+    sessionRef.current?.stop();
+    sessionRef.current = null;
+    setIsRecording(false);
+    setInterimTranscript("");
+    setAudioLevel(0);
+  };
+
+  const handleToggleRecording = async () => {
+    if (isRecording) {
+      stopMic();
+      return;
+    }
+    setMicError(null);
+    setGeneratedSoap(null);
+    setAppliedSuccess(false);
+    try {
+      const session = await startAmbientMic({
+        lang: "en-IN",
+        onLevel: setAudioLevel,
+        onError: (message) => setMicError(message),
+        onTranscript: ({ finalChunk, interim }) => {
+          if (finalChunk) {
+            setFinalTranscript((prev) => (prev ? `${prev.trim()} ${finalChunk}` : finalChunk));
+          }
+          setInterimTranscript(interim);
+        },
+      });
+      sessionRef.current = session;
       setIsRecording(true);
-      setGeneratedSoap(null);
-      setAppliedSuccess(false);
-      const seed = `Doctor: Hello ${currentPatient.name}, tell me what symptoms you are experiencing today.`;
-      if (!transcript.trim()) setTranscript(seed);
-      setStreamQueue(
-        'Patient reports activity-related pain, morning stiffness, and limited range. Doctor notes guarded posture and plans a home exercise review.'
-          .split(' ')
-      );
-    } else {
+      if (!isSpeechRecognitionAvailable()) {
+        setMicError(
+          "Live microphone is on, but this browser has no Speech Recognition. Type the consult in the box, or use Chrome / Edge for live captions."
+        );
+      }
+    } catch (err) {
+      const mapped = micErrorMessage(err);
+      setMicError(mapped.message);
       setIsRecording(false);
-      setStreamQueue([]);
     }
   };
 
-  const handleSelectSample = (sampleText: string) => {
-    const formatted = sampleText.replace(/patientName/g, currentPatient.name);
-    setTranscript(formatted);
+  const handleClearTranscript = () => {
+    setFinalTranscript("");
+    setInterimTranscript("");
     setGeneratedSoap(null);
     setAppliedSuccess(false);
+    setExtractSource(null);
   };
 
-  const handleGenerateSoap = async () => {
-    if (!transcript.trim()) return;
+  const handleGenerateAndMaybeApply = async (apply: boolean) => {
+    const text = (transcriptRef.current || finalTranscript || transcript).trim();
+    if (!text) {
+      setMicError("Capture or type a consult transcript before extracting clinical tokens.");
+      return;
+    }
+    stopMic();
     setIsGenerating(true);
     setAppliedSuccess(false);
-    setIsRecording(false);
-    setStreamQueue([]);
-
+    setMicError(null);
     try {
-      const res = await fetch('/api/gemini/generate-soap', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          patientName: currentPatient.name,
-          patientAge: currentPatient.age,
-          patientGender: currentPatient.gender,
-          transcript: transcript,
-          vitals: {
-            bloodPressureSystolic: 122,
-            bloodPressureDiastolic: 80,
-            heartRate: 78,
-            temperature: 99.8,
-            spO2: 98,
-            weightKg: 68.0,
-          },
-          doctorSpecialty: currentDoctor.specialty,
-          doctorName: currentDoctor.name,
-        }),
+      const { soap, source } = await extractClinicalTokens({
+        transcript: text,
+        patient: currentPatient,
+        doctor: currentDoctor,
+        recordingSeconds,
       });
-
-      const data = await res.json();
-      if (data.success && data.soap) {
-        const fullSoap: SoapNote = {
-          id: 'soap-' + Date.now(),
-          patientId: currentPatient.id,
-          uhid: currentPatient.uhid,
-          doctorId: currentDoctor.id,
-          date: new Date().toISOString().split('T')[0],
-          ...data.soap,
-          ambientRecordingDurationSec: recordingSeconds > 0 ? recordingSeconds : 95,
-        };
-        setGeneratedSoap(fullSoap);
-      } else {
-        setGeneratedSoap(fallbackSoap(currentPatient, currentDoctor, recordingSeconds));
+      setGeneratedSoap(soap);
+      setExtractSource(source);
+      if (apply) {
+        onApplyToRx(soap);
+        setAppliedSuccess(true);
+        window.setTimeout(() => flashPopulatedRxFields(), 80);
+        setTimeout(() => setAppliedSuccess(false), 4000);
       }
     } catch (err) {
-      console.error('Error generating SOAP in compact scribe:', err);
-      setGeneratedSoap(fallbackSoap(currentPatient, currentDoctor, recordingSeconds));
+      setMicError(err instanceof Error ? err.message : "Pulse AI could not extract clinical tokens.");
     } finally {
       setIsGenerating(false);
     }
-  };
-
-  const handleApply = () => {
-    if (!generatedSoap) return;
-    onApplyToRx(generatedSoap);
-    setAppliedSuccess(true);
-    setTimeout(() => setAppliedSuccess(false), 4000);
   };
 
   if (!isOpen) return null;
@@ -302,10 +184,15 @@ export const CompactAmbientScribe: React.FC<CompactAmbientScribeProps> = ({
   const formatTimer = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
   };
 
-  const statusLabel = status === 'listening' ? 'Listening' : status === 'processing' ? 'Processing' : 'Idle';
+  const statusLabel = status === "listening" ? "Listening" : status === "processing" ? "Processing" : "Idle";
+  const bars = Array.from({ length: 16 }, (_, i) => {
+    const wave = ((i % 5) + 1) * 12;
+    const live = Math.max(12, Math.round((audioLevel / 100) * wave + (i % 3) * 8));
+    return isRecording ? live : 14;
+  });
 
   return (
     <section
@@ -317,25 +204,25 @@ export const CompactAmbientScribe: React.FC<CompactAmbientScribeProps> = ({
         <div className="flex items-center gap-2 min-w-0">
           <div
             className={`w-9 h-9 rounded-lg flex items-center justify-center border ${
-              status === 'listening'
-                ? 'bg-rose-50 border-rose-200 text-rose-600'
-                : status === 'processing'
-                  ? 'bg-amber-50 border-amber-200 text-amber-700'
-                  : 'bg-violet-50 border-violet-200 text-violet-700'
+              status === "listening"
+                ? "bg-rose-50 border-rose-200 text-rose-600"
+                : status === "processing"
+                  ? "bg-amber-50 border-amber-200 text-amber-700"
+                  : "bg-violet-50 border-violet-200 text-violet-700"
             }`}
           >
-            <Mic className={`w-4 h-4 ${status === 'listening' ? 'animate-pulse' : ''}`} />
+            <Mic className={`w-4 h-4 ${status === "listening" ? "animate-pulse" : ""}`} />
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-sm font-bold text-slate-900">Ambient AI Scribe</span>
               <span
                 className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${
-                  status === 'listening'
-                    ? 'bg-rose-100 text-rose-800 border-rose-200'
-                    : status === 'processing'
-                      ? 'bg-amber-100 text-amber-800 border-amber-200'
-                      : 'bg-slate-100 text-slate-600 border-slate-200'
+                  status === "listening"
+                    ? "bg-rose-100 text-rose-800 border-rose-200"
+                    : status === "processing"
+                      ? "bg-amber-100 text-amber-800 border-amber-200"
+                      : "bg-slate-100 text-slate-600 border-slate-200"
                 }`}
               >
                 {statusLabel}
@@ -345,7 +232,7 @@ export const CompactAmbientScribe: React.FC<CompactAmbientScribeProps> = ({
               )}
             </div>
             <p className="text-[11px] text-slate-500 truncate">
-              Review captured transcript and clinical tokens before they populate the Rx.
+              Live mic + transcript, then Pulse AI fills the Rx. Review highlighted fields before signing.
             </p>
           </div>
         </div>
@@ -361,60 +248,84 @@ export const CompactAmbientScribe: React.FC<CompactAmbientScribeProps> = ({
         )}
       </div>
 
+      {micError && (
+        <div
+          role="alert"
+          className="mx-4 mt-3 px-3 py-2 rounded-lg border border-rose-200 bg-rose-50 text-rose-800 text-xs flex items-start gap-2"
+        >
+          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+          <span>{micError}</span>
+        </div>
+      )}
+
       <div className="p-4 grid grid-cols-1 lg:grid-cols-2 gap-3">
         <div className="space-y-2">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
-              <div className={`w-2.5 h-2.5 rounded-full ${isRecording ? 'bg-rose-500 animate-ping' : 'bg-slate-300'}`} />
+              <div className={`w-2.5 h-2.5 rounded-full ${isRecording ? "bg-rose-500 animate-ping" : "bg-slate-300"}`} />
               <span className="text-[11px] font-semibold text-slate-600">
-                {isRecording ? 'Live mic + visualizer' : 'Microphone idle'}
+                {isRecording ? "Live mic + visualizer" : "Microphone idle"}
               </span>
             </div>
-            {isRecording && (
-              <div className="flex items-end gap-0.5 h-6 px-2 py-0.5 bg-rose-50 rounded border border-rose-100" aria-hidden>
-                {[40, 70, 25, 90, 60, 80, 45, 95, 30, 85, 55, 75].map((h, i) => (
-                  <div
-                    key={i}
-                    className="w-1 bg-rose-500 rounded-full animate-pulse"
-                    style={{ height: `${h}%`, animationDelay: `${i * 80}ms` }}
-                  />
-                ))}
-              </div>
-            )}
+            <div className="flex items-end gap-0.5 h-6 px-2 py-0.5 bg-slate-50 rounded border border-slate-200" aria-hidden>
+              {bars.map((h, i) => (
+                <div
+                  key={i}
+                  className={`w-1 rounded-full ${isRecording ? "bg-rose-500" : "bg-slate-300"}`}
+                  style={{ height: `${h}%` }}
+                />
+              ))}
+            </div>
           </div>
 
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              onClick={handleToggleRecording}
+              onClick={() => void handleToggleRecording()}
+              aria-label={isRecording ? "Stop listening" : "Start listening / Live mic"}
+              title={isRecording ? "Stop the live microphone" : "Request microphone access and start live transcription"}
               className={`px-3 py-1.5 rounded-lg font-semibold text-xs flex items-center gap-1.5 ${
-                isRecording ? 'bg-rose-600 text-white' : 'bg-violet-600 text-white hover:bg-violet-700'
+                isRecording ? "bg-rose-600 text-white" : "bg-violet-600 text-white hover:bg-violet-700"
               }`}
             >
               {isRecording ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
-              <span>{isRecording ? 'Stop listening' : 'Start listening'}</span>
+              <span>{isRecording ? "Stop listening" : "Start listening"}</span>
+              {!isRecording && <span className="opacity-80 font-medium">/ Live mic</span>}
             </button>
             <button
               type="button"
-              onClick={() => void handleGenerateSoap()}
+              onClick={handleClearTranscript}
+              className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-700 font-semibold text-xs flex items-center gap-1.5 hover:bg-slate-50"
+            >
+              <Eraser className="w-3.5 h-3.5" />
+              Clear / Reset Transcript
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleGenerateAndMaybeApply(false)}
               disabled={isGenerating || !transcript.trim()}
               className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-semibold text-xs flex items-center gap-1.5"
             >
               {isGenerating ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
-              <span>{isGenerating ? 'Extracting tokens…' : 'Extract clinical tokens'}</span>
+              <span>{isGenerating ? "Extracting tokens…" : "Extract clinical tokens"}</span>
             </button>
           </div>
 
           <div className="flex flex-wrap gap-1">
-            {REGIONAL_SAMPLES.map((sample) => (
+            {DEMO_CONSULTS.map((sample) => (
               <button
                 key={sample.id}
                 type="button"
-                onClick={() => handleSelectSample(sample.text)}
+                onClick={() => {
+                  setFinalTranscript(sample.text);
+                  setInterimTranscript("");
+                  setGeneratedSoap(null);
+                  setAppliedSuccess(false);
+                  setMicError(null);
+                }}
                 className="px-2 py-1 rounded bg-slate-50 hover:bg-slate-100 border border-slate-200 text-[10px] text-slate-600"
-                title={sample.label}
               >
-                {sample.flag.split(' ')[0]} {sample.label.split(' ')[0]}
+                {sample.label}
               </button>
             ))}
           </div>
@@ -427,24 +338,55 @@ export const CompactAmbientScribe: React.FC<CompactAmbientScribeProps> = ({
           </div>
           <textarea
             value={transcript}
-            onChange={(e) => setTranscript(e.target.value)}
+            onChange={(e) => {
+              setFinalTranscript(e.target.value);
+              setInterimTranscript("");
+            }}
             rows={6}
-            placeholder="Live transcript streams here for review before the form is filled…"
+            placeholder="Transcript is empty until you start the live mic or type the consult here…"
             className="w-full min-h-[140px] bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 text-xs font-mono focus:border-violet-400 focus:outline-none resize-y leading-relaxed"
           />
         </div>
       </div>
 
-      {generatedSoap && (
-        <div className="px-4 pb-4">
+      <div className="px-4 pb-4 space-y-3">
+        <button
+          type="button"
+          onClick={() => void handleGenerateAndMaybeApply(true)}
+          disabled={isGenerating || !transcript.trim()}
+          className={`w-full px-4 py-2.5 rounded-lg font-bold text-sm inline-flex items-center justify-center gap-2 shadow-sm ${
+            appliedSuccess ? "bg-emerald-600 text-white" : "bg-violet-700 hover:bg-violet-800 text-white disabled:opacity-50"
+          }`}
+        >
+          {isGenerating ? (
+            <>
+              <RefreshCw className="w-4 h-4 animate-spin" />
+              Pulse AI is extracting tokens…
+            </>
+          ) : appliedSuccess ? (
+            <>
+              <CheckCircle2 className="w-4 h-4" />
+              Rx fields auto-populated
+            </>
+          ) : (
+            <>
+              <Sparkles className="w-4 h-4" />
+              Continue to Rx (Auto-populate Fields)
+              <ArrowRight className="w-4 h-4" />
+            </>
+          )}
+        </button>
+
+        {generatedSoap && (
           <div className="p-3 bg-violet-50 rounded-lg border border-violet-200 space-y-2">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1.5 text-violet-800">
                 <Sparkles className="w-3.5 h-3.5" />
-                <span className="font-bold text-xs">Extracted clinical tokens — review before applying</span>
+                <span className="font-bold text-xs">Extracted clinical tokens — edit highlighted Rx fields</span>
               </div>
               <span className="text-[10px] font-mono text-emerald-700 bg-white px-1.5 py-0.5 rounded border border-emerald-200">
                 ICD {generatedSoap.assessment.icd10Code}
+                {extractSource ? ` · ${extractSource}` : ""}
               </span>
             </div>
             <p className="text-xs text-slate-800">
@@ -455,6 +397,20 @@ export const CompactAmbientScribe: React.FC<CompactAmbientScribeProps> = ({
                 <li key={i}>{c}</li>
               ))}
             </ul>
+            {generatedSoap.physiotherapyAssessment && (
+              <p className="text-[11px] text-slate-600">
+                ROM {generatedSoap.physiotherapyAssessment.jointRomFindings.map((r) => `${r.movement} ${r.degrees}`).join("; ")}
+              </p>
+            )}
+            {(generatedSoap.prescribedExercises || []).length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {generatedSoap.prescribedExercises!.map((m, i) => (
+                  <span key={i} className="text-[10px] bg-white border border-violet-200 rounded px-1.5 py-0.5 text-slate-700">
+                    HEP · {m.exerciseName}
+                  </span>
+                ))}
+              </div>
+            )}
             {generatedSoap.plan.medicines.length > 0 && (
               <div className="flex flex-wrap gap-1">
                 {generatedSoap.plan.medicines.map((m, i) => (
@@ -464,28 +420,9 @@ export const CompactAmbientScribe: React.FC<CompactAmbientScribeProps> = ({
                 ))}
               </div>
             )}
-            <button
-              type="button"
-              onClick={handleApply}
-              className={`w-full sm:w-auto px-4 py-2 rounded-lg font-bold text-xs inline-flex items-center justify-center gap-1.5 ${
-                appliedSuccess ? 'bg-emerald-600 text-white' : 'bg-violet-700 hover:bg-violet-800 text-white'
-              }`}
-            >
-              {appliedSuccess ? (
-                <>
-                  <CheckCircle2 className="w-4 h-4" />
-                  Applied to Rx form
-                </>
-              ) : (
-                <>
-                  <Sparkles className="w-4 h-4" />
-                  Apply reviewed tokens to Rx
-                </>
-              )}
-            </button>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </section>
   );
 };
