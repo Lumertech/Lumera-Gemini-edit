@@ -1,7 +1,7 @@
 /** Hint copy only — never used as a controlled `value` on the public login/signup form. */
-export const LOGIN_EMAIL_PLACEHOLDER = "doctor@lumera.me";
-export const LOGIN_PASSWORD_PLACEHOLDER = "••••••••";
-export const LOGIN_WHATSAPP_PLACEHOLDER = "+91 98234 55667";
+export const LOGIN_EMAIL_PLACEHOLDER = "Work email";
+export const LOGIN_PASSWORD_PLACEHOLDER = "Password";
+export const LOGIN_WHATSAPP_PLACEHOLDER = "WhatsApp number";
 export const REGISTER_EMAIL_PLACEHOLDER = "doctor@clinic.com";
 export const REGISTER_PASSWORD_PLACEHOLDER = "Minimum 6 characters";
 

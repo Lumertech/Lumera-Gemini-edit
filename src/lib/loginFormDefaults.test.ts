@@ -5,6 +5,8 @@ import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   emptyPublicLoginFields,
+  LOGIN_PASSWORD_PLACEHOLDER,
+  LOGIN_WHATSAPP_PLACEHOLDER,
   isSeededDemoEmail,
   persistRememberedLoginEmail,
   readRememberedLoginEmail,
@@ -81,6 +83,10 @@ describe("public login form defaults", () => {
     assert.match(loginPage, /placeholder=\{LOGIN_EMAIL_PLACEHOLDER\}/);
     assert.match(loginPage, /placeholder=\{LOGIN_PASSWORD_PLACEHOLDER\}/);
     assert.match(loginPage, /placeholder=\{LOGIN_WHATSAPP_PLACEHOLDER\}/);
+    assert.equal(LOGIN_PASSWORD_PLACEHOLDER, "Password");
+    assert.equal(LOGIN_WHATSAPP_PLACEHOLDER, "WhatsApp number");
+    assert.doesNotMatch(LOGIN_PASSWORD_PLACEHOLDER, /•|●|Lumera@2026/);
+    assert.doesNotMatch(LOGIN_WHATSAPP_PLACEHOLDER, /98234|\+91/);
     assert.match(loginPage, /placeholder=\{REGISTER_EMAIL_PLACEHOLDER\}/);
     assert.match(loginPage, /placeholder=\{REGISTER_PASSWORD_PLACEHOLDER\}/);
     assert.doesNotMatch(loginPage, /useState\(loginDemo \? "/);
@@ -95,6 +101,10 @@ describe("public login form defaults", () => {
     assert.match(loginPage, /autoComplete="tel"/);
     assert.match(loginPage, /sanitizePhoneDigits/);
     assert.match(loginPage, /data-testid="admin-password-login-note"/);
+    assert.match(loginPage, /data-testid="login-password"/);
+    assert.match(loginPage, /data-testid="login-whatsapp"/);
+    assert.match(loginPage, /useState\(publicLoginDefaults\.password\)/);
+    assert.match(loginPage, /useState\(publicLoginDefaults\.whatsappPhone\)/);
   });
 
   it("keeps Remember email opt-in and hides public Admin chrome", () => {

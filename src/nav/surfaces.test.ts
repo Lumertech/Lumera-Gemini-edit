@@ -110,6 +110,21 @@ describe("public vs app surface routing (founder lock #48)", () => {
     assert.deepEqual(destinationNavAfterAuth("admin", "/app/rx"), { surface: "admin" });
   });
 
+  it("Privacy Back to `/` renders landing even if nav surface is still legal", () => {
+    assert.equal(pathToNav("/").surface, "landing");
+    assert.equal(pathToNav("/").policySlug, "");
+    assert.equal(surfaceToPath("landing"), "/");
+    const staleLegalOnRoot = decideChrome({
+      loading: false,
+      authenticated: false,
+      surface: "legal",
+      pathname: "/",
+    });
+    assert.equal(staleLegalOnRoot.renderSurface, "landing");
+    assert.equal(staleLegalOnRoot.showAppChrome, false);
+    assert.equal(staleLegalOnRoot.boot, false);
+  });
+
   it("never shows app chrome for anonymous visitors, including protected deep links", () => {
     const root = decideChrome({ loading: false, authenticated: false, surface: "landing", pathname: "/" });
     assert.equal(root.showAppChrome, false);
