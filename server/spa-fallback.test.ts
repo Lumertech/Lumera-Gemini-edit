@@ -1,13 +1,17 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { Server } from "node:http";
 import { after, describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
 import express from "express";
 import {
   applyBundledServerNodeEnv,
   assertRequiredProductionEnv,
+  failFastRequiredProductionEnv,
+  JWT_SECRET_REQUIRED_MESSAGE,
   resolveListenPort,
 } from "./runtime.ts";
 import {
@@ -20,7 +24,9 @@ import {
 describe("production listen / env helpers", () => {
   it("uses PORT from the environment for Cloud Run", () => {
     assert.equal(resolveListenPort({} as NodeJS.ProcessEnv), 3000);
+    assert.equal(resolveListenPort({ PORT: "3000" } as NodeJS.ProcessEnv), 3000);
     assert.equal(resolveListenPort({ PORT: "8080" } as NodeJS.ProcessEnv), 8080);
+    assert.notEqual(resolveListenPort({ PORT: "3000" } as NodeJS.ProcessEnv), 8080);
     assert.throws(() => resolveListenPort({ PORT: "nope" } as NodeJS.ProcessEnv), /PORT/);
   });
 
@@ -49,12 +55,93 @@ describe("production listen / env helpers", () => {
       assert.throws(() => assertRequiredProductionEnv(), /JWT_SECRET/);
       process.env.JWT_SECRET = "a-sufficiently-long-cloud-run-secret";
       assert.doesNotThrow(() => assertRequiredProductionEnv());
+      assert.match(JWT_SECRET_REQUIRED_MESSAGE, /JWT_SECRET is required/);
     } finally {
       if (prevJwt === undefined) delete process.env.JWT_SECRET;
       else process.env.JWT_SECRET = prevJwt;
       if (prevNode === undefined) delete process.env.NODE_ENV;
       else process.env.NODE_ENV = prevNode;
     }
+  });
+
+  it("fail-fast logs JWT_SECRET is required and exits before listen", () => {
+    const lines: string[] = [];
+    const orig = console.error;
+    let exitCode: number | undefined;
+    console.error = (...args: unknown[]) => {
+      lines.push(args.map(String).join(" "));
+    };
+    try {
+      failFastRequiredProductionEnv({ NODE_ENV: "production" } as NodeJS.ProcessEnv, (code) => {
+        exitCode = code;
+      });
+    } finally {
+      console.error = orig;
+    }
+    assert.equal(exitCode, 1);
+    assert.match(lines.join("\n"), /JWT_SECRET is required/);
+    assert.match(lines.join("\n"), /PORT timeout even though bind is not the bug/);
+  });
+
+  it("fail-fast is a no-op when JWT_SECRET is set or NODE_ENV is not production", () => {
+    let exited = false;
+    failFastRequiredProductionEnv(
+      { NODE_ENV: "production", JWT_SECRET: "a-sufficiently-long-cloud-run-secret" } as NodeJS.ProcessEnv,
+      () => {
+        exited = true;
+      }
+    );
+    failFastRequiredProductionEnv({ NODE_ENV: "development" } as NodeJS.ProcessEnv, () => {
+      exited = true;
+    });
+    assert.equal(exited, false);
+  });
+
+  it("Cloud Run-style boot without JWT_SECRET exits in seconds with a clear log", () => {
+    const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
+    const started = Date.now();
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "-e",
+        `
+        (async () => {
+          process.env.NODE_ENV = "production";
+          delete process.env.JWT_SECRET;
+          const { failFastRequiredProductionEnv } = await import("./server/runtime.ts");
+          failFastRequiredProductionEnv();
+          console.log("SHOULD_NOT_REACH");
+        })();
+        `,
+      ],
+      {
+        cwd: root,
+        encoding: "utf8",
+        timeout: 8000,
+        env: { ...process.env, NODE_ENV: "production" },
+      }
+    );
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed < 5000, `fail-fast took ${elapsed}ms — Cloud Run would treat a hang as PORT timeout`);
+    assert.notEqual(result.status, 0);
+    assert.match(`${result.stderr}\n${result.stdout}`, /JWT_SECRET is required/);
+    assert.doesNotMatch(result.stdout || "", /SHOULD_NOT_REACH/);
+  });
+});
+
+describe("Cloud Run boot order (source contract)", () => {
+  it("listens on 0.0.0.0:$PORT after JWT fail-fast and before initDatabase", () => {
+    const src = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "server.ts"), "utf8");
+    assert.match(src, /failFastRequiredProductionEnv\(\)/);
+    assert.match(src, /app\.listen\(PORT,\s*"0\.0\.0\.0"/);
+    const listenIdx = src.indexOf('app.listen(PORT, "0.0.0.0"');
+    const initIdx = src.lastIndexOf("initDatabase()");
+    assert.ok(listenIdx > 0, "must bind 0.0.0.0");
+    assert.ok(initIdx > listenIdx, "initDatabase must run after listen so Cloud Run gets a socket promptly");
+    assert.equal(src.includes("assertRequiredProductionEnv()"), false);
+    assert.doesNotMatch(src, /app\.listen\(\s*8080/);
   });
 });
 

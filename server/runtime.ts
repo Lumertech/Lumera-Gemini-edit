@@ -51,7 +51,10 @@ export function appPublicUrl(reqHost?: string, reqProto?: string): string {
   return "http://localhost:3000";
 }
 
-/** Cloud Run (and most Node hosts) inject PORT. Default 3000 for local production smoke. */
+/**
+ * Cloud Run injects PORT (AI Studio services often use 3000; classic default is 8080).
+ * Honor that value. Never hardcode 8080 for listen(). Unset → 3000 for local smoke only.
+ */
 export function resolveListenPort(env: NodeJS.ProcessEnv = process.env): number {
   const raw = String(env.PORT || "").trim();
   if (!raw) return 3000;
@@ -61,6 +64,10 @@ export function resolveListenPort(env: NodeJS.ProcessEnv = process.env): number 
   }
   return n;
 }
+
+/** Cloud Run surfaces this line when production exits before listen. */
+export const JWT_SECRET_REQUIRED_MESSAGE =
+  "JWT_SECRET is required in production (no weak default). Set JWT_SECRET on the Cloud Run service (Secret Manager or Console), then rebuild. This process exits before listen(0.0.0.0, PORT); Cloud Run will report a PORT timeout even though bind is not the bug.";
 
 /**
  * Cloud Run / `npm start` entry is `dist/server.cjs` and may omit NODE_ENV.
@@ -84,14 +91,32 @@ export function assertRequiredProductionEnv(env: NodeJS.ProcessEnv = process.env
   if (env.NODE_ENV !== "production") return;
   const jwt = String(env.JWT_SECRET || "").trim();
   if (!jwt || isUnsetOrPlaceholder(jwt)) {
-    throw new Error(
-      "JWT_SECRET is required in production (no weak default). Set it in Cloud Run environment variables (or AI Studio secrets)."
-    );
+    throw new Error(JWT_SECRET_REQUIRED_MESSAGE);
   }
   const appUrl = String(env.APP_URL || "").trim().replace(/\/$/, "");
   if (!appUrl) {
     console.warn(
       "[Lumera] APP_URL is unset. Set APP_URL=https://www.mylumera.in for Meta OAuth and policy links."
     );
+  }
+}
+
+/**
+ * Fail-closed on missing/placeholder JWT_SECRET in production.
+ * Logs the exact `JWT_SECRET is required…` line Cloud Run should surface, then exits.
+ * Does not listen — that crash is not a PORT/bind bug.
+ */
+export function failFastRequiredProductionEnv(
+  env: NodeJS.ProcessEnv = process.env,
+  exitProcess: (code: number) => void = (code) => {
+    process.exit(code);
+  }
+): void {
+  try {
+    assertRequiredProductionEnv(env);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[Lumera] BOOT FATAL: ${msg}`);
+    exitProcess(1);
   }
 }

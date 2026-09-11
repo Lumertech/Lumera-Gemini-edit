@@ -34,6 +34,19 @@ describe("Firebase Hosting → Cloud Run config (#26)", () => {
     assert.match(docker, /FROM node:22/);
     assert.match(docker, /npm run build/);
     assert.match(docker, /CMD \["npm", "start"\]/);
+    assert.match(docker, /ENV PORT=8080/);
+    assert.match(docker, /Cloud Run may probe PORT=3000/);
+    assert.doesNotMatch(docker, /ENV PORT=3000/);
+  });
+
+  it("cloudbuild deploy updates APP_URL/NODE_ENV only and does not wipe JWT_SECRET", () => {
+    const yaml = readRepo("cloudbuild.yaml");
+    const withoutComments = yaml.replace(/#.*$/gm, "");
+    assert.match(yaml, /--update-env-vars=NODE_ENV=production,APP_URL=https:\/\/www\.mylumera\.in/);
+    assert.doesNotMatch(withoutComments, /--set-env-vars/);
+    assert.doesNotMatch(withoutComments, /--update-env-vars=[^\n]*JWT_SECRET/);
+    assert.match(yaml, /JWT_SECRET must already exist/);
+    assert.match(readRepo("deploy/CLOUD_RUN_BOOT_CHECK.md"), /JWT_SECRET is required/);
   });
 
   it("runbook is Firebase Hosting + Cloud Run, not Hostinger purchase", () => {

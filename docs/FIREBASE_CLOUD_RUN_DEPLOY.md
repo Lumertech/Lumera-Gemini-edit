@@ -28,7 +28,7 @@ Firebase project (from `firebase-applet-config.json` / `.firebaserc`): **`gen-la
 | Node.js | **22** (`package.json` `engines.node` is `>=22 <25`). Built-in `node:sqlite` — not 18/20. |
 | Build | `npm run build` — Vite client → `dist/` + bundled `dist/server.cjs` |
 | Start | `npm start` → `NODE_ENV=production node dist/server.cjs` |
-| Port | Honor `process.env.PORT` (Cloud Run injects this, usually `8080`) |
+| Port | Honor `process.env.PORT` (Cloud Run injects this; this AI Studio service uses `3000`. Dockerfile `ENV PORT=8080` is only the unset default.) |
 | Public directory on Hosting | `hosting/` is an empty stub (no `index.html`) so `/` is **not** served as static Firebase. The Node process serves `dist`. |
 
 Do **not** deploy Vite `dist/` as a static Hosting site. That would 200 the landing HTML and **break** `/api/*` (OAuth, webhook, policy JSON).
@@ -94,7 +94,7 @@ Every revision still needs (set once in Console / Secret Manager; the pipeline p
 | --- | --- |
 | `APP_URL` | `https://www.mylumera.in` |
 | `NODE_ENV` | `production` |
-| `JWT_SECRET` | long random; production refuses to start on placeholder |
+| `JWT_SECRET` | long random; production **exits before listen** on missing/placeholder. Cloud Run then reports a PORT timeout — that is not a bind bug. See `deploy/CLOUD_RUN_BOOT_CHECK.md`. |
 | `META_VERIFY_TOKEN` | required before Meta can verify `GET /api/meta/webhook` |
 
 ---
@@ -146,9 +146,11 @@ the image deploy. Retry Cloud Build with the trigger pointed at repo
 | --- | --- |
 | `NODE_ENV` | `production` |
 | `APP_URL` | `https://www.mylumera.in` (no trailing slash) |
-| `JWT_SECRET` | long random string (no `change-me` / placeholder). Production **refuses to start** if missing or a placeholder. |
+| `JWT_SECRET` | long random string (no `change-me` / placeholder). Production **exits before listen** if missing or a placeholder. Cloud Run will then say the revision did not listen on PORT. |
 
-`PORT` is injected by Cloud Run. Do not hardcode it.
+`PORT` is injected by Cloud Run (this service: `3000`). `resolveListenPort()` honors it. Do not hardcode `8080` for listen. Dockerfile `ENV PORT=8080` is a default only when unset.
+
+Boot order and the JWT vs PORT confusion: `deploy/CLOUD_RUN_BOOT_CHECK.md`.
 
 ### Optional until the founder provisions Meta / payments
 
@@ -285,8 +287,9 @@ Until those exist, treat www as **not live** even if this PR is merged.
 | TLS `CN=firebaseapp.com`, curl 60 | Custom domain connected but cert not minted yet. Keep Firebase DNS; wait / finish Hosting domain setup. |
 | www or `*.web.app` serves static 404 / AI Studio placeholder | Hosting rewrite not deployed, or `public` still has an `index.html`. Confirm `**` → Cloud Run and empty `hosting/`. |
 | `/` 200 HTML but `/api/*` 404 | Hosting is serving Vite static instead of Cloud Run. |
-| Process crash on boot | Missing `JWT_SECRET`, or Node ≠ 22 (`node:sqlite`). Check Cloud Run logs. |
-| App not responding | Not honoring `PORT`. Logs should show `Lumera AI Server running on http://0.0.0.0:<port>`. |
+| Process crash on boot | Missing `JWT_SECRET`, or Node ≠ 22 (`node:sqlite`). Logs show `JWT_SECRET is required…`. |
+| Cloud Run: revision did not start/listen on PORT | **First check JWT.** Missing `JWT_SECRET` exits before bind and looks exactly like a PORT timeout. Listen is `0.0.0.0:$PORT`. Set `JWT_SECRET` on the service, then rebuild tip ≥ hotfix. See `deploy/CLOUD_RUN_BOOT_CHECK.md`. |
+| App not responding (JWT is set) | Not honoring `PORT`. Logs should show `[Lumera] listening on 0.0.0.0:<port>`. |
 | Policy URL 404 | SPA fallback not running (static host) or rewrite missing. |
 | Webhook GET 500 | Expected until `META_VERIFY_TOKEN` is set. |
 | Hosting rewrite 404 from Cloud Run | Wrong `serviceId` / `region` (must be `lumera-gemini-edit` / `asia-south1`), Hosting site not created (Console still on **Get started**), or region not in Firebase’s rewrite allow-list. |

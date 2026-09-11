@@ -10,14 +10,14 @@ import { attachUser, requireAuth } from "./server/auth.ts";
 import { createApiRouter } from "./server/api.ts";
 import { createMetaRouter } from "./server/meta.ts";
 import { createAbdmRouter } from "./server/abdm.ts";
-import { applyBundledServerNodeEnv, assertRequiredProductionEnv, resolveListenPort } from "./server/runtime.ts";
+import { applyBundledServerNodeEnv, failFastRequiredProductionEnv, resolveListenPort } from "./server/runtime.ts";
 import { attachProductionSpaFallback } from "./server/spa-fallback.ts";
 import { attachPublicPolicyHtml, isPublicPolicyHtmlPath } from "./server/policy-html.ts";
 
 dotenv.config();
 applyBundledServerNodeEnv();
-assertRequiredProductionEnv();
-initDatabase();
+// Fail-closed on JWT_SECRET before any listen. Missing secret exits here — not a PORT bug.
+failFastRequiredProductionEnv();
 
 const app = express();
 const PORT = resolveListenPort();
@@ -594,7 +594,7 @@ For query "${query}":
 // ----------------------------------------------------
 async function startServer() {
   applyBundledServerNodeEnv();
-  assertRequiredProductionEnv();
+  failFastRequiredProductionEnv();
 
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
@@ -627,10 +627,20 @@ async function startServer() {
     attachProductionSpaFallback(app);
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Lumera AI Server running on http://0.0.0.0:${PORT}`);
-    startAppointmentReminderScheduler();
+  const envPort = String(process.env.PORT || "").trim();
+  await new Promise<void>((resolve, reject) => {
+    const server = app.listen(PORT, "0.0.0.0", () => {
+      console.log(
+        `[Lumera] listening on 0.0.0.0:${PORT} (env PORT=${envPort || "(unset → default 3000)"})`
+      );
+      resolve();
+    });
+    server.once("error", reject);
   });
+
+  // Heavy work after the Cloud Run socket is open. /healthz is already registered.
+  initDatabase();
+  startAppointmentReminderScheduler();
 }
 
 startServer().catch((err) => {
