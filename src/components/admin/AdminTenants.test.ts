@@ -52,6 +52,7 @@ describe("Superadmin Tenants console (#54 UI)", () => {
     assert.match(shell, /Exit to platform/);
     assert.match(shell, /clearScope\(\)/);
     assert.match(shell, /item\.id === "tenants" && !isPlatformAdmin/);
+    assert.match(shell, /data-testid="superadmin-tab-forbidden"/);
     const tenantsAt = shell.indexOf('{ id: "tenants"');
     const dhisAt = shell.indexOf('{ id: "dhis"');
     const metaAt = shell.indexOf('{ id: "meta"');

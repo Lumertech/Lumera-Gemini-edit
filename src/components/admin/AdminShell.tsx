@@ -238,6 +238,11 @@ const AdminShellInner: React.FC = () => {
             </Link>
           </div>
         )}
+        {adminTab !== safeTab && SUPERADMIN_TABS.has(adminTab) && !isPlatformAdmin && (
+          <p className="mb-4 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2" data-testid="superadmin-tab-forbidden">
+            Tenants and all-tenant subscriptions are restricted to super_admin. Clinic admins cannot list every tenant.
+          </p>
+        )}
         <div key={safeTab} data-testid="admin-tab-remount">
           {panel}
         </div>
