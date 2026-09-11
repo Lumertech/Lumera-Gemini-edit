@@ -162,6 +162,8 @@ Leave unset for the URL-hosting stage. Production **does not fake** Graph delive
 | `META_APP_SECRET` | Webhook HMAC (`X-Hub-Signature-256`) in production |
 | `FACEBOOK_APP_ID` / `FACEBOOK_APP_SECRET` | Live Facebook Login |
 | `FACEBOOK_REDIRECT_URI` | Override; default is `{APP_URL}/api/auth/facebook/callback` |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Live Google Sign-in (Web application OAuth client) |
+| `GOOGLE_REDIRECT_URI` | Override; default is `{APP_URL}/api/auth/google/callback` |
 | `META_ACCESS_TOKEN` / `META_PHONE_NUMBER_ID` | Live Graph send |
 | `GEMINI_API_KEY` | Pulse AI / SOAP (landing + policy pages work without it; AI Studio often injects this) |
 | Razorpay keys | Payments — not required to host Review URLs |
@@ -254,6 +256,31 @@ Paste **only after** the smoke gate in §5 is green:
 | WhatsApp webhook callback URL | `https://www.mylumera.in/api/meta/webhook` (`GET` challenge + `POST`) |
 
 Optional override: `FACEBOOK_REDIRECT_URI=https://www.mylumera.in/api/auth/facebook/callback`.
+
+### Google Cloud Console (Google Sign-in)
+
+Create an OAuth 2.0 **Web application** client. Do **not** reuse the Firebase/AI Studio `oAuthClientId` in `firebase-applet-config.json` unless that exact client has a secret and the callback below is already allow-listed.
+
+Cloud Run env (same service as `APP_URL`):
+
+| Variable | Value |
+| --- | --- |
+| `GOOGLE_CLIENT_ID` | Web client ID (`….apps.googleusercontent.com`) |
+| `GOOGLE_CLIENT_SECRET` | Web client secret (never commit) |
+| `APP_URL` | `https://www.mylumera.in` (no trailing slash) |
+| `GOOGLE_REDIRECT_URI` | Optional override; default `{APP_URL}/api/auth/google/callback` |
+
+Google Cloud Console → APIs & Services → Credentials → the Web client:
+
+| Console field | Exact value the app sends |
+| --- | --- |
+| Authorized JavaScript origins | `https://www.mylumera.in` |
+| Authorized JavaScript origins (optional apex) | `https://mylumera.in` |
+| Authorized redirect URIs (**required**) | `https://www.mylumera.in/api/auth/google/callback` |
+| Authorized redirect URIs (optional apex) | `https://mylumera.in/api/auth/google/callback` |
+| Authorized redirect URIs (local) | `http://localhost:3000/api/auth/google/callback` |
+
+`www` and apex are different origins. Production `APP_URL` is **www**, so the callback Google must whitelist is **`https://www.mylumera.in/api/auth/google/callback`** (no trailing slash). A localhost-only allow-list is why production Sign-in fails with `redirect_uri_mismatch`.
 
 ### Must be real before Review submission
 

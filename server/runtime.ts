@@ -96,7 +96,7 @@ export function assertRequiredProductionEnv(env: NodeJS.ProcessEnv = process.env
   const appUrl = String(env.APP_URL || "").trim().replace(/\/$/, "");
   if (!appUrl) {
     console.warn(
-      "[Lumera] APP_URL is unset. Set APP_URL=https://www.mylumera.in for Meta OAuth and policy links."
+      "[Lumera] APP_URL is unset. Set APP_URL=https://www.mylumera.in for Google/Meta OAuth and policy links."
     );
   }
 }

@@ -183,15 +183,26 @@ describe("Facebook OAuth identity", () => {
 
   it("rejects Google client-email OAuth in production", async () => {
     process.env.NODE_ENV = "production";
-    await assert.rejects(
-      () =>
-        resolveFederatedIdentity({
-          provider: "google",
-          redirectUri: "http://localhost:3000/callback",
-          clientEmail: "attacker@example.com",
-        }),
-      /disabled in production/i
-    );
+    const prevId = process.env.GOOGLE_CLIENT_ID;
+    const prevSecret = process.env.GOOGLE_CLIENT_SECRET;
+    delete process.env.GOOGLE_CLIENT_ID;
+    delete process.env.GOOGLE_CLIENT_SECRET;
+    try {
+      await assert.rejects(
+        () =>
+          resolveFederatedIdentity({
+            provider: "google",
+            redirectUri: "https://www.mylumera.in/api/auth/google/callback",
+            clientEmail: "attacker@example.com",
+          }),
+        /GOOGLE_CLIENT_ID|not configured/i
+      );
+    } finally {
+      if (prevId === undefined) delete process.env.GOOGLE_CLIENT_ID;
+      else process.env.GOOGLE_CLIENT_ID = prevId;
+      if (prevSecret === undefined) delete process.env.GOOGLE_CLIENT_SECRET;
+      else process.env.GOOGLE_CLIENT_SECRET = prevSecret;
+    }
   });
 
   it("labels non-prod client email as SANDBOX", async () => {

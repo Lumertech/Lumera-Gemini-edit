@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import jwt from "jsonwebtoken";
 import { getJwtSecret } from "./auth.ts";
 import { appPublicUrl, graphApiVersion, isProduction, readSecret } from "./runtime.ts";
+import { googleClientId, googleOAuthConfigured, googleRedirectUri, verifyGoogleIdentity } from "./google-oauth.ts";
 
 /** Fail-closed: dedicated state secret if set, otherwise JWT_SECRET (no hardcoded fallback). */
 function oauthStateSecret(): string {
@@ -195,12 +196,13 @@ export type FederatedIdentity = {
   name: string;
   avatarUrl: string;
   facebookId?: string;
+  googleId?: string;
   sandbox?: boolean;
 };
 
 /**
- * Production: Facebook requires Graph-verified identity; client-supplied email is rejected.
- * Non-prod: SANDBOX / DEV-ONLY client email is allowed when no Facebook token is presented.
+ * Production: Google/Facebook require provider-verified identity; client-supplied email is rejected.
+ * Non-prod: SANDBOX / DEV-ONLY client email is allowed when no provider token is presented.
  */
 export async function resolveFederatedIdentity(opts: {
   provider: string;
@@ -245,9 +247,40 @@ export async function resolveFederatedIdentity(opts: {
     };
   }
 
+  if (provider === "google") {
+    const hasToken = Boolean(opts.code || opts.accessToken);
+    if (hasToken || isProduction()) {
+      const profile = await verifyGoogleIdentity({
+        code: opts.code,
+        accessToken: opts.accessToken,
+        redirectUri: opts.redirectUri,
+        fetchImpl: opts.fetchImpl,
+      });
+      return {
+        provider: "google",
+        email: profile.email,
+        name: profile.name,
+        avatarUrl: profile.avatarUrl,
+        googleId: profile.id,
+      };
+    }
+
+    const email = String(opts.clientEmail || "").trim().toLowerCase();
+    if (!email) {
+      throw new FacebookOAuthError("SANDBOX Google login requires an email or a Google token.", 400);
+    }
+    return {
+      provider: "google",
+      email,
+      name: String(opts.clientName || email.split("@")[0]),
+      avatarUrl: String(opts.clientAvatarUrl || ""),
+      sandbox: true,
+    };
+  }
+
   if (isProduction()) {
     throw new FacebookOAuthError(
-      `Client-trusted ${provider} email OAuth is disabled in production. Use Facebook Login with server-side token exchange.`,
+      `Client-trusted ${provider} email OAuth is disabled in production. Use Google or Facebook Login with server-side token exchange.`,
       403
     );
   }
@@ -270,9 +303,12 @@ export function oauthPublicConfig() {
     facebookConfigured: facebookOAuthConfigured(),
     facebookAppId: facebookAppId() || null,
     facebookRedirectUri: facebookOAuthConfigured() ? facebookRedirectUri() : null,
+    googleConfigured: googleOAuthConfigured(),
+    googleClientId: googleClientId() || null,
+    googleRedirectUri: googleOAuthConfigured() ? googleRedirectUri() : null,
     sandboxClientOAuthAllowed: !isProduction(),
     notice: isProduction()
-      ? "Production requires Facebook Login server-side token exchange. Client-supplied emails are rejected. Missing FACEBOOK_APP_ID/SECRET is a hard configuration error."
-      : "SANDBOX / DEV-ONLY: Facebook App credentials are optional. Client-supplied OAuth email is accepted only when NODE_ENV is not production.",
+      ? "Production requires Google/Facebook Login server-side token exchange. Client-supplied emails are rejected. Missing GOOGLE_CLIENT_ID/SECRET or FACEBOOK_APP_ID/SECRET is a hard configuration error for that provider."
+      : "SANDBOX / DEV-ONLY: Google/Facebook credentials are optional. Client-supplied OAuth email is accepted only when NODE_ENV is not production.",
   };
 }

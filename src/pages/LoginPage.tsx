@@ -156,7 +156,7 @@ export const LoginPage: React.FC = () => {
   const [forgotSuccess, setForgotSuccess] = useState("");
 
   const otpInputRefs = useRef<(HTMLInputElement | null)[]>([]);
-  const facebookOauthSuccessHandled = useRef(false);
+  const oauthSuccessHandled = useRef(false);
 
   const openRegisterForm = () => {
     setMode("register");
@@ -183,11 +183,12 @@ export const LoginPage: React.FC = () => {
     setExplicitPolyclinicChoice(false);
   }, []);
 
-  // Auto-redirect if already authenticated and not verifying OTP / completing Facebook OAuth.
+  // Auto-redirect if already authenticated and not verifying OTP / completing OAuth.
   useEffect(() => {
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
-      if (params.get("oauth") === "facebook" && params.get("status") === "ok") return;
+      const oauth = params.get("oauth");
+      if ((oauth === "facebook" || oauth === "google") && params.get("status") === "ok") return;
     }
     if (!user || busy || showOtpView) return;
     goAfterAuth(go, destinationAfterAuth(user, loginNext), loginNextPath);
@@ -205,34 +206,40 @@ export const LoginPage: React.FC = () => {
   useEffect(() => {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
-    if (params.get("oauth") !== "facebook") return;
+    const oauth = params.get("oauth");
+    if (oauth !== "facebook" && oauth !== "google") return;
+    const label = oauth === "google" ? "Google" : "Facebook";
     const oauthError = params.get("error");
     if (oauthError) {
       setError(
         oauthError === "not_configured"
-          ? "Facebook Login is not configured (FACEBOOK_APP_ID / FACEBOOK_APP_SECRET)."
+          ? oauth === "google"
+            ? "Google Sign-in is not configured (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET)."
+            : "Facebook Login is not configured (FACEBOOK_APP_ID / FACEBOOK_APP_SECRET)."
           : decodeURIComponent(oauthError)
       );
     }
     if (params.get("unregistered") === "1") {
       openRegisterForm();
-      const fbEmail = params.get("email") || "";
-      const fbName = params.get("name") || "";
-      if (fbEmail) setAdminEmail(fbEmail);
-      if (fbName) setAdminName(fbName);
+      const ssoEmail = params.get("email") || "";
+      const ssoName = params.get("name") || "";
+      if (ssoEmail) setAdminEmail(ssoEmail);
+      if (ssoName) setAdminName(ssoName);
       setVerifiedSsoNotice(
-        `Facebook identity verified (${fbEmail}). Please complete your clinic details below.`
+        `${label} identity verified (${ssoEmail}). Please complete your clinic details below.`
       );
     }
   }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    if (authLoading || facebookOauthSuccessHandled.current) return;
+    if (authLoading || oauthSuccessHandled.current) return;
     const params = new URLSearchParams(window.location.search);
-    if (params.get("oauth") !== "facebook" || params.get("status") !== "ok") return;
+    const oauth = params.get("oauth");
+    if ((oauth !== "facebook" && oauth !== "google") || params.get("status") !== "ok") return;
+    const label = oauth === "google" ? "Google" : "Facebook";
 
-    facebookOauthSuccessHandled.current = true;
+    oauthSuccessHandled.current = true;
     const stripOauthQuery = () => {
       const url = new URL(window.location.href);
       url.searchParams.delete("oauth");
@@ -244,7 +251,7 @@ export const LoginPage: React.FC = () => {
     let cancelled = false;
     (async () => {
       setBusy(true);
-      setSuccessMsg("Completing Facebook sign-in…");
+      setSuccessMsg(`Completing ${label} sign-in…`);
       try {
         const hydrated = user ?? (await refreshSession());
         if (cancelled) return;
@@ -253,13 +260,13 @@ export const LoginPage: React.FC = () => {
           goAfterAuth(go, destinationAfterAuth(hydrated, loginNext), loginNextPath);
         } else {
           setSuccessMsg("");
-          setError("Facebook sign-in succeeded but the session could not be restored. Please try again.");
+          setError(`${label} sign-in succeeded but the session could not be restored. Please try again.`);
         }
       } catch {
         if (cancelled) return;
         stripOauthQuery();
         setSuccessMsg("");
-        setError("Facebook sign-in succeeded but the session could not be restored. Please try again.");
+        setError(`${label} sign-in succeeded but the session could not be restored. Please try again.`);
       } finally {
         if (!cancelled) setBusy(false);
       }
@@ -267,7 +274,7 @@ export const LoginPage: React.FC = () => {
 
     return () => {
       cancelled = true;
-      facebookOauthSuccessHandled.current = false;
+      oauthSuccessHandled.current = false;
     };
   }, [authLoading, user, refreshSession, go, loginNext]);
 
@@ -383,8 +390,6 @@ export const LoginPage: React.FC = () => {
     setSuccessMsg("");
     setOauthPrompt(null);
 
-    // Real Google Identity redirect is owned by PR #64 (GET /api/auth/google).
-    // Keep this LoginPage-only so either merge order still works once googleConfigured is true.
     if (provider === "google" && oauthConfig?.googleConfigured) {
       window.location.href = "/api/auth/google";
       return;
@@ -397,6 +402,7 @@ export const LoginPage: React.FC = () => {
 
     if (provider === "google" && !oauthConfig?.sandboxClientOAuthAllowed) {
       setBusy(false);
+      setError("Google Sign-in is not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.");
       return;
     }
 
@@ -1130,6 +1136,11 @@ export const LoginPage: React.FC = () => {
                       <span>Facebook</span>
                     </button>
                   </div>
+                  {oauthConfig && !oauthConfig.googleConfigured && oauthConfig.sandboxClientOAuthAllowed && (
+                    <p className="text-[11px] text-amber-400/90 mb-2">
+                      SANDBOX / DEV-ONLY: Google credentials are unset, so the Google button still posts a client email. This path is disabled in production.
+                    </p>
+                  )}
                   {oauthConfig && !oauthConfig.facebookConfigured && oauthConfig.sandboxClientOAuthAllowed && (
                     <p className="text-[11px] text-amber-400/90 mb-2">
                       SANDBOX / DEV-ONLY: Facebook App credentials are unset, so the Facebook button still posts a client email. This path is disabled in production.
