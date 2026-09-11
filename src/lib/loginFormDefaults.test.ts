@@ -131,6 +131,10 @@ describe("public login form defaults", () => {
     assert.doesNotMatch(loginPage, /System Administrator/);
     assert.doesNotMatch(landingPage, />\s*Admin\s*</);
     assert.doesNotMatch(landingPage, /loginNext:\s*"admin"/);
+    assert.doesNotMatch(landingPage, /User [Mm]anagement/);
+    assert.doesNotMatch(landingPage, /Tenants/);
+    assert.doesNotMatch(landingPage, /Superadmin/);
+    assert.match(landingPage, /data-testid="public-landing"/);
     assert.match(landingPage, /loginMode:\s*"register"/);
     assert.match(landingPage, /Try for free/);
   });

@@ -3,7 +3,13 @@ import { BrowserRouter } from "react-router-dom";
 import { AuthProvider, destinationAfterAuth, homeSurfaceForRole, useAuth } from "./auth/AuthContext";
 import { BrandMark } from "./components/BrandMark";
 import { NavigationProvider, goAfterAuth, useNav } from "./nav/NavigationContext";
-import { decideChrome, nextAuthenticatedSurface, surfaceToPath } from "./nav/surfaces";
+import {
+  decideChrome,
+  isSmartHomePath,
+  nextAuthenticatedSurface,
+  safeNextPath,
+  surfaceToPath,
+} from "./nav/surfaces";
 import { LandingPage } from "./components/LandingPage";
 import { LoginPage } from "./pages/LoginPage";
 import { PolicyPage } from "./pages/PolicyPage";
@@ -47,10 +53,12 @@ function SurfaceRoot() {
     if (loading) return;
 
     if (!user) {
+      // Founder lock: logged-out `/` stays on the marketing landing — never `/admin`.
+      if (isSmartHomePath(pathname)) return;
       if (chrome.renderSurface === "login" && surface !== "login") {
         go("login", {
           loginNext: surface,
-          loginNextPath: surfaceToPath(surface, { appView, adminTab }),
+          loginNextPath: safeNextPath(pathname) || surfaceToPath(surface, { appView, adminTab }),
           loginMode: "signin",
           replace: true,
         });
@@ -97,15 +105,15 @@ function SurfaceRoot() {
   if (view === "onboarding") return <OnboardingWizard />;
 
   if (view === "admin") {
-    if (!user) return <LoginPage />;
+    if (!user || !chrome.showAppChrome) return <LoginPage />;
     return <AdminShell />;
   }
   if (view === "app") {
-    if (!user) return <LoginPage />;
+    if (!user || !chrome.showAppChrome) return <LoginPage />;
     return <ClinicianApp />;
   }
   if (view === "portal") {
-    if (!user) return <LoginPage />;
+    if (!user || !chrome.showAppChrome) return <LoginPage />;
     return <PatientPortalApp />;
   }
 

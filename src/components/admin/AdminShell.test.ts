@@ -34,5 +34,7 @@ describe("AdminShell tab remounts", () => {
     assert.ok(tenantsAt > 0 && dhisAt > tenantsAt, "Tenants must appear before DHIS in the nav source");
     assert.match(src, /data-testid=\{\`admin-nav-\$\{item\.id\}\`\}/);
     assert.match(src, /adminTabToPath\(item\.id\)/);
+    assert.match(src, /data-testid="admin-shell"/);
+    assert.match(src, /data-testid="admin-restricted"/);
   });
 });

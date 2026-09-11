@@ -88,7 +88,10 @@ const AdminShellInner: React.FC = () => {
 
   if (!isAdmin) {
     return (
-      <div className="h-screen w-screen flex items-center justify-center bg-slate-950 text-white p-6">
+      <div
+        data-testid="admin-restricted"
+        className="h-screen w-screen flex items-center justify-center bg-slate-950 text-white p-6"
+      >
         <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center space-y-4 shadow-2xl">
           <div className="w-12 h-12 rounded-xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center mx-auto">
             <Shield className="w-6 h-6" />
@@ -134,7 +137,7 @@ const AdminShellInner: React.FC = () => {
   }[safeTab];
 
   return (
-    <div className="h-screen flex bg-slate-50 text-slate-900">
+    <div data-testid="admin-shell" className="h-screen flex bg-slate-50 text-slate-900">
       <aside className="w-64 bg-gradient-to-b from-slate-900 to-slate-800 text-slate-200 flex flex-col shrink-0">
         <div className="px-5 py-6 flex items-center gap-3 border-b border-slate-700/80">
           <div className="w-10 h-10 bg-purple-600 rounded-lg flex items-center justify-center shadow-lg shadow-purple-500/30">

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import { describe, it } from "node:test";
 import {
   adminTabToPath,
@@ -138,6 +139,17 @@ describe("public vs app surface routing (founder lock #48)", () => {
     const adminDeep = decideChrome({ loading: false, authenticated: false, surface: "admin", pathname: "/admin" });
     assert.equal(adminDeep.showAppChrome, false);
     assert.equal(adminDeep.renderSurface, "login");
+    assert.notEqual(adminDeep.renderSurface, "admin");
+
+    const adminUsers = decideChrome({
+      loading: false,
+      authenticated: false,
+      surface: "admin",
+      pathname: "/admin/users",
+    });
+    assert.equal(adminUsers.showAppChrome, false);
+    assert.equal(adminUsers.renderSurface, "login");
+    assert.notEqual(adminUsers.renderSurface, "admin");
   });
 
   it("does not flash clinician chrome while the session is still loading", () => {
@@ -210,7 +222,7 @@ describe("public vs app surface routing (founder lock #48)", () => {
         roleHome: "admin",
         needsOnboarding: false,
       }),
-      "admin"
+      "landing"
     );
     assert.equal(
       nextAuthenticatedSurface({
@@ -221,5 +233,65 @@ describe("public vs app surface routing (founder lock #48)", () => {
       }),
       "legal"
     );
+
+    const signedInAdminRoot = decideChrome({
+      loading: false,
+      authenticated: true,
+      surface: "landing",
+      pathname: "/",
+      roleHome: "admin",
+    });
+    assert.equal(signedInAdminRoot.renderSurface, "landing");
+    assert.equal(signedInAdminRoot.showAppChrome, false);
+
+    const signedInAdminConsole = decideChrome({
+      loading: false,
+      authenticated: true,
+      surface: "admin",
+      pathname: "/admin",
+      roleHome: "admin",
+    });
+    assert.equal(signedInAdminConsole.renderSurface, "admin");
+    assert.equal(signedInAdminConsole.showAppChrome, true);
+  });
+
+  it("anonymous `/` stays landing even if ?view= or ?surface= tries to select admin", () => {
+    assert.equal(pathToNav("/", "?view=admin").surface, "landing");
+    assert.equal(pathToNav("/", "?surface=admin").surface, "landing");
+    assert.equal(pathToNav("/index.html", "?view=admin").surface, "landing");
+    assert.equal(pathToNav("/admin", "?view=landing").surface, "admin");
+    assert.equal(pathToNav("/admin/users").surface, "admin");
+    const hijack = decideChrome({
+      loading: false,
+      authenticated: false,
+      surface: pathToNav("/", "?view=admin").surface,
+      pathname: "/",
+    });
+    assert.equal(hijack.renderSurface, "landing");
+    assert.equal(hijack.showAppChrome, false);
+  });
+
+  it("gates AdminShell: anonymous `/admin` is login, never the console chrome", () => {
+    const login = surfaceToPath("login", { loginNext: "admin", loginNextPath: "/admin" });
+    assert.equal(login, "/login?next=%2Fadmin");
+    assert.equal(safeNextPath("/admin"), "/admin");
+    assert.equal(safeNextPath("/admin/users"), "/admin/users");
+    assert.equal(pathToNav("/login", "?next=%2Fadmin").loginNext, "admin");
+    assert.equal(pathToNav("/login", "?next=%2Fadmin").loginNextPath, "/admin");
   });
 });
+
+describe("App surface root founder lock", () => {
+  it("never mounts AdminShell without a session and never soft-routes logged-out `/`", () => {
+    const app = fs.readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
+    assert.match(app, /isSmartHomePath\(pathname\)/);
+    assert.match(app, /logged-out `\/` stays on the marketing landing/);
+    assert.match(app, /if \(!user \|\| !chrome\.showAppChrome\) return <LoginPage \/>/);
+    assert.match(app, /return <AdminShell \/>/);
+    assert.match(app, /return <LandingPage \/>/);
+    const adminMount = app.indexOf("return <AdminShell />");
+    const gate = app.indexOf("if (!user || !chrome.showAppChrome) return <LoginPage />");
+    assert.ok(gate > 0 && adminMount > gate, "AdminShell must sit behind the auth + chrome gate");
+  });
+});
+

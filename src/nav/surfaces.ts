@@ -210,17 +210,12 @@ function loginFromPath(pathname: string, search: string): NavLocation {
   });
 }
 
-/** Map a URL to a product surface. `/` is the smart home (landing until auth resolves). */
+/** Map a URL to a product surface. `/` is the marketing home — query cannot hijack it. */
 export function pathToNav(pathname = "/", search = ""): NavLocation {
   const p = normalizePath(pathname);
 
   if (p === "/login" || p === "/signin" || p === "/sign-in" || p === "/signup" || p === "/register") {
     return loginFromPath(p, search);
-  }
-
-  const fromQuery = surfaceFromQuery(search);
-  if (fromQuery) {
-    return nav(fromQuery);
   }
 
   const policy = POLICY_PATHS[p];
@@ -237,6 +232,16 @@ export function pathToNav(pathname = "/", search = ""): NavLocation {
   }
   if (p === "/dashboard" || p === "/studio" || p === "/clinic") {
     return nav("app", { appView: DEFAULT_APP_VIEW });
+  }
+
+  // Founder lock: `/` is marketing. `?view=admin` / `?surface=admin` must not win.
+  if (isSmartHomePath(p)) {
+    return nav("landing");
+  }
+
+  const fromQuery = surfaceFromQuery(search);
+  if (fromQuery) {
+    return nav(fromQuery);
   }
 
   return nav("landing");
@@ -303,6 +308,7 @@ export interface ChromeDecision {
 /**
  * Founder lock: anonymous `/` is the public site; app chrome only after auth.
  * Protected deep links never flash Navbar/Sidebar while session is unknown.
+ * `/` never soft-routes into Superadmin/Admin chrome.
  */
 export function decideChrome(args: {
   loading: boolean;
@@ -361,6 +367,8 @@ export function nextAuthenticatedSurface(args: {
   if (surface === "onboarding") return roleHome;
   if (surface === "login") return roleHome;
   if (surface === "landing" && isSmartHomePath(pathname) && !isExplicitPublicPath(pathname)) {
+    // Clinician/patient smart-home is fine; never yank `/` into `/admin`.
+    if (roleHome === "admin") return "landing";
     return roleHome;
   }
   return surface;
