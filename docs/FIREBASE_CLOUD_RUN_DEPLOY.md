@@ -35,16 +35,19 @@ Do **not** deploy Vite `dist/` as a static Hosting site. That would 200 the land
 
 ---
 
-## 2. Cloud Run (AI Studio Publish or Dockerfile)
+## 2. Cloud Run (canonical: image via `cloudbuild.yaml`)
 
-### Path A — Gemini AI Studio Publish (preferred if already used)
+**Canonical path going forward:** build the repo `Dockerfile` and `gcloud run deploy --image` from root `cloudbuild.yaml`. Do **not** mix AI Studio Publish / `gcloud run deploy --source` with that image pipeline on the same service unless you first clear `run.googleapis.com/sources` (see §2b).
+
+### Path A — Gemini AI Studio Publish (do not mix with image Cloud Build)
 
 1. Publish this repo from AI Studio so Google builds and runs the Node app on Cloud Run.
 2. Live service (Firebase Console): **`lumera-gemini-edit`** in **`asia-south1`**.
 3. `firebase.json` already pins those values (`hosting.rewrites[0].run.serviceId` / `region`). Redeploy Hosting after Publish if the service was recreated.
 4. Cloud Run **ingress**: allow traffic from Firebase Hosting / public (Hosting rewrite needs to reach the service).
+5. If you later switch to Cloud Build image deploys, clear the source annotation first (§2b). Do not run AI Studio Publish and `cloudbuild.yaml` against the same revision stream without that clear.
 
-### Path B — Container from this repo
+### Path B — Container from this repo (manual; same contract as `cloudbuild.yaml`)
 
 ```bash
 export PROJECT=gen-lang-client-0108182367
@@ -61,11 +64,77 @@ gcloud run deploy "${SERVICE}" \
   --set-secrets "JWT_SECRET=JWT_SECRET:latest"
 ```
 
-Use Secret Manager (or AI Studio secrets) for `JWT_SECRET`. Never commit it.
+Use Secret Manager (or AI Studio secrets) for `JWT_SECRET`. Never commit it. Prefer `--update-env-vars` / existing revision secrets so you do not wipe `META_VERIFY_TOKEN`.
 
 `Dockerfile` is Node 22, `npm ci` when `package-lock.json` exists otherwise `npm install`, `npm run build`, `npm start`, `USER node`, honors `PORT`.
 
 SQLite is `data/lumera.db` under the process cwd. Cloud Run instances are ephemeral — policy text **re-seeds on boot**. Durable clinic data is out of scope for the App Review URL stage.
+
+### Path C — Cloud Build trigger → repo `cloudbuild.yaml` (preferred)
+
+Root `cloudbuild.yaml` builds the Dockerfile, pushes `${_IMAGE}`, clears leftover source metadata, then deploys **that image only** (no `--source`).
+
+| Substitution | Default | Meaning |
+| --- | --- | --- |
+| `_SERVICE` | `lumera-gemini-edit` | Cloud Run service name |
+| `_REGION` | `asia-south1` | Must match `firebase.json` Hosting rewrite |
+| `_IMAGE` | `gcr.io/${PROJECT_ID}/lumera-gemini-edit:${SHORT_SHA}` | Image URI Cloud Run pulls |
+
+Wire / retarget the Console trigger:
+
+1. Cloud Build → Triggers → the trigger that deploys this repo (or Create trigger).
+2. Event: push to `main` (or your release branch).
+3. Configuration: **Cloud Build configuration file**, location **`/cloudbuild.yaml`** (repo root). Do not leave it on the Console-generated Dockerfile/Buildpacks template — that path never clears the annotation.
+4. Optional substitution overrides: `_SERVICE`, `_REGION`, `_IMAGE` (use Artifact Registry if you already have `asia-south1-docker.pkg.dev/${PROJECT}/…`).
+5. Cloud Build SA needs Cloud Run Admin, Service Account User (act-as the Cloud Run runtime SA), and push to the image registry.
+
+Every revision still needs (set once in Console / Secret Manager; the pipeline pins only the public two via `--update-env-vars`):
+
+| Variable | Value |
+| --- | --- |
+| `APP_URL` | `https://www.mylumera.in` |
+| `NODE_ENV` | `production` |
+| `JWT_SECRET` | long random; production refuses to start on placeholder |
+| `META_VERIFY_TOKEN` | required before Meta can verify `GET /api/meta/webhook` |
+
+---
+
+## 2b. Unblock: AI Studio source annotation vs image Cloud Build
+
+**Symptom**
+
+```
+ERROR: (gcloud.run.deploy) spec.template.metadata.annotations[run.googleapis.com/sources]: Source annotation has sources that are not referenced by a container.
+```
+
+**Cause.** Service `lumera-gemini-edit` (`asia-south1`, project `gen-lang-client-0108182367`) was first published via AI Studio / `gcloud run deploy --source`. That writes `run.googleapis.com/sources` on the revision template (often with `image: scratch`). A later **image-only** Cloud Build copies that annotation onto a container that does not reference those sources, and the API rejects the revision. Do **not** delete the Cloud Run service to fix this.
+
+**One-time Console / gcloud unblock (CoS):**
+
+```bash
+gcloud run services update lumera-gemini-edit \
+  --region=asia-south1 \
+  --project=gen-lang-client-0108182367 \
+  --remove-annotations=run.googleapis.com/sources
+```
+
+Then retry Cloud Build, with the trigger pointed at repo `cloudbuild.yaml`. The pipeline runs that same `--remove-annotations` (`|| true` if the service is new or the flag is missing) and then export-strips the **template** annotation / `image: scratch` via `deploy/clear-cloud-run-source-annotation.sh` before `gcloud run deploy --image`.
+
+If the one-liner is `unrecognized arguments: --remove-annotations` (some `gcloud` builds have no generic annotation flag) or image deploy still fails, the annotation is on `spec.template.metadata` and may be paired with `image: scratch`. After an image exists:
+
+```bash
+export PROJECT=gen-lang-client-0108182367
+export REGION=asia-south1
+export SERVICE=lumera-gemini-edit
+# IMAGE = the URI you just pushed (same as ${_IMAGE} in cloudbuild.yaml)
+deploy/clear-cloud-run-source-annotation.sh \
+  --service="${SERVICE}" --region="${REGION}" --project="${PROJECT}" \
+  --image="${IMAGE}"
+```
+
+That is `describe --format=export` → drop `run.googleapis.com/sources` (and companion `run.googleapis.com/base-images`) → rewrite `scratch` → `gcloud run services replace`. Env vars on the current spec are preserved. Then `gcloud run deploy --image` succeeds.
+
+**Going forward:** image via `cloudbuild.yaml` only. Avoid mixing AI Studio Publish with Cloud Build image deploys without clearing the annotation first.
 
 ---
 
@@ -198,8 +267,8 @@ Graph OTP / reminder / receipt without tokens; `simulate-embedded-signup`; unsig
 
 This repo change cannot finish issue #26 acceptance. Ask the founder / GCP owner for:
 
-1. Permission to deploy / update Cloud Run on `gen-lang-client-0108182367` (AI Studio Publish **or** `gcloud run deploy` from `Dockerfile`) for service **`lumera-gemini-edit`** in **`asia-south1`**.
-2. Cloud Run env: `APP_URL=https://www.mylumera.in`, a new `JWT_SECRET`, `NODE_ENV=production`.
+1. Permission to deploy / update Cloud Run on `gen-lang-client-0108182367` (`cloudbuild.yaml` image deploy **or** AI Studio Publish, not both without §2b) for service **`lumera-gemini-edit`** in **`asia-south1`**. Point the Cloud Build trigger at `/cloudbuild.yaml`.
+2. Cloud Run env: `APP_URL=https://www.mylumera.in`, a new `JWT_SECRET`, `NODE_ENV=production`, plus `META_VERIFY_TOKEN` before Meta webhook verify.
 3. If Hosting still shows **Get started**, finish that in Console, then `firebase deploy --only hosting` (`firebase.json` already pins `lumera-gemini-edit` / `asia-south1`).
 4. Connect custom domain **`www.mylumera.in`** and wait until the cert SAN includes it (keep existing A `199.36.158.100`).
 5. Optional apex 301 → www in Firebase Hosting.
@@ -221,6 +290,7 @@ Until those exist, treat www as **not live** even if this PR is merged.
 | Policy URL 404 | SPA fallback not running (static host) or rewrite missing. |
 | Webhook GET 500 | Expected until `META_VERIFY_TOKEN` is set. |
 | Hosting rewrite 404 from Cloud Run | Wrong `serviceId` / `region` (must be `lumera-gemini-edit` / `asia-south1`), Hosting site not created (Console still on **Get started**), or region not in Firebase’s rewrite allow-list. |
+| Cloud Build / `gcloud run deploy --image` fails: `run.googleapis.com/sources` “not referenced by a container” | Service still has AI Studio / `--source` template annotation (sometimes `image: scratch`). Clear it (§2b) and deploy **image only** from `cloudbuild.yaml`. Do not add `--source` to the same pipeline. |
 
 ---
 
