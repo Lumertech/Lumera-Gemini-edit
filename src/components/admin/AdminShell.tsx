@@ -36,20 +36,25 @@ import { AdminSettings } from "./AdminSettings";
 import { AdminAudit } from "./AdminAudit";
 import { AdminMetaTechProvider } from "./AdminMetaTechProvider";
 import { DhisMeter } from "../dhis/DhisMeter";
+import { TenantScopeProvider, useTenantScope } from "./TenantScopeContext";
 
-/** Platform / Meta / CMS — super_admin only, listed after desk tabs. */
+/** Clinic desk — CLINIC_ADMIN / polyclinic_admin / super_admin. */
+const DESK_TABS = new Set<AdminTab>(["overview", "users", "people", "branches", "profile", "settings", "audit"]);
+/** Platform Superadmin — Tenants + all-tenant Subs. CLINIC_ADMIN must not see these (T-6). */
+const SUPERADMIN_TABS = new Set<AdminTab>(["tenants", "subscriptions"]);
+/** Platform / Meta / CMS — super_admin only, listed after Superadmin tabs. */
 const PLATFORM_TABS = new Set<AdminTab>(["dhis", "meta", "site", "policies", "media"]);
 
-const NAV: { id: AdminTab; label: string; icon: typeof Users; badge?: string; group?: "desk" | "platform" }[] = [
+const NAV: { id: AdminTab; label: string; icon: typeof Users; badge?: string; group?: "desk" | "superadmin" | "platform" }[] = [
   { id: "overview", label: "Dashboard", icon: LayoutDashboard, group: "desk" },
   { id: "users", label: "User management", icon: Users, group: "desk" },
   { id: "people", label: "Doctors & staff", icon: Stethoscope, group: "desk" },
   { id: "branches", label: "Branches", icon: Building2, group: "desk" },
-  { id: "tenants", label: "Tenants", icon: Network, group: "desk" },
   { id: "profile", label: "Admin profile", icon: UserCircle, group: "desk" },
   { id: "settings", label: "Clinic & AI settings", icon: Settings, group: "desk" },
-  { id: "subscriptions", label: "Subscriptions", icon: KeyRound, group: "desk" },
   { id: "audit", label: "Audit log", icon: History, group: "desk" },
+  { id: "tenants", label: "Tenants", icon: Network, group: "superadmin" },
+  { id: "subscriptions", label: "Subscriptions", icon: KeyRound, group: "superadmin" },
   { id: "dhis", label: "ABDM & DHIS Meter", icon: Award, group: "platform" },
   { id: "meta", label: "Meta WhatsApp", icon: Share2, badge: "SANDBOX", group: "platform" },
   { id: "site", label: "Website CMS", icon: Globe, group: "platform" },
@@ -58,14 +63,25 @@ const NAV: { id: AdminTab; label: string; icon: typeof Users; badge?: string; gr
 ];
 
 export const AdminShell: React.FC = () => {
+  return (
+    <TenantScopeProvider>
+      <AdminShellInner />
+    </TenantScopeProvider>
+  );
+};
+
+const AdminShellInner: React.FC = () => {
   const { user, logout } = useAuth();
   const { go, adminTab } = useNav();
+  const { scope, clearScope } = useTenantScope();
 
   const isAdmin = user && (user.role === "super_admin" || user.role === "polyclinic_admin" || user.role === "CLINIC_ADMIN");
   const isPlatformAdmin = user?.role === "super_admin";
   const navItems = NAV.filter((item) => {
+    if (SUPERADMIN_TABS.has(item.id) && !isPlatformAdmin) return false;
     if (PLATFORM_TABS.has(item.id) && !isPlatformAdmin) return false;
     if (item.id === "tenants" && !isPlatformAdmin) return false;
+    if (DESK_TABS.has(item.id) || SUPERADMIN_TABS.has(item.id) || PLATFORM_TABS.has(item.id)) return true;
     return true;
   });
   const safeTab = navItems.some((item) => item.id === adminTab) ? adminTab : "overview";
@@ -130,11 +146,16 @@ export const AdminShell: React.FC = () => {
           </div>
         </div>
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
-          {(["desk", "platform"] as const).map((group) => {
+          {(["desk", "superadmin", "platform"] as const).map((group) => {
             const items = navItems.filter((item) => (item.group || "desk") === group);
             if (!items.length) return null;
             return (
               <div key={group} className="space-y-1">
+                {group === "superadmin" && (
+                  <div className="px-4 pt-3 pb-1 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">
+                    Superadmin
+                  </div>
+                )}
                 {group === "platform" && (
                   <div className="px-4 pt-3 pb-1 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">
                     Platform
@@ -182,7 +203,10 @@ export const AdminShell: React.FC = () => {
           </button>
           <button
             type="button"
-            onClick={() => logout().then(() => go("landing"))}
+            onClick={() => {
+              clearScope();
+              logout().then(() => go("landing"));
+            }}
             className="w-full flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm text-slate-300 border border-slate-600 hover:bg-slate-700"
           >
             <LogOut className="w-4 h-4" /> Logout
@@ -190,6 +214,33 @@ export const AdminShell: React.FC = () => {
         </div>
       </aside>
       <main className="flex-1 overflow-y-auto p-8">
+        {isPlatformAdmin && scope && (
+          <div
+            className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-purple-200 bg-purple-50 px-4 py-2.5 text-xs"
+            data-testid="tenant-context-switcher"
+          >
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-purple-700 font-semibold">Tenant context</div>
+              <div className="font-bold text-slate-900" data-testid="tenant-context-name">
+                {scope.name}
+              </div>
+              <div className="font-mono text-[11px] text-slate-500" data-testid="tenant-context-id">
+                {scope.id}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                clearScope();
+                go("admin", { adminTab: "tenants" });
+              }}
+              className="px-3 py-1.5 rounded-lg border border-purple-300 text-purple-800 font-semibold bg-white"
+              data-testid="tenant-context-exit"
+            >
+              Exit to platform
+            </button>
+          </div>
+        )}
         <div key={safeTab} data-testid="admin-tab-remount">
           {panel}
         </div>

@@ -1,23 +1,39 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { KeyRound, Search, AlertTriangle, IndianRupee, Users } from "lucide-react";
 import { apiFetch } from "../../api/http";
+import { useTenantScope } from "./TenantScopeContext";
+import { TenantSubscriptionPanel } from "./TenantSubscriptionPanel";
+import {
+  AdminPlanCatalogRow,
+  AdminTenant,
+  honestyCaption,
+  normalizeHonestyLabel,
+  planBadgeLabel,
+  SUB_STATUS_STYLES,
+  badgeClass,
+} from "../../lib/adminTenants";
 
-type SubStatus = "trial" | "active" | "suspended" | "cancelled" | "expired";
+type SubStatus = "trial" | "active" | "suspended" | "cancelled" | "expired" | "past_due" | "canceled";
 
 interface Subscription {
   id: string;
   userId: string;
+  tenantId?: string;
   name: string;
   email: string;
   phone: string;
   status: SubStatus;
   planType: string;
+  planCode?: string;
   monthlyPrice: number;
   autoRenew: boolean;
   startedAt: string;
   endsAt: string | null;
   notes: string;
   daysRemaining: number | null;
+  billingSource?: string;
+  honestyLabel?: string;
+  paymentCollected?: boolean;
 }
 
 interface Summary {
@@ -26,21 +42,17 @@ interface Summary {
   mrr: number;
 }
 
-const STATUS_STYLES: Record<string, string> = {
-  trial: "bg-sky-100 text-sky-800 border-sky-300",
-  active: "bg-emerald-100 text-emerald-800 border-emerald-300",
-  suspended: "bg-amber-100 text-amber-800 border-amber-300",
-  cancelled: "bg-slate-100 text-slate-700 border-slate-300",
-  expired: "bg-rose-100 text-rose-800 border-rose-300",
-};
-
 export const AdminSubscriptions: React.FC = () => {
+  const { scope, setScope } = useTenantScope();
   const [rows, setRows] = useState<Subscription[]>([]);
+  const [tenants, setTenants] = useState<AdminTenant[]>([]);
+  const [plans, setPlans] = useState<AdminPlanCatalogRow[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [nearExpiry, setNearExpiry] = useState(false);
   const [editing, setEditing] = useState<Subscription | null>(null);
+  const [error, setError] = useState("");
   const [form, setForm] = useState({
     status: "trial",
     planType: "trial",
@@ -55,14 +67,26 @@ export const AdminSubscriptions: React.FC = () => {
       .then((d) => setRows(d.subscriptions))
       .catch(() => setRows([]));
     apiFetch<Summary>("/api/admin/subscriptions/summary").then(setSummary).catch(() => undefined);
+    apiFetch<{ tenants: AdminTenant[] }>("/api/admin/tenants")
+      .then((d) => setTenants(d.tenants || []))
+      .catch(() => setTenants([]));
+    apiFetch<{ plans: AdminPlanCatalogRow[] }>("/api/admin/plans")
+      .then((d) => setPlans(d.plans || []))
+      .catch(() => setPlans([]));
   };
 
   useEffect(() => {
     load();
   }, []);
 
+  const scopedTenant = useMemo(
+    () => tenants.find((t) => t.id === scope?.id) || null,
+    [tenants, scope?.id]
+  );
+
   const filtered = useMemo(() => {
     let list = rows;
+    if (scope?.id) list = list.filter((r) => r.tenantId === scope.id);
     if (filter !== "all") list = list.filter((r) => r.status === filter);
     if (nearExpiry) list = list.filter((r) => r.daysRemaining !== null && r.daysRemaining <= 14);
     if (search.trim()) {
@@ -72,13 +96,13 @@ export const AdminSubscriptions: React.FC = () => {
       );
     }
     return list;
-  }, [rows, filter, search, nearExpiry]);
+  }, [rows, filter, search, nearExpiry, scope?.id]);
 
   const openEdit = (row: Subscription) => {
     setEditing(row);
     setForm({
       status: row.status,
-      planType: row.planType,
+      planType: row.planCode || row.planType,
       monthlyPrice: String(row.monthlyPrice),
       autoRenew: row.autoRenew,
       extendDays: "0",
@@ -89,20 +113,28 @@ export const AdminSubscriptions: React.FC = () => {
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editing) return;
-    await apiFetch(`/api/admin/subscriptions/${editing.id}`, {
-      method: "PATCH",
-      body: JSON.stringify({
-        status: form.status,
-        planType: form.planType,
-        monthlyPrice: Number(form.monthlyPrice),
-        autoRenew: form.autoRenew,
-        extendDays: Number(form.extendDays),
-        notes: form.notes,
-      }),
-    });
-    setEditing(null);
-    load();
+    setError("");
+    try {
+      await apiFetch(`/api/admin/subscriptions/${editing.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          status: form.status,
+          planCode: form.planType,
+          monthlyPrice: Number(form.monthlyPrice),
+          autoRenew: form.autoRenew,
+          extendDays: Number(form.extendDays),
+          notes: form.notes,
+          billingSource: "manual",
+        }),
+      });
+      setEditing(null);
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Save failed");
+    }
   };
+
+  const catalogCodes = plans.length ? plans.map((p) => p.code) : ["trial", "starter", "professional", "clinic", "internal"];
 
   return (
     <div className="space-y-6 max-w-6xl">
@@ -110,8 +142,55 @@ export const AdminSubscriptions: React.FC = () => {
         <h1 className="font-manrope text-2xl font-bold text-slate-900 flex items-center gap-2">
           <KeyRound className="h-7 w-7 text-purple-600" /> Subscription management
         </h1>
-        <p className="text-sm text-slate-500 mt-1">Trials, monthly plans, expiries, and pricing per account.</p>
+        <p className="text-sm text-slate-500 mt-1">
+          Tenant-scoped catalog is the source of truth. Per-user rows below are a legacy license view — both show an
+          honesty label, never a captured Razorpay payment.
+        </p>
+        <p className="text-xs text-amber-800 mt-1 font-medium" data-testid="subscriptions-honesty-banner">
+          {honestyCaption(scopedTenant?.plan.billingSource || "manual")}
+        </p>
       </div>
+
+      {scope && (
+        <TenantSubscriptionPanel
+          tenantId={scope.id}
+          initial={scopedTenant?.subscription || null}
+          plans={plans}
+          onSaved={() => load()}
+        />
+      )}
+
+      {!scope && tenants.length > 0 && (
+        <div className="bg-white border border-slate-200 rounded-xl overflow-x-auto" data-testid="tenant-sot-table">
+          <div className="px-3 py-2 text-[11px] uppercase tracking-wide text-slate-500 font-semibold border-b">
+            Tenant subscriptions (SoT)
+          </div>
+          <table className="w-full text-xs">
+            <thead className="bg-slate-50 text-slate-500">
+              <tr>
+                <th className="text-left px-3 py-2">Tenant</th>
+                <th className="text-left px-3 py-2">Plan</th>
+                <th className="text-left px-3 py-2">Status</th>
+                <th className="text-left px-3 py-2">Honesty</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tenants.slice(0, 12).map((t) => (
+                <tr
+                  key={t.id}
+                  className="border-t hover:bg-slate-50 cursor-pointer"
+                  onClick={() => setScope({ id: t.id, name: t.name })}
+                >
+                  <td className="px-3 py-2 font-semibold">{t.name}</td>
+                  <td className="px-3 py-2">{planBadgeLabel(t.plan)}</td>
+                  <td className="px-3 py-2">{t.plan.status}</td>
+                  <td className="px-3 py-2 uppercase text-amber-800">{normalizeHonestyLabel(t.plan.billingSource)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {summary && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -137,6 +216,11 @@ export const AdminSubscriptions: React.FC = () => {
           </div>
         </div>
       )}
+
+      <div>
+        <h2 className="text-sm font-bold text-slate-800">Per-user licenses (legacy)</h2>
+        <p className="text-[11px] text-slate-500">Edit still persists via PATCH. Badges prefer catalog / honesty fields.</p>
+      </div>
 
       <div className="flex items-center gap-2 flex-wrap">
         {["all", "trial", "active", "suspended", "expired", "cancelled"].map((s) => (
@@ -166,6 +250,8 @@ export const AdminSubscriptions: React.FC = () => {
         </div>
       </div>
 
+      {error && <p className="text-xs text-red-600">{error}</p>}
+
       <div className="bg-white border border-slate-200 rounded-xl overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
@@ -173,6 +259,7 @@ export const AdminSubscriptions: React.FC = () => {
               <th className="py-2 px-3">User</th>
               <th className="py-2 px-3">Status</th>
               <th className="py-2 px-3">Plan</th>
+              <th className="py-2 px-3">Honesty</th>
               <th className="py-2 px-3">Price</th>
               <th className="py-2 px-3">Expiry</th>
               <th className="py-2 px-3">Auto-renew</th>
@@ -187,11 +274,16 @@ export const AdminSubscriptions: React.FC = () => {
                   <div className="text-xs text-slate-500">{r.email}</div>
                 </td>
                 <td className="px-3 py-2">
-                  <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full border ${STATUS_STYLES[r.status]}`}>
+                  <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full border ${badgeClass(SUB_STATUS_STYLES, r.status)}`}>
                     {r.status}
                   </span>
                 </td>
-                <td className="px-3 py-2 capitalize">{r.planType}</td>
+                <td className="px-3 py-2 capitalize">{r.planCode || r.planType}</td>
+                <td className="px-3 py-2">
+                  <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full border bg-amber-50 text-amber-800 border-amber-200">
+                    {normalizeHonestyLabel(r.honestyLabel || r.billingSource)}
+                  </span>
+                </td>
                 <td className="px-3 py-2">₹{r.monthlyPrice.toLocaleString("en-IN")}</td>
                 <td className="px-3 py-2 text-xs">
                   {r.endsAt ? new Date(r.endsAt).toLocaleDateString("en-IN") : "—"}
@@ -212,6 +304,7 @@ export const AdminSubscriptions: React.FC = () => {
       {editing && (
         <form onSubmit={save} className="bg-white border border-slate-200 rounded-xl p-4 grid sm:grid-cols-2 gap-3 text-sm max-w-2xl">
           <h2 className="sm:col-span-2 font-manrope font-bold">Edit {editing.name}</h2>
+          <p className="sm:col-span-2 text-[11px] text-amber-800">{honestyCaption("manual")}</p>
           <label className="text-xs font-semibold">
             Status
             <select
@@ -231,8 +324,10 @@ export const AdminSubscriptions: React.FC = () => {
               value={form.planType}
               onChange={(e) => setForm({ ...form, planType: e.target.value })}
             >
-              {["trial", "starter", "professional", "clinic", "internal"].map((s) => (
-                <option key={s}>{s}</option>
+              {catalogCodes.map((s) => (
+                <option key={s} value={s}>
+                  {plans.find((p) => p.code === s)?.displayName || s}
+                </option>
               ))}
             </select>
           </label>

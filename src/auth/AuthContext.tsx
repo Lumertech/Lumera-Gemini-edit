@@ -3,6 +3,7 @@ import { apiFetch, setStoredToken } from "../api/http";
 import { AppUser, UserRole } from "../types";
 import { Surface } from "../nav/NavigationContext";
 import { needsOnboarding } from "../lib/sessionWorkspace";
+import { clearTenantScope } from "../lib/tenantScope";
 
 export interface LoginResult {
   requiresOtp?: boolean;
@@ -255,6 +256,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
     setStoredToken(null);
     setUser(null);
+    clearTenantScope();
   }, []);
 
   const setUserDirectly = useCallback((u: AppUser | null) => {

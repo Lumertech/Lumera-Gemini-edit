@@ -23,10 +23,14 @@ describe("AdminShell tab remounts", () => {
 
   it("lists desk tabs before CMS/Meta/DHIS and hides platform tabs for CLINIC_ADMIN", () => {
     assert.match(src, /PLATFORM_TABS/);
+    assert.match(src, /SUPERADMIN_TABS/);
     assert.match(src, /isPlatformAdmin/);
     assert.match(src, /group: "platform"/);
+    assert.match(src, /group: "superadmin"/);
     const usersAt = src.indexOf('{ id: "users"');
+    const tenantsAt = src.indexOf('{ id: "tenants"');
     const dhisAt = src.indexOf('{ id: "dhis"');
     assert.ok(usersAt > 0 && dhisAt > usersAt, "User management must appear before DHIS in the nav source");
+    assert.ok(tenantsAt > 0 && dhisAt > tenantsAt, "Tenants must appear before DHIS in the nav source");
   });
 });

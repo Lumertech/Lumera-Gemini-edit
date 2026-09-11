@@ -3,6 +3,7 @@ import { apiFetch } from "../../api/http";
 import { useAuth } from "../../auth/AuthContext";
 import { AppUser, UserRole, UserStatus } from "../../types";
 import { PACK_ID_OPTIONS, packIdLabel } from "../../lib/specialtyPack";
+import { useTenantScope } from "./TenantScopeContext";
 
 const ROLES: UserRole[] = ["super_admin", "polyclinic_admin", "CLINIC_ADMIN", "doctor", "receptionist", "patient"];
 const STATUSES: UserStatus[] = ["active", "invited", "disabled"];
@@ -25,6 +26,7 @@ function practiceLabel(value?: string | null) {
 
 export const AdminUsers: React.FC = () => {
   const { user: actor } = useAuth();
+  const { scope } = useTenantScope();
   const [users, setUsers] = useState<AppUser[]>([]);
   const [q, setQ] = useState("");
   const [role, setRole] = useState("");
@@ -41,6 +43,7 @@ export const AdminUsers: React.FC = () => {
     if (q) params.set("q", q);
     if (role) params.set("role", role);
     if (status) params.set("status", status);
+    if (scope?.id) params.set("tenantId", scope.id);
     apiFetch<{ users: AppUser[] }>(`/api/users?${params}`)
       .then((d) => setUsers(d.users))
       .catch((e) => setError(e instanceof Error ? e.message : "Could not load users"));
@@ -48,7 +51,7 @@ export const AdminUsers: React.FC = () => {
 
   useEffect(() => {
     load();
-  }, [q, role, status]);
+  }, [q, role, status, scope?.id]);
 
   const openEdit = (u: AppUser) => {
     setError("");
@@ -79,7 +82,7 @@ export const AdminUsers: React.FC = () => {
           status: form.status,
           specialty: form.specialty,
           practiceType: form.practiceType,
-          tenantId: actor?.tenantId || undefined,
+          tenantId: scope?.id || actor?.tenantId || undefined,
         }),
       });
       setForm(emptyForm);
@@ -165,6 +168,7 @@ export const AdminUsers: React.FC = () => {
         <h1 className="text-xl font-extrabold">User management</h1>
         <p className="text-xs text-slate-500 mt-1">
           Create, edit, and disable platform logins. Name, email, role, specialty, and practice type persist via the API. New users default to Individual practice.
+          {scope?.id ? ` Scoped to tenant ${scope.name} (${scope.id}).` : ""}
         </p>
       </div>
       <div className="flex flex-wrap gap-2">

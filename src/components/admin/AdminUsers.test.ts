@@ -20,7 +20,7 @@ describe("Admin User Management Edit (P0 live-deploy AC)", () => {
     assert.match(src, /PACK_ID_OPTIONS/);
     assert.match(src, /data-testid="admin-create-specialty"/);
     assert.match(src, /data-testid="admin-create-password"/);
-    assert.match(src, /tenantId: actor\?\.tenantId/);
+    assert.match(src, /tenantId: scope\?\.id \|\| actor\?\.tenantId/);
     assert.match(src, /temporaryPassword/);
     assert.match(src, /value=\{s\.id\}/);
     assert.match(src, /SPECIALTY_PACK_IDS|PACK_ID_OPTIONS/);
