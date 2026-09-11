@@ -59,6 +59,8 @@ export interface AdminTenant {
   };
   createdAt: string;
   usersCount?: number;
+  /** Support-only (#70). Super Admin does not own Branches CRUD. */
+  branchesCount?: number;
   subscription?: AdminTenantSubscription;
   phone?: string;
   email?: string;

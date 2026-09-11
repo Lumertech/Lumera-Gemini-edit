@@ -56,5 +56,9 @@ describe("AdminShell tab remounts", () => {
     assert.match(src, /data-testid="clinic-branches-tab-forbidden"/);
     assert.match(src, /data-testid="superadmin-tab-forbidden"/);
     assert.match(src, /Super Admin has no Branches/);
+    assert.match(src, /Lumera Platform/);
+    assert.match(src, /data-testid="platform-console-caption"/);
+    assert.equal(isAdminNavItemVisible("super_admin", "tenants"), true);
+    assert.equal(isAdminNavItemVisible("super_admin", "subscriptions"), true);
   });
 });

@@ -167,7 +167,9 @@ export const AdminUsers: React.FC = () => {
       <div>
         <h1 className="text-xl font-extrabold">User management</h1>
         <p className="text-xs text-slate-500 mt-1">
-          Create, edit, and disable platform logins. Name, email, role, specialty, and practice type persist via the API. New users default to Individual practice.
+          Create, edit, and disable platform logins. Individual: doctor master + receptionist sub (not CLINIC_ADMIN, not
+          Branches). Polyclinic: CLINIC_ADMIN owns Branches. Super Admin is platform only. New users default to Individual
+          practice.
           {scope?.id ? ` Scoped to tenant ${scope.name} (${scope.id}).` : ""}
         </p>
       </div>

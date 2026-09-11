@@ -228,7 +228,7 @@ export const AdminTenants: React.FC = () => {
 
         {detail && (
           <>
-            <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+            <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-3 text-xs">
               <div className="bg-white border rounded-xl p-4">
                 <div className="text-[11px] uppercase text-slate-500 font-bold">Type</div>
                 <div className="font-semibold mt-1">{typeLabel(detail.type)}</div>
@@ -244,6 +244,15 @@ export const AdminTenants: React.FC = () => {
                 <div className="font-extrabold text-lg mt-1" data-testid="tenant-users-count">
                   {detail.usersCount ?? 0}
                 </div>
+              </div>
+              <div className="bg-white border rounded-xl p-4">
+                <div className="text-[11px] uppercase text-slate-500 font-bold">Branches</div>
+                <div className="font-extrabold text-lg mt-1" data-testid="tenant-branches-count">
+                  {detail.branchesCount ?? 0}
+                </div>
+                <p className="text-[11px] text-slate-500 mt-1" data-testid="tenant-branches-support-caption">
+                  Support count only — Branches CRUD belongs to Polyclinic User Admin, not Super Admin.
+                </p>
               </div>
               <div className="bg-white border rounded-xl p-4">
                 <div className="text-[11px] uppercase text-slate-500 font-bold">Plan</div>
@@ -292,7 +301,9 @@ export const AdminTenants: React.FC = () => {
         <div>
           <h1 className="text-xl font-extrabold">Tenants</h1>
           <p className="text-xs text-slate-500 mt-1">
-            Platform Superadmin roster. Plan badges come from the tenant subscription catalog — status is{" "}
+            Platform Superadmin roster. Super Admin is not clinic admin and does not own Branches (#70). Individual
+            tenants: doctor master + receptionist sub. Polyclinic: CLINIC_ADMIN owns Branches. Plan badges come from the
+            tenant subscription catalog — status is{" "}
             <span className="font-semibold">{normalizeHonestyLabel("manual")}</span> unless labeled sandbox/demo. Not a
             captured Razorpay payment.
           </p>
@@ -352,7 +363,10 @@ export const AdminTenants: React.FC = () => {
       {!loading && tenants.length === 0 ? (
         <div className="bg-white border border-dashed rounded-xl p-8 text-center space-y-3" data-testid="admin-tenants-empty">
           <p className="text-sm font-semibold text-slate-800">No tenants match this filter</p>
-          <p className="text-xs text-slate-500">Create a clinic tenant to assign a catalog plan (manual / no PSP).</p>
+          <p className="text-xs text-slate-500">
+            Create a tenant to assign a catalog plan (manual / no PSP). Individual defaults to a doctor master — not
+            CLINIC_ADMIN. Polyclinic opt-in gets CLINIC_ADMIN, who owns Branches.
+          </p>
           <button
             type="button"
             onClick={openCreate}

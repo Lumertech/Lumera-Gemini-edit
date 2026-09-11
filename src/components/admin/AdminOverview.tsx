@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { apiFetch } from "../../api/http";
+import { useAuth } from "../../auth/AuthContext";
 import { DhisMeter } from "../dhis/DhisMeter";
 
 interface Overview {
@@ -15,6 +16,8 @@ interface Overview {
 }
 
 export const AdminOverview: React.FC = () => {
+  const { user } = useAuth();
+  const isPlatformAdmin = user?.role === "super_admin";
   const [data, setData] = useState<Overview | null>(null);
   const [error, setError] = useState("");
 
@@ -46,8 +49,14 @@ export const AdminOverview: React.FC = () => {
   return (
     <div className="space-y-6 max-w-6xl">
       <div>
-        <h1 className="font-manrope text-2xl font-bold text-slate-900">Admin dashboard</h1>
-        <p className="text-sm text-slate-500">Website, accounts, and subscription health — not the clinical EMR.</p>
+        <h1 className="font-manrope text-2xl font-bold text-slate-900">
+          {isPlatformAdmin ? "Platform dashboard" : "Admin dashboard"}
+        </h1>
+        <p className="text-sm text-slate-500">
+          {isPlatformAdmin
+            ? "Platform console — Super Admin is not clinic admin and does not own Branches. Tenant detail may show a support-only branch count (#70)."
+            : "Website, accounts, and subscription health — not the clinical EMR."}
+        </p>
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
         {cards.map(([label, value]) => (

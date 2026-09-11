@@ -8,6 +8,9 @@ const DEMO_TENANT_ID = "tenant-lumera-main";
 /**
  * Idempotent sandbox matrix. Creates missing @lumera.me logins and keeps
  * specialty / role / doctor roster aligned. Password reset is non-prod only.
+ * Role model (#70): doctor@ = Individual master; reception@ = Individual sub;
+ * clinic.admin@ = Polyclinic CLINIC_ADMIN (Branches); admin@ = Super Admin (no Branches).
+ * Seed emails already match — this does not invent new personas.
  */
 export function ensureDemoPersonaUsers(database: DatabaseSync) {
   const now = new Date().toISOString();

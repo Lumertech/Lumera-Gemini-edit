@@ -115,6 +115,8 @@ export interface PublicTenant {
   };
   createdAt: string;
   usersCount?: number;
+  /** Support-only (#70). Super Admin does not own Branches CRUD. Individual is always 0. */
+  branchesCount?: number;
   subscription?: PublicTenantSubscription;
   phone?: string;
   email?: string;
@@ -569,6 +571,16 @@ function usersCount(database: DatabaseSync, tenantId: string): number {
   return (database.prepare("SELECT COUNT(*) AS c FROM users WHERE tenant_id = ?").get(tenantId) as { c: number }).c;
 }
 
+/** Support-only. Individual has no Branches; polyclinic count is global until branches are tenant-scoped. */
+function branchesCount(database: DatabaseSync, type: TenantType): number {
+  if (type !== "polyclinic") return 0;
+  try {
+    return (database.prepare("SELECT COUNT(*) AS c FROM branches").get() as { c: number }).c;
+  } catch {
+    return 0;
+  }
+}
+
 export function mapPublicSubscription(row: TenantSubscriptionRow): PublicTenantSubscription {
   const plan = findPlan(row.plan_code) || findPlan("trial")!;
   const billingSource = (BILLING_SOURCES as readonly string[]).includes(row.billing_source)
@@ -623,11 +635,10 @@ function mapPublicTenant(database: DatabaseSync, row: TenantRow, opts?: { detail
     email: row.email || "",
     deletedAt: row.deleted_at || null,
   };
+  tenant.usersCount = usersCount(database, row.id);
+  tenant.branchesCount = branchesCount(database, type);
   if (opts?.detail) {
-    tenant.usersCount = usersCount(database, row.id);
     tenant.subscription = subscription;
-  } else {
-    tenant.usersCount = usersCount(database, row.id);
   }
   return tenant;
 }

@@ -129,8 +129,15 @@ const AdminShellInner: React.FC = () => {
             <Shield className="h-5 w-5 text-white" />
           </div>
           <div>
-            <div className="font-manrope text-sm font-bold text-white">Lumera Admin</div>
+            <div className="font-manrope text-sm font-bold text-white">
+              {isPlatformAdmin ? "Lumera Platform" : "Lumera Admin"}
+            </div>
             <div className="text-[11px] text-slate-400 truncate max-w-[140px]">{user?.email}</div>
+            {isPlatformAdmin && (
+              <div className="text-[10px] text-slate-500" data-testid="platform-console-caption">
+                Super Admin · not clinic admin
+              </div>
+            )}
           </div>
         </div>
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">

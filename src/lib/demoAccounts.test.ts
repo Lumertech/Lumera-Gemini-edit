@@ -13,6 +13,7 @@ import {
 
 const here = dirname(fileURLToPath(import.meta.url));
 const loginSrc = readFileSync(join(here, "../pages/LoginPage.tsx"), "utf8");
+const demoDocs = readFileSync(join(here, "../../docs/DEMO_ACCOUNTS.md"), "utf8");
 
 describe("demo login matrix", () => {
   it("keeps the shared sandbox password", () => {
@@ -52,5 +53,25 @@ describe("demo login matrix", () => {
     assert.ok(emails.indexOf("dentist@lumera.me") > emails.indexOf("dentist.doctor@lumera.me"));
     assert.ok(emails.indexOf("physio@lumera.me") > emails.indexOf("physio.doctor@lumera.me"));
     assert.ok(emails.indexOf("wellness@lumera.me") > emails.indexOf("spa.doctor@lumera.me"));
+  });
+
+  it("seed emails already match Individual vs Polyclinic vs Super Admin role model (#70)", () => {
+    const admin = DEMO_ACCOUNTS.find((a) => a.email === "admin@lumera.me");
+    const doctor = DEMO_ACCOUNTS.find((a) => a.email === "doctor@lumera.me");
+    const reception = DEMO_ACCOUNTS.find((a) => a.email === "reception@lumera.me");
+    const clinic = DEMO_ACCOUNTS.find((a) => a.email === "clinic.admin@lumera.me");
+    assert.equal(admin?.role, "super_admin");
+    assert.equal(doctor?.role, "doctor");
+    assert.equal(doctor?.practiceType, "individual");
+    assert.equal(reception?.role, "receptionist");
+    assert.equal(reception?.practiceType, "individual");
+    assert.equal(clinic?.role, "CLINIC_ADMIN");
+    assert.equal(clinic?.practiceType, "polyclinic");
+    assert.match(demoDocs, /already match/);
+    assert.match(demoDocs, /Product #70/);
+    assert.match(demoDocs, /doctor@lumera\.me/);
+    assert.match(demoDocs, /clinic\.admin@lumera\.me/);
+    assert.match(demoDocs, /support-only/);
+    assert.doesNotMatch(demoDocs, /Super Admin owns Branches/);
   });
 });
