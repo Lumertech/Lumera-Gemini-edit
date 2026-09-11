@@ -4,19 +4,22 @@
 #
 # AI Studio Publish / `gcloud run deploy --source` writes
 # `run.googleapis.com/sources` on the revision template (and often pairs it
-# with `image: scratch`). A later Cloud Build that only pushes a container
-# then fails with:
+# with `run.googleapis.com/base-images`, `runtimeClassName:
+# run.googleapis.com/linux-base-image-update`, and `image: scratch`).
+# A later Cloud Build that only pushes a container then fails with:
 #   spec.template.metadata.annotations[run.googleapis.com/sources]:
 #   Source annotation has sources that are not referenced by a container.
+# or, after sources/base-images are stripped but runtimeClassName remains:
+#   spec.template.spec.runtimeClassName: runtimeClassName can only be set to
+#   run.googleapis.com/linux-base-image-update, when annotation
+#   [run.googleapis.com/base-images] is also set
 #
-# CoS one-liner (may no-op on CLIs that lack --remove-annotations):
-#   gcloud run services update lumera-gemini-edit \
-#     --region=asia-south1 \
-#     --project=gen-lang-client-0108182367 \
-#     --remove-annotations=run.googleapis.com/sources
+# Do not use `gcloud run services update --remove-annotations=...`.
+# That flag is not on the Cloud SDK `run services update` CLI (it errors
+# with "unrecognized arguments" / "did you mean --remove-env-vars?").
 #
-# This helper runs that flag first, then export → strip template annotations →
-# rewrite `image: scratch` → `gcloud run services replace` when needed.
+# This helper is export → strip template annotations + linux-base-image-update
+# runtimeClassName → rewrite `image: scratch` → `gcloud run services replace`.
 set -euo pipefail
 
 SERVICE="${SERVICE:-lumera-gemini-edit}"
@@ -73,6 +76,9 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Stdlib-only stripper. Cloud SDK images may not have PyYAML.
+# Always drop sources + base-images together, and delete template
+# runtimeClassName when it is the AI Studio linux-base-image-update class
+# (replace rejects that class unless base-images is also set).
 strip_export() {
   local image="${1:-}"
   # Program is -c so caller stdin (export YAML) reaches Python.
@@ -85,13 +91,23 @@ skip = (
     "run.googleapis.com/base-images",
 )
 image_line = re.compile(r"^(\s*(?:-\s+)?)image:\s*(.*)$")
+runtime_class_line = re.compile(r"^(\s*)runtimeClassName:\s*(.*)$")
+linux_base = "run.googleapis.com/linux-base-image-update"
+quotes = chr(34) + chr(39)
 out = []
 for line in text.splitlines(True):
-    if any(key in line for key in skip):
+    body = line.rstrip("\n")
+    if any(key in body for key in skip):
         continue
-    match = image_line.match(line.rstrip("\n"))
+    rc = runtime_class_line.match(body)
+    if rc:
+        raw = rc.group(2).strip().strip(quotes)
+        # Delete the line so replace does not require base-images.
+        if raw == linux_base or not raw:
+            continue
+    match = image_line.match(body)
     if image and match:
-        raw = match.group(2).strip().strip(chr(34) + chr(39))
+        raw = match.group(2).strip().strip(quotes)
         if raw == "scratch":
             nl = "\n" if line.endswith("\n") else ""
             out.append("%simage: %s%s" % (match.group(1), image, nl))
@@ -120,6 +136,7 @@ spec:
         run.googleapis.com/base-images: '{"": "nodejs"}'
         autoscaling.knative.dev/maxScale: "5"
     spec:
+      runtimeClassName: run.googleapis.com/linux-base-image-update
       containers:
       - image: scratch
         env:
@@ -134,6 +151,14 @@ YAML
   fi
   if grep -q 'run.googleapis.com/base-images' <<<"$got"; then
     echo "FAIL: base-images annotation still present" >&2
+    fail=1
+  fi
+  if grep -q 'runtimeClassName' <<<"$got"; then
+    echo "FAIL: runtimeClassName should be deleted with base-images" >&2
+    fail=1
+  fi
+  if grep -q 'linux-base-image-update' <<<"$got"; then
+    echo "FAIL: linux-base-image-update runtimeClassName still present" >&2
     fail=1
   fi
   if ! grep -q 'image: gcr.io/demo/app:abc' <<<"$got"; then
@@ -240,13 +265,6 @@ if ! command -v gcloud >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "Attempting CoS annotation flag on ${SERVICE} (${REGION} / ${PROJECT})..."
-gcloud run services update "${SERVICE}" \
-  --region="${REGION}" \
-  --project="${PROJECT}" \
-  --remove-annotations=run.googleapis.com/sources \
-  || true
-
 if ! gcloud run services describe "${SERVICE}" \
   --region="${REGION}" \
   --project="${PROJECT}" \
@@ -281,7 +299,7 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
   exit 0
 fi
 
-echo "Replacing ${SERVICE} without run.googleapis.com/sources (preserving env)..."
+echo "Replacing ${SERVICE} without AI Studio source/base-image metadata (preserving env)..."
 gcloud run services replace "$tmp_out" \
   --region="${REGION}" \
   --project="${PROJECT}"

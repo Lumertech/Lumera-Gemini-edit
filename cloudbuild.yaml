@@ -39,10 +39,11 @@ steps:
       - push
       - ${_IMAGE}
 
-  # 3. Clear AI Studio / --source annotation (and scratch placeholder).
-  #    CoS one-liner is attempted first; || true covers missing flag / first deploy.
-  #    Helper then export-strips template annotations so the image deploy below
-  #    is not rejected. Existing env (JWT_SECRET, META_VERIFY_TOKEN, …) is kept.
+  # 3. Clear AI Studio / --source metadata (sources, base-images,
+  #    linux-base-image-update runtimeClassName, scratch placeholder).
+  #    Do not call `gcloud run services update --remove-annotations` —
+  #    that flag is not on the Cloud SDK CLI. The helper export-strips
+  #    then replace. Existing env (JWT_SECRET, META_VERIFY_TOKEN, …) is kept.
   - name: gcr.io/google.com/cloudsdktool/cloud-sdk
     id: clear-source-annotation
     entrypoint: bash
@@ -51,11 +52,6 @@ steps:
       - |
         set -euo pipefail
         chmod +x deploy/clear-cloud-run-source-annotation.sh
-        gcloud run services update "${_SERVICE}" \
-          --region="${_REGION}" \
-          --project="${PROJECT_ID}" \
-          --remove-annotations=run.googleapis.com/sources \
-          || true
         deploy/clear-cloud-run-source-annotation.sh \
           --service "${_SERVICE}" \
           --region "${_REGION}" \
