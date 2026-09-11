@@ -305,15 +305,9 @@ export const LandingPage: React.FC = () => {
           {s.heroTitle}
         </h1>
 
-        {/* Regional Language Scripts in Sub-headline */}
         <p className="mt-5 text-base sm:text-xl text-slate-300 max-w-3xl mx-auto leading-relaxed">
-          Let Lumera AI answer clinic phone calls, book appointments via WhatsApp, and generate clinical prescriptions in{" "}
-          <span className="text-purple-300 font-semibold">हिंदी (Hindi)</span>,{" "}
-          <span className="text-teal-300 font-semibold">தமிழ் (Tamil)</span>,{" "}
-          <span className="text-cyan-300 font-semibold">తెలుగు (Telugu)</span>,{" "}
-          <span className="text-amber-300 font-semibold">मराठी (Marathi)</span>,{" "}
-          <span className="text-rose-300 font-semibold">বাংলা (Bengali)</span> &amp;{" "}
-          <span className="text-blue-300 font-semibold">English</span>.
+          Let Lumera AI answer clinic phone calls, book appointments via WhatsApp, and generate clinical
+          prescriptions in regional Indian languages.
         </p>
 
         {/* HERO CTA BUTTON: Direct routing to single-card auth */}
@@ -458,7 +452,7 @@ export const LandingPage: React.FC = () => {
                 </p>
               </div>
               <p className="text-slate-300 text-xs leading-relaxed">
-                Zero typing during consultations. Ambiently transcribes natural doctor-patient dialogues in <strong className="text-purple-300">Hindi, Tamil, Telugu, Marathi, Bengali &amp; English</strong>.
+                Zero typing during consultations. Ambiently transcribes natural doctor-patient dialogues in regional Indian languages.
               </p>
               <ul className="space-y-2 text-xs text-slate-400 pt-2 border-t border-slate-800">
                 <li className="flex items-center gap-2">

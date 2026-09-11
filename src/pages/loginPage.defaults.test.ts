@@ -41,6 +41,18 @@ describe("LoginPage create-clinic / register defaults (founder P0)", () => {
   });
 });
 
+describe("LoginPage WhatsApp country code (founder P0)", () => {
+  it("places country code adjacent to the WhatsApp number on one row", () => {
+    assert.match(loginSrc, /WhatsAppPhoneRow/);
+    assert.match(loginSrc, /testId="login-whatsapp"/);
+    assert.match(loginSrc, /flex items-stretch rounded-xl/);
+    assert.match(loginSrc, /aria-label="Country code"/);
+    assert.match(loginSrc, /composeWhatsAppNumber\(loginCountry\.code, whatsappPhone\)/);
+    assert.match(loginSrc, /data-testid=\{\`\$\{testId\}-country\`\}/);
+    assert.doesNotMatch(loginSrc, /id="login-whatsapp"[\s\S]{0,400}className="w-full pl-9/);
+  });
+});
+
 describe("LoginPage Google SSO visibility (complements PR #64)", () => {
   it("shows Google when googleConfigured or sandboxClientOAuthAllowed, hidden while loading", () => {
     assert.match(loginSrc, /showGoogleOAuthButton\(oauthConfig\)/);
