@@ -36,47 +36,21 @@ import {
 import { Patient, Doctor } from '../types';
 import { DocumentPreviewModal, DocumentPreviewData } from './whatsapp/DocumentPreviewModal';
 import { OutboundTriggerPanel } from './whatsapp/OutboundTriggerPanel';
+import {
+  conversationInitial,
+  normalizeWhatsAppConversations,
+  normalizeWhatsAppMessages,
+  type WhatsAppChatMessage,
+  type WhatsAppConversationItem,
+} from '../lib/whatsappInbox';
 
 interface WhatsAppAssistantProps {
   currentPatient: Patient;
   doctors: Doctor[];
 }
 
-interface ConversationItem {
-  id: string;
-  patient_phone: string;
-  patient_name: string;
-  patient_uhid: string;
-  last_message: string;
-  last_message_time: string;
-  unread_count: number;
-  handover_mode: 'bot' | 'human';
-  assigned_staff: string | null;
-  tag: string | null;
-}
-
-interface ChatMessage {
-  id: string;
-  conversation_id: string;
-  patient_phone: string;
-  sender: 'bot' | 'user' | 'system';
-  staff_name?: string | null;
-  content: string;
-  translated_content?: string | null;
-  detected_language?: string | null;
-  time_display: string;
-  buttons?: string[] | null;
-  media?: {
-    type: 'pdf' | 'image';
-    title: string;
-    url?: string;
-    size?: string;
-    subtitle?: string;
-    previewData?: any;
-  } | null;
-  status: string;
-  created_at: string;
-}
+type ConversationItem = WhatsAppConversationItem;
+type ChatMessage = WhatsAppChatMessage;
 
 const SAMPLE_VOICE_PROMPTS = [
   {
@@ -160,7 +134,7 @@ export const WhatsAppAssistant: React.FC<WhatsAppAssistantProps> = ({
       const res = await fetch('/api/whatsapp/conversations');
       if (res.ok) {
         const data = await res.json();
-        setConversations(data.conversations || []);
+        setConversations(normalizeWhatsAppConversations(data.conversations));
       }
     } catch (err) {
       console.error('Failed to load conversations:', err);
@@ -171,10 +145,12 @@ export const WhatsAppAssistant: React.FC<WhatsAppAssistantProps> = ({
   const loadMessages = async (convId: string) => {
     try {
       setLoadingMessages(true);
-      const res = await fetch(`/api/whatsapp/messages/${convId}`);
+      const res = await fetch(
+        `/api/whatsapp/messages?conversationId=${encodeURIComponent(convId)}`
+      );
       if (res.ok) {
         const data = await res.json();
-        setMessages(data.messages || []);
+        setMessages(normalizeWhatsAppMessages(data.messages));
       }
     } catch (err) {
       console.error('Failed to load messages:', err);
@@ -567,7 +543,7 @@ export const WhatsAppAssistant: React.FC<WhatsAppAssistantProps> = ({
                         <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs ${
                           isHuman ? 'bg-amber-100 text-amber-800' : 'bg-slate-200 text-slate-700'
                         }`}>
-                          {conv.patient_name.charAt(0)}
+                          {conversationInitial(conv.patient_name)}
                         </div>
                         <div>
                           <h4 className="font-bold text-xs text-slate-900 leading-tight">
