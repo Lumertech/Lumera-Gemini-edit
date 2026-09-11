@@ -34,14 +34,15 @@ describe("LoginPage create-clinic / register defaults (founder P0)", () => {
   });
 });
 
-describe("LoginPage Google SSO visibility (CoS UX hotfix)", () => {
-  it("hides Google until oauth-config explicitly allows sandbox client OAuth", () => {
-    assert.match(
-      loginSrc,
-      /const showGoogleOAuth = oauthConfig\?\.sandboxClientOAuthAllowed === true/
-    );
+describe("LoginPage Google SSO visibility (complements PR #64)", () => {
+  it("shows Google when googleConfigured or sandboxClientOAuthAllowed, hidden while loading", () => {
+    assert.match(loginSrc, /showGoogleOAuthButton\(oauthConfig\)/);
+    assert.match(loginSrc, /googleConfigured\?: boolean/);
     assert.match(loginSrc, /useState<\{[\s\S]*sandboxClientOAuthAllowed: boolean;[\s\S]*\} \| null>\(null\)/);
-    assert.match(loginSrc, /provider === "google" && oauthConfig\?\.sandboxClientOAuthAllowed !== true/);
+    assert.match(loginSrc, /oauthConfig\?\.googleConfigured/);
+    assert.match(loginSrc, /window\.location\.href = "\/api\/auth\/google"/);
+    assert.equal(loginSrc.includes("oauthConfig?.sandboxClientOAuthAllowed === true"), false);
+    assert.equal(loginSrc.includes("oauthConfig?.sandboxClientOAuthAllowed !== true"), false);
   });
 
   it("gates both Google button clusters and leaves Facebook always rendered", () => {

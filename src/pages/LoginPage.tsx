@@ -41,6 +41,7 @@ import {
 } from "../lib/practiceOnboarding";
 import { PolyclinicSpecialty } from "../types";
 import { DEMO_LOGIN_MATRIX, DEMO_PASSWORD } from "../lib/demoAccounts";
+import { showGoogleOAuthButton } from "../lib/oauthUi";
 
 const SPECIALTIES: PolyclinicSpecialty[] = [
   "General Medicine",
@@ -108,6 +109,7 @@ export const LoginPage: React.FC = () => {
   const [verifiedSsoNotice, setVerifiedSsoNotice] = useState<string | null>(null);
   const [oauthConfig, setOauthConfig] = useState<{
     facebookConfigured: boolean;
+    googleConfigured?: boolean;
     sandboxClientOAuthAllowed: boolean;
     notice?: string;
   } | null>(null);
@@ -195,7 +197,9 @@ export const LoginPage: React.FC = () => {
     fetch("/api/auth/oauth-config")
       .then((r) => r.json())
       .then((cfg) => setOauthConfig(cfg))
-      .catch(() => setOauthConfig({ facebookConfigured: false, sandboxClientOAuthAllowed: true }));
+      .catch(() =>
+        setOauthConfig({ facebookConfigured: false, googleConfigured: false, sandboxClientOAuthAllowed: true })
+      );
   }, []);
 
   useEffect(() => {
@@ -379,13 +383,20 @@ export const LoginPage: React.FC = () => {
     setSuccessMsg("");
     setOauthPrompt(null);
 
-    if (provider === "google" && oauthConfig?.sandboxClientOAuthAllowed !== true) {
-      setBusy(false);
+    // Real Google Identity redirect is owned by PR #64 (GET /api/auth/google).
+    // Keep this LoginPage-only so either merge order still works once googleConfigured is true.
+    if (provider === "google" && oauthConfig?.googleConfigured) {
+      window.location.href = "/api/auth/google";
       return;
     }
 
     if (provider === "facebook" && oauthConfig?.facebookConfigured) {
       window.location.href = "/api/auth/facebook";
+      return;
+    }
+
+    if (provider === "google" && !oauthConfig?.sandboxClientOAuthAllowed) {
+      setBusy(false);
       return;
     }
 
@@ -630,10 +641,7 @@ export const LoginPage: React.FC = () => {
     }
   };
 
-  // Hide Google until oauth-config confirms sandbox client-email OAuth is allowed.
-  // Production returns sandboxClientOAuthAllowed: false (no real Google Identity path).
-  // While config is loading (null), stay hidden so a dead Google button never flashes.
-  const showGoogleOAuth = oauthConfig?.sandboxClientOAuthAllowed === true;
+  const showGoogleOAuth = showGoogleOAuthButton(oauthConfig);
 
   return (
     <div
