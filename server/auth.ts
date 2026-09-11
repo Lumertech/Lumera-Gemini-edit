@@ -248,17 +248,22 @@ export function isSeededDemoPasswordSessionEmail(email?: string | null): boolean
 /**
  * Production email+password session — no WhatsApp OTP required.
  * MUST: super_admin / admin (role alias + admin@lumera.me). Clinic admins included so desk login is not Graph-gated.
- * Seeded @lumera.me demos (doctor, reception, pack aliases, patient) are OTP-safe the same way —
- * Clinical UX chrome smoke on www must not invent OTP codes. Client skipOtp stays ignored
- * for everyone outside this allowlist.
+ * Seeded @lumera.me demos (doctor, reception, pack aliases, patient) are OTP-safe only while Graph is unset —
+ * Clinical UX chrome smoke on www must not invent OTP codes. When META_ACCESS_TOKEN + META_PHONE_NUMBER_ID
+ * (or a tenant Graph path) are configured, those demos still require OTP. Client skipOtp stays ignored
+ * for everyone outside the admin allowlist.
  */
-export function allowPasswordLoginWithoutOtp(user?: { role?: string; email?: string } | null): boolean {
+export function allowPasswordLoginWithoutOtp(
+  user?: { role?: string; email?: string } | null,
+  opts?: { graphConfigured?: boolean }
+): boolean {
   const role = String(user?.role || "");
   const email = String(user?.email || "").trim().toLowerCase();
   if (email === "admin@lumera.me") return true;
-  if (isSeededDemoPasswordSessionEmail(email)) return true;
   if (role === "admin") return true;
-  return (PASSWORD_SESSION_ROLES as readonly string[]).includes(role);
+  if ((PASSWORD_SESSION_ROLES as readonly string[]).includes(role)) return true;
+  if (isSeededDemoPasswordSessionEmail(email) && !opts?.graphConfigured) return true;
+  return false;
 }
 export const CLINIC_MANAGER_ROLES: UserRole[] = ["doctor", "polyclinic_admin", "CLINIC_ADMIN"];
 export const CLINICIAN_ROLES: UserRole[] = [

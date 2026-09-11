@@ -33,6 +33,7 @@ import {
   CLINICIAN_ROLES,
   CLINIC_MANAGER_ROLES,
   USER_MANAGER_ROLES,
+  PASSWORD_SESSION_ROLES,
   allowPasswordLoginWithoutOtp,
   allowSkipOtp,
   isSeededDemoPasswordSessionEmail,
@@ -64,7 +65,7 @@ import {
 import { generateTemporaryPassword, hashPassword, passwordRuleError, verifyPassword } from "./password.ts";
 import { parseSpecialtyPackInput, resolveSpecialtyPack } from "./specialty-packs.ts";
 import { appPublicUrl, isProduction } from "./runtime.ts";
-import { dispatchWhatsAppCloudMessage, isCloudDispatchFailure } from "./graph-whatsapp.ts";
+import { dispatchWhatsAppCloudMessage, isCloudDispatchFailure, whatsappCloudConfigured } from "./graph-whatsapp.ts";
 import {
   FacebookOAuthError,
   facebookLoginDialogUrl,
@@ -400,13 +401,19 @@ export function createApiRouter(): Router {
       return res.json({ user: publicUser(user), token: jwtToken, requiresOtp: false });
     };
 
-    // MUST: admin / seeded @lumera.me demo matrix email+password is a production session — not skipOtp.
-    // Honesty: sandbox/demo password session for product demos; clinic emails still Graph-OTP gated.
-    const passwordSession = allowPasswordLoginWithoutOtp(user);
+    // MUST: admin email+password is a production session — not skipOtp.
+    // Seeded @lumera.me demos get the same sandbox/demo password session only while Graph is unset.
+    // Honesty: not a production clinic auth weaken; skipOtp is never honored for arbitrary users.
+    const passwordSession = allowPasswordLoginWithoutOtp(user, {
+      graphConfigured: whatsappCloudConfigured(getDb()),
+    });
     const skipOtp = Boolean(req.body?.skipOtp) && (allowSkipOtp() || passwordSession);
     if (passwordSession || skipOtp) {
       const reason = passwordSession
-        ? isSeededDemoPasswordSessionEmail(user.email)
+        ? isSeededDemoPasswordSessionEmail(user.email) &&
+          !(PASSWORD_SESSION_ROLES as readonly string[]).includes(String(user.role || "")) &&
+          String(user.role || "") !== "admin" &&
+          String(user.email || "").trim().toLowerCase() !== "admin@lumera.me"
           ? "sandbox/demo password session"
           : "admin password session"
         : "direct session";

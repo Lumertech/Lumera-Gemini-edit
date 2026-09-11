@@ -84,10 +84,14 @@ describe("Wave 1A PHI / auth lock", () => {
     assert.equal(allowSkipOtp("test"), true);
     assert.equal(allowPasswordLoginWithoutOtp({ role: "super_admin", email: "admin@lumera.me" }), true);
     assert.equal(allowPasswordLoginWithoutOtp({ role: "doctor", email: "doctor@lumera.me" }), true);
+    assert.equal(
+      allowPasswordLoginWithoutOtp({ role: "doctor", email: "doctor@lumera.me" }, { graphConfigured: true }),
+      false
+    );
     assert.equal(allowPasswordLoginWithoutOtp({ role: "doctor", email: "clinic.gp@example.com" }), false);
   });
 
-  it("password session without OTP is reserved for admin roles and seeded @lumera.me demos", () => {
+  it("password session without OTP is reserved for admin roles and seeded @lumera.me demos while Graph is unset", () => {
     assert.equal(allowPasswordLoginWithoutOtp({ role: "super_admin" }), true);
     assert.equal(allowPasswordLoginWithoutOtp({ role: "admin" }), true);
     assert.equal(allowPasswordLoginWithoutOtp({ email: "admin@lumera.me", role: "doctor" }), true);
@@ -102,12 +106,35 @@ describe("Wave 1A PHI / auth lock", () => {
     assert.equal(allowPasswordLoginWithoutOtp({ role: "patient", email: "patient@lumera.me" }), true);
     assert.equal(allowPasswordLoginWithoutOtp({ role: "doctor", email: "gp.doctor@lumera.me" }), true);
     assert.equal(allowPasswordLoginWithoutOtp({ role: "doctor", email: "physio.doctor@lumera.me" }), true);
+    assert.equal(
+      allowPasswordLoginWithoutOtp({ role: "doctor", email: "gp.doctor@lumera.me" }, { graphConfigured: true }),
+      false
+    );
+    assert.equal(
+      allowPasswordLoginWithoutOtp({ role: "super_admin", email: "admin@lumera.me" }, { graphConfigured: true }),
+      true
+    );
+    assert.equal(
+      allowPasswordLoginWithoutOtp({ role: "CLINIC_ADMIN", email: "clinic.admin@lumera.me" }, { graphConfigured: true }),
+      true
+    );
     assert.equal(isSeededDemoPasswordSessionEmail("doctor@clinic.com"), false);
     assert.equal(isSeededDemoPasswordSessionEmail("suspended.clinic@lumera.me"), false);
     assert.equal(allowPasswordLoginWithoutOtp({ role: "doctor", email: "anyone@clinic.com" }), false);
     for (const acct of DEMO_LOGIN_MATRIX) {
       assert.equal(isSeededDemoPasswordSessionEmail(acct.email), true, acct.email);
       assert.equal(allowPasswordLoginWithoutOtp(acct), true, acct.email);
+      const adminDesk =
+        acct.email === "admin@lumera.me" ||
+        acct.role === "admin" ||
+        acct.role === "super_admin" ||
+        acct.role === "CLINIC_ADMIN" ||
+        acct.role === "polyclinic_admin";
+      assert.equal(
+        allowPasswordLoginWithoutOtp(acct, { graphConfigured: true }),
+        adminDesk,
+        `${acct.email} graph-set`
+      );
     }
   });
 
@@ -377,9 +404,13 @@ describe("Wave 1A PHI / auth lock", () => {
       );
   }
 
-  it("production seeded demo doctor/reception/patient mint a password session without OTP", async () => {
+  it("production seeded demo doctor/reception/patient mint a password session without OTP when Graph is unset", async () => {
     const prev = process.env.NODE_ENV;
+    const prevToken = process.env.META_ACCESS_TOKEN;
+    const prevPhone = process.env.META_PHONE_NUMBER_ID;
     process.env.NODE_ENV = "production";
+    delete process.env.META_ACCESS_TOKEN;
+    delete process.env.META_PHONE_NUMBER_ID;
     try {
       for (const email of [
         "doctor@lumera.me",
@@ -402,6 +433,10 @@ describe("Wave 1A PHI / auth lock", () => {
     } finally {
       if (prev === undefined) delete process.env.NODE_ENV;
       else process.env.NODE_ENV = prev;
+      if (prevToken === undefined) delete process.env.META_ACCESS_TOKEN;
+      else process.env.META_ACCESS_TOKEN = prevToken;
+      if (prevPhone === undefined) delete process.env.META_PHONE_NUMBER_ID;
+      else process.env.META_PHONE_NUMBER_ID = prevPhone;
     }
   });
 
@@ -437,7 +472,7 @@ describe("Wave 1A PHI / auth lock", () => {
     }
   });
 
-  it("production Graph credentials still skip OTP only for seeded demos, not clinic doctors", async () => {
+  it("production Graph credentials keep OTP required for seeded demo doctors; admin still password-session", async () => {
     const email = `clinic.graph.${Date.now().toString(36)}@um-test.example`;
     await insertNonDemoDoctor(email);
     const prev = process.env.NODE_ENV;
@@ -450,10 +485,11 @@ describe("Wave 1A PHI / auth lock", () => {
       const demo = await jsonRequest(port, "POST", "/api/auth/login", {
         email: "doctor@lumera.me",
         password: "Lumera@2026",
+        skipOtp: true,
       });
-      assert.equal(demo.status, 200);
-      assert.equal(demo.json.requiresOtp, false);
-      assert.ok(demo.json.token);
+      assert.notEqual(demo.status, 200);
+      assert.equal(demo.json.requiresOtp, undefined);
+      assert.equal(demo.json.token, undefined);
       assert.equal(demo.json.demoOtp, undefined);
 
       const clinic = await jsonRequest(port, "POST", "/api/auth/login", {
@@ -465,6 +501,15 @@ describe("Wave 1A PHI / auth lock", () => {
       assert.equal(clinic.json.requiresOtp, undefined);
       assert.equal(clinic.json.token, undefined);
       assert.equal(clinic.json.demoOtp, undefined);
+
+      const admin = await jsonRequest(port, "POST", "/api/auth/login", {
+        email: "admin@lumera.me",
+        password: "Lumera@2026",
+      });
+      assert.equal(admin.status, 200);
+      assert.equal(admin.json.requiresOtp, false);
+      assert.ok(admin.json.token);
+      assert.equal(admin.json.demoOtp, undefined);
     } finally {
       if (prev === undefined) delete process.env.NODE_ENV;
       else process.env.NODE_ENV = prev;

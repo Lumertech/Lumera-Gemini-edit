@@ -61,6 +61,11 @@ export function resolveGraphCredentials(db?: DatabaseSync | null): GraphCredenti
   return null;
 }
 
+/** Env or tenant Graph path is usable — OTP can actually be sent. */
+export function whatsappCloudConfigured(db?: DatabaseSync | null): boolean {
+  return resolveGraphCredentials(db) != null;
+}
+
 export function toWhatsAppRecipient(phone: string): string {
   return phone.replace(/[^\d]/g, "");
 }
