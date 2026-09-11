@@ -64,6 +64,7 @@ export interface NavLocation {
   policySlug: string;
   adminTab: AdminTab;
   appView: AppView;
+  workspaceSlug: string;
   loginMode: LoginMode;
   loginNext: Surface;
   loginNextPath: string;
@@ -74,6 +75,7 @@ export const DEFAULT_NAV: NavLocation = {
   policySlug: "",
   adminTab: DEFAULT_ADMIN_TAB,
   appView: DEFAULT_APP_VIEW,
+  workspaceSlug: "",
   loginMode: "signin",
   loginNext: "app",
   loginNextPath: "",
@@ -134,8 +136,15 @@ export function canonicalizeAdminTab(raw?: string | null): AdminTab {
 }
 
 /** Distinct path for each clinician tab so a click always updates `window.location`. */
-export function appViewToPath(view?: string | null): string {
-  return `/app/${canonicalizeAppView(view)}`;
+export function appViewToPath(view?: string | null, workspaceSlug?: string | null): string {
+  const tab = canonicalizeAppView(view);
+  const ws = String(workspaceSlug || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  if (ws) return `/w/${ws}/${tab}`;
+  return `/app/${tab}`;
 }
 
 /** Distinct path for each admin section. */
@@ -232,6 +241,14 @@ export function pathToNav(pathname = "/", search = ""): NavLocation {
   if (p === "/portal" || p === "/patient") return nav("portal");
   if (p === "/landing" || p === "/site" || p === "/public") return nav("landing");
   if (p === "/onboarding") return nav("onboarding");
+  if (p === "/w" || p.startsWith("/w/")) {
+    const rest = p === "/w" ? "" : p.slice(3);
+    const [workspaceSlug, viewSeg] = rest.split("/").filter(Boolean);
+    return nav("app", {
+      workspaceSlug: workspaceSlug || "",
+      appView: viewSeg ? canonicalizeAppView(viewSeg) : DEFAULT_APP_VIEW,
+    });
+  }
   if (p === "/app" || p.startsWith("/app/")) {
     return nav("app", { appView: canonicalizeAppView(firstSegmentAfter("/app", p)) });
   }
@@ -250,6 +267,7 @@ export interface SurfacePathOpts {
   loginNextPath?: string;
   adminTab?: AdminTab | string;
   appView?: AppView | string;
+  workspaceSlug?: string;
 }
 
 export function surfaceToPath(surface: Surface, opts?: SurfacePathOpts): string {
@@ -263,7 +281,10 @@ export function surfaceToPath(surface: Surface, opts?: SurfacePathOpts): string 
     return next ? `${base}?next=${encodeURIComponent(next)}` : base;
   }
   if (surface === "app") {
-    return opts?.appView ? appViewToPath(opts.appView) : "/app";
+    const ws = opts?.workspaceSlug;
+    if (opts?.appView) return appViewToPath(opts.appView, ws);
+    if (ws) return `/w/${ws}`;
+    return "/app";
   }
   if (surface === "admin") {
     return opts?.adminTab ? adminTabToPath(opts.adminTab) : "/admin";
@@ -283,12 +304,18 @@ export function destinationNavAfterAuth(dest: Surface, loginNextPath?: string): 
   surface: Surface;
   appView?: AppView;
   adminTab?: AdminTab;
+  workspaceSlug?: string;
 } {
   const nextPath = safeNextPath(loginNextPath);
   if (!nextPath) return { surface: dest };
   const loc = pathToNav(nextPath);
   if (loc.surface !== dest) return { surface: dest };
-  return { surface: loc.surface, appView: loc.appView, adminTab: loc.adminTab };
+  return {
+    surface: loc.surface,
+    appView: loc.appView,
+    adminTab: loc.adminTab,
+    workspaceSlug: loc.workspaceSlug,
+  };
 }
 
 export interface ChromeDecision {

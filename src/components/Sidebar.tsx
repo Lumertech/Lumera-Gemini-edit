@@ -64,7 +64,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   currentDoctor,
 }) => {
   const { user, logout } = useAuth();
-  const { go } = useNav();
+  const { go, workspaceSlug } = useNav();
   const userRole = user?.role || 'doctor';
   let allowedViews = ROLE_VISIBLE_VIEWS[userRole] || ROLE_VISIBLE_VIEWS.doctor;
   const polyclinic = isPolyclinicPractice(user);
@@ -209,7 +209,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div className="flex-1 overflow-y-auto p-3 space-y-5 scrollbar-thin scrollbar-thumb-slate-800">
         {canStartConsult && (
           <Link
-            to={appViewToPath(startView)}
+            to={appViewToPath(startView, workspaceSlug)}
             title={isCollapsed ? pack.primaryCta : undefined}
             className={`w-full flex items-center ${
               isCollapsed ? 'justify-center px-2' : 'justify-center gap-2 px-3'
@@ -237,7 +237,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 return (
                   <Link
                     key={item.id}
-                    to={appViewToPath(item.id)}
+                    to={appViewToPath(item.id, workspaceSlug)}
                     data-testid={`app-nav-${item.id}`}
                     title={isCollapsed ? item.label : undefined}
                     className={`w-full flex items-center ${
@@ -283,7 +283,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               4. Settings & Profile
             </h3>
             <Link
-              to={appViewToPath('settings')}
+              to={appViewToPath('settings', workspaceSlug)}
               data-testid="app-nav-settings"
               className={`w-full flex items-center px-3 py-2 rounded-lg text-xs font-medium ${
                 currentView === 'settings'
@@ -307,7 +307,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         )}
         {isCollapsed && (
           <Link
-            to={appViewToPath('settings')}
+            to={appViewToPath('settings', workspaceSlug)}
             className="w-full flex justify-center py-2 rounded-lg text-slate-300 hover:bg-slate-800"
             title="Clinic & Doctor Profile Settings"
           >

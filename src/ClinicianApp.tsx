@@ -38,6 +38,7 @@ import { apiFetch } from './api/http';
 import { useAuth } from './auth/AuthContext';
 import { useNav } from './nav/NavigationContext';
 import { canonicalizeAppView } from './nav/surfaces';
+import { isAppWorkspaceRootPath } from './lib/workspacePath';
 import {
   UNASSIGNED_PATIENT,
   clinicSettingsFromSession,
@@ -103,7 +104,7 @@ export default function ClinicianApp() {
       });
       return;
     }
-    if (pathname === '/app' || pathname === '/app/') {
+    if (isAppWorkspaceRootPath(pathname)) {
       go('app', { appView: canonicalizeAppView(clinicianHomeView(user)), replace: true });
     }
   }, [user?.id, user?.practiceType, user?.specialty, pathname, go]);

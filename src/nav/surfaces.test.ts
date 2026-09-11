@@ -67,6 +67,13 @@ describe("public vs app surface routing (founder lock #48)", () => {
   it("maps clinician and admin tabs to distinct History-API paths (not HashRouter)", () => {
     assert.equal(pathToNav("/app/rx").surface, "app");
     assert.equal(pathToNav("/app/rx").appView, "rx");
+    assert.equal(pathToNav("/app/whatsapp").appView, "whatsapp");
+    assert.equal(pathToNav("/w/dr-demo-physio/whatsapp").surface, "app");
+    assert.equal(pathToNav("/w/dr-demo-physio/whatsapp").workspaceSlug, "dr-demo-physio");
+    assert.equal(pathToNav("/w/dr-demo-physio/whatsapp").appView, "whatsapp");
+    assert.equal(pathToNav("/w/dr-demo-physio/billing").appView, "billing");
+    assert.equal(appViewToPath("whatsapp", "dr-demo-physio"), "/w/dr-demo-physio/whatsapp");
+    assert.equal(surfaceToPath("app", { appView: "billing", workspaceSlug: "dr-demo-physio" }), "/w/dr-demo-physio/billing");
     assert.equal(pathToNav("/app/queue").appView, "queue");
     assert.equal(pathToNav("/app/smart-rx").appView, "rx");
     assert.equal(pathToNav("/app").appView, "queue");
@@ -106,6 +113,13 @@ describe("public vs app surface routing (founder lock #48)", () => {
       surface: "app",
       appView: "rx",
       adminTab: "overview",
+      workspaceSlug: "",
+    });
+    assert.deepEqual(destinationNavAfterAuth("app", "/w/dr-demo-physio/whatsapp"), {
+      surface: "app",
+      appView: "whatsapp",
+      adminTab: "overview",
+      workspaceSlug: "dr-demo-physio",
     });
     assert.deepEqual(destinationNavAfterAuth("admin", "/app/rx"), { surface: "admin" });
   });

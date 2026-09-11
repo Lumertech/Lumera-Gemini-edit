@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { apiFetch, setStoredToken } from "../api/http";
 import { AppUser, UserRole } from "../types";
-import { Surface } from "../nav/NavigationContext";
+import { type Surface } from "../nav/surfaces";
 import { needsOnboarding } from "../lib/sessionWorkspace";
 import { clearTenantScope } from "../lib/tenantScope";
 
