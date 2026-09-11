@@ -51,6 +51,22 @@ describe("product brand SSOT (founder P0)", () => {
     assert.match(indexHtml, /<title>Lumera — Enterprise Clinical & Practice Suite<\/title>/);
   });
 
+  it("uses the restored Sparkles four-point star on a purple→indigo→blue tile (not the medical-cross mark)", () => {
+    assert.match(logoSvg, /four-pointed star/);
+    assert.match(logoSvg, /from-purple-500 via-indigo-600 to-blue-600/);
+    assert.match(logoSvg, /#A855F7/i);
+    assert.match(logoSvg, /#4F46E5/i);
+    assert.match(logoSvg, /#2563EB/i);
+    assert.match(
+      logoSvg,
+      /M11\.017 2\.814a1 1 0 0 1 1\.966 0l1\.051 5\.558/,
+    );
+    assert.doesNotMatch(logoSvg, /Vertical Beam|Horizontal Beam|Medical Cross/i);
+    assert.doesNotMatch(logoSvg, /<rect[^>]+x="27"[^>]+y="14"[^>]+width="10"[^>]+height="36"/);
+    assert.doesNotMatch(logoSvg, /<rect[^>]+x="14"[^>]+y="27"[^>]+width="36"[^>]+height="10"/);
+    assert.doesNotMatch(logoSvg, /L35\.5 28\.5 L44 32/);
+  });
+
   it("renders the same BrandMark on landing, sign-in/register, policy, and public boot splash", () => {
     for (const [label, src] of [
       ["landing", landing],
