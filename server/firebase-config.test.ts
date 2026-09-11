@@ -41,9 +41,10 @@ describe("Firebase Hosting → Cloud Run config (#26)", () => {
 
   it("cloudbuild deploy updates APP_URL/NODE_ENV only and does not wipe JWT_SECRET", () => {
     const yaml = readRepo("cloudbuild.yaml");
+    const withoutComments = yaml.replace(/#.*$/gm, "");
     assert.match(yaml, /--update-env-vars=NODE_ENV=production,APP_URL=https:\/\/www\.mylumera\.in/);
-    assert.doesNotMatch(yaml, /--set-env-vars/);
-    assert.doesNotMatch(yaml, /--update-env-vars=[^\n]*JWT_SECRET/);
+    assert.doesNotMatch(withoutComments, /--set-env-vars/);
+    assert.doesNotMatch(withoutComments, /--update-env-vars=[^\n]*JWT_SECRET/);
     assert.match(yaml, /JWT_SECRET must already exist/);
     assert.match(readRepo("deploy/CLOUD_RUN_BOOT_CHECK.md"), /JWT_SECRET is required/);
   });
