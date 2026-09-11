@@ -32,6 +32,9 @@ export const AdminSettings: React.FC = () => {
       <h1 className="text-xl font-extrabold">Clinic & AI settings</h1>
       <div className="bg-white border rounded-xl p-4 space-y-3 text-sm">
         <p className="text-xs text-slate-500">
+          Clinic site / AI settings. Multi-clinic Branches belong to Polyclinic User Admin, not Super Admin.
+        </p>
+        <p className="text-xs text-slate-500">
           Gemini key status: {geminiConfigured ? "configured in .env" : "missing — local fallbacks will be used"}. Keys are never stored in SQLite.
         </p>
         <label className="block text-xs font-semibold">

@@ -37,13 +37,7 @@ import { AdminAudit } from "./AdminAudit";
 import { AdminMetaTechProvider } from "./AdminMetaTechProvider";
 import { DhisMeter } from "../dhis/DhisMeter";
 import { TenantScopeProvider, useTenantScope } from "./TenantScopeContext";
-
-/** Clinic desk — CLINIC_ADMIN / polyclinic_admin / super_admin. */
-const DESK_TABS = new Set<AdminTab>(["overview", "users", "people", "branches", "profile", "settings", "audit"]);
-/** Platform Superadmin — Tenants + all-tenant Subs. CLINIC_ADMIN must not see these (T-6). */
-const SUPERADMIN_TABS = new Set<AdminTab>(["tenants", "subscriptions"]);
-/** Platform / Meta / CMS — super_admin only, listed after Superadmin tabs. */
-const PLATFORM_TABS = new Set<AdminTab>(["dhis", "meta", "site", "policies", "media"]);
+import { CLINIC_BRANCH_TABS, SUPERADMIN_TABS, isAdminNavItemVisible } from "./adminNav";
 
 const NAV: { id: AdminTab; label: string; icon: typeof Users; badge?: string; group?: "desk" | "superadmin" | "platform" }[] = [
   { id: "overview", label: "Dashboard", icon: LayoutDashboard, group: "desk" },
@@ -77,13 +71,7 @@ const AdminShellInner: React.FC = () => {
 
   const isAdmin = user && (user.role === "super_admin" || user.role === "polyclinic_admin" || user.role === "CLINIC_ADMIN");
   const isPlatformAdmin = user?.role === "super_admin";
-  const navItems = NAV.filter((item) => {
-    if (SUPERADMIN_TABS.has(item.id) && !isPlatformAdmin) return false;
-    if (PLATFORM_TABS.has(item.id) && !isPlatformAdmin) return false;
-    if (item.id === "tenants" && !isPlatformAdmin) return false;
-    if (DESK_TABS.has(item.id) || SUPERADMIN_TABS.has(item.id) || PLATFORM_TABS.has(item.id)) return true;
-    return true;
-  });
+  const navItems = NAV.filter((item) => isAdminNavItemVisible(user?.role, item.id));
   const safeTab = navItems.some((item) => item.id === adminTab) ? adminTab : "overview";
 
   if (!isAdmin) {
@@ -141,8 +129,15 @@ const AdminShellInner: React.FC = () => {
             <Shield className="h-5 w-5 text-white" />
           </div>
           <div>
-            <div className="font-manrope text-sm font-bold text-white">Lumera Admin</div>
+            <div className="font-manrope text-sm font-bold text-white">
+              {isPlatformAdmin ? "Lumera Platform" : "Lumera Admin"}
+            </div>
             <div className="text-[11px] text-slate-400 truncate max-w-[140px]">{user?.email}</div>
+            {isPlatformAdmin && (
+              <div className="text-[10px] text-slate-500" data-testid="platform-console-caption">
+                Super Admin · not clinic admin
+              </div>
+            )}
           </div>
         </div>
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
@@ -241,6 +236,11 @@ const AdminShellInner: React.FC = () => {
         {adminTab !== safeTab && SUPERADMIN_TABS.has(adminTab) && !isPlatformAdmin && (
           <p className="mb-4 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2" data-testid="superadmin-tab-forbidden">
             Tenants and all-tenant subscriptions are restricted to super_admin. Clinic admins cannot list every tenant.
+          </p>
+        )}
+        {adminTab !== safeTab && CLINIC_BRANCH_TABS.has(adminTab) && isPlatformAdmin && (
+          <p className="mb-4 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2" data-testid="clinic-branches-tab-forbidden">
+            Branches / multi-clinic belongs to Polyclinic User Admin. Super Admin has no Branches.
           </p>
         )}
         <div key={safeTab} data-testid="admin-tab-remount">

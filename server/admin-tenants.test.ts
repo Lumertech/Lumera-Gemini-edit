@@ -146,6 +146,11 @@ describe("Platform admin tenants + tenant-scoped subscriptions (#54)", () => {
     assert.ok(demo?.createdAt);
     const owner = demo?.owner as { email?: string };
     assert.ok(owner);
+    const demoDetail = await jsonRequest(port, "GET", "/api/admin/tenants/tenant-lumera-main", undefined, auth);
+    assert.equal(demoDetail.status, 200);
+    const demoTenant = demoDetail.json.tenant as { branchesCount?: number; type?: string };
+    assert.equal(typeof demoTenant.branchesCount, "number");
+    if (demoTenant.type === "individual") assert.equal(demoTenant.branchesCount, 0);
 
     const suspended = tenants.find((t) => t.id === SUSPENDED_DEMO_TENANT_ID);
     assert.ok(suspended, "suspended demo fixture must be seeded");
@@ -176,6 +181,7 @@ describe("Platform admin tenants + tenant-scoped subscriptions (#54)", () => {
     assert.equal(tenant.name, `Roundtrip Clinic ${stamp}`);
     assert.equal(tenant.type, "individual");
     assert.equal(tenant.status, "trial");
+    assert.equal((tenant as { branchesCount?: number }).branchesCount, 0, "Individual tenant has no Branches");
     const tenantId = String(tenant.id);
 
     const listed = await jsonRequest(port, "GET", `/api/admin/tenants?q=${encodeURIComponent(`rina.${stamp}`)}`, undefined, auth);

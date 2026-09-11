@@ -109,7 +109,7 @@ export function normalizePracticeType(value?: string | null): "individual" | "po
   return "individual";
 }
 
-/** Individual founders are clinicians; multi-specialty founders are clinic admins. */
+/** Individual founders are the doctor master (receptionist is the sub). Polyclinic founders are CLINIC_ADMIN and own Branches. Super Admin is never assigned here. */
 export function assignedRoleForPracticeType(
   practiceType: "individual" | "polyclinic",
   currentRole?: string | null
@@ -1032,6 +1032,7 @@ function seedIfEmpty(database: DatabaseSync) {
     VALUES (?, ?, ?, ?, ?, 'active', ?, NULL, ?)
   `);
 
+  // #70 role model: admin@ platform Super Admin (no Branches); doctor@ Individual master; reception@ Individual sub.
   insertUser.run("user-admin", "admin@lumera.me", passwordHash, "Priya Iyer", "super_admin", "+91 98000 11111", now);
   insertUser.run("user-doctor", "doctor@lumera.me", passwordHash, "Dr. Vikram Malhotra", "doctor", "+91 98765 43210", now);
   insertUser.run("user-patient", "patient@lumera.me", passwordHash, "Rajiv Saxena", "patient", "+91 98234 55667", now);
@@ -1072,6 +1073,7 @@ function seedIfEmpty(database: DatabaseSync) {
   insertStaff.run("s-3", null, "Deepa Nair", "Pharmacist", "In-House Pharmacy", "+91 98200 77889", "deepa.n@lumera.me", "Active", "Evening");
   insertStaff.run("s-4", null, "Amit Verma", "Lab Tech", "Pathology & Diagnostic", "+91 98200 99001", "amit.v@lumera.me", "Active", "Morning");
 
+  // Seeded branches belong to the polyclinic demo — CLINIC_ADMIN owns CRUD, not Super Admin (#70).
   const insertBranch = database.prepare(`
     INSERT INTO branches (id, name, address, phone, opd_hours, active_doctors, status)
     VALUES (?, ?, ?, ?, ?, ?, ?)

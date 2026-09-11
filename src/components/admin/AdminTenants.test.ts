@@ -51,7 +51,7 @@ describe("Superadmin Tenants console (#54 UI)", () => {
     assert.match(shell, /data-testid="tenant-context-switcher"/);
     assert.match(shell, /Exit to platform/);
     assert.match(shell, /clearScope\(\)/);
-    assert.match(shell, /item\.id === "tenants" && !isPlatformAdmin/);
+    assert.match(shell, /isAdminNavItemVisible\(user\?\.role, item\.id\)/);
     assert.match(shell, /data-testid="superadmin-tab-forbidden"/);
     const tenantsAt = shell.indexOf('{ id: "tenants"');
     const dhisAt = shell.indexOf('{ id: "dhis"');
@@ -59,5 +59,18 @@ describe("Superadmin Tenants console (#54 UI)", () => {
     assert.ok(tenantsAt > 0 && dhisAt > tenantsAt, "Tenants must appear before DHIS/CMS in nav");
     assert.ok(metaAt > tenantsAt, "Tenants must appear before Meta in nav");
     assert.match(auth, /clearTenantScope\(\)/);
+  });
+
+  it("does not imply Super Admin owns Branches; tenant detail branch count is support-only (#70)", () => {
+    assert.match(tenants, /does not own Branches/);
+    assert.match(tenants, /data-testid="tenant-branches-count"/);
+    assert.match(tenants, /data-testid="tenant-branches-support-caption"/);
+    assert.match(tenants, /Support count only/);
+    assert.match(tenants, /CLINIC_ADMIN owns Branches/);
+    assert.match(tenants, /doctor master/);
+    assert.match(catalog, /branchesCount\?/);
+    assert.match(shell, /Lumera Platform/);
+    assert.match(shell, /data-testid="platform-console-caption"/);
+    assert.match(shell, /SUPERADMIN_TABS/);
   });
 });

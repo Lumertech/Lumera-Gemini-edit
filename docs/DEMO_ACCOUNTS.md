@@ -4,13 +4,25 @@ Shared password for every seeded `@lumera.me` login: **`Lumera@2026`**.
 
 This is a local / staging matrix. It is **not** production. ABDM paths are NHA sandbox — not certified.
 
+## Role model (founder lock 2026-09-11 · Product #70)
+
+Seed emails **already match** this lock — no new personas required.
+
+| Track | Master | Sub | Branches |
+|---|---|---|---|
+| **Individual** | `doctor@lumera.me` (`doctor`) | `reception@lumera.me` / `receptionist@lumera.me` | Not in this track (no CLINIC_ADMIN) |
+| **Polyclinic** | `clinic.admin@lumera.me` (`CLINIC_ADMIN`) | Multiple practitioner subs on the demo roster | CLINIC_ADMIN owns Branches / multi-clinic |
+| **Platform** | `admin@lumera.me` (`super_admin`) | — | Super Admin ≠ clinic Admin ≠ Branches. Tenant detail may show a **support-only** branch count. |
+
+Register / create-clinic first paint stays **Individual** (`DEFAULT_PRACTICE_TYPE`). `clinic.admin@lumera.me` is the single explicit Multi-specialty demo and does **not** change that default.
+
 **OTP honesty (www / sandbox smoke):** seeded product-demo emails in this matrix complete email+password login with `requiresOtp: false` — a sandbox/demo password session, same path as `#56` admin desk login. WhatsApp OTP is not invented in chat and is not echoed in production JSON. This does **not** weaken auth for real clinic emails (any domain other than the seeded `@lumera.me` allowlist still requires Graph OTP in production). Client `skipOtp` is never honored in production for non-allowlisted users.
 
 Product table (login picker lists these first): `admin@` · `reception@` · `gp.doctor@` · `physio.doctor@` · `dentist.doctor@` · `spa.doctor@` · `therapist@` · `consultant@`. `dentist@` / `physio@` / `wellness@` / medical `cardiology@`… remain extras.
 
 | Email | Role | Practice type | Practice line | Specialty pack | Lands on |
 |---|---|---|---|---|---|
-| `admin@lumera.me` | super_admin | platform (polyclinic tenant) | Platform | — | Admin console |
+| `admin@lumera.me` | super_admin | platform only (not clinic admin) | Platform | — | Platform console (no Branches) |
 | `receptionist@lumera.me` | receptionist | **individual** | Front desk | — | Reception (no Multispecialty chrome) |
 | `reception@lumera.me` | receptionist | **individual** | Front desk | — | Reception (legacy alias) |
 | `clinic.admin@lumera.me` | CLINIC_ADMIN | **polyclinic** (opt-in demo only) | Doctors & Clinics | General Medicine | Welcome / multi-specialty clinic home |
@@ -28,8 +40,6 @@ Product table (login picker lists these first): `admin@` · `reception@` · `gp.
 | `therapist@lumera.me` | doctor | individual | Therapists | Psychiatry & Mental Health | Therapy session desk |
 | `wellness@lumera.me` | doctor | individual | Wellness & Spas | Wellness & Spas | Salon/spa book (not a medical chart) |
 | `consultant@lumera.me` | doctor | individual | Consultants | Consulting | Meetings / briefs / invoices |
-
-Register / create-clinic first paint stays **Individual** (`DEFAULT_PRACTICE_TYPE`). `clinic.admin@lumera.me` is the single explicit Multi-specialty demo and does **not** change that default.
 
 Every specialty doctor above is an **individual** practice login. They land the matching specialty pack (GP / physio / dental / therapy / wellness / consultant), not the generic Multispecialty welcome roster.
 

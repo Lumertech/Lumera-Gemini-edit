@@ -39,6 +39,9 @@ export interface DemoAccount {
 /**
  * Canonical sandbox matrix. Emails stay on lumera.me.
  * Password is always DEMO_PASSWORD. Not production credentials.
+ * Founder lock / #70: seed emails already match the role model —
+ * admin@ = platform Super Admin (no Branches); doctor@ = Individual master;
+ * reception@ = Individual sub; clinic.admin@ = Polyclinic CLINIC_ADMIN (owns Branches).
  */
 export const DEMO_ACCOUNTS: DemoAccount[] = [
   {
@@ -49,6 +52,7 @@ export const DEMO_ACCOUNTS: DemoAccount[] = [
     specialty: "",
     phone: "+91 98000 11111",
     practiceLine: "Platform",
+    // Sandbox row lives on the shared demo tenant; Super Admin is still platform-only (no Branches).
     practiceType: "polyclinic",
   },
   {
@@ -80,6 +84,7 @@ export const DEMO_ACCOUNTS: DemoAccount[] = [
     displaySpecialty: "General Medicine",
     phone: "+91 98000 22222",
     practiceLine: "Doctors & Clinics",
+    // Explicit polyclinic opt-in demo. Owns Branches / multi-clinic. Does not change register default.
     practiceType: "polyclinic",
   },
   {
@@ -96,6 +101,7 @@ export const DEMO_ACCOUNTS: DemoAccount[] = [
     id: "user-doctor",
     email: "doctor@lumera.me",
     name: "Dr. Vikram Malhotra",
+    // Individual practice master. Receptionist is the sub — not CLINIC_ADMIN / not Branches.
     role: "doctor",
     specialty: "gp",
     displaySpecialty: "General Medicine",
