@@ -16,11 +16,21 @@ interface Overview {
 
 export const AdminOverview: React.FC = () => {
   const [data, setData] = useState<Overview | null>(null);
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    apiFetch<Overview>("/api/admin/overview").then(setData).catch(() => undefined);
+    apiFetch<Overview>("/api/admin/overview")
+      .then(setData)
+      .catch((e) => setError(e instanceof Error ? e.message : "Could not load overview"));
   }, []);
 
+  if (error) {
+    return (
+      <p className="text-sm text-red-600" data-testid="admin-overview-error">
+        {error}
+      </p>
+    );
+  }
   if (!data) return <p className="text-sm text-slate-500">Loading overview…</p>;
 
   const cards = [
