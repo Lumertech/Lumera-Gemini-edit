@@ -41,6 +41,7 @@ import {
 } from "../lib/practiceOnboarding";
 import { PolyclinicSpecialty } from "../types";
 import { DEMO_LOGIN_MATRIX, DEMO_PASSWORD } from "../lib/demoAccounts";
+import { showGoogleOAuthButton } from "../lib/oauthUi";
 
 const SPECIALTIES: PolyclinicSpecialty[] = [
   "General Medicine",
@@ -108,6 +109,7 @@ export const LoginPage: React.FC = () => {
   const [verifiedSsoNotice, setVerifiedSsoNotice] = useState<string | null>(null);
   const [oauthConfig, setOauthConfig] = useState<{
     facebookConfigured: boolean;
+    googleConfigured?: boolean;
     sandboxClientOAuthAllowed: boolean;
     notice?: string;
   } | null>(null);
@@ -195,7 +197,9 @@ export const LoginPage: React.FC = () => {
     fetch("/api/auth/oauth-config")
       .then((r) => r.json())
       .then((cfg) => setOauthConfig(cfg))
-      .catch(() => setOauthConfig({ facebookConfigured: false, sandboxClientOAuthAllowed: true }));
+      .catch(() =>
+        setOauthConfig({ facebookConfigured: false, googleConfigured: false, sandboxClientOAuthAllowed: true })
+      );
   }, []);
 
   useEffect(() => {
@@ -379,8 +383,20 @@ export const LoginPage: React.FC = () => {
     setSuccessMsg("");
     setOauthPrompt(null);
 
+    // Real Google Identity redirect is owned by PR #64 (GET /api/auth/google).
+    // Keep this LoginPage-only so either merge order still works once googleConfigured is true.
+    if (provider === "google" && oauthConfig?.googleConfigured) {
+      window.location.href = "/api/auth/google";
+      return;
+    }
+
     if (provider === "facebook" && oauthConfig?.facebookConfigured) {
       window.location.href = "/api/auth/facebook";
+      return;
+    }
+
+    if (provider === "google" && !oauthConfig?.sandboxClientOAuthAllowed) {
+      setBusy(false);
       return;
     }
 
@@ -624,6 +640,8 @@ export const LoginPage: React.FC = () => {
       setForgotBusy(false);
     }
   };
+
+  const showGoogleOAuth = showGoogleOAuthButton(oauthConfig);
 
   return (
     <div
@@ -1080,9 +1098,11 @@ export const LoginPage: React.FC = () => {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2.5 mb-3">
+                  <div className={`grid gap-2.5 mb-3 ${showGoogleOAuth ? "grid-cols-2" : "grid-cols-1"}`}>
+                    {showGoogleOAuth && (
                     <button
                       type="button"
+                      data-testid="oauth-google-signin"
                       onClick={() => handleOAuthSignIn("google")}
                       disabled={busy}
                       className="flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-slate-950 hover:bg-slate-800/90 border border-slate-700/80 hover:border-slate-600 text-xs font-semibold text-slate-200 transition-all hover:shadow-sm"
@@ -1095,9 +1115,11 @@ export const LoginPage: React.FC = () => {
                       </svg>
                       <span>Google</span>
                     </button>
+                    )}
 
                     <button
                       type="button"
+                      data-testid="oauth-facebook-signin"
                       onClick={() => handleOAuthSignIn("facebook")}
                       disabled={busy}
                       className="flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-slate-950 hover:bg-slate-800/90 border border-slate-700/80 hover:border-slate-600 text-xs font-semibold text-slate-200 transition-all hover:shadow-sm"
@@ -1179,9 +1201,11 @@ export const LoginPage: React.FC = () => {
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-slate-400 font-medium">Or pre-fill with single sign-on:</span>
                     </div>
-                    <div className="grid grid-cols-1 min-[400px]:grid-cols-2 gap-2">
+                    <div className={`grid grid-cols-1 gap-2 ${showGoogleOAuth ? "min-[400px]:grid-cols-2" : ""}`}>
+                      {showGoogleOAuth && (
                       <button
                         type="button"
+                        data-testid="oauth-google-register"
                         onClick={() => handleOAuthSignIn("google")}
                         className="flex items-center justify-center gap-1.5 min-h-11 py-2 px-2 rounded-lg bg-slate-900 hover:bg-slate-850 border border-slate-700 text-[11px] font-medium text-slate-200"
                       >
@@ -1193,8 +1217,10 @@ export const LoginPage: React.FC = () => {
                         </svg>
                         <span>Google Sign-In</span>
                       </button>
+                      )}
                       <button
                         type="button"
+                        data-testid="oauth-facebook-register"
                         onClick={() => handleOAuthSignIn("facebook")}
                         className="flex items-center justify-center gap-1.5 min-h-11 py-2 px-2 rounded-lg bg-slate-900 hover:bg-slate-850 border border-slate-700 text-[11px] font-medium text-slate-200"
                       >
