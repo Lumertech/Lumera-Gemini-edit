@@ -76,7 +76,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 }) => {
   const toggleCopilot = onTogglePulse || onToggleGemini || onToggleHexa || (() => {});
   const { logout } = useAuth();
-  const { go } = useNav();
+  const { go, workspaceSlug } = useNav();
   const VIEW_TITLES: Record<NavView, string> = {
     welcome: 'Welcome & Initial Setup',
     reception: 'OPD Reception & ABHA Intake',
@@ -122,7 +122,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
         {/* Logo */}
         <Link
-          to={appViewToPath('ambient')}
+          to={appViewToPath('ambient', workspaceSlug)}
           className="flex items-center space-x-2.5 cursor-pointer"
         >
           <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white shadow-sm shadow-blue-500/30">
@@ -209,7 +209,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
         {/* Quick New Rx Action */}
         <Link
-          to={appViewToPath('rx')}
+          to={appViewToPath('rx', workspaceSlug)}
           className="flex items-center space-x-1 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-all shadow-sm shadow-blue-600/30"
           title="Create New Digital Prescription"
         >
