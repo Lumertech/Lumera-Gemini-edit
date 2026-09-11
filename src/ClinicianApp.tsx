@@ -609,6 +609,8 @@ export default function ClinicianApp() {
               isSpecialtyLocked={isSpecialtyLocked}
               lockedSpecialty={lockedSpecialty}
               onProceedToBilling={() => setCurrentView('billing')}
+              appointments={appointments}
+              onBookFollowUp={async (input) => persistAppointmentCreate(input)}
             />
           )}
 

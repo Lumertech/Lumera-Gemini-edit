@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   Activity, 
   Dumbbell, 
@@ -29,6 +29,8 @@ interface PhysiotherapyRxModuleProps {
   onUpdateAssessment: (assessment: PhysiotherapyAssessment) => void;
   onUpdateProcedures: (procedures: PhysiotherapyProcedure[]) => void;
   onUpdateExercises: (exercises: PrescribedExercise[]) => void;
+  preferredSubTab?: 'assessment' | 'procedures' | 'exercises';
+  hepRevision?: number;
 }
 
 export const PhysiotherapyRxModule: React.FC<PhysiotherapyRxModuleProps> = ({
@@ -37,9 +39,15 @@ export const PhysiotherapyRxModule: React.FC<PhysiotherapyRxModuleProps> = ({
   exercises,
   onUpdateAssessment,
   onUpdateProcedures,
-  onUpdateExercises
+  onUpdateExercises,
+  preferredSubTab,
+  hepRevision,
 }) => {
   const [activeSubTab, setActiveSubTab] = useState<'assessment' | 'procedures' | 'exercises'>('assessment');
+
+  useEffect(() => {
+    if (preferredSubTab) setActiveSubTab(preferredSubTab);
+  }, [preferredSubTab, hepRevision]);
   const [exerciseFilter, setExerciseFilter] = useState<string>('All');
   const [showCatalogModal, setShowCatalogModal] = useState(false);
   const [showProcedureModal, setShowProcedureModal] = useState(false);

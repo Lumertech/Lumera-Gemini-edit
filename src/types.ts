@@ -500,6 +500,9 @@ export interface Prescription {
   advice: string[];
   dietInstructions?: string;
   followUpDate: string;
+  followUpTimeSlot?: string;
+  followUpAppointmentId?: string;
+  followUpBookingRef?: string;
   clinicName: string;
   clinicAddress: string;
   clinicPhone: string;
