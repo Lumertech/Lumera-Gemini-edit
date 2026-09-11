@@ -33,3 +33,38 @@ describe("LoginPage create-clinic / register defaults (founder P0)", () => {
     assert.match(loginSrc, /initialRegisterPracticeType\(window\.location\.search\)/);
   });
 });
+
+describe("LoginPage Google SSO visibility (CoS UX hotfix)", () => {
+  it("hides Google until oauth-config explicitly allows sandbox client OAuth", () => {
+    assert.match(
+      loginSrc,
+      /const showGoogleOAuth = oauthConfig\?\.sandboxClientOAuthAllowed === true/
+    );
+    assert.match(loginSrc, /useState<\{[\s\S]*sandboxClientOAuthAllowed: boolean;[\s\S]*\} \| null>\(null\)/);
+    assert.match(loginSrc, /provider === "google" && oauthConfig\?\.sandboxClientOAuthAllowed !== true/);
+  });
+
+  it("gates both Google button clusters and leaves Facebook always rendered", () => {
+    const googleClicks = loginSrc.match(/handleOAuthSignIn\("google"\)/g) || [];
+    const facebookClicks = loginSrc.match(/handleOAuthSignIn\("facebook"\)/g) || [];
+    assert.equal(googleClicks.length, 2);
+    assert.equal(facebookClicks.length, 2);
+    assert.match(loginSrc, /data-testid="oauth-google-signin"/);
+    assert.match(loginSrc, /data-testid="oauth-google-register"/);
+    assert.match(loginSrc, /data-testid="oauth-facebook-signin"/);
+    assert.match(loginSrc, /data-testid="oauth-facebook-register"/);
+
+    const signinGoogleBlock = loginSrc.slice(
+      loginSrc.indexOf("data-testid=\"oauth-google-signin\""),
+      loginSrc.indexOf("data-testid=\"oauth-facebook-signin\"")
+    );
+    const registerGoogleBlock = loginSrc.slice(
+      loginSrc.indexOf("data-testid=\"oauth-google-register\""),
+      loginSrc.indexOf("data-testid=\"oauth-facebook-register\"")
+    );
+    assert.match(loginSrc, /\{showGoogleOAuth && \(/);
+    assert.equal((loginSrc.match(/\{showGoogleOAuth && \(/g) || []).length, 2);
+    assert.match(signinGoogleBlock, /Google/);
+    assert.match(registerGoogleBlock, /Google Sign-In/);
+  });
+});
