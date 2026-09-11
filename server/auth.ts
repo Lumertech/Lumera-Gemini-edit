@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 import jwt from "jsonwebtoken";
+import { isDemoAccountEmail } from "../src/lib/demoAccounts.ts";
 import { getDb, publicUser, type DbUser, type UserRole } from "./db.ts";
 import { clinicTenantAccessError } from "./platform-tenants.ts";
 
@@ -235,13 +236,27 @@ export const USER_MANAGER_ROLES: UserRole[] = ["super_admin", "polyclinic_admin"
 export const PASSWORD_SESSION_ROLES: UserRole[] = ["super_admin", "polyclinic_admin", "CLINIC_ADMIN"];
 
 /**
+ * Seeded product-demo matrix only (`*@lumera.me` from DEMO_LOGIN_MATRIX).
+ * Sandbox/demo password session for www/Clinical UX smoke — not a production clinic auth weaken.
+ * Never matches arbitrary clinic domains or unseeded @lumera.me addresses.
+ */
+export function isSeededDemoPasswordSessionEmail(email?: string | null): boolean {
+  const value = String(email || "").trim().toLowerCase();
+  return value.endsWith("@lumera.me") && isDemoAccountEmail(value);
+}
+
+/**
  * Production email+password session — no WhatsApp OTP required.
  * MUST: super_admin / admin (role alias + admin@lumera.me). Clinic admins included so desk login is not Graph-gated.
+ * Seeded @lumera.me demos (doctor, reception, pack aliases, patient) are OTP-safe the same way —
+ * Clinical UX chrome smoke on www must not invent OTP codes. Client skipOtp stays ignored
+ * for everyone outside this allowlist.
  */
 export function allowPasswordLoginWithoutOtp(user?: { role?: string; email?: string } | null): boolean {
   const role = String(user?.role || "");
   const email = String(user?.email || "").trim().toLowerCase();
   if (email === "admin@lumera.me") return true;
+  if (isSeededDemoPasswordSessionEmail(email)) return true;
   if (role === "admin") return true;
   return (PASSWORD_SESSION_ROLES as readonly string[]).includes(role);
 }

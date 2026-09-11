@@ -4,6 +4,8 @@ Shared password for every seeded `@lumera.me` login: **`Lumera@2026`**.
 
 This is a local / staging matrix. It is **not** production. ABDM paths are NHA sandbox — not certified.
 
+**OTP honesty (www / sandbox smoke):** seeded product-demo emails in this matrix complete email+password login with `requiresOtp: false` — a sandbox/demo password session, same path as `#56` admin desk login. WhatsApp OTP is not invented in chat and is not echoed in production JSON. This does **not** weaken auth for real clinic emails (any domain other than the seeded `@lumera.me` allowlist still requires Graph OTP in production). Client `skipOtp` is never honored in production for non-allowlisted users.
+
 Product table (login picker lists these first): `admin@` · `reception@` · `gp.doctor@` · `physio.doctor@` · `dentist.doctor@` · `spa.doctor@` · `therapist@` · `consultant@`. `dentist@` / `physio@` / `wellness@` / medical `cardiology@`… remain extras.
 
 | Email | Role | Practice type | Practice line | Specialty pack | Lands on |
