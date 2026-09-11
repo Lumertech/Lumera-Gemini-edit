@@ -70,6 +70,34 @@ export function sanitizePhoneDigits(raw: string): string {
   return leadingPlus ? `+${digits}` : digits;
 }
 
+/**
+ * National (local) digits for an inline country-code + number row.
+ * Strips a pasted international prefix when it matches `countryCode`.
+ */
+export function sanitizeNationalPhoneDigits(raw: string, countryCode = ""): string {
+  let digits = raw.replace(/\D/g, "");
+  const codeDigits = countryCode.replace(/\D/g, "");
+  if (codeDigits && digits.startsWith(codeDigits) && digits.length >= codeDigits.length + 8) {
+    digits = digits.slice(codeDigits.length);
+  }
+  return digits;
+}
+
+/** Compose E.164-ish WhatsApp number from an adjacent country code + national digits. */
+export function composeWhatsAppNumber(countryCode: string, national: string): string {
+  const trimmedNational = national.trim();
+  if (trimmedNational.startsWith("+")) return sanitizePhoneDigits(trimmedNational);
+  const n = trimmedNational.replace(/\D/g, "");
+  if (!n) return "";
+  const code = countryCode.trim();
+  const codeDigits = code.replace(/\D/g, "");
+  if (codeDigits && n.startsWith(codeDigits) && n.length > codeDigits.length + 6) {
+    return `+${n}`;
+  }
+  const prefix = code.startsWith("+") ? code : codeDigits ? `+${codeDigits}` : "";
+  return `${prefix}${n}`;
+}
+
 export const REMEMBER_EMAIL_KEY = "lumera.rememberEmail";
 
 export function readRememberedLoginEmail(): string {

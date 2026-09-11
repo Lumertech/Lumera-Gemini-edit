@@ -6,7 +6,6 @@ import {
   Eye,
   EyeOff,
   Building2,
-  Phone,
   Mail,
   Lock,
   ArrowRight,
@@ -28,7 +27,8 @@ import {
   readRememberedLoginEmail,
   REGISTER_EMAIL_PLACEHOLDER,
   REGISTER_PASSWORD_PLACEHOLDER,
-  sanitizePhoneDigits,
+  composeWhatsAppNumber,
+  sanitizeNationalPhoneDigits,
 } from "../lib/loginFormDefaults";
 import { Link } from "react-router-dom";
 import { goAfterAuth, useNav } from "../nav/NavigationContext";
@@ -68,6 +68,68 @@ const COUNTRIES = [
   { name: "Australia", code: "+61", timezone: "AEST (UTC+10:00)" },
 ];
 
+type DialCountry = (typeof COUNTRIES)[number];
+
+/** Single visual field: country code sits next to the national WhatsApp number. */
+const WhatsAppPhoneRow: React.FC<{
+  id: string;
+  testId: string;
+  country: DialCountry;
+  onCountryChange: (country: DialCountry) => void;
+  value: string;
+  onValueChange: (national: string) => void;
+  placeholder: string;
+  accent?: "green" | "purple";
+}> = ({ id, testId, country, onCountryChange, value, onValueChange, placeholder, accent = "green" }) => {
+  const focusBorder = accent === "green" ? "focus-within:border-green-500" : "focus-within:border-purple-500";
+  return (
+    <div
+      data-testid={`${testId}-row`}
+      className={`flex items-stretch rounded-xl bg-slate-950 border border-slate-700 overflow-hidden ${focusBorder}`}
+    >
+      <label htmlFor={`${id}-country`} className="sr-only">
+        Country code
+      </label>
+      <div className="relative shrink-0">
+        <select
+          id={`${id}-country`}
+          data-testid={`${testId}-country`}
+          aria-label="Country code"
+          value={country.code}
+          onChange={(e) => {
+            const found = COUNTRIES.find((c) => c.code === e.target.value);
+            if (found) onCountryChange(found);
+          }}
+          className="h-full min-h-11 appearance-none cursor-pointer bg-slate-900/70 pl-3 pr-7 text-sm font-medium text-slate-100 border-0 border-r border-slate-700 focus:outline-none"
+        >
+          {COUNTRIES.map((c) => (
+            <option key={c.code} value={c.code} className="bg-slate-900 text-white">
+              {c.code}
+            </option>
+          ))}
+        </select>
+        <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-500">
+          ▾
+        </span>
+      </div>
+      <input
+        id={id}
+        data-testid={testId}
+        name="tel"
+        type="tel"
+        autoComplete="tel-national"
+        required
+        inputMode="numeric"
+        pattern="[0-9]*"
+        value={value}
+        onChange={(e) => onValueChange(sanitizeNationalPhoneDigits(e.target.value, country.code))}
+        placeholder={placeholder}
+        className="min-w-0 flex-1 bg-transparent pl-3 pr-3.5 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none"
+      />
+    </div>
+  );
+};
+
 export const LoginPage: React.FC = () => {
   const {
     login,
@@ -100,6 +162,7 @@ export const LoginPage: React.FC = () => {
   const [email, setEmail] = useState(rememberedEmail || publicLoginDefaults.email);
   const [password, setPassword] = useState(publicLoginDefaults.password);
   const [whatsappPhone, setWhatsappPhone] = useState(publicLoginDefaults.whatsappPhone);
+  const [loginCountry, setLoginCountry] = useState(COUNTRIES[0]);
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(Boolean(rememberedEmail));
 
@@ -331,7 +394,8 @@ export const LoginPage: React.FC = () => {
   // Handle WhatsApp Phone Sign In
   const handleWhatsAppSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!sanitizePhoneDigits(whatsappPhone).replace(/\D/g, "")) {
+    const fullPhone = composeWhatsAppNumber(loginCountry.code, whatsappPhone);
+    if (!fullPhone.replace(/\D/g, "")) {
       setError("Please enter your registered WhatsApp phone number.");
       return;
     }
@@ -341,10 +405,10 @@ export const LoginPage: React.FC = () => {
     setSuccessMsg("");
 
     try {
-      const res = await sendWhatsAppOtp(whatsappPhone.trim(), "", "login", "Clinician");
+      const res = await sendWhatsAppOtp(fullPhone, "", "login", "Clinician");
       if (res.ok && res.verificationId) {
         setOtpVerificationId(res.verificationId);
-        setOtpPhone(res.phone || whatsappPhone);
+        setOtpPhone(res.phone || fullPhone);
         setOtpEmail("");
         setDemoOtpCode(res.demoOtp || "");
         setOtpPurpose("login");
@@ -473,9 +537,7 @@ export const LoginPage: React.FC = () => {
     setError("");
     setSuccessMsg("");
 
-    const fullPhone = adminPhone.startsWith("+")
-      ? adminPhone
-      : `${selectedCountry.code} ${adminPhone.trim()}`;
+    const fullPhone = composeWhatsAppNumber(selectedCountry.code, adminPhone);
 
     try {
       const res = await registerClinic({
@@ -1050,26 +1112,19 @@ export const LoginPage: React.FC = () => {
                 ) : (
                   <form onSubmit={handleWhatsAppSignIn} className="space-y-3.5">
                     <div>
-                      <label className="block text-xs font-semibold text-slate-300 mb-1">
+                      <label htmlFor="login-whatsapp" className="block text-xs font-semibold text-slate-300 mb-1">
                         Registered WhatsApp Phone Number
                       </label>
-                      <div className="relative">
-                        <Phone className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
-                        <input
-                          id="login-whatsapp"
-                          data-testid="login-whatsapp"
-                          name="tel"
-                          type="tel"
-                          autoComplete="tel"
-                          required
-                          inputMode="numeric"
-                          pattern="[0-9+]*"
-                          value={whatsappPhone}
-                          onChange={(e) => setWhatsappPhone(sanitizePhoneDigits(e.target.value))}
-                          placeholder={LOGIN_WHATSAPP_PLACEHOLDER}
-                          className="w-full pl-9 pr-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-green-500"
-                        />
-                      </div>
+                      <WhatsAppPhoneRow
+                        id="login-whatsapp"
+                        testId="login-whatsapp"
+                        country={loginCountry}
+                        onCountryChange={setLoginCountry}
+                        value={whatsappPhone}
+                        onValueChange={setWhatsappPhone}
+                        placeholder={LOGIN_WHATSAPP_PLACEHOLDER}
+                        accent="green"
+                      />
                       <p className="text-[11px] text-slate-400 mt-1">
                         A 6-digit OTP code will be dispatched to your WhatsApp.
                       </p>
@@ -1407,25 +1462,19 @@ export const LoginPage: React.FC = () => {
                   </div>
 
                   <div className="min-w-0">
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">
+                    <label htmlFor="register-phone" className="block text-xs font-semibold text-slate-300 mb-1">
                       WhatsApp Phone *
                     </label>
-                    <div className="relative">
-                      <Phone className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
-                      <input
-                        id="register-phone"
-                        name="tel"
-                        type="tel"
-                        autoComplete="tel"
-                        required
-                        inputMode="numeric"
-                        pattern="[0-9+]*"
-                        value={adminPhone}
-                        onChange={(e) => setAdminPhone(sanitizePhoneDigits(e.target.value))}
-                        placeholder={`${selectedCountry.code} 98234 55667`}
-                        className="w-full min-h-11 min-w-0 pl-9 pr-3 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
-                      />
-                    </div>
+                    <WhatsAppPhoneRow
+                      id="register-phone"
+                      testId="register-whatsapp"
+                      country={selectedCountry}
+                      onCountryChange={setSelectedCountry}
+                      value={adminPhone}
+                      onValueChange={setAdminPhone}
+                      placeholder="98234 55667"
+                      accent="purple"
+                    />
                   </div>
                 </div>
 

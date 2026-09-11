@@ -11,6 +11,8 @@ import {
   persistRememberedLoginEmail,
   readRememberedLoginEmail,
   REMEMBER_EMAIL_KEY,
+  composeWhatsAppNumber,
+  sanitizeNationalPhoneDigits,
   sanitizePhoneDigits,
   stripSeededPublicLoginValue,
 } from "./loginFormDefaults";
@@ -47,6 +49,15 @@ describe("public login form defaults", () => {
     assert.equal(sanitizePhoneDigits("98234abc55667"), "9823455667");
     assert.equal(sanitizePhoneDigits("+"), "+");
     assert.equal(sanitizePhoneDigits("++91-90000-11111"), "+919000011111");
+  });
+
+  it("keeps national WhatsApp digits next to a country code and composes E.164", () => {
+    assert.equal(sanitizeNationalPhoneDigits("98234 55667", "+91"), "9823455667");
+    assert.equal(sanitizeNationalPhoneDigits("+91 98234 55667", "+91"), "9823455667");
+    assert.equal(sanitizeNationalPhoneDigits("abc", "+91"), "");
+    assert.equal(composeWhatsAppNumber("+91", "98234 55667"), "+919823455667");
+    assert.equal(composeWhatsAppNumber("+91", ""), "");
+    assert.equal(composeWhatsAppNumber("+1", "4155552671"), "+14155552671");
   });
 
   it("never persists demo emails when Remember is opted in", () => {
@@ -98,11 +109,17 @@ describe("public login form defaults", () => {
     assert.match(loginPage, /autoComplete="current-password"/);
     assert.match(loginPage, /autoComplete="email"/);
     assert.match(loginPage, /autoComplete="new-password"/);
-    assert.match(loginPage, /autoComplete="tel"/);
-    assert.match(loginPage, /sanitizePhoneDigits/);
+    assert.match(loginPage, /autoComplete="tel-national"/);
+    assert.match(loginPage, /sanitizeNationalPhoneDigits/);
+    assert.match(loginPage, /composeWhatsAppNumber/);
     assert.match(loginPage, /data-testid="admin-password-login-note"/);
     assert.match(loginPage, /data-testid="login-password"/);
-    assert.match(loginPage, /data-testid="login-whatsapp"/);
+    assert.match(loginPage, /testId="login-whatsapp"/);
+    assert.match(loginPage, /data-testid=\{testId\}/);
+    assert.match(loginPage, /data-testid=\{\`\$\{testId\}-row\`\}/);
+    assert.match(loginPage, /data-testid=\{\`\$\{testId\}-country\`\}/);
+    assert.match(loginPage, /flex items-stretch rounded-xl/);
+    assert.match(loginPage, /aria-label="Country code"/);
     assert.match(loginPage, /useState\(publicLoginDefaults\.password\)/);
     assert.match(loginPage, /useState\(publicLoginDefaults\.whatsappPhone\)/);
   });
@@ -116,6 +133,17 @@ describe("public login form defaults", () => {
     assert.doesNotMatch(landingPage, /loginNext:\s*"admin"/);
     assert.match(landingPage, /loginMode:\s*"register"/);
     assert.match(landingPage, /Try for free/);
+  });
+
+  it("shows landing languages only in the scrolling strip, not a static name list", () => {
+    assert.match(landingPage, /export const REGIONAL_LANGUAGES/);
+    assert.match(landingPage, /animate-marquee/);
+    assert.match(landingPage, /\[\.\.\.REGIONAL_LANGUAGES, \.\.\.REGIONAL_LANGUAGES, \.\.\.REGIONAL_LANGUAGES\]/);
+    assert.match(landingPage, /regional Indian languages/);
+    assert.doesNotMatch(landingPage, /हिंदी \(Hindi\)/);
+    assert.doesNotMatch(landingPage, /தமிழ் \(Tamil\)/);
+    assert.doesNotMatch(landingPage, /Hindi, Tamil, Telugu, Marathi, Bengali/);
+    assert.doesNotMatch(landingPage, /Regional Language Scripts in Sub-headline/);
   });
 
   it("keeps the create-clinic card fluid on phone, tablet, and desktop", () => {
