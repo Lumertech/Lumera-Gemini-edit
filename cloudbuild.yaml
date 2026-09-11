@@ -23,7 +23,10 @@ options:
 timeout: 1200s
 
 steps:
-  # 1. Build the repo Dockerfile (Node 22, npm run build / npm start, PORT).
+  # 1. Build the repo Dockerfile (Node 22, npm run build / npm start).
+  #    Container honors injected PORT (Cloud Run / AI Studio often 3000).
+  #    See deploy/CLOUD_RUN_BOOT_CHECK.md — JWT_SECRET must already exist
+  #    on the service or production exits before listen (looks like a PORT timeout).
   - name: gcr.io/cloud-builders/docker
     id: build
     args:
@@ -59,7 +62,10 @@ steps:
           --image "${_IMAGE}"
 
   # 4. Deploy the built image only. Never pass --source here.
-  #    --update-env-vars pins public production values without wiping secrets.
+  #    --update-env-vars pins APP_URL/NODE_ENV only. Do NOT use --set-env-vars
+  #    (that wipes JWT_SECRET and other secrets). JWT_SECRET must already exist
+  #    on the service (Secret Manager or Console). Missing JWT_SECRET makes
+  #    production exit before listen — Cloud Run then reports a PORT timeout.
   - name: gcr.io/google.com/cloudsdktool/cloud-sdk
     id: deploy
     entrypoint: gcloud
