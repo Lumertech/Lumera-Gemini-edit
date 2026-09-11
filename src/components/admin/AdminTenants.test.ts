@@ -10,6 +10,7 @@ const panel = readFileSync(join(here, "TenantSubscriptionPanel.tsx"), "utf8");
 const shell = readFileSync(join(here, "AdminShell.tsx"), "utf8");
 const subs = readFileSync(join(here, "AdminSubscriptions.tsx"), "utf8");
 const auth = readFileSync(join(here, "../../auth/AuthContext.tsx"), "utf8");
+const catalog = readFileSync(join(here, "../../lib/adminTenants.ts"), "utf8");
 
 describe("Superadmin Tenants console (#54 UI)", () => {
   it("lists tenants from Platform APIs and persists create / status / subscription", () => {
@@ -36,9 +37,9 @@ describe("Superadmin Tenants console (#54 UI)", () => {
     assert.match(panel, /honestyCaption/);
     assert.doesNotMatch(panel, /billingSource: "razorpay"/);
     assert.doesNotMatch(panel, /billingSource: "paid"/);
-    assert.match(panel, /trial/);
-    assert.match(panel, /past_due/);
-    assert.match(panel, /canceled/);
+    assert.match(panel, /SUBSCRIPTION_STATUSES/);
+    assert.match(catalog, /"past_due"/);
+    assert.match(catalog, /"canceled"/);
     assert.match(subs, /honestyCaption/);
     assert.match(subs, /billingSource: "manual"/);
     assert.match(subs, /Tenant subscriptions \(SoT\)/);
