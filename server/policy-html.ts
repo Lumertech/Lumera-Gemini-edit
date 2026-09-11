@@ -57,6 +57,7 @@ export function renderPolicyDocumentHtml(title: string, body: string, updatedAt?
   <header>
     <p class="notice"><strong>Lumera Solutions LLP</strong> — clinic software. Lumera is not a certified Meta Tech Provider. Meta App Review is not submitted.</p>
     <nav>
+      <a href="/" data-testid="policy-back">Back</a>
       <a href="/">Home</a>
       <a href="/privacy-policy">Privacy Policy</a>
       <a href="/terms-of-service">Terms of Service</a>

@@ -20,6 +20,7 @@ import {
   type UserStatus,
 } from "./db.ts";
 import { persistSpecialtyPackId } from "../src/lib/specialtyPack.ts";
+import { PRODUCT_NAME } from "../src/brand.ts";
 import { createClinicalRouter } from "./clinical.ts";
 import { createBillingRouter } from "./billing.ts";
 import {
@@ -206,7 +207,7 @@ function assemblePublicSite() {
   }
   return {
     settings: {
-      brandName: settings.brand_name || "Lumera",
+      brandName: settings.brand_name || PRODUCT_NAME,
       badgeText: settings.badge_text || "",
       heroTitle: settings.hero_title || "",
       heroSubtitle: settings.hero_subtitle || "",

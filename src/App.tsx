@@ -1,7 +1,7 @@
 import React, { useEffect } from "react";
 import { BrowserRouter } from "react-router-dom";
-import { Sparkles } from "lucide-react";
 import { AuthProvider, destinationAfterAuth, homeSurfaceForRole, useAuth } from "./auth/AuthContext";
+import { BrandMark } from "./components/BrandMark";
 import { NavigationProvider, goAfterAuth, useNav } from "./nav/NavigationContext";
 import { decideChrome, nextAuthenticatedSurface, surfaceToPath } from "./nav/surfaces";
 import { LandingPage } from "./components/LandingPage";
@@ -19,10 +19,11 @@ function PublicBootSplash() {
       data-testid="public-boot-splash"
       className="h-full w-full flex flex-col items-center justify-center bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 text-white"
     >
-      <div className="h-12 w-12 rounded-2xl bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-purple-500/30 mb-4">
-        <Sparkles className="w-6 h-6 text-white" />
-      </div>
-      <p className="font-manrope text-lg font-bold tracking-tight">Lumera</p>
+      <BrandMark
+        size="lg"
+        layout="stack"
+        wordmarkClassName="font-manrope text-lg font-bold tracking-tight text-white"
+      />
       <p className="text-xs text-slate-400 mt-1">Practice operating system</p>
     </div>
   );

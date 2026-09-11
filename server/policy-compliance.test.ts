@@ -172,6 +172,8 @@ describe("Compliance #26 public policy HTML + deletion-status", () => {
       if (p === "/privacy-policy") {
         assert.match(html, /\bSTOP\b/);
         assert.match(html, /DPDP/i);
+        assert.match(html, /data-testid="policy-back"/);
+        assert.match(html, /href="\/"[^>]*>Back/);
       }
       if (p === "/data-deletion-instructions") {
         assert.match(html, /https:\/\/www\.mylumera\.in\/api\/meta\/data-deletion/);

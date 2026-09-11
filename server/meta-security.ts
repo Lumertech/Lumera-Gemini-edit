@@ -163,7 +163,7 @@ export function buildMetaReadinessOverview(opts: {
   const passedCount = checklist.filter((c) => c.passed).length;
 
   return {
-    providerName: "Lumera Health Solutions LLP",
+    providerName: "Lumera Solutions LLP",
     providerType: "SANDBOX — not a certified Meta Tech Provider",
     certificationStatus: "NOT_CERTIFIED",
     environment: isProduction() ? "production" : "sandbox",

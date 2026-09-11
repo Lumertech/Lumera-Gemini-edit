@@ -71,7 +71,7 @@ export interface NavLocation {
 
 export const DEFAULT_NAV: NavLocation = {
   surface: "landing",
-  policySlug: "privacy",
+  policySlug: "",
   adminTab: DEFAULT_ADMIN_TAB,
   appView: DEFAULT_APP_VIEW,
   loginMode: "signin",
@@ -324,6 +324,10 @@ export function decideChrome(args: {
   }
 
   if (!authenticated) {
+    // Trust the URL: stale `legal`/`policy` state must not keep Privacy on `/`.
+    if (smartHome) {
+      return { boot: false, showAppChrome: false, renderSurface: "landing" };
+    }
     if (isProtectedSurface(surface)) {
       return { boot: false, showAppChrome: false, renderSurface: "login" };
     }
