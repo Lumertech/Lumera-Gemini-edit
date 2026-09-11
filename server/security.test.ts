@@ -11,6 +11,7 @@ import {
   allowSkipOtp,
   attachUser,
   getJwtSecret,
+  isSeededDemoPasswordSessionEmail,
   requireAuth,
   signJwtToken,
   verifyJwtToken,
@@ -18,6 +19,7 @@ import {
 import { createApiRouter } from "./api.ts";
 import { getDb, initDatabase } from "./db.ts";
 import { hashPassword } from "./password.ts";
+import { DEMO_LOGIN_MATRIX } from "../src/lib/demoAccounts.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -81,10 +83,11 @@ describe("Wave 1A PHI / auth lock", () => {
     assert.equal(allowSkipOtp("development"), true);
     assert.equal(allowSkipOtp("test"), true);
     assert.equal(allowPasswordLoginWithoutOtp({ role: "super_admin", email: "admin@lumera.me" }), true);
-    assert.equal(allowPasswordLoginWithoutOtp({ role: "doctor", email: "doctor@lumera.me" }), false);
+    assert.equal(allowPasswordLoginWithoutOtp({ role: "doctor", email: "doctor@lumera.me" }), true);
+    assert.equal(allowPasswordLoginWithoutOtp({ role: "doctor", email: "clinic.gp@example.com" }), false);
   });
 
-  it("password session without OTP is reserved for admin roles", () => {
+  it("password session without OTP is reserved for admin roles and seeded @lumera.me demos", () => {
     assert.equal(allowPasswordLoginWithoutOtp({ role: "super_admin" }), true);
     assert.equal(allowPasswordLoginWithoutOtp({ role: "admin" }), true);
     assert.equal(allowPasswordLoginWithoutOtp({ email: "admin@lumera.me", role: "doctor" }), true);
@@ -93,6 +96,19 @@ describe("Wave 1A PHI / auth lock", () => {
     assert.equal(allowPasswordLoginWithoutOtp({ role: "doctor" }), false);
     assert.equal(allowPasswordLoginWithoutOtp({ role: "receptionist" }), false);
     assert.equal(allowPasswordLoginWithoutOtp({ role: "patient" }), false);
+    assert.equal(allowPasswordLoginWithoutOtp({ role: "doctor", email: "doctor@lumera.me" }), true);
+    assert.equal(allowPasswordLoginWithoutOtp({ role: "receptionist", email: "receptionist@lumera.me" }), true);
+    assert.equal(allowPasswordLoginWithoutOtp({ role: "receptionist", email: "reception@lumera.me" }), true);
+    assert.equal(allowPasswordLoginWithoutOtp({ role: "patient", email: "patient@lumera.me" }), true);
+    assert.equal(allowPasswordLoginWithoutOtp({ role: "doctor", email: "gp.doctor@lumera.me" }), true);
+    assert.equal(allowPasswordLoginWithoutOtp({ role: "doctor", email: "physio.doctor@lumera.me" }), true);
+    assert.equal(isSeededDemoPasswordSessionEmail("doctor@clinic.com"), false);
+    assert.equal(isSeededDemoPasswordSessionEmail("suspended.clinic@lumera.me"), false);
+    assert.equal(allowPasswordLoginWithoutOtp({ role: "doctor", email: "anyone@clinic.com" }), false);
+    for (const acct of DEMO_LOGIN_MATRIX) {
+      assert.equal(isSeededDemoPasswordSessionEmail(acct.email), true, acct.email);
+      assert.equal(allowPasswordLoginWithoutOtp(acct), true, acct.email);
+    }
   });
 
   it("does not echo OTP codes in production", () => {
@@ -341,12 +357,66 @@ describe("Wave 1A PHI / auth lock", () => {
     }
   });
 
-  it("production login ignores skipOtp and does not mint a session", async () => {
+  async function insertNonDemoDoctor(email: string) {
+    const stamp = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    const now = new Date().toISOString();
+    getDb()
+      .prepare(
+        `INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, onboarding_completed, practice_type, last_login, created_at)
+         VALUES (?, ?, ?, ?, ?, 'doctor', 'active', ?, 1, 'individual', ?, ?)`
+      )
+      .run(
+        `user-nondemo-doc-${stamp}`,
+        "tenant-lumera-main",
+        email,
+        hashPassword("Lumera@2026"),
+        "Non-demo Clinic Doctor",
+        "+91 97000 00999",
+        now,
+        now
+      );
+  }
+
+  it("production seeded demo doctor/reception/patient mint a password session without OTP", async () => {
     const prev = process.env.NODE_ENV;
     process.env.NODE_ENV = "production";
     try {
+      for (const email of [
+        "doctor@lumera.me",
+        "receptionist@lumera.me",
+        "reception@lumera.me",
+        "patient@lumera.me",
+        "gp.doctor@lumera.me",
+      ]) {
+        const login = await jsonRequest(port, "POST", "/api/auth/login", {
+          email,
+          password: "Lumera@2026",
+        });
+        assert.equal(login.status, 200, `${email}: ${String(login.json.error || "demo prod login")}`);
+        assert.equal(login.json.requiresOtp, false, email);
+        assert.ok(login.json.token, email);
+        assert.equal(login.json.demoOtp, undefined, email);
+        assert.equal(login.json.verificationId, undefined, email);
+        assert.equal((login.json.user as { email?: string } | undefined)?.email, email);
+      }
+    } finally {
+      if (prev === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = prev;
+    }
+  });
+
+  it("production login ignores skipOtp for non-demo emails and does not mint a session", async () => {
+    const email = `clinic.gp.${Date.now().toString(36)}@um-test.example`;
+    await insertNonDemoDoctor(email);
+    const prev = process.env.NODE_ENV;
+    const prevToken = process.env.META_ACCESS_TOKEN;
+    const prevPhone = process.env.META_PHONE_NUMBER_ID;
+    process.env.NODE_ENV = "production";
+    delete process.env.META_ACCESS_TOKEN;
+    delete process.env.META_PHONE_NUMBER_ID;
+    try {
       const login = await jsonRequest(port, "POST", "/api/auth/login", {
-        email: "doctor@lumera.me",
+        email,
         password: "Lumera@2026",
         skipOtp: true,
       });
@@ -360,6 +430,48 @@ describe("Wave 1A PHI / auth lock", () => {
     } finally {
       if (prev === undefined) delete process.env.NODE_ENV;
       else process.env.NODE_ENV = prev;
+      if (prevToken === undefined) delete process.env.META_ACCESS_TOKEN;
+      else process.env.META_ACCESS_TOKEN = prevToken;
+      if (prevPhone === undefined) delete process.env.META_PHONE_NUMBER_ID;
+      else process.env.META_PHONE_NUMBER_ID = prevPhone;
+    }
+  });
+
+  it("production Graph credentials still skip OTP only for seeded demos, not clinic doctors", async () => {
+    const email = `clinic.graph.${Date.now().toString(36)}@um-test.example`;
+    await insertNonDemoDoctor(email);
+    const prev = process.env.NODE_ENV;
+    const prevToken = process.env.META_ACCESS_TOKEN;
+    const prevPhone = process.env.META_PHONE_NUMBER_ID;
+    process.env.NODE_ENV = "production";
+    process.env.META_ACCESS_TOKEN = "EAAGisAlongEnoughTokenWithoutEllipsis0123456789abcdef";
+    process.env.META_PHONE_NUMBER_ID = "123456789012345";
+    try {
+      const demo = await jsonRequest(port, "POST", "/api/auth/login", {
+        email: "doctor@lumera.me",
+        password: "Lumera@2026",
+      });
+      assert.equal(demo.status, 200);
+      assert.equal(demo.json.requiresOtp, false);
+      assert.ok(demo.json.token);
+      assert.equal(demo.json.demoOtp, undefined);
+
+      const clinic = await jsonRequest(port, "POST", "/api/auth/login", {
+        email,
+        password: "Lumera@2026",
+        skipOtp: true,
+      });
+      assert.notEqual(clinic.status, 200);
+      assert.equal(clinic.json.requiresOtp, undefined);
+      assert.equal(clinic.json.token, undefined);
+      assert.equal(clinic.json.demoOtp, undefined);
+    } finally {
+      if (prev === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = prev;
+      if (prevToken === undefined) delete process.env.META_ACCESS_TOKEN;
+      else process.env.META_ACCESS_TOKEN = prevToken;
+      if (prevPhone === undefined) delete process.env.META_PHONE_NUMBER_ID;
+      else process.env.META_PHONE_NUMBER_ID = prevPhone;
     }
   });
 
