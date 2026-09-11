@@ -33,6 +33,9 @@ usage() {
 Usage:
   deploy/clear-cloud-run-source-annotation.sh [options]
 
+Flags accept `--name VALUE` or `--name=VALUE` (Cloud Build / bash
+passes the latter as a single argv token).
+
 Live (default):
   --service NAME     Cloud Run service (default: lumera-gemini-edit)
   --region REGION    Region (default: asia-south1)
@@ -50,11 +53,17 @@ EOF
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --service=*) SERVICE="${1#*=}"; shift ;;
     --service) SERVICE="$2"; shift 2 ;;
+    --region=*) REGION="${1#*=}"; shift ;;
     --region) REGION="$2"; shift 2 ;;
+    --project=*) PROJECT="${1#*=}"; shift ;;
     --project) PROJECT="$2"; shift 2 ;;
+    --image=*) IMAGE="${1#*=}"; shift ;;
     --image) IMAGE="$2"; shift 2 ;;
+    --file=*) FILE="${1#*=}"; shift ;;
     --file) FILE="$2"; shift 2 ;;
+    --out=*) OUT="${1#*=}"; shift ;;
     --out) OUT="$2"; shift 2 ;;
     --dry-run) DRY_RUN=1; shift ;;
     --self-test) SELF_TEST=1; shift ;;
@@ -158,6 +167,46 @@ YAML
       fail=1
     fi
   fi
+
+  # Parser smoke: Cloud Build passes `--service=VALUE` as one argv token.
+  # Offline --file/--out path needs no gcloud.
+  local tmp_in tmp_out parser_err
+  tmp_in="$(mktemp)"
+  tmp_out="$(mktemp)"
+  parser_err="$(mktemp)"
+  cat >"$tmp_in" <<'YAML'
+spec:
+  template:
+    spec:
+      containers:
+      - image: gcr.io/demo/app:old
+YAML
+  if ! bash "${BASH_SOURCE[0]}" \
+      --service=lumera-gemini-edit \
+      --region=asia-south1 \
+      --project=demo-project \
+      --image=gcr.io/demo/app:abc \
+      --file="$tmp_in" \
+      --out="$tmp_out" \
+      2>"$parser_err"; then
+    echo "FAIL: --service=lumera-gemini-edit argv form was rejected" >&2
+    cat "$parser_err" >&2
+    fail=1
+  elif grep -q 'Unknown argument' "$parser_err"; then
+    echo "FAIL: --flag=VALUE produced Unknown argument" >&2
+    cat "$parser_err" >&2
+    fail=1
+  fi
+  if ! bash "${BASH_SOURCE[0]}" \
+      --service lumera-gemini-edit \
+      --file "$tmp_in" \
+      --out "$tmp_out" \
+      2>"$parser_err"; then
+    echo "FAIL: --service VALUE argv form was rejected" >&2
+    cat "$parser_err" >&2
+    fail=1
+  fi
+  rm -f "$tmp_in" "$tmp_out" "$parser_err"
 
   if [[ "$fail" -ne 0 ]]; then
     echo "self-test failed" >&2
