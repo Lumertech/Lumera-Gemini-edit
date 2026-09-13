@@ -3,10 +3,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { after, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import express from "express";
 import { createApiRouter } from "./api.ts";
-import { attachUser } from "./auth.ts";
 import { initDatabase } from "./db.ts";
+import { jsonRequest, startTestServer } from "./test-http.ts";
 import { resolveFederatedIdentity } from "./facebook-oauth.ts";
 import {
   assertGoogleIdTokenAudience,
@@ -255,16 +254,13 @@ describe("Google OAuth HTTP routes", () => {
     process.env.GOOGLE_CLIENT_SECRET = "GOCSPX-unit-test-not-a-real-secret";
     delete process.env.GOOGLE_REDIRECT_URI;
 
-    const app = express();
-    app.use("/api", createApiRouter());
-    const server = app.listen(0, "127.0.0.1");
+    const server = await startTestServer((app) => {
+      app.use("/api", createApiRouter());
+    });
     try {
-      await new Promise<void>((resolve) => server.once("listening", () => resolve()));
-      const addr = server.address();
-      if (!addr || typeof addr === "string") throw new Error("no port");
-      const res = await fetch(`http://127.0.0.1:${addr.port}/api/auth/oauth-config`);
+      const res = await jsonRequest(server.port, "GET", "/api/auth/oauth-config");
       assert.equal(res.status, 200);
-      const json = (await res.json()) as {
+      const json = res.json as {
         googleConfigured?: boolean;
         googleRedirectUri?: string;
         sandboxClientOAuthAllowed?: boolean;
@@ -273,7 +269,7 @@ describe("Google OAuth HTTP routes", () => {
       assert.equal(json.googleRedirectUri, "https://www.mylumera.in/api/auth/google/callback");
       assert.equal(json.sandboxClientOAuthAllowed, false);
     } finally {
-      await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+      await server.close();
     }
   });
 
@@ -284,14 +280,11 @@ describe("Google OAuth HTTP routes", () => {
     process.env.GOOGLE_CLIENT_ID = "1234567890-abc.apps.googleusercontent.com";
     process.env.GOOGLE_CLIENT_SECRET = "GOCSPX-unit-test-not-a-real-secret";
 
-    const app = express();
-    app.use("/api", createApiRouter());
-    const server = app.listen(0, "127.0.0.1");
+    const server = await startTestServer((app) => {
+      app.use("/api", createApiRouter());
+    });
     try {
-      await new Promise<void>((resolve) => server.once("listening", () => resolve()));
-      const addr = server.address();
-      if (!addr || typeof addr === "string") throw new Error("no port");
-      const res = await fetch(`http://127.0.0.1:${addr.port}/api/auth/google`, { redirect: "manual" });
+      const res = await jsonRequest(server.port, "GET", "/api/auth/google");
       assert.equal(res.status, 302);
       const location = res.headers.get("location") || "";
       const url = new URL(location);
@@ -299,7 +292,7 @@ describe("Google OAuth HTTP routes", () => {
       assert.equal(url.searchParams.get("redirect_uri"), "https://www.mylumera.in/api/auth/google/callback");
       assert.ok(url.searchParams.get("state"));
     } finally {
-      await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+      await server.close();
     }
   });
 
@@ -309,52 +302,40 @@ describe("Google OAuth HTTP routes", () => {
     delete process.env.GOOGLE_CLIENT_ID;
     delete process.env.GOOGLE_CLIENT_SECRET;
 
-    const app = express();
-    app.use("/api", createApiRouter());
-    const server = app.listen(0, "127.0.0.1");
+    const server = await startTestServer((app) => {
+      app.use("/api", createApiRouter());
+    });
     try {
-      await new Promise<void>((resolve) => server.once("listening", () => resolve()));
-      const addr = server.address();
-      if (!addr || typeof addr === "string") throw new Error("no port");
-      const res = await fetch(`http://127.0.0.1:${addr.port}/api/auth/google`, { redirect: "manual" });
+      const res = await jsonRequest(server.port, "GET", "/api/auth/google");
       assert.equal(res.status, 503);
-      const json = (await res.json()) as { error?: string };
-      assert.match(json.error || "", /GOOGLE_CLIENT_ID/);
+      assert.match(String(res.json.error || ""), /GOOGLE_CLIENT_ID/);
     } finally {
-      await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+      await server.close();
     }
   });
 
   it("POST /api/auth/oauth rejects production client-email Google login", async () => {
-    process.env.NODE_ENV = "production";
     process.env.JWT_SECRET = "test-jwt-secret-lock-phi";
     delete process.env.GOOGLE_CLIENT_ID;
     delete process.env.GOOGLE_CLIENT_SECRET;
+    // sqlite fallback is forbidden while NODE_ENV=production; open the test db first.
+    delete process.env.NODE_ENV;
     initDatabase();
+    process.env.NODE_ENV = "production";
 
-    const app = express();
-    app.use(express.json());
-    app.use(attachUser);
-    app.use("/api", createApiRouter());
-    const server = app.listen(0, "127.0.0.1");
+    const server = await startTestServer((app) => {
+      app.use("/api", createApiRouter());
+    });
     try {
-      await new Promise<void>((resolve) => server.once("listening", () => resolve()));
-      const addr = server.address();
-      if (!addr || typeof addr === "string") throw new Error("no port");
-      const res = await fetch(`http://127.0.0.1:${addr.port}/api/auth/oauth`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          provider: "google",
-          profile: { email: "attacker@example.com", name: "Attacker" },
-          skipOtp: true,
-        }),
+      const res = await jsonRequest(server.port, "POST", "/api/auth/oauth", {
+        provider: "google",
+        profile: { email: "attacker@example.com", name: "Attacker" },
+        skipOtp: true,
       });
       assert.equal(res.status, 503);
-      const json = (await res.json()) as { error?: string };
-      assert.match(json.error || "", /GOOGLE_CLIENT_ID|not configured/i);
+      assert.match(String(res.json.error || ""), /GOOGLE_CLIENT_ID|not configured/i);
     } finally {
-      await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+      await server.close();
     }
   });
 });
