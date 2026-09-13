@@ -374,7 +374,7 @@ describe("Usage wallet billing", () => {
     assert.equal(publicWalletStatus(emptyTenant).balance, 0);
 
     const otp = await dispatchWhatsAppCloudMessage({
-      to: marquee,
+      to: "+919800011122",
       kind: "otp",
       otp: "123456",
       purpose: "login",
@@ -387,7 +387,7 @@ describe("Usage wallet billing", () => {
     assert.ok(publicWalletStatus(emptyTenant).balance < 0);
 
     const confirm = await dispatchWhatsAppCloudMessage({
-      to: marquee,
+      to: "+919800011122",
       kind: "book_confirmation",
       textBody: "confirmed",
       db: getDb(),
@@ -411,7 +411,7 @@ describe("Usage wallet billing", () => {
     publicWalletStatus(emptyTenant);
 
     const reminder = await dispatchWhatsAppCloudMessage({
-      to: marquee,
+      to: "+919800011122",
       kind: "appointment_reminder",
       textBody: "reminder",
       db: getDb(),
@@ -500,7 +500,7 @@ describe("Usage wallet billing", () => {
     const usageApi = fs.readFileSync(path.join(__dirname, "usage-billing-api.ts"), "utf8");
     assert.match(billing, /createRazorpayCollectOrder/);
     assert.match(billing, /decideRazorpayWebhookSignature/);
-    assert.match(usageApi, /purpose !== "wallet_topup"/);
+    assert.match(usageApi, /purpose !== \"wallet_topup\"/);
     assert.match(usageApi, /decideRazorpayWebhookSignature/);
     const usage = fs.readFileSync(path.join(__dirname, "usage-billing.ts"), "utf8");
     assert.match(usage, /ensureUsageWalletSchema/);
