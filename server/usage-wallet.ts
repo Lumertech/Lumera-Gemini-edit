@@ -128,10 +128,9 @@ export function getMarkupPercent(tenantId: string, resource: UsageResource, data
       `SELECT markup_percent FROM usage_markup_config
        WHERE scope = 'global' AND tenant_id = '' AND resource = ?`
     )
-      .get(resource) as { markup_percent: number } | undefined;
-    if (global && Number.isFinite(Number(global.markup_percent))) {
-      return Number(global.markup_percent);
-    }
+    .get(resource) as { markup_percent: number } | undefined;
+  if (global && Number.isFinite(Number(global.markup_percent))) {
+    return Number(global.markup_percent);
   }
   return DEFAULT_MARKUP_PERCENT;
 }
