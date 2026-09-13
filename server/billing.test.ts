@@ -69,3 +69,65 @@ function createClinicUser(label: string) {
   });
   return { tenantId, userId, email };
 }
+
+describe("Razorpay webhook signatures", () => {
+  const secret = "rzp_test_webhook_secret";
+  const body = '{"event":"payment.captured"}';
+
+  it("accepts a valid X-Razorpay-Signature", () => {
+    const sig = crypto.createHmac("sha256", secret).update(body).digest("hex");
+    assert.equal(verifyRazorpayWebhookSignature(body, sig, secret), true);
+  });
+
+  it("rejects a tampered payload", () => {
+    const sig = crypto.createHmac("sha256", secret).update(body).digest("hex");
+    assert.equal(verifyRazorpayWebhookSignature(body + "x", sig, secret), false);
+  });
+
+  it("fail-closes unsigned webhooks in production when the secret is missing", () => {
+    const decision = decideRazorpayWebhookSignature({
+      rawBody: body,
+      signatureHeader: undefined,
+      webhookSecret: "",
+      production: true,
+    });
+    assert.equal(decision.ok, false);
+    if (!decision.ok) assert.equal(decision.status, 500);
+  });
+
+  it("fail-closes unsigned webhooks in non-prod (sandbox mock is the only bypass)", () => {
+    const decision = decideRazorpayWebhookSignature({
+      rawBody: body,
+      signatureHeader: undefined,
+      webhookSecret: "",
+      production: false,
+    });
+    assert.equal(decision.ok, false);
+    if (!decision.ok) assert.equal(decision.status, 403);
+  });
+
+  it("fail-closes a bad signature even when the secret is present", () => {
+    const decision = decideRazorpayWebhookSignature({
+      rawBody: body,
+      signatureHeader: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      webhookSecret: secret,
+      production: false,
+    });
+    assert.equal(decision.ok, false);
+    if (!decision.ok) assert.equal(decision.status, 403);
+  });
+
+  it("treats replace-with-* Razorpay env placeholders as unset", () => {
+    assert.equal(isUnsetOrPlaceholder("replace-with-razorpay-key-id"), true);
+    assert.equal(isUnsetOrPlaceholder("replace-with-razorpay-key-secret"), true);
+    assert.equal(isUnsetOrPlaceholder("undefined"), true);
+    const prevId = process.env.RAZORPAY_KEY_ID;
+    const prevSecret = process.env.RAZORPAY_KEY_SECRET;
+    process.env.RAZORPAY_KEY_ID = "replace-with-razorpay-key-id";
+    process.env.RAZORPAY_KEY_SECRET = "replace-with-razorpay-key-secret";
+    assert.equal(razorpayKeysConfigured(), false);
+    if (prevId === undefined) delete process.env.RAZORPAY_KEY_ID;
+    else process.env.RAZORPAY_KEY_ID = prevId;
+    if (prevSecret === undefined) delete process.env.RAZORPAY_WEBHOOK_SECRET;
+    else process.env.RAZORPAY_KEY_SECRET = prevSecret;
+  });
