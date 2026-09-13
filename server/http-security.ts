@@ -3,7 +3,7 @@
  * Meta / Razorpay webhooks and /healthz are exempt so signature-verified
  * callbacks are not blocked by browser Origin / CSRF / login throttles.
  */
-import express, { type Express, type NextFunction, type Request, type Response } from "express";
+import { type Express, type NextFunction, type Request, type Response } from "express";
 import { isUnsetOrPlaceholder } from "./runtime.ts";
 
 export const CSRF_COOKIE = "lumera_csrf";
@@ -197,26 +197,6 @@ export function attachHttpSecurity(app: Express, env: NodeJS.ProcessEnv = proces
   app.use(csrfProtectionMiddleware());
   app.use(createAuthRateLimiter());
 }
-
-/** Install allowlist CORS / CSRF / rate-limit when the app enables trust proxy (server.ts). */
-function patchExpressTrustProxyInstall() {
-  const proto = express.application as express.Application & {
-    set: (setting: string, ...args: unknown[]) => unknown;
-    __lumeraTrustProxyPatched?: boolean;
-  };
-  if (proto.__lumeraTrustProxyPatched) return;
-  proto.__lumeraTrustProxyPatched = true;
-  const origSet = proto.set;
-  proto.set = function patchedSet(this: Express, setting: string, ...args: unknown[]) {
-    const result = origSet.apply(this, [setting, ...args] as never);
-    if (setting === "trust proxy") {
-      attachHttpSecurity(this);
-    }
-    return result;
-  };
-}
-
-patchExpressTrustProxyInstall();
 
 export function csrfCookieValue(): string {
   return crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "");
