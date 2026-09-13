@@ -17,6 +17,8 @@ import {
   listWalletTransactions,
   publicWalletStatus,
   recordAiScribeUsage,
+  scribeQuantityMinutes,
+  transcriptScribeMinutes,
 } from "./usage-billing.ts";
 import { GEMINI_SCRIBE_RAW_COST_INR } from "./usage-rates.ts";
 import {
@@ -122,7 +124,6 @@ describe("Gemini ambient-scribe usage meter", () => {
     app.use(attachUser);
     app.use("/api/gemini", requireAuth);
     app.use("/api", createApiRouter());
-    // Mirrors server.ts `/api/gemini/generate-soap`: gate → mock Gemini → meter on success only.
     app.post("/api/gemini/generate-soap", async (req, res) => {
       try {
         const transcript = String((req.body || {}).transcript || "");
@@ -170,11 +171,9 @@ describe("Gemini ambient-scribe usage meter", () => {
     });
     assert.equal(login.status, 200, String(login.json.error || "login"));
     const auth = { Authorization: `Bearer ${String(login.json.token)}` };
-
     const beforeCalls = generateCalls;
     const beforeUsage = usageCount(tenantId);
     const beforeDebits = debitCount(tenantId);
-
     const generateWasCalled = { value: false };
     const result = await runMeteredGeminiScribe({
       tenantId,
@@ -192,7 +191,6 @@ describe("Gemini ambient-scribe usage meter", () => {
       assert.match(String(result.body.error), /Top up now/i);
     }
     assert.equal(generateWasCalled.value, false);
-
     const soap = await jsonRequest(
       port,
       "POST",
@@ -221,33 +219,29 @@ describe("Gemini ambient-scribe usage meter", () => {
       });
       assert.equal(login.status, 200, String(login.json.error || "login"));
       const auth = { Authorization: `Bearer ${String(login.json.token)}` };
-
       const before = publicWalletStatus(tenantId).balance;
       const beforeUsage = usageCount(tenantId);
       generateImpl = async () => ({ subjective: { chiefComplaints: ["fever"] } });
-
       const soap = await jsonRequest(
         port,
         "POST",
         "/api/gemini/generate-soap",
-        { transcript: SOAP_TRANSCRIPT, durationMinutes: 4 },
+        { transcript: SOAP_TRANSCRIPT, durationMinutes: 1 },
         auth
       );
       assert.equal(soap.status, 200, String(soap.json.error || "soap"));
       assert.equal(soap.json.success, true);
       assert.equal(soap.json.source, "gemini-3.7-flash");
-
       assert.ok(usageCount(tenantId) >= beforeUsage + 1);
       const event = getDb()
         .prepare(
           `SELECT * FROM usage_events WHERE tenant_id = ? AND resource = 'ai_scribe_minutes' ORDER BY created_at DESC LIMIT 1`
         )
         .get(tenantId) as { quantity: number; raw_cost: number | null; metadata: string };
-      assert.equal(event.quantity, 4);
+      assert.equal(event.quantity, scribeQuantityMinutes({ transcript: SOAP_TRANSCRIPT, durationMinutes: 1 }));
       assert.equal(Number(event.raw_cost), 1);
       const meta = JSON.parse(event.metadata || "{}") as { endpoint?: string };
       assert.equal(meta.endpoint, "generate-soap");
-
       const markup = getMarkupPercent(tenantId, "ai_scribe_minutes");
       const billed = billedAmountFromRaw(1, markup);
       assert.ok(billed > 0);
@@ -259,6 +253,36 @@ describe("Gemini ambient-scribe usage meter", () => {
       if (prev === undefined) delete process.env.GEMINI_SCRIBE_RAW_COST_INR;
       else process.env.GEMINI_SCRIBE_RAW_COST_INR = prev;
     }
+  });
+
+  it("wildly understated client durationMinutes does not reduce billed quantity", async () => {
+    const { tenantId, clinicEmail } = createClinic("understated", 500);
+    const login = await jsonRequest(port, "POST", "/api/auth/login", {
+      email: clinicEmail,
+      password: "Lumera@2026",
+      skipOtp: true,
+    });
+    assert.equal(login.status, 200, String(login.json.error || "login"));
+    const auth = { Authorization: `Bearer ${String(login.json.token)}` };
+    const transcript = Array.from({ length: 650 }, (_, i) => `symptom${i}`).join(" ");
+    const estimated = transcriptScribeMinutes(transcript);
+    assert.ok(estimated > 1);
+    const soap = await jsonRequest(
+      port,
+      "POST",
+      "/api/gemini/generate-soap",
+      { transcript, durationMinutes: 0.1 },
+      auth
+    );
+    assert.equal(soap.status, 200, String(soap.json.error || "soap"));
+    const event = getDb()
+      .prepare(
+        `SELECT * FROM usage_events WHERE tenant_id = ? AND resource = 'ai_scribe_minutes' ORDER BY created_at DESC LIMIT 1`
+      )
+      .get(tenantId) as { quantity: number };
+    assert.equal(event.quantity, estimated);
+    assert.ok(event.quantity > 0.1);
+    assert.equal(scribeQuantityMinutes({ transcript, durationMinutes: 0.1 }), estimated);
   });
 
   it("failed Gemini generate does not insert usage_events or debit", async () => {
