@@ -83,13 +83,29 @@ export function generateRuleBasedSoap(name: string, age: number, gender: string,
 export function getPulseFallbackAnswer(query: string, ctx: any): string {
   const q = query.toLowerCase();
   if (q.includes("dose") || q.includes("paracetamol")) {
-    return `### Paracetamol Dosage Guidelines (Adult & Pediatric):\n• **Adults**: 500 mg - 650 mg PO every 4 to 6 hours as needed. Maximum daily dose is **4,000 mg (4g)** in healthy adults. In hepatic impairment/chronic alcohol use, limit to **2,000 mg/day**.\n• **Pediatrics**: 10 - 15 mg/kg per dose PO every 4 to 6 hours (Max: 5 doses or 75 mg/kg/24 hrs).\n• **Caution**: Monitor for co-prescriptions containing acetaminophen (e.g. Ultracet, Combiflam) to prevent accidental overdose.`;
+    return `### Paracetamol Dosage Guidelines (Adult & Pediatric):
+• **Adults**: 500 mg - 650 mg PO every 4 to 6 hours as needed. Maximum daily dose is **4,000 mg (4g)** in healthy adults. In hepatic impairment/chronic alcohol use, limit to **2,000 mg/day**.
+• **Pediatrics**: 10 - 15 mg/kg per dose PO every 4 to 6 hours (Max: 5 doses or 75 mg/kg/24 hrs).
+• **Caution**: Monitor for co-prescriptions containing acetaminophen (e.g. Ultracet, Combiflam) to prevent accidental overdose.`;
   }
   if (q.includes("interaction") || q.includes("aceclofenac") || q.includes("telmisartan")) {
-    return `### Clinical Interaction Analysis:\n• **Telmisartan (ARB) + Aceclofenac (NSAID)**:\n  - **Mechanism**: NSAIDs inhibit renal prostaglandin synthesis, which can reduce the GFR and blunt the antihypertensive efficacy of ARBs.\n  - **Risk**: Increased risk of acute kidney injury (AKI) and hyperkalemia, especially in elderly or dehydrated patients.\n  - **Recommendation**: If NSAID is required, limit to lowest effective dose for <3-5 days. Ensure adequate hydration and monitor serum creatinine & potassium if prolonged.`;
+    return `### Clinical Interaction Analysis:
+• **Telmisartan (ARB) + Aceclofenac (NSAID)**:
+  - **Mechanism**: NSAIDs inhibit renal prostaglandin synthesis, which can reduce the GFR and blunt the antihypertensive efficacy of ARBs.
+  - **Risk**: Increased risk of acute kidney injury (AKI) and hyperkalemia, especially in elderly or dehydrated patients.
+  - **Recommendation**: If NSAID is required, limit to lowest effective dose for <3-5 days. Ensure adequate hydration and monitor serum creatinine & potassium if prolonged.`;
   }
   if (q.includes("hypertension") || q.includes("guidelines")) {
-    return `### ICMR & ESC Hypertension Management Summary:\n1. **Initial Therapy (Stage 1 HTN >140/90)**:\n   - Monotherapy with ARB (Telmisartan 40mg) OR CCB (Amlodipine 5mg).\n2. **Stage 2 HTN (>160/100) or High Risk**:\n   - Single-pill combination: ARB + CCB (e.g. Telmisartan 40mg + Amlodipine 5mg) OR ARB + Thiazide diuretic.\n3. **Lifestyle**: Sodium restriction (<2g sodium/day), DASH diet, weight control, 150 mins aerobic exercise/week.`;
+    return `### ICMR & ESC Hypertension Management Summary:
+1. **Initial Therapy (Stage 1 HTN >140/90)**:
+   - Monotherapy with ARB (Telmisartan 40mg) OR CCB (Amlodipine 5mg).
+2. **Stage 2 HTN (>160/100) or High Risk**:
+   - Single-pill combination: ARB + CCB (e.g. Telmisartan 40mg + Amlodipine 5mg) OR ARB + Thiazide diuretic.
+3. **Lifestyle**: Sodium restriction (<2g sodium/day), DASH diet, weight control, 150 mins aerobic exercise/week.`;
   }
-  return `### Clinical Decision Support:\nFor query "${query}":\n• Please evaluate comprehensive patient history, current vitals, renal/hepatic parameters, and medication profile.\n• Standard medical practice recommends conservative symptom-targeted therapy with non-pharmacological support where appropriate.\n• Always verify patient allergy records prior to initiating antimicrobial or NSAID regimens.`;
+  return `### Clinical Decision Support:
+For query "${query}":
+• Please evaluate comprehensive patient history, current vitals, renal/hepatic parameters, and medication profile.
+• Standard medical practice recommends conservative symptom-targeted therapy with non-pharmacological support where appropriate.
+• Always verify patient allergy records prior to initiating antimicrobial or NSAID regimens.`;
 }
