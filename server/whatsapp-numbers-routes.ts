@@ -88,6 +88,33 @@ export function createWhatsAppNumbersRouter(): Router {
     }
   });
 
+  function adminUpsertFields(body: Record<string, unknown>) {
+    return {
+      wabaId: body.wabaId != null ? String(body.wabaId) : undefined,
+      phoneNumberId: body.phoneNumberId != null ? String(body.phoneNumberId) : undefined,
+      metaWabaName: body.metaWabaName != null ? String(body.metaWabaName) : undefined,
+      metaAccessToken: body.metaAccessToken != null ? String(body.metaAccessToken) : undefined,
+      status: body.status as "pending" | "connected" | "disconnected" | undefined,
+      connectedVia: "master_admin" as const,
+    };
+  }
+
+  function patchAdminWhatsAppNumber(id: string, body: Record<string, unknown>) {
+    const existing = getDb()
+      .prepare("SELECT * FROM whatsapp_numbers WHERE id = ?")
+      .get(id) as { owner_type?: WhatsAppOwnerType; owner_id?: string } | undefined;
+    if (!existing?.owner_type || !existing.owner_id) {
+      throw new WhatsAppNumberError(404, "WhatsApp number not found", "NOT_FOUND");
+    }
+    return upsertWhatsAppNumber(platformAdminActor(), {
+      id,
+      ownerType: existing.owner_type,
+      ownerId: existing.owner_id,
+      ...adminUpsertFields(body),
+      allowCreate: false,
+    });
+  }
+
   router.post("/admin/whatsapp-numbers", requireAuth, requirePlatformAdmin, (req, res) => {
     try {
       bootWhatsAppOwnershipSchema();
@@ -101,12 +128,7 @@ export function createWhatsAppNumbersRouter(): Router {
       const row = upsertWhatsAppNumber(platformAdminActor(), {
         ownerType,
         ownerId,
-        wabaId: body.wabaId != null ? String(body.wabaId) : undefined,
-        phoneNumberId: body.phoneNumberId != null ? String(body.phoneNumberId) : undefined,
-        metaWabaName: body.metaWabaName != null ? String(body.metaWabaName) : undefined,
-        metaAccessToken: body.metaAccessToken != null ? String(body.metaAccessToken) : undefined,
-        status: body.status as "pending" | "connected" | "disconnected" | undefined,
-        connectedVia: "master_admin",
+        ...adminUpsertFields(body),
       });
       res.status(201).json({ whatsappNumber: publicWhatsAppNumber(row) });
     } catch (err) {
@@ -114,28 +136,37 @@ export function createWhatsAppNumbersRouter(): Router {
     }
   });
 
+  router.patch("/admin/whatsapp-numbers", requireAuth, requirePlatformAdmin, (req, res) => {
+    try {
+      bootWhatsAppOwnershipSchema();
+      const body = (req.body || {}) as Record<string, unknown>;
+      const id = String(body.id || "").trim();
+      if (id) {
+        const row = patchAdminWhatsAppNumber(id, body);
+        return res.json({ whatsappNumber: publicWhatsAppNumber(row) });
+      }
+      const ownerType = String(body.ownerType || body.owner_type || "") as WhatsAppOwnerType;
+      const ownerId = String(body.ownerId || body.owner_id || body.tenantId || "").trim();
+      if (ownerType !== "tenant" && ownerType !== "doctor") {
+        return res.status(400).json({ error: "id or ownerType + ownerId is required" });
+      }
+      if (!ownerId) return res.status(400).json({ error: "id or ownerType + ownerId is required" });
+      const row = upsertWhatsAppNumber(platformAdminActor(), {
+        ownerType,
+        ownerId,
+        ...adminUpsertFields(body),
+        allowCreate: false,
+      });
+      res.json({ whatsappNumber: publicWhatsAppNumber(row) });
+    } catch (err) {
+      handleWabaError(res, err, "Failed to update WhatsApp number");
+    }
+  });
+
   router.patch("/admin/whatsapp-numbers/:id", requireAuth, requirePlatformAdmin, (req, res) => {
     try {
       bootWhatsAppOwnershipSchema();
-      const existing = getDb()
-        .prepare("SELECT * FROM whatsapp_numbers WHERE id = ?")
-        .get(req.params.id) as { owner_type?: WhatsAppOwnerType; owner_id?: string } | undefined;
-      if (!existing?.owner_type || !existing.owner_id) {
-        return res.status(404).json({ error: "WhatsApp number not found" });
-      }
-      const body = (req.body || {}) as Record<string, unknown>;
-      const row = upsertWhatsAppNumber(platformAdminActor(), {
-        id: req.params.id,
-        ownerType: existing.owner_type,
-        ownerId: existing.owner_id,
-        wabaId: body.wabaId != null ? String(body.wabaId) : undefined,
-        phoneNumberId: body.phoneNumberId != null ? String(body.phoneNumberId) : undefined,
-        metaWabaName: body.metaWabaName != null ? String(body.metaWabaName) : undefined,
-        metaAccessToken: body.metaAccessToken != null ? String(body.metaAccessToken) : undefined,
-        status: body.status as "pending" | "connected" | "disconnected" | undefined,
-        connectedVia: "master_admin",
-        allowCreate: false,
-      });
+      const row = patchAdminWhatsAppNumber(req.params.id, (req.body || {}) as Record<string, unknown>);
       res.json({ whatsappNumber: publicWhatsAppNumber(row) });
     } catch (err) {
       handleWabaError(res, err, "Failed to update WhatsApp number");
@@ -174,6 +205,7 @@ export function createWhatsAppNumbersRouter(): Router {
         return res.status(403).json({ error: "Clinic connect can only create a tenant-owned WhatsApp number." });
       }
       const row = upsertWhatsAppNumber(clinicActor(tenantId), {
+        id: String(body.id || "").trim() || undefined,
         ownerType: "tenant",
         ownerId: tenantId,
         wabaId: body.wabaId != null ? String(body.wabaId) : undefined,
