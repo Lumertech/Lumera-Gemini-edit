@@ -11,11 +11,15 @@ const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
 describe("Drizzle schema vs server/db.ts migrate (Epic 0.1)", () => {
   it("exports every CREATE TABLE from migrate() and platform-tenants", () => {
     const dbSrc = fs.readFileSync(path.join(root, "server/db.ts"), "utf8");
-    const migrateSrc = fs.existsSync(path.join(root, "server/db-migrate.ts"))
-      ? fs.readFileSync(path.join(root, "server/db-migrate.ts"), "utf8")
-      : "";
+    const migrateSrc = [
+      path.join(root, "server/db-migrate.ts"),
+      path.join(root, "server/db-bootstrap-ddl.ts"),
+    ]
+      .filter((p) => fs.existsSync(p))
+      .map((p) => fs.readFileSync(p, "utf8"))
+      .join("\n");
     const platform = fs.readFileSync(path.join(root, "server/platform-tenants.ts"), "utf8");
-    const names = new Set<string>();
+    const names = new Set();
     for (const src of [dbSrc, migrateSrc, platform]) {
       for (const m of src.matchAll(/CREATE TABLE IF NOT EXISTS\s+(\w+)/g)) {
         names.add(m[1]);
