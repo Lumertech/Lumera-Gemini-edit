@@ -33,6 +33,9 @@ describe("public vs app surface routing (founder lock #48)", () => {
     assert.equal(privacy.adminTab, "overview");
     assert.equal(pathToNav("/terms-of-service").policySlug, "terms-of-service");
     assert.equal(pathToNav("/data-deletion-instructions").policySlug, "data-deletion-instructions");
+    assert.equal(pathToNav("/government-data-request-policy").surface, "legal");
+    assert.equal(pathToNav("/government-data-request-policy").policySlug, "government-data-request-policy");
+    assert.equal(pathToNav("/government-requests").policySlug, "government-data-request-policy");
     assert.equal(pathToNav("/privacy").surface, "legal");
     assert.equal(pathToNav("/terms").surface, "legal");
   });

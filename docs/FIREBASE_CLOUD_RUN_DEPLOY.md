@@ -194,7 +194,7 @@ Hosting rewrite regions must be one of [Firebase’s Cloud Run rewrite regions](
 After rewrite + cert mint, from any laptop:
 
 ```bash
-for p in / /privacy-policy /terms-of-service /data-deletion-instructions; do
+for p in / /privacy-policy /terms-of-service /data-deletion-instructions /government-data-request-policy; do
   echo "== $p"
   curl -sI "https://www.mylumera.in$p" | head -n 1
 done
@@ -207,7 +207,7 @@ curl -sI "https://www.mylumera.in/api/meta/webhook"
 Expect:
 
 - `/` → **HTTP 200** (SPA landing; no login wall).
-- `/privacy-policy`, `/terms-of-service`, `/data-deletion-instructions` → **HTTP 200** HTML that **embeds the `cms_policies` body** (title + article). Meta crawlers must see “not a certified Meta Tech Provider” and WhatsApp **STOP** in the document, not an empty SPA shell.
+- `/privacy-policy`, `/terms-of-service`, `/data-deletion-instructions`, `/government-data-request-policy` → **HTTP 200** HTML that **embeds the `cms_policies` body** (title + article). Meta crawlers must see “not a certified Meta Tech Provider” and WhatsApp **STOP** in the document, not an empty SPA shell. The government-request page must include the four Data Handling headers (Required Legal Review, Challenging Unlawful Requests, Data Minimization, Documentation & Record-Keeping).
 - `/healthz` → **200** `ok`.
 - `/api/public/policies/privacy-policy` → **200** JSON (same honest CMS body, including WhatsApp STOP opt-out).
 - `GET /api/meta/webhook` without hub params → **403/500** until `META_VERIFY_TOKEN` is set. It must still be **reachable over HTTPS** (not a Firebase static 404 / cert mismatch).
@@ -217,7 +217,7 @@ After a policy-seed merge, **Cloud Run must redeploy (or restart)** so live www 
 
 **Do not claim Dashboard-ready** until Compliance re-skims the live HTML.
 
-**Do not paste these URLs into Meta App Dashboard until the four document paths return HTTPS 200 with a cert for www.mylumera.in.**
+**Do not paste these URLs into Meta App Dashboard until the public document paths return HTTPS 200 with a cert for www.mylumera.in.**
 
 Local production smoke (same process Cloud Run runs):
 
@@ -229,7 +229,7 @@ export PORT=8080
 npm run build
 npm start
 # in another terminal:
-for p in / /privacy-policy /terms-of-service /data-deletion-instructions; do
+for p in / /privacy-policy /terms-of-service /data-deletion-instructions /government-data-request-policy; do
   curl -sI "http://127.0.0.1:8080$p" | head -n 1
 done
 ```
@@ -251,6 +251,7 @@ Paste **only after** the smoke gate in §5 is green:
 | Privacy Policy URL | `https://www.mylumera.in/privacy-policy` |
 | Terms of Service URL | `https://www.mylumera.in/terms-of-service` |
 | User data deletion instructions (human page) | `https://www.mylumera.in/data-deletion-instructions` |
+| Government / public-authority data request policy (Data Handling) | `https://www.mylumera.in/government-data-request-policy` |
 | Data deletion request callback | `https://www.mylumera.in/api/meta/data-deletion` (`POST`) |
 | Valid OAuth Redirect URIs (Facebook Login) | `https://www.mylumera.in/api/auth/facebook/callback` |
 | WhatsApp webhook callback URL | `https://www.mylumera.in/api/meta/webhook` (`GET` challenge + `POST`) |
