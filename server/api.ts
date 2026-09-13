@@ -21,6 +21,7 @@ import {
 } from "./db.ts";
 import { persistSpecialtyPackId } from "../src/lib/specialtyPack.ts";
 import { PRODUCT_NAME } from "../src/brand.ts";
+import { reportCaughtError } from "./error-tracker.ts";
 import { createClinicalRouter } from "./clinical.ts";
 import { createBillingRouter } from "./billing.ts";
 import {
@@ -2332,8 +2333,8 @@ export function createApiRouter(): Router {
     const filePath = path.join(process.cwd(), row.url.replace(/^\//, ""));
     try {
       if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-    } catch {
-      /* ignore */
+    } catch (err) {
+      reportCaughtError(err, "api.media.unlink");
     }
     getDb().prepare("DELETE FROM cms_media WHERE id = ?").run(req.params.id);
     audit(req, "Media deleted", row.filename);
