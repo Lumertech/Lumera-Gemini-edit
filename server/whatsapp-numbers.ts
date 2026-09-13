@@ -42,7 +42,8 @@ export function upsertWhatsAppNumber(actor: WabaActor, input: UpsertWhatsAppNumb
     throw new WhatsAppNumberError(404, "WhatsApp number not found for this owner", "NOT_FOUND");
   }
 
-  if (existing && actor.kind === "clinic" && input.allowCreate === true && input.id && input.id !== existing.id) {
+  const requestedId = String(input.id || "").trim();
+  if (existing && actor.kind === "clinic" && requestedId && requestedId !== existing.id) {
     throw new WhatsAppNumberError(
       409,
       "This clinic already has a tenant-owned WhatsApp number. A clinic gets exactly one.",
