@@ -15,6 +15,11 @@ substitutions:
   # Full image URI including tag. Override for Artifact Registry, e.g.
   # asia-south1-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/lumera-gemini-edit:${SHORT_SHA}
   _IMAGE: gcr.io/${PROJECT_ID}/lumera-gemini-edit:${SHORT_SHA}
+  # Cloud SQL instance connection name: PROJECT:asia-south1:INSTANCE
+  # Leave "none" until the founder provisions Cloud SQL (do not guess a billed
+  # instance). Then set PROJECT:asia-south1:INSTANCE so Cloud Run mounts
+  # /cloudsql/$INSTANCE. DATABASE_URL stays in Secret Manager / Console.
+  _CLOUDSQL_INSTANCE: none
 
 options:
   logging: CLOUD_LOGGING_ONLY
@@ -63,21 +68,28 @@ steps:
 
   # 4. Deploy the built image only. Never pass --source here.
   #    --update-env-vars pins APP_URL/NODE_ENV only. Do NOT use --set-env-vars
-  #    (that wipes JWT_SECRET and other secrets). JWT_SECRET must already exist
-  #    on the service (Secret Manager or Console). Missing JWT_SECRET makes
-  #    production exit before listen — Cloud Run then reports a PORT timeout.
+  #    (that wipes JWT_SECRET, DATABASE_URL, and other secrets). JWT_SECRET and
+  #    DATABASE_URL must already exist on the service (Secret Manager or Console).
+  #    Missing JWT_SECRET or DATABASE_URL makes production exit before listen —
+  #    Cloud Run then reports a PORT timeout.
   - name: gcr.io/google.com/cloudsdktool/cloud-sdk
     id: deploy
-    entrypoint: gcloud
+    entrypoint: bash
     args:
-      - run
-      - deploy
-      - ${_SERVICE}
-      - --image=${_IMAGE}
-      - --region=${_REGION}
-      - --project=${PROJECT_ID}
-      - --allow-unauthenticated
-      - --update-env-vars=NODE_ENV=production,APP_URL=https://www.mylumera.in
+      - -c
+      - |
+        set -euo pipefail
+        EXTRA=()
+        if [[ -n "${_CLOUDSQL_INSTANCE}" && "${_CLOUDSQL_INSTANCE}" != "none" ]]; then
+          EXTRA+=(--add-cloudsql-instances="${_CLOUDSQL_INSTANCE}")
+        fi
+        gcloud run deploy "${_SERVICE}" \
+          --image="${_IMAGE}" \
+          --region="${_REGION}" \
+          --project="${PROJECT_ID}" \
+          --allow-unauthenticated \
+          --update-env-vars=NODE_ENV=production,APP_URL=https://www.mylumera.in \
+          "${EXTRA[@]}"
 
 images:
   - ${_IMAGE}
