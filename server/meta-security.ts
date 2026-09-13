@@ -116,6 +116,7 @@ export function buildMetaReadinessOverview(opts: {
   privacyUrl?: string;
   termsUrl?: string;
   dataDeletionUrl?: string;
+  governmentDataRequestUrl?: string;
   graphOtpConfigured: boolean;
   webhookSecretConfigured: boolean;
   verifyTokenConfigured: boolean;
@@ -139,6 +140,12 @@ export function buildMetaReadinessOverview(opts: {
       passed: false,
       url: opts.dataDeletionUrl || "/data-deletion-instructions",
       note: "Callback scaffold only — not App Review complete.",
+    },
+    {
+      item: "Government & public-authority data request policy (Data Handling four areas)",
+      passed: true,
+      url: opts.governmentDataRequestUrl || "/government-data-request-policy",
+      note: "Legal review, challenge unlawful requests, data minimization, and request logging.",
     },
     {
       item: "Webhook GET verify token configured",
