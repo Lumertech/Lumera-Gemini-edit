@@ -25,7 +25,14 @@ function readRepo(rel: string): string {
 }
 
 function policySeedSource(): string {
-  return [readRepo("server/cms-policy-seed.ts"), readRepo("server/db.ts")].join("\n");
+  return [
+    readRepo("server/cms-policy-seed.ts"),
+    readRepo("server/db.ts"),
+    readRepo("server/db-seed.ts"),
+    readRepo("server/db-seed-maps.ts"),
+    readRepo("server/db-seed-clinical.ts"),
+    readRepo("server/db-seed-meta.ts"),
+  ].join("\n");
 }
 
 function overclaimWithoutHonesty(src: string): string[] {
@@ -78,7 +85,13 @@ describe("Compliance #26 re-skim bar", () => {
     }
     assert.deepEqual(leftovers, [], leftovers.join("\n"));
 
-    const feat6 = readRepo("server/db.ts");
+    const feat6 = [
+      readRepo("server/db.ts"),
+      readRepo("server/db-seed.ts"),
+      readRepo("server/db-seed-maps.ts"),
+      readRepo("server/db-seed-clinical.ts"),
+      readRepo("server/db-seed-meta.ts"),
+    ].join("\n");
     assert.match(feat6, /id = 'feat-6'/);
     assert.match(feat6, /ABDM-aligned \(NHA sandbox\)/);
     assert.equal(/feat-6[\s\S]{0,400}ABDM Compliant/i.test(feat6), false);
