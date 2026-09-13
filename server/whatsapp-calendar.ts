@@ -450,8 +450,7 @@ function recordOutboundEvent(opts: {
   const now = new Date().toISOString();
   const eventId = `evt-${crypto.randomUUID().slice(0, 8)}`;
   db.prepare(
-    `INSERT INTO whatsapp_outbound_events (id, event_type, patient_phone, patient_name, status, details, action_payload, sent_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO whatsapp_outbound_events (id, event_type, patient_phone, patient_name, status, details, action_payload, sent_at)\n     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(eventId, opts.eventType, opts.phone, opts.name, opts.status, opts.details, JSON.stringify(opts.payload), now);
 
   if (opts.conversationContent) {
@@ -462,20 +461,16 @@ function recordOutboundEvent(opts: {
     if (!conv) {
       const convId = `conv-${crypto.randomUUID().slice(0, 8)}`;
       db.prepare(
-        `INSERT INTO whatsapp_conversations (id, patient_phone, patient_name, handover_mode, assigned_staff, tags, preferred_language, unread_count, last_message, last_message_time, updated_at)
-         VALUES (?, ?, ?, 'bot', 'Unassigned', '["Appointment"]', 'en', 0, ?, ?, ?)`
+        `INSERT INTO whatsapp_conversations (id, patient_phone, patient_name, handover_mode, assigned_staff, tags, preferred_language, unread_count, last_message, last_message_time, updated_at)\n         VALUES (?, ?, ?, 'bot', 'Unassigned', '["Appointment"]', 'en', 0, ?, ?, ?)`
       ).run(convId, opts.phone, opts.name, opts.conversationContent.slice(0, 80), timeDisplay, now);
       conv = { id: convId };
     }
     const msgId = `msg-out-${crypto.randomUUID().slice(0, 8)}`;
     db.prepare(
-      `INSERT INTO whatsapp_messages (id, conversation_id, patient_phone, sender, staff_name, content, time_display, status, created_at)
-       VALUES (?, ?, ?, 'bot', 'Appointment Reminder', ?, ?, ?, ?)`
+      `INSERT INTO whatsapp_messages (id, conversation_id, patient_phone, sender, staff_name, content, time_display, status, created_at)\n       VALUES (?, ?, ?, 'bot', 'Appointment Reminder', ?, ?, ?, ?)`
     ).run(msgId, conv.id, opts.phone, opts.conversationContent, timeDisplay, opts.status, now);
     db.prepare(
-      `UPDATE whatsapp_conversations
-       SET last_message = ?, last_message_time = ?, updated_at = ?
-       WHERE id = ?`
+      `UPDATE whatsapp_conversations\n       SET last_message = ?, last_message_time = ?, updated_at = ?\n       WHERE id = ?`
     ).run(opts.conversationContent.slice(0, 80), timeDisplay, now, conv.id);
   }
 
@@ -563,6 +558,7 @@ export async function dispatchAppointmentReminder(opts: {
     ],
     db: getDb(),
     fetchImpl: opts.fetchImpl,
+    tenantId: opts.tenantId,
   });
   return recordCloudDispatch({
     eventType: "appointment_reminder",
@@ -596,6 +592,7 @@ export async function dispatchWhatsAppBookConfirmation(opts: {
     ],
     db: getDb(),
     fetchImpl: opts.fetchImpl,
+    tenantId: opts.tenantId,
   });
   return recordCloudDispatch({
     eventType: "book_confirmation",
@@ -630,9 +627,7 @@ export async function runAppointmentReminders(opts?: {
         ].filter(Boolean)
       : db
           .prepare(
-            `SELECT * FROM appointments
-             WHERE ${ACTIVE_APPOINTMENT_SQL}
-             ${opts?.tenantId ? "AND tenant_id = ?" : ""}`
+            `SELECT * FROM appointments\n             WHERE ${ACTIVE_APPOINTMENT_SQL}\n             ${opts?.tenantId ? "AND tenant_id = ?" : ""}`
           )
           .all(...(opts?.tenantId ? [opts.tenantId] : []))
   ) as Record<string, unknown>[];

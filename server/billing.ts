@@ -273,6 +273,7 @@ async function dispatchInvoiceReceipt(
     textBody: receiptBody(invoice, false),
     previewUrl: Boolean(invoice.payLink),
     db: getDb(),
+    tenantId: invoice.tenantId,
   });
 
   if (isCloudDispatchFailure(sent)) {
@@ -619,8 +620,10 @@ export function createBillingRouter(): Router {
     const result = await dispatchInvoiceReceipt(row);
     const updated = mapInvoice(getTenantInvoice(tenantId, String(row.id))!);
     if (result.ok === false) {
-      return res.status(503).json({
+      const walletBlocked = /Top up now/i.test(result.error);
+      return res.status(walletBlocked ? 402 : 503).json({
         error: result.error,
+        code: walletBlocked ? "WALLET_INSUFFICIENT" : undefined,
         invoice: updated,
         channel: result.channel,
         graphDelivered: false,
