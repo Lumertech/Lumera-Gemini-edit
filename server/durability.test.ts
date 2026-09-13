@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import { describe, it } from "node:test";
 import {
   assertRequiredProductionEnv,
@@ -56,5 +57,13 @@ describe("production DATABASE_URL fail-fast (Epic 0.2)", () => {
       true
     );
     assert.equal(sqliteFallbackForbidden({} as NodeJS.ProcessEnv, "/app/dist/server.cjs"), true);
+  });
+
+  it("Cloud Run bundle aliases node:sqlite to the pg/sqlite dual-mode class", () => {
+    const pkg = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
+      scripts: { build: string };
+    };
+    assert.match(pkg.scripts.build, /alias:node:sqlite=\.\/server\/sqlite-compat\.ts/);
+    assert.match(pkg.scripts.build, /cp server\/pg-sync-worker\.cjs dist\/pg-sync-worker\.cjs/);
   });
 });
