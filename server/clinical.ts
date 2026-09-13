@@ -10,6 +10,7 @@ import {
 } from "./db.ts";
 import { clinicLine, getTenantLetterhead } from "./letterhead.ts";
 import { requireAuth } from "./auth.ts";
+import { reportCaughtError } from "./error-tracker.ts";
 import { resolveAbdmMode, type AbdmMode } from "./abdm-mode.ts";
 
 function tenantIdOf(req: Request): string {
@@ -765,7 +766,8 @@ export function createClinicalRouter(): Router {
         .prepare("SELECT * FROM patients WHERE tenant_id = ? ORDER BY name ASC")
         .all(tenantId) as Record<string, unknown>[];
       res.json({ patients: rows.map(mapPatient) });
-    } catch {
+    } catch (err) {
+      reportCaughtError(err, "clinical.listPatients");
       res.status(500).json({ error: "Failed to fetch patients" });
     }
   });
@@ -901,7 +903,8 @@ export function createClinicalRouter(): Router {
         .prepare("SELECT * FROM appointments WHERE tenant_id = ? ORDER BY token_number ASC")
         .all(tenantId) as Record<string, unknown>[];
       res.json({ appointments: rows.map(mapAppointment) });
-    } catch {
+    } catch (err) {
+      reportCaughtError(err, "clinical.listAppointments");
       res.status(500).json({ error: "Failed to fetch appointments" });
     }
   });
@@ -966,7 +969,8 @@ export function createClinicalRouter(): Router {
               .all(tenantId)
       ) as Record<string, unknown>[];
       res.json({ prescriptions: rows.map(mapPrescription) });
-    } catch {
+    } catch (err) {
+      reportCaughtError(err, "clinical.listPrescriptions");
       res.status(500).json({ error: "Failed to fetch prescriptions" });
     }
   });
