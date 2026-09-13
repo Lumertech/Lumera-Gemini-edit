@@ -150,7 +150,8 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
           date: "2026-09-12",
           timeSlot: "11:00 AM",
         },
-      }
+      },
+      auth
     );
     assert.equal(booked.status, 200, String(booked.json.error || ""));
     const appointment = booked.json.appointment as {
@@ -186,6 +187,8 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
 
   it("repeat WhatsApp book does not duplicate the same patient/doctor/date row", async () => {
     const clinic = createClinicUser("dedupe");
+    const token = await login(clinic.email);
+    const auth = { Authorization: `Bearer ${token}` };
     const phone = uniquePhone();
     const payload = {
       action: "book_appointment",
@@ -198,8 +201,8 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
         timeSlot: "09:30 AM",
       },
     };
-    const first = await jsonRequest(port, "POST", "/api/whatsapp/emr-action", payload);
-    const second = await jsonRequest(port, "POST", "/api/whatsapp/emr-action", payload);
+    const first = await jsonRequest(port, "POST", "/api/whatsapp/emr-action", payload, auth);
+    const second = await jsonRequest(port, "POST", "/api/whatsapp/emr-action", payload, auth);
     assert.equal(first.status, 200, String(first.json.error || ""));
     assert.equal(second.status, 200, String(second.json.error || ""));
     assert.equal(second.json.reused, true);
@@ -217,6 +220,7 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
   it("clinic B cannot see clinic A's WhatsApp-booked token", async () => {
     const clinicA = createClinicUser("isoWA");
     const clinicB = createClinicUser("isoWB");
+    const tokenA = await login(clinicA.email);
     const tokenB = await login(clinicB.email);
     const phone = uniquePhone();
 
@@ -225,7 +229,7 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
       tenantId: clinicA.tenantId,
       patientPhone: phone,
       payload: { patientName: "A-only WA", doctorId: clinicA.doctorId, date: "2026-09-14" },
-    });
+    }, { Authorization: `Bearer ${tokenA}` });
     assert.equal(booked.status, 200, String(booked.json.error || ""));
     const aptId = (booked.json.appointment as { id: string }).id;
 
@@ -252,6 +256,7 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
   it("cancel and reschedule update the same appointments row", async () => {
     const clinic = createClinicUser("patch");
     const token = await login(clinic.email);
+    const auth = { Authorization: `Bearer ${token}` };
     const phone = uniquePhone();
     const booked = await jsonRequest(port, "POST", "/api/whatsapp/emr-action", {
       action: "book_appointment",
@@ -263,7 +268,7 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
         date: "2026-09-15",
         timeSlot: "10:00 AM",
       },
-    });
+    }, auth);
     const aptId = (booked.json.appointment as { id: string }).id;
 
     const rescheduled = await jsonRequest(port, "POST", "/api/whatsapp/emr-action", {
@@ -271,7 +276,7 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
       tenantId: clinic.tenantId,
       patientPhone: phone,
       payload: { appointmentId: aptId, date: "2026-09-16", timeSlot: "04:00 PM" },
-    });
+    }, auth);
     assert.equal(rescheduled.status, 200, String(rescheduled.json.error || ""));
     const moved = rescheduled.json.appointment as { id: string; date: string; timeSlot: string; status: string };
     assert.equal(moved.id, aptId);
@@ -289,7 +294,7 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
       tenantId: clinic.tenantId,
       patientPhone: phone,
       payload: { appointmentId: aptId },
-    });
+    }, auth);
     assert.equal(cancelled.status, 200, String(cancelled.json.error || ""));
     assert.equal((cancelled.json.appointment as { status: string }).status, "Cancelled");
 
@@ -303,14 +308,14 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
         date: "2026-09-17",
         timeSlot: "09:00 AM",
       },
-    });
+    }, auth);
     const noShowId = (noShowBook.json.appointment as { id: string }).id;
     const marked = await jsonRequest(port, "POST", "/api/whatsapp/emr-action", {
       action: "mark_no_show",
       tenantId: clinic.tenantId,
       patientPhone: phone,
       payload: { appointmentId: noShowId },
-    });
+    }, auth);
     assert.equal((marked.json.appointment as { status: string }).status, "No-Show");
   });
 
@@ -419,12 +424,13 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
     const prevNode = process.env.NODE_ENV;
     const prevToken = process.env.META_ACCESS_TOKEN;
     const prevPhone = process.env.META_PHONE_NUMBER_ID;
-    process.env.NODE_ENV = "production";
-    delete process.env.META_ACCESS_TOKEN;
-    delete process.env.META_PHONE_NUMBER_ID;
 
     try {
       const clinic = createClinicUser("remindP");
+      const token = await login(clinic.email);
+      process.env.NODE_ENV = "production";
+      delete process.env.META_ACCESS_TOKEN;
+      delete process.env.META_PHONE_NUMBER_ID;
       const booked = bookWhatsAppAppointment({
         tenantId: clinic.tenantId,
         patientPhone: uniquePhone(),
@@ -447,7 +453,7 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
         tenantId: clinic.tenantId,
         appointmentId: booked.appointment.id,
         now: "2026-09-11T03:00:00.000Z",
-      });
+      }, { Authorization: `Bearer ${token}` });
       assert.equal(http.status, 503);
       assert.equal(http.json.channel, "none");
       assert.equal(JSON.stringify(http.json).includes("wamid"), false);
@@ -468,6 +474,7 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
     delete process.env.META_PHONE_NUMBER_ID;
     try {
       const clinic = createClinicUser("skipSt");
+      const token = await login(clinic.email);
       const phone = uniquePhone();
       const booked = bookWhatsAppAppointment({
         tenantId: clinic.tenantId,
@@ -482,7 +489,7 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
         tenantId: clinic.tenantId,
         payload: { appointmentId: booked.appointment.id },
         patientPhone: phone,
-      });
+      }, { Authorization: `Bearer ${token}` });
       const run = await runAppointmentReminders({
         tenantId: clinic.tenantId,
         appointmentId: booked.appointment.id,
