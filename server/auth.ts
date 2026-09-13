@@ -185,8 +185,40 @@ export function loadUserFromSession(req: Request): AuthUser | null {
   return publicUser(row);
 }
 
-export function attachUser(req: Request, _res: Response, next: NextFunction) {
+function isDashboardWhatsAppPath(req: Request): boolean {
+  const raw = String(req.originalUrl || req.path || "").split("?")[0];
+  const p = raw.startsWith("/api/whatsapp") ? raw.slice("/api".length) : raw.startsWith("/whatsapp") ? raw : `/whatsapp${raw.startsWith("/") ? raw : `/${raw}`}`;
+  if (p.startsWith("/whatsapp/prescription/") || p.startsWith("/whatsapp/lab-report/")) return false;
+  const protectedPrefixes = [
+    "/whatsapp/conversations",
+    "/whatsapp/messages",
+    "/whatsapp/send",
+    "/whatsapp/emr-action",
+    "/whatsapp/voice-process",
+    "/whatsapp/translate",
+    "/whatsapp/send-rx",
+    "/whatsapp/outbound/trigger",
+    "/whatsapp/outbound-trigger",
+    "/whatsapp/outbound/events",
+    "/whatsapp/outbound-events",
+    "/whatsapp/reminders/run",
+  ];
+  return protectedPrefixes.some((prefix) => p === prefix || p.startsWith(`${prefix}/`));
+}
+
+export function attachUser(req: Request, res: Response, next: NextFunction) {
   req.user = loadUserFromSession(req) || undefined;
+  if (isDashboardWhatsAppPath(req)) {
+    if (!req.user) {
+      return res.status(401).json({ error: "Authentication required" });
+    }
+    const role = req.user.role;
+    const allowed =
+      (CLINICIAN_ROLES as readonly string[]).includes(role) || isPlatformAdminRole(role);
+    if (!allowed) {
+      return res.status(403).json({ error: "Insufficient permissions" });
+    }
+  }
   next();
 }
 
