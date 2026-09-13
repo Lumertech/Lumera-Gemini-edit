@@ -138,6 +138,26 @@ describe("getDb / initDatabase engine selection (Epic 0.2 wiring)", () => {
     }
   });
 
+  it("platform tenant helpers accept SqlDatabase, not node:sqlite DatabaseSync", () => {
+    const src = fs.readFileSync(path.join(root, "server/platform-tenants.ts"), "utf8");
+    assert.match(src, /from "\.\/sql-engine\.ts"/);
+    assert.match(src, /ensurePlatformTenantSchema\(database: SqlDatabase\)/);
+    assert.equal(/from "node:sqlite"/.test(src), false);
+    assert.equal(/DatabaseSync/.test(src), false);
+  });
+
+  it("demo ABHA seed grep still finds LINKED_SANDBOX after db.ts seed split", () => {
+    const db = [
+      fs.readFileSync(path.join(root, "server/db.ts"), "utf8"),
+      fs.readFileSync(path.join(root, "server/db-seed.ts"), "utf8"),
+      fs.readFileSync(path.join(root, "server/db-seed-maps.ts"), "utf8"),
+      fs.readFileSync(path.join(root, "server/db-seed-clinical.ts"), "utf8"),
+      fs.readFileSync(path.join(root, "server/db-seed-meta.ts"), "utf8"),
+    ].join("\n");
+    assert.equal(/kycStatus:\s*"VERIFIED"/.test(db), false);
+    assert.match(db, /kycStatus: "LINKED_SANDBOX"/);
+  });
+
   it("placeholder DATABASE_URL is not a postgres engine", () => {
     assert.throws(
       () =>

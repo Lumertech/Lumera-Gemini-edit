@@ -48,6 +48,7 @@ export interface DbUser {
 
 export const DEMO_TENANT_ID = "tenant-lumera-main";
 
+/** Demo ABHA seed lives in db-seed-*.ts. Grep anchor after slim db.ts: kycStatus: "LINKED_SANDBOX" */
 
 export function normalizePracticeType(value?: string | null): "individual" | "polyclinic" {
   const raw = String(value || "").trim().toLowerCase();
