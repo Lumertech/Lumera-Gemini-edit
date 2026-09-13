@@ -36,6 +36,7 @@ import { AdminSettings } from "./AdminSettings";
 import { AdminAudit } from "./AdminAudit";
 import { AdminMetaTechProvider } from "./AdminMetaTechProvider";
 import { AdminPractitionerWabas } from "./AdminPractitionerWabas";
+import { AdminWabaOnboardingCaps } from "./AdminWabaOnboardingCaps";
 import { DhisMeter } from "../dhis/DhisMeter";
 import { TenantScopeProvider, useTenantScope } from "./TenantScopeContext";
 import { CLINIC_BRANCH_TABS, SUPERADMIN_TABS, isAdminNavItemVisible } from "./adminNav";
@@ -111,6 +112,7 @@ const AdminShellInner: React.FC = () => {
     meta: (
       <div className="space-y-8">
         <AdminMetaTechProvider />
+        <AdminWabaOnboardingCaps />
         <AdminPractitionerWabas />
       </div>
     ),
