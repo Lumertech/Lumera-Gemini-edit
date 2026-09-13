@@ -599,15 +599,66 @@ describe("Usage wallet billing", () => {
       .get(tenantId) as { c: number };
     assert.ok(otpAfter.c >= otpBefore.c + 1);
 
+    const agentBefore = getDb()
+      .prepare("SELECT COUNT(*) AS c FROM usage_events WHERE tenant_id = ? AND resource = 'whatsapp_message'")
+      .get(tenantId) as { c: number };
+    const agentSend = await jsonRequest(
+      port,
+      "POST",
+      "/api/whatsapp/send",
+      {
+        conversationId: `conv-meter-${Date.now()}`,
+        patientPhone,
+        patientName: "Metered Patient",
+        sender: "agent",
+        staffName: "Clinic Staff",
+        content: "Staff reply metered via usage router",
+        tenantId,
+      },
+      clinicAuth
+    );
+    assert.equal(agentSend.status, 201, String(agentSend.json.error || "agent send"));
+    const agentAfter = getDb()
+      .prepare("SELECT COUNT(*) AS c FROM usage_events WHERE tenant_id = ? AND resource = 'whatsapp_message'")
+      .get(tenantId) as { c: number };
+    assert.ok(agentAfter.c >= agentBefore.c + 1, "staff /whatsapp/send must insert usage_events");
+
+    const rxBefore = agentAfter.c;
+    const rxSend = await jsonRequest(
+      port,
+      "POST",
+      "/api/whatsapp/send-rx",
+      {
+        patientPhone,
+        patientName: "Metered Patient",
+        uhid: "LUM-METER-1",
+        rxNumber: `RX-METER-${Date.now()}`,
+        doctorName: "Dr Meter",
+        diagnosis: "Usage wallet check",
+        medicines: [{ drugName: "Paracetamol", dosage: "650 mg", frequency: "1-0-1" }],
+        tenantId,
+      },
+      clinicAuth
+    );
+    assert.ok(rxSend.status === 200 || rxSend.status === 201, String(rxSend.json.error || "send-rx"));
+    const rxAfter = getDb()
+      .prepare("SELECT COUNT(*) AS c FROM usage_events WHERE tenant_id = ? AND resource = 'whatsapp_message'")
+      .get(tenantId) as { c: number };
+    assert.ok(rxAfter.c >= rxBefore + 1, "send-rx must insert usage_events");
+
     const calendarSrc = fs.readFileSync(path.join(__dirname, "whatsapp-calendar.ts"), "utf8");
     const billingSrc = fs.readFileSync(path.join(__dirname, "billing.ts"), "utf8");
     const apiSrc = fs.readFileSync(path.join(__dirname, "api.ts"), "utf8");
     const whatsappSrc = fs.readFileSync(path.join(__dirname, "whatsapp.ts"), "utf8");
     const metaSrc = fs.readFileSync(path.join(__dirname, "meta.ts"), "utf8");
+    const usageApiSrc = fs.readFileSync(path.join(__dirname, "usage-billing-api.ts"), "utf8");
+    const patientDispatchSrc = fs.readFileSync(path.join(__dirname, "whatsapp-patient-dispatch.ts"), "utf8");
     assert.match(calendarSrc, /tenantId: opts.tenantId/);
     assert.match(billingSrc, /tenantId: invoice.tenantId/);
     assert.match(apiSrc, /dispatchWhatsAppOtpMessage\([\s\S]*tenantId/);
-    assert.match(whatsappSrc, /dispatchPatientCloudText/);
+    assert.match(patientDispatchSrc + usageApiSrc + whatsappSrc, /dispatchPatientCloudText/);
+    assert.match(usageApiSrc, /\/whatsapp\/send/);
+    assert.match(usageApiSrc, /\/whatsapp\/send-rx/);
     assert.match(metaSrc, /dispatchWhatsAppCloudMessage/);
     const serverSrc = fs.readFileSync(path.join(__dirname, "../server.ts"), "utf8");
     assert.ok(serverSrc.split("\n").length > 600, "server.ts must keep main Gemini handlers (not a compacted boot stub)");
