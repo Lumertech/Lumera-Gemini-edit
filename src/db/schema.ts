@@ -1,30 +1,43 @@
-import { relations } from 'drizzle-orm';
-import { integer, pgTable, serial, text, timestamp } from 'drizzle-orm/pg-core';
+/**
+ * Lumera clinic schema — 1:1 translation of server/db.ts migrate() plus
+ * ALTER TABLE steps and server/platform-tenants.ts ensurePlatformTenantSchema().
+ *
+ * Do not "clean up" types: TEXT stays text (including ISO datetimes and JSON
+ * blobs), INTEGER 0/1 flags stay integer, REAL stays real. This file replaces
+ * the unused template users/entries model. Runtime still bootstraps via
+ * CREATE TABLE IF NOT EXISTS in migrate(); drizzle-kit uses this file for
+ * Cloud SQL migrations.
+ */
+import { sql } from "drizzle-orm";
+import {
+  foreignKey,
+  index,
+  integer,
+  pgTable,
+  real,
+  text,
+  unique,
+  uniqueIndex,
+} from "drizzle-orm/pg-core";
 
-export const users = pgTable('users', {
-  id: serial('id').primaryKey(),
-  uid: text('uid').notNull().unique(), // Firebase Auth UID
-  email: text('email').notNull(),
-  createdAt: timestamp('created_at').defaultNow(),
+export const users = pgTable("users", {
+  id: text("id").primaryKey(),
+  email: text("email").notNull().unique(),
+  passwordHash: text("password_hash").notNull(),
+  name: text("name").notNull(),
+  role: text("role").notNull(),
+  status: text("status").notNull().default("active"),
+  phone: text("phone").notNull().default(""),
+  lastLogin: text("last_login"),
+  createdAt: text("created_at").notNull(),
+  tenantId: text("tenant_id").default(""),
+  clinicName: text("clinic_name").default(""),
+  avatarUrl: text("avatar_url").default(""),
+  whatsappVerified: integer("whatsapp_verified").default(0),
+  hprId: text("hpr_id").default(""),
+  hfrId: text("hfr_id").default(""),
+  onboardingCompleted: integer("onboarding_completed").default(0),
+  practiceType: text("practice_type").default("individual"),
+  specialty: text("specialty").default(""),
+  packId: text("pack_id").default(""),
 });
-
-export const entries = pgTable('entries', {
-  id: serial('id').primaryKey(),
-  userId: integer('user_id')
-    .references(() => users.id)
-    .notNull(),
-  content: text('content').notNull(),
-  date: text('date').notNull(),
-  createdAt: timestamp('created_at').defaultNow(),
-});
-
-export const usersRelations = relations(users, ({ many }) => ({
-  entries: many(entries),
-}));
-
-export const entriesRelations = relations(entries, ({ one }) => ({
-  author: one(users, {
-    fields: [entries.userId],
-    references: [users.id],
-  }),
-}));
