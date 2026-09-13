@@ -20,6 +20,7 @@ import {
 import {
   DEFAULT_MARKUP_PERCENT,
   applyWalletTransaction,
+  assertWalletAllowsAiScribe,
   creditWalletFromRazorpayTopup,
   ensureUsageWalletSchema,
   getMarkupPercent,
@@ -29,6 +30,8 @@ import {
   markupSource,
   platformMarginReport,
   publicWalletStatus,
+  recordAiScribeUsage,
+  scribeQuantityMinutes,
   seedDemoUsageWallet,
   upsertMarkupConfig,
   usageBreakdown,
@@ -87,6 +90,37 @@ export function createUsageBillingRouter(): Router {
     });
     writeAudit(getDb(), null, "Razorpay webhook", "Wallet top-up", `${refs.tenantId} ₹${amount} ${refs.paymentId}`);
     return res.json({ ok: true, purpose: "wallet_topup", transaction: tx, wallet: publicWalletStatus(refs.tenantId) });
+  });
+
+  // Gate AI Scribe before server.ts's /api/gemini/generate-soap; meter only when Gemini is configured.
+  api.post("/gemini/generate-soap", (req, res, next) => {
+    const tenantId = tenantIdOf(req);
+    if (tenantId) {
+      const gate = assertWalletAllowsAiScribe(tenantId);
+      if (!gate.ok) {
+        return res.status(gate.status).json({
+          error: gate.error,
+          code: gate.code,
+          wallet: gate.wallet,
+        });
+      }
+      res.on("finish", () => {
+        if (!process.env.GEMINI_API_KEY || res.statusCode >= 400) return;
+        try {
+          recordAiScribeUsage({
+            tenantId,
+            quantityMinutes: scribeQuantityMinutes({
+              durationMinutes: (req.body || {}).durationMinutes,
+              transcript: String((req.body || {}).transcript || ""),
+            }),
+            metadata: { source: "gemini-3.7-flash", endpoint: "generate-soap" },
+          });
+        } catch (meterErr) {
+          console.error("Failed to record AI Scribe usage:", meterErr);
+        }
+      });
+    }
+    next();
   });
 
   api.get("/admin/usage-markup", requireAuth, requirePlatformAdmin, (_req, res) => {
