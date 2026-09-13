@@ -32,26 +32,29 @@ describe("showGoogleOAuthButton (complements PR #64)", () => {
   });
 });
 
-describe("showFacebookOAuthButton (honesty gate, mirrors Google #65)", () => {
-  it("hides Facebook while oauth-config is loading", () => {
+describe("showFacebookOAuthButton (mirrors Google #65 exactly)", () => {
+  it("hides Facebook while oauth-config is loading (no flash)", () => {
     assert.equal(showFacebookOAuthButton(null), false);
     assert.equal(showFacebookOAuthButton(undefined), false);
   });
 
-  it("hides Facebook when facebookConfigured is false", () => {
-    assert.equal(showFacebookOAuthButton({ facebookConfigured: false }), false);
+  it("hides Facebook in production when neither Login nor sandbox is available", () => {
+    assert.equal(showFacebookOAuthButton({ sandboxClientOAuthAllowed: false }), false);
     assert.equal(
       showFacebookOAuthButton({ facebookConfigured: false, sandboxClientOAuthAllowed: false }),
       false
     );
+  });
+
+  it("shows Facebook when sandbox client-email OAuth is allowed", () => {
+    assert.equal(showFacebookOAuthButton({ sandboxClientOAuthAllowed: true }), true);
     assert.equal(
       showFacebookOAuthButton({ facebookConfigured: false, sandboxClientOAuthAllowed: true }),
-      false
+      true
     );
   });
 
-  it("shows Facebook when facebookConfigured is true", () => {
-    assert.equal(showFacebookOAuthButton({ facebookConfigured: true }), true);
+  it("shows Facebook when facebookConfigured even if sandbox client OAuth is disabled", () => {
     assert.equal(
       showFacebookOAuthButton({ facebookConfigured: true, sandboxClientOAuthAllowed: false }),
       true

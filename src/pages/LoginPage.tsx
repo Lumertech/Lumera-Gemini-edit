@@ -1202,6 +1202,11 @@ export const LoginPage: React.FC = () => {
                       SANDBOX / DEV-ONLY: Google credentials are unset, so the Google button still posts a client email. This path is disabled in production.
                     </p>
                   )}
+                  {oauthConfig && !oauthConfig.facebookConfigured && oauthConfig.sandboxClientOAuthAllowed && (
+                    <p className="text-[11px] text-amber-400/90 mb-2">
+                      SANDBOX / DEV-ONLY: Facebook App credentials are unset, so the Facebook button still posts a client email. This path is disabled in production.
+                    </p>
+                  )}
                 </div>
                 )}
 
