@@ -1,0 +1,75 @@
+diff --git a/server/api.ts b/server/api.ts
+index 15979bb..1f01ba5 100644
+--- a/server/api.ts
++++ b/server/api.ts
+@@ -21,6 +21,7 @@ import {
+ } from "./db.ts";
+ import { persistSpecialtyPackId } from "../src/lib/specialtyPack.ts";
+ import { PRODUCT_NAME } from "../src/brand.ts";
++import { reportCaughtError } from "./error-tracker.ts";
+ import { createClinicalRouter } from "./clinical.ts";
+ import { createBillingRouter } from "./billing.ts";
+ import {
+@@ -2332,8 +2333,8 @@ export function createApiRouter(): Router {
+     const filePath = path.join(process.cwd(), row.url.replace(/^\//, ""));
+     try {
+       if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+-    } catch {
+-      /* ignore */
++    } catch (err) {
++      reportCaughtError(err, "api.media.unlink");
+     }
+     getDb().prepare("DELETE FROM cms_media WHERE id = ?").run(req.params.id);
+     audit(req, "Media deleted", row.filename);
+diff --git a/server/whatsapp.ts b/server/whatsapp.ts
+index 9d2a482..e3a7ed4 100644
+--- a/server/whatsapp.ts
++++ b/server/whatsapp.ts
+@@ -19,6 +19,7 @@ import {
+   runAppointmentReminders,
+ } from "./whatsapp-calendar.ts";
+ import { isProduction } from "./runtime.ts";
++import { reportCaughtError } from "./error-tracker.ts";
+ 
+ let defaultGenAIClient: GoogleGenAI | null = null;
+ function getDefaultGenAI(): GoogleGenAI | null {
+@@ -308,7 +309,8 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
+       if (sender === "agent" && targetLanguage && targetLanguage !== "en") {
+         try {
+           translatedContent = await translateWithGeminiOrFallback(content, targetLanguage, getGenAI());
+-        } catch {
++        } catch (err) {
++          reportCaughtError(err, "whatsapp.translate.outbound");
+           translatedContent = null;
+         }
+       }
+@@ -319,7 +321,8 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
+         if (detectedLanguage !== "en") {
+           try {
+             translatedContent = await translateWithGeminiOrFallback(content, "en", getGenAI());
+-          } catch {
++          } catch (err) {
++            reportCaughtError(err, "whatsapp.translate.inbound");
+             translatedContent = null;
+           }
+         }
+@@ -1549,7 +1552,8 @@ Suggest relevant quick actions (booking appointment, checking timings, viewing l
+         content: res.text || "Thank you for reaching out to Lumera Polyclinic. How may we assist you further?",
+         buttons: ["📅 Book Doctor Appointment", "💊 Refill Prescription", "🔬 View Lab Reports", "👤 Speak with Receptionist"],
+       };
+-    } catch {
++    } catch (err) {
++      reportCaughtError(err, "whatsapp.gemini.fallback");
+       /* fallback below */
+     }
+   }
+@@ -1600,7 +1604,8 @@ async function translateWithGeminiOrFallback(text: string, targetLang: string, a
+         ],
+       });
+       if (response.text) return response.text.trim();
+-    } catch {
++    } catch (err) {
++      reportCaughtError(err, "whatsapp.translate.gemini");
+       /* fallback */
+     }
+   }
