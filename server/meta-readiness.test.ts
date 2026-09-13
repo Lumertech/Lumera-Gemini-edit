@@ -23,7 +23,7 @@ function hmacSha256(secret: string, body: string): string {
 
 describe("Meta webhook signatures", () => {
   const secret = "test-app-secret";
-  const body = '{\"object\":\"whatsapp_business_account\"}';
+  const body = '{"object":"whatsapp_business_account"}';
 
   it("accepts a valid X-Hub-Signature-256", () => {
     assert.equal(verifyMetaHubSignature(body, hmacSha256(secret, body), secret), true);
