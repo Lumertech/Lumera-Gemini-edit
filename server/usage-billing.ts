@@ -57,6 +57,12 @@ export function categoryForCloudKind(kind?: string | null): WhatsAppCategory {
   return "utility";
 }
 
+/**
+ * Oct 1 2026 cutover (WABA timezone approximated as UTC unless overridden).
+ * META_BILL_SERVICE_WINDOW=true forces billed-in-window behavior now.
+ * META_FREE_SERVICE_WINDOW=true keeps the pre-cutover free window (tests / rollback).
+ * META_SERVICE_WINDOW_CUTOVER overrides the ISO timestamp.
+ */
 export function isMetaServiceWindowBilled(now: Date = new Date()): boolean {
   if (envFlag("META_FREE_SERVICE_WINDOW")) return false;
   if (envFlag("META_BILL_SERVICE_WINDOW")) return true;
@@ -122,6 +128,7 @@ export function insertUsageEvent(opts: {
   return { id, createdAt };
 }
 
+/** tenants.ai_scribe_minutes_used is a derived rollup of usage_events, not an independently written value. */
 export function refreshAiScribeMinutesRollup(tenantId: string, database?: DatabaseSync) {
   const db = database || getDb();
   try {
@@ -219,6 +226,12 @@ export function recordWhatsAppUsageAndDebit(opts: {
   return { usageEventId: usage.id, rawCost: estimate.rawCost, billedAmount, markupPercent };
 }
 
+/**
+ * Record AI Scribe minutes, then debit the wallet the same way WhatsApp does
+ * (`recordWhatsAppUsageAndDebit`): markup on raw_cost when a numeric session
+ * cost exists. Null raw_cost → usage_events + minutes rollup, no usage_debit
+ * (no invented Gemini per-minute rate).
+ */
 export function recordAiScribeUsage(opts: {
   tenantId: string;
   quantityMinutes: number;
@@ -258,6 +271,7 @@ export function recordAiScribeUsage(opts: {
   return { usageEventId: usage.id, rawCost, billedAmount, markupPercent };
 }
 
+/** Alias matching `recordWhatsAppUsageAndDebit` — same implementation. */
 export const recordAiScribeUsageAndDebit = recordAiScribeUsage;
 
 /**
