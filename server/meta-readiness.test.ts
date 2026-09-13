@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import { after, describe, it } from "node:test";
-import express from "express";
 import { createMetaRouter } from "./meta.ts";
 import {
   buildMetaReadinessOverview,
@@ -13,9 +12,10 @@ import {
 import { facebookOAuthConfigured, resolveFederatedIdentity, signFacebookOAuthState, verifyFacebookOAuthState } from "./facebook-oauth.ts";
 import { resolveGraphCredentials } from "./graph-whatsapp.ts";
 import { isUnsetOrPlaceholder } from "./runtime.ts";
-import { attachUser, verifyJwtToken } from "./auth.ts";
+import { verifyJwtToken } from "./auth.ts";
 import { createApiRouter } from "./api.ts";
 import { initDatabase } from "./db.ts";
+import { jsonRequest, startTestServer } from "./test-http.ts";
 
 function hmacSha256(secret: string, body: string): string {
   return "sha256=" + crypto.createHmac("sha256", secret).update(body).digest("hex");
@@ -23,7 +23,7 @@ function hmacSha256(secret: string, body: string): string {
 
 describe("Meta webhook signatures", () => {
   const secret = "test-app-secret";
-  const body = '{"object":"whatsapp_business_account"}';
+  const body = '{\"object\":\"whatsapp_business_account\"}';
 
   it("accepts a valid X-Hub-Signature-256", () => {
     assert.equal(verifyMetaHubSignature(body, hmacSha256(secret, body), secret), true);
@@ -271,28 +271,19 @@ describe("Facebook OAuth session mint (JWT parity)", () => {
     delete process.env.FACEBOOK_APP_SECRET;
     initDatabase();
 
-    const app = express();
-    app.use(express.json());
-    app.use(attachUser);
-    app.use("/api", createApiRouter());
-    const server = app.listen(0, "127.0.0.1");
+    const server = await startTestServer((app) => {
+      app.use("/api", createApiRouter());
+    });
     try {
-      await new Promise<void>((resolve) => server.once("listening", () => resolve()));
-      const addr = server.address();
-      if (!addr || typeof addr === "string") throw new Error("server did not bind a port");
-      const port = addr.port;
+      const port = server.port;
 
-      const oauthRes = await fetch(`http://127.0.0.1:${port}/api/auth/oauth`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          provider: "facebook",
-          profile: { email: "doctor@lumera.me", name: "Dr. Rajiv Saxena" },
-          skipOtp: true,
-        }),
+      const oauthRes = await jsonRequest(port, "POST", "/api/auth/oauth", {
+        provider: "facebook",
+        profile: { email: "doctor@lumera.me", name: "Dr. Rajiv Saxena" },
+        skipOtp: true,
       });
       assert.equal(oauthRes.status, 200);
-      const oauthJson = (await oauthRes.json()) as {
+      const oauthJson = oauthRes.json as {
         token?: string;
         user?: { email?: string };
         sandbox?: boolean;
@@ -311,23 +302,21 @@ describe("Facebook OAuth session mint (JWT parity)", () => {
       const setCookie = oauthRes.headers.get("set-cookie") || "";
       assert.match(setCookie, /lumera_sid=/);
 
-      const meBearer = await fetch(`http://127.0.0.1:${port}/api/auth/me`, {
-        headers: { Authorization: `Bearer ${token}` },
+      const meBearer = await jsonRequest(port, "GET", "/api/auth/me", undefined, {
+        Authorization: `Bearer ${token}`,
       });
       assert.equal(meBearer.status, 200);
-      const meBearerJson = (await meBearer.json()) as { user?: { email?: string }; token?: string };
-      assert.equal(meBearerJson.user?.email, "doctor@lumera.me");
-      assert.equal(meBearerJson.token, token);
+      assert.equal((meBearer.json.user as { email?: string } | undefined)?.email, "doctor@lumera.me");
+      assert.equal(meBearer.json.token, token);
 
-      const meCookie = await fetch(`http://127.0.0.1:${port}/api/auth/me`, {
-        headers: { Cookie: `lumera_sid=${encodeURIComponent(token)}` },
+      const meCookie = await jsonRequest(port, "GET", "/api/auth/me", undefined, {
+        Cookie: `lumera_sid=${encodeURIComponent(token)}`,
       });
       assert.equal(meCookie.status, 200);
-      const meCookieJson = (await meCookie.json()) as { user?: { email?: string }; token?: string };
-      assert.equal(meCookieJson.user?.email, "doctor@lumera.me");
-      assert.equal(meCookieJson.token, token);
+      assert.equal((meCookie.json.user as { email?: string } | undefined)?.email, "doctor@lumera.me");
+      assert.equal(meCookie.json.token, token);
     } finally {
-      await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+      await server.close();
       if (prevJwt === undefined) delete process.env.JWT_SECRET;
       else process.env.JWT_SECRET = prevJwt;
       if (prevNode === undefined) delete process.env.NODE_ENV;
@@ -344,23 +333,18 @@ describe("Production-gated simulate routes", () => {
   it("POST /api/meta/simulate-embedded-signup is 403 when NODE_ENV=production", async () => {
     const prev = process.env.NODE_ENV;
     process.env.NODE_ENV = "production";
-    const app = express();
-    app.use(express.json());
-    app.use("/api/meta", createMetaRouter());
-    const server = app.listen(0);
+    const server = await startTestServer((app) => {
+      app.use("/api/meta", createMetaRouter());
+    });
     try {
-      const { port } = server.address() as { port: number };
-      const res = await fetch(`http://127.0.0.1:${port}/api/meta/simulate-embedded-signup`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tenantId: "tenant-lumera-main" }),
+      const res = await jsonRequest(server.port, "POST", "/api/meta/simulate-embedded-signup", {
+        tenantId: "tenant-lumera-main",
       });
       assert.equal(res.status, 403);
-      const json = (await res.json()) as { error?: string };
-      assert.match(json.error || "", /disabled in production/i);
+      assert.match(String(res.json.error || ""), /disabled in production/i);
     } finally {
       process.env.NODE_ENV = prev;
-      await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+      await server.close();
     }
   });
 
@@ -369,31 +353,24 @@ describe("Production-gated simulate routes", () => {
     const prevFlag = process.env.META_WEBHOOK_ALLOW_UNSIGNED;
     process.env.META_APP_SECRET = "unit-test-secret";
     process.env.META_WEBHOOK_ALLOW_UNSIGNED = "false";
-    const app = express();
-    app.use(
-      express.json({
-        verify: (req, _res, buf) => {
-          (req as express.Request).rawBody = buf;
-        },
-      })
-    );
-    app.use("/api/meta", createMetaRouter());
-    const server = app.listen(0);
+    const server = await startTestServer((app) => {
+      app.use("/api/meta", createMetaRouter());
+    });
     try {
-      const { port } = server.address() as { port: number };
-      const res = await fetch(`http://127.0.0.1:${port}/api/meta/webhook`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
+      const res = await jsonRequest(
+        server.port,
+        "POST",
+        "/api/meta/webhook",
+        { object: "whatsapp_business_account", entry: [] },
+        {
           "X-Hub-Signature-256": "sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        },
-        body: JSON.stringify({ object: "whatsapp_business_account", entry: [] }),
-      });
+        }
+      );
       assert.equal(res.status, 403);
     } finally {
       process.env.META_APP_SECRET = prevSecret;
       process.env.META_WEBHOOK_ALLOW_UNSIGNED = prevFlag;
-      await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+      await server.close();
     }
   });
 });
