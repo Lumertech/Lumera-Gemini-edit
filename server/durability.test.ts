@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import path from "node:path";
 import { describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
+import {
+  openConfiguredDatabase,
+  resolveSqlEngineKind,
+} from "./sql-open.ts";
 import {
   assertRequiredProductionEnv,
   DATABASE_URL_REQUIRED_MESSAGE,
@@ -10,6 +16,8 @@ import { sqliteFallbackForbidden } from "./sql-engine.ts";
 
 const PROD_JWT = "a-sufficiently-long-cloud-run-secret";
 const PROD_DB = "postgres://lumera:local@127.0.0.1:5432/lumera";
+const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
+const sqlitePath = path.join(root, "data", "lumera.db");
 
 describe("production DATABASE_URL fail-fast (Epic 0.2)", () => {
   it("requires DATABASE_URL after JWT_SECRET in production", () => {
@@ -50,8 +58,16 @@ describe("production DATABASE_URL fail-fast (Epic 0.2)", () => {
     assert.doesNotThrow(() => assertRequiredProductionEnv({} as NodeJS.ProcessEnv));
   });
 
-  it("forbids sqlite fallback on Cloud Run / bundled server.cjs only", () => {
+  it("forbids sqlite fallback in production, Cloud Run, and bundled server.cjs", () => {
     assert.equal(sqliteFallbackForbidden({} as NodeJS.ProcessEnv, "/workspace/server.ts"), false);
+    assert.equal(
+      sqliteFallbackForbidden({ NODE_ENV: "test" } as NodeJS.ProcessEnv, "/workspace/server.ts"),
+      false
+    );
+    assert.equal(
+      sqliteFallbackForbidden({ NODE_ENV: "production" } as NodeJS.ProcessEnv, "/workspace/server.ts"),
+      true
+    );
     assert.equal(
       sqliteFallbackForbidden({ K_SERVICE: "lumera-gemini-edit" } as NodeJS.ProcessEnv, "/workspace/server.ts"),
       true
@@ -65,5 +81,78 @@ describe("production DATABASE_URL fail-fast (Epic 0.2)", () => {
     };
     assert.match(pkg.scripts.build, /alias:node:sqlite=\.\/server\/sqlite-compat\.ts/);
     assert.match(pkg.scripts.build, /cp server\/pg-sync-worker\.cjs dist\/pg-sync-worker\.cjs/);
+  });
+});
+
+describe("getDb / initDatabase engine selection (Epic 0.2 wiring)", () => {
+  it("calls sqliteFallbackForbidden from db init and prefers pg-shim when DATABASE_URL is set", () => {
+    const dbSrc = fs.readFileSync(path.join(root, "server/db.ts"), "utf8");
+    const openSrc = fs.readFileSync(path.join(root, "server/sql-open.ts"), "utf8");
+    assert.match(dbSrc, /openConfiguredDatabase/);
+    assert.match(openSrc, /sqliteFallbackForbidden\(/);
+    assert.match(openSrc, /createPgShim\(/);
+    assert.equal(
+      resolveSqlEngineKind(
+        { DATABASE_URL: "postgres://lumera:lumera@127.0.0.1:54329/lumera" } as NodeJS.ProcessEnv,
+        "/workspace/server.ts"
+      ),
+      "postgres"
+    );
+    assert.equal(resolveSqlEngineKind({ NODE_ENV: "test" } as NodeJS.ProcessEnv, "/workspace/server.ts"), "sqlite");
+    assert.equal(resolveSqlEngineKind({} as NodeJS.ProcessEnv, "/workspace/server.ts"), "sqlite");
+  });
+
+  it("production / Cloud Run without DATABASE_URL does not open sqlite", () => {
+    const existed = fs.existsSync(sqlitePath);
+    const mtime = existed ? fs.statSync(sqlitePath).mtimeMs : 0;
+
+    assert.throws(
+      () => resolveSqlEngineKind({ NODE_ENV: "production" } as NodeJS.ProcessEnv, "/workspace/server.ts"),
+      /DATABASE_URL/
+    );
+    assert.throws(
+      () =>
+        openConfiguredDatabase(
+          { NODE_ENV: "production" } as NodeJS.ProcessEnv,
+          "/workspace/server.ts"
+        ),
+      /DATABASE_URL is required/
+    );
+    assert.throws(
+      () =>
+        openConfiguredDatabase(
+          { K_SERVICE: "lumera-gemini-edit" } as NodeJS.ProcessEnv,
+          "/workspace/server.ts"
+        ),
+      /DATABASE_URL is required/
+    );
+    assert.throws(
+      () => openConfiguredDatabase({} as NodeJS.ProcessEnv, "/app/dist/server.cjs"),
+      /DATABASE_URL is required/
+    );
+
+    if (existed) {
+      assert.equal(fs.statSync(sqlitePath).mtimeMs, mtime, "production fail-fast must not touch lumera.db");
+    } else {
+      assert.equal(fs.existsSync(sqlitePath), false, "production fail-fast must not create lumera.db");
+    }
+  });
+
+  it("placeholder DATABASE_URL is not a postgres engine", () => {
+    assert.throws(
+      () =>
+        resolveSqlEngineKind(
+          { NODE_ENV: "production", DATABASE_URL: "replace-with-postgres-url" } as NodeJS.ProcessEnv,
+          "/workspace/server.ts"
+        ),
+      /DATABASE_URL/
+    );
+    assert.equal(
+      resolveSqlEngineKind(
+        { NODE_ENV: "test", DATABASE_URL: "replace-with-postgres-url" } as NodeJS.ProcessEnv,
+        "/workspace/server.ts"
+      ),
+      "sqlite"
+    );
   });
 });
