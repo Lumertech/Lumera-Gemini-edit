@@ -29,6 +29,7 @@ import {
   embeddedSignupPublicConfig,
 } from "./embedded-signup.ts";
 import { wabaOnboardingCapsOverview } from "./waba-onboarding-caps.ts";
+import { handleMetaDataDeletionPost } from "./meta-signed-request.ts";
 
 export function bootWhatsAppOwnershipSchema() {
   const database = getDb();
@@ -298,6 +299,9 @@ export function createWhatsAppNumbersRouter(): Router {
   router.get("/meta/embedded-signup-config", requireAuth, (_req, res) => {
     res.json(embeddedSignupPublicConfig());
   });
+
+  // Mounted at /api before createApiRouter, so this wins over server/meta.ts's unsigned scaffold.
+  router.post("/meta/data-deletion", handleMetaDataDeletionPost);
 
   router.post("/whatsapp-numbers/embedded-signup/complete", requireAuth, async (req, res) => {
     try {
