@@ -1,34 +1,14 @@
 import assert from "node:assert/strict";
-import type { Server } from "node:http";
 import { after, before, describe, it } from "node:test";
-import express from "express";
-import { attachUser } from "./auth.ts";
+import { jsonRequest, startTestServer } from "./test-http.ts";
 import { createApiRouter } from "./api.ts";
 import { DEMO_TENANT_ID, getDb, initDatabase } from "./db.ts";
 import { DEMO_ACCOUNTS, DEMO_PASSWORD } from "../src/lib/demoAccounts.ts";
 
-async function jsonRequest(
-  port: number,
-  method: string,
-  urlPath: string,
-  body?: unknown,
-  headers: Record<string, string> = {}
-): Promise<{ status: number; json: Record<string, unknown> }> {
-  const res = await fetch(`http://127.0.0.1:${port}${urlPath}`, {
-    method,
-    headers: {
-      ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
-      ...headers,
-    },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
-  const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-  return { status: res.status, json };
-}
 
 describe("Admin console persist (founder audit 1–9)", () => {
   let port = 0;
-  let server: Server | undefined;
+  let close: (() => Promise<void>) | undefined;
 
   before(async () => {
     if (!process.env.JWT_SECRET) process.env.JWT_SECRET = "test-jwt-admin-console";
@@ -37,20 +17,15 @@ describe("Admin console persist (founder audit 1–9)", () => {
     } catch {
       initDatabase();
     }
-    const app = express();
-    app.use(express.json());
-    app.use(attachUser);
-    app.use("/api", createApiRouter());
-    server = app.listen(0, "127.0.0.1");
-    await new Promise<void>((resolve) => server!.once("listening", () => resolve()));
-    const addr = server.address();
-    if (!addr || typeof addr === "string") throw new Error("no port");
-    port = addr.port;
+    const server = await startTestServer((app) => {
+      app.use("/api", createApiRouter());
+    });
+    port = server.port;
+    close = server.close;
   });
 
   after(async () => {
-    if (!server) return;
-    await new Promise<void>((resolve, reject) => server!.close((err) => (err ? reject(err) : resolve())));
+    await close?.();
   });
 
   async function login(email: string) {
