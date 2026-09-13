@@ -11,6 +11,13 @@ import { createApiRouter } from "./server/api.ts";
 import { createMetaRouter } from "./server/meta.ts";
 import { createAbdmRouter } from "./server/abdm.ts";
 import { applyBundledServerNodeEnv, failFastRequiredProductionEnv, resolveListenPort } from "./server/runtime.ts";
+import {
+  expressErrorHandler,
+  failFastErrorTrackerConfig,
+  initErrorTracker,
+  installProcessErrorHandlers,
+  reportError,
+} from "./server/error-tracker.ts";
 import { attachProductionSpaFallback } from "./server/spa-fallback.ts";
 import { attachPublicPolicyHtml, isPublicPolicyHtmlPath } from "./server/policy-html.ts";
 
@@ -18,6 +25,9 @@ dotenv.config();
 applyBundledServerNodeEnv();
 // Fail-closed on JWT_SECRET before any listen. Missing secret exits here — not a PORT bug.
 failFastRequiredProductionEnv();
+failFastErrorTrackerConfig();
+initErrorTracker();
+installProcessErrorHandlers();
 
 const app = express();
 const PORT = resolveListenPort();
@@ -595,6 +605,7 @@ For query "${query}":
 async function startServer() {
   applyBundledServerNodeEnv();
   failFastRequiredProductionEnv();
+  failFastErrorTrackerConfig();
 
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
@@ -627,6 +638,8 @@ async function startServer() {
     attachProductionSpaFallback(app);
   }
 
+  app.use(expressErrorHandler);
+
   const envPort = String(process.env.PORT || "").trim();
   await new Promise<void>((resolve, reject) => {
     const server = app.listen(PORT, "0.0.0.0", () => {
@@ -644,6 +657,7 @@ async function startServer() {
 }
 
 startServer().catch((err) => {
+  reportError(err, { kind: "startup" });
   console.error("[Lumera] Server failed to start:", err);
   process.exit(1);
 });

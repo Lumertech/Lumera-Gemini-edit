@@ -135,10 +135,17 @@ describe("Cloud Run boot order (source contract)", () => {
   it("listens on 0.0.0.0:$PORT after JWT fail-fast and before initDatabase", () => {
     const src = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "server.ts"), "utf8");
     assert.match(src, /failFastRequiredProductionEnv\(\)/);
+    assert.match(src, /failFastErrorTrackerConfig\(\)/);
+    assert.match(src, /initErrorTracker\(\)/);
+    assert.match(src, /app\.use\(expressErrorHandler\)/);
     assert.match(src, /app\.listen\(PORT,\s*"0\.0\.0\.0"/);
     const listenIdx = src.indexOf('app.listen(PORT, "0.0.0.0"');
     const initIdx = src.lastIndexOf("initDatabase()");
+    const trackerIdx = src.indexOf("initErrorTracker()");
+    const errMwIdx = src.indexOf("app.use(expressErrorHandler)");
     assert.ok(listenIdx > 0, "must bind 0.0.0.0");
+    assert.ok(trackerIdx > 0 && trackerIdx < listenIdx, "error tracker must initialize before listen");
+    assert.ok(errMwIdx > 0 && errMwIdx < listenIdx, "Express error middleware must be attached before listen");
     assert.ok(initIdx > listenIdx, "initDatabase must run after listen so Cloud Run gets a socket promptly");
     assert.equal(src.includes("assertRequiredProductionEnv()"), false);
     assert.doesNotMatch(src, /app\.listen\(\s*8080/);

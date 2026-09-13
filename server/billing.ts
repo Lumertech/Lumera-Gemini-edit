@@ -17,6 +17,7 @@ import {
   razorpayKeysConfigured,
 } from "./razorpay.ts";
 import { appPublicUrl, isProduction, sandboxSimulatorsEnabled } from "./runtime.ts";
+import { reportCaughtError } from "./error-tracker.ts";
 
 function tenantIdOf(req: Request): string {
   return String(req.user?.tenantId || "").trim();
@@ -474,7 +475,8 @@ export function createBillingRouter(): Router {
               .all(tenantId)
       ) as Record<string, unknown>[];
       res.json({ invoices: rows.map(mapInvoice) });
-    } catch {
+    } catch (err) {
+      reportCaughtError(err, "billing.listInvoices");
       res.status(500).json({ error: "Failed to fetch invoices" });
     }
   });

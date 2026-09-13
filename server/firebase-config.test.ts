@@ -49,6 +49,23 @@ describe("Firebase Hosting → Cloud Run config (#26)", () => {
     assert.match(readRepo("deploy/CLOUD_RUN_BOOT_CHECK.md"), /JWT_SECRET is required/);
   });
 
+  it("cloudbuild runs lint + test before Docker build as a sequential hard gate", () => {
+    const yaml = readRepo("cloudbuild.yaml");
+    const pkg = JSON.parse(readRepo("package.json")) as { scripts: { test: string } };
+    const testGlobs = pkg.scripts.test.replace(/^tsx\s+/, "");
+    assert.match(yaml, /id: lint-test/);
+    assert.match(yaml, /npm run lint/);
+    assert.ok(yaml.includes(testGlobs), "cloudbuild test command must use package.json test globs");
+    assert.match(yaml, /JWT_SECRET/);
+    const lintIdx = yaml.indexOf("id: lint-test");
+    const buildIdx = yaml.indexOf("id: build");
+    const pushIdx = yaml.indexOf("id: push");
+    assert.ok(lintIdx > 0 && lintIdx < buildIdx, "lint-test must be declared before docker build");
+    assert.ok(buildIdx < pushIdx, "docker build must still precede push");
+    assert.match(yaml, /waitFor:\s*\['lint-test'\]/);
+    assert.match(yaml, /waitFor:\s*\['build'\]/);
+  });
+
   it("runbook is Firebase Hosting + Cloud Run, not Hostinger purchase", () => {
     assert.equal(fs.existsSync(path.join(root, "docs/HOSTINGER_NODE_DEPLOY.md")), false);
     const runbook = readRepo("docs/FIREBASE_CLOUD_RUN_DEPLOY.md");
