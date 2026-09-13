@@ -17,6 +17,7 @@ import {
   Building2,
   Settings,
   Network,
+  Wallet,
 } from "lucide-react";
 import { useAuth } from "../../auth/AuthContext";
 import { Link } from "react-router-dom";
@@ -29,6 +30,7 @@ import { AdminPeople } from "./AdminPeople";
 import { AdminBranches } from "./AdminBranches";
 import { AdminTenants } from "./AdminTenants";
 import { AdminSubscriptions } from "./AdminSubscriptions";
+import { AdminUsageBilling } from "./AdminUsageBilling";
 import { AdminCmsSite } from "./AdminCmsSite";
 import { AdminPolicies } from "./AdminPolicies";
 import { AdminMedia } from "./AdminMedia";
@@ -49,6 +51,7 @@ const NAV: { id: AdminTab; label: string; icon: typeof Users; badge?: string; gr
   { id: "audit", label: "Audit log", icon: History, group: "desk" },
   { id: "tenants", label: "Tenants", icon: Network, group: "superadmin" },
   { id: "subscriptions", label: "Subscriptions", icon: KeyRound, group: "superadmin" },
+  { id: "usage", label: "Usage wallet", icon: Wallet, group: "superadmin" },
   { id: "dhis", label: "ABDM & DHIS Meter", icon: Award, group: "platform" },
   { id: "meta", label: "Meta WhatsApp", icon: Share2, badge: "SANDBOX", group: "platform" },
   { id: "site", label: "Website CMS", icon: Globe, group: "platform" },
@@ -114,6 +117,7 @@ const AdminShellInner: React.FC = () => {
     branches: <AdminBranches />,
     tenants: <AdminTenants />,
     subscriptions: <AdminSubscriptions />,
+    usage: <AdminUsageBilling />,
     site: <AdminCmsSite />,
     policies: <AdminPolicies />,
     media: <AdminMedia />,
