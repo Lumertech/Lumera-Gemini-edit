@@ -2,6 +2,7 @@ import type { NextFunction, Request, Response } from "express";
 import jwt from "jsonwebtoken";
 import { isDemoAccountEmail } from "../src/lib/demoAccounts.ts";
 import { getDb, publicUser, type DbUser, type UserRole } from "./db.ts";
+import { CSRF_COOKIE, csrfCookieValue, csrfSetCookieHeader } from "./http-security.ts";
 import { clinicTenantAccessError } from "./platform-tenants.ts";
 
 const COOKIE = "lumera_sid";
@@ -120,14 +121,15 @@ function parseCookies(header?: string): Record<string, string> {
 
 export function setSessionCookie(res: Response, sessionId: string) {
   const maxAge = SESSION_DAYS * 24 * 60 * 60;
-  res.setHeader(
-    "Set-Cookie",
-    `${COOKIE}=${encodeURIComponent(sessionId)}; HttpOnly; Path=/; SameSite=None; Secure; Partitioned; Max-Age=${maxAge}`
-  );
+  const sid = `${COOKIE}=${encodeURIComponent(sessionId)}; HttpOnly; Path=/; SameSite=None; Secure; Partitioned; Max-Age=${maxAge}`;
+  res.setHeader("Set-Cookie", [sid, csrfSetCookieHeader(csrfCookieValue())]);
 }
 
 export function clearSessionCookie(res: Response) {
-  res.setHeader("Set-Cookie", `${COOKIE}=; HttpOnly; Path=/; SameSite=None; Secure; Partitioned; Max-Age=0`);
+  res.setHeader("Set-Cookie", [
+    `${COOKIE}=; HttpOnly; Path=/; SameSite=None; Secure; Partitioned; Max-Age=0`,
+    `${CSRF_COOKIE}=; Path=/; SameSite=None; Secure; Partitioned; Max-Age=0`,
+  ]);
 }
 
 export function createSession(userId: string): string {
