@@ -77,7 +77,7 @@ interface AuthContextValue {
   ) => Promise<LoginResult>;
   sendWhatsAppOtp: (phone: string, email?: string, purpose?: string, name?: string) => Promise<{ ok: boolean; verificationId: string; phone: string; demoOtp?: string; expiresAt: string; message?: string }>;
   verifyWhatsAppOtp: (verificationId: string, otp: string, updatedPhone?: string) => Promise<{ ok: boolean; user?: AppUser; token?: string; tenantId?: string; message?: string }>;
-  registerClinic: (data: RegisterClinicData) => Promise<{ requiresOtp: boolean; verificationId: string; phone: string; email: string; demoOtp?: string; tenantId?: string; userId?: string; hfrId?: string; hprId?: string; message: string }>;
+  registerClinic: (data: RegisterClinicData) => Promise<{ requiresOtp: boolean; verificationId: string; phone: string; email: string; demoOtp?: string; tenantId?: string; userId?: string; hfrId?: string; hprId?: string; hfrLabel?: string; hprLabel?: string; registryIdsPlaceholder?: boolean; abdmMode?: "stub" | "sandbox"; message: string }>;
   completeOnboarding: (data: OnboardingPayload) => Promise<{ ok: boolean; user?: AppUser; token?: string; homeView?: string; message?: string }>;
   requestPasswordReset: (email: string) => Promise<{ ok: boolean; verificationId: string; phone: string; demoOtp?: string; message: string }>;
   resetPassword: (verificationId: string, otp: string, newPassword: string) => Promise<{ ok: boolean; message: string }>;
@@ -224,6 +224,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       userId?: string;
       hfrId?: string;
       hprId?: string;
+      hfrLabel?: string;
+      hprLabel?: string;
+      registryIdsPlaceholder?: boolean;
+      abdmMode?: "stub" | "sandbox";
       message: string;
     }>("/api/auth/register-practice", {
       method: "POST",
