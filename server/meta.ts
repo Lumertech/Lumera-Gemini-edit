@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import { findDataDeletionRequest, getDb, insertDataDeletionRequest } from "./db.ts";
 import { appPublicUrl, isProduction, sandboxSimulatorsEnabled } from "./runtime.ts";
+import { reportCaughtError } from "./error-tracker.ts";
 import { resolveGraphCredentials } from "./graph-whatsapp.ts";
 import { facebookOAuthConfigured } from "./facebook-oauth.ts";
 import {
@@ -88,7 +89,9 @@ export function createMetaRouter(): Router {
                       SET status = ?, sent_at = ?
                       WHERE id = ? OR patient_phone = ?
                     `).run(status, now, messageId, recipientId);
-                  } catch {}
+                  } catch (err) {
+                    reportCaughtError(err, "meta.webhook.outbound-status");
+                  }
                 }
               }
 
@@ -165,8 +168,8 @@ export function createMetaRouter(): Router {
           `Data erasure request code ${code} initialized for ${userIdOrPhone}`,
           now
         );
-      } catch {
-        /* audit is best-effort */
+      } catch (err) {
+        reportCaughtError(err, "meta.data-deletion.audit");
       }
 
       return res.status(200).json({
@@ -177,8 +180,8 @@ export function createMetaRouter(): Router {
       console.error("[Meta Data Deletion Callback Error]", err);
       try {
         insertDataDeletionRequest(getDb(), code, userIdOrPhone);
-      } catch {
-        /* persist fallback is best-effort */
+      } catch (err) {
+        reportCaughtError(err, "meta.data-deletion.persist-fallback");
       }
       return res.status(200).json({
         url: `${origin}/data-deletion-instructions?code=${encodeURIComponent(code)}`,
