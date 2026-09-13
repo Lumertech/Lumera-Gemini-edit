@@ -19,11 +19,19 @@ export interface SqlDatabase {
 }
 
 /**
- * Refuse the local sqlite file on Cloud Run / bundled production server.
- * Tests that set NODE_ENV=production still use sqlite when DATABASE_URL is
- * unset — they do not set K_SERVICE and they do not run dist/server.cjs.
+ * Refuse the local sqlite file when a durable engine is required.
+ *
+ * True when:
+ * - NODE_ENV=production (Cloud Run / `npm start`)
+ * - Cloud Run injects K_SERVICE / K_REVISION
+ * - the process is the bundled dist/server.cjs
+ *
+ * Callers must still prefer DATABASE_URL / pg-shim when a URL is set.
+ * Tests that only flip NODE_ENV after initDatabase() keep their existing
+ * connection; they must not call initDatabase() again without DATABASE_URL.
  */
 export function sqliteFallbackForbidden(env: NodeJS.ProcessEnv = process.env, argv1 = process.argv[1]): boolean {
+  if (String(env.NODE_ENV || "").trim() === "production") return true;
   if (String(env.K_SERVICE || "").trim() || String(env.K_REVISION || "").trim()) return true;
   if (/(^|[\\/])server\.cjs$/.test(String(argv1 || ""))) return true;
   return false;

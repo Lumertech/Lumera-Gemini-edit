@@ -1,21 +1,20 @@
 /**
  * Drop-in for `node:sqlite` DatabaseSync used by the Cloud Run bundle.
  *
- * esbuild aliases `node:sqlite` → this file so `new DatabaseSync(path)` in
- * server/db.ts talks to Cloud SQL when DATABASE_URL is set. The real sqlite
- * module is loaded via createRequire so the alias cannot recurse.
+ * esbuild aliases `node:sqlite` → this file so any leftover
+ * `new DatabaseSync(path)` in the bundle still talks to Cloud SQL when
+ * DATABASE_URL is set. getDb()/initDatabase() in server/db.ts now select
+ * the pg-shim directly (this class is the second line of defense).
  *
  * tsx tests import node:sqlite directly (no alias) and keep using a local
- * file. Production fail-fast for a missing DATABASE_URL is in runtime.ts
- * (before listen). This class is the second line of defense: Cloud Run /
- * dist/server.cjs refuse a local sqlite file even if initDatabase is called.
+ * file when DATABASE_URL is unset. Production / Cloud Run refuse sqlite.
  */
 import { createRequire } from "node:module";
 import fs from "node:fs";
 import path from "node:path";
 import { databaseUrlFromEnv } from "../src/db/url.ts";
 import { createPgShim } from "./pg-shim.ts";
-import { DATABASE_URL_REQUIRED_MESSAGE } from "./runtime.ts";
+import { DATABASE_URL_REQUIRED_MESSAGE, isUnsetOrPlaceholder } from "./runtime.ts";
 import { sqliteFallbackForbidden, type SqlDatabase, type SqlStatement } from "./sql-engine.ts";
 
 const require = createRequire(import.meta.url);
@@ -28,7 +27,7 @@ export class DatabaseSync implements SqlDatabase {
 
   constructor(filename: string) {
     const url = databaseUrlFromEnv();
-    if (url) {
+    if (url && !isUnsetOrPlaceholder(url)) {
       this.inner = createPgShim(url);
       return;
     }
