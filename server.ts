@@ -50,3 +50,19 @@ app.post("/data-deletion-callback", (req, res, next) => {
   createMetaRouter()(req, res, next);
 });
 attachPublicPolicyHtml(app);
+
+// Lazy Google GenAI initialization
+let genAIClient: GoogleGenAI | null = null;
+function getGenAI(): GoogleGenAI | null {
+  if (!genAIClient && process.env.GEMINI_API_KEY) {
+    genAIClient = new GoogleGenAI({
+      apiKey: process.env.GEMINI_API_KEY,
+      httpOptions: {
+        headers: {
+          "User-Agent": "aistudio-build",
+        },
+      },
+    });
+  }
+  return genAIClient;
+}
