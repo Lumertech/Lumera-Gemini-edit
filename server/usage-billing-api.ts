@@ -1,7 +1,12 @@
-import { Router, type Request } from "express";
+import { Router, type Request, type Response, type NextFunction } from "express";
 import { getDb, writeAudit } from "./db.ts";
 import { requireAuth, requirePlatformAdmin } from "./auth.ts";
+import { isCloudDispatchFailure } from "./graph-whatsapp.ts";
+import { getTenantLetterhead } from "./letterhead.ts";
 import { appPublicUrl, isProduction, sandboxSimulatorsEnabled } from "./runtime.ts";
+import { WALLET_INSUFFICIENT_ERROR } from "./usage-wallet.ts";
+import { resolveWhatsAppTenantId } from "./whatsapp-calendar.ts";
+import { dispatchPatientCloudText, walletDispatchStatus } from "./whatsapp-patient-dispatch.ts";
 import {
   createRazorpayWalletTopupOrder,
   decideRazorpayWebhookSignature,
@@ -122,6 +127,128 @@ export function createUsageBillingRouter(): Router {
     }
     next();
   });
+
+  function walletBlockedJson(res: Response, sent: { error: string; channel: "none" | "graph" }) {
+    return res.status(walletDispatchStatus(sent.error)).json({
+      error: sent.error,
+      code: sent.error === WALLET_INSUFFICIENT_ERROR ? "WALLET_INSUFFICIENT" : undefined,
+      channel: sent.channel,
+    });
+  }
+
+  function requestTenantId(req: Request, patientPhone?: string): string {
+    return (
+      resolveWhatsAppTenantId({
+        tenantId: String((req.body || {}).tenantId || (req.body || {}).tenant_id || req.user?.tenantId || "").trim(),
+        sessionTenantId: tenantIdOf(req),
+        phoneNumberId: (req.body || {}).phoneNumberId,
+        wabaId: (req.body || {}).wabaId,
+        patientPhone,
+      }) || tenantIdOf(req)
+    );
+  }
+
+  // Staff/bot/Rx/custom outbound patient sends: meter before the WhatsApp router (same choke point as Gemini SOAP).
+  api.post("/whatsapp/send", async (req: Request, res: Response, next: NextFunction) => {
+    const sender = String((req.body || {}).sender || "user");
+    const patientPhone = String((req.body || {}).patientPhone || "").trim();
+    const tenantId = requestTenantId(req, patientPhone);
+    const body = req.body || {};
+    if (!body.content && !body.media && !body.buttons) return next();
+    if (sender === "agent" && patientPhone) {
+      const outboundText = String(body.content || "").trim() || "[media]";
+      const sent = await dispatchPatientCloudText({
+        tenantId: tenantId || undefined,
+        to: patientPhone,
+        textBody: outboundText,
+      });
+      if (isCloudDispatchFailure(sent)) return walletBlockedJson(res, sent);
+      return next();
+    }
+    if (sender === "user" && patientPhone) {
+      const origJson = res.json.bind(res);
+      res.json = ((body: unknown) => {
+        const payload = (body || {}) as { botReply?: { content?: string } | null };
+        const botText = String(payload.botReply?.content || "").trim();
+        if (!botText) return origJson(body);
+        return dispatchPatientCloudText({
+          tenantId: tenantId || undefined,
+          to: patientPhone,
+          textBody: botText,
+        }).then((sent) => {
+          if (isCloudDispatchFailure(sent)) {
+            return origJson({ ...(payload as object), botReply: null, botReplyError: sent.error });
+          }
+          return origJson(body);
+        });
+      }) as Response["json"];
+    }
+    next();
+  });
+
+  api.post("/whatsapp/send-rx", async (req: Request, res: Response, next: NextFunction) => {
+    const body = (req.body || {}) as Record<string, unknown>;
+    const patientPhone = String(body.patientPhone || "+91 98234 55667").trim();
+    const tenantId = requestTenantId(req, patientPhone);
+    const clinicName =
+      String(body.clinicName || "").trim() ||
+      (tenantId ? getTenantLetterhead(tenantId).clinicName : "") ||
+      "Lumera Healthcare Polyclinic";
+    const patientName = String(body.patientName || "Patient");
+    const uhid = String(body.uhid || "LUM-2026-0001");
+    const rxNumber = String(body.rxNumber || "RX-2026-0001");
+    const doctorName = String(body.doctorName || "Doctor");
+    const doctorSpecialty = String(body.doctorSpecialty || "General Medicine");
+    const diagnosis = String(body.diagnosis || "Clinical Consultation");
+    const medicines = Array.isArray(body.medicines) ? body.medicines : [];
+    const medsText = medicines
+      .slice(0, 3)
+      .map((m: { drugName?: string; dosage?: string; frequency?: string }, i: number) => {
+        return `  ${i + 1}. *${m.drugName || "Medicine"}* (${m.dosage || ""} - ${m.frequency || ""})`;
+      })
+      .join("\n");
+    const moreMeds = medicines.length > 3 ? `\n  _...and ${medicines.length - 3} more medications_` : "";
+    const pdfUrl = `/api/whatsapp/prescription/${rxNumber}/pdf`;
+    const content = `🩺 *${clinicName}*\n*Official Digital Prescription*\n\nNamaste *${patientName}* (UHID: ${uhid}),\nYour consultation prescription has been finalized and signed by *${doctorName}* (${doctorSpecialty}).\n\n📋 *Diagnosis:* ${diagnosis}\n💊 *Prescribed Medications (${medicines.length}):*\n${medsText}${moreMeds}\n\n📄 *Download Official PDF Prescription:*\n${pdfUrl}\n\n_Please follow the dosage schedule strictly. For emergency follow-up, reply to this chat._`;
+    const sent = await dispatchPatientCloudText({
+      tenantId: tenantId || undefined,
+      to: patientPhone,
+      textBody: content,
+      previewUrl: true,
+    });
+    if (isCloudDispatchFailure(sent)) return walletBlockedJson(res, sent);
+    next();
+  });
+
+  async function meterCustomOutbound(req: Request, res: Response, next: NextFunction) {
+    const body = (req.body || {}) as Record<string, unknown>;
+    const eventType = String(body.eventType || "");
+    const reminderEvent =
+      eventType === "appointment_reminder" ||
+      eventType === "appointment_reminder_24h" ||
+      eventType === "appointment_reminder_2h";
+    if (reminderEvent) return next();
+    const patientPhone = String(body.patientPhone || "").trim();
+    if (!eventType || !patientPhone) return next();
+    const customPayload = (body.customPayload || {}) as { message?: string; tenantId?: string };
+    const tenantId = requestTenantId(req, patientPhone) || String(customPayload.tenantId || "").trim();
+    const patientName = String(body.patientName || "Patient");
+    let messageContent = customPayload.message || "Important health notification from Lumera Polyclinic.";
+    if (eventType === "post_consultation_dispatch") {
+      messageContent = `📋 *Consultation Summary & Prescription Signed*\n\nNamaste ${patientName},\nYour digital consultation documents have been generated.`;
+    } else if (eventType === "queue_token_update") {
+      messageContent = `📢 *OPD Queue Alert - You're Almost Up!*\n\nNamaste ${patientName},\nPlease proceed to the OPD waiting lounge.`;
+    }
+    const sent = await dispatchPatientCloudText({
+      tenantId: tenantId || undefined,
+      to: patientPhone,
+      textBody: messageContent,
+    });
+    if (isCloudDispatchFailure(sent)) return walletBlockedJson(res, sent);
+    next();
+  }
+  api.post("/whatsapp/outbound/trigger", meterCustomOutbound);
+  api.post("/whatsapp/outbound-trigger", meterCustomOutbound);
 
   api.get("/admin/usage-markup", requireAuth, requirePlatformAdmin, (_req, res) => {
     res.json(listMarkupConfig());
