@@ -9,6 +9,7 @@ import { attachUser } from "./auth.ts";
 import { createApiRouter } from "./api.ts";
 import { DEMO_TENANT_ID, getDb, initDatabase } from "./db.ts";
 import { hashPassword } from "./password.ts";
+import { applyWalletTransaction } from "./usage-wallet.ts";
 import {
   appointmentInstantUtc,
   bookWhatsAppAppointment,
@@ -68,6 +69,10 @@ function createClinicUser(label: string) {
     `INSERT INTO doctors (id, user_id, name, qualification, reg_number, specialty, experience_years, consultation_fee, opd_room, available_days, opd_timing, phone, email, avatar_url, bio, hpr_id, active)
      VALUES (?, ?, ?, 'MBBS', ?, 'General Medicine', 8, 500, 'OPD-1', '["Mon","Tue","Wed","Thu","Fri"]', '09:00 AM - 01:00 PM', ?, ?, '', '', '', 1)`
   ).run(doctorId, userId, `Dr ${label}`, `REG-${suffix}`, `+91 91000 ${label.slice(0, 5).padEnd(5, "0")}`, email);
+  applyWalletTransaction(tenantId, "adjustment", 1000, {
+    note: "Test seed credit for WhatsApp metering",
+    createdBy: "system",
+  });
   return { tenantId, userId, doctorId, email };
 }
 
@@ -502,6 +507,7 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
     assert.match(src, /sendAppointmentReminder/);
     assert.match(src, /sendBookConfirmation/);
     assert.match(src, /dispatchWhatsAppCloudMessage/);
+    assert.match(src, /tenantId: opts.tenantId/);
     assert.equal(src.includes("sendWhatsAppGraphCloudMessage"), false);
     assert.equal(src.includes("graph.facebook.com"), false);
   });
