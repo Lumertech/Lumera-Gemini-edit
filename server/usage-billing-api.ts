@@ -2,7 +2,13 @@ import { Router, type Request } from "express";
 import { getDb, writeAudit } from "./db.ts";
 import { requireAuth, requirePlatformAdmin } from "./auth.ts";
 import { appPublicUrl, isProduction, sandboxSimulatorsEnabled } from "./runtime.ts";
-import { createRazorpayWalletTopupOrder, getRazorpayKeyId } from "./razorpay.ts";
+import {
+  createRazorpayWalletTopupOrder,
+  decideRazorpayWebhookSignature,
+  extractRazorpayPaidRefs,
+  getRazorpayKeyId,
+  getRazorpayWebhookSecret,
+} from "./razorpay.ts";
 import {
   GEMINI_SCRIBE_RAW_COST_INR,
   GEMINI_SCRIBE_RAW_COST_NOTE,
@@ -14,6 +20,7 @@ import {
 import {
   DEFAULT_MARKUP_PERCENT,
   applyWalletTransaction,
+  creditWalletFromRazorpayTopup,
   ensureUsageWalletSchema,
   getMarkupPercent,
   isMetaServiceWindowBilled,
@@ -45,6 +52,42 @@ export function createUsageBillingRouter(): Router {
   } catch {
     /* db may not be initialized in some unit tests */
   }
+
+  // Intercept wallet top-ups on the shared Razorpay webhook path, then next() to invoice collect.
+  api.post("/billing/razorpay/webhook", (req, res, next) => {
+    const rawBody = req.rawBody ?? Buffer.from(JSON.stringify(req.body || {}));
+    const decision = decideRazorpayWebhookSignature({
+      rawBody,
+      signatureHeader: req.headers["x-razorpay-signature"],
+      webhookSecret: getRazorpayWebhookSecret(),
+    });
+    if (decision.ok === false) {
+      return res.status(decision.status).json({ error: decision.error });
+    }
+    const refs = extractRazorpayPaidRefs(req.body);
+    if (!refs || refs.purpose !== "wallet_topup") {
+      return next();
+    }
+    if (!refs.tenantId) {
+      return res.status(400).json({ error: "Wallet top-up payload is missing tenant_id." });
+    }
+    const tenant = getDb().prepare("SELECT id FROM tenants WHERE id = ?").get(refs.tenantId);
+    if (!tenant) {
+      return res.status(404).json({ error: "Tenant not found for wallet top-up." });
+    }
+    const amount = refs.amountRupees;
+    if (!(amount > 0)) {
+      return res.status(400).json({ error: "Wallet top-up amount is missing from the Razorpay payload." });
+    }
+    const tx = creditWalletFromRazorpayTopup({
+      tenantId: refs.tenantId,
+      amountRupees: amount,
+      razorpayPaymentId: refs.paymentId || refs.orderId,
+      note: `Razorpay wallet top-up ${refs.paymentId || refs.orderId}`,
+    });
+    writeAudit(getDb(), null, "Razorpay webhook", "Wallet top-up", `${refs.tenantId} ₹${amount} ${refs.paymentId}`);
+    return res.json({ ok: true, purpose: "wallet_topup", transaction: tx, wallet: publicWalletStatus(refs.tenantId) });
+  });
 
   api.get("/admin/usage-markup", requireAuth, requirePlatformAdmin, (_req, res) => {
     res.json(listMarkupConfig());
