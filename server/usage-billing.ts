@@ -1,8 +1,8 @@
 import type { DatabaseSync } from "node:sqlite";
 import { getDb } from "./db.ts";
 import {
-  GEMINI_SCRIBE_RAW_COST_INR,
   GEMINI_SCRIBE_RAW_COST_NOTE,
+  resolveGeminiScribeRawCostInr,
   META_SERVICE_WINDOW_CUTOVER_ISO,
   lookupMetaRate,
   recipientCountryFromPhone,
@@ -226,29 +226,53 @@ export function recordWhatsAppUsageAndDebit(opts: {
   return { usageEventId: usage.id, rawCost: estimate.rawCost, billedAmount, markupPercent };
 }
 
+/**
+ * Record AI Scribe minutes, then debit the wallet the same way WhatsApp does
+ * (`recordWhatsAppUsageAndDebit`): markup on raw_cost when a numeric session
+ * cost exists. Null raw_cost → usage_events + minutes rollup, no usage_debit
+ * (no invented Gemini per-minute rate).
+ */
 export function recordAiScribeUsage(opts: {
   tenantId: string;
   quantityMinutes: number;
   metadata?: Record<string, unknown>;
   database?: DatabaseSync;
-}): { usageEventId: string; rawCost: null; billedAmount: 0 } | null {
+}): { usageEventId: string; rawCost: number | null; billedAmount: number; markupPercent: number } | null {
   const tenantId = String(opts.tenantId || "").trim();
   if (!tenantId) return null;
+  const db = opts.database || getDb();
   const quantity = Number(opts.quantityMinutes);
   const minutes = Number.isFinite(quantity) && quantity > 0 ? quantity : 1;
+  const rawCost = resolveGeminiScribeRawCostInr();
   const usage = insertUsageEvent({
     tenantId,
     resource: "ai_scribe_minutes",
     quantity: minutes,
-    rawCost: GEMINI_SCRIBE_RAW_COST_INR,
+    rawCost,
     metadata: {
       rawCostNote: GEMINI_SCRIBE_RAW_COST_NOTE,
       ...opts.metadata,
     },
-    database: opts.database,
+    database: db,
   });
-  return { usageEventId: usage.id, rawCost: null, billedAmount: 0 };
+  if (rawCost == null) {
+    return { usageEventId: usage.id, rawCost: null, billedAmount: 0, markupPercent: 0 };
+  }
+  const markupPercent = getMarkupPercent(tenantId, "ai_scribe_minutes", db);
+  const billedAmount = billedAmountFromRaw(rawCost, markupPercent);
+  if (billedAmount > 0) {
+    applyWalletTransaction(tenantId, "usage_debit", -billedAmount, {
+      usageEventId: usage.id,
+      createdBy: "system",
+      note: `AI Scribe ${minutes} min`,
+      database: db,
+    });
+  }
+  return { usageEventId: usage.id, rawCost, billedAmount, markupPercent };
 }
+
+/** Alias matching `recordWhatsAppUsageAndDebit` — same implementation. */
+export const recordAiScribeUsageAndDebit = recordAiScribeUsage;
 
 export function scribeQuantityMinutes(body: { durationMinutes?: unknown; transcript?: string }): number {
   const explicit = Number(body.durationMinutes);
