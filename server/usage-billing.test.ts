@@ -10,9 +10,14 @@ import { attachUser } from "./auth.ts";
 import { createApiRouter } from "./api.ts";
 import { createUsageBillingRouter } from "./usage-billing-api.ts";
 import { getDb, initDatabase } from "./db.ts";
-import { dispatchWhatsAppCloudMessage } from "./graph-whatsapp.ts";
+import { dispatchWhatsAppCloudMessage, sendPaymentReceipt } from "./graph-whatsapp.ts";
 import { hashPassword } from "./password.ts";
 import { extractRazorpayPaidRefs } from "./razorpay.ts";
+import {
+  bookWhatsAppAppointment,
+  dispatchAppointmentReminder,
+  dispatchWhatsAppBookConfirmation,
+} from "./whatsapp-calendar.ts";
 import {
   DEFAULT_MARKUP_PERCENT,
   applyWalletTransaction,
@@ -90,11 +95,15 @@ function createUsers(label: string) {
     now,
     now
   );
-  applyWalletTransaction(tenantId, "adjustment", 1000, {
+    applyWalletTransaction(tenantId, "adjustment", 1000, {
     note: "Test seed credit",
     createdBy: "system",
   });
-  return { tenantId, clinicEmail, adminEmail, otherTenantId: "" };
+  db.prepare(
+    `INSERT INTO doctors (id, user_id, name, qualification, reg_number, specialty, experience_years, consultation_fee, opd_room, available_days, opd_timing, phone, email, avatar_url, bio, hpr_id, active)
+     VALUES (?, ?, ?, 'MBBS', ?, 'General Medicine', 8, 500, 'OPD-1', '["Mon","Tue","Wed","Thu","Fri"]', '09:00 AM - 01:00 PM', ?, ?, '', '', '', 1)`
+  ).run(`doc-${suffix}`, `user-clinic-${suffix}`, `Clinic ${label}`, `REG-${suffix}`, "+91 90000 11111", clinicEmail);
+  return { tenantId, clinicEmail, adminEmail, otherTenantId: "", doctorId: `doc-${suffix}` };
 }
 
 describe("Usage wallet billing", () => {
@@ -106,6 +115,7 @@ describe("Usage wallet billing", () => {
   let otherTenantId = "";
   let clinicEmail = "";
   let adminEmail = "";
+  let doctorId = "";
 
   before(async () => {
     if (!process.env.JWT_SECRET) process.env.JWT_SECRET = "test-jwt-usage-wallet";
@@ -141,6 +151,7 @@ describe("Usage wallet billing", () => {
     tenantId = a.tenantId;
     clinicEmail = a.clinicEmail;
     adminEmail = a.adminEmail;
+    doctorId = a.doctorId;
     const b = createUsers("wb");
     otherTenantId = b.tenantId;
 
@@ -493,6 +504,115 @@ describe("Usage wallet billing", () => {
     if (prevCut === undefined) delete process.env.META_SERVICE_WINDOW_CUTOVER;
     else process.env.META_SERVICE_WINDOW_CUTOVER = prevCut;
     assert.equal(META_SERVICE_WINDOW_CUTOVER_ISO, "2026-10-01T00:00:00.000Z");
+  });
+
+  it("calendar reminder, book confirmation, receipt, and patient replies meter patient phones with tenantId", async () => {
+    const patientPhone = `+91 98111 ${String(Date.now()).slice(-5)}`;
+    const booked = bookWhatsAppAppointment({
+      tenantId,
+      patientPhone,
+      patientName: "Metered Patient",
+      doctorId,
+      date: "2026-09-21",
+      timeSlot: "10:00 AM",
+    });
+    const userMatch = getDb()
+      .prepare("SELECT id FROM users WHERE phone LIKE ?")
+      .get(`%${patientPhone.replace(/\D/g, "").slice(-10)}`);
+    assert.equal(userMatch, undefined);
+
+    const before = getDb()
+      .prepare("SELECT COUNT(*) AS c FROM usage_events WHERE tenant_id = ? AND resource = 'whatsapp_message'")
+      .get(tenantId) as { c: number };
+
+    const reminder = await dispatchAppointmentReminder({
+      tenantId,
+      appointment: booked.appointment,
+      window: "24h",
+    });
+    assert.equal(reminder.ok, true);
+
+    const confirm = await dispatchWhatsAppBookConfirmation({
+      tenantId,
+      appointment: booked.appointment,
+    });
+    assert.equal(confirm.ok, true);
+
+    const receipt = await sendPaymentReceipt({
+      to: patientPhone,
+      patientName: "Metered Patient",
+      amount: 700,
+      invoiceId: "INV-METER-1",
+      db: getDb(),
+      tenantId,
+    });
+    assert.equal(receipt.ok, true);
+
+    const reply = await dispatchWhatsAppCloudMessage({
+      to: patientPhone,
+      kind: "text",
+      textBody: "Staff reply to patient",
+      db: getDb(),
+      tenantId,
+      inCustomerServiceWindow: true,
+    });
+    assert.equal(reply.ok, true);
+
+    const events = getDb()
+      .prepare(
+        `SELECT metadata FROM usage_events WHERE tenant_id = ? AND resource = 'whatsapp_message' ORDER BY created_at DESC LIMIT 12`
+      )
+      .all(tenantId) as { metadata: string }[];
+    const kinds = events.map((row) => {
+      try {
+        return String((JSON.parse(row.metadata || "{}") as { kind?: string }).kind || "");
+      } catch {
+        return "";
+      }
+    });
+    assert.ok(kinds.includes("appointment_reminder"), String(kinds));
+    assert.ok(kinds.includes("book_confirmation"), String(kinds));
+    assert.ok(kinds.includes("payment_receipt"), String(kinds));
+    assert.ok(kinds.includes("text"), String(kinds));
+
+    const count = getDb()
+      .prepare("SELECT COUNT(*) AS c FROM usage_events WHERE tenant_id = ? AND resource = 'whatsapp_message'")
+      .get(tenantId) as { c: number };
+    assert.ok(count.c >= before.c + 4);
+
+    const clinicUserPhone = "+91 98888 12121";
+    getDb().prepare("UPDATE users SET phone = ? WHERE email = ?").run(clinicUserPhone, clinicEmail);
+    const otpBefore = getDb()
+      .prepare("SELECT COUNT(*) AS c FROM usage_events WHERE tenant_id = ? AND resource = 'whatsapp_message'")
+      .get(tenantId) as { c: number };
+    const otp = await dispatchWhatsAppCloudMessage({
+      to: clinicUserPhone,
+      kind: "otp",
+      otp: "654321",
+      purpose: "login",
+      textBody: "otp",
+      db: getDb(),
+    });
+    assert.equal(otp.ok, true);
+    const otpAfter = getDb()
+      .prepare("SELECT COUNT(*) AS c FROM usage_events WHERE tenant_id = ? AND resource = 'whatsapp_message'")
+      .get(tenantId) as { c: number };
+    assert.ok(otpAfter.c >= otpBefore.c + 1);
+
+    const calendarSrc = fs.readFileSync(path.join(__dirname, "whatsapp-calendar.ts"), "utf8");
+    const billingSrc = fs.readFileSync(path.join(__dirname, "billing.ts"), "utf8");
+    const apiSrc = fs.readFileSync(path.join(__dirname, "api.ts"), "utf8");
+    const whatsappSrc = fs.readFileSync(path.join(__dirname, "whatsapp.ts"), "utf8");
+    const metaSrc = fs.readFileSync(path.join(__dirname, "meta.ts"), "utf8");
+    assert.match(calendarSrc, /tenantId: opts.tenantId/);
+    assert.match(billingSrc, /tenantId: invoice.tenantId/);
+    assert.match(apiSrc, /dispatchWhatsAppOtpMessage\([\s\S]*tenantId/);
+    assert.match(whatsappSrc, /dispatchPatientCloudText/);
+    assert.match(metaSrc, /dispatchWhatsAppCloudMessage/);
+    const serverSrc = fs.readFileSync(path.join(__dirname, "../server.ts"), "utf8");
+    assert.ok(serverSrc.split("\n").length > 600, "server.ts must keep main Gemini handlers (not a compacted boot stub)");
+    assert.match(serverSrc, /createUsageBillingRouter/);
+    assert.match(serverSrc, /clinical-synthesis-engine/);
   });
 
   it("invoices and tenant_subscriptions schema files stay the clinic/SaaS surfaces", () => {
