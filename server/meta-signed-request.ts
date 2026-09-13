@@ -10,8 +10,10 @@
  */
 
 import crypto from "node:crypto";
+import type { Request, Response } from "express";
+import { findDataDeletionRequest, getDb, insertDataDeletionRequest } from "./db.ts";
 import { getMetaAppSecret } from "./meta-security.ts";
-import { isProduction } from "./runtime.ts";
+import { appPublicUrl, isProduction } from "./runtime.ts";
 
 export type SignedRequestPayload = {
   algorithm?: string;
@@ -116,4 +118,58 @@ export function decideDataDeletionSignedRequest(opts: {
 
 export function dataDeletionSignedRequestVerificationConfigured(): boolean {
   return Boolean(getMetaAppSecret());
+}
+
+/** POST /api/meta/data-deletion — HMAC-SHA256 signed_request when META_APP_SECRET is set. */
+export function handleMetaDataDeletionPost(req: Request, res: Response) {
+  const signedDecision = decideDataDeletionSignedRequest({
+    signedRequest: req.body?.signed_request,
+    appSecret: getMetaAppSecret(),
+  });
+  if (!signedDecision.ok) {
+    return res.status(signedDecision.status).json({ error: signedDecision.error });
+  }
+  const host = req.get("host") || undefined;
+  const proto = req.protocol === "https" || req.get("x-forwarded-proto") === "https" ? "https" : req.protocol;
+  const origin = appPublicUrl(host, proto);
+  const code = `DEL-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+  const userIdOrPhone = String(
+    signedDecision.userId || req.body?.user_id || req.body?.phone || req.body?.id || "meta_user_session"
+  );
+
+  try {
+    const db = getDb();
+    insertDataDeletionRequest(db, code, userIdOrPhone);
+    const now = new Date().toISOString();
+    try {
+      db.prepare(`
+          INSERT INTO audit_logs (id, user_id, user_name, action, details, timestamp)
+          VALUES (?, ?, ?, 'Meta Data Deletion Request', ?, ?)
+        `).run(
+        `audit-${Date.now()}`,
+        "system-meta-compliance",
+        "Meta Compliance Agent",
+        `Data erasure request code ${code} initialized for ${userIdOrPhone}`,
+        now
+      );
+    } catch {
+      /* audit is best-effort */
+    }
+
+    return res.status(200).json({
+      url: `${origin}/data-deletion-instructions?code=${encodeURIComponent(code)}`,
+      confirmation_code: code,
+    });
+  } catch (err) {
+    console.error("[Meta Data Deletion Callback Error]", err);
+    try {
+      insertDataDeletionRequest(getDb(), code, userIdOrPhone);
+    } catch {
+      /* persist fallback is best-effort */
+    }
+    return res.status(200).json({
+      url: `${origin}/data-deletion-instructions?code=${encodeURIComponent(code)}`,
+      confirmation_code: code,
+    });
+  }
 }
