@@ -120,4 +120,18 @@ function rebuildPatientsTableWithoutPhoneUnique(database: DatabaseSync) {
 export function applyTenantPhoneSecurityMigrations(database: DatabaseSync) {
   addWhatsAppTenantColumns(database);
   migratePatientsPhoneUnique(database);
+  const demoTenantId = "tenant-lumera-main";
+  try {
+    database.exec(
+      `UPDATE whatsapp_conversations SET tenant_id = '${demoTenantId}' WHERE tenant_id IS NULL OR tenant_id = ''`
+    );
+    database.exec(
+      `UPDATE whatsapp_messages SET tenant_id = '${demoTenantId}' WHERE tenant_id IS NULL OR tenant_id = ''`
+    );
+    database.exec(
+      `UPDATE whatsapp_outbound_events SET tenant_id = '${demoTenantId}' WHERE tenant_id IS NULL OR tenant_id = ''`
+    );
+  } catch {
+    /* columns missing until ALTER above */
+  }
 }
