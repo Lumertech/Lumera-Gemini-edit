@@ -115,10 +115,25 @@ export function recipientCountryFromPhone(phone: string): "IN" | "OTHER" {
 }
 
 /**
- * Gemini / ambient-scribe raw_cost is intentionally null.
+ * Gemini / ambient-scribe raw_cost is intentionally null in code.
  * This repo has no reliable per-minute Gemini figure (billing is per-token, not
  * per consult-minute). Do not invent a rupee-per-minute number.
+ *
+ * Optional `GEMINI_SCRIBE_RAW_COST_INR` env (INR per successful scribe session,
+ * not a token rate) lets operators/tests supply a real figure. When set,
+ * `recordAiScribeUsage` stores it on `usage_events` and `usage_debit`s the
+ * wallet after markup. Unset/invalid → null, event recorded, no debit.
  */
 export const GEMINI_SCRIBE_RAW_COST_INR: number | null = null;
 export const GEMINI_SCRIBE_RAW_COST_NOTE =
-  "raw_cost left null — no per-minute Gemini figure in this repo (Gemini is token-priced). Wallet debit skipped until a real cost exists.";
+  "raw_cost left null unless GEMINI_SCRIBE_RAW_COST_INR is set — no per-minute Gemini figure in this repo (Gemini is token-priced). Wallet debit applies only when a numeric session raw_cost exists.";
+
+/** Code default is null. Env override is an INR session cost, not an invented per-minute rate. */
+export function resolveGeminiScribeRawCostInr(): number | null {
+  const envVal = String(process.env.GEMINI_SCRIBE_RAW_COST_INR ?? "").trim();
+  if (envVal !== "") {
+    const n = Number(envVal);
+    if (Number.isFinite(n) && n >= 0) return n;
+  }
+  return GEMINI_SCRIBE_RAW_COST_INR;
+}
