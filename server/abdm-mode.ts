@@ -3,7 +3,23 @@
  * Default is local stub (zero outbound). sandbox requires real env creds.
  */
 
+import {
+  formatAbdmArtefactLabel,
+  formatAbdmRegistryLabel,
+  onboardingCompleteMessage,
+  practiceRegisteredAuditMessage,
+  practiceRegisteredWelcomeMessage,
+} from "../src/lib/abdmRegistryLabel.ts";
+
 export type AbdmMode = "stub" | "sandbox";
+
+export {
+  formatAbdmArtefactLabel,
+  formatAbdmRegistryLabel,
+  onboardingCompleteMessage,
+  practiceRegisteredAuditMessage,
+  practiceRegisteredWelcomeMessage,
+};
 
 const PLACEHOLDER = /SBX_LUMERA|lumera_abdm_sandbox_sec|replace-with/i;
 
@@ -44,4 +60,28 @@ export function assertAbdmSandboxCreds(env: NodeJS.ProcessEnv = process.env): vo
       { status: 503 }
     );
   }
+}
+
+/** Stub, or sandbox without real NHA credentials — locally generated IDs are placeholders. */
+export function isAbdmPlaceholderRegistryMode(env: NodeJS.ProcessEnv = process.env): boolean {
+  return resolveAbdmMode(env) !== "sandbox" || !abdmHasRealCreds(env);
+}
+
+export function abdmRegistryPublicFields(
+  hfrId?: string | null,
+  hprId?: string | null,
+  env: NodeJS.ProcessEnv = process.env
+): {
+  hfrLabel: string;
+  hprLabel: string;
+  registryIdsPlaceholder: boolean;
+  abdmMode: AbdmMode;
+} {
+  const placeholder = isAbdmPlaceholderRegistryMode(env);
+  return {
+    hfrLabel: formatAbdmRegistryLabel("HFR", hfrId, placeholder),
+    hprLabel: formatAbdmRegistryLabel("HPR", hprId, placeholder),
+    registryIdsPlaceholder: placeholder,
+    abdmMode: resolveAbdmMode(env),
+  };
 }
