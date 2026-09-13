@@ -51,7 +51,6 @@ app.post("/data-deletion-callback", (req, res, next) => {
 });
 attachPublicPolicyHtml(app);
 
-// Lazy Google GenAI initialization
 let genAIClient: GoogleGenAI | null = null;
 function getGenAI(): GoogleGenAI | null {
   if (!genAIClient && process.env.GEMINI_API_KEY) {
@@ -67,14 +66,8 @@ function getGenAI(): GoogleGenAI | null {
   return genAIClient;
 }
 
-// ----------------------------------------------------
-// Clinical Gemini AI Routes
-// ----------------------------------------------------
-
-// 1. Ambient AI Clinical SOAP Note Generation
 attachGeminiSoapRoute(app, { getGenAI });
 
-// 2. Gemini Clinical Assistant / Copilot (Clinical Decision Support Chat - Pulse AI)
 const handleGeminiCopilot = async (req: Request, res: Response) => {
   try {
     const { query, patientContext = {}, history = [] } = req.body;
@@ -107,7 +100,6 @@ Always maintain an objective, rigorous, professional medical tone.`;
           });
         }
 
-        // Add conversation history
         for (const h of history.slice(-6)) {
           contents.push({
             role: h.sender === "user" ? "user" : "model",
@@ -135,7 +127,6 @@ Always maintain an objective, rigorous, professional medical tone.`;
       }
     }
 
-    // Fallback response for offline / simulated queries
     const fallbackAnswer = getPulseFallbackAnswer(query, patientContext);
     return res.json({ response: fallbackAnswer, source: "Pulse AI Knowledge Base (Offline Fallback)" });
   } catch (error: any) {
@@ -147,7 +138,6 @@ app.post("/api/gemini/copilot", handleGeminiCopilot);
 app.post("/api/gemini/pulse-assistant", handleGeminiCopilot);
 app.post("/api/gemini/hexa-assistant", handleGeminiCopilot);
 
-// 3. Clinical Safety & Drug Interaction Checker
 app.post("/api/gemini/safety-check", async (req: Request, res: Response) => {
   try {
     const { patientAllergies = [], chronicConditions = [], medicines = [], patientAge, patientGender } = req.body;
@@ -196,11 +186,9 @@ Return JSON with format:
       }
     }
 
-    // Rule-based safety validator
     const alerts: any[] = [];
     const drugNames = medicines.map((m: any) => (m.drugName + ' ' + (m.composition || '')).toLowerCase());
     
-    // Check allergy
     for (const allergy of patientAllergies) {
       const allgLower = allergy.toLowerCase();
       if (allgLower.includes('penicillin') && drugNames.some((d: string) => d.includes('amoxicillin') || d.includes('augmentin') || d.includes('ampicillin'))) {
@@ -225,7 +213,6 @@ Return JSON with format:
       }
     }
 
-    // Check drug-drug interactions
     const hasNsaid = drugNames.some((d: string) => d.includes('aceclofenac') || d.includes('ibuprofen') || d.includes('combiflam'));
     const hasTelmisartan = drugNames.some((d: string) => d.includes('telmisartan') || d.includes('losartan'));
     if (hasNsaid && hasTelmisartan) {
@@ -259,7 +246,6 @@ Return JSON with format:
   }
 });
 
-// 4. Voice Bot & Triage Simulator
 app.post("/api/gemini/voice-bot", async (req: Request, res: Response) => {
   try {
     const { message, callerName = "Patient", language = "English" } = req.body;
@@ -301,7 +287,6 @@ Output JSON:
       }
     }
 
-    // Fallback response
     return res.json({
       speechText: `Hello ${callerName}, I understand. I can help book you an appointment with Dr. Vikram Malhotra in General Medicine for tomorrow at 10:30 AM. Would you like me to confirm this token?`,
       intent: "BOOKING",
@@ -312,7 +297,6 @@ Output JSON:
   }
 });
 
-// 5. Multi-Language Rx Advice Translation
 app.post("/api/gemini/translate-rx", async (req: Request, res: Response) => {
   try {
     const { advice = [], medicines = [], targetLanguage = "Hindi" } = req.body;
@@ -356,14 +340,13 @@ Return JSON:
     return res.json({
       language: targetLanguage,
       translatedAdvice: advice,
-      formattedWhatsAppMessage: `\u092a\u094d\u0930\u093f\u092f \u092e\u0930\u0940\u091c, \u0906\u092a\u0915\u0947 \u0921\u0949\u0915\u094d\u091f\u0930 \u0926\u094d\u0935\u093e\u0930\u093e \u0926\u0940 \u0917\u0908 \u0938\u0932\u093e\u0939:\n${advice.join('\n• ')}\n\u0915\u0943\u092a\u092f\u093e \u0926\u0935\u093e\u0907\u092f\u093e\u0902 \u0938\u092e\u092f \u092a\u0930 \u0932\u0947\u0902\u0964`
+      formattedWhatsAppMessage: `प्रिय मरीज, आपके डॉक्टर द्वारा दी गई सलाह:\n${advice.join('\n• ')}\nकृपया दवाइयां समय पर लें।`
     });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// Helper for fallback SOAP generation
 function generateRuleBasedSoap(name: string, age: number, gender: string, transcript: string, vitals: any) {
   const t = transcript.toLowerCase();
   let primaryDiagnosis = "Acute Upper Respiratory Infection";
@@ -476,9 +459,6 @@ For query "${query}":
 • Always verify patient allergy records prior to initiating antimicrobial or NSAID regimens.`;
 }
 
-// ----------------------------------------------------
-// Start Server with Vite Middleware
-// ----------------------------------------------------
 async function startServer() {
   applyBundledServerNodeEnv();
   failFastRequiredProductionEnv();
@@ -525,7 +505,6 @@ async function startServer() {
     server.once("error", reject);
   });
 
-  // Heavy work after the Cloud Run socket is open. /healthz is already registered.
   initDatabase();
   bootWhatsAppOwnershipSchema();
   startAppointmentReminderScheduler();
