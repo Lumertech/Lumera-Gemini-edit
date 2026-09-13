@@ -3,7 +3,7 @@ import type { AdminTab } from "../../nav/surfaces";
 /** Clinic desk — CLINIC_ADMIN / polyclinic_admin share these; Super Admin sees desk tabs except Branches. */
 export const DESK_TABS = new Set<AdminTab>(["overview", "users", "people", "branches", "profile", "settings", "audit"]);
 /** Platform Superadmin — Tenants + all-tenant Subs. CLINIC_ADMIN must not see these (T-6). */
-export const SUPERADMIN_TABS = new Set<AdminTab>(["tenants", "subscriptions"]);
+export const SUPERADMIN_TABS = new Set<AdminTab>(["tenants", "subscriptions", "usage"]);
 /** Platform / Meta / CMS — super_admin only, listed after Superadmin tabs. */
 export const PLATFORM_TABS = new Set<AdminTab>(["dhis", "meta", "site", "policies", "media"]);
 /**
