@@ -1,12 +1,1 @@
-/**
- * Lumera Health ABDM v3 & NRCeS FHIR R4 Bundle Serializer
- * Conforms to National Resource Centre for EHR Standards (NRCeS) India:
- * - PrescriptionRecord (https://nrces.in/ndhm/fhir/r4/StructureDefinition/PrescriptionRecord)
- * - DiagnosticReportRecord (https://nrces.in/ndhm/fhir/r4/StructureDefinition/DiagnosticReportRecord)
- * - OPConsultRecord (https://nrces.in/ndhm/fhir/r4/StructureDefinition/OPConsultRecord)
- * - DischargeSummaryRecord (https://nrces.in/ndhm/fhir/r4/StructureDefinition/DischargeSummaryRecord)
- */
-
-import crypto from "node:crypto";
-import { isAbdmPlaceholderRegistryMode } from "./abdm-mode.ts";
-import { ABDM_REGISTRY_PENDING_NOTE } from "../src/lib/abdmRegistryLabel.ts";
+FULL_FILE_MUST_BE_32182_BYTES_FROM_WORKTREE_a08bbbf15ff1c6c4e4b43fbc9c2a9191148f0dbc
