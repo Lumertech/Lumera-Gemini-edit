@@ -16,6 +16,10 @@ export interface AppUser {
   whatsappVerified?: boolean;
   hprId?: string;
   hfrId?: string;
+  hprLabel?: string;
+  hfrLabel?: string;
+  registryIdsPlaceholder?: boolean;
+  abdmMode?: 'stub' | 'sandbox';
   onboardingCompleted?: boolean;
   specialty?: string;
   packId?: string;
@@ -140,6 +144,7 @@ export interface Doctor {
   avatarUrl?: string;
   bio?: string;
   hprId?: string;
+  hprLabel?: string;
   phone: string;
   email: string;
   active: boolean;
@@ -167,6 +172,7 @@ export interface Patient {
   abhaAddress?: string;
   kycStatus?: 'LINKED_SANDBOX' | 'PENDING' | 'FAILED';
   hfrId?: string;
+  hfrLabel?: string;
   /** ISO timestamp when ABHA was first attached. Empty until an NHA sandbox link. */
   abhaLinkedAt?: string;
   /** Present on patient detail / ABHA-link responses only. Never invented on the simple path. */
@@ -186,6 +192,7 @@ export interface AbdmConsentArtefact {
   tenantId?: string;
   patientId?: string;
   consentId: string;
+  consentIdLabel?: string;
   status?: 'GRANTED' | 'REVOKED' | 'DENIED' | string;
   hiTypes?: string[];
   dateRange?: { from?: string; to?: string };
