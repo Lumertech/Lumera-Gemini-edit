@@ -14,11 +14,14 @@ import { applyBundledServerNodeEnv, failFastRequiredProductionEnv, resolveListen
 import { attachProductionSpaFallback } from "./server/spa-fallback.ts";
 import { attachPublicPolicyHtml, isPublicPolicyHtmlPath } from "./server/policy-html.ts";
 import { mountGeminiClinicalRoutes } from "./server/gemini-clinical.ts";
+import { installWhatsAppRouterPatch } from "./server/whatsapp-dashboard-guard.ts";
 
 dotenv.config();
 applyBundledServerNodeEnv();
 // Fail-closed on JWT_SECRET before any listen. Missing secret exits here — not a PORT bug.
 failFastRequiredProductionEnv();
+
+installWhatsAppRouterPatch();
 
 const app = express();
 const PORT = resolveListenPort();
