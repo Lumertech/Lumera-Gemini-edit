@@ -139,7 +139,11 @@ describe("getDb / initDatabase engine selection (Epic 0.2 wiring)", () => {
   });
 
   it("platform tenant helpers accept SqlDatabase, not node:sqlite DatabaseSync", () => {
-    const src = fs.readFileSync(path.join(root, "server/platform-tenants.ts"), "utf8");
+    const src = [
+      fs.readFileSync(path.join(root, "server/platform-tenants.ts"), "utf8"),
+      fs.readFileSync(path.join(root, "server/platform-tenants-schema.ts"), "utf8"),
+      fs.readFileSync(path.join(root, "server/platform-tenants-admin.ts"), "utf8"),
+    ].join("\n");
     assert.match(src, /from "\.\/sql-engine\.ts"/);
     assert.match(src, /ensurePlatformTenantSchema\(database: SqlDatabase\)/);
     assert.equal(/from "node:sqlite"/.test(src), false);
