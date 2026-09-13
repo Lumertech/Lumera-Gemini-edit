@@ -5,25 +5,25 @@
  * 2. Aadhaar ABHA Generation & Verification (/v3/registration/aadhaar/*)
  * 3. ABDM Webhook Listeners for Consent & Tokenized Data Transfer with Diffie-Hellman (ECDH) Key Exchange
  * 4. DHIS (Digital Health Incentive Scheme) transaction registration and audit engine
+ *
+ * Implementation is split across abdm-internal / abdm-identity-routes / abdm-consent-routes
+ * so GitHub uploads stay under the MCP truncation limit. Behavior matches main + copy labels.
  */
+import { Router } from "express";
+import { registerAbdmIdentityRoutes } from "./abdm-identity-routes.ts";
+import { registerAbdmConsentRoutes } from "./abdm-consent-routes.ts";
 
-import { Router, type Request, type Response } from "express";
-import crypto from "node:crypto";
-import { getDb, mapConsentArtefact, mapPatient, writeAudit } from "./db.ts";
-import { allowOtpEcho, requireAuth } from "./auth.ts";
-import { getAbdmBridgeStatus, resolveAbdmMode } from "./abdm-mode.ts";
-import { decideAbdmCallbackSignature } from "./abdm-hmac.ts";
-import {
-  findTenantPatientByAbha,
-  getTenantPatient,
-  listTenantConsentArtefacts,
-  storeConsentArtefact,
-} from "./clinical.ts";
-import {
-  createPrescriptionBundle,
-  createOPConsultBundle,
-  createDiagnosticReportBundle,
-  type PatientContext,
-  type DoctorContext,
-  type TenantContext,
-} from "./fhir.ts";
+export {
+  generateAbdmEcdhKeys,
+  encryptFhirPayloadWithDiffieHellman,
+  recordDhisTransaction,
+  buildAbdmStatusPayload,
+  type AbdmMode,
+} from "./abdm-internal.ts";
+
+export function createAbdmRouter(): Router {
+  const router = Router();
+  registerAbdmIdentityRoutes(router);
+  registerAbdmConsentRoutes(router);
+  return router;
+}
