@@ -199,3 +199,74 @@ function nextInner(inner: Router, req: Request, res: Response) {
     if (!res.headersSent) res.status(404).json({ error: "Not found" });
   });
 }
+
+function wrapRegistered(path: string, method: string, handler: unknown) {
+  if (typeof handler !== "function") return handler;
+  return function lumeraWaRegistered(this: unknown, req: Request, res: Response, next: NextFunction) {
+    if (method === "get" && path === "/conversations") {
+      const tenantId = clinicTenantId(req);
+      if (!tenantId) return res.json({ conversations: [] });
+      const rows = listTenantConversations(tenantId);
+      return res.json({ conversations: rows.map(serializeConversation) });
+    }
+    if (method === "get" && path === "/conversations/:id") {
+      const tenantId = clinicTenantId(req);
+      if (!tenantId) return res.status(400).json({ error: "No tenant associated with this account." });
+      const c = getTenantConversation(tenantId, String(req.params.id));
+      if (!c) return res.status(404).json({ error: "Conversation not found" });
+      return res.json({ conversation: serializeConversation(c) });
+    }
+    if (method === "get" && (path === "/outbound/events" || path === "/outbound-events")) {
+      const tenantId = clinicTenantId(req);
+      if (!tenantId) return res.json({ events: [] });
+      return res.json({ events: listTenantOutboundEvents(tenantId) });
+    }
+    stampSessionTenant(req);
+    const tenantId = clinicTenantId(req);
+    const convId = conversationIdFromPath(path, req);
+    if ((path.startsWith("/messages") || /\/(handover|assign|tags)$/.test(path)) && convId && tenantId) {
+      const conv = getTenantConversation(tenantId, convId);
+      if (!conv) return res.status(404).json({ error: "Conversation not found" });
+    }
+    if (method === "post" && path === "/send" && tenantId) {
+      const origStatus = res.status.bind(res);
+      (res as Response & { status: (code: number) => Response }).status = (code: number) => {
+        const chain = origStatus(code);
+        const origJson = chain.json.bind(chain);
+        chain.json = (body: unknown) => {
+          const convIdSent = String(
+            (body as { sentMessage?: { conversationId?: string } } | null)?.sentMessage?.conversationId || ""
+          );
+          if (convIdSent) stampWhatsAppTenant("whatsapp_conversations", convIdSent, tenantId);
+          return origJson(body);
+        };
+        return chain;
+      };
+    }
+    return (handler as RequestHandler).call(this, req, res, next);
+  };
+}
+
+/**
+ * When server/whatsapp.ts cannot be rewritten via MCP, patch Express Router
+ * so dashboard registrations still get requireAuth + tenant filters.
+ */
+export function installWhatsAppRouterPatch() {
+  const proto = Router as typeof Router & { __lumeraWaPatched?: boolean };
+  if (proto.__lumeraWaPatched) return;
+  proto.__lumeraWaPatched = true;
+  for (const method of ["get", "post", "put", "patch", "delete"] as const) {
+    const orig = Router.prototype[method];
+    (Router.prototype as unknown as Record<string, unknown>)[method] = function patchedLumeraWa(
+      this: unknown,
+      path: unknown,
+      ...handlers: unknown[]
+    ) {
+      if (typeof path === "string" && isDashboardPath(path)) {
+        handlers = handlers.map((h) => wrapRegistered(path, method, h));
+        return (orig as (...args: unknown[]) => unknown).call(this, path, ...requireClinicWhatsApp, ...handlers);
+      }
+      return (orig as (...args: unknown[]) => unknown).call(this, path, ...handlers);
+    };
+  }
+}
