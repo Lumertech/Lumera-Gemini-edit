@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import express from "express";
 import { attachUser } from "./auth.ts";
 import { createApiRouter } from "./api.ts";
+import { wrapAbdmRegistryJson } from "./abdm-registry-public.ts";
 import { getDb, initDatabase } from "./db.ts";
 import {
   abdmHasRealCreds,
@@ -78,7 +79,8 @@ describe("ABDM placeholder-ID copy (registration + surfaces)", () => {
     const app = express();
     app.use(express.json());
     app.use(attachUser);
-    app.use("/api", createApiRouter());
+    // Labels live at the JSON edge: MCP cannot safely replace 100KB api.ts/db.ts.
+    app.use("/api", wrapAbdmRegistryJson(createApiRouter()));
 
     server = app.listen(0, "127.0.0.1");
     await new Promise<void>((resolve) => server!.once("listening", () => resolve()));
@@ -227,24 +229,29 @@ describe("ABDM placeholder-ID copy (registration + surfaces)", () => {
   it("user-facing surfaces inventory: pending copy present; large files not truncated", () => {
     const onboarding = readRepo("src/pages/OnboardingWizard.tsx");
     const api = readRepo("server/api.ts");
+    const edge = readRepo("server/abdm-registry-public.ts");
     const welcome = readRepo("src/components/WelcomeSetupDashboard.tsx");
     const dhis = readRepo("src/components/dhis/DhisMeter.tsx");
     const doctorModal = readRepo("src/components/DoctorProfileModal.tsx");
     const landing = readRepo("src/components/LandingPage.tsx");
     const adminMeta = readRepo("src/components/admin/AdminMetaTechProvider.tsx");
+    const fhir = readRepo("server/fhir.ts");
 
     assert.match(onboarding, /hfrLabel/);
     assert.match(onboarding, /formatAbdmRegistryLabel/);
-    assert.match(api, /practiceRegisteredWelcomeMessage/);
-    assert.match(api, /abdmRegistryPublicFields/);
+    assert.match(edge, /practiceRegisteredWelcomeMessage/);
+    assert.match(edge, /abdmRegistryPublicFields/);
     assert.match(welcome, /hfrLabel/);
     assert.match(welcome, /formatAbdmRegistryLabel/);
     assert.match(dhis, /pending — not yet verified with the National Health Authority/);
     assert.match(doctorModal, /pending — not yet verified with the National Health Authority/);
     assert.match(doctorModal, /ravee@lumer\.me/);
+    assert.match(fhir, /createPrescriptionBundle/);
+    assert.match(fhir, /ABDM_REGISTRY_PENDING_NOTE/);
 
     assert.ok(lineCount("src/pages/OnboardingWizard.tsx") >= 860, "OnboardingWizard.tsx truncated");
     assert.ok(lineCount("server/api.ts") >= 2370, "server/api.ts truncated");
+    assert.ok(lineCount("server/fhir.ts") >= 1000, "server/fhir.ts truncated");
     assert.ok(lineCount("src/components/LandingPage.tsx") >= 970, "LandingPage.tsx truncated");
     assert.ok(lineCount("src/components/admin/AdminMetaTechProvider.tsx") >= 1160, "AdminMetaTechProvider.tsx truncated");
 
