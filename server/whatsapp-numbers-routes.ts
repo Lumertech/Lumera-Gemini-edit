@@ -21,6 +21,7 @@ import {
   WhatsAppNumberError,
   type WhatsAppOwnerType,
 } from "./whatsapp-numbers.ts";
+import { attachDeprecatedMetaWabaAliases } from "./whatsapp-numbers-meta-alias.ts";
 
 export function bootWhatsAppOwnershipSchema() {
   const database = getDb();
@@ -287,5 +288,6 @@ export function createWhatsAppNumbersRouter(): Router {
     }
   });
 
+  attachDeprecatedMetaWabaAliases(router);
   return router;
 }
