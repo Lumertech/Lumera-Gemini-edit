@@ -20,6 +20,7 @@ import {
   parseAllowedOrigins,
   resetAuthRateLimitStore,
 } from "./http-security.ts";
+import { installWhatsAppRouterPatch } from "./whatsapp-dashboard-guard.ts";
 import { PATIENTS_PHONE_UNIQUE } from "../src/db/patients-tenant-phone.unique.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -96,6 +97,7 @@ describe("Auth / tenant isolation / CORS / CSRF / rate limit", () => {
   const rateStore = new Map();
 
   before(async () => {
+    installWhatsAppRouterPatch();
     if (!process.env.JWT_SECRET) {
       process.env.JWT_SECRET = "test-jwt-secret-auth-cors";
     }
