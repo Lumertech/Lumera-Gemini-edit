@@ -64,7 +64,7 @@ describe("LoginPage Google SSO visibility (complements PR #64)", () => {
     assert.equal(loginSrc.includes("oauthConfig?.sandboxClientOAuthAllowed !== true"), false);
   });
 
-  it("gates both Google button clusters and leaves Facebook always rendered", () => {
+  it("gates both Google button clusters and both Facebook button clusters", () => {
     const googleClicks = loginSrc.match(/handleOAuthSignIn\("google"\)/g) || [];
     const facebookClicks = loginSrc.match(/handleOAuthSignIn\("facebook"\)/g) || [];
     assert.equal(googleClicks.length, 2);
@@ -84,7 +84,19 @@ describe("LoginPage Google SSO visibility (complements PR #64)", () => {
     );
     assert.match(loginSrc, /\{showGoogleOAuth && \(/);
     assert.equal((loginSrc.match(/\{showGoogleOAuth && \(/g) || []).length, 2);
+    assert.match(loginSrc, /\{showFacebookOAuth && \(/);
+    assert.equal((loginSrc.match(/\{showFacebookOAuth && \(/g) || []).length, 2);
     assert.match(signinGoogleBlock, /Google/);
     assert.match(registerGoogleBlock, /Google Sign-In/);
+  });
+});
+
+describe("LoginPage Facebook SSO visibility (honesty gate)", () => {
+  it("hides Facebook unless facebookConfigured is true", () => {
+    assert.match(loginSrc, /showFacebookOAuthButton\(oauthConfig\)/);
+    assert.match(loginSrc, /facebookConfigured: boolean/);
+    assert.match(loginSrc, /oauthConfig\?\.facebookConfigured/);
+    assert.match(loginSrc, /window\.location\.href = "\/api\/auth\/facebook"/);
+    assert.equal((loginSrc.match(/\{showFacebookOAuth && \(/g) || []).length, 2);
   });
 });
