@@ -12,6 +12,7 @@ import {
   assertRequiredProductionEnv,
   failFastRequiredProductionEnv,
   JWT_SECRET_REQUIRED_MESSAGE,
+  DATABASE_URL_REQUIRED_MESSAGE,
   resolveListenPort,
 } from "./runtime.ts";
 import {
@@ -47,20 +48,27 @@ describe("production listen / env helpers", () => {
   it("requires JWT_SECRET in production and leaves Meta secrets optional", () => {
     const prevJwt = process.env.JWT_SECRET;
     const prevNode = process.env.NODE_ENV;
+    const prevDb = process.env.DATABASE_URL;
     try {
       process.env.NODE_ENV = "production";
       delete process.env.JWT_SECRET;
+      delete process.env.DATABASE_URL;
       assert.throws(() => assertRequiredProductionEnv(), /JWT_SECRET/);
       process.env.JWT_SECRET = "change-me-to-a-long-random-secret";
       assert.throws(() => assertRequiredProductionEnv(), /JWT_SECRET/);
       process.env.JWT_SECRET = "a-sufficiently-long-cloud-run-secret";
+      assert.throws(() => assertRequiredProductionEnv(), /DATABASE_URL/);
+      process.env.DATABASE_URL = "postgres://lumera:local@127.0.0.1:5432/lumera";
       assert.doesNotThrow(() => assertRequiredProductionEnv());
       assert.match(JWT_SECRET_REQUIRED_MESSAGE, /JWT_SECRET is required/);
+      assert.match(DATABASE_URL_REQUIRED_MESSAGE, /DATABASE_URL is required/);
     } finally {
       if (prevJwt === undefined) delete process.env.JWT_SECRET;
       else process.env.JWT_SECRET = prevJwt;
       if (prevNode === undefined) delete process.env.NODE_ENV;
       else process.env.NODE_ENV = prevNode;
+      if (prevDb === undefined) delete process.env.DATABASE_URL;
+      else process.env.DATABASE_URL = prevDb;
     }
   });
 
@@ -86,7 +94,11 @@ describe("production listen / env helpers", () => {
   it("fail-fast is a no-op when JWT_SECRET is set or NODE_ENV is not production", () => {
     let exited = false;
     failFastRequiredProductionEnv(
-      { NODE_ENV: "production", JWT_SECRET: "a-sufficiently-long-cloud-run-secret" } as NodeJS.ProcessEnv,
+      {
+        NODE_ENV: "production",
+        JWT_SECRET: "a-sufficiently-long-cloud-run-secret",
+        DATABASE_URL: "postgres://lumera:local@127.0.0.1:5432/lumera",
+      } as NodeJS.ProcessEnv,
       () => {
         exited = true;
       }

@@ -1,5 +1,9 @@
 /** Shared environment helpers. Simulators stay SANDBOX / DEV-ONLY. */
 
+import { databaseUrlFromEnv } from "../src/db/url.ts";
+
+export { databaseUrlFromEnv };
+
 export function isProduction(): boolean {
   return process.env.NODE_ENV === "production";
 }
@@ -70,6 +74,13 @@ export const JWT_SECRET_REQUIRED_MESSAGE =
   "JWT_SECRET is required in production (no weak default). Set JWT_SECRET on the Cloud Run service (Secret Manager or Console), then rebuild. This process exits before listen(0.0.0.0, PORT); Cloud Run will report a PORT timeout even though bind is not the bug.";
 
 /**
+ * Cloud Run is stateless. A local data/lumera.db is discarded on every deploy,
+ * scale-to-zero wake, and extra instance. Production must use Cloud SQL.
+ */
+export const DATABASE_URL_REQUIRED_MESSAGE =
+  "DATABASE_URL is required in production (Cloud Run is stateless; node:sqlite files are discarded on deploy/scale). Set DATABASE_URL to the Cloud SQL unix-socket URI (postgres://user:pass@/dbname?host=/cloudsql/PROJECT:asia-south1:INSTANCE) or INSTANCE_CONNECTION_NAME + SQL_USER + SQL_PASSWORD + SQL_DB_NAME, plus Cloud Run --add-cloudsql-instances. This process exits before listen(0.0.0.0, PORT); Cloud Run will report a PORT timeout even though bind is not the bug.";
+
+/**
  * Cloud Run / `npm start` entry is `dist/server.cjs` and may omit NODE_ENV.
  * Treat a bundled server start as production unless NODE_ENV is already set.
  */
@@ -84,7 +95,7 @@ export function applyBundledServerNodeEnv(
 }
 
 /**
- * Production hosting (App Review URL stage) requires JWT_SECRET.
+ * Production hosting requires JWT_SECRET and a durable Postgres URL.
  * Meta / Facebook / Razorpay secrets stay optional until the founder provisions them.
  */
 export function assertRequiredProductionEnv(env: NodeJS.ProcessEnv = process.env): void {
@@ -92,6 +103,10 @@ export function assertRequiredProductionEnv(env: NodeJS.ProcessEnv = process.env
   const jwt = String(env.JWT_SECRET || "").trim();
   if (!jwt || isUnsetOrPlaceholder(jwt)) {
     throw new Error(JWT_SECRET_REQUIRED_MESSAGE);
+  }
+  const dbUrl = databaseUrlFromEnv(env);
+  if (!dbUrl || isUnsetOrPlaceholder(dbUrl)) {
+    throw new Error(DATABASE_URL_REQUIRED_MESSAGE);
   }
   const appUrl = String(env.APP_URL || "").trim().replace(/\/$/, "");
   if (!appUrl) {

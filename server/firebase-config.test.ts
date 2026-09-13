@@ -45,8 +45,16 @@ describe("Firebase Hosting → Cloud Run config (#26)", () => {
     assert.match(yaml, /--update-env-vars=NODE_ENV=production,APP_URL=https:\/\/www\.mylumera\.in/);
     assert.doesNotMatch(withoutComments, /--set-env-vars/);
     assert.doesNotMatch(withoutComments, /--update-env-vars=[^\n]*JWT_SECRET/);
+    assert.doesNotMatch(withoutComments, /--update-env-vars=[^\n]*DATABASE_URL/);
     assert.match(yaml, /JWT_SECRET must already exist/);
+    assert.match(yaml, /--add-cloudsql-instances/);
+    assert.match(yaml, /_CLOUDSQL_INSTANCE/);
     assert.match(readRepo("deploy/CLOUD_RUN_BOOT_CHECK.md"), /JWT_SECRET is required/);
+    assert.match(readRepo("deploy/CLOUD_RUN_BOOT_CHECK.md"), /DATABASE_URL is required/);
+    assert.match(readRepo("docs/CLOUD_SQL_POSTGRES.md"), /asia-south1/);
+    assert.match(readRepo(".env.example"), /DATABASE_URL=/);
+    assert.match(readRepo("package.json"), /alias:node:sqlite/);
+    assert.match(readRepo("server/sqlite-compat.ts"), /createPgShim/);
   });
 
   it("runbook is Firebase Hosting + Cloud Run, not Hostinger purchase", () => {
