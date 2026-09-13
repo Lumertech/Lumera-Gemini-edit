@@ -1,4 +1,4 @@
-import type { DatabaseSync } from "node:sqlite";
+import type { SqlDatabase } from "./sql-engine.ts";
 import { DEMO_ACCOUNTS, DEMO_PASSWORD } from "../src/lib/demoAccounts.ts";
 import { packIdLabel } from "../src/lib/specialtyPack.ts";
 import { hashPassword } from "./password.ts";
@@ -12,7 +12,7 @@ const DEMO_TENANT_ID = "tenant-lumera-main";
  * clinic.admin@ = Polyclinic CLINIC_ADMIN (Branches); admin@ = Super Admin (no Branches).
  * Seed emails already match — this does not invent new personas.
  */
-export function ensureDemoPersonaUsers(database: DatabaseSync) {
+export function ensureDemoPersonaUsers(database: SqlDatabase) {
   const now = new Date().toISOString();
   const passwordHash = hashPassword(DEMO_PASSWORD);
   const isProd = process.env.NODE_ENV === "production";
