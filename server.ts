@@ -1,21 +1,16 @@
 import express, { Request, Response } from "express";
-import http from "http";
 import path from "path";
-import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
-import { initDatabase, getDb } from "./server/db.ts";
-import { startAppointmentReminderScheduler } from "./server/whatsapp-calendar.ts";
 import { attachUser, requireAuth } from "./server/auth.ts";
 import { createApiRouter } from "./server/api.ts";
 import { createUsageBillingRouter } from "./server/usage-billing-api.ts";
 import { createMetaRouter } from "./server/meta.ts";
-import { ensureUsageWalletSchema, seedDemoUsageWallet } from "./server/usage-billing.ts";
 import { aiScribeTenantIdFromRequest, blockedAiScribeResponse, meterSuccessfulGeminiScribe } from "./server/gemini-scribe-meter.ts";
+import { attachGeminiClinicalRest, generateRuleBasedSoap, startLumeraServer } from "./server/gemini-clinical-rest.ts";
 import { createAbdmRouter } from "./server/abdm.ts";
 import { applyBundledServerNodeEnv, failFastRequiredProductionEnv, resolveListenPort } from "./server/runtime.ts";
-import { attachProductionSpaFallback } from "./server/spa-fallback.ts";
-import { attachPublicPolicyHtml, isPublicPolicyHtmlPath } from "./server/policy-html.ts";
+import { attachPublicPolicyHtml } from "./server/policy-html.ts";
 
 dotenv.config();
 applyBundledServerNodeEnv();
@@ -99,77 +94,7 @@ app.post("/api/gemini/generate-soap", async (req: Request, res: Response) => {
 
     if (ai) {
       try {
-        const prompt = `You are Lumera AI, an expert Clinical AI Medical Scribe.
-Generate a comprehensive, structured clinical SOAP note from the following doctor-patient consultation transcript.
-
-PATIENT INFO:
-- Name: ${patientName}
-- Age/Gender: ${patientAge} / ${patientGender}
-- Doctor: ${doctorName} (${doctorSpecialty})
-- Vitals: BP: ${vitals.bloodPressureSystolic || 120}/${vitals.bloodPressureDiastolic || 80} mmHg, HR: ${vitals.heartRate || 72} bpm, Temp: ${vitals.temperature || 98.6}°F, SpO2: ${vitals.spO2 || 99}%, Weight: ${vitals.weightKg || 70} kg
-
-TRANSCRIPT OF CONSULTATION:
-"""${transcript}"""
-
-Return STRICTLY a JSON object with this exact schema:
-{
-  "subjective": {
-    "chiefComplaints": ["complaint 1 with duration", "complaint 2"],
-    "historyOfPresentIllness": "detailed narrative of symptoms, onset, severity, aggravating/relieving factors",
-    "pastMedicalHistory": "past conditions, chronic illnesses if mentioned",
-    "reviewOfSystems": "relevant positive/negative systemic review"
-  },
-  "objective": {
-    "vitals": {
-      "bloodPressureSystolic": number,
-      "bloodPressureDiastolic": number,
-      "heartRate": number,
-      "temperature": number,
-      "spO2": number,
-      "weightKg": number,
-      "heightCm": number,
-      "bmi": number,
-      "bloodSugarRandom": number
-    },
-    "physicalExamination": "general appearance and system exam (e.g. chest clear, no pallor/icterus, throat congested)",
-    "clinicalFindings": ["finding 1", "finding 2"]
-  },
-  "assessment": {
-    "primaryDiagnosis": "Most probable clinical diagnosis",
-    "icd10Code": "e.g. J06.9, E11.9, I10, K29.7",
-    "differentialDiagnoses": ["Diff Dx 1", "Diff Dx 2"],
-    "riskLevel": "Low" | "Moderate" | "High" | "Emergency"
-  },
-  "plan": {
-    "medicines": [
-      {
-        "id": "med-1",
-        "drugName": "Standard Indian Brand or Generic name (e.g. Paracetamol 650 mg (Dolo 650))",
-        "composition": "Chemical composition",
-        "dosage": "e.g. 650 mg",
-        "form": "Tablet" | "Capsule" | "Syrup" | "Injection" | "Ointment" | "Inhaler",
-        "frequency": "1-0-1" | "1-0-0" | "0-0-1" | "1-1-1" | "SOS" | "Once a week",
-        "timing": "After Food" | "Before Food" | "With Food" | "At Bedtime",
-        "durationDays": number,
-        "instructions": "specific patient instructions"
-      }
-    ],
-    "labTests": [
-      {
-        "id": "lab-1",
-        "testName": "e.g. Complete Blood Count (CBC)",
-        "category": "Hematology" | "Biochemistry" | "Radiology" | "Pathology",
-        "urgent": boolean,
-        "notes": "indication"
-      }
-    ],
-    "lifestyleAdvice": ["advice 1", "advice 2", "diet advice"],
-    "redFlags": ["emergency signs that require immediate hospital visit"],
-    "followUpDays": number,
-    "followUpDate": "YYYY-MM-DD"
-  },
-  "transcriptSummary": "Concise 2-sentence executive summary of the encounter"
-}`;
+        const prompt = `You are Lumera AI, an expert Clinical AI Medical Scribe.\nGenerate a comprehensive, structured clinical SOAP note from the following doctor-patient consultation transcript.\n\nPATIENT INFO:\n- Name: ${patientName}\n- Age/Gender: ${patientAge} / ${patientGender}\n- Doctor: ${doctorName} (${doctorSpecialty})\n- Vitals: BP: ${vitals.bloodPressureSystolic || 120}/${vitals.bloodPressureDiastolic || 80} mmHg, HR: ${vitals.heartRate || 72} bpm, Temp: ${vitals.temperature || 98.6}°F, SpO2: ${vitals.spO2 || 99}%, Weight: ${vitals.weightKg || 70} kg\n\nTRANSCRIPT OF CONSULTATION:\n"""${transcript}"""\n\nReturn STRICTLY a JSON object with this exact schema:\n{\n  "subjective": {\n    "chiefComplaints": ["complaint 1 with duration", "complaint 2"],\n    "historyOfPresentIllness": "detailed narrative of symptoms, onset, severity, aggravating/relieving factors",\n    "pastMedicalHistory": "past conditions, chronic illnesses if mentioned",\n    "reviewOfSystems": "relevant positive/negative systemic review"\n  },\n  "objective": {\n    "vitals": {\n      "bloodPressureSystolic": number,\n      "bloodPressureDiastolic": number,\n      "heartRate": number,\n      "temperature": number,\n      "spO2": number,\n      "weightKg": number,\n      "heightCm": number,\n      "bmi": number,\n      "bloodSugarRandom": number\n    },\n    "physicalExamination": "general appearance and system exam (e.g. chest clear, no pallor/icterus, throat congested)",\n    "clinicalFindings": ["finding 1", "finding 2"]\n  },\n  "assessment": {\n    "primaryDiagnosis": "Most probable clinical diagnosis",\n    "icd10Code": "e.g. J06.9, E11.9, I10, K29.7",\n    "differentialDiagnoses": ["Diff Dx 1", "Diff Dx 2"],\n    "riskLevel": "Low" | "Moderate" | "High" | "Emergency"\n  },\n  "plan": {\n    "medicines": [\n      {\n        "id": "med-1",\n        "drugName": "Standard Indian Brand or Generic name (e.g. Paracetamol 650 mg (Dolo 650))",\n        "composition": "Chemical composition",\n        "dosage": "e.g. 650 mg",\n        "form": "Tablet" | "Capsule" | "Syrup" | "Injection" | "Ointment" | "Inhaler",\n        "frequency": "1-0-1" | "1-0-0" | "0-0-1" | "1-1-1" | "SOS" | "Once a week",\n        "timing": "After Food" | "Before Food" | "With Food" | "At Bedtime",\n        "durationDays": number,\n        "instructions": "specific patient instructions"\n      }\n    ],\n    "labTests": [\n      {\n        "id": "lab-1",\n        "testName": "e.g. Complete Blood Count (CBC)",\n        "category": "Hematology" | "Biochemistry" | "Radiology" | "Pathology",\n        "urgent": boolean,\n        "notes": "indication"\n      }\n    ],\n    "lifestyleAdvice": ["advice 1", "advice 2", "diet advice"],\n    "redFlags": ["emergency signs that require immediate hospital visit"],\n    "followUpDays": number,\n    "followUpDate": "YYYY-MM-DD"\n  },\n  "transcriptSummary": "Concise 2-sentence executive summary of the encounter"\n}`;
 
         const response = await ai.models.generateContent({
           model: "gemini-3.7-flash",
@@ -203,7 +128,8 @@ Return STRICTLY a JSON object with this exact schema:
   }
 });
 
-// Remaining clinical Gemini routes + boot live in server/gemini-clinical-rest.ts
-// so this file keeps the real generate-soap call site without MCP truncation.
-import { attachGeminiClinicalRest, generateRuleBasedSoap } from "./server/gemini-clinical-rest.ts";
 attachGeminiClinicalRest(app, getGenAI);
+startLumeraServer(app, PORT).catch((err) => {
+  console.error("[Lumera] Server failed to start:", err);
+  process.exit(1);
+});
