@@ -108,7 +108,7 @@ export function decideDataDeletionSignedRequest(opts: {
   }
 
   const parsed = parseMetaSignedRequest(signed, secret);
-  if (!parsed.ok) {
+  if (parsed.ok === false) {
     return { ok: false, status: 403, error: parsed.error };
   }
 
@@ -126,7 +126,7 @@ export function handleMetaDataDeletionPost(req: Request, res: Response) {
     signedRequest: req.body?.signed_request,
     appSecret: getMetaAppSecret(),
   });
-  if (!signedDecision.ok) {
+  if (signedDecision.ok === false) {
     return res.status(signedDecision.status).json({ error: signedDecision.error });
   }
   const host = req.get("host") || undefined;
