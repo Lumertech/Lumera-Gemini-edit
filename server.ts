@@ -16,6 +16,7 @@ import { attachProductionSpaFallback } from "./server/spa-fallback.ts";
 import { attachPublicPolicyHtml, isPublicPolicyHtmlPath } from "./server/policy-html.ts";
 import { mountGeminiClinicalRoutes } from "./server/gemini-clinical.ts";
 import { installWhatsAppRouterPatch, protectWhatsAppDashboard } from "./server/whatsapp-dashboard-guard.ts";
+import { createLiveRegistrationRouter } from "./server/live-registration-routes.ts";
 
 dotenv.config();
 applyBundledServerNodeEnv();
@@ -49,6 +50,9 @@ app.use("/v3", createAbdmRouter());
 // Mount protected inbox before createApiRouter so GitHub's unpatched whatsapp.ts
 // (MCP cannot rewrite the 70KB file) still gets auth + tenant filters.
 app.use("/api/whatsapp", protectWhatsAppDashboard(createWhatsAppRouter()));
+// Own live signup before createApiRouter so api.ts demo-seed fallbacks are dead
+// in dist/server.cjs (esbuild stacks are server.cjs, not api.ts:LINE:COL).
+app.use("/api", createLiveRegistrationRouter());
 app.use("/api", createApiRouter());
 app.use("/meta", createMetaRouter());
 app.post("/data-deletion-callback", (req, res, next) => {

@@ -16,11 +16,10 @@ export function generateTemporaryPassword(): string {
 }
 
 /**
- * GitHub `server/api.ts` still has two live-registration fallbacks
- * `hashPassword("Lumera@2026")` (lines 828 col 52 and 1027 col 62) because MCP
- * cannot upload the ~102KB file intact. Rewrite only those call sites.
+ * Defense-in-depth for `tsx` / `npm test` only. Production is `node dist/server.cjs`
+ * (esbuild); bundled stacks are `server.cjs`, so this must not be the only fix.
+ * Live signup is owned by `createLiveRegistrationRouter()` mounted in server.ts.
  * Tests and demo seed that hash the same string from other files are unchanged.
- * When api.ts is uploaded with liveRegistrationPasswordHash(), these frames vanish and this is a no-op.
  */
 function rewriteLiveRegistrationFallback(password: string): string {
   if (password !== "Lumera@2026") return password;
