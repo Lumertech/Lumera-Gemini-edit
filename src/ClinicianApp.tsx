@@ -52,6 +52,7 @@ import {
   allowedViewsForWorkflow,
   clinicianHomeView,
   specialtyMatchesDoctor,
+  clinicianRxSpecialty,
   workflowForUser,
 } from './lib/specialtyWorkflow';
 import { SpecialtyPackBoard } from './components/specialty-packs/SpecialtyPackBoard';
@@ -91,9 +92,9 @@ export default function ClinicianApp() {
     [user, currentDoctor, letterhead]
   );
 
-  // Specialty locking enforcement for doctor accounts
+  // Specialty locking — resolve pack-id `gp` / demo emails to the actual Rx module (Cardiology, Physio, …).
   const isSpecialtyLocked = user?.role === 'doctor' || Boolean(user?.specialty) || user?.practiceType === 'individual';
-  const lockedSpecialty = user?.specialty || (user?.role === 'doctor' ? currentDoctor.specialty : undefined);
+  const lockedSpecialty = clinicianRxSpecialty(user, currentDoctor.specialty);
 
   useEffect(() => {
     if (!user) return;
@@ -112,9 +113,11 @@ export default function ClinicianApp() {
   useEffect(() => {
     if (!user) return;
     if (isDemo) {
+      const rxModule = clinicianRxSpecialty(user);
       const match =
         MOCK_DOCTORS.find((d) => d.email && user.email && d.email.toLowerCase() === user.email.toLowerCase()) ||
-        MOCK_DOCTORS.find((d) => specialtyMatchesDoctor(user.specialty, d.specialty));
+        MOCK_DOCTORS.find((d) => d.specialty === rxModule) ||
+        MOCK_DOCTORS.find((d) => specialtyMatchesDoctor(rxModule, d.specialty));
       setCurrentDoctor(match || MOCK_DOCTORS[0]);
       return;
     }
@@ -152,7 +155,7 @@ export default function ClinicianApp() {
                 nextDoctors.find((d) => d.id === prev.id) ||
                 nextDoctors.find((d) => d.userId === user?.id) ||
                 nextDoctors.find((d) => d.email && user?.email && d.email.toLowerCase() === user.email.toLowerCase()) ||
-                nextDoctors.find((d) => specialtyMatchesDoctor(user?.specialty, d.specialty)) ||
+                nextDoctors.find((d) => specialtyMatchesDoctor(clinicianRxSpecialty(user), d.specialty)) ||
                 nextDoctors[0]
               );
             }
