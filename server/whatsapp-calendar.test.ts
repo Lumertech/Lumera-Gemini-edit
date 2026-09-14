@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import express from "express";
 import { attachUser } from "./auth.ts";
 import { createApiRouter } from "./api.ts";
+import { installWhatsAppRouterPatch } from "./whatsapp-dashboard-guard.ts";
 import { DEMO_TENANT_ID, getDb, initDatabase } from "./db.ts";
 import { hashPassword } from "./password.ts";
 import {
@@ -92,6 +93,7 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
       initDatabase();
     }
 
+    installWhatsAppRouterPatch();
     const app = express();
     app.use(express.json());
     app.use(attachUser);
