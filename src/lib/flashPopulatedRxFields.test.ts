@@ -12,6 +12,8 @@ describe("scribe Rx flash matchers", () => {
       "Joint Range of Motion (ROM) & Mobility Restrictions",
       "Manual Muscle Testing (MMT 0-5)",
       "Prescribed Home Exercise Program (HEP)",
+      "NYHA Functional Class",
+      "Target Resting BP",
     ];
     for (const label of labels) {
       assert.ok(

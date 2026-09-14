@@ -7,6 +7,11 @@ export const RX_FLASH_MATCHERS: RegExp[] = [
   /manual muscle testing/i,
   /special (orthopedic )?tests/i,
   /home exercise program/i,
+  /nyha functional class/i,
+  /target resting bp/i,
+  /fitzpatrick|lesion/i,
+  /weight bearing/i,
+  /affected joint/i,
 ];
 
 const FLASH_CLASSES = [
