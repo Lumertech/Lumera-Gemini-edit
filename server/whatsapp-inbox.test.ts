@@ -13,9 +13,10 @@ import {
 
 async function jsonRequest(
   port: number,
-  urlPath: string
+  urlPath: string,
+  headers: Record<string, string> = {}
 ): Promise<{ status: number; json: Record<string, unknown> }> {
-  const res = await fetch(`http://127.0.0.1:${port}${urlPath}`);
+  const res = await fetch(`http://127.0.0.1:${port}${urlPath}`, { headers });
   const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   return { status: res.status, json };
 }
@@ -23,6 +24,7 @@ async function jsonRequest(
 describe("WhatsApp inbox HTTP contract for /app/whatsapp", () => {
   let port = 0;
   let server: Server | undefined;
+  let token = "";
 
   before(async () => {
     if (!process.env.JWT_SECRET) {
@@ -44,6 +46,15 @@ describe("WhatsApp inbox HTTP contract for /app/whatsapp", () => {
     const addr = server.address();
     if (!addr || typeof addr === "string") throw new Error("server did not bind a port");
     port = addr.port;
+
+    const login = await fetch(`http://127.0.0.1:${port}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "doctor@lumera.me", password: "Lumera@2026", skipOtp: true }),
+    });
+    const loginJson = (await login.json()) as { token?: string };
+    token = String(loginJson.token || "");
+    if (!token) throw new Error("doctor@lumera.me login failed for WhatsApp inbox tests");
   });
 
   after(async () => {
@@ -54,7 +65,7 @@ describe("WhatsApp inbox HTTP contract for /app/whatsapp", () => {
   });
 
   it("returns camelCase conversations the suite can render without throwing", async () => {
-    const res = await jsonRequest(port, "/api/whatsapp/conversations");
+    const res = await jsonRequest(port, "/api/whatsapp/conversations", { Authorization: `Bearer ${token}` });
     assert.equal(res.status, 200);
     const conversations = normalizeWhatsAppConversations(res.json.conversations);
     assert.ok(conversations.length > 0);
@@ -65,13 +76,16 @@ describe("WhatsApp inbox HTTP contract for /app/whatsapp", () => {
   });
 
   it("lists messages by query and by /messages/:id alias", async () => {
-    const list = await jsonRequest(port, "/api/whatsapp/conversations");
+    const list = await jsonRequest(port, "/api/whatsapp/conversations", { Authorization: `Bearer ${token}` });
     const first = (list.json.conversations as Array<{ id: string }>)[0];
     const byQuery = await jsonRequest(
       port,
-      `/api/whatsapp/messages?conversationId=${encodeURIComponent(first.id)}`
+      `/api/whatsapp/messages?conversationId=${encodeURIComponent(first.id)}`,
+      { Authorization: `Bearer ${token}` }
     );
-    const byPath = await jsonRequest(port, `/api/whatsapp/messages/${encodeURIComponent(first.id)}`);
+    const byPath = await jsonRequest(port, `/api/whatsapp/messages/${encodeURIComponent(first.id)}`, {
+      Authorization: `Bearer ${token}`,
+    });
     assert.equal(byQuery.status, 200);
     assert.equal(byPath.status, 200);
     const messages = normalizeWhatsAppMessages(byQuery.json.messages);

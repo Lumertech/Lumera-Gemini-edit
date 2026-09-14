@@ -36,6 +36,15 @@ export async function apiFetch<T = unknown>(path: string, init: RequestInit = {}
     }
   }
 
+  if (!headers.has("X-CSRF-Token") && typeof document !== "undefined") {
+    try {
+      const match = document.cookie.match(/(?:^|; )lumera_csrf=([^;]*)/);
+      if (match?.[1]) headers.set("X-CSRF-Token", decodeURIComponent(match[1]));
+    } catch {
+      /* ignore cookie parse errors */
+    }
+  }
+
   const res = await fetch(path, {
     ...init,
     credentials: "include",
