@@ -146,6 +146,7 @@ export interface Doctor {
   signatureUrl?: string;
   slotDurationMinutes?: number;
   rxTemplate?: 'classic' | 'compact' | 'detailed';
+  practitionerId?: string;
 }
 
 export interface Patient {
