@@ -228,7 +228,6 @@ describe("ABDM placeholder-ID copy (registration + surfaces)", () => {
 
   it("user-facing surfaces inventory: pending copy present; large files not truncated", () => {
     const onboarding = readRepo("src/pages/OnboardingWizard.tsx");
-    const api = readRepo("server/api.ts");
     const edge = readRepo("server/abdm-registry-public.ts");
     const welcome = readRepo("src/components/WelcomeSetupDashboard.tsx");
     const dhis = readRepo("src/components/dhis/DhisMeter.tsx");
@@ -236,6 +235,9 @@ describe("ABDM placeholder-ID copy (registration + surfaces)", () => {
     const landing = readRepo("src/components/LandingPage.tsx");
     const adminMeta = readRepo("src/components/admin/AdminMetaTechProvider.tsx");
     const fhir = readRepo("server/fhir.ts");
+    const abdm = readRepo("server/abdm.ts");
+    const abdmIdentity = readRepo("server/abdm-identity-routes.ts");
+    const abdmConsent = readRepo("server/abdm-consent-routes.ts");
 
     assert.match(onboarding, /hfrLabel/);
     assert.match(onboarding, /formatAbdmRegistryLabel/);
@@ -248,12 +250,20 @@ describe("ABDM placeholder-ID copy (registration + surfaces)", () => {
     assert.match(doctorModal, /ravee@lumer\.me/);
     assert.match(fhir, /createPrescriptionBundle/);
     assert.match(fhir, /ABDM_REGISTRY_PENDING_NOTE/);
+    assert.match(abdm, /export function createAbdmRouter/);
+    assert.match(abdmIdentity, /handleBridgeSession/);
+    assert.match(abdmConsent, /persistCallbackArtefact/);
 
     assert.ok(lineCount("src/pages/OnboardingWizard.tsx") >= 860, "OnboardingWizard.tsx truncated");
     assert.ok(lineCount("server/api.ts") >= 2370, "server/api.ts truncated");
     assert.ok(lineCount("server/fhir.ts") >= 1000, "server/fhir.ts truncated");
     assert.ok(lineCount("src/components/LandingPage.tsx") >= 970, "LandingPage.tsx truncated");
     assert.ok(lineCount("src/components/admin/AdminMetaTechProvider.tsx") >= 1160, "AdminMetaTechProvider.tsx truncated");
+    const gatewayLines =
+      lineCount("server/abdm-internal.ts") +
+      lineCount("server/abdm-identity-routes.ts") +
+      lineCount("server/abdm-consent-routes.ts");
+    assert.ok(gatewayLines >= 1100, `ABDM gateway split truncated (${gatewayLines} lines)`);
 
     assert.equal(/ABDM Compliant/i.test(onboarding), false);
     assert.equal(/Official Tech Provider/i.test(landing), false);
