@@ -1,6 +1,7 @@
 import { AppUser, ClinicSettings, Doctor, Patient, PolyclinicSpecialty, TenantLetterhead, UserRole } from "../types";
 import { DEFAULT_CLINIC_SETTINGS } from "../data/clinicalData";
 import { BLANK_CLINIC_SETTINGS } from "./letterhead";
+import { resolveRxModule } from "./specialtyWorkflow";
 
 export const UNASSIGNED_PATIENT: Patient = {
   id: "",
@@ -56,7 +57,7 @@ export function doctorFromUser(user: AppUser | null | undefined, fallback?: Doct
     name,
     qualification: "",
     regNumber: "",
-    specialty: (user?.specialty as PolyclinicSpecialty) || "General Medicine",
+    specialty: resolveRxModule(user?.specialty) || "General Medicine",
     experienceYears: 0,
     consultationFee: 0,
     opdRoom: "",
