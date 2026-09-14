@@ -1,5 +1,9 @@
 /** Shared environment helpers. Simulators stay SANDBOX / DEV-ONLY. */
 
+import { databaseUrlFromEnv } from "../src/db/url.ts";
+
+export { databaseUrlFromEnv };
+
 export function isProduction(): boolean {
   return process.env.NODE_ENV === "production";
 }
@@ -68,6 +72,13 @@ export function resolveListenPort(env: NodeJS.ProcessEnv = process.env): number 
 /** Cloud Run surfaces this line when production exits before listen. */
 export const JWT_SECRET_REQUIRED_MESSAGE =
   "JWT_SECRET is required in production (no weak default). Set JWT_SECRET on the Cloud Run service (Secret Manager or Console), then rebuild. This process exits before listen(0.0.0.0, PORT); Cloud Run will report a PORT timeout even though bind is not the bug.";
+
+/**
+ * Cloud Run is stateless. A local data/lumera.db is discarded on every deploy,
+ * scale-to-zero wake, and extra instance. Production must use Cloud SQL.
+ */
+export const DATABASE_URL_REQUIRED_MESSAGE =
+  "DATABASE_URL is required in production (Cloud Run is stateless; node:sqlite files are discarded on deploy/scale). Set DATABASE_URL to the Cloud SQL unix-socket URI (postgres://user:pass@/dbname?host=/cloudsql/PROJECT:asia-south1:INSTANCE) or INSTANCE_CONNECTION_NAME + SQL_USER + SQL_PASSWORD + SQL_DB_NAME, plus Cloud Run --add-cloudsql-instances. This process exits before listen(0.0.0.0, PORT); Cloud Run will report a PORT timeout even though bind is not the bug.";
 
 /**
  * Cloud Run / `npm start` entry is `dist/server.cjs` and may omit NODE_ENV.
