@@ -3,7 +3,9 @@ import { describe, it } from "node:test";
 import {
   detectPhysioRegion,
   extractPhysioTokensFromTranscript,
+  extractSpecialtyTokensFromTranscript,
   mergePhysioIntoSoap,
+  mergeSpecialtyIntoSoap,
 } from "./pulseClinicalTokens.ts";
 import type { SoapNote } from "../types.ts";
 
@@ -86,5 +88,57 @@ describe("Pulse physio token extraction", () => {
     assert.equal(tokens.icd10, "M54.16");
     assert.ok(tokens.assessment.specialOrthopedicTests.some((t) => /straight leg/i.test(t.testName)));
     assert.ok(tokens.exercises.some((e) => /mckenzie/i.test(e.exerciseName)));
+  });
+});
+
+describe("Pulse tokens for every practice line", () => {
+  it("does not force knee HEP onto a GP fever consult", () => {
+    const text =
+      "Patient: 2 din se tez fever and throat pain. Mild dry cough.\nDoctor: Viral URI. Dolo 650 after food.";
+    const merged = mergePhysioIntoSoap(VIRAL_SOAP, text, "General Medicine");
+    assert.equal(merged.assessment.icd10Code, "J06.9");
+    assert.equal(merged.prescribedExercises, undefined);
+    const gp = extractSpecialtyTokensFromTranscript(text, "gp");
+    assert.equal(gp.icd10, "J06.9");
+    assert.equal(gp.prescribedExercises, undefined);
+  });
+
+  it("maps a cardiology consult to NYHA + I10/I20, not frozen shoulder", () => {
+    const text =
+      "Patient: Chest heaviness during brisk walking for 2 weeks, relieves with rest.\nDoctor: BP 142/88. Telmisartan 40 mg. Echo.";
+    const tokens = extractSpecialtyTokensFromTranscript(text, "Cardiology");
+    assert.match(tokens.icd10, /^I/);
+    assert.ok(tokens.cardiologyAssessment);
+    assert.equal(tokens.cardiologyAssessment?.nyhaFunctionalClass, "Class II");
+    assert.ok(tokens.medicines.some((m) => /telmisartan/i.test(m.drugName)));
+    const merged = mergeSpecialtyIntoSoap(VIRAL_SOAP, text, "Cardiology");
+    assert.notEqual(merged.assessment.icd10Code, "J06.9");
+    assert.ok(merged.cardiologyAssessment);
+  });
+
+  it("maps dermatology and pediatrics without physio ROM", () => {
+    const derm = extractSpecialtyTokensFromTranscript(
+      "Patient: Pimples on the cheeks for 6 weeks, itchy after sun.\nDoctor: Acne vulgaris. Clindamycin gel.",
+      "Dermatology"
+    );
+    assert.equal(derm.icd10, "L70.0");
+    assert.ok(derm.dermatologyAssessment);
+    assert.equal(derm.physiotherapyAssessment, undefined);
+
+    const peds = extractSpecialtyTokensFromTranscript(
+      "Patient: High fever since last night, dry cough. Papa is 3 years.\nDoctor: Viral pyrexia. Paracetamol syrup.",
+      "Pediatrics"
+    );
+    assert.equal(peds.icd10, "R50.9");
+    assert.ok(peds.pediatricAssessment);
+  });
+
+  it("starts a new GP clinic from the captured text instead of a canned URI", () => {
+    const tokens = extractSpecialtyTokensFromTranscript(
+      "Patient: Headache every afternoon for 5 days, worse with screens.\nDoctor: Tension-type headache. Rest, hydration, review.",
+      "General Medicine"
+    );
+    assert.notEqual(tokens.icd10, "M17.9");
+    assert.ok(tokens.chiefComplaints.some((c) => /headache/i.test(c)));
   });
 });
