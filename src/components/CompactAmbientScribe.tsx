@@ -14,6 +14,7 @@ import {
 import { SoapNote, Patient, Doctor } from "../types";
 import { isSpeechRecognitionAvailable, micErrorMessage, startAmbientMic } from "../lib/ambientMic";
 import { extractClinicalTokens, type PulseExtractSource } from "../lib/pulseClinicalTokens";
+import { resolveRxModule } from "../lib/specialtyWorkflow";
 import { flashPopulatedRxFields } from "../lib/flashPopulatedRxFields";
 
 export type AmbientScribeStatus = "idle" | "listening" | "processing";
@@ -25,26 +26,96 @@ interface CompactAmbientScribeProps {
   isOpen?: boolean;
   onClose?: () => void;
   onStatusChange?: (status: AmbientScribeStatus) => void;
+  /** Active Rx module — GP, cardiology, physio, etc. Independent of demo pack-id `gp`. */
+  practiceSpecialty?: string;
 }
 
-const DEMO_CONSULTS = [
-  {
-    id: "demo-knee",
-    label: "Demo: knee OA (Marathi)",
-    text: `Doctor: नमस्कार, गुडघ्याचा त्रास कसा आहे?
-Patient: डॉक्टर, गेल्या आठवड्यापासून डाव्या गुडघ्यात खूप तीव्र वेदना आहेत. जिने चढताना आणि खाली बसताना stiffness आणि कट-कट आवाज येतो. VAS 7/10.
-Doctor: Left knee examination: Medial joint line tenderness, crepitus on passive flexion, Active ROM limited to 105 degrees with pain on terminal extension.
-Doctor: Grade II osteoarthritis. Quadriceps strengthening, hot pack, Aceclofenac after food for 5 days. Home exercise program 3 times daily.`,
-  },
-  {
-    id: "demo-shoulder",
-    label: "Demo: frozen shoulder",
-    text: `Doctor: How is the left shoulder this week?
-Patient: Severe pain and stiffness for 3 weeks. I cannot reach overhead or fasten clothes. Night pain, VAS 8/10.
-Doctor: Abduction 75 degrees with capsular end-feel, external rotation 25 degrees. Neer and Hawkins positive.
-Doctor: Adhesive capsulitis stage II. Pendulum swings, external rotation with yellow band, wand flexion. Volini gel twice daily.`,
-  },
-];
+const DEMO_BY_MODULE: Record<string, Array<{ id: string; label: string; text: string }>> = {
+  "Physiotherapy & Rehabilitation": [
+    {
+      id: "demo-knee",
+      label: "Demo: knee OA",
+      text: `Doctor: नमस्कार, गुडघ्याचा त्रास कसा आहे?
+Patient: डॉक्टर, गेल्या आठवड्यापासून डाव्या गुडघ्यात खूप तीव्र वेदना आहेत. जिने चढताना stiffness. VAS 7/10.
+Doctor: Left knee ROM limited to 105 degrees, crepitus, medial joint line tenderness.
+Doctor: Grade II osteoarthritis. Quadriceps strengthening, hot pack, Aceclofenac after food.`,
+    },
+    {
+      id: "demo-shoulder",
+      label: "Demo: frozen shoulder",
+      text: `Doctor: How is the left shoulder this week?
+Patient: Severe pain and stiffness for 3 weeks. I cannot reach overhead. Night pain, VAS 8/10.
+Doctor: Abduction 75 degrees with capsular end-feel. Neer and Hawkins positive.
+Doctor: Adhesive capsulitis stage II. Pendulum swings, yellow-band ER, Volini gel.`,
+    },
+  ],
+  Cardiology: [
+    {
+      id: "demo-angina",
+      label: "Demo: HTN / angina",
+      text: `Doctor: How have you been since starting the blood pressure medicines?
+Patient: For 2 weeks I feel mild retrosternal heaviness during brisk walking, which relieves within 3 minutes of rest.
+Doctor: Blood pressure 142/88 mmHg, pulse 74 regular. ECG sinus rhythm. Increasing Telmisartan 40 mg, adding Aspirin 75 mg. Ordering 2D echo.`,
+    },
+  ],
+  Dermatology: [
+    {
+      id: "demo-acne",
+      label: "Demo: facial acne",
+      text: `Doctor: Show me the flare.
+Patient: Pimples and comedones on the cheeks and forehead for 6 weeks. Itchy after sun.
+Doctor: Inflammatory papules, Fitzpatrick IV. Clindamycin gel twice daily, SPF 50 every morning.`,
+    },
+  ],
+  Pediatrics: [
+    {
+      id: "demo-pyrexia",
+      label: "Demo: pediatric fever",
+      text: `Doctor: Vanakkam, what happened to papa?
+Patient: High fever since last night, dry cough, vomiting sensation. Age 3 years.
+Doctor: Temp 100.8°F, chest clear, throat congested. Viral pyrexia. Paracetamol syrup 15 mg/kg SOS, ORS.`,
+    },
+  ],
+  Orthopedics: [
+    {
+      id: "demo-knee-ortho",
+      label: "Demo: knee OA",
+      text: `Doctor: Which knee is troubling you?
+Patient: Left knee pain for one week on stairs, stiffness in the morning.
+Doctor: Medial joint line tenderness, ROM 105 degrees. Grade II osteoarthritis. Hinged brace, Aceclofenac after food, X-ray AP/lateral.`,
+    },
+  ],
+  "Dental Surgery": [
+    {
+      id: "demo-caries",
+      label: "Demo: tooth pain",
+      text: `Doctor: Which tooth hurts?
+Patient: Lower left molar pain on biting for 4 days, sensitivity to cold.
+Doctor: Deep occlusal caries 36, tender on percussion. Plan RCT, paracetamol after food.`,
+    },
+  ],
+  "General Medicine": [
+    {
+      id: "demo-uri",
+      label: "Demo: fever & cough",
+      text: `Doctor: Namaste, kya takleef hai?
+Patient: 2 din se tez fever, throat pain, mild dry cough. No breathlessness.
+Doctor: Temp 100.4°F, pharynx congested, lungs clear. Viral URI. Dolo 650 after food, warm gargles.`,
+    },
+    {
+      id: "demo-dm",
+      label: "Demo: diabetes review",
+      text: `Doctor: How is the sugar control?
+Patient: Afternoon fatigue. Tingling in the soles for a few weeks.
+Doctor: Random sugar 152. Early diabetic neuropathy. Continue metformin 500 SR, HbA1c, methylcobalamin at night.`,
+    },
+  ],
+};
+
+function demoConsultsFor(specialty?: string) {
+  const module = resolveRxModule(specialty);
+  return DEMO_BY_MODULE[module] || DEMO_BY_MODULE["General Medicine"];
+}
 
 export const CompactAmbientScribe: React.FC<CompactAmbientScribeProps> = ({
   currentPatient,
@@ -53,6 +124,7 @@ export const CompactAmbientScribe: React.FC<CompactAmbientScribeProps> = ({
   isOpen = true,
   onClose,
   onStatusChange,
+  practiceSpecialty,
 }) => {
   const [isRecording, setIsRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
@@ -163,6 +235,7 @@ export const CompactAmbientScribe: React.FC<CompactAmbientScribeProps> = ({
         patient: currentPatient,
         doctor: currentDoctor,
         recordingSeconds,
+        practiceSpecialty: practiceSpecialty || currentDoctor.specialty,
       });
       setGeneratedSoap(soap);
       setExtractSource(source);
@@ -232,7 +305,7 @@ export const CompactAmbientScribe: React.FC<CompactAmbientScribeProps> = ({
               )}
             </div>
             <p className="text-[11px] text-slate-500 truncate">
-              Live mic + transcript, then Pulse AI fills the Rx. Review highlighted fields before signing.
+              Live mic + transcript for this {resolveRxModule(practiceSpecialty || currentDoctor.specialty)} consult. Pulse AI fills the Rx — review highlighted fields before signing.
             </p>
           </div>
         </div>
@@ -312,7 +385,7 @@ export const CompactAmbientScribe: React.FC<CompactAmbientScribeProps> = ({
           </div>
 
           <div className="flex flex-wrap gap-1">
-            {DEMO_CONSULTS.map((sample) => (
+            {demoConsultsFor(practiceSpecialty || currentDoctor.specialty).map((sample) => (
               <button
                 key={sample.id}
                 type="button"
