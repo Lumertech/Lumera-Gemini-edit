@@ -7,6 +7,7 @@ import { initDatabase } from "./server/db.ts";
 import { startAppointmentReminderScheduler } from "./server/whatsapp-calendar.ts";
 import { attachUser, requireAuth } from "./server/auth.ts";
 import { createApiRouter } from "./server/api.ts";
+import { createWhatsAppRouter } from "./server/whatsapp.ts";
 import { createMetaRouter } from "./server/meta.ts";
 import { createAbdmRouter } from "./server/abdm.ts";
 import { attachHttpSecurity } from "./server/http-security.ts";
@@ -14,7 +15,7 @@ import { applyBundledServerNodeEnv, failFastRequiredProductionEnv, resolveListen
 import { attachProductionSpaFallback } from "./server/spa-fallback.ts";
 import { attachPublicPolicyHtml, isPublicPolicyHtmlPath } from "./server/policy-html.ts";
 import { mountGeminiClinicalRoutes } from "./server/gemini-clinical.ts";
-import { installWhatsAppRouterPatch } from "./server/whatsapp-dashboard-guard.ts";
+import { installWhatsAppRouterPatch, protectWhatsAppDashboard } from "./server/whatsapp-dashboard-guard.ts";
 
 dotenv.config();
 applyBundledServerNodeEnv();
@@ -45,6 +46,9 @@ app.use(attachUser);
 app.use("/api/gemini", requireAuth);
 app.use("/api/v3", createAbdmRouter());
 app.use("/v3", createAbdmRouter());
+// Mount protected inbox before createApiRouter so GitHub's unpatched whatsapp.ts
+// (MCP cannot rewrite the 70KB file) still gets auth + tenant filters.
+app.use("/api/whatsapp", protectWhatsAppDashboard(createWhatsAppRouter()));
 app.use("/api", createApiRouter());
 app.use("/meta", createMetaRouter());
 app.post("/data-deletion-callback", (req, res, next) => {

@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import express from "express";
 import { attachUser } from "./auth.ts";
 import { createApiRouter } from "./api.ts";
+import { createWhatsAppRouter } from "./whatsapp.ts";
 import { getDb, initDatabase } from "./db.ts";
 import { hashPassword } from "./password.ts";
 import {
@@ -20,7 +21,7 @@ import {
   parseAllowedOrigins,
   resetAuthRateLimitStore,
 } from "./http-security.ts";
-import { installWhatsAppRouterPatch } from "./whatsapp-dashboard-guard.ts";
+import { installWhatsAppRouterPatch, protectWhatsAppDashboard } from "./whatsapp-dashboard-guard.ts";
 import { PATIENTS_PHONE_UNIQUE } from "../src/db/patients-tenant-phone.unique.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -113,6 +114,7 @@ describe("Auth / tenant isolation / CORS / CSRF / rate limit", () => {
     app.use(createAuthRateLimiter({ windowMs: 60_000, max: 5, store: rateStore }));
     app.use(express.json());
     app.use(attachUser);
+    app.use("/api/whatsapp", protectWhatsAppDashboard(createWhatsAppRouter()));
     app.use("/api", createApiRouter());
 
     server = app.listen(0, "127.0.0.1");
@@ -177,7 +179,7 @@ describe("Auth / tenant isolation / CORS / CSRF / rate limit", () => {
       authA
     );
     assert.equal(sent.status, 201, String(sent.json.error || ""));
-    const convId = String((sent.json.sentMessage as { conversationId?: string } | undefined)?.conversationId || "");
+    const convId = String((sent.json.sentMessage as { sentMessage?: { conversationId?: string } } | undefined)?.sentMessage?.conversationId || (sent.json.sentMessage as { conversationId?: string } | undefined)?.conversationId || "");
     assert.ok(convId);
 
     const listB = await jsonRequest(port, "GET", "/api/whatsapp/conversations", undefined, authB);
