@@ -17,3 +17,15 @@ export type PublicOauthConfig = {
 export function showGoogleOAuthButton(oauthConfig: PublicOauthConfig): boolean {
   return Boolean(oauthConfig?.googleConfigured || oauthConfig?.sandboxClientOAuthAllowed);
 }
+
+/**
+ * Show Facebook Sign-In when Facebook Login is configured, or when
+ * SANDBOX/DEV client-email OAuth is allowed. Hide while config is loading
+ * (null) and when production has neither path (facebookConfigured:false).
+ *
+ * Same formula as `showGoogleOAuthButton` (#65). Do not invent
+ * FACEBOOK_APP_ID/SECRET to force this on.
+ */
+export function showFacebookOAuthButton(oauthConfig: PublicOauthConfig): boolean {
+  return Boolean(oauthConfig?.facebookConfigured || oauthConfig?.sandboxClientOAuthAllowed);
+}

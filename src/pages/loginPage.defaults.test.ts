@@ -64,7 +64,7 @@ describe("LoginPage Google SSO visibility (complements PR #64)", () => {
     assert.equal(loginSrc.includes("oauthConfig?.sandboxClientOAuthAllowed !== true"), false);
   });
 
-  it("gates both Google button clusters and leaves Facebook always rendered", () => {
+  it("gates both Google button clusters and both Facebook button clusters", () => {
     const googleClicks = loginSrc.match(/handleOAuthSignIn\("google"\)/g) || [];
     const facebookClicks = loginSrc.match(/handleOAuthSignIn\("facebook"\)/g) || [];
     assert.equal(googleClicks.length, 2);
@@ -84,7 +84,36 @@ describe("LoginPage Google SSO visibility (complements PR #64)", () => {
     );
     assert.match(loginSrc, /\{showGoogleOAuth && \(/);
     assert.equal((loginSrc.match(/\{showGoogleOAuth && \(/g) || []).length, 2);
+    assert.match(loginSrc, /\{showFacebookOAuth && \(/);
+    assert.equal((loginSrc.match(/\{showFacebookOAuth && \(/g) || []).length, 2);
     assert.match(signinGoogleBlock, /Google/);
     assert.match(registerGoogleBlock, /Google Sign-In/);
+  });
+});
+
+describe("LoginPage Facebook SSO visibility (mirrors Google #65)", () => {
+  it("shows Facebook when facebookConfigured or sandboxClientOAuthAllowed, hidden while loading", () => {
+    assert.match(loginSrc, /showFacebookOAuthButton\(oauthConfig\)/);
+    assert.match(loginSrc, /facebookConfigured: boolean/);
+    assert.match(loginSrc, /useState<\{[\s\S]*sandboxClientOAuthAllowed: boolean;[\s\S]*\} \| null>\(null\)/);
+    assert.match(loginSrc, /oauthConfig\?\.facebookConfigured/);
+    assert.match(loginSrc, /window\.location\.href = "\/api\/auth\/facebook"/);
+  });
+
+  it("gates Facebook on both sign-in (/login) and register (create-clinic / signup)", () => {
+    const signinBlock = loginSrc.slice(
+      loginSrc.indexOf("data-testid=\"oauth-facebook-signin\""),
+      loginSrc.indexOf("SANDBOX / DEMO logins")
+    );
+    const registerBlock = loginSrc.slice(
+      loginSrc.indexOf("data-testid=\"oauth-facebook-register\""),
+      loginSrc.indexOf("register-practice-type")
+    );
+    assert.match(loginSrc, /\{showFacebookOAuth && \(/);
+    assert.equal((loginSrc.match(/\{showFacebookOAuth && \(/g) || []).length, 2);
+    assert.match(signinBlock, /Facebook/);
+    assert.match(registerBlock, /Facebook Sign-In/);
+    assert.match(loginSrc, /data-testid="oauth-facebook-signin"/);
+    assert.match(loginSrc, /data-testid="oauth-facebook-register"/);
   });
 });

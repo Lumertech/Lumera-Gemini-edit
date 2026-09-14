@@ -42,7 +42,7 @@ import {
 import { PolyclinicSpecialty } from "../types";
 import { BrandMark } from "../components/BrandMark";
 import { DEMO_LOGIN_MATRIX, DEMO_PASSWORD } from "../lib/demoAccounts";
-import { showGoogleOAuthButton } from "../lib/oauthUi";
+import { showFacebookOAuthButton, showGoogleOAuthButton } from "../lib/oauthUi";
 
 const SPECIALTIES: PolyclinicSpecialty[] = [
   "General Medicine",
@@ -711,6 +711,9 @@ export const LoginPage: React.FC = () => {
   };
 
   const showGoogleOAuth = showGoogleOAuthButton(oauthConfig);
+  const showFacebookOAuth = showFacebookOAuthButton(oauthConfig);
+  const showBothOauth = showGoogleOAuth && showFacebookOAuth;
+  const showAnyOauth = showGoogleOAuth || showFacebookOAuth;
 
   return (
     <div
@@ -1149,6 +1152,7 @@ export const LoginPage: React.FC = () => {
                 )}
 
                 {/* Google & Facebook SSO Section */}
+                {showAnyOauth && (
                 <div className="pt-3 border-t border-slate-800/80">
                   <div className="relative my-2.5">
                     <div className="absolute inset-0 flex items-center">
@@ -1159,7 +1163,7 @@ export const LoginPage: React.FC = () => {
                     </div>
                   </div>
 
-                  <div className={`grid gap-2.5 mb-3 ${showGoogleOAuth ? "grid-cols-2" : "grid-cols-1"}`}>
+                  <div className={`grid gap-2.5 mb-3 ${showBothOauth ? "grid-cols-2" : "grid-cols-1"}`}>
                     {showGoogleOAuth && (
                     <button
                       type="button"
@@ -1178,6 +1182,7 @@ export const LoginPage: React.FC = () => {
                     </button>
                     )}
 
+                    {showFacebookOAuth && (
                     <button
                       type="button"
                       data-testid="oauth-facebook-signin"
@@ -1190,6 +1195,7 @@ export const LoginPage: React.FC = () => {
                       </svg>
                       <span>Facebook</span>
                     </button>
+                    )}
                   </div>
                   {oauthConfig && !oauthConfig.googleConfigured && oauthConfig.sandboxClientOAuthAllowed && (
                     <p className="text-[11px] text-amber-400/90 mb-2">
@@ -1202,6 +1208,7 @@ export const LoginPage: React.FC = () => {
                     </p>
                   )}
                 </div>
+                )}
 
                 {/* SANDBOX demo matrix */}
                 <div className="pt-2 border-t border-slate-800/60 space-y-2">
@@ -1262,12 +1269,12 @@ export const LoginPage: React.FC = () => {
                 )}
 
                 {/* Fast SSO Registration Strip */}
-                {!verifiedSsoNotice && (
+                {!verifiedSsoNotice && showAnyOauth && (
                   <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs">
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-slate-400 font-medium">Or pre-fill with single sign-on:</span>
                     </div>
-                    <div className={`grid grid-cols-1 gap-2 ${showGoogleOAuth ? "min-[400px]:grid-cols-2" : ""}`}>
+                    <div className={`grid grid-cols-1 gap-2 ${showBothOauth ? "min-[400px]:grid-cols-2" : ""}`}>
                       {showGoogleOAuth && (
                       <button
                         type="button"
@@ -1284,6 +1291,7 @@ export const LoginPage: React.FC = () => {
                         <span>Google Sign-In</span>
                       </button>
                       )}
+                      {showFacebookOAuth && (
                       <button
                         type="button"
                         data-testid="oauth-facebook-register"
@@ -1295,6 +1303,7 @@ export const LoginPage: React.FC = () => {
                         </svg>
                         <span>Facebook Sign-In</span>
                       </button>
+                      )}
                     </div>
                   </div>
                 )}
