@@ -2,6 +2,7 @@ import React from "react";
 import { Stethoscope, UserPlus, Sparkles, Building2 } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { PersonalWabaConnect } from "./PersonalWabaConnect";
+import { ClinicWabaConnect } from "./ClinicWabaConnect";
 import { formatAbdmRegistryLabel } from "../lib/abdmRegistryLabel";
 
 interface WelcomeSetupDashboardProps {
@@ -95,11 +96,10 @@ export const WelcomeSetupDashboard: React.FC<WelcomeSetupDashboardProps> = ({
           )}
         </div>
 
-        {user?.role === "doctor" ? (
-          <div className="mt-6">
-            <PersonalWabaConnect variant="onboarding" />
-          </div>
-        ) : null}
+        <div className="mt-6 space-y-3">
+          <ClinicWabaConnect variant="onboarding" />
+          {user?.role === "doctor" ? <PersonalWabaConnect variant="onboarding" /> : null}
+        </div>
       </div>
     </div>
   );

@@ -54,7 +54,7 @@ export const PersonalWabaConnect: React.FC<PersonalWabaConnectProps> = ({ varian
   const connected = mine?.doctorNumber?.status === "connected";
   const simulatorsEnabled = Boolean(config?.simulatorsEnabled ?? mine?.sandbox);
 
-  const completeSignup = async (payload: { code: string; wabaId: string; phoneNumberId: string }) => {
+  const completeSignup = async (payload: { code: string; wabaId: string; phoneNumberId: string; businessId?: string }) => {
     const data = await apiFetch<{ notice?: string; message?: string }>("/api/whatsapp-numbers/embedded-signup/complete", {
       method: "POST",
       body: JSON.stringify({
@@ -62,6 +62,7 @@ export const PersonalWabaConnect: React.FC<PersonalWabaConnectProps> = ({ varian
         code: payload.code,
         wabaId: payload.wabaId,
         phoneNumberId: payload.phoneNumberId,
+        businessId: payload.businessId || "",
         displayName: "Personal WABA",
       }),
     });
@@ -85,7 +86,12 @@ export const PersonalWabaConnect: React.FC<PersonalWabaConnectProps> = ({ varian
       }
       await loadFacebookSdk(signup.appId, signup.graphVersion || "v21.0");
       const session = await launchEmbeddedSignupV4(signup);
-      await completeSignup(session);
+      await completeSignup({
+        code: session.code,
+        wabaId: session.wabaId,
+        phoneNumberId: session.phoneNumberId,
+        businessId: session.businessId,
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not complete Meta Embedded Signup.");
     } finally {
