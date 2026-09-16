@@ -220,12 +220,3 @@ function assemblePublicSite() {
       ctaBannerSubtitle: settings.cta_banner_subtitle || "",
       logoUrl: settings.logo_url || "",
       clinicName: settings.clinic_name || "",
-    },
-    stats,
-    pains: parsed.filter((s) => s.type === "pain"),
-    features: parsed.filter((s) => s.type === "feature"),
-    personas: parsed.filter((s) => s.type === "persona"),
-    testimonials: parsed.filter((s) => s.type === "testimonial"),
-    policies,
-  };
-}
