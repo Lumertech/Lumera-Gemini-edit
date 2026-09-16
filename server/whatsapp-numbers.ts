@@ -53,7 +53,15 @@ export function upsertWhatsAppNumber(actor: WabaActor, input: UpsertWhatsAppNumb
 
   const wabaId = String(input.wabaId ?? existing?.waba_id ?? "").trim();
   const phoneNumberId = String(input.phoneNumberId ?? existing?.phone_number_id ?? "").trim();
+  const businessId = String(input.businessId ?? existing?.business_id ?? "").trim();
   const metaWabaName = String(input.metaWabaName ?? existing?.meta_waba_name ?? "").trim();
+  const phoneStatus = String(input.phoneStatus ?? existing?.phone_status ?? "").trim();
+  const codeVerificationStatus = String(input.codeVerificationStatus ?? existing?.code_verification_status ?? "").trim();
+  const displayNameStatus = String(input.displayNameStatus ?? existing?.display_name_status ?? "").trim();
+  const businessVerificationStatus = String(
+    input.businessVerificationStatus ?? existing?.business_verification_status ?? ""
+  ).trim();
+  const qualityRating = String(input.qualityRating ?? existing?.quality_rating ?? "").trim();
   const status = (input.status || (wabaId && phoneNumberId ? "connected" : existing?.status) || "pending") as WhatsAppNumberStatus;
   const connectedVia = (input.connectedVia || existing?.connected_via || (actor.kind === "platform_admin" ? "master_admin" : "embedded_signup")) as WhatsAppConnectedVia;
   const now = new Date().toISOString();
@@ -86,18 +94,53 @@ export function upsertWhatsAppNumber(actor: WabaActor, input: UpsertWhatsAppNumb
     database
       .prepare(
         `UPDATE whatsapp_numbers
-         SET waba_id = ?, phone_number_id = ?, meta_waba_name = ?, status = ?, connected_via = ?, meta_token_ref = ?, meta_token_expires_at = ?, updated_at = ?
+         SET waba_id = ?, phone_number_id = ?, business_id = ?, meta_waba_name = ?, status = ?, connected_via = ?, meta_token_ref = ?, meta_token_expires_at = ?, phone_status = ?, code_verification_status = ?, display_name_status = ?, business_verification_status = ?, quality_rating = ?, updated_at = ?
          WHERE id = ?`
       )
-      .run(wabaId, phoneNumberId, metaWabaName, status, connectedVia, tokenRef, expiresAt, now, existing.id);
+      .run(
+        wabaId,
+        phoneNumberId,
+        businessId,
+        metaWabaName,
+        status,
+        connectedVia,
+        tokenRef,
+        expiresAt,
+        phoneStatus,
+        codeVerificationStatus,
+        displayNameStatus,
+        businessVerificationStatus,
+        qualityRating,
+        now,
+        existing.id
+      );
   } else {
     database
       .prepare(
         `INSERT INTO whatsapp_numbers
-          (id, owner_type, owner_id, waba_id, phone_number_id, meta_waba_name, status, connected_via, meta_token_ref, meta_token_expires_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          (id, owner_type, owner_id, waba_id, phone_number_id, business_id, meta_waba_name, status, connected_via, meta_token_ref, meta_token_expires_at, phone_status, code_verification_status, display_name_status, business_verification_status, quality_rating, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(numberId, ownerType, ownerId, wabaId, phoneNumberId, metaWabaName, status, connectedVia, tokenRef, expiresAt, now, now);
+      .run(
+        numberId,
+        ownerType,
+        ownerId,
+        wabaId,
+        phoneNumberId,
+        businessId,
+        metaWabaName,
+        status,
+        connectedVia,
+        tokenRef,
+        expiresAt,
+        phoneStatus,
+        codeVerificationStatus,
+        displayNameStatus,
+        businessVerificationStatus,
+        qualityRating,
+        now,
+        now
+      );
   }
 
   storeToken(database, numberId, tokenRef, tokenToStore);
@@ -139,11 +182,17 @@ export function publicWhatsAppNumber(row: WhatsAppNumberRow) {
     ownerId: row.owner_id,
     wabaId: row.waba_id,
     phoneNumberId: row.phone_number_id,
+    businessId: row.business_id || "",
     metaWabaName: row.meta_waba_name,
     status: row.status,
     connectedVia: row.connected_via,
     metaTokenRef: row.meta_token_ref,
     metaTokenExpiresAt: row.meta_token_expires_at,
+    phoneStatus: row.phone_status || "",
+    codeVerificationStatus: row.code_verification_status || "",
+    displayNameStatus: row.display_name_status || "",
+    businessVerificationStatus: row.business_verification_status || "",
+    qualityRating: row.quality_rating || "",
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     hasToken: Boolean(row.meta_token_ref),
