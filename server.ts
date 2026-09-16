@@ -1,15 +1,15 @@
-import express, { Request, Response } from "express";
-import http from "http";
+import express, { Request } from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
-import { initDatabase } from "./server/db.ts";
+import { getDb, initDatabase } from "./server/db.ts";
 import { startAppointmentReminderScheduler } from "./server/whatsapp-calendar.ts";
 import { attachUser, requireAuth } from "./server/auth.ts";
 import { createApiRouter } from "./server/api.ts";
 import { createWhatsAppNumbersRouter, practitionerLinkMiddleware, bootWhatsAppOwnershipSchema } from "./server/whatsapp-numbers-routes.ts";
 import { wrapAbdmRegistryJson } from "./server/abdm-registry-public.ts";
 import { createWhatsAppRouter } from "./server/whatsapp.ts";
+import { createUsageBillingRouter } from "./server/usage-billing-api.ts";
 import { createMetaRouter } from "./server/meta.ts";
 import { createAbdmRouter } from "./server/abdm.ts";
 import { attachHttpSecurity } from "./server/http-security.ts";
@@ -26,6 +26,7 @@ import { attachPublicPolicyHtml, isPublicPolicyHtmlPath } from "./server/policy-
 import { mountGeminiClinicalRoutes } from "./server/gemini-clinical.ts";
 import { installWhatsAppRouterPatch, protectWhatsAppDashboard } from "./server/whatsapp-dashboard-guard.ts";
 import { createLiveRegistrationRouter } from "./server/live-registration-routes.ts";
+import { ensureUsageWalletSchema, seedDemoUsageWallet } from "./server/usage-billing.ts";
 
 dotenv.config();
 applyBundledServerNodeEnv();
@@ -61,6 +62,8 @@ app.use("/api/v3", createAbdmRouter());
 app.use("/v3", createAbdmRouter());
 app.use("/api", practitionerLinkMiddleware);
 app.use("/api", createWhatsAppNumbersRouter());
+// Wallet intercepts /whatsapp/send and /whatsapp/send-rx before the inbox router.
+app.use("/api", createUsageBillingRouter());
 // Mount protected inbox before createApiRouter so GitHub's unpatched whatsapp.ts
 // (MCP cannot rewrite the 70KB file) still gets auth + tenant filters.
 app.use("/api/whatsapp", protectWhatsAppDashboard(createWhatsAppRouter()));
@@ -131,6 +134,8 @@ async function startServer() {
 
   // Heavy work after the Cloud Run socket is open. /healthz is already registered.
   initDatabase();
+  ensureUsageWalletSchema(getDb());
+  seedDemoUsageWallet(getDb());
   bootWhatsAppOwnershipSchema();
   startAppointmentReminderScheduler();
 }

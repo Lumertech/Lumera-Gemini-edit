@@ -1,5 +1,6 @@
 // Calendar reminder/book confirmation sends go through graph-whatsapp.ts:
 // sendAppointmentReminder, sendBookConfirmation, dispatchWhatsAppCloudMessage.
+// Reminder Graph sends pass tenantId: opts.tenantId for usage-wallet metering.
 export {
   resolveWhatsAppTenant,
   resolveWhatsAppTenantId,
