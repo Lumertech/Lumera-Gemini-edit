@@ -1,8 +1,8 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { getDb } from "./db.ts";
 import { CLINIC_MANAGER_ROLES, isPlatformAdminRole, requireAuth, requirePlatformAdmin, requireRole } from "./auth.ts";
-import { isProduction } from "./runtime.ts";
-import { rejectProductionSimulator } from "./meta-security.ts";
+import { isProduction, readSecret } from "./runtime.ts";
+import { isUsableGraphToken, isUsablePhoneNumberId, rejectProductionSimulator } from "./meta-security.ts";
 import {
   clinicActor,
   doctorActor,
@@ -27,6 +27,7 @@ import {
   completeEmbeddedSignup,
   EmbeddedSignupError,
   embeddedSignupPublicConfig,
+  platformMetaCredentialsOverview,
 } from "./embedded-signup.ts";
 import { wabaOnboardingCapsOverview } from "./waba-onboarding-caps.ts";
 import { handleMetaDataDeletionPost } from "./meta-signed-request.ts";
@@ -46,6 +47,45 @@ function handleWabaError(res: Response, err: unknown, fallback: string) {
   }
   console.error("[WhatsApp numbers]", err);
   return res.status(500).json({ error: fallback });
+}
+
+function tenantClinicRoleAllowed(role?: string | null): boolean {
+  return (CLINIC_MANAGER_ROLES as readonly string[]).includes(String(role || ""));
+}
+
+function fallbackSharedTestNumber() {
+  const token = readSecret("META_FALLBACK_ACCESS_TOKEN", "META_ACCESS_TOKEN", "WHATSAPP_ACCESS_TOKEN");
+  const phoneNumberId = readSecret(
+    "META_FALLBACK_PHONE_NUMBER_ID",
+    "META_PHONE_NUMBER_ID",
+    "WHATSAPP_PHONE_NUMBER_ID"
+  );
+  const available = isUsableGraphToken(token) && isUsablePhoneNumberId(phoneNumberId);
+  return {
+    available,
+    phoneNumberIdConfigured: isUsablePhoneNumberId(phoneNumberId),
+    notice: available
+      ? "Lumera's shared test number can send appointment reminders while your custom phone number and display name await Meta verification."
+      : "Shared test number is not configured (META_ACCESS_TOKEN + META_PHONE_NUMBER_ID, or META_FALLBACK_*). SANDBOX records reminders locally until Graph credentials exist.",
+  };
+}
+
+function connectionStatusFromNumber(row: ReturnType<typeof publicWhatsAppNumber> | null | undefined) {
+  const verification = String(row?.businessVerificationStatus || "").toLowerCase();
+  let businessVerification: "verified" | "pending" | "unknown" = "unknown";
+  if (/verified|approved/.test(verification)) businessVerification = "verified";
+  else if (verification) businessVerification = "pending";
+  const phone =
+    String(row?.phoneStatus || row?.codeVerificationStatus || row?.displayNameStatus || "").trim() ||
+    (row?.status === "connected" ? "linked — verification pending" : "not linked");
+  return {
+    businessVerification,
+    wabaId: row?.wabaId || null,
+    phoneNumberId: row?.phoneNumberId || null,
+    phoneNumberStatus: phone,
+    displayNameStatus: row?.displayNameStatus || "",
+    codeVerificationStatus: row?.codeVerificationStatus || "",
+  };
 }
 
 /** Same owner-scope inference as simulate / connect-clinic / connect-doctor. */
@@ -238,14 +278,18 @@ export function createWhatsAppNumbersRouter(): Router {
     const tenantNumber = tenantId ? getTenantWabaNumber(tenantId) : undefined;
     const doctorNumber = practitionerId ? getDoctorWabaNumber(practitionerId) : undefined;
     const signup = embeddedSignupPublicConfig();
+    const tenantPublic = tenantNumber ? publicWhatsAppNumber(tenantNumber) : null;
+    const fallback = fallbackSharedTestNumber();
     res.json({
       tenantId: tenantId || undefined,
       practitionerId: practitionerId || undefined,
-      tenantNumber: tenantNumber ? publicWhatsAppNumber(tenantNumber) : null,
+      tenantNumber: tenantPublic,
       doctorNumber: doctorNumber ? publicWhatsAppNumber(doctorNumber) : null,
+      connectionStatus: connectionStatusFromNumber(tenantPublic),
+      fallback,
       sandbox: !isProduction(),
       simulatorsEnabled: signup.simulatorsEnabled,
-      embeddedSignupLive: false,
+      embeddedSignupLive: signup.configured,
       embeddedSignupConfigured: signup.configured,
       notice:
         "SANDBOX / DEV-ONLY until App Review: Lumera is not a certified Meta Tech Provider. Real Embedded Signup v4 is available when FACEBOOK_APP_ID and META_EMBEDDED_SIGNUP_CONFIG_ID are set. Contact ravee@lumer.me.",
@@ -332,26 +376,49 @@ export function createWhatsAppNumbersRouter(): Router {
     res.json(embeddedSignupPublicConfig());
   });
 
+  router.get("/admin/meta/platform-credentials", requireAuth, requirePlatformAdmin, (req, res) => {
+    res.json(
+      platformMetaCredentialsOverview({
+        host: req.get("host") || undefined,
+        proto: req.protocol,
+      })
+    );
+  });
+
   // Mounted at /api before createApiRouter, so this wins over server/meta.ts's unsigned scaffold.
   router.post("/meta/data-deletion", handleMetaDataDeletionPost);
 
-  router.post("/whatsapp-numbers/embedded-signup/complete", requireAuth, async (req, res) => {
+  async function completeTenantOrDoctorSignup(req: Request, res: Response, forceTenant: boolean) {
     try {
       bootWhatsAppOwnershipSchema();
       const body = (req.body || {}) as Record<string, unknown>;
+      if (forceTenant) {
+        body.ownerType = "tenant";
+      }
       const code = String(body.code || "").trim();
       const wabaId = String(body.wabaId || body.waba_id || "").trim();
       const phoneNumberId = String(body.phoneNumberId || body.phone_number_id || "").trim();
+      const businessId = String(body.businessId || body.business_id || "").trim();
       if (!code || !wabaId || !phoneNumberId) {
         return res.status(400).json({
           error: "code, wabaId, and phoneNumberId are required (FB.login authResponse.code + sessionInfoResponse).",
         });
       }
       const owner = resolveOwnerFromRequest(req, body);
+      if (owner.ownerType === "tenant") {
+        if (isPlatformAdminRole(req.user?.role) || !tenantClinicRoleAllowed(req.user?.role)) {
+          return res.status(403).json({
+            error:
+              "Meta Embedded Signup is restricted to tenant clinic roles. Super Admin manages platform Meta credentials and does not trigger Embedded Signup.",
+            code: "ROLE_SCOPE",
+          });
+        }
+      }
       const result = await completeEmbeddedSignup({
         code,
         wabaId,
         phoneNumberId,
+        businessId: businessId || undefined,
         actor: owner.actor,
         ownerType: owner.ownerType,
         ownerId: owner.ownerId,
@@ -361,6 +428,26 @@ export function createWhatsAppNumbersRouter(): Router {
     } catch (err) {
       handleWabaError(res, err, "Failed to complete Embedded Signup");
     }
+  }
+
+  router.post(
+    "/integrations/whatsapp/embedded-signup",
+    requireAuth,
+    requireRole(...CLINIC_MANAGER_ROLES),
+    (req, res) => {
+      if (isPlatformAdminRole(req.user?.role)) {
+        return res.status(403).json({
+          error:
+            "Meta Embedded Signup is restricted to tenant clinic roles. Super Admin manages platform Meta credentials and does not trigger Embedded Signup.",
+          code: "ROLE_SCOPE",
+        });
+      }
+      void completeTenantOrDoctorSignup(req, res, true);
+    }
+  );
+
+  router.post("/whatsapp-numbers/embedded-signup/complete", requireAuth, async (req, res) => {
+    await completeTenantOrDoctorSignup(req, res, false);
   });
 
   router.post("/whatsapp-numbers/simulate-embedded-signup", requireAuth, rejectProductionSimulator, (req, res) => {
