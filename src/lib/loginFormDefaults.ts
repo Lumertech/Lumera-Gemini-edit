@@ -5,6 +5,37 @@ export const LOGIN_WHATSAPP_PLACEHOLDER = "WhatsApp number";
 export const REGISTER_EMAIL_PLACEHOLDER = "doctor@clinic.com";
 export const REGISTER_PASSWORD_PLACEHOLDER = "Minimum 6 characters";
 export const REGISTER_OAUTH_PASSWORD_PLACEHOLDER = "Optional fallback for email sign-in";
+export const REGISTER_OAUTH_PASSWORD_LABEL =
+  "(Optional) Set a fallback password for direct email login";
+
+export type UnregisteredOauthPrefill = {
+  provider: "google" | "facebook" | null;
+  email: string;
+  name: string;
+  oauthToken: string;
+};
+
+/** Parse `/login?oauth=facebook&unregistered=1&email=&name=&oauthToken=` (Google too). */
+export function unregisteredOauthFromSearch(search = ""): UnregisteredOauthPrefill {
+  const raw = search.startsWith("?") ? search.slice(1) : search;
+  const params = new URLSearchParams(raw);
+  const oauth = params.get("oauth");
+  if ((oauth !== "facebook" && oauth !== "google") || params.get("unregistered") !== "1") {
+    return { provider: null, email: "", name: "", oauthToken: "" };
+  }
+  return {
+    provider: oauth,
+    email: String(params.get("email") || "").trim(),
+    name: String(params.get("name") || "").trim(),
+    oauthToken: String(params.get("oauthToken") || "").trim(),
+  };
+}
+
+export function verifiedOauthBanner(provider: "google" | "facebook", email: string): string {
+  const label = provider === "google" ? "Google" : "Facebook";
+  const trimmed = String(email || "").trim();
+  return trimmed ? `Verified via ${label} (${trimmed})` : `Verified via ${label}`;
+}
 
 const SEEDED_DEMO_EMAILS = new Set([
   "doctor@lumera.me",
