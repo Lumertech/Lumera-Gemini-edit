@@ -480,7 +480,7 @@ export function resolveRxModule(specialty?: string | null): PolyclinicSpecialty 
   if (s.includes("gyn") || s.includes("obstet")) return "Gynecology";
   if (s === "ent" || s.includes("otolaryng") || /\bent\b/.test(s)) return "ENT";
   if (s.includes("neuro") && !s.includes("surgeon")) return "Neurology";
-  if (s.includes("general") || s.includes("physician") || /\bclinics?\b/.test(s)) return "General Medicine";
+  if (s.includes("general") || s.includes("physician") || /\bclinics?\b/.test(s) || s === "gp") return "General Medicine";
   const exact = PRACTICE_SPECIALTIES.find((item) => item.toLowerCase() === s);
   return (exact as PolyclinicSpecialty) || "General Medicine";
 }
@@ -495,6 +495,13 @@ function packForSpecialty(specialty?: string | null): SpecialtyWorkflowPack {
   const module = resolveRxModule(specialty);
   const key = module.toLowerCase();
   return PACKS[key] || DEFAULT_MEDICAL;
+}
+
+/** Rx module for this login — demo emails use displaySpecialty so cardiology@ is not stuck on pack-id `gp`. */
+export function clinicianRxSpecialty(user?: AppUser | null, doctorSpecialty?: string): PolyclinicSpecialty {
+  const pack = workflowForUser(user);
+  if (pack.rxModule) return pack.rxModule;
+  return resolveRxModule(doctorSpecialty || user?.specialty);
 }
 
 export function workflowForUser(user?: AppUser | null): SpecialtyWorkflowPack {

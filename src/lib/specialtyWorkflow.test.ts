@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import { DEMO_ACCOUNTS, DEMO_PASSWORD } from "./demoAccounts.ts";
 import {
   clinicianHomeView,
+  clinicianRxSpecialty,
   resolveRxModule,
   workflowFingerprint,
   workflowForUser,
@@ -122,5 +123,17 @@ describe("specialty workflow packs", () => {
     assert.equal(resolveRxModule("dentist"), "Dental Surgery");
     assert.equal(resolveRxModule("Physio"), "Physiotherapy & Rehabilitation");
     assert.equal(resolveRxModule("spa"), "Wellness & Spas");
+    assert.equal(resolveRxModule("gp"), "General Medicine");
+  });
+
+  it("resolves demo and new-user logins to the matching Rx module, not pack-id gp", () => {
+    assert.equal(clinicianRxSpecialty(fakeUser("cardiology@lumera.me", "gp")), "Cardiology");
+    assert.equal(clinicianRxSpecialty(fakeUser("dermatology@lumera.me", "gp")), "Dermatology");
+    assert.equal(clinicianRxSpecialty(fakeUser("orthopedics@lumera.me", "gp")), "Orthopedics");
+    assert.equal(clinicianRxSpecialty(fakeUser("physio@lumera.me", "physio")), "Physiotherapy & Rehabilitation");
+    assert.equal(clinicianRxSpecialty(fakeUser("dentist@lumera.me", "dentist")), "Dental Surgery");
+    assert.equal(clinicianRxSpecialty(fakeUser("doctor@lumera.me", "gp")), "General Medicine");
+    assert.equal(clinicianRxSpecialty(fakeUser("new.clinic@example.com", "gp")), "General Medicine");
+    assert.equal(clinicianRxSpecialty(fakeUser("new.physio@example.com", "physio")), "Physiotherapy & Rehabilitation");
   });
 });
