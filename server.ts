@@ -12,6 +12,13 @@ import { createWhatsAppNumbersRouter, practitionerLinkMiddleware, bootWhatsAppOw
 import { createMetaRouter } from "./server/meta.ts";
 import { createAbdmRouter } from "./server/abdm.ts";
 import { applyBundledServerNodeEnv, failFastRequiredProductionEnv, resolveListenPort } from "./server/runtime.ts";
+import {
+  expressErrorHandler,
+  failFastErrorTrackerConfig,
+  initErrorTracker,
+  installProcessErrorHandlers,
+  reportError,
+} from "./server/error-tracker.ts";
 import { attachProductionSpaFallback } from "./server/spa-fallback.ts";
 import { attachPublicPolicyHtml, isPublicPolicyHtmlPath } from "./server/policy-html.ts";
 
@@ -19,6 +26,9 @@ dotenv.config();
 applyBundledServerNodeEnv();
 // Fail-closed on JWT_SECRET before any listen. Missing secret exits here — not a PORT bug.
 failFastRequiredProductionEnv();
+failFastErrorTrackerConfig();
+initErrorTracker();
+installProcessErrorHandlers();
 
 const app = express();
 const PORT = resolveListenPort();
@@ -472,7 +482,7 @@ Return JSON:
     return res.json({
       language: targetLanguage,
       translatedAdvice: advice,
-      formattedWhatsAppMessage: `प्रिय मरीज, आपके डॉक्टर द्वारा दी गई सलाह:\n${advice.join('\n• ')}\nकृपया दवाइयां समय पर लें।`
+      formattedWhatsAppMessage: `\u092a\u094d\u0930\u093f\u092f \u092e\u0930\u0940\u091c, \u0906\u092a\u0915\u0947 \u0921\u0949\u0915\u094d\u091f\u0930 \u0926\u094d\u0935\u093e\u0930\u093e \u0926\u0940 \u0917\u0908 \u0938\u0932\u093e\u0939:\\n${advice.join('\\n\u2022 ')}\\n\u0915\u0943\u092a\u092f\u093e \u0926\u0935\u093e\u0907\u092f\u093e\u0902 \u0938\u092e\u092f \u092a\u0930 \u0932\u0947\u0902\u0964`
     });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -598,6 +608,7 @@ For query "${query}":
 async function startServer() {
   applyBundledServerNodeEnv();
   failFastRequiredProductionEnv();
+  failFastErrorTrackerConfig();
 
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
@@ -630,6 +641,8 @@ async function startServer() {
     attachProductionSpaFallback(app);
   }
 
+  app.use(expressErrorHandler);
+
   const envPort = String(process.env.PORT || "").trim();
   await new Promise<void>((resolve, reject) => {
     const server = app.listen(PORT, "0.0.0.0", () => {
@@ -648,6 +661,7 @@ async function startServer() {
 }
 
 startServer().catch((err) => {
+  reportError(err, { kind: "startup" });
   console.error("[Lumera] Server failed to start:", err);
   process.exit(1);
 });
