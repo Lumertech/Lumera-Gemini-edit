@@ -1,0 +1,128 @@
+i().endsWith("/"), false);
+  });
+
+  it("treats x-forwarded-proto lists as https when APP_URL is unset", () => {
+    delete process.env.APP_URL;
+    delete process.env.FACEBOOK_REDIRECT_URI;
+    assert.equal(
+      facebookRedirectUri("www.mylumera.in", "https, http"),
+      CALLBACK
+    );
+  });
+
+  it("does not treat www and apex as the same host", () => {
+    delete process.env.FACEBOOK_REDIRECT_URI;
+    process.env.APP_URL = "https://www.mylumera.in";
+    assert.equal(facebookRedirectUri(), CALLBACK);
+    process.env.APP_URL = "https://mylumera.in";
+    assert.equal(facebookRedirectUri(), "https://mylumera.in/api/auth/facebook/callback");
+  });
+
+  it("honors FACEBOOK_REDIRECT_URI override without a trailing slash", () => {
+    process.env.FACEBOOK_REDIRECT_URI = `${CALLBACK}/`;
+    process.env.APP_URL = "https://wrong.example";
+    assert.equal(facebookRedirectUri(), CALLBACK);
+  });
+
+  it("treats placeholders as unset credentials", () => {
+    process.env.FACEBOOK_APP_ID = "replace-with-facebook-app-id";
+    process.env.FACEBOOK_APP_SECRET = "replace-with-facebook-app-secret";
+    assert.equal(facebookOAuthConfigured(), false);
+    process.env.FACEBOOK_APP_ID = APP_ID;
+    process.env.FACEBOOK_APP_SECRET = APP_SECRET;
+    assert.equal(facebookOAuthConfigured(), true);
+  });
+
+  it("builds facebook.com dialog/oauth with code + email scope + exact redirect_uri", () => {
+    process.env.FACEBOOK_APP_ID = APP_ID;
+    process.env.FACEBOOK_APP_SECRET = APP_SECRET;
+    const url = new URL(
+      facebookLoginDialogUrl({
+        redirectUri: CALLBACK,
+        state: "unit-state",
+      })
+    );
+    assert.match(url.origin + url.pathname, /facebook\.com\/v\d+\.\d+\/dialog\/oauth/);
+    assert.equal(url.searchParams.get("redirect_uri"), CALLBACK);
+    assert.equal(url.searchParams.get("client_id"), APP_ID);
+    assert.equal(url.searchParams.get("response_type"), "code");
+    assert.equal(url.searchParams.get("scope"), "email,public_profile");
+  });
+});
+
+describe("Facebook OAuth identity", () => {
+  const restore = saveEnv([
+    "NODE_ENV",
+    "FACEBOOK_APP_ID",
+    "FACEBOOK_APP_SECRET",
+    "META_APP_ID",
+    "META_APP_SECRET",
+    "JWT_SECRET",
+    "FACEBOOK_OAUTH_STATE_SECRET",
+    "APP_URL",
+  ]);
+  after(restore);
+
+  it("rejects client-supplied email in production when Facebook is not configured", async () => {
+    process.env.NODE_ENV = "production";
+    delete process.env.FACEBOOK_APP_ID;
+    delete process.env.FACEBOOK_APP_SECRET;
+    await assert.rejects(
+      () =>
+        resolveFederatedIdentity({
+          provider: "facebook",
+          redirectUri: CALLBACK,
+          clientEmail: "attacker@example.com",
+        }),
+      /FACEBOOK_APP_ID|not configured/i
+    );
+  });
+
+  it("rejects production Facebook login without a code even when credentials exist", async () => {
+    process.env.NODE_ENV = "production";
+    process.env.FACEBOOK_APP_ID = APP_ID;
+    process.env.FACEBOOK_APP_SECRET = APP_SECRET;
+    await assert.rejects(
+      () =>
+        resolveFederatedIdentity({
+          provider: "facebook",
+          redirectUri: CALLBACK,
+          clientEmail: "attacker@example.com",
+        }),
+      /authorization code or access token/i
+    );
+  });
+
+  it("exchanges a code, debug_tokens the user token, and requires Graph email", async () => {
+    process.env.NODE_ENV = "production";
+    process.env.FACEBOOK_APP_ID = APP_ID;
+    process.env.FACEBOOK_APP_SECRET = APP_SECRET;
+    const identity = await resolveFederatedIdentity({
+      provider: "facebook",
+      code: "unit-code",
+      redirectUri: CALLBACK,
+      clientEmail: "attacker@example.com",
+      fetchImpl: mockFacebookGraph(),
+    });
+    assert.equal(identity.sandbox, undefined);
+    assert.equal(identity.email, "doctor@lumera.me");
+    assert.equal(identity.name, "Dr. Rajiv Saxena");
+    assert.equal(identity.facebookId, "fb-user-1");
+    assert.equal(identity.provider, "facebook");
+  });
+
+  it("rejects a user token that belongs to another app id", async () => {
+    process.env.FACEBOOK_APP_ID = APP_ID;
+    process.env.FACEBOOK_APP_SECRET = APP_SECRET;
+    await assert.rejects(
+      () =>
+        verifyFacebookIdentity({
+          accessToken: "EAA_other",
+          redirectUri: CALLBACK,
+          fetchImpl: mockFacebookGraph({ appId: "999" }),
+        }),
+      /invalid for this app/i
+    );
+  });
+
+  it("rejects tokens that omit the email permission
