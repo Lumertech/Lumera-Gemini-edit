@@ -1,31 +1,11 @@
 import assert from "node:assert/strict";
-import type { Server } from "node:http";
+import { jsonRequest, startTestServer } from "./test-http.ts";
 import { after, before, describe, it } from "node:test";
-import express from "express";
-import { attachUser } from "./auth.ts";
 import { createApiRouter } from "./api.ts";
 import { createLiveRegistrationRouter } from "./live-registration-routes.ts";
 import { assignedRoleForPracticeType, getDb, initDatabase, normalizePracticeType } from "./db.ts";
 import { hashPassword } from "./password.ts";
 
-async function jsonRequest(
-  port: number,
-  method: string,
-  urlPath: string,
-  body?: unknown,
-  headers: Record<string, string> = {}
-): Promise<{ status: number; json: Record<string, unknown> }> {
-  const res = await fetch(`http://127.0.0.1:${port}${urlPath}`, {
-    method,
-    headers: {
-      ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
-      ...headers,
-    },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
-  const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-  return { status: res.status, json };
-}
 
 function seedOnboardingUser(label: string, practiceType: "individual" | "polyclinic") {
   const suffix = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
@@ -64,7 +44,7 @@ function seedOnboardingUser(label: string, practiceType: "individual" | "polycli
 
 describe("practice type onboarding", () => {
   let port = 0;
-  let server: Server | undefined;
+  let close: (() => Promise<void>) | undefined;
 
   before(async () => {
     if (!process.env.JWT_SECRET) {
@@ -76,24 +56,16 @@ describe("practice type onboarding", () => {
       initDatabase();
     }
 
-    const app = express();
-    app.use(express.json());
-    app.use(attachUser);
-    app.use("/api", createLiveRegistrationRouter());
-    app.use("/api", createApiRouter());
-
-    server = app.listen(0, "127.0.0.1");
-    await new Promise<void>((resolve) => server!.once("listening", () => resolve()));
-    const addr = server.address();
-    if (!addr || typeof addr === "string") throw new Error("server did not bind a port");
-    port = addr.port;
+    const server = await startTestServer((app) => {
+      app.use("/api", createLiveRegistrationRouter());
+      app.use("/api", createApiRouter());
+    });
+    port = server.port;
+    close = server.close;
   });
 
   after(async () => {
-    if (!server) return;
-    await new Promise<void>((resolve, reject) => {
-      server!.close((err) => (err ? reject(err) : resolve()));
-    });
+    await close?.();
   });
 
   it("normalizes missing and alias practice types to the founder lock", () => {
