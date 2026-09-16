@@ -7,6 +7,7 @@ import {
   emptyPublicLoginFields,
   LOGIN_PASSWORD_PLACEHOLDER,
   LOGIN_WHATSAPP_PLACEHOLDER,
+  REGISTER_OAUTH_PASSWORD_PLACEHOLDER,
   isSeededDemoEmail,
   persistRememberedLoginEmail,
   readRememberedLoginEmail,
@@ -101,6 +102,9 @@ describe("public login form defaults", () => {
     assert.doesNotMatch(LOGIN_WHATSAPP_PLACEHOLDER, /98234|\+91/);
     assert.match(loginPage, /placeholder=\{REGISTER_EMAIL_PLACEHOLDER\}/);
     assert.match(loginPage, /placeholder=\{REGISTER_PASSWORD_PLACEHOLDER\}/);
+    assert.match(loginPage, /REGISTER_OAUTH_PASSWORD_PLACEHOLDER/);
+    assert.match(loginPage, /required=\{!oauthOnboarding\}/);
+    assert.equal(REGISTER_OAUTH_PASSWORD_PLACEHOLDER, "Optional fallback for email sign-in");
     assert.doesNotMatch(loginPage, /useState\(loginDemo \? "/);
     assert.doesNotMatch(loginPage, /useState\("doctor@lumera\.me"\)/);
     assert.doesNotMatch(loginPage, /useState\("Lumera@2026"\)/);
