@@ -17,3 +17,7 @@ export type PublicOauthConfig = {
 export function showGoogleOAuthButton(oauthConfig: PublicOauthConfig): boolean {
   return Boolean(oauthConfig?.googleConfigured || oauthConfig?.sandboxClientOAuthAllowed);
 }
+
+export function showFacebookOAuthButton(oauthConfig: PublicOauthConfig): boolean {
+  return Boolean(oauthConfig?.facebookConfigured || oauthConfig?.sandboxClientOAuthAllowed);
+}

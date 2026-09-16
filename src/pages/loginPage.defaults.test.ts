@@ -34,6 +34,12 @@ describe("LoginPage create-clinic / register defaults (founder P0)", () => {
     assert.match(loginSrc, /oauth !== "google"/);
   });
 
+  it("starts Facebook Login at /api/auth/facebook when credentials are configured", () => {
+    assert.match(loginSrc, /oauthConfig\?\.facebookConfigured/);
+    assert.match(loginSrc, /window\.location\.href = "\/api\/auth\/facebook"/);
+    assert.match(loginSrc, /FACEBOOK_APP_ID and FACEBOOK_APP_SECRET/);
+  });
+
   it("does not read URL params to select Multispecialty", () => {
     assert.equal(loginSrc.includes('params.get("practiceType")'), false);
     assert.equal(loginSrc.includes('searchParams.get("practice")'), false);
@@ -64,7 +70,7 @@ describe("LoginPage Google SSO visibility (complements PR #64)", () => {
     assert.equal(loginSrc.includes("oauthConfig?.sandboxClientOAuthAllowed !== true"), false);
   });
 
-  it("gates both Google button clusters and leaves Facebook always rendered", () => {
+  it("gates both Google and Facebook button clusters the same way", () => {
     const googleClicks = loginSrc.match(/handleOAuthSignIn\("google"\)/g) || [];
     const facebookClicks = loginSrc.match(/handleOAuthSignIn\("facebook"\)/g) || [];
     assert.equal(googleClicks.length, 2);
@@ -73,18 +79,9 @@ describe("LoginPage Google SSO visibility (complements PR #64)", () => {
     assert.match(loginSrc, /data-testid="oauth-google-register"/);
     assert.match(loginSrc, /data-testid="oauth-facebook-signin"/);
     assert.match(loginSrc, /data-testid="oauth-facebook-register"/);
-
-    const signinGoogleBlock = loginSrc.slice(
-      loginSrc.indexOf("data-testid=\"oauth-google-signin\""),
-      loginSrc.indexOf("data-testid=\"oauth-facebook-signin\"")
-    );
-    const registerGoogleBlock = loginSrc.slice(
-      loginSrc.indexOf("data-testid=\"oauth-google-register\""),
-      loginSrc.indexOf("data-testid=\"oauth-facebook-register\"")
-    );
-    assert.match(loginSrc, /\{showGoogleOAuth && \(/);
+    assert.match(loginSrc, /showFacebookOAuthButton\(oauthConfig\)/);
+    assert.match(loginSrc, /window\.location\.href = "\/api\/auth\/facebook"/);
     assert.equal((loginSrc.match(/\{showGoogleOAuth && \(/g) || []).length, 2);
-    assert.match(signinGoogleBlock, /Google/);
-    assert.match(registerGoogleBlock, /Google Sign-In/);
+    assert.equal((loginSrc.match(/\{showFacebookOAuth && \(/g) || []).length, 2);
   });
 });

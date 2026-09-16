@@ -1,6 +1,7 @@
 import React from "react";
 import { Stethoscope, UserPlus, Sparkles, Building2 } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
+import { PersonalWabaConnect } from "./PersonalWabaConnect";
 
 interface WelcomeSetupDashboardProps {
   onAddPatients: () => void;
@@ -81,6 +82,12 @@ export const WelcomeSetupDashboard: React.FC<WelcomeSetupDashboardProps> = ({
             </button>
           )}
         </div>
+
+        {user?.role === "doctor" ? (
+          <div className="mt-6">
+            <PersonalWabaConnect variant="onboarding" />
+          </div>
+        ) : null}
       </div>
     </div>
   );

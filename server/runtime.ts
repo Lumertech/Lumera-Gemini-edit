@@ -45,7 +45,8 @@ export function appPublicUrl(reqHost?: string, reqProto?: string): string {
   const fromEnv = String(process.env.APP_URL || "").trim().replace(/\/$/, "");
   if (fromEnv) return fromEnv;
   if (reqHost) {
-    const proto = reqProto === "https" ? "https" : "http";
+    const first = String(reqProto || "").split(",")[0].trim().toLowerCase();
+    const proto = first === "https" ? "https" : "http";
     return `${proto}://${reqHost}`;
   }
   return "http://localhost:3000";
