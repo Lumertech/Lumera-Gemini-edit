@@ -257,7 +257,7 @@ export const Reception: React.FC<ReceptionProps> = ({
       abhaNumber: verificationSuccess?.abhaNumber || '',
       abhaAddress: verificationSuccess?.abhaAddress || '',
       kycStatus: verificationSuccess ? 'LINKED_SANDBOX' : 'PENDING',
-      hfrId: verificationSuccess ? 'HFR-IN-8829104' : '',
+      hfrId: verificationSuccess ? 'HFR-IN-8829104' : '', // local stub facility id; API labels it pending without NHA creds
     };
 
     setSavingIntake(true);
