@@ -604,7 +604,12 @@ export const DhisMeter: React.FC<{ compact?: boolean; onSimulateSuccess?: () => 
             <div className="space-y-2 text-xs">
               <div className="flex justify-between py-1 border-b border-slate-100">
                 <span className="text-slate-500">HFR Facility ID</span>
-                <span className="font-mono font-bold text-slate-900">HFR-IN-8829104</span>
+                <span className="font-mono font-bold text-slate-900 text-right">
+                  HFR-IN-8829104
+                  <span className="block font-sans font-medium text-[10px] text-amber-700 normal-case">
+                    pending — not yet verified with the National Health Authority
+                  </span>
+                </span>
               </div>
               <div className="flex justify-between py-1 border-b border-slate-100">
                 <span className="text-slate-500">Facility Name</span>
@@ -612,7 +617,10 @@ export const DhisMeter: React.FC<{ compact?: boolean; onSimulateSuccess?: () => 
               </div>
               <div className="flex justify-between py-1 border-b border-slate-100">
                 <span className="text-slate-500">Client ID</span>
-                <span className="font-mono text-slate-700">SBX_LUMERA_HEALTH_2026</span>
+                <span className="font-mono text-slate-700 text-right">
+                  SBX_LUMERA_HEALTH_2026
+                  <span className="block font-sans text-[10px] text-amber-700">local stub client id</span>
+                </span>
               </div>
               <div className="flex justify-between py-1 border-b border-slate-100">
                 <span className="text-slate-500">Encryption Scheme</span>
