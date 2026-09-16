@@ -186,7 +186,7 @@ export const ENV_CATALOG: EnvKeyDoc[] = [
   },
   {
     name: "APPOINTMENT_REMINDER_SCHEDULER",
-    description: "Enable T\u221224h / T\u22122h appointment reminder scheduler.",
+    description: "Enable T−24h / T−2h appointment reminder scheduler.",
     dummy: "true",
   },
   {
