@@ -1,0 +1,31 @@
+# Restore server/api.ts if a GitHub MCP push truncated the 100KB file.
+# Runs once on this feature branch; no-ops when the file is already whole.
+name: restore-api-ts
+on:
+  push:
+    branches: [cursor/doctor-schedule-google-calendar-0c0a]
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Restore truncated server/api.ts from git history
+        run: |
+          set -euo pipefail
+          size=$(wc -c < server/api.ts)
+          echo "server/api.ts size=${size}"
+          if [ "$size" -ge 50000 ]; then
+            echo "api.ts is intact"
+            exit 0
+          fi
+          restore_sha="757a752c65776904c9e48e3eda214a3f53762bd7"
+          git show "${restore_sha}:server/api.ts" > server/api.ts
+          git config user.name "lumera-restore"
+          git config user.email "ravee@lumer.me"
+          git add server/api.ts
+          git commit -m "Restore truncated server/api.ts from ${restore_sha}"
+          git push

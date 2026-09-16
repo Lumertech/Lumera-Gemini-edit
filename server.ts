@@ -28,6 +28,7 @@ import { installWhatsAppRouterPatch, protectWhatsAppDashboard } from "./server/w
 import { createLiveRegistrationRouter } from "./server/live-registration-routes.ts";
 import { ensureUsageWalletSchema, seedDemoUsageWallet } from "./server/usage-billing.ts";
 import { ensureDoctorScheduleSchema } from "./server/doctor-schedule-schema.ts";
+import { createDoctorScheduleRouter } from "./server/doctor-schedule-api.ts";
 
 dotenv.config();
 applyBundledServerNodeEnv();
@@ -71,6 +72,8 @@ app.use("/api/whatsapp", protectWhatsAppDashboard(createWhatsAppRouter()));
 // Own live signup before createApiRouter so api.ts demo-seed fallbacks are dead
 // in dist/server.cjs (esbuild stacks are server.cjs, not api.ts:LINE:COL).
 app.use("/api", createLiveRegistrationRouter());
+// Schedule routes mount here so GitHub MCP cannot truncate api.ts and drop them.
+app.use("/api", createDoctorScheduleRouter());
 app.use("/api", wrapAbdmRegistryJson(createApiRouter()));
 app.use("/meta", createMetaRouter());
 app.post("/data-deletion-callback", (req, res, next) => {
