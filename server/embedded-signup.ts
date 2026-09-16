@@ -19,7 +19,7 @@
  * (same SQLite TEXT pattern as tenants.meta_access_token). Not Secret Manager.
  */
 
-import { envFlag, graphApiVersion, isProduction, isUnsetOrPlaceholder, readSecret, sandboxSimulatorsEnabled } from "./runtime.ts";
+import { appPublicUrl, envFlag, graphApiVersion, isProduction, isUnsetOrPlaceholder, readSecret, sandboxSimulatorsEnabled } from "./runtime.ts";
 import { upsertWhatsAppNumber, publicWhatsAppNumber, type WabaActor, type WhatsAppOwnerType } from "./whatsapp-numbers.ts";
 
 export const EMBEDDED_SIGNUP_SCOPES = [
@@ -228,7 +228,16 @@ export async function confirmWabaAndPhoneGrants(opts: {
   phoneNumberId: string;
   debugToken?: DebugTokenPayload;
   fetchImpl?: FetchImpl;
-}): Promise<{ wabaName: string }> {
+}): Promise<{
+  wabaName: string;
+  phoneStatus: string;
+  codeVerificationStatus: string;
+  displayNameStatus: string;
+  qualityRating: string;
+  verifiedName: string;
+  businessId: string;
+  businessVerificationStatus: string;
+}> {
   const wabaId = String(opts.wabaId || "").trim();
   const phoneNumberId = String(opts.phoneNumberId || "").trim();
   if (!wabaId || !phoneNumberId) {
@@ -252,7 +261,7 @@ export async function confirmWabaAndPhoneGrants(opts: {
   const fetchImpl = resolveFetchImpl(opts.fetchImpl);
 
   const waba = await graphCall({
-    url: `https://graph.facebook.com/${version}/${encodeURIComponent(wabaId)}?fields=id,name&${tokenQ.toString()}`,
+    url: `https://graph.facebook.com/${version}/${encodeURIComponent(wabaId)}?fields=id,name,account_review_status,on_behalf_of_business_info&${tokenQ.toString()}`,
     fetchImpl,
   });
   if (!waba.ok || (waba.data && typeof waba.data === "object" && waba.data.error)) {
@@ -268,7 +277,7 @@ export async function confirmWabaAndPhoneGrants(opts: {
   }
 
   const phones = await graphCall({
-    url: `https://graph.facebook.com/${version}/${encodeURIComponent(wabaId)}/phone_numbers?fields=id,display_phone_number&${tokenQ.toString()}`,
+    url: `https://graph.facebook.com/${version}/${encodeURIComponent(wabaId)}/phone_numbers?fields=id,display_phone_number,verified_name,code_verification_status,name_status,quality_rating,status&${tokenQ.toString()}`,
     fetchImpl,
   });
   if (!phones.ok || (phones.data && typeof phones.data === "object" && phones.data.error)) {
@@ -288,7 +297,83 @@ export async function confirmWabaAndPhoneGrants(opts: {
     );
   }
 
-  return { wabaName: String(waba.data?.name || "").trim() };
+  const onBehalf = waba.data?.on_behalf_of_business_info;
+  const businessIdFromWaba =
+    (onBehalf && typeof onBehalf === "object" ? String((onBehalf as { id?: string }).id || "").trim() : "") || "";
+  const review = String(waba.data?.account_review_status || "").trim();
+
+  return {
+    wabaName: String(waba.data?.name || "").trim(),
+    phoneStatus: String(match.status || "").trim(),
+    codeVerificationStatus: String(match.code_verification_status || "").trim(),
+    displayNameStatus: String(match.name_status || "").trim(),
+    qualityRating: String(match.quality_rating || "").trim(),
+    verifiedName: String(match.verified_name || "").trim(),
+    businessId: businessIdFromWaba,
+    businessVerificationStatus: review,
+  };
+}
+
+async function inspectBusinessVerification(opts: {
+  accessToken: string;
+  businessId: string;
+  fetchImpl: FetchImpl;
+}): Promise<string> {
+  const businessId = String(opts.businessId || "").trim();
+  if (!businessId) return "";
+  try {
+    const version = graphApiVersion();
+    const tokenQ = new URLSearchParams({ access_token: opts.accessToken });
+    const result = await graphCall({
+      url: `https://graph.facebook.com/${version}/${encodeURIComponent(businessId)}?fields=id,name,verification_status&${tokenQ.toString()}`,
+      fetchImpl: opts.fetchImpl,
+    });
+    if (!result.ok || (result.data && typeof result.data === "object" && result.data.error)) {
+      return "";
+    }
+    return String(result.data?.verification_status || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+function maskSecretPreview(value: string): string {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (raw.length <= 8) return "••••";
+  return `${raw.slice(0, 4)}••••${raw.slice(-4)}`;
+}
+
+/** Super Admin inventory of platform Meta env — never returns live secrets. */
+export function platformMetaCredentialsOverview(opts?: { host?: string; proto?: string }) {
+  const appId = facebookAppIdForEmbeddedSignup();
+  const appSecret = facebookAppSecretForEmbeddedSignup();
+  const systemToken = readSecret("META_ACCESS_TOKEN", "WHATSAPP_ACCESS_TOKEN");
+  const fallbackToken = readSecret("META_FALLBACK_ACCESS_TOKEN", "META_ACCESS_TOKEN", "WHATSAPP_ACCESS_TOKEN");
+  const phoneNumberId = readSecret("META_PHONE_NUMBER_ID", "WHATSAPP_PHONE_NUMBER_ID");
+  const fallbackPhoneNumberId = readSecret(
+    "META_FALLBACK_PHONE_NUMBER_ID",
+    "META_PHONE_NUMBER_ID",
+    "WHATSAPP_PHONE_NUMBER_ID"
+  );
+  const configId = embeddedSignupConfigId();
+  const webhookUrl = `${appPublicUrl(opts?.host, opts?.proto)}/api/meta/webhook`;
+  return {
+    appId: appId || null,
+    appIdConfigured: Boolean(appId),
+    appSecretConfigured: Boolean(appSecret),
+    appSecretPreview: appSecret ? maskSecretPreview(appSecret) : "",
+    systemTokenConfigured: Boolean(systemToken),
+    systemTokenPreview: systemToken ? maskSecretPreview(systemToken) : "",
+    phoneNumberId: phoneNumberId || null,
+    fallbackPhoneNumberId: fallbackPhoneNumberId || null,
+    fallbackTokenConfigured: Boolean(fallbackToken),
+    embeddedSignupConfigIdConfigured: Boolean(configId),
+    webhookUrl,
+    webhookVerifyTokenConfigured: Boolean(readSecret("META_VERIFY_TOKEN")),
+    notice:
+      "Platform Meta App ID, App Secret, Tech Provider-style system tokens, and the central webhook receiver are env-configured. Super Admin does not trigger Embedded Signup — clinic tenants connect from Settings. Lumera is not a certified Meta Tech Provider. Contact ravee@lumer.me.",
+  };
 }
 
 export async function subscribeAppToCustomerWaba(opts: {
@@ -325,6 +410,7 @@ export async function completeEmbeddedSignup(opts: {
   code: string;
   wabaId: string;
   phoneNumberId: string;
+  businessId?: string;
   actor: WabaActor;
   ownerType: WhatsAppOwnerType;
   ownerId: string;
@@ -357,16 +443,30 @@ export async function completeEmbeddedSignup(opts: {
     fetchImpl,
   });
 
+  const businessId = String(opts.businessId || grants.businessId || "").trim();
+  const businessVerificationStatus =
+    (await inspectBusinessVerification({
+      accessToken: exchanged.accessToken,
+      businessId,
+      fetchImpl,
+    })) || grants.businessVerificationStatus;
+
   const row = upsertWhatsAppNumber(opts.actor, {
     ownerType: opts.ownerType,
     ownerId: opts.ownerId,
     wabaId: opts.wabaId,
     phoneNumberId: opts.phoneNumberId,
-    metaWabaName: grants.wabaName || opts.displayName || "",
+    businessId,
+    metaWabaName: grants.wabaName || grants.verifiedName || opts.displayName || "",
     metaAccessToken: exchanged.accessToken,
     metaTokenExpiresAt: tokenExpiryIso(debug),
     status: "connected",
     connectedVia: "embedded_signup",
+    phoneStatus: grants.phoneStatus,
+    codeVerificationStatus: grants.codeVerificationStatus,
+    displayNameStatus: grants.displayNameStatus,
+    businessVerificationStatus,
+    qualityRating: grants.qualityRating,
   });
 
   return {
@@ -376,6 +476,11 @@ export async function completeEmbeddedSignup(opts: {
       column: "meta_access_token",
       tokenRef: row.meta_token_ref,
       note: "Business token stored as SQLite TEXT on whatsapp_number_secrets, referenced by whatsapp_numbers.meta_token_ref. Same pattern as tenants.meta_access_token. Not Secret Manager.",
+    },
+    webhook: {
+      subscribed: true,
+      receiver: "/api/meta/webhook",
+      notice: "Customer WABA subscribed_apps registered against Lumera's central webhook receiver.",
     },
     sandbox: !isProduction(),
     notice:
