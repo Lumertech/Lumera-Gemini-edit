@@ -25,13 +25,13 @@ jobs:
       - name: Assemble whatsapp.ts and api.ts
         run: |
           set -euo pipefail
-          if [ ! -d .merge-parts ]; then
-            echo "No .merge-parts directory; nothing to assemble."
+          if [ ! -f .merge-parts/api.12 ]; then
+            echo "Not all api parts present; skip assemble."
             exit 0
           fi
           git fetch origin cursor/ci-error-tracking-0c0a
           git checkout origin/cursor/ci-error-tracking-0c0a -- server/whatsapp.ts
-          cat .merge-parts/api.00 .merge-parts/api.01 .merge-parts/api.02 .merge-parts/api.03 > server/api.ts
+          cat .merge-parts/api.00 .merge-parts/api.01 .merge-parts/api.02 .merge-parts/api.03 .merge-parts/api.04 .merge-parts/api.05 .merge-parts/api.06 .merge-parts/api.07 .merge-parts/api.08 .merge-parts/api.09 .merge-parts/api.10 .merge-parts/api.11 .merge-parts/api.12 > server/api.ts
           test "$(git hash-object server/whatsapp.ts)" = "e3a7ed403445ae1370f2cace08c6fa8f4f49c66b"
           test "$(git hash-object server/api.ts)" = "2a5ee5d41bd5525e2bcf291f4b9ee920de630914"
           rm -rf .merge-parts
