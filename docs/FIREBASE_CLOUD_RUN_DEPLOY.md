@@ -156,7 +156,7 @@ Boot order and the JWT vs PORT confusion: `deploy/CLOUD_RUN_BOOT_CHECK.md`.
 
 Leave unset for the URL-hosting stage. Production **does not fake** Graph delivery, Facebook Login, or Razorpay capture without these.
 
-| Variable | Value |
+| Variable | Needed when |
 | --- | --- |
 | `META_VERIFY_TOKEN` | Meta can verify `GET /api/meta/webhook` |
 | `META_APP_SECRET` | Webhook HMAC (`X-Hub-Signature-256`) in production |
