@@ -145,4 +145,56 @@ describe("live registration override HTTP", () => {
     assert.ok(temporaryPassword, "register verify-otp without hash must return temporaryPassword");
     assert.equal(verifyPassword(temporaryPassword, row.password_hash), true);
   });
+
+  it("OAuth onboarding token locks verified email/name and allows an empty fallback password", async () => {
+    const { signOauthOnboardingToken } = await import("./oauth-onboarding.ts");
+    const stamp = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    const verifiedEmail = `oauth.${stamp}@sec-test.example`;
+    const token = signOauthOnboardingToken({
+      provider: "facebook",
+      email: verifiedEmail,
+      name: "Verified FB Director",
+    });
+    const res = await jsonRequest(port, "POST", "/api/auth/register-practice", {
+      clinicName: "OAuth Onboard Clinic",
+      specialty: "General Medicine",
+      country: "India",
+      timezone: "IST (UTC+5:30)",
+      phone: `+91 97200 ${stamp.slice(0, 5)}`,
+      name: "Attacker Name",
+      email: "attacker@evil.example",
+      password: "",
+      oauthToken: token,
+      oauthProvider: "facebook",
+    });
+    assert.equal(res.status, 200, String(res.json.error || "oauth register-practice failed"));
+    assert.equal(res.json.email, verifiedEmail);
+    assert.ok(res.json.temporaryPassword, "empty OAuth password must still mint a fallback hash");
+    assert.notEqual(res.json.temporaryPassword, "Lumera@2026");
+
+    const row = getDb()
+      .prepare("SELECT email, name FROM users WHERE email = ?")
+      .get(verifiedEmail) as { email: string; name: string } | undefined;
+    assert.ok(row);
+    assert.equal(row.email, verifiedEmail);
+    assert.equal(row.name, "Verified FB Director");
+    const forged = getDb().prepare("SELECT id FROM users WHERE email = ?").get("attacker@evil.example");
+    assert.equal(forged, undefined);
+  });
+
+  it("rejects an invalid oauthToken instead of trusting the posted email", async () => {
+    const stamp = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    const res = await jsonRequest(port, "POST", "/api/auth/register-practice", {
+      clinicName: "OAuth Expired Clinic",
+      specialty: "General Medicine",
+      country: "India",
+      timezone: "IST (UTC+5:30)",
+      phone: `+91 97300 ${stamp.slice(0, 5)}`,
+      name: "Expired Director",
+      email: `expired.${stamp}@sec-test.example`,
+      oauthToken: "not-a-valid-onboarding-jwt",
+    });
+    assert.equal(res.status, 401);
+    assert.match(String(res.json.error || ""), /expired/i);
+  });
 });

@@ -17,6 +17,9 @@ describe("live registration override mount", () => {
     assert.ok(liveMount >= 0, "server.ts must mount createLiveRegistrationRouter()");
     assert.ok(apiMount >= 0, "server.ts must still mount createApiRouter()");
     assert.ok(liveMount < apiMount, "live registration must mount before createApiRouter()");
+    const oauthMount = serverSrc.indexOf("createOauthLoginRouter()");
+    assert.ok(oauthMount >= 0, "server.ts must mount createOauthLoginRouter()");
+    assert.ok(oauthMount < apiMount, "OAuth login router must mount before createApiRouter()");
     assert.match(routesSrc, /liveRegistrationPasswordHash\(/);
     assert.equal(routesSrc.includes("Lumera@2026"), false);
     assert.match(liveSrc, /function liveRegistrationPasswordHash/);
