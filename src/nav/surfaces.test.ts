@@ -80,7 +80,14 @@ describe("public vs app surface routing (founder lock #48)", () => {
     assert.equal(pathToNav("/app/queue").appView, "queue");
     assert.equal(pathToNav("/app/smart-rx").appView, "rx");
     assert.equal(pathToNav("/app").appView, "queue");
-    assert.equal(pathToNav("/admin/users").surface, "admin");
+    assert.equal(pathToNav("/settings/integrations").surface, "app");
+    assert.equal(pathToNav("/settings/integrations").appView, "settings");
+    assert.equal(pathToNav("/app/settings/integrations").appView, "settings");
+    assert.equal(pathToNav("/superadmin/integrations").surface, "admin");
+    assert.equal(pathToNav("/superadmin/integrations").adminTab, "meta");
+    assert.equal(pathToNav("/admin/integrations").adminTab, "meta");
+    assert.equal(canonicalizeAdminTab("integrations"), "meta");
+    assert.equal(canonicalizeAppView("integrations"), "settings");
     assert.equal(pathToNav("/admin/users").adminTab, "users");
     assert.equal(pathToNav("/admin/people").adminTab, "people");
     assert.equal(pathToNav("/admin/profile").adminTab, "profile");
@@ -98,7 +105,7 @@ describe("public vs app surface routing (founder lock #48)", () => {
     assert.equal(appViewToPath("rx"), "/app/rx");
     assert.equal(adminTabToPath("users"), "/admin/users");
     assert.equal(surfaceToPath("app", { appView: "billing" }), "/app/billing");
-    assert.equal(surfaceToPath("admin", { adminTab: "site" }), "/admin/site");
+    assert.equal(surfaceToPath("admin", { adminTab: "site"}), "/admin/site");
     assert.notEqual(pathToNav("/app/rx").surface, "landing");
   });
 

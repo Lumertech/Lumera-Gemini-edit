@@ -58,6 +58,12 @@ const APP_VIEW_ALIASES: Record<string, AppView> = {
   "smart-rx": "rx",
   "opd-queue": "queue",
   lab: "reports",
+  integrations: "settings",
+};
+
+const ADMIN_TAB_ALIASES: Record<string, AdminTab> = {
+  integrations: "meta",
+  meta: "meta",
 };
 
 export interface NavLocation {
@@ -136,7 +142,8 @@ export function canonicalizeAppView(raw?: string | null): AppView {
 export function canonicalizeAdminTab(raw?: string | null): AdminTab {
   if (!raw) return DEFAULT_ADMIN_TAB;
   const key = raw.toLowerCase();
-  return ADMIN_TAB_SET.has(key) ? (key as AdminTab) : DEFAULT_ADMIN_TAB;
+  if (ADMIN_TAB_SET.has(key)) return key as AdminTab;
+  return ADMIN_TAB_ALIASES[key] || DEFAULT_ADMIN_TAB;
 }
 
 /** Distinct path for each clinician tab so a click always updates `window.location`. */
@@ -241,6 +248,12 @@ export function pathToNav(pathname = "/", search = ""): NavLocation {
 
   if (p === "/admin" || p.startsWith("/admin/")) {
     return nav("admin", { adminTab: canonicalizeAdminTab(firstSegmentAfter("/admin", p)) });
+  }
+  if (p === "/superadmin/integrations" || p === "/superadmin/meta" || p === "/admin/integrations") {
+    return nav("admin", { adminTab: "meta" });
+  }
+  if (p === "/settings/integrations" || p === "/app/settings/integrations") {
+    return nav("app", { appView: "settings" });
   }
   if (p === "/portal" || p === "/patient") return nav("portal");
   if (p === "/landing" || p === "/site" || p === "/public") return nav("landing");
