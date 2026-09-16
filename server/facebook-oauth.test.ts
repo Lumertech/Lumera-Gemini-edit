@@ -9,6 +9,8 @@ import { attachUser } from "./auth.ts";
 import { initDatabase } from "./db.ts";
 import {
   exchangeFacebookAuthorizationCode,
+  facebookAppId,
+  facebookAppSecret,
   facebookLoginDialogUrl,
   facebookOAuthConfigured,
   facebookRedirectUri,
@@ -95,6 +97,8 @@ describe("Facebook OAuth founder docs", () => {
     const runbook = fs.readFileSync(path.join(root, "docs/FIREBASE_CLOUD_RUN_DEPLOY.md"), "utf8");
     assert.match(envEx, /FACEBOOK_APP_ID=/);
     assert.match(envEx, /FACEBOOK_APP_SECRET=/);
+    assert.match(envEx, /FACEBOOK_CLIENT_ID=/);
+    assert.match(envEx, /FACEBOOK_CLIENT_SECRET=/);
     assert.match(envEx, /https:\/\/www\.mylumera\.in\/api\/auth\/facebook\/callback/);
     assert.match(runbook, /https:\/\/www\.mylumera\.in\/api\/auth\/facebook\/callback/);
     assert.match(runbook, /Client OAuth Login/);
@@ -107,6 +111,8 @@ describe("Facebook OAuth redirect URI + config", () => {
     "APP_URL",
     "FACEBOOK_APP_ID",
     "FACEBOOK_APP_SECRET",
+    "FACEBOOK_CLIENT_ID",
+    "FACEBOOK_CLIENT_SECRET",
     "FACEBOOK_REDIRECT_URI",
     "FACEBOOK_CALLBACK_URL",
     "META_APP_ID",
@@ -156,6 +162,20 @@ describe("Facebook OAuth redirect URI + config", () => {
     assert.equal(facebookOAuthConfigured(), true);
   });
 
+  it("accepts FACEBOOK_CLIENT_ID / FACEBOOK_CLIENT_SECRET aliases", () => {
+    delete process.env.FACEBOOK_APP_ID;
+    delete process.env.FACEBOOK_APP_SECRET;
+    delete process.env.FACEBOOK_CLIENT_ID;
+    delete process.env.FACEBOOK_CLIENT_SECRET;
+    delete process.env.META_APP_ID;
+    delete process.env.META_APP_SECRET;
+    process.env.FACEBOOK_CLIENT_ID = APP_ID;
+    process.env.FACEBOOK_CLIENT_SECRET = APP_SECRET;
+    assert.equal(facebookAppId(), APP_ID);
+    assert.equal(facebookAppSecret(), APP_SECRET);
+    assert.equal(facebookOAuthConfigured(), true);
+  });
+
   it("builds facebook.com dialog/oauth with code + email scope + exact redirect_uri", () => {
     process.env.FACEBOOK_APP_ID = APP_ID;
     process.env.FACEBOOK_APP_SECRET = APP_SECRET;
@@ -178,6 +198,8 @@ describe("Facebook OAuth identity", () => {
     "NODE_ENV",
     "FACEBOOK_APP_ID",
     "FACEBOOK_APP_SECRET",
+    "FACEBOOK_CLIENT_ID",
+    "FACEBOOK_CLIENT_SECRET",
     "META_APP_ID",
     "META_APP_SECRET",
     "JWT_SECRET",
@@ -280,6 +302,8 @@ describe("Facebook OAuth HTTP routes", () => {
     "APP_URL",
     "FACEBOOK_APP_ID",
     "FACEBOOK_APP_SECRET",
+    "FACEBOOK_CLIENT_ID",
+    "FACEBOOK_CLIENT_SECRET",
     "FACEBOOK_REDIRECT_URI",
     "GOOGLE_CLIENT_ID",
     "GOOGLE_CLIENT_SECRET",
@@ -352,6 +376,8 @@ describe("Facebook OAuth HTTP routes", () => {
     process.env.JWT_SECRET = "test-jwt-secret-lock-phi";
     delete process.env.FACEBOOK_APP_ID;
     delete process.env.FACEBOOK_APP_SECRET;
+    delete process.env.FACEBOOK_CLIENT_ID;
+    delete process.env.FACEBOOK_CLIENT_SECRET;
     delete process.env.META_APP_ID;
     delete process.env.META_APP_SECRET;
 
@@ -371,13 +397,42 @@ describe("Facebook OAuth HTTP routes", () => {
     }
   });
 
-  it("GET /api/auth/facebook/callback exchanges the code and issues a session cookie", async () => {
+  it("GET /api/auth/facebook/callback maps user cancellation to access_denied", async () => {
     process.env.NODE_ENV = "production";
     process.env.JWT_SECRET = "test-jwt-secret-lock-phi";
     process.env.APP_URL = "https://www.mylumera.in";
     process.env.FACEBOOK_APP_ID = APP_ID;
     process.env.FACEBOOK_APP_SECRET = APP_SECRET;
+
+    const app = express();
+    app.use("/api", createApiRouter());
+    const server = app.listen(0, "127.0.0.1");
+    try {
+      await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+      const addr = server.address();
+      if (!addr || typeof addr === "string") throw new Error("no port");
+      const res = await fetch(
+        `http://127.0.0.1:${addr.port}/api/auth/facebook/callback?error=access_denied&error_reason=user_denied`,
+        { redirect: "manual" }
+      );
+      assert.equal(res.status, 302);
+      const location = res.headers.get("location") || "";
+      assert.match(location, /oauth=facebook/);
+      assert.match(location, /error=access_denied/);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+    }
+  });
+
+  it("GET /api/auth/facebook/callback exchanges the code and issues a session cookie", async () => {
+    process.env.JWT_SECRET = "test-jwt-secret-lock-phi";
+    process.env.APP_URL = "https://www.mylumera.in";
+    process.env.FACEBOOK_APP_ID = APP_ID;
+    process.env.FACEBOOK_APP_SECRET = APP_SECRET;
+    // sqlite fallback is forbidden while NODE_ENV=production; open the test db first.
+    delete process.env.NODE_ENV;
     initDatabase();
+    process.env.NODE_ENV = "production";
 
     const origFetch = globalThis.fetch;
     const graphFetch = mockFacebookGraph();
@@ -415,11 +470,12 @@ describe("Facebook OAuth HTTP routes", () => {
   });
 
   it("POST /api/auth/oauth rejects production client-email Facebook login", async () => {
-    process.env.NODE_ENV = "production";
     process.env.JWT_SECRET = "test-jwt-secret-lock-phi";
     delete process.env.FACEBOOK_APP_ID;
     delete process.env.FACEBOOK_APP_SECRET;
+    delete process.env.NODE_ENV;
     initDatabase();
+    process.env.NODE_ENV = "production";
 
     const app = express();
     app.use(express.json());
