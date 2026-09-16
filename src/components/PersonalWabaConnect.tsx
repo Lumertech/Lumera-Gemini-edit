@@ -1,12 +1,19 @@
 import React, { useEffect, useState } from "react";
 import { Smartphone, CheckCircle2, ArrowRight } from "lucide-react";
 import { apiFetch } from "../api/http";
+import {
+  launchEmbeddedSignupV4,
+  loadFacebookSdk,
+  type EmbeddedSignupConfig,
+} from "../lib/facebook-embedded-signup";
 
 type MineResponse = {
   practitionerId?: string;
   doctorNumber?: { id: string; status: string; wabaId?: string; phoneNumberId?: string; metaWabaName?: string } | null;
   notice?: string;
   sandbox?: boolean;
+  simulatorsEnabled?: boolean;
+  embeddedSignupConfigured?: boolean;
 };
 
 type PersonalWabaConnectProps = {
@@ -16,6 +23,7 @@ type PersonalWabaConnectProps = {
 
 export const PersonalWabaConnect: React.FC<PersonalWabaConnectProps> = ({ variant = "settings", onConnected }) => {
   const [mine, setMine] = useState<MineResponse | null>(null);
+  const [config, setConfig] = useState<EmbeddedSignupConfig | null>(null);
   const [busy, setBusy] = useState(false);
   const [skipped, setSkipped] = useState(false);
   const [error, setError] = useState("");
@@ -23,8 +31,17 @@ export const PersonalWabaConnect: React.FC<PersonalWabaConnectProps> = ({ varian
 
   const load = async () => {
     try {
-      const data = await apiFetch<MineResponse>("/api/whatsapp-numbers/mine");
+      const [data, signup] = await Promise.all([
+        apiFetch<MineResponse>("/api/whatsapp-numbers/mine"),
+        apiFetch<EmbeddedSignupConfig>("/api/meta/embedded-signup-config"),
+      ]);
       setMine(data);
+      setConfig(signup);
+      if (signup.appId && signup.graphVersion) {
+        void loadFacebookSdk(signup.appId, signup.graphVersion).catch(() => {
+          /* SDK loads on click if this prefetch fails */
+        });
+      }
     } catch {
       setMine(null);
     }
@@ -35,8 +52,48 @@ export const PersonalWabaConnect: React.FC<PersonalWabaConnectProps> = ({ varian
   }, []);
 
   const connected = mine?.doctorNumber?.status === "connected";
+  const simulatorsEnabled = Boolean(config?.simulatorsEnabled ?? mine?.sandbox);
 
-  const handleConnect = async () => {
+  const completeSignup = async (payload: { code: string; wabaId: string; phoneNumberId: string }) => {
+    const data = await apiFetch<{ notice?: string; message?: string }>("/api/whatsapp-numbers/embedded-signup/complete", {
+      method: "POST",
+      body: JSON.stringify({
+        ownerType: "doctor",
+        code: payload.code,
+        wabaId: payload.wabaId,
+        phoneNumberId: payload.phoneNumberId,
+        displayName: "Personal WABA",
+      }),
+    });
+    setMessage(data.notice || data.message || "Personal WhatsApp number connected.");
+    await load();
+    onConnected?.();
+  };
+
+  const handleRealConnect = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      const signup =
+        config || (await apiFetch<EmbeddedSignupConfig>("/api/meta/embedded-signup-config"));
+      setConfig(signup);
+      if (!signup.appId || !signup.configId) {
+        throw new Error(
+          signup.notice ||
+            "Embedded Signup is not configured. Set FACEBOOK_APP_ID and META_EMBEDDED_SIGNUP_CONFIG_ID. Contact ravee@lumer.me."
+        );
+      }
+      await loadFacebookSdk(signup.appId, signup.graphVersion || "v21.0");
+      const session = await launchEmbeddedSignupV4(signup);
+      await completeSignup(session);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not complete Meta Embedded Signup.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleSimulate = async () => {
     setBusy(true);
     setError("");
     try {
@@ -80,8 +137,8 @@ export const PersonalWabaConnect: React.FC<PersonalWabaConnectProps> = ({ varian
       </div>
       <p className={bodyClass}>
         Optional. Use this if you practice at more than one clinic and want inbound WhatsApp on a personal number.
-        Real Meta Embedded Signup (JS SDK + auth-code exchange) is not live. Lumera is not a certified Tech Provider.
-        Contact ravee@lumer.me for Meta App Review questions.
+        Real Meta Embedded Signup v4 (JS SDK + config_id) is wired; Lumera is not a certified Tech Provider and App Review
+        is not claimed. Contact ravee@lumer.me.
       </p>
       {connected ? (
         <p className={`text-xs flex items-center gap-1.5 ${variant === "onboarding" ? "text-emerald-300" : "text-emerald-700"}`}>
@@ -93,12 +150,22 @@ export const PersonalWabaConnect: React.FC<PersonalWabaConnectProps> = ({ varian
           <button
             type="button"
             disabled={busy}
-            onClick={() => void handleConnect()}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600 text-white text-xs font-semibold disabled:opacity-50"
+            onClick={() => void handleRealConnect()}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-semibold disabled:opacity-50"
           >
-            {busy ? "Connecting…" : "Connect personal WhatsApp (SANDBOX)"}
+            {busy ? "Connecting…" : "Connect with Meta Embedded Signup"}
             <ArrowRight className="w-3.5 h-3.5" />
           </button>
+          {simulatorsEnabled ? (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void handleSimulate()}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600 text-white text-xs font-semibold disabled:opacity-50"
+            >
+              {busy ? "Connecting…" : "Simulate (SANDBOX / DEV-ONLY)"}
+            </button>
+          ) : null}
           <button
             type="button"
             disabled={busy}

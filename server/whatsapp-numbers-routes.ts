@@ -19,9 +19,17 @@ import {
   simulateEmbeddedSignupForOwner,
   upsertWhatsAppNumber,
   WhatsAppNumberError,
+  type WabaActor,
   type WhatsAppOwnerType,
 } from "./whatsapp-numbers.ts";
 import { attachDeprecatedMetaWabaAliases } from "./whatsapp-numbers-meta-alias.ts";
+import {
+  completeEmbeddedSignup,
+  EmbeddedSignupError,
+  embeddedSignupPublicConfig,
+} from "./embedded-signup.ts";
+import { wabaOnboardingCapsOverview } from "./waba-onboarding-caps.ts";
+import { handleMetaDataDeletionPost } from "./meta-signed-request.ts";
 
 export function bootWhatsAppOwnershipSchema() {
   const database = getDb();
@@ -33,8 +41,57 @@ function handleWabaError(res: Response, err: unknown, fallback: string) {
   if (err instanceof WhatsAppNumberError) {
     return res.status(err.status).json({ error: err.message, code: err.code, ...(err.extra || {}) });
   }
+  if (err instanceof EmbeddedSignupError) {
+    return res.status(err.status).json({ error: err.message, code: err.code, ...(err.extra || {}) });
+  }
   console.error("[WhatsApp numbers]", err);
   return res.status(500).json({ error: fallback });
+}
+
+/** Same owner-scope inference as simulate / connect-clinic / connect-doctor. */
+export function resolveOwnerFromRequest(
+  req: Request,
+  body: Record<string, unknown>
+): { ownerType: WhatsAppOwnerType; ownerId: string; actor: WabaActor } {
+  const intended: WhatsAppOwnerType = body.ownerType === "doctor" ? "doctor" : "tenant";
+  if (intended === "doctor") {
+    if (req.user?.role !== "doctor" && !isPlatformAdminRole(req.user?.role)) {
+      throw new WhatsAppNumberError(
+        403,
+        "Only the linked doctor (or Master Admin) can connect a personal WABA.",
+        "OWNER_SCOPE"
+      );
+    }
+    const practitionerId = isPlatformAdminRole(req.user?.role)
+      ? String(body.ownerId || "").trim()
+      : ensurePractitionerForUser(req.user!.id);
+    if (!practitionerId) {
+      throw new WhatsAppNumberError(400, "No practitioner identity is linked to this account.", "NO_PRACTITIONER");
+    }
+    return {
+      ownerType: "doctor",
+      ownerId: practitionerId,
+      actor: isPlatformAdminRole(req.user?.role) ? platformAdminActor() : doctorActor(practitionerId),
+    };
+  }
+  const tenantId = isPlatformAdminRole(req.user?.role)
+    ? String(body.ownerId || body.tenantId || req.user?.tenantId || "").trim()
+    : String(req.user?.tenantId || "").trim();
+  if (!tenantId) {
+    throw new WhatsAppNumberError(400, "tenantId is required", "INVALID_OWNER");
+  }
+  if (!isPlatformAdminRole(req.user?.role) && tenantId !== req.user?.tenantId) {
+    throw new WhatsAppNumberError(
+      403,
+      "Clinic users can only connect the WhatsApp number for their own tenant.",
+      "OWNER_SCOPE"
+    );
+  }
+  return {
+    ownerType: "tenant",
+    ownerId: tenantId,
+    actor: isPlatformAdminRole(req.user?.role) ? platformAdminActor() : clinicActor(tenantId),
+  };
 }
 
 function linkPractitionerAfterDoctorWrite(body: Record<string, unknown>) {
@@ -180,14 +237,18 @@ export function createWhatsAppNumbersRouter(): Router {
       req.user?.role === "doctor" ? ensurePractitionerForUser(req.user!.id) : getPractitionerIdForUser(req.user!.id);
     const tenantNumber = tenantId ? getTenantWabaNumber(tenantId) : undefined;
     const doctorNumber = practitionerId ? getDoctorWabaNumber(practitionerId) : undefined;
+    const signup = embeddedSignupPublicConfig();
     res.json({
       tenantId: tenantId || undefined,
       practitionerId: practitionerId || undefined,
       tenantNumber: tenantNumber ? publicWhatsAppNumber(tenantNumber) : null,
       doctorNumber: doctorNumber ? publicWhatsAppNumber(doctorNumber) : null,
       sandbox: !isProduction(),
+      simulatorsEnabled: signup.simulatorsEnabled,
       embeddedSignupLive: false,
-      notice: "SANDBOX / DEV-ONLY: Embedded Signup is not live. Lumera is not a certified Meta Tech Provider.",
+      embeddedSignupConfigured: signup.configured,
+      notice:
+        "SANDBOX / DEV-ONLY until App Review: Lumera is not a certified Meta Tech Provider. Real Embedded Signup v4 is available when FACEBOOK_APP_ID and META_EMBEDDED_SIGNUP_CONFIG_ID are set. Contact ravee@lumer.me.",
     });
   });
 
@@ -258,52 +319,60 @@ export function createWhatsAppNumbersRouter(): Router {
     }
   });
 
+  router.get("/admin/whatsapp-onboarding-caps", requireAuth, requirePlatformAdmin, (_req, res) => {
+    try {
+      bootWhatsAppOwnershipSchema();
+      res.json(wabaOnboardingCapsOverview());
+    } catch (err) {
+      handleWabaError(res, err, "Failed to load WhatsApp onboarding caps");
+    }
+  });
+
+  router.get("/meta/embedded-signup-config", requireAuth, (_req, res) => {
+    res.json(embeddedSignupPublicConfig());
+  });
+
+  // Mounted at /api before createApiRouter, so this wins over server/meta.ts's unsigned scaffold.
+  router.post("/meta/data-deletion", handleMetaDataDeletionPost);
+
+  router.post("/whatsapp-numbers/embedded-signup/complete", requireAuth, async (req, res) => {
+    try {
+      bootWhatsAppOwnershipSchema();
+      const body = (req.body || {}) as Record<string, unknown>;
+      const code = String(body.code || "").trim();
+      const wabaId = String(body.wabaId || body.waba_id || "").trim();
+      const phoneNumberId = String(body.phoneNumberId || body.phone_number_id || "").trim();
+      if (!code || !wabaId || !phoneNumberId) {
+        return res.status(400).json({
+          error: "code, wabaId, and phoneNumberId are required (FB.login authResponse.code + sessionInfoResponse).",
+        });
+      }
+      const owner = resolveOwnerFromRequest(req, body);
+      const result = await completeEmbeddedSignup({
+        code,
+        wabaId,
+        phoneNumberId,
+        actor: owner.actor,
+        ownerType: owner.ownerType,
+        ownerId: owner.ownerId,
+        displayName: String(body.displayName || body.clinicName || req.user?.name || ""),
+      });
+      res.json(result);
+    } catch (err) {
+      handleWabaError(res, err, "Failed to complete Embedded Signup");
+    }
+  });
+
   router.post("/whatsapp-numbers/simulate-embedded-signup", requireAuth, rejectProductionSimulator, (req, res) => {
     try {
       bootWhatsAppOwnershipSchema();
       const body = (req.body || {}) as Record<string, unknown>;
-      const intended: WhatsAppOwnerType = body.ownerType === "doctor" ? "doctor" : "tenant";
-      if (intended === "doctor") {
-        if (req.user?.role !== "doctor" && !isPlatformAdminRole(req.user?.role)) {
-          return res.status(403).json({ error: "Only the linked doctor (or Master Admin) can simulate a personal WABA." });
-        }
-        const practitionerId = isPlatformAdminRole(req.user?.role)
-          ? String(body.ownerId || "").trim()
-          : ensurePractitionerForUser(req.user!.id);
-        if (!practitionerId) {
-          return res.status(400).json({ error: "No practitioner identity is linked to this account." });
-        }
-        const actor = isPlatformAdminRole(req.user?.role) ? platformAdminActor() : doctorActor(practitionerId);
-        const simulated = simulateEmbeddedSignupForOwner({
-          actor,
-          ownerType: "doctor",
-          ownerId: practitionerId,
-          displayName: String(body.displayName || req.user?.name || ""),
-        });
-        return res.json({
-          success: true,
-          sandbox: true,
-          notice: "SANDBOX / DEV-ONLY simulator — not live Meta Embedded Signup.",
-          message:
-            "SANDBOX / DEV-ONLY: fake WABA ids stored locally. This is not Meta Embedded Signup and Lumera is not a certified Tech Provider.",
-          whatsappNumber: publicWhatsAppNumber(simulated.row),
-          wabaId: simulated.wabaId,
-          phoneNumberId: simulated.phoneNumberId,
-        });
-      }
-      const tenantId = isPlatformAdminRole(req.user?.role)
-        ? String(body.ownerId || body.tenantId || req.user?.tenantId || "").trim()
-        : String(req.user?.tenantId || "").trim();
-      if (!tenantId) return res.status(400).json({ error: "tenantId is required" });
-      if (!isPlatformAdminRole(req.user?.role) && tenantId !== req.user?.tenantId) {
-        return res.status(403).json({ error: "Clinic users can only connect the WhatsApp number for their own tenant." });
-      }
-      const actor = isPlatformAdminRole(req.user?.role) ? platformAdminActor() : clinicActor(tenantId);
+      const owner = resolveOwnerFromRequest(req, body);
       const simulated = simulateEmbeddedSignupForOwner({
-        actor,
-        ownerType: "tenant",
-        ownerId: tenantId,
-        displayName: String(body.displayName || body.clinicName || ""),
+        actor: owner.actor,
+        ownerType: owner.ownerType,
+        ownerId: owner.ownerId,
+        displayName: String(body.displayName || body.clinicName || req.user?.name || ""),
       });
       return res.json({
         success: true,

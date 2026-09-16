@@ -24,22 +24,44 @@ export function facebookOAuthConfigured(): boolean {
 }
 
 export function facebookRedirectUri(reqHost?: string, reqProto?: string): string {
-  const explicit = String(process.env.FACEBOOK_REDIRECT_URI || process.env.FACEBOOK_CALLBACK_URL || "").trim();
+  const explicit = String(process.env.FACEBOOK_REDIRECT_URI || process.env.FACEBOOK_CALLBACK_URL || "")
+    .trim()
+    .replace(/\/$/, "");
   if (explicit) return explicit;
   return `${appPublicUrl(reqHost, reqProto)}/api/auth/facebook/callback`;
 }
 
-export function signFacebookOAuthState(): string {
-  return jwt.sign({ purpose: "facebook_oauth", n: crypto.randomUUID() }, oauthStateSecret(), { expiresIn: "10m" });
+type FacebookOAuthStatePayload = {
+  purpose: "facebook_oauth";
+  n: string;
+  redirectUri?: string;
+};
+
+/** Bind redirect_uri into `state` so the token exchange uses the exact dialog URI (Meta requires a match). */
+export function signFacebookOAuthState(redirectUri?: string): string {
+  const payload: FacebookOAuthStatePayload = {
+    purpose: "facebook_oauth",
+    n: crypto.randomUUID(),
+  };
+  const uri = String(redirectUri || "").trim();
+  if (uri) payload.redirectUri = uri;
+  return jwt.sign(payload, oauthStateSecret(), { expiresIn: "10m" });
+}
+
+export function parseFacebookOAuthState(state: string): { redirectUri?: string } | null {
+  try {
+    const decoded = jwt.verify(state, oauthStateSecret());
+    if (!decoded || typeof decoded !== "object") return null;
+    if ((decoded as { purpose?: string }).purpose !== "facebook_oauth") return null;
+    const redirectUri = String((decoded as { redirectUri?: string }).redirectUri || "").trim() || undefined;
+    return { redirectUri };
+  } catch {
+    return null;
+  }
 }
 
 export function verifyFacebookOAuthState(state: string): boolean {
-  try {
-    const decoded = jwt.verify(state, oauthStateSecret());
-    return Boolean(decoded && typeof decoded === "object" && (decoded as { purpose?: string }).purpose === "facebook_oauth");
-  } catch {
-    return false;
-  }
+  return Boolean(parseFacebookOAuthState(state));
 }
 
 export function facebookLoginDialogUrl(opts: { redirectUri: string; state: string }): string {
@@ -111,7 +133,7 @@ export async function exchangeFacebookAuthorizationCode(opts: {
 export async function inspectFacebookAccessToken(opts: {
   accessToken: string;
   fetchImpl?: typeof fetch;
-}): Promise<{ appId: string; isValid: boolean; userId?: string }> {
+}): Promise<{ appId: string; isValid: boolean; userId?: string; scopes: string[] }> {
   const appId = facebookAppId();
   const appSecret = facebookAppSecret();
   if (!appId || !appSecret) {
@@ -124,10 +146,12 @@ export async function inspectFacebookAccessToken(opts: {
   });
   const data = await graphJson(`https://graph.facebook.com/debug_token?${params.toString()}`, opts.fetchImpl || fetch);
   const payload = data?.data || {};
+  const scopes = Array.isArray(payload.scopes) ? payload.scopes.map((s: unknown) => String(s)) : [];
   return {
     appId: String(payload.app_id || ""),
     isValid: Boolean(payload.is_valid),
     userId: payload.user_id ? String(payload.user_id) : undefined,
+    scopes,
   };
 }
 
@@ -181,6 +205,11 @@ export async function verifyFacebookIdentity(opts: {
   const inspection = await inspectFacebookAccessToken({ accessToken: token, fetchImpl: opts.fetchImpl });
   if (!inspection.isValid || inspection.appId !== facebookAppId()) {
     throw new FacebookOAuthError("Facebook access token is invalid for this app.");
+  }
+  if (inspection.scopes.length > 0 && !inspection.scopes.includes("email")) {
+    throw new FacebookOAuthError(
+      "Facebook Login did not grant the email permission. Re-authorize with email and retry."
+    );
   }
 
   const profile = await fetchFacebookMe({ accessToken: token, fetchImpl: opts.fetchImpl });

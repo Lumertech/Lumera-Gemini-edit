@@ -152,6 +152,12 @@ describe("Overview claims", () => {
     assert.match(JSON.stringify(overview), /not a certified Meta Tech Provider/i);
     assert.match(JSON.stringify(overview), /credentials are optional until provisioned/i);
     assert.equal(overview.appReviewStatus.checklist.every((c) => c.passed), false);
+    assert.ok(overview.appReviewStatus.checklist.some((c) => c.item === "Embedded Signup config_id configured"));
+    assert.ok(
+      overview.appReviewStatus.checklist.some((c) =>
+        c.item.includes("whatsapp_business_management / business_management / whatsapp_business_messaging")
+      )
+    );
   });
 });
 

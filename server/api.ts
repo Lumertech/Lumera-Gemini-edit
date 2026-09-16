@@ -71,9 +71,9 @@ import {
   facebookOAuthConfigured,
   facebookRedirectUri,
   oauthPublicConfig,
+  parseFacebookOAuthState,
   resolveFederatedIdentity,
   signFacebookOAuthState,
-  verifyFacebookOAuthState,
 } from "./facebook-oauth.ts";
 import {
   GoogleOAuthError,
@@ -465,7 +465,7 @@ export function createApiRouter(): Router {
     const host = req.get("host") || undefined;
     const proto = req.get("x-forwarded-proto") || req.protocol;
     const redirectUri = facebookRedirectUri(host, proto);
-    const state = signFacebookOAuthState();
+    const state = signFacebookOAuthState(redirectUri);
     return res.redirect(facebookLoginDialogUrl({ redirectUri, state }));
   });
 
@@ -541,13 +541,14 @@ export function createApiRouter(): Router {
     const code = String(req.query.code || "").trim();
     const state = String(req.query.state || "").trim();
     if (!code) return fail("missing_code");
-    if (!verifyFacebookOAuthState(state)) return fail("invalid_state");
+    const parsedState = parseFacebookOAuthState(state);
+    if (!parsedState) return fail("invalid_state");
 
     try {
       const identity = await resolveFederatedIdentity({
         provider: "facebook",
         code,
-        redirectUri: facebookRedirectUri(host, proto),
+        redirectUri: parsedState.redirectUri || facebookRedirectUri(host, proto),
       });
       const user = getDb().prepare("SELECT * FROM users WHERE email = ?").get(identity.email) as unknown as DbUser | undefined;
       if (!user) {
@@ -583,7 +584,10 @@ export function createApiRouter(): Router {
     const proto = req.get("x-forwarded-proto") || req.protocol;
     const defaultRedirect =
       provider === "google" ? googleRedirectUri(host, proto) : facebookRedirectUri(host, proto);
-    const redirectUri = String(req.body?.redirectUri || defaultRedirect).trim();
+    // Production: never trust a client-supplied redirect_uri (must match the dialog + Meta allow-list).
+    const redirectUri = isProduction()
+      ? defaultRedirect
+      : String(req.body?.redirectUri || defaultRedirect).trim();
 
     let identity;
     try {

@@ -67,17 +67,18 @@ function resolveDoctorOwnedNumber(opts: {
     for (const affiliation of affiliations) {
       const patient = findPatientByPhoneInTenant(affiliation.tenantId, phone);
       if (!patient) continue;
+      const patientId = String(patient.id || "");
       const history = getDb()
         .prepare(
           `SELECT id FROM appointments
            WHERE tenant_id = ? AND doctor_id = ? AND (patient_id = ? OR patient_phone = ?)
            LIMIT 1`
         )
-        .get(affiliation.tenantId, affiliation.doctorId, patient.id, phone) as { id?: string } | undefined;
+        .get(affiliation.tenantId, affiliation.doctorId, patientId, phone) as { id?: string } | undefined;
       const patientOnly = !history
         ? getDb()
             .prepare("SELECT id FROM patients WHERE tenant_id = ? AND id = ? LIMIT 1")
-            .get(affiliation.tenantId, patient.id)
+            .get(affiliation.tenantId, patientId)
         : undefined;
       if (history || patientOnly) matchedTenants.add(affiliation.tenantId);
     }

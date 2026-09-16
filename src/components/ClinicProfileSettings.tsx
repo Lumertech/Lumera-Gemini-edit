@@ -4,6 +4,7 @@ import { Doctor, PolyclinicSpecialty, TenantLetterhead } from "../types";
 import { useAuth } from "../auth/AuthContext";
 import { patchTenantLetterhead } from "../lib/letterhead";
 import { PersonalWabaConnect } from "./PersonalWabaConnect";
+import { ClinicWabaConnect } from "./ClinicWabaConnect";
 
 const SPECIALTIES: PolyclinicSpecialty[] = [
   "General Medicine",
@@ -297,6 +298,9 @@ export const ClinicProfileSettings: React.FC<ClinicProfileSettingsProps> = ({
         </div>
       </div>
 
+      {user?.role === "CLINIC_ADMIN" || user?.role === "polyclinic_admin" || user?.role === "doctor" ? (
+        <ClinicWabaConnect />
+      ) : null}
       {user?.role === "doctor" ? <PersonalWabaConnect variant="settings" /> : null}
 
       <button
