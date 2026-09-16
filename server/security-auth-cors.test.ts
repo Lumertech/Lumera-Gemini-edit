@@ -300,6 +300,7 @@ describe("Auth / tenant isolation / CORS / CSRF / rate limit", () => {
     assert.equal(corsShouldReject(fakeReq(undefined), prod), true);
     assert.equal(corsShouldReject(fakeReq(undefined, "/api/meta/webhook"), prod), false);
     assert.equal(corsShouldReject(fakeReq(undefined, "/api/billing/razorpay/webhook"), prod), false);
+    assert.equal(corsShouldReject(fakeReq(undefined, "/api/webhooks/google-calendar"), prod), false);
     assert.equal(corsShouldReject(fakeReq("https://www.mylumera.in"), prod), false);
   });
 
@@ -341,5 +342,13 @@ describe("Auth / tenant isolation / CORS / CSRF / rate limit", () => {
       headers: { cookie: "lumera_sid=abc.def" },
     } as unknown as express.Request;
     assert.equal(csrfShouldReject(webhookReq), false);
+
+    const gcalWebhookReq = {
+      method: "POST",
+      path: "/api/webhooks/google-calendar",
+      originalUrl: "/api/webhooks/google-calendar",
+      headers: { cookie: "lumera_sid=abc.def" },
+    } as unknown as express.Request;
+    assert.equal(csrfShouldReject(gcalWebhookReq), false);
   });
 });
