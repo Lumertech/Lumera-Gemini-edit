@@ -1,1 +1,2383 @@
-PLACEHOLDER_WILL_REPLACE
+import { Router, type Request, type Response } from "express";
+import multer from "multer";
+import fs from "node:fs";
+import path from "node:path";
+import { createWhatsAppRouter } from "./whatsapp.ts";
+import { createMetaRouter } from "./meta.ts";
+import { createAbdmRouter } from "./abdm.ts";
+import {
+  DEMO_TENANT_ID,
+  getDb,
+  mapDoctor,
+  mapSubscription,
+  assignedRoleForPracticeType,
+  normalizePracticeType,
+  publicUser,
+  seedSubscriptionsIfMissing,
+  writeAudit,
+  type DbUser,
+  type UserRole,
+  type UserStatus,
+} from "./db.ts";
+import { persistSpecialtyPackId } from "../src/lib/specialtyPack.ts";
+import { PRODUCT_NAME } from "../src/brand.ts";
+import { reportCaughtError } from "./error-tracker.ts";
+import { createClinicalRouter } from "./clinical.ts";
+import { createBillingRouter } from "./billing.ts";
+import {
+  getTenantLetterhead,
+  parseLetterheadPatch,
+  updateTenantLetterhead,
+} from "./letterhead.ts";
+import {
+  ADMIN_ROLES,
+  CLINICIAN_ROLES,
+  CLINIC_MANAGER_ROLES,
+  USER_MANAGER_ROLES,
+  allowPasswordLoginWithoutOtp,
+  allowSkipOtp,
+  isSeededDemoPasswordSessionEmail,
+  clearSessionCookie,
+  destroySession,
+  getSessionId,
+  issueLumeraSession,
+  isPlatformAdminRole,
+  otpEchoPayload,
+  requireAuth,
+  requirePlatformAdmin,
+  requireRole,
+} from "./auth.ts";
+import {
+  createAdminTenant,
+  ensureTenantSubscription,
+  findPlan,
+  getAdminTenant,
+  getAdminTenantSubscription,
+  listAdminTenants,
+  listPublicPlans,
+  normalizeBillingSource,
+  patchAdminTenant,
+  patchAdminTenantSubscription,
+  clinicTenantAccessError,
+  resolvePlanCode,
+  upsertTenantSubscription,
+} from "./platform-tenants.ts";
+import { generateTemporaryPassword, hashPassword, passwordRuleError, verifyPassword } from "./password.ts";
+import { parseSpecialtyPackInput, resolveSpecialtyPack } from "./specialty-packs.ts";
+import { appPublicUrl, isProduction } from "./runtime.ts";
+import { dispatchWhatsAppCloudMessage, isCloudDispatchFailure } from "./graph-whatsapp.ts";
+import {
+  FacebookOAuthError,
+  facebookLoginDialogUrl,
+  facebookOAuthConfigured,
+  facebookRedirectUri,
+  oauthPublicConfig,
+  parseFacebookOAuthState,
+  resolveFederatedIdentity,
+  signFacebookOAuthState,
+} from "./facebook-oauth.ts";
+import {
+  GoogleOAuthError,
+  googleLoginDialogUrl,
+  googleOAuthConfigured,
+  googleRedirectUri,
+  signGoogleOAuthState,
+  verifyGoogleOAuthState,
+} from "./google-oauth.ts";
+
+const uploadDir = path.join(process.cwd(), "uploads");
+fs.mkdirSync(uploadDir, { recursive: true });
+
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, uploadDir),
+    filename: (_req, file, cb) => {
+      const ext = path.extname(file.originalname || "").slice(0, 8);
+      cb(null, `${crypto.randomUUID()}${ext}`);
+    },
+  }),
+  limits: { fileSize: 8 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype.startsWith("image/")) cb(null, true);
+    else cb(new Error("Only image uploads are allowed"));
+  },
+});
+
+function audit(req: Request, action: string, details: string) {
+  writeAudit(getDb(), req.user?.id || null, req.user?.name || "Anonymous", action, details);
+}
+
+function isSuperAdmin(req: Request): boolean {
+  return req.user?.role === "super_admin" || isPlatformAdminRole(req.user?.role);
+}
+
+function httpStatusError(err: unknown, fallback: string): { status: number; error: string } {
+  const status = typeof err === "object" && err && "status" in err ? Number((err as { status?: number }).status) || 500 : 500;
+  const error = err instanceof Error ? err.message : fallback;
+  return { status, error };
+}
+
+function rejectClinicTenantBlocked(user: { role?: string; tenant_id?: string; tenantId?: string } | null | undefined, res: Response): boolean {
+  const blocked = clinicTenantAccessError(user);
+  if (!blocked) return false;
+  res.status(403).json({ error: blocked });
+  return true;
+}
+
+function requestedTenantId(body: Record<string, unknown> | undefined): string {
+  if (!body) return "";
+  return String(body.tenantId ?? body.tenant_id ?? "").trim();
+}
+
+function requestedDisplayName(body: Record<string, unknown> | undefined, fallback = ""): string {
+  if (!body) return fallback;
+  const raw = body.displayName ?? body.display_name ?? body.name;
+  return raw == null ? fallback : String(raw);
+}
+
+function requestedStatus(body: Record<string, unknown> | undefined, fallback: UserStatus): UserStatus {
+  if (!body) return fallback;
+  if (typeof body.enabled === "boolean") return body.enabled ? "active" : "disabled";
+  if (body.status) return body.status as UserStatus;
+  return fallback;
+}
+
+/** `specialty` is canonical; optional `packId` / `pack_id` alias writes the same enum. */
+function specialtyInputFromBody(body: Record<string, unknown> | undefined): unknown {
+  if (!body) return undefined;
+  if (Object.prototype.hasOwnProperty.call(body, "specialty")) return body.specialty;
+  if (Object.prototype.hasOwnProperty.call(body, "packId")) return body.packId;
+  if (Object.prototype.hasOwnProperty.call(body, "pack_id")) return body.pack_id;
+  return undefined;
+}
+
+function loadUserRow(id: string): DbUser | undefined {
+  return getDb().prepare("SELECT * FROM users WHERE id = ?").get(id) as unknown as DbUser | undefined;
+}
+
+function canManageUser(req: Request, target: { tenant_id?: string }): boolean {
+  if (isSuperAdmin(req)) return true;
+  const actorTenant = req.user?.tenantId || "";
+  if (!actorTenant) return false;
+  return (target.tenant_id || "") === actorTenant;
+}
+
+function syncDoctorPackProfile(user: DbUser) {
+  if (user.role !== "doctor") return;
+  const specialty = resolveSpecialtyPack(user.specialty || user.pack_id || "")?.id || "";
+  const existing = getDb().prepare("SELECT id FROM doctors WHERE user_id = ?").get(user.id) as { id: string } | undefined;
+  if (existing) {
+    getDb()
+      .prepare("UPDATE doctors SET name = ?, specialty = ?, pack_id = ?, phone = ?, email = ? WHERE user_id = ?")
+      .run(user.name, specialty, specialty, user.phone || "", user.email, user.id);
+    return;
+  }
+  getDb()
+    .prepare(
+      `INSERT INTO doctors (id, user_id, name, qualification, reg_number, specialty, experience_years, consultation_fee, opd_room, available_days, opd_timing, phone, email, avatar_url, bio, hpr_id, pack_id, active)
+       VALUES (?, ?, ?, '', '', ?, 0, 0, '', '[]', '', ?, ?, '', '', '', ?, 1)`
+    )
+    .run(`doc-${user.id.slice(0, 8)}`, user.id, user.name, specialty, user.phone || "", user.email, specialty);
+}
+
+function settingsMap(): Record<string, string> {
+  const rows = getDb().prepare("SELECT key, value FROM cms_settings").all() as { key: string; value: string }[];
+  const out: Record<string, string> = {};
+  for (const r of rows) out[r.key] = r.value;
+  return out;
+}
+
+function assemblePublicSite() {
+  const settings = settingsMap();
+  const sections = getDb()
+    .prepare("SELECT id, type, sort_order, payload FROM cms_sections ORDER BY type, sort_order")
+    .all() as { id: string; type: string; sort_order: number; payload: string }[];
+  const parsed = sections.map((s) => ({
+    id: s.id,
+    type: s.type,
+    sortOrder: s.sort_order,
+    ...JSON.parse(s.payload),
+  }));
+  const policies = getDb()
+    .prepare("SELECT slug, title FROM cms_policies ORDER BY title")
+    .all() as { slug: string; title: string }[];
+  let stats: unknown[] = [];
+  try {
+    stats = JSON.parse(settings.stats || "[]");
+  } catch {
+    stats = [];
+  }
+  return {
+    settings: {
+      brandName: settings.brand_name || PRODUCT_NAME,
+      badgeText: settings.badge_text || "",
+      heroTitle: settings.hero_title || "",
+      heroSubtitle: settings.hero_subtitle || "",
+      contactEmail: settings.contact_email || "",
+      ctaPrimary: settings.cta_primary || "Get Started Free",
+      ctaSecondary: settings.cta_secondary || "See Demo",
+      ctaBannerTitle: settings.cta_banner_title || "",
+      ctaBannerSubtitle: settings.cta_banner_subtitle || "",
+      logoUrl: settings.logo_url || "",
+      clinicName: settings.clinic_name || "",
+    },
+    stats,
+    pains: parsed.filter((s) => s.type === "pain"),
+    features: parsed.filter((s) => s.type === "feature"),
+    personas: parsed.filter((s) => s.type === "persona"),
+    testimonials: parsed.filter((s) => s.type === "testimonial"),
+    policies,
+  };
+}
+
+function recordWhatsAppOtpEvent(opts: {
+  phone: string;
+  name: string;
+  otp: string;
+  purpose: string;
+  status: string;
+  details: string;
+  payload: Record<string, unknown>;
+  conversationContent?: string;
+}) {
+  try {
+    const db = getDb();
+    const now = new Date().toISOString();
+    const timeDisplay = new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
+    const cleanPhone = opts.phone.trim() || "+91 98234 55667";
+    const convId = `conv-otp-${cleanPhone.replace(/\D/g, "").slice(-8) || "user"}`;
+    const userName = opts.name.trim() || "Healthcare Clinician";
+
+    let conv = db
+      .prepare("SELECT * FROM whatsapp_conversations WHERE id = ? OR patient_phone = ?")
+      .get(convId, cleanPhone) as Record<string, unknown> | undefined;
+
+    if (!conv) {
+      db.prepare(`
+        INSERT INTO whatsapp_conversations (id, patient_phone, patient_name, handover_mode, assigned_staff, tags, preferred_language, unread_count, last_message, last_message_time, updated_at)
+        VALUES (?, ?, ?, 'bot', 'Lumera Security Engine', '["Security", "OTP"]', 'en', 0, ?, ?, ?)
+      `).run(convId, cleanPhone, userName, opts.details, timeDisplay, now);
+    } else {
+      db.prepare(`
+        UPDATE whatsapp_conversations
+        SET last_message = ?, last_message_time = ?, updated_at = ?
+        WHERE id = ?
+      `).run(opts.details, timeDisplay, now, String(conv.id));
+    }
+
+    if (opts.conversationContent) {
+      const msgId = `msg-otp-${crypto.randomUUID().slice(0, 8)}`;
+      db.prepare(`
+        INSERT INTO whatsapp_messages (id, conversation_id, patient_phone, sender, staff_name, content, translated_content, detected_language, time_display, buttons, media, status, created_at)
+        VALUES (?, ?, ?, 'agent', 'Lumera Security Bot', ?, null, 'en', ?, null, null, ?, ?)
+      `).run(msgId, convId, cleanPhone, opts.conversationContent, timeDisplay, opts.status, now);
+    }
+
+    const eventId = `evt-otp-${crypto.randomUUID().slice(0, 8)}`;
+    db.prepare(`
+      INSERT INTO whatsapp_outbound_events (id, event_type, patient_phone, patient_name, status, details, action_payload, sent_at)
+      VALUES (?, 'otp_verification', ?, ?, ?, ?, ?, ?)
+    `).run(eventId, cleanPhone, userName, opts.status, opts.details, JSON.stringify(opts.payload), now);
+  } catch (err) {
+    console.error("Failed to record WhatsApp OTP dispatch in database:", err);
+  }
+}
+
+export type OtpDispatchResult =
+  | { ok: true; channel: "graph" | "sandbox"; messageId?: string }
+  | { ok: false; error: string; channel: "none" | "graph" };
+
+async function dispatchWhatsAppOtpMessage(phone: string, name: string, otp: string, purpose: string): Promise<OtpDispatchResult> {
+  const sent = await dispatchWhatsAppCloudMessage({
+    to: phone,
+    kind: "otp",
+    textBody: `Lumera verification code: ${otp}\nAction: ${purpose}\nValid for 5 minutes. Do not share this code.`,
+    otp,
+    purpose,
+    db: getDb(),
+  });
+
+  if (sent.ok && sent.channel === "graph") {
+    recordWhatsAppOtpEvent({
+      phone,
+      name,
+      otp,
+      purpose,
+      status: "sent",
+      details: `WhatsApp Cloud API OTP accepted for ${purpose}`,
+      payload: { purpose, channel: "graph", messageId: sent.messageId },
+    });
+    return { ok: true, channel: "graph", messageId: sent.messageId };
+  }
+
+  if (isCloudDispatchFailure(sent)) {
+    if (sent.channel === "graph") {
+      recordWhatsAppOtpEvent({
+        phone,
+        name,
+        otp,
+        purpose,
+        status: "failed",
+        details: `Graph OTP send failed for ${purpose}: ${sent.error}`,
+        payload: { purpose, channel: "graph", error: sent.error },
+      });
+      return { ok: false, error: sent.error, channel: "graph" };
+    }
+    recordWhatsAppOtpEvent({
+      phone,
+      name,
+      otp,
+      purpose,
+      status: "failed",
+      details: "OTP not delivered: META_ACCESS_TOKEN and META_PHONE_NUMBER_ID (or a real tenant token) are required in production.",
+      payload: { purpose, channel: "none", sandbox: false },
+    });
+    return {
+      ok: false,
+      channel: "none",
+      error:
+        "WhatsApp Cloud API is not configured. Set META_ACCESS_TOKEN and META_PHONE_NUMBER_ID (or a real tenant phone_number_id + token). OTP was not delivered.",
+    };
+  }
+
+  const content = `SANDBOX / DEV-ONLY OTP (not sent via Graph)\n\nYour 6-digit verification code is:\n\n*${otp}*\n\nAction: ${
+    purpose === "register"
+      ? "New Clinic Registration"
+      : purpose === "password_reset"
+      ? "Password Recovery"
+      : "Sign In & WhatsApp Phone Binding"
+  }\nStatus: SANDBOX recorded (Valid for 5 minutes)`;
+
+  recordWhatsAppOtpEvent({
+    phone,
+    name,
+    otp,
+    purpose,
+    status: "sandbox_recorded",
+    details: `SANDBOX / DEV-ONLY OTP recorded locally for ${purpose} (not Graph)`,
+    payload: { otp, purpose, sandbox: true, channel: "sandbox" },
+    conversationContent: content,
+  });
+  return { ok: true, channel: "sandbox" };
+}
+
+function otpDispatchFailure(res: Response, result: OtpDispatchResult) {
+  if (result.ok === false) {
+    res.status(503).json({
+      error: result.error,
+      otpDelivered: false,
+      channel: result.channel,
+    });
+    return true;
+  }
+  return false;
+}
+
+export function createApiRouter(): Router {
+  const api = Router();
+
+  api.post("/auth/login", async (req: Request, res: Response) => {
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    const password = String(req.body?.password || "");
+
+    if (!email || !password) {
+      return res.status(400).json({ error: "Email and password are required" });
+    }
+    const user = getDb().prepare("SELECT * FROM users WHERE email = ?").get(email) as unknown as DbUser | undefined;
+    if (!user || !verifyPassword(password, user.password_hash)) {
+      return res.status(401).json({ error: "Invalid email or password" });
+    }
+    if (user.status === "disabled") {
+      return res.status(403).json({ error: "This account has been disabled" });
+    }
+    if (rejectClinicTenantBlocked(user, res)) return;
+
+    const issuePasswordSession = (reason: string) => {
+      const jwtToken = issueLumeraSession(res, user);
+      getDb()
+        .prepare("UPDATE users SET last_login = ?, whatsapp_verified = 1 WHERE id = ?")
+        .run(new Date().toISOString(), user.id);
+      writeAudit(getDb(), user.id, user.name, "Login", `${user.email} signed in (${reason})`);
+      return res.json({ user: publicUser(user), token: jwtToken, requiresOtp: false });
+    };
+
+    // MUST: admin / seeded @lumera.me demo matrix email+password is a production session — not skipOtp.
+    // Honesty: sandbox/demo password session for product demos; clinic emails still Graph-OTP gated.
+    const passwordSession = allowPasswordLoginWithoutOtp(user);
+    const skipOtp = Boolean(req.body?.skipOtp) && (allowSkipOtp() || passwordSession);
+    if (passwordSession || skipOtp) {
+      const reason = passwordSession
+        ? isSeededDemoPasswordSessionEmail(user.email)
+          ? "sandbox/demo password session"
+          : "admin password session"
+        : "direct session";
+      return issuePasswordSession(reason);
+    }
+
+    // Mandatory WhatsApp Business Phone Binding & Verification
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const verificationId = crypto.randomUUID();
+    const phone = user.phone || "+91 98234 55667";
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+
+    getDb().prepare(`
+      INSERT INTO otp_verifications (id, phone, email, otp, purpose, payload, created_at, expires_at)
+      VALUES (?, ?, ?, ?, 'login', ?, ?, ?)
+    `).run(
+      verificationId,
+      phone,
+      user.email,
+      otp,
+      JSON.stringify({ userId: user.id, email: user.email }),
+      new Date().toISOString(),
+      expiresAt
+    );
+
+    const sent = await dispatchWhatsAppOtpMessage(phone, user.name, otp, "login");
+    if (otpDispatchFailure(res, sent)) return;
+
+    return res.json({
+      requiresOtp: true,
+      verificationId,
+      phone,
+      email: user.email,
+      ...otpEchoPayload(otp),
+      expiresAt,
+      user: publicUser(user),
+      otpChannel: sent.ok ? sent.channel : undefined,
+      message:
+        sent.ok && sent.channel === "graph"
+          ? "Security code dispatched via WhatsApp Cloud API."
+          : "SANDBOX / DEV-ONLY: security code recorded locally (not sent via Graph).",
+    });
+  });
+
+  api.get("/auth/oauth-config", (_req: Request, res: Response) => {
+    res.json(oauthPublicConfig());
+  });
+
+  api.get("/auth/facebook", (req: Request, res: Response) => {
+    if (!facebookOAuthConfigured()) {
+      if (isProduction()) {
+        return res.status(503).json({ error: "Facebook Login is not configured (FACEBOOK_APP_ID / FACEBOOK_APP_SECRET)." });
+      }
+      return res.redirect("/login?oauth=facebook&error=not_configured");
+    }
+    const host = req.get("host") || undefined;
+    const proto = req.get("x-forwarded-proto") || req.protocol;
+    const redirectUri = facebookRedirectUri(host, proto);
+    const state = signFacebookOAuthState(redirectUri);
+    return res.redirect(facebookLoginDialogUrl({ redirectUri, state }));
+  });
+
+  api.get("/auth/google", (req: Request, res: Response) => {
+    if (!googleOAuthConfigured()) {
+      if (isProduction()) {
+        return res.status(503).json({ error: "Google Sign-in is not configured (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET)." });
+      }
+      return res.redirect("/login?oauth=google&error=not_configured");
+    }
+    const host = req.get("host") || undefined;
+    const proto = req.get("x-forwarded-proto") || req.protocol;
+    const redirectUri = googleRedirectUri(host, proto);
+    const state = signGoogleOAuthState();
+    return res.redirect(googleLoginDialogUrl({ redirectUri, state }));
+  });
+
+  api.get("/auth/google/callback", async (req: Request, res: Response) => {
+    const host = req.get("host") || undefined;
+    const proto = req.get("x-forwarded-proto") || req.protocol;
+    const appUrl = appPublicUrl(host, proto);
+    const fail = (reason: string) => res.redirect(`${appUrl}/login?oauth=google&error=${encodeURIComponent(reason)}`);
+
+    const errorParam = String(req.query.error || "").trim();
+    if (errorParam) return fail(errorParam);
+
+    const code = String(req.query.code || "").trim();
+    const state = String(req.query.state || "").trim();
+    if (!code) return fail("missing_code");
+    if (!verifyGoogleOAuthState(state)) return fail("invalid_state");
+
+    try {
+      const identity = await resolveFederatedIdentity({
+        provider: "google",
+        code,
+        redirectUri: googleRedirectUri(host, proto),
+      });
+      const user = getDb().prepare("SELECT * FROM users WHERE email = ?").get(identity.email) as unknown as DbUser | undefined;
+      if (!user) {
+        const params = new URLSearchParams({
+          oauth: "google",
+          unregistered: "1",
+          email: identity.email,
+          name: identity.name,
+        });
+        return res.redirect(`${appUrl}/login?${params.toString()}`);
+      }
+      if (user.status === "disabled") return fail("account_disabled");
+      const tenantBlocked = clinicTenantAccessError(user);
+      if (tenantBlocked) return fail("tenant_suspended");
+
+      issueLumeraSession(res, user);
+      getDb()
+        .prepare("UPDATE users SET last_login = ?, whatsapp_verified = 1, avatar_url = COALESCE(NULLIF(?, ''), avatar_url) WHERE id = ?")
+        .run(new Date().toISOString(), identity.avatarUrl, user.id);
+      writeAudit(getDb(), user.id, user.name, "OAuth Sign In", `${user.email} signed in via google (Google-verified)`);
+      return res.redirect(`${appUrl}/login?oauth=google&status=ok`);
+    } catch (err) {
+      const message = err instanceof GoogleOAuthError || err instanceof FacebookOAuthError ? err.message : "google_oauth_failed";
+      return fail(message);
+    }
+  });
+
+  api.get("/auth/facebook/callback", async (req: Request, res: Response) => {
+    const host = req.get("host") || undefined;
+    const proto = req.get("x-forwarded-proto") || req.protocol;
+    const appUrl = appPublicUrl(host, proto);
+    const fail = (reason: string) => res.redirect(`${appUrl}/login?oauth=facebook&error=${encodeURIComponent(reason)}`);
+
+    const errorParam = String(req.query.error || "").trim();
+    if (errorParam) return fail(errorParam);
+
+    const code = String(req.query.code || "").trim();
+    const state = String(req.query.state || "").trim();
+    if (!code) return fail("missing_code");
+    const parsedState = parseFacebookOAuthState(state);
+    if (!parsedState) return fail("invalid_state");
+
+    try {
+      const identity = await resolveFederatedIdentity({
+        provider: "facebook",
+        code,
+        redirectUri: parsedState.redirectUri || facebookRedirectUri(host, proto),
+      });
+      const user = getDb().prepare("SELECT * FROM users WHERE email = ?").get(identity.email) as unknown as DbUser | undefined;
+      if (!user) {
+        const params = new URLSearchParams({
+          oauth: "facebook",
+          unregistered: "1",
+          email: identity.email,
+          name: identity.name,
+        });
+        return res.redirect(`${appUrl}/login?${params.toString()}`);
+      }
+      if (user.status === "disabled") return fail("account_disabled");
+      const tenantBlocked = clinicTenantAccessError(user);
+      if (tenantBlocked) return fail("tenant_suspended");
+
+      issueLumeraSession(res, user);
+      getDb()
+        .prepare("UPDATE users SET last_login = ?, whatsapp_verified = 1, avatar_url = COALESCE(NULLIF(?, ''), avatar_url) WHERE id = ?")
+        .run(new Date().toISOString(), identity.avatarUrl, user.id);
+      writeAudit(getDb(), user.id, user.name, "OAuth Sign In", `${user.email} signed in via facebook (Graph-verified)`);
+      return res.redirect(`${appUrl}/login?oauth=facebook&status=ok`);
+    } catch (err) {
+      const message = err instanceof FacebookOAuthError ? err.message : "facebook_oauth_failed";
+      return fail(message);
+    }
+  });
+
+  // Federated OAuth: Google/Facebook require provider-verified identity in production.
+  api.post("/auth/oauth", async (req: Request, res: Response) => {
+    const provider = String(req.body?.provider || "google").toLowerCase();
+    const profile = req.body?.profile || {};
+    const host = req.get("host") || undefined;
+    const proto = req.get("x-forwarded-proto") || req.protocol;
+    const defaultRedirect =
+      provider === "google" ? googleRedirectUri(host, proto) : facebookRedirectUri(host, proto);
+    // Production: never trust a client-supplied redirect_uri (must match the dialog + Meta allow-list).
+    const redirectUri = isProduction()
+      ? defaultRedirect
+      : String(req.body?.redirectUri || defaultRedirect).trim();
+
+    let identity;
+    try {
+      identity = await resolveFederatedIdentity({
+        provider,
+        code: String(req.body?.code || "").trim() || undefined,
+        accessToken: String(req.body?.accessToken || req.body?.access_token || "").trim() || undefined,
+        redirectUri,
+        clientEmail: String(profile?.email || req.body?.email || "").trim().toLowerCase(),
+        clientName: String(profile?.name || "").trim(),
+        clientAvatarUrl: String(profile?.avatarUrl || "").trim(),
+      });
+    } catch (err) {
+      const status = err instanceof FacebookOAuthError || err instanceof GoogleOAuthError ? err.status : 401;
+      const message = err instanceof Error ? err.message : "OAuth verification failed.";
+      return res.status(status).json({ error: message });
+    }
+
+    const user = getDb().prepare("SELECT * FROM users WHERE email = ?").get(identity.email) as unknown as DbUser | undefined;
+    const providerLabel = identity.provider === "google" ? "Google" : "Facebook";
+
+    if (!user) {
+      return res.json({
+        unregistered: true,
+        provider: identity.provider,
+        email: identity.email,
+        name: identity.name,
+        avatarUrl: identity.avatarUrl,
+        sandbox: Boolean(identity.sandbox),
+        message: identity.sandbox
+          ? "SANDBOX / DEV-ONLY: no clinic account for this email. Complete clinic registration."
+          : `No existing clinic account found with this verified ${providerLabel} email. Please complete clinic registration.`,
+      });
+    }
+
+    if (user.status === "disabled") {
+      return res.status(403).json({ error: "This account has been disabled" });
+    }
+    if (rejectClinicTenantBlocked(user, res)) return;
+
+    const skipOtp = Boolean(req.body?.skipOtp) && allowSkipOtp();
+    const federatedVerified =
+      (identity.provider === "facebook" || identity.provider === "google") && !identity.sandbox;
+    if (federatedVerified || skipOtp) {
+      const jwtToken = issueLumeraSession(res, user);
+      getDb()
+        .prepare("UPDATE users SET last_login = ?, whatsapp_verified = 1, avatar_url = COALESCE(NULLIF(?, ''), avatar_url) WHERE id = ?")
+        .run(new Date().toISOString(), identity.avatarUrl, user.id);
+      writeAudit(
+        getDb(),
+        user.id,
+        user.name,
+        "OAuth Sign In",
+        `${user.email} signed in via ${identity.provider}${identity.sandbox ? " (SANDBOX / DEV-ONLY client email)" : " (provider-verified)"}`
+      );
+      return res.json({
+        user: publicUser(user),
+        token: jwtToken,
+        requiresOtp: false,
+        sandbox: Boolean(identity.sandbox),
+        notice: identity.sandbox ? "SANDBOX / DEV-ONLY: session issued from client-supplied email. Disabled in production." : undefined,
+      });
+    }
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const verificationId = crypto.randomUUID();
+    const phone = user.phone || "+91 98234 55667";
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+
+    getDb().prepare(`
+      INSERT INTO otp_verifications (id, phone, email, otp, purpose, payload, created_at, expires_at)
+      VALUES (?, ?, ?, ?, 'login', ?, ?, ?)
+    `).run(
+      verificationId,
+      phone,
+      user.email,
+      otp,
+      JSON.stringify({ userId: user.id, provider: identity.provider, avatarUrl: identity.avatarUrl || user.avatar_url }),
+      new Date().toISOString(),
+      expiresAt
+    );
+
+    const sent = await dispatchWhatsAppOtpMessage(phone, user.name, otp, "login");
+    if (otpDispatchFailure(res, sent)) return;
+
+    return res.json({
+      requiresOtp: true,
+      verificationId,
+      phone,
+      email: user.email,
+      ...otpEchoPayload(otp),
+      provider: identity.provider,
+      user: publicUser(user),
+      sandbox: Boolean(identity.sandbox),
+      message: identity.sandbox
+        ? `SANDBOX / DEV-ONLY ${identity.provider} sign-in. Verify WhatsApp to continue.`
+        : `Signed in with ${identity.provider === "google" ? "Google" : "Facebook"}. Please verify your WhatsApp Business number.`,
+    });
+  });
+
+  // WhatsApp OTP Dispatch Engine
+  api.post("/auth/whatsapp/send-otp", async (req: Request, res: Response) => {
+    const phone = String(req.body?.phone || "").trim();
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    const purpose = String(req.body?.purpose || "login");
+    const name = String(req.body?.name || "Clinician");
+    const payload = req.body?.payload ? JSON.stringify(req.body.payload) : "{}";
+
+    if (!phone) {
+      return res.status(400).json({ error: "WhatsApp Business phone number is required" });
+    }
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const verificationId = crypto.randomUUID();
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+
+    getDb().prepare(`
+      INSERT INTO otp_verifications (id, phone, email, otp, purpose, payload, created_at, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(verificationId, phone, email, otp, purpose, payload, new Date().toISOString(), expiresAt);
+
+    const sent = await dispatchWhatsAppOtpMessage(phone, name, otp, purpose);
+    if (otpDispatchFailure(res, sent)) return;
+
+    return res.json({
+      ok: true,
+      verificationId,
+      phone,
+      ...otpEchoPayload(otp),
+      expiresAt,
+      status: sent.ok && sent.channel === "graph" ? "sent" : "sandbox_recorded",
+      channel: sent.ok && sent.channel === "graph" ? "WhatsApp Cloud API" : "SANDBOX / DEV-ONLY SQLite",
+      sandbox: sent.ok && sent.channel === "sandbox",
+      message:
+        sent.ok && sent.channel === "graph"
+          ? "6-digit OTP sent via WhatsApp Cloud API."
+          : "SANDBOX / DEV-ONLY: OTP recorded locally (not sent via Graph).",
+    });
+  });
+
+  // Live Interactive WhatsApp Verification & Session Finalization
+  api.post("/auth/whatsapp/verify-otp", (req: Request, res: Response) => {
+    const verificationId = String(req.body?.verificationId || "").trim();
+    const inputOtp = String(req.body?.otp || "").trim();
+    const updatedPhone = String(req.body?.updatedPhone || "").trim();
+
+    if (!verificationId || !inputOtp) {
+      return res.status(400).json({ error: "Verification ID and 6-digit OTP are required" });
+    }
+
+    const record = getDb()
+      .prepare("SELECT * FROM otp_verifications WHERE id = ?")
+      .get(verificationId) as {
+        id: string;
+        phone: string;
+        email: string;
+        otp: string;
+        purpose: string;
+        payload: string;
+        created_at: string;
+        expires_at: string;
+        verified_at: string | null;
+      } | undefined;
+
+    if (!record) {
+      return res.status(400).json({ error: "Invalid or expired verification session. Please request a new OTP." });
+    }
+
+    if (new Date(record.expires_at).getTime() < Date.now()) {
+      return res.status(400).json({ error: "This OTP code has expired. Please click resend to get a fresh code." });
+    }
+
+    if (record.otp !== inputOtp) {
+      return res.status(400).json({ error: "Incorrect 6-digit verification code. Please check your WhatsApp and retry." });
+    }
+
+    // Mark verified
+    getDb().prepare("UPDATE otp_verifications SET verified_at = ? WHERE id = ?").run(new Date().toISOString(), verificationId);
+
+    let payload: Record<string, any> = {};
+    try {
+      payload = JSON.parse(record.payload || "{}");
+    } catch {
+      payload = {};
+    }
+
+    const now = new Date().toISOString();
+
+    if (record.purpose === "login") {
+      let user = payload.userId
+        ? (getDb().prepare("SELECT * FROM users WHERE id = ?").get(payload.userId) as unknown as DbUser | undefined)
+        : undefined;
+
+      if (!user && record.email) {
+        user = getDb().prepare("SELECT * FROM users WHERE email = ?").get(record.email) as unknown as DbUser | undefined;
+      }
+
+      if (!user && record.phone) {
+        const rawDigits = record.phone.replace(/\D/g, "");
+        const last10 = rawDigits.slice(-10);
+        user = getDb()
+          .prepare("SELECT * FROM users WHERE phone LIKE ? OR phone = ?")
+          .get(`%${last10}%`, record.phone) as unknown as DbUser | undefined;
+      }
+
+      // Fail closed: never fall back to an arbitrary doctor/user (LIMIT 1) if lookup misses.
+      if (!user) {
+        return res.status(404).json({ error: "User profile could not be located." });
+      }
+      if (rejectClinicTenantBlocked(user, res)) return;
+
+      const activePhone = updatedPhone || record.phone || user.phone;
+      const avatarUrl = payload.avatarUrl || user.avatar_url || "";
+
+      getDb().prepare(`
+        UPDATE users 
+        SET last_login = ?, whatsapp_verified = 1, phone = ?, avatar_url = ?
+        WHERE id = ?
+      `).run(now, activePhone, avatarUrl, user.id);
+
+      const updatedUser = getDb().prepare("SELECT * FROM users WHERE id = ?").get(user.id) as unknown as DbUser;
+      const jwtToken = issueLumeraSession(res, updatedUser);
+      writeAudit(getDb(), user.id, user.name, "WhatsApp Verified", `WhatsApp phone ${activePhone} verified for ${user.email}`);
+
+      return res.json({
+        ok: true,
+        user: publicUser(updatedUser),
+        token: jwtToken,
+        message: "WhatsApp Business verification confirmed. Welcome back!",
+      });
+    }
+
+    if (record.purpose === "register") {
+      const practiceName = payload.practiceName || payload.clinicName || "New Clinic";
+      const mappedRegisterSpecialty = persistSpecialtyPackId(payload.specialty || "General Medicine", { required: true });
+      const specialty = mappedRegisterSpecialty.ok ? mappedRegisterSpecialty.id : "gp";
+      const country = payload.country || "India";
+      const timezone = payload.timezone || "IST (UTC+5:30)";
+      const phone = record.phone || payload.phone || "";
+      const name = payload.name || "Practice Director";
+      const email = record.email || payload.email || "";
+      const passwordHash = payload.passwordHash || hashPassword("Lumera@2026");
+      const avatarUrl = payload.avatarUrl || "";
+
+      let tenantId = payload.tenantId;
+      let userId = payload.userId;
+      let hfrId = payload.hfrId;
+      let hprId = payload.hprId;
+
+      const trialEndsAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
+      // Ensure tenant exists
+      if (!tenantId) {
+        tenantId = `tenant-${crypto.randomUUID().slice(0, 8)}`;
+        hfrId = `IN-HFR-${Math.floor(10000000 + Math.random() * 90000000)}`;
+        getDb().prepare(`
+          INSERT INTO tenants (id, name, specialty, country, timezone, phone, trial_ends_at, ai_scribe_minutes_limit, ai_scribe_minutes_used, active_status, hfr_id, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, 500, 0, 1, ?, ?, ?)
+        `).run(tenantId, practiceName, specialty, country, timezone, updatedPhone || phone, trialEndsAt, hfrId, now, now);
+      } else if (updatedPhone) {
+        getDb().prepare("UPDATE tenants SET phone = ?, updated_at = ? WHERE id = ?").run(updatedPhone, now, tenantId);
+      }
+
+      // Ensure DHIS transactions entry exists
+      const existingDhis = getDb().prepare("SELECT id FROM dhis_transactions WHERE tenant_id = ?").get(tenantId);
+      if (!existingDhis) {
+        const dhisId = `dhis-${crypto.randomUUID().slice(0, 8)}`;
+        const currentMonth = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
+        getDb().prepare(`
+          INSERT INTO dhis_transactions (id, tenant_id, claims_count, claims_threshold, month_year, status, created_at, updated_at)
+          VALUES (?, ?, 0, 100, ?, 'active', ?, ?)
+        `).run(dhisId, tenantId, currentMonth, now, now);
+      }
+
+      // Ensure user exists with CLINIC_ADMIN role mapped to tenant_id
+      let existingUser = userId
+        ? (getDb().prepare("SELECT * FROM users WHERE id = ?").get(userId) as unknown as DbUser | undefined)
+        : undefined;
+
+      if (!existingUser && email) {
+        existingUser = getDb().prepare("SELECT * FROM users WHERE email = ?").get(email) as unknown as DbUser | undefined;
+      }
+
+      if (!existingUser) {
+        userId = `user-${crypto.randomUUID().slice(0, 8)}`;
+        hprId = hprId || `IN-HPR-${Math.floor(10000000 + Math.random() * 90000000)}`;
+        getDb().prepare(`
+          INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, clinic_name, avatar_url, whatsapp_verified, hpr_id, hfr_id, onboarding_completed, practice_type, specialty, pack_id, last_login, created_at)
+          VALUES (?, ?, ?, ?, ?, 'doctor', 'active', ?, ?, ?, 1, ?, ?, 0, 'individual', ?, ?, ?, ?)
+        `).run(
+          userId,
+          tenantId,
+          email,
+          passwordHash,
+          name,
+          updatedPhone || phone,
+          practiceName,
+          avatarUrl,
+          hprId,
+          hfrId,
+          specialty,
+          specialty,
+          now,
+          now
+        );
+      } else {
+        userId = existingUser.id;
+        hprId = existingUser.hpr_id || hprId || `IN-HPR-${Math.floor(10000000 + Math.random() * 90000000)}`;
+        getDb().prepare(`
+          UPDATE users 
+          SET tenant_id = COALESCE(NULLIF(tenant_id, ''), ?),
+              clinic_name = ?,
+              phone = ?,
+              whatsapp_verified = 1,
+              last_login = ?,
+              hpr_id = COALESCE(NULLIF(hpr_id, ''), ?),
+              hfr_id = COALESCE(NULLIF(hfr_id, ''), ?)
+          WHERE id = ?
+        `).run(tenantId, practiceName, updatedPhone || phone, now, hprId, hfrId, userId);
+      }
+
+      // Ensure Doctor entry exists for EHR suite (blank credentials until onboarding)
+      const existingDoc = getDb().prepare("SELECT id FROM doctors WHERE user_id = ?").get(userId);
+      if (!existingDoc) {
+        const docId = `doc-${crypto.randomUUID().slice(0, 8)}`;
+        getDb().prepare(`
+          INSERT INTO doctors (id, user_id, name, qualification, reg_number, specialty, experience_years, consultation_fee, opd_room, available_days, opd_timing, avatar_url, bio, hpr_id, phone, email, signature_url, slot_duration_minutes, rx_template, active)
+          VALUES (?, ?, ?, '', '', ?, 0, 0, '', '["Mon","Tue","Wed","Thu","Fri","Sat"]', '', ?, '', ?, ?, ?, '', 15, 'classic', 1)
+        `).run(
+          docId,
+          userId,
+          name.startsWith("Dr.") ? name : `Dr. ${name}`,
+          specialty,
+          avatarUrl,
+          hprId,
+          updatedPhone || phone,
+          email
+        );
+      }
+
+      // Ensure Subscription trial
+      const subId = `sub-${crypto.randomUUID().slice(0, 8)}`;
+      getDb().prepare(`
+        INSERT OR REPLACE INTO subscriptions (id, user_id, status, plan_type, monthly_price, auto_renew, started_at, ends_at, notes)
+        VALUES (?, ?, 'active', 'Enterprise Trial', 0, 1, ?, ?, ?)
+      `).run(
+        subId,
+        userId,
+        now,
+        trialEndsAt,
+        JSON.stringify({
+          tenantId,
+          practiceName,
+          specialty,
+          country,
+          timezone,
+          hfrId,
+          hprId,
+          aiScribeMinutesLimit: 500,
+          dhisTransactionsLimit: 100,
+          trialDays: 30,
+          activeStatus: true,
+        })
+      );
+      ensureTenantSubscription(getDb(), tenantId, { planCode: "trial", status: "trial", billingSource: "sandbox" });
+
+      const updatedUser = getDb().prepare("SELECT * FROM users WHERE id = ?").get(userId) as unknown as DbUser;
+      const jwtToken = issueLumeraSession(res, updatedUser);
+
+      writeAudit(getDb(), updatedUser.id, updatedUser.name, "Practice Registered", `Registered and activated tenant: ${practiceName} (HFR: ${hfrId || "Active"})`);
+
+      return res.json({
+        ok: true,
+        user: publicUser(updatedUser),
+        token: jwtToken,
+        tenantId,
+        role: updatedUser.role,
+        message: `Welcome to Lumera! ${practiceName} has been activated with 500 AI Scribe minutes and 100 monthly DHIS transactions.`,
+      });
+    }
+
+    if (record.purpose === "password_reset") {
+      return res.json({
+        ok: true,
+        verified: true,
+        message: "OTP code verified. You can now set your new password.",
+      });
+    }
+
+    return res.json({ ok: true, message: "Verification confirmed." });
+  });
+
+  // Practice Registration Endpoint: Creates Tenant, CLINIC_ADMIN, ABDM HFR/HPR, DHIS threshold, and dispatches WhatsApp OTP
+  const handleRegisterPractice = async (req: Request, res: Response) => {
+    const practiceName = String(req.body?.practiceName || req.body?.clinicName || "").trim();
+    const mappedSpecialty = persistSpecialtyPackId(req.body?.specialty || "General Medicine", { required: true });
+    if (!mappedSpecialty.ok) {
+      return res.status(400).json({ error: mappedSpecialty.error });
+    }
+    const specialty = mappedSpecialty.id;
+    const country = String(req.body?.country || "India").trim();
+    const timezone = String(req.body?.timezone || "IST (UTC+5:30)").trim();
+    const phone = String(req.body?.phone || "").trim();
+    const name = String(req.body?.name || "").trim();
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    const password = String(req.body?.password || "");
+    const avatarUrl = String(req.body?.avatarUrl || "");
+    // Missing / empty / unknown → individual. Multispecialty only if the client sent an explicit alias.
+    const practiceType = normalizePracticeType(req.body?.practiceType);
+    const assignedRole = assignedRoleForPracticeType(practiceType);
+
+    if (!practiceName || !phone || !name || !email) {
+      return res.status(400).json({ error: "Practice Name, Director Name, Email, and WhatsApp Phone are required." });
+    }
+
+    // Check if email already registered
+    const existing = getDb().prepare("SELECT id FROM users WHERE email = ?").get(email);
+    if (existing) {
+      return res.status(400).json({
+        error: "An account with this email address already exists. Please switch to Sign In or reset your password.",
+      });
+    }
+
+    const now = new Date().toISOString();
+    const trialEndsAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
+    // 1. TENANT CREATION:
+    const tenantId = `tenant-${crypto.randomUUID().slice(0, 8)}`;
+    // ABDM HFR (Health Facility Registry ID) placeholder
+    const hfrId = `IN-HFR-${Math.floor(10000000 + Math.random() * 90000000)}`;
+
+    getDb().prepare(`
+      INSERT INTO tenants (id, name, specialty, country, timezone, phone, trial_ends_at, ai_scribe_minutes_limit, ai_scribe_minutes_used, active_status, hfr_id, created_at, updated_at, practice_type, lifecycle_status, owner_name, owner_email, owner_phone, email)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 500, 0, 1, ?, ?, ?, ?, 'trial', ?, ?, ?, ?)
+    `).run(tenantId, practiceName, specialty, country, timezone, phone, trialEndsAt, hfrId, now, now, practiceType, name, email, phone, email);
+
+    // 2. PRIMARY USER CREATION (doctor for individual practice, CLINIC_ADMIN for multispecialty clinic) mapped to new tenant ID:
+    const userId = `user-${crypto.randomUUID().slice(0, 8)}`;
+    // ABDM HPR (Healthcare Professionals Registry ID) placeholder
+    const hprId = `IN-HPR-${Math.floor(10000000 + Math.random() * 90000000)}`;
+    const passwordHash = password ? hashPassword(password) : hashPassword("Lumera@2026");
+
+    getDb().prepare(`
+      INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, clinic_name, avatar_url, whatsapp_verified, hpr_id, hfr_id, onboarding_completed, practice_type, specialty, pack_id, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, 0, ?, ?, 0, ?, ?, ?, ?)
+    `).run(userId, tenantId, email, passwordHash, name, assignedRole, phone, practiceName, avatarUrl, hprId, hfrId, practiceType, specialty, specialty, now);
+
+    // 3. DHIS TRANSACTIONS INITIALIZATION (0/100 threshold for current month):
+    const dhisId = `dhis-${crypto.randomUUID().slice(0, 8)}`;
+    const currentMonth = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
+
+    getDb().prepare(`
+      INSERT INTO dhis_transactions (id, tenant_id, claims_count, claims_threshold, month_year, status, created_at, updated_at)
+      VALUES (?, ?, 0, 100, ?, 'active', ?, ?)
+    `).run(dhisId, tenantId, currentMonth, now, now);
+
+    // 4. Clinical Doctor Profile — empty credentials until the onboarding wizard is completed.
+    const docId = `doc-${crypto.randomUUID().slice(0, 8)}`;
+    getDb().prepare(`
+      INSERT INTO doctors (id, user_id, name, qualification, reg_number, specialty, experience_years, consultation_fee, opd_room, available_days, opd_timing, avatar_url, bio, hpr_id, phone, email, signature_url, slot_duration_minutes, rx_template, active)
+      VALUES (?, ?, ?, '', '', ?, 0, 0, '', '["Mon","Tue","Wed","Thu","Fri","Sat"]', '', ?, '', ?, ?, ?, '', 15, 'classic', 1)
+    `).run(
+      docId,
+      userId,
+      name.startsWith("Dr.") ? name : `Dr. ${name}`,
+      specialty,
+      avatarUrl,
+      hprId,
+      phone,
+      email
+    );
+
+    // 5. Subscription seed:
+    const subId = `sub-${crypto.randomUUID().slice(0, 8)}`;
+    getDb().prepare(`
+      INSERT OR REPLACE INTO subscriptions (id, user_id, status, plan_type, monthly_price, auto_renew, started_at, ends_at, notes)
+      VALUES (?, ?, 'active', 'Enterprise Trial', 0, 1, ?, ?, ?)
+    `).run(
+      subId,
+      userId,
+      now,
+      trialEndsAt,
+      JSON.stringify({
+        tenantId,
+        practiceName,
+        specialty,
+        country,
+        timezone,
+        hfrId,
+        hprId,
+        aiScribeMinutesLimit: 500,
+        dhisTransactionsLimit: 100,
+        trialDays: 30,
+        activeStatus: true,
+        })
+      );
+    ensureTenantSubscription(getDb(), tenantId, { planCode: "trial", status: "trial", billingSource: "sandbox" });
+
+    // 6. WHATSAPP OTP TRIGGER:
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const verificationId = crypto.randomUUID();
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+
+    const otpPayload = {
+      tenantId,
+      userId,
+      practiceName,
+      clinicName: practiceName,
+      specialty,
+      country,
+      timezone,
+      phone,
+      name,
+      email,
+      passwordHash,
+      avatarUrl,
+      hfrId,
+      hprId,
+    };
+
+    getDb().prepare(`
+      INSERT INTO otp_verifications (id, phone, email, otp, purpose, payload, created_at, expires_at)
+      VALUES (?, ?, ?, ?, 'register', ?, ?, ?)
+    `).run(verificationId, phone, email, otp, JSON.stringify(otpPayload), now, expiresAt);
+
+    const sent = await dispatchWhatsAppOtpMessage(phone, name, otp, "register");
+    if (otpDispatchFailure(res, sent)) return;
+
+    return res.json({
+      requiresOtp: true,
+      verificationId,
+      phone,
+      email,
+      ...otpEchoPayload(otp),
+      tenantId,
+      userId,
+      hfrId,
+      hprId,
+      trialQuotas: {
+        trialEndsAt,
+        aiScribeMinutesLimit: 500,
+        dhisClaimsLimit: 100,
+      },
+      otpChannel: sent.ok ? sent.channel : undefined,
+      message:
+        sent.ok && sent.channel === "graph"
+          ? "6-digit OTP sent via WhatsApp Cloud API."
+          : "SANDBOX / DEV-ONLY: OTP recorded locally (not sent via Graph).",
+    });
+  };
+
+  api.post("/auth/register-practice", handleRegisterPractice);
+  api.post("/auth/register-clinic", handleRegisterPractice);
+
+  // Guided Onboarding Completion: saves clinician / facility profile and sets onboarding_completed = 1
+  api.post("/auth/complete-onboarding", requireAuth, (req: Request, res: Response) => {
+    const userId = req.user!.id;
+    const doctorName = req.body?.doctorName ? String(req.body.doctorName).trim() : undefined;
+    const clinicName = req.body?.clinicName ? String(req.body.clinicName).trim() : undefined;
+    let specialty: string | undefined;
+    if (req.body?.specialty != null && String(req.body.specialty).trim()) {
+      const mappedOnboarding = persistSpecialtyPackId(req.body.specialty, { required: true });
+      if (!mappedOnboarding.ok) {
+        return res.status(400).json({ error: mappedOnboarding.error });
+      }
+      specialty = mappedOnboarding.id;
+    }
+    const regNumber = req.body?.regNumber ? String(req.body.regNumber).trim() : undefined;
+    const consultationFee = req.body?.consultationFee !== undefined && req.body?.consultationFee !== null
+      ? Number(req.body.consultationFee)
+      : undefined;
+    const qualification = req.body?.qualification ? String(req.body.qualification).trim() : undefined;
+    const opdRoom = req.body?.opdRoom ? String(req.body.opdRoom).trim() : undefined;
+    const opdTiming = req.body?.opdTiming ? String(req.body.opdTiming).trim() : undefined;
+    const practiceType = req.body?.practiceType ? normalizePracticeType(req.body.practiceType) : undefined;
+    const signatureUrl = req.body?.signatureUrl ? String(req.body.signatureUrl) : undefined;
+    const slotDurationMinutes = req.body?.slotDurationMinutes !== undefined && req.body?.slotDurationMinutes !== null
+      ? Number(req.body.slotDurationMinutes)
+      : undefined;
+    const rxTemplate = req.body?.rxTemplate ? String(req.body.rxTemplate).trim() : undefined;
+    const facilityAddress = req.body?.facilityAddress ? String(req.body.facilityAddress).trim() : undefined;
+    const facilityCity = req.body?.facilityCity ? String(req.body.facilityCity).trim() : undefined;
+    const departments = Array.isArray(req.body?.departments)
+      ? (req.body.departments as unknown[])
+          .map((item) => String(item || "").trim())
+          .filter(Boolean)
+      : [];
+    const frontDeskRaw = req.body?.frontDesk && typeof req.body.frontDesk === "object" ? req.body.frontDesk : {};
+    const rosterDoctors = Array.isArray(req.body?.rosterDoctors) ? req.body.rosterDoctors : [];
+    const nextRole = practiceType
+      ? assignedRoleForPracticeType(practiceType, req.user?.role)
+      : undefined;
+
+    getDb().prepare(`
+      UPDATE users
+      SET onboarding_completed = 1,
+          practice_type = COALESCE(?, practice_type),
+          specialty = COALESCE(?, specialty),
+          pack_id = COALESCE(?, pack_id),
+          name = COALESCE(?, name),
+          clinic_name = COALESCE(?, clinic_name),
+          role = COALESCE(?, role)
+      WHERE id = ?
+    `).run(
+      practiceType || null,
+      specialty || null,
+      specialty || null,
+      doctorName || null,
+      clinicName || null,
+      nextRole || null,
+      userId
+    );
+
+    if (req.user?.tenantId) {
+      const tenantSpecialty = departments.length ? departments.join(", ") : specialty;
+      const practiceSettings = JSON.stringify({
+        walkInEnabled: frontDeskRaw.walkInEnabled !== false,
+        sharedQueue: frontDeskRaw.sharedQueue !== false,
+        tokenPrefix: String(frontDeskRaw.tokenPrefix || "OPD").trim() || "OPD",
+        departments,
+        slotDurationMinutes: slotDurationMinutes || 15,
+      });
+      getDb().prepare(`
+        UPDATE tenants
+        SET name = COALESCE(?, name),
+            specialty = COALESCE(?, specialty),
+            address = COALESCE(?, address),
+            city = COALESCE(?, city),
+            practice_settings = ?,
+            updated_at = ?
+        WHERE id = ?
+      `).run(
+        clinicName || null,
+        tenantSpecialty || null,
+        facilityAddress || null,
+        facilityCity || null,
+        practiceSettings,
+        new Date().toISOString(),
+        req.user.tenantId
+      );
+    }
+
+    const existingDoc = getDb().prepare("SELECT id FROM doctors WHERE user_id = ?").get(userId) as { id: string } | undefined;
+    if (existingDoc) {
+      getDb().prepare(`
+        UPDATE doctors
+        SET name = COALESCE(?, name),
+            specialty = COALESCE(?, specialty),
+            reg_number = COALESCE(?, reg_number),
+            consultation_fee = COALESCE(?, consultation_fee),
+            qualification = COALESCE(?, qualification),
+            opd_room = COALESCE(?, opd_room),
+            opd_timing = COALESCE(?, opd_timing),
+            signature_url = COALESCE(?, signature_url),
+            slot_duration_minutes = COALESCE(?, slot_duration_minutes),
+            rx_template = COALESCE(?, rx_template)
+        WHERE id = ?
+      `).run(
+        doctorName || null,
+        specialty || null,
+        regNumber || null,
+        consultationFee ?? null,
+        qualification || null,
+        opdRoom || null,
+        opdTiming || null,
+        signatureUrl || null,
+        slotDurationMinutes ?? null,
+        rxTemplate || null,
+        existingDoc.id
+      );
+    } else {
+      const docId = `doc-${crypto.randomUUID().slice(0, 8)}`;
+      getDb().prepare(`
+        INSERT INTO doctors (id, user_id, name, qualification, reg_number, specialty, experience_years, consultation_fee, opd_room, available_days, opd_timing, avatar_url, bio, hpr_id, phone, email, signature_url, slot_duration_minutes, rx_template, active)
+        VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, '["Mon","Tue","Wed","Thu","Fri","Sat"]', ?, '', '', ?, ?, ?, ?, ?, ?, 1)
+      `).run(
+        docId,
+        userId,
+        doctorName || (req.user!.name.startsWith("Dr.") ? req.user!.name : `Dr. ${req.user!.name}`),
+        qualification || "",
+        regNumber || "",
+        specialty || "General Medicine",
+        consultationFee || 0,
+        opdRoom || "",
+        opdTiming || "",
+        req.user!.hprId || "",
+        req.user!.phone || "",
+        req.user!.email || "",
+        signatureUrl || "",
+        slotDurationMinutes || 15,
+        rxTemplate || "classic"
+      );
+    }
+
+    if (practiceType === "polyclinic") {
+      const founderName = (doctorName || req.user!.name || "").trim().toLowerCase();
+      for (const raw of rosterDoctors as Array<Record<string, unknown>>) {
+        const rosterName = String(raw?.name || "").trim();
+        const rosterSpecialty = String(raw?.specialty || "").trim();
+        if (!rosterName || !rosterSpecialty) continue;
+        if (rosterName.toLowerCase() === founderName && rosterSpecialty === (specialty || "")) continue;
+        const rosterId = `doc-${crypto.randomUUID().slice(0, 8)}`;
+        getDb().prepare(`
+          INSERT INTO doctors (id, user_id, name, qualification, reg_number, specialty, experience_years, consultation_fee, opd_room, available_days, opd_timing, avatar_url, bio, hpr_id, phone, email, signature_url, slot_duration_minutes, rx_template, active)
+          VALUES (?, NULL, ?, ?, ?, ?, 0, ?, '', '["Mon","Tue","Wed","Thu","Fri","Sat"]', ?, '', '', '', ?, '', '', ?, 'classic', 1)
+        `).run(
+          rosterId,
+          rosterName.startsWith("Dr.") ? rosterName : `Dr. ${rosterName}`,
+          String(raw?.qualification || "").trim(),
+          String(raw?.regNumber || "").trim(),
+          rosterSpecialty,
+          Number(raw?.consultationFee || consultationFee || 0),
+          String(raw?.opdTiming || opdTiming || ""),
+          String(raw?.phone || ""),
+          Number(raw?.slotDurationMinutes || slotDurationMinutes || 15)
+        );
+      }
+    }
+
+    const updatedUserRow = getDb().prepare(`
+      SELECT u.*,
+             COALESCE(NULLIF(u.clinic_name, ''), t.name, '') AS clinic_name,
+             COALESCE(NULLIF(u.hfr_id, ''), t.hfr_id, '') AS hfr_id
+      FROM users u
+      LEFT JOIN tenants t ON u.tenant_id = t.id
+      WHERE u.id = ?
+    `).get(userId) as unknown as DbUser;
+
+    const jwtToken = issueLumeraSession(res, updatedUserRow);
+    writeAudit(
+      getDb(),
+      userId,
+      req.user!.name,
+      "Onboarding Completed",
+      `Completed ${practiceType || "practice"} setup for specialty: ${specialty || "General Medicine"}`
+    );
+
+    return res.json({
+      ok: true,
+      user: publicUser(updatedUserRow),
+      token: jwtToken,
+      homeView: practiceType === "polyclinic" ? "welcome" : "queue",
+      message: "Clinical profile verified & practice suite activated successfully.",
+    });
+  });
+
+  // Password Recovery / Forgot Password
+  api.post("/auth/forgot-password", async (req: Request, res: Response) => {
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    if (!email) {
+      return res.status(400).json({ error: "Please provide your registered email address." });
+    }
+
+    const user = getDb().prepare("SELECT * FROM users WHERE email = ?").get(email) as unknown as DbUser | undefined;
+    const phone = user?.phone || "+91 98234 55667";
+    const name = user?.name || "Clinician";
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const verificationId = crypto.randomUUID();
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+
+    getDb().prepare(`
+      INSERT INTO otp_verifications (id, phone, email, otp, purpose, payload, created_at, expires_at)
+      VALUES (?, ?, ?, ?, 'password_reset', ?, ?, ?)
+    `).run(
+      verificationId,
+      phone,
+      email,
+      otp,
+      JSON.stringify({ userId: user?.id, email }),
+      new Date().toISOString(),
+      expiresAt
+    );
+
+    const sent = await dispatchWhatsAppOtpMessage(phone, name, otp, "password_reset");
+    if (otpDispatchFailure(res, sent)) return;
+
+    return res.json({
+      ok: true,
+      verificationId,
+      phone,
+      ...otpEchoPayload(otp),
+      otpChannel: sent.ok ? sent.channel : undefined,
+      message:
+        sent.ok && sent.channel === "graph"
+          ? `Password reset code sent via WhatsApp Cloud API to ${phone}.`
+          : `SANDBOX / DEV-ONLY: password reset code recorded locally for ${phone} (not sent via Graph).`,
+    });
+  });
+
+  // Password Reset Finalization
+  api.post("/auth/reset-password", (req: Request, res: Response) => {
+    const verificationId = String(req.body?.verificationId || "").trim();
+    const otp = String(req.body?.otp || "").trim();
+    const newPassword = String(req.body?.newPassword || "");
+
+    if (!verificationId || !otp || !newPassword) {
+      return res.status(400).json({ error: "Verification ID, 6-digit OTP, and new password are required." });
+    }
+    if (newPassword.length < 6) {
+      return res.status(400).json({ error: "Password must be at least 6 characters long." });
+    }
+
+    const record = getDb()
+      .prepare("SELECT * FROM otp_verifications WHERE id = ?")
+      .get(verificationId) as {
+        id: string;
+        email: string;
+        otp: string;
+        payload: string;
+        expires_at: string;
+      } | undefined;
+
+    if (!record || record.otp !== otp || new Date(record.expires_at).getTime() < Date.now()) {
+      return res.status(400).json({ error: "Invalid or expired reset code. Please request a fresh OTP." });
+    }
+
+    let payload: Record<string, any> = {};
+    try {
+      payload = JSON.parse(record.payload || "{}");
+    } catch {
+      payload = {};
+    }
+
+    const userEmail = record.email || payload.email;
+    const user = getDb().prepare("SELECT * FROM users WHERE email = ?").get(userEmail) as unknown as DbUser | undefined;
+
+    if (!user) {
+      return res.status(404).json({ error: "User account not found." });
+    }
+
+    const newHash = hashPassword(newPassword);
+    getDb().prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(newHash, user.id);
+    getDb().prepare("UPDATE otp_verifications SET verified_at = ? WHERE id = ?").run(new Date().toISOString(), verificationId);
+
+    writeAudit(getDb(), user.id, user.name, "Password Reset", `Password reset via WhatsApp OTP for ${user.email}`);
+
+    return res.json({
+      ok: true,
+      message: "Password reset successful! You may now sign in with your new credentials.",
+    });
+  });
+
+  api.post("/auth/logout", (req: Request, res: Response) => {
+    const sid = getSessionId(req);
+    if (sid) destroySession(sid);
+    clearSessionCookie(res);
+    return res.json({ ok: true });
+  });
+
+  api.get("/auth/me", (req: Request, res: Response) => {
+    if (!req.user) return res.json({ user: null });
+    if (rejectClinicTenantBlocked(req.user, res)) return;
+    let tenant = null;
+    if (req.user.tenantId) {
+      tenant = getDb().prepare("SELECT * FROM tenants WHERE id = ?").get(req.user.tenantId) as any;
+    }
+    return res.json({ user: req.user, tenant, token: getSessionId(req) });
+  });
+
+  api.patch("/auth/me", requireAuth, (req: Request, res: Response) => {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ error: "Authentication required" });
+    const existing = getDb().prepare("SELECT * FROM users WHERE id = ?").get(userId) as unknown as DbUser | undefined;
+    if (!existing) return res.status(404).json({ error: "User not found" });
+
+    const name = req.body?.name != null ? String(req.body.name).trim() : existing.name;
+    const phone = req.body?.phone != null ? String(req.body.phone).trim() : existing.phone;
+    const email = req.body?.email ? String(req.body.email).trim().toLowerCase() : existing.email;
+    const avatarUrl = req.body?.avatarUrl != null ? String(req.body.avatarUrl).trim() : existing.avatar_url || "";
+    if (!name) return res.status(400).json({ error: "Name is required" });
+    if (!email || !email.includes("@")) return res.status(400).json({ error: "A valid email is required" });
+
+    try {
+      getDb()
+        .prepare("UPDATE users SET name = ?, phone = ?, email = ?, avatar_url = ? WHERE id = ?")
+        .run(name, phone, email, avatarUrl, existing.id);
+    } catch {
+      return res.status(409).json({ error: "Email already exists" });
+    }
+
+    const newPassword = req.body?.newPassword != null ? String(req.body.newPassword) : "";
+    const currentPassword = req.body?.currentPassword != null ? String(req.body.currentPassword) : "";
+    if (newPassword) {
+      if (newPassword.length < 8) return res.status(400).json({ error: "New password must be at least 8 characters" });
+      if (!currentPassword || !verifyPassword(currentPassword, existing.password_hash)) {
+        return res.status(400).json({ error: "Current password is incorrect" });
+      }
+      getDb().prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(hashPassword(newPassword), existing.id);
+    }
+
+    audit(req, "Profile updated", `${email}${newPassword ? " (password changed)" : ""}`);
+    const user = getDb().prepare("SELECT * FROM users WHERE id = ?").get(existing.id) as unknown as DbUser;
+    res.json({ user: publicUser(user) });
+  });
+
+  api.get("/tenant/current", requireAuth, (req: Request, res: Response) => {
+    const tenantId = req.user?.tenantId;
+    if (!tenantId) {
+      return res.status(404).json({ error: "No tenant associated with this account." });
+    }
+    const tenant = getDb().prepare("SELECT * FROM tenants WHERE id = ?").get(tenantId) as any;
+    if (!tenant) {
+      return res.status(404).json({ error: "Tenant record not found." });
+    }
+    const currentMonth = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
+    const dhis = getDb().prepare("SELECT * FROM dhis_transactions WHERE tenant_id = ? AND month_year = ?").get(tenantId, currentMonth) as any;
+
+    return res.json({
+      tenant,
+      letterhead: getTenantLetterhead(tenantId, req.user?.id),
+      dhis: dhis || { claims_count: 0, claims_threshold: 100, month_year: currentMonth, status: "active" },
+    });
+  });
+
+  api.get("/tenant/letterhead", requireAuth, (req: Request, res: Response) => {
+    const tenantId = req.user?.tenantId;
+    if (!tenantId) {
+      return res.status(404).json({ error: "No tenant associated with this account." });
+    }
+    const tenant = getDb().prepare("SELECT id FROM tenants WHERE id = ?").get(tenantId) as { id: string } | undefined;
+    if (!tenant) {
+      return res.status(404).json({ error: "Tenant record not found." });
+    }
+    return res.json({
+      letterhead: getTenantLetterhead(tenantId, req.user?.id),
+    });
+  });
+
+  const saveTenantLetterhead = (req: Request, res: Response) => {
+    const tenantId = req.user?.tenantId;
+    if (!tenantId) {
+      return res.status(404).json({ error: "No tenant associated with this account." });
+    }
+    const tenant = getDb().prepare("SELECT id FROM tenants WHERE id = ?").get(tenantId) as { id: string } | undefined;
+    if (!tenant) {
+      return res.status(404).json({ error: "Tenant record not found." });
+    }
+    const patch = parseLetterheadPatch(req.body);
+    const letterhead = updateTenantLetterhead(tenantId, patch, req.user?.id);
+    writeAudit(
+      getDb(),
+      req.user!.id,
+      req.user!.name,
+      "Tenant Letterhead Updated",
+      `Updated letterhead fields for tenant ${tenantId}`
+    );
+    return res.json({ letterhead });
+  };
+
+  api.patch("/tenant/letterhead", requireAuth, requireRole(...CLINIC_MANAGER_ROLES), saveTenantLetterhead);
+  api.put("/tenant/letterhead", requireAuth, requireRole(...CLINIC_MANAGER_ROLES), saveTenantLetterhead);
+
+  api.get("/public/site", (_req, res) => {
+    res.json(assemblePublicSite());
+  });
+
+  api.get("/public/policies/:slug", (req, res) => {
+    const row = getDb()
+      .prepare("SELECT slug, title, body, updated_at FROM cms_policies WHERE slug = ?")
+      .get(req.params.slug) as { slug: string; title: string; body: string; updated_at: string } | undefined;
+    if (!row) return res.status(404).json({ error: "Policy not found" });
+    res.json(row);
+  });
+
+  api.get("/doctors", requireAuth, (req, res) => {
+    const tenantId = req.user?.tenantId;
+    if (!tenantId) {
+      return res.json({ doctors: [] });
+    }
+    const rows = getDb()
+      .prepare(
+        `SELECT d.* FROM doctors d
+         INNER JOIN users u ON u.id = d.user_id
+         WHERE u.tenant_id = ?
+         ORDER BY d.name`
+      )
+      .all(tenantId) as Record<string, unknown>[];
+    res.json({ doctors: rows.map(mapDoctor) });
+  });
+
+  api.get("/clinic/team", requireAuth, requireRole(...CLINICIAN_ROLES), (req, res) => {
+    const tenantId = req.user?.tenantId || "";
+    const members = getDb()
+      .prepare(
+        `SELECT * FROM users
+         WHERE role IN ('doctor', 'receptionist', 'polyclinic_admin', 'CLINIC_ADMIN')
+           AND tenant_id = ?
+         ORDER BY name`
+      )
+      .all(tenantId) as unknown as DbUser[];
+    const doctors = getDb()
+      .prepare(
+        `SELECT d.* FROM doctors d
+         INNER JOIN users u ON u.id = d.user_id
+         WHERE u.tenant_id = ?
+         ORDER BY d.name`
+      )
+      .all(tenantId) as Record<string, unknown>[];
+    const staff = getDb().prepare("SELECT * FROM staff ORDER BY name").all();
+    res.json({ members: members.map(publicUser), doctors: doctors.map(mapDoctor), staff: tenantId === DEMO_TENANT_ID ? staff : [] });
+  });
+
+  api.post("/clinic/members", requireAuth, requireRole(...CLINIC_MANAGER_ROLES), (req, res) => {
+    const { name, email, phone, role, password, specialty, qualification, regNumber, consultationFee, opdRoom, department, shift } =
+      req.body || {};
+    const allowedRoles =
+      ["polyclinic_admin", "CLINIC_ADMIN"].includes(req.user?.role || "") ? ["doctor", "receptionist", "polyclinic_admin", "CLINIC_ADMIN"] : ["doctor", "receptionist"];
+    if (!name || !email || !role) {
+      return res.status(400).json({ error: "name, email, and role are required" });
+    }
+    if (!allowedRoles.includes(role)) {
+      return res.status(403).json({ error: "You cannot assign that role" });
+    }
+    const id = crypto.randomUUID();
+    const pwd = password ? String(password) : `Temp${Math.random().toString(36).slice(2, 8)}!A1`;
+    try {
+      getDb()
+        .prepare(
+          `INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, last_login, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, 'active', ?, NULL, ?)`
+        )
+        .run(
+          id,
+          req.user?.tenantId || "",
+          String(email).trim().toLowerCase(),
+          hashPassword(pwd),
+          String(name),
+          role,
+          String(phone || ""),
+          new Date().toISOString()
+        );
+    } catch {
+      return res.status(409).json({ error: "Email already exists" });
+    }
+    if (role === "doctor") {
+      const docId = `doc-${id.slice(0, 8)}`;
+      getDb()
+        .prepare(
+          `INSERT INTO doctors (id, user_id, name, qualification, reg_number, specialty, experience_years, consultation_fee, opd_room, available_days, opd_timing, phone, email, avatar_url, bio, hpr_id, active)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
+        )
+        .run(
+          docId,
+          id,
+          String(name),
+          qualification || "",
+          regNumber || "",
+          specialty || "General Medicine",
+          0,
+          Number(consultationFee || 600),
+          opdRoom || "",
+          JSON.stringify(["Mon", "Tue", "Wed", "Thu", "Fri"]),
+          "09:00 AM - 02:00 PM",
+          phone || "",
+          String(email).trim().toLowerCase(),
+          req.body?.avatarUrl || "",
+          req.body?.bio || "",
+          req.body?.hprId || ""
+        );
+    }
+    if (role === "receptionist") {
+      const staffId = `s-${id.slice(0, 8)}`;
+      getDb()
+        .prepare(
+          `INSERT INTO staff (id, user_id, name, role, department, phone, email, status, shift)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'Active', ?)`
+        )
+        .run(staffId, id, String(name), "Receptionist", department || "Front Desk", phone || "", String(email).trim().toLowerCase(), shift || "Full Day");
+    }
+    seedSubscriptionsIfMissing(getDb());
+    audit(req, "Clinic member created", `${name} <${email}> as ${role}`);
+    const user = getDb().prepare("SELECT * FROM users WHERE id = ?").get(id) as unknown as DbUser;
+    res.status(201).json({ user: publicUser(user), temporaryPassword: password ? undefined : pwd });
+  });
+
+  api.patch("/clinic/members/:id", requireAuth, requireRole(...CLINIC_MANAGER_ROLES), (req, res) => {
+    const existing = getDb().prepare("SELECT * FROM users WHERE id = ?").get(req.params.id) as unknown as DbUser | undefined;
+    if (!existing) return res.status(404).json({ error: "User not found" });
+    if (existing.role === "super_admin" || existing.role === "patient") {
+      return res.status(403).json({ error: "This account is not a clinic team member" });
+    }
+    if (existing.id === req.user?.id && req.body.status === "disabled") {
+      return res.status(400).json({ error: "You cannot disable your own login" });
+    }
+    const name = req.body.name ?? existing.name;
+    const phone = req.body.phone ?? existing.phone;
+    const status = req.body.status ?? existing.status;
+    const allowedRoles =
+      ["polyclinic_admin", "CLINIC_ADMIN"].includes(req.user?.role || "") ? ["doctor", "receptionist", "polyclinic_admin", "CLINIC_ADMIN"] : ["doctor", "receptionist"];
+    let role = existing.role;
+    if (req.body.role && req.body.role !== existing.role) {
+      if (!allowedRoles.includes(req.body.role)) {
+        return res.status(403).json({ error: "You cannot assign that role" });
+      }
+      role = req.body.role;
+    }
+    getDb()
+      .prepare("UPDATE users SET name = ?, phone = ?, status = ?, role = ? WHERE id = ?")
+      .run(name, phone, status, role, existing.id);
+    audit(req, "Clinic member updated", `${existing.email} status=${status} role=${role}`);
+    const user = getDb().prepare("SELECT * FROM users WHERE id = ?").get(existing.id) as unknown as DbUser;
+    res.json({ user: publicUser(user) });
+  });
+
+  api.post("/clinic/members/:id/password", requireAuth, requireRole(...CLINIC_MANAGER_ROLES), (req, res) => {
+    const existing = getDb().prepare("SELECT * FROM users WHERE id = ?").get(req.params.id) as unknown as DbUser | undefined;
+    if (!existing) return res.status(404).json({ error: "User not found" });
+    if (existing.role === "super_admin" || existing.role === "patient") {
+      return res.status(403).json({ error: "This account is not a clinic team member" });
+    }
+    const password = String(req.body?.password || `Temp${Math.random().toString(36).slice(2, 8)}!A1`);
+    if (password.length < 8) return res.status(400).json({ error: "Password must be at least 8 characters" });
+    getDb().prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(hashPassword(password), existing.id);
+    audit(req, "Clinic password reset", existing.email);
+    res.json({ ok: true, temporaryPassword: req.body?.password ? undefined : password });
+  });
+
+  api.get("/admin/plans", requireAuth, requirePlatformAdmin, (_req, res) => {
+    res.json({ plans: listPublicPlans() });
+  });
+
+  api.get("/admin/tenants", requireAuth, requirePlatformAdmin, (req, res) => {
+    const includeDeleted = String(req.query.includeDeleted || req.query.include_deleted || "") === "1";
+    res.json({
+      tenants: listAdminTenants({
+        q: String(req.query.q || req.query.search || ""),
+        status: String(req.query.status || ""),
+        type: String(req.query.type || req.query.practiceType || ""),
+        includeDeleted,
+      }),
+    });
+  });
+
+  api.post("/admin/tenants", requireAuth, requirePlatformAdmin, (req, res) => {
+    try {
+      const tenant = createAdminTenant((req.body || {}) as Record<string, unknown>, {
+        id: req.user?.id,
+        name: req.user?.name,
+      });
+      res.status(201).json({ tenant });
+    } catch (err) {
+      const { status, error } = httpStatusError(err, "Could not create tenant");
+      res.status(status === 500 ? 400 : status).json({ error });
+    }
+  });
+
+  api.get("/admin/tenants/:id", requireAuth, requirePlatformAdmin, (req, res) => {
+    const tenant = getAdminTenant(req.params.id);
+    if (!tenant) return res.status(404).json({ error: "Tenant not found" });
+    res.json({ tenant });
+  });
+
+  api.patch("/admin/tenants/:id", requireAuth, requirePlatformAdmin, (req, res) => {
+    try {
+      const tenant = patchAdminTenant(req.params.id, (req.body || {}) as Record<string, unknown>, {
+        id: req.user?.id,
+        name: req.user?.name,
+      });
+      res.json({ tenant });
+    } catch (err) {
+      const { status, error } = httpStatusError(err, "Could not update tenant");
+      res.status(status === 500 ? 400 : status).json({ error });
+    }
+  });
+
+  api.get("/admin/tenants/:id/subscription", requireAuth, requirePlatformAdmin, (req, res) => {
+    const subscription = getAdminTenantSubscription(req.params.id);
+    if (!subscription) return res.status(404).json({ error: "Tenant not found" });
+    res.json({ subscription });
+  });
+
+  api.patch("/admin/tenants/:id/subscription", requireAuth, requirePlatformAdmin, (req, res) => {
+    try {
+      const subscription = patchAdminTenantSubscription(req.params.id, (req.body || {}) as Record<string, unknown>, {
+        id: req.user?.id,
+        name: req.user?.name,
+      });
+      res.json({ subscription });
+    } catch (err) {
+      const { status, error } = httpStatusError(err, "Could not update subscription");
+      res.status(status === 500 ? 400 : status).json({ error });
+    }
+  });
+
+  api.get("/admin/overview", requireAuth, requireRole(...ADMIN_ROLES), (_req, res) => {
+    const count = (sql: string) => (getDb().prepare(sql).get() as { c: number }).c;
+    const recent = getDb()
+      .prepare("SELECT * FROM audit_logs ORDER BY timestamp DESC LIMIT 8")
+      .all();
+    res.json({
+      users: count("SELECT COUNT(*) AS c FROM users"),
+      subscriptions: count("SELECT COUNT(*) AS c FROM subscriptions"),
+      activePlans: count("SELECT COUNT(*) AS c FROM subscriptions WHERE status = 'active'"),
+      trials: count("SELECT COUNT(*) AS c FROM subscriptions WHERE status = 'trial'"),
+      mrr: (getDb().prepare("SELECT COALESCE(SUM(monthly_price),0) AS c FROM subscriptions WHERE status = 'active'").get() as { c: number }).c,
+      media: count("SELECT COUNT(*) AS c FROM cms_media"),
+      policies: count("SELECT COUNT(*) AS c FROM cms_policies"),
+      geminiConfigured: Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== "MY_GEMINI_API_KEY"),
+      recentAudit: recent,
+    });
+  });
+
+  api.get("/users", requireAuth, requireRole(...USER_MANAGER_ROLES), (req, res) => {
+    const q = String(req.query.q || "").toLowerCase();
+    const role = String(req.query.role || "");
+    const status = String(req.query.status || "");
+    const tenantFilter = String(req.query.tenantId || req.query.tenant_id || "");
+    let sql = `
+      SELECT u.*,
+             COALESCE(NULLIF(u.clinic_name, ''), t.name, '') AS clinic_name,
+             COALESCE(NULLIF(u.hfr_id, ''), t.hfr_id, '') AS hfr_id
+      FROM users u
+      LEFT JOIN tenants t ON u.tenant_id = t.id
+      WHERE 1=1
+    `;
+    const args: unknown[] = [];
+    if (!isSuperAdmin(req)) {
+      sql += " AND u.tenant_id = ?";
+      args.push(req.user?.tenantId || "");
+    } else if (tenantFilter) {
+      sql += " AND u.tenant_id = ?";
+      args.push(tenantFilter);
+    }
+    if (q) {
+      sql += " AND (lower(u.name) LIKE ? OR lower(u.email) LIKE ? OR lower(COALESCE(u.clinic_name, t.name, '')) LIKE ? OR lower(COALESCE(u.hpr_id, '')) LIKE ? OR lower(COALESCE(u.hfr_id, t.hfr_id, '')) LIKE ?)";
+      args.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
+    }
+    if (role) {
+      sql += " AND u.role = ?";
+      args.push(role);
+    }
+    if (status) {
+      sql += " AND u.status = ?";
+      args.push(status);
+    }
+    sql += " ORDER BY u.created_at DESC";
+    const rows = getDb().prepare(sql).all(...(args as string[])) as unknown as DbUser[];
+    res.json({ users: rows.map(publicUser) });
+  });
+
+  api.post("/users", requireAuth, requireRole(...USER_MANAGER_ROLES), (req, res) => {
+    const body = (req.body || {}) as Record<string, unknown>;
+    const email = String(body.email || "").trim().toLowerCase();
+    const name = requestedDisplayName(body);
+    const role = String(body.role || "") as UserRole;
+    if (!email || !name || !role) {
+      return res.status(400).json({ error: "name, email, and role are required" });
+    }
+
+    const packParsed = parseSpecialtyPackInput(specialtyInputFromBody(body));
+    if (packParsed && "error" in packParsed) {
+      return res.status(400).json({ error: packParsed.error });
+    }
+
+    let tenantId = requestedTenantId(body);
+    if (!isSuperAdmin(req)) {
+      if (tenantId && tenantId !== (req.user?.tenantId || "")) {
+        return res.status(403).json({ error: "Clinic admins cannot create users on another tenant" });
+      }
+      tenantId = req.user?.tenantId || "";
+    } else if (!tenantId) {
+      tenantId = req.user?.tenantId || DEMO_TENANT_ID;
+    }
+
+    const passwordProvided = Boolean(body.password);
+    const pwd = passwordProvided ? String(body.password) : generateTemporaryPassword();
+    const passwordError = passwordRuleError(pwd);
+    if (passwordError) return res.status(400).json({ error: passwordError });
+
+    const status = requestedStatus(body, "active");
+    const practiceType = normalizePracticeType(body.practiceType ? String(body.practiceType) : "individual");
+    const id = crypto.randomUUID();
+    try {
+      getDb()
+        .prepare(
+          `INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, last_login, created_at, practice_type, specialty, pack_id, onboarding_completed)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, 1)`
+        )
+        .run(
+          id,
+          tenantId,
+          email,
+          hashPassword(pwd),
+          name,
+          role,
+          status,
+          String(body.phone || ""),
+          new Date().toISOString(),
+          practiceType,
+          packParsed && "specialty" in packParsed ? packParsed.specialty : "",
+          packParsed && "specialty" in packParsed ? packParsed.specialty : ""
+        );
+    } catch {
+      return res.status(409).json({ error: "Email already exists" });
+    }
+    audit(req, "User created", `${name} <${email}> as ${role}`);
+    seedSubscriptionsIfMissing(getDb());
+    const user = loadUserRow(id)!;
+    syncDoctorPackProfile(user);
+    const created = loadUserRow(id)!;
+    res.status(201).json({
+      user: publicUser(created),
+      temporaryPassword: passwordProvided ? undefined : pwd,
+    });
+  });
+
+  api.patch("/users/:id", requireAuth, requireRole(...USER_MANAGER_ROLES), (req, res) => {
+    const existing = loadUserRow(req.params.id);
+    if (!existing) return res.status(404).json({ error: "User not found" });
+    if (!canManageUser(req, existing)) {
+      return res.status(403).json({ error: "User not found" });
+    }
+
+    const body = (req.body || {}) as Record<string, unknown>;
+    const name = requestedDisplayName(body, existing.name) || existing.name;
+    const role = (body.role ? String(body.role) : existing.role) as UserRole;
+    const status = requestedStatus(body, existing.status);
+    const phone = body.phone != null ? String(body.phone) : existing.phone;
+    const email = body.email ? String(body.email).trim().toLowerCase() : existing.email;
+
+    let tenantId = existing.tenant_id || "";
+    const wantsTenant =
+      Object.prototype.hasOwnProperty.call(body, "tenantId") ||
+      Object.prototype.hasOwnProperty.call(body, "tenant_id");
+    if (wantsTenant && !isSuperAdmin(req)) {
+      return res.status(403).json({ error: "Only super_admin can reassign tenantId" });
+    }
+    const requestedTenant = requestedTenantId(body);
+    if (wantsTenant && requestedTenant && requestedTenant !== tenantId) {
+      const tenant = getDb().prepare("SELECT id FROM tenants WHERE id = ?").get(requestedTenant) as { id: string } | undefined;
+      if (!tenant) return res.status(404).json({ error: "Tenant not found" });
+      tenantId = requestedTenant;
+    }
+
+    let specialty = resolveSpecialtyPack(existing.specialty || existing.pack_id || "")?.id || existing.specialty || "";
+    if (specialtyInputFromBody(body) !== undefined) {
+      const packParsed = parseSpecialtyPackInput(specialtyInputFromBody(body));
+      if (packParsed && "error" in packParsed) {
+        return res.status(400).json({ error: packParsed.error });
+      }
+      specialty = packParsed && "specialty" in packParsed ? packParsed.specialty : "";
+    }
+
+    const practiceType =
+      body.practiceType != null || body.practice_type != null
+        ? normalizePracticeType(String(body.practiceType ?? body.practice_type))
+        : normalizePracticeType(existing.practice_type);
+
+    try {
+      getDb()
+        .prepare(
+          "UPDATE users SET name = ?, role = ?, status = ?, phone = ?, email = ?, tenant_id = ?, specialty = ?, pack_id = ?, practice_type = ? WHERE id = ?"
+        )
+        .run(name, role, status, phone, email, tenantId, specialty, specialty, practiceType, existing.id);
+    } catch {
+      return res.status(409).json({ error: "Email already exists" });
+    }
+    audit(req, "User updated", `${email} role=${role} status=${status}`);
+    const user = loadUserRow(existing.id)!;
+    syncDoctorPackProfile(user);
+    const updated = loadUserRow(existing.id)!;
+    res.json({ user: publicUser(updated) });
+  });
+
+  api.delete("/users/:id", requireAuth, requireRole(...USER_MANAGER_ROLES), (req, res) => {
+    const existing = loadUserRow(req.params.id);
+    if (!existing) return res.status(404).json({ error: "User not found" });
+    if (!canManageUser(req, existing)) {
+      return res.status(403).json({ error: "User not found" });
+    }
+    if (existing.id === req.user?.id) {
+      return res.status(400).json({ error: "You cannot delete your own account from User management. Use profile or disable instead." });
+    }
+    if (existing.role === "super_admin") {
+      const admins = (getDb().prepare("SELECT COUNT(*) AS c FROM users WHERE role = 'super_admin' AND status != 'disabled'").get() as { c: number }).c;
+      if (admins <= 1) return res.status(400).json({ error: "Cannot delete the last active super_admin" });
+    }
+    getDb().prepare("DELETE FROM users WHERE id = ?").run(existing.id);
+    audit(req, "User deleted", `${existing.email} (${existing.role})`);
+    res.json({ ok: true });
+  });
+
+  api.post("/users/:id/password", requireAuth, requireRole(...USER_MANAGER_ROLES), (req, res) => {
+    const existing = loadUserRow(req.params.id);
+    if (!existing) return res.status(404).json({ error: "User not found" });
+    if (!canManageUser(req, existing)) {
+      return res.status(403).json({ error: "User not found" });
+    }
+    const provided = req.body?.password != null && String(req.body.password) !== "";
+    const password = provided ? String(req.body.password) : generateTemporaryPassword();
+    const passwordError = passwordRuleError(password);
+    if (passwordError) return res.status(400).json({ error: passwordError });
+    getDb().prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(hashPassword(password), existing.id);
+    audit(req, "Password reset", `Password reset for ${existing.email}`);
+    res.json({ ok: true, temporaryPassword: provided ? undefined : password });
+  });
+
+  api.get("/admin/subscriptions", requireAuth, requirePlatformAdmin, (_req, res) => {
+    const rows = getDb()
+      .prepare(
+        `SELECT s.*, u.name, u.email, u.phone
+         FROM subscriptions s JOIN users u ON u.id = s.user_id
+         ORDER BY u.name`
+      )
+      .all() as Record<string, unknown>[];
+    res.json({
+      subscriptions: rows.map((r) =>
+        mapSubscription(r, { name: String(r.name), email: String(r.email), phone: String(r.phone) })
+      ),
+    });
+  });
+
+  api.get("/admin/subscriptions/summary", requireAuth, requirePlatformAdmin, (_req, res) => {
+    const totalUsers = (getDb().prepare("SELECT COUNT(*) AS c FROM users").get() as { c: number }).c;
+    const statuses = getDb()
+      .prepare("SELECT status, COUNT(*) AS c FROM subscriptions GROUP BY status")
+      .all() as { status: string; c: number }[];
+    const counts: Record<string, number> = { trial: 0, active: 0, suspended: 0, cancelled: 0, expired: 0 };
+    for (const s of statuses) counts[s.status] = s.c;
+    const mrr = (
+      getDb().prepare("SELECT COALESCE(SUM(monthly_price),0) AS c FROM subscriptions WHERE status = 'active'").get() as {
+        c: number;
+      }
+    ).c;
+    res.json({ totalUsers, counts, mrr });
+  });
+
+  api.patch("/admin/subscriptions/:id", requireAuth, requirePlatformAdmin, (req, res) => {
+    const existing = getDb().prepare("SELECT * FROM subscriptions WHERE id = ?").get(req.params.id) as
+      | Record<string, unknown>
+      | undefined;
+    if (!existing) return res.status(404).json({ error: "Subscription not found" });
+    const requestedPlan = req.body.planCode ?? req.body.plan_code ?? req.body.planType ?? req.body.plan_type ?? existing.plan_type;
+    const planCode = resolvePlanCode(String(requestedPlan));
+    if ((req.body.planCode || req.body.plan_code || req.body.planType || req.body.plan_type) && !planCode) {
+      return res.status(400).json({
+        error: `Unknown plan code "${requestedPlan}". Assign from the catalog only.`,
+      });
+    }
+    const plan = planCode ? findPlan(planCode) : undefined;
+    const status = String(req.body.status || existing.status);
+    const planType = plan?.code || String(requestedPlan);
+    const monthlyPrice = Number(req.body.monthlyPrice ?? req.body.monthly_price ?? plan?.monthlyPrice ?? existing.monthly_price);
+    const autoFlag = req.body.autoRenew ?? req.body.auto_renew;
+    const autoRenew = autoFlag === undefined ? existing.auto_renew : autoFlag ? 1 : 0;
+    const notes = req.body.notes ?? existing.notes;
+    let endsAt = (existing.ends_at as string) || null;
+    const extendDays = Number(req.body.extendDays || req.body.extend_days || 0);
+    if (extendDays) {
+      const base = endsAt && new Date(endsAt) > new Date() ? new Date(endsAt) : new Date();
+      base.setDate(base.getDate() + extendDays);
+      endsAt = base.toISOString();
+    }
+    if (req.body.endsAt || req.body.ends_at) endsAt = String(req.body.endsAt || req.body.ends_at);
+    const billing = normalizeBillingSource(req.body.billingSource ?? req.body.billing_source, "manual");
+    if (typeof billing === "object") {
+      return res.status(400).json({ error: billing.error });
+    }
+    getDb()
+      .prepare(
+        `UPDATE subscriptions SET status = ?, plan_type = ?, monthly_price = ?, auto_renew = ?, ends_at = ?, notes = ?, plan_code = ?, billing_source = ? WHERE id = ?`
+      )
+      .run(
+        status,
+        planType,
+        monthlyPrice,
+        Number(autoRenew),
+        endsAt,
+        String(notes ?? ""),
+        plan?.code || String(existing.plan_code || ""),
+        billing,
+        req.params.id
+      );
+    const tenantId = String(existing.tenant_id || "");
+    if (tenantId && plan) {
+      upsertTenantSubscription(getDb(), tenantId, {
+        planCode: plan.code,
+        status,
+        billingSource: billing,
+        endsAt,
+        notes: String(notes || ""),
+      });
+    }
+    audit(req, "Subscription updated", `${req.params.id} ${status} ${planType} billingSource=${billing}`);
+    const row = getDb()
+      .prepare(
+        `SELECT s.*, u.name, u.email, u.phone FROM subscriptions s JOIN users u ON u.id = s.user_id WHERE s.id = ?`
+      )
+      .get(req.params.id) as Record<string, unknown>;
+    res.json({
+      subscription: mapSubscription(row, { name: String(row.name), email: String(row.email), phone: String(row.phone) }),
+    });
+  });
+
+  api.post("/doctors", requireAuth, requireRole(...ADMIN_ROLES, ...CLINIC_MANAGER_ROLES), (req, res) => {
+    const b = req.body || {};
+    if (!b.name || !b.specialty) return res.status(400).json({ error: "name and specialty are required" });
+    const id = b.id || `doc-${crypto.randomUUID().slice(0, 8)}`;
+    getDb()
+      .prepare(
+        `INSERT INTO doctors (id, user_id, name, qualification, reg_number, specialty, experience_years, consultation_fee, opd_room, available_days, opd_timing, phone, email, avatar_url, bio, hpr_id, active)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        id,
+        b.userId || null,
+        b.name,
+        b.qualification || "",
+        b.regNumber || "",
+        b.specialty,
+        Number(b.experienceYears || 0),
+        Number(b.consultationFee || 0),
+        b.opdRoom || "",
+        JSON.stringify(b.availableDays || []),
+        b.opdTiming || "",
+        b.phone || "",
+        b.email || "",
+        b.avatarUrl || "",
+        b.bio || "",
+        b.hprId || "",
+        b.active === false ? 0 : 1
+      );
+    audit(req, "Doctor created", b.name);
+    const row = getDb().prepare("SELECT * FROM doctors WHERE id = ?").get(id) as Record<string, unknown>;
+    res.status(201).json({ doctor: mapDoctor(row) });
+  });
+
+  api.patch("/doctors/:id", requireAuth, requireRole(...ADMIN_ROLES, ...CLINIC_MANAGER_ROLES), (req, res) => {
+    const existing = getDb().prepare("SELECT * FROM doctors WHERE id = ?").get(req.params.id) as Record<string, unknown> | undefined;
+    if (!existing) return res.status(404).json({ error: "Doctor not found" });
+    const mapped = mapDoctor(existing);
+    const next = { ...mapped, ...req.body };
+    getDb()
+      .prepare(
+        `UPDATE doctors SET user_id = ?, name = ?, qualification = ?, reg_number = ?, specialty = ?, experience_years = ?, consultation_fee = ?, opd_room = ?, available_days = ?, opd_timing = ?, phone = ?, email = ?, avatar_url = ?, bio = ?, hpr_id = ?, active = ? WHERE id = ?`
+      )
+      .run(
+        next.userId || null,
+        next.name,
+        next.qualification,
+        next.regNumber,
+        next.specialty,
+        Number(next.experienceYears),
+        Number(next.consultationFee),
+        next.opdRoom,
+        JSON.stringify(next.availableDays || []),
+        next.opdTiming,
+        next.phone,
+        next.email,
+        next.avatarUrl || "",
+        next.bio || "",
+        next.hprId || "",
+        next.active === false ? 0 : 1,
+        req.params.id
+      );
+    audit(req, "Doctor updated", next.name);
+    const row = getDb().prepare("SELECT * FROM doctors WHERE id = ?").get(req.params.id) as Record<string, unknown>;
+    res.json({ doctor: mapDoctor(row) });
+  });
+
+  api.post("/doctors/:id/avatar", requireAuth, requireRole(...ADMIN_ROLES, ...CLINIC_MANAGER_ROLES), (req, res) => {
+    upload.single("file")(req, res, (err) => {
+      if (err) return res.status(400).json({ error: err.message || "Upload failed" });
+      if (!req.file) return res.status(400).json({ error: "File is required" });
+      const avatarUrl = `/uploads/${req.file.filename}`;
+      getDb().prepare("UPDATE doctors SET avatar_url = ? WHERE id = ?").run(avatarUrl, req.params.id);
+      const row = getDb().prepare("SELECT * FROM doctors WHERE id = ?").get(req.params.id) as Record<string, unknown>;
+      audit(req, "Doctor avatar updated", (row?.name as string) || req.params.id);
+      res.json({ doctor: mapDoctor(row), avatarUrl });
+    });
+  });
+
+  api.delete("/doctors/:id", requireAuth, requireRole(...ADMIN_ROLES, ...CLINIC_MANAGER_ROLES), (req, res) => {
+    getDb().prepare("DELETE FROM doctors WHERE id = ?").run(req.params.id);
+    audit(req, "Doctor deleted", req.params.id);
+    res.json({ ok: true });
+  });
+
+  api.get("/staff", requireAuth, requireRole(...CLINICIAN_ROLES), (_req, res) => {
+    res.json({ staff: getDb().prepare("SELECT * FROM staff ORDER BY name").all() });
+  });
+
+  api.post("/staff", requireAuth, requireRole(...ADMIN_ROLES, ...CLINIC_MANAGER_ROLES), (req, res) => {
+    const b = req.body || {};
+    if (!b.name || !b.role) return res.status(400).json({ error: "name and role are required" });
+    const id = `s-${crypto.randomUUID().slice(0, 8)}`;
+    getDb()
+      .prepare(
+        `INSERT INTO staff (id, user_id, name, role, department, phone, email, status, shift)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(id, b.userId || null, b.name, b.role, b.department || "", b.phone || "", b.email || "", b.status || "Active", b.shift || "Morning");
+    audit(req, "Staff created", b.name);
+    res.status(201).json({ staff: getDb().prepare("SELECT * FROM staff WHERE id = ?").get(id) });
+  });
+
+  api.patch("/staff/:id", requireAuth, requireRole(...ADMIN_ROLES, ...CLINIC_MANAGER_ROLES), (req, res) => {
+    const existing = getDb().prepare("SELECT * FROM staff WHERE id = ?").get(req.params.id) as Record<string, unknown> | undefined;
+    if (!existing) return res.status(404).json({ error: "Staff not found" });
+    const next = { ...existing, ...req.body };
+    getDb()
+      .prepare(
+        `UPDATE staff SET user_id = ?, name = ?, role = ?, department = ?, phone = ?, email = ?, status = ?, shift = ? WHERE id = ?`
+      )
+      .run(next.userId || next.user_id || null, next.name, next.role, next.department, next.phone, next.email, next.status, next.shift, req.params.id);
+    audit(req, "Staff updated", String(next.name));
+    res.json({ staff: getDb().prepare("SELECT * FROM staff WHERE id = ?").get(req.params.id) });
+  });
+
+  api.delete("/staff/:id", requireAuth, requireRole(...ADMIN_ROLES, ...CLINIC_MANAGER_ROLES), (req, res) => {
+    getDb().prepare("DELETE FROM staff WHERE id = ?").run(req.params.id);
+    audit(req, "Staff deleted", req.params.id);
+    res.json({ ok: true });
+  });
+
+  api.get("/branches", (_req, res) => {
+    res.json({ branches: getDb().prepare("SELECT * FROM branches ORDER BY name").all() });
+  });
+
+  api.post("/branches", requireAuth, requireRole(...ADMIN_ROLES), (req, res) => {
+    const b = req.body || {};
+    if (!b.name) return res.status(400).json({ error: "name is required" });
+    const id = `b-${crypto.randomUUID().slice(0, 8)}`;
+    getDb()
+      .prepare(
+        `INSERT INTO branches (id, name, address, phone, opd_hours, active_doctors, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(id, b.name, b.address || "", b.phone || "", b.opdHours || b.opd_hours || "", Number(b.activeDoctors || b.active_doctors || 0), b.status || "Operating");
+    audit(req, "Branch created", b.name);
+    res.status(201).json({ branch: getDb().prepare("SELECT * FROM branches WHERE id = ?").get(id) });
+  });
+
+  api.patch("/branches/:id", requireAuth, requireRole(...ADMIN_ROLES), (req, res) => {
+    const existing = getDb().prepare("SELECT * FROM branches WHERE id = ?").get(req.params.id) as Record<string, unknown> | undefined;
+    if (!existing) return res.status(404).json({ error: "Branch not found" });
+    const next = {
+      name: req.body.name ?? existing.name,
+      address: req.body.address ?? existing.address,
+      phone: req.body.phone ?? existing.phone,
+      opd_hours: req.body.opdHours ?? req.body.opd_hours ?? existing.opd_hours,
+      active_doctors: req.body.activeDoctors ?? req.body.active_doctors ?? existing.active_doctors,
+      status: req.body.status ?? existing.status,
+    };
+    getDb()
+      .prepare(
+        `UPDATE branches SET name = ?, address = ?, phone = ?, opd_hours = ?, active_doctors = ?, status = ? WHERE id = ?`
+      )
+      .run(next.name, next.address, next.phone, next.opd_hours, Number(next.active_doctors), next.status, req.params.id);
+    audit(req, "Branch updated", String(next.name));
+    res.json({ branch: getDb().prepare("SELECT * FROM branches WHERE id = ?").get(req.params.id) });
+  });
+
+  api.delete("/branches/:id", requireAuth, requireRole(...ADMIN_ROLES), (req, res) => {
+    getDb().prepare("DELETE FROM branches WHERE id = ?").run(req.params.id);
+    audit(req, "Branch deleted", req.params.id);
+    res.json({ ok: true });
+  });
+
+  api.get("/cms/settings", requireAuth, requireRole(...ADMIN_ROLES), (_req, res) => {
+    res.json({ settings: settingsMap(), geminiConfigured: Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== "MY_GEMINI_API_KEY") });
+  });
+
+  api.put("/cms/settings", requireAuth, requireRole(...ADMIN_ROLES), (req, res) => {
+    const incoming = req.body?.settings || req.body || {};
+    const stmt = getDb().prepare(
+      "INSERT INTO cms_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+    );
+    for (const [key, value] of Object.entries(incoming)) {
+      if (key.toLowerCase().includes("api_key") || key.toLowerCase().includes("gemini_key")) continue;
+      stmt.run(key, typeof value === "string" ? value : JSON.stringify(value));
+    }
+    audit(req, "CMS settings updated", Object.keys(incoming).join(", "));
+    res.json({ settings: settingsMap() });
+  });
+
+  api.get("/cms/sections", requireAuth, requireRole(...ADMIN_ROLES), (_req, res) => {
+    const rows = getDb()
+      .prepare("SELECT id, type, sort_order, payload FROM cms_sections ORDER BY type, sort_order")
+      .all() as { id: string; type: string; sort_order: number; payload: string }[];
+    res.json({
+      sections: rows.map((s) => ({
+        id: s.id,
+        type: s.type,
+        sortOrder: s.sort_order,
+        payload: JSON.parse(s.payload),
+      })),
+    });
+  });
+
+  api.put("/cms/sections", requireAuth, requireRole(...ADMIN_ROLES), (req, res) => {
+    const sections = req.body?.sections;
+    if (!Array.isArray(sections)) return res.status(400).json({ error: "sections array required" });
+    const database = getDb();
+    database.exec("DELETE FROM cms_sections");
+    const stmt = database.prepare("INSERT INTO cms_sections (id, type, sort_order, payload) VALUES (?, ?, ?, ?)");
+    sections.forEach((s: { id?: string; type: string; sortOrder?: number; payload: unknown }, i: number) => {
+      stmt.run(s.id || crypto.randomUUID(), s.type, s.sortOrder ?? i, JSON.stringify(s.payload || {}));
+    });
+    audit(req, "CMS sections updated", `${sections.length} sections`);
+    res.json({ ok: true });
+  });
+
+  api.get("/cms/policies", requireAuth, requireRole(...ADMIN_ROLES), (_req, res) => {
+    res.json({
+      policies: getDb().prepare("SELECT slug, title, body, updated_at FROM cms_policies ORDER BY slug").all(),
+    });
+  });
+
+  api.put("/cms/policies/:slug", requireAuth, requireRole(...ADMIN_ROLES), (req, res) => {
+    const existing = getDb().prepare("SELECT slug FROM cms_policies WHERE slug = ?").get(req.params.slug);
+    if (!existing) return res.status(404).json({ error: "Policy not found" });
+    getDb()
+      .prepare("UPDATE cms_policies SET title = ?, body = ?, updated_at = ? WHERE slug = ?")
+      .run(req.body.title || req.params.slug, req.body.body || "", new Date().toISOString(), req.params.slug);
+    audit(req, "Policy updated", req.params.slug);
+    res.json({
+      policy: getDb().prepare("SELECT slug, title, body, updated_at FROM cms_policies WHERE slug = ?").get(req.params.slug),
+    });
+  });
+
+  api.get("/media", requireAuth, requireRole(...ADMIN_ROLES), (_req, res) => {
+    res.json({ media: getDb().prepare("SELECT * FROM cms_media ORDER BY created_at DESC").all() });
+  });
+
+  api.post("/media", requireAuth, requireRole(...ADMIN_ROLES), (req, res, next) => {
+    upload.single("file")(req, res, (err) => {
+      if (err) return res.status(400).json({ error: err.message || "Upload failed" });
+      if (!req.file) return res.status(400).json({ error: "file is required" });
+      const id = crypto.randomUUID();
+      const url = `/uploads/${req.file.filename}`;
+      getDb()
+        .prepare(
+          `INSERT INTO cms_media (id, filename, url, alt, mime, uploaded_by, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(id, req.file.originalname, url, String(req.body?.alt || ""), req.file.mimetype, req.user?.id || null, new Date().toISOString());
+      audit(req, "Media uploaded", req.file.originalname);
+      res.status(201).json({ media: getDb().prepare("SELECT * FROM cms_media WHERE id = ?").get(id) });
+    });
+  });
+
+  api.delete("/media/:id", requireAuth, requireRole(...ADMIN_ROLES), (req, res) => {
+    const row = getDb().prepare("SELECT * FROM cms_media WHERE id = ?").get(req.params.id) as { filename: string; url: string } | undefined;
+    if (!row) return res.status(404).json({ error: "Media not found" });
+    const filePath = path.join(process.cwd(), row.url.replace(/^\//, ""));
+    try {
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    } catch (err) {
+      reportCaughtError(err, "api.media.unlink");
+    }
+    getDb().prepare("DELETE FROM cms_media WHERE id = ?").run(req.params.id);
+    audit(req, "Media deleted", row.filename);
+    res.json({ ok: true });
+  });
+
+  api.get("/audit", requireAuth, requireRole(...ADMIN_ROLES), (req, res) => {
+    const limit = Math.min(Number(req.query.limit || 100), 500);
+    res.json({
+      logs: getDb().prepare("SELECT * FROM audit_logs ORDER BY timestamp DESC LIMIT ?").all(limit),
+    });
+  });
+
+  // ----------------------------------------------------
+  // WhatsApp AI Suite & Outbound Trigger Engine Router
+  // ----------------------------------------------------
+  api.use("/whatsapp", createWhatsAppRouter());
+
+  // ----------------------------------------------------
+  // Meta WhatsApp webhooks, WABA inventory, and SANDBOX simulators
+  // ----------------------------------------------------
+  api.use("/meta", createMetaRouter());
+
+  // ----------------------------------------------------
+  // ABDM v3 Gateway, Identity & DHIS Router
+  // ----------------------------------------------------
+  api.use("/abdm", createAbdmRouter());
+  api.use("/v3", createAbdmRouter());
+
+  // Direct EMR PDF viewer endpoints
+  api.get("/emr/prescription/:id/pdf", (req, res) => {
+    res.redirect(`/api/whatsapp/prescription/${req.params.id}/pdf`);
+  });
+  api.get("/emr/lab-report/:id/pdf", (req, res) => {
+    res.redirect(`/api/whatsapp/lab-report/${req.params.id}/pdf`);
+  });
+
+  api.use(createClinicalRouter());
+  api.use(createBillingRouter());
+
+  return api;
+}
