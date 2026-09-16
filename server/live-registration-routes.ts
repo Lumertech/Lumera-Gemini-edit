@@ -3,6 +3,7 @@ import { persistSpecialtyPackId } from "../src/lib/specialtyPack.ts";
 import { assignedRoleForPracticeType, getDb, normalizePracticeType } from "./db.ts";
 import { otpEchoPayload } from "./auth.ts";
 import { liveRegistrationPasswordHash } from "./live-registration-password.ts";
+import { readOauthOnboardingFromRequest } from "./oauth-onboarding.ts";
 import { ensureTenantSubscription } from "./platform-tenants.ts";
 import { dispatchWhatsAppCloudMessage, isCloudDispatchFailure } from "./graph-whatsapp.ts";
 
@@ -42,12 +43,22 @@ async function handleRegisterPractice(req: Request, res: Response) {
   const country = String(req.body?.country || "India").trim();
   const timezone = String(req.body?.timezone || "IST (UTC+5:30)").trim();
   const phone = String(req.body?.phone || "").trim();
-  const name = String(req.body?.name || "").trim();
-  const email = String(req.body?.email || "").trim().toLowerCase();
+  let name = String(req.body?.name || "").trim();
+  let email = String(req.body?.email || "").trim().toLowerCase();
   const password = String(req.body?.password || "");
-  const avatarUrl = String(req.body?.avatarUrl || "");
+  let avatarUrl = String(req.body?.avatarUrl || "");
   const practiceType = normalizePracticeType(req.body?.practiceType);
   const assignedRole = assignedRoleForPracticeType(practiceType);
+
+  const oauthOnboard = readOauthOnboardingFromRequest(req);
+  if (oauthOnboard.present && !oauthOnboard.ok) {
+    return res.status(401).json({ error: oauthOnboard.error });
+  }
+  if (oauthOnboard.present && oauthOnboard.ok) {
+    email = oauthOnboard.identity.email;
+    name = oauthOnboard.identity.name;
+    if (oauthOnboard.identity.avatarUrl) avatarUrl = oauthOnboard.identity.avatarUrl;
+  }
 
   if (!practiceName || !phone || !name || !email) {
     return res.status(400).json({ error: "Practice Name, Director Name, Email, and WhatsApp Phone are required." });
