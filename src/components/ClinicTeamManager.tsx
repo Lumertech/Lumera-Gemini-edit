@@ -538,7 +538,7 @@ export const ClinicTeamManager: React.FC<ClinicTeamManagerProps> = ({
                   {d.hprId && (
                     <span className="px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 font-mono flex items-center gap-1 border border-blue-200/50">
                       <Award className="w-3 h-3 text-blue-600" />
-                      {d.hprId}
+                      {d.hprLabel || d.hprId}
                     </span>
                   )}
                   <span className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 font-semibold flex items-center gap-0.5">
