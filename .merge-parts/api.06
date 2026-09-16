@@ -1,0 +1,193 @@
+    const slotDurationMinutes = req.body?.slotDurationMinutes !== undefined && req.body?.slotDurationMinutes !== null
+      ? Number(req.body.slotDurationMinutes)
+      : undefined;
+    const rxTemplate = req.body?.rxTemplate ? String(req.body.rxTemplate).trim() : undefined;
+    const facilityAddress = req.body?.facilityAddress ? String(req.body.facilityAddress).trim() : undefined;
+    const facilityCity = req.body?.facilityCity ? String(req.body.facilityCity).trim() : undefined;
+    const departments = Array.isArray(req.body?.departments)
+      ? (req.body.departments as unknown[])
+          .map((item) => String(item || "").trim())
+          .filter(Boolean)
+      : [];
+    const frontDeskRaw = req.body?.frontDesk && typeof req.body.frontDesk === "object" ? req.body.frontDesk : {};
+    const rosterDoctors = Array.isArray(req.body?.rosterDoctors) ? req.body.rosterDoctors : [];
+    const nextRole = practiceType
+      ? assignedRoleForPracticeType(practiceType, req.user?.role)
+      : undefined;
+
+    getDb().prepare(`
+      UPDATE users
+      SET onboarding_completed = 1,
+          practice_type = COALESCE(?, practice_type),
+          specialty = COALESCE(?, specialty),
+          pack_id = COALESCE(?, pack_id),
+          name = COALESCE(?, name),
+          clinic_name = COALESCE(?, clinic_name),
+          role = COALESCE(?, role)
+      WHERE id = ?
+    `).run(
+      practiceType || null,
+      specialty || null,
+      specialty || null,
+      doctorName || null,
+      clinicName || null,
+      nextRole || null,
+      userId
+    );
+
+    if (req.user?.tenantId) {
+      const tenantSpecialty = departments.length ? departments.join(", ") : specialty;
+      const practiceSettings = JSON.stringify({
+        walkInEnabled: frontDeskRaw.walkInEnabled !== false,
+        sharedQueue: frontDeskRaw.sharedQueue !== false,
+        tokenPrefix: String(frontDeskRaw.tokenPrefix || "OPD").trim() || "OPD",
+        departments,
+        slotDurationMinutes: slotDurationMinutes || 15,
+      });
+      getDb().prepare(`
+        UPDATE tenants
+        SET name = COALESCE(?, name),
+            specialty = COALESCE(?, specialty),
+            address = COALESCE(?, address),
+            city = COALESCE(?, city),
+            practice_settings = ?,
+            updated_at = ?
+        WHERE id = ?
+      `).run(
+        clinicName || null,
+        tenantSpecialty || null,
+        facilityAddress || null,
+        facilityCity || null,
+        practiceSettings,
+        new Date().toISOString(),
+        req.user.tenantId
+      );
+    }
+
+    const existingDoc = getDb().prepare("SELECT id FROM doctors WHERE user_id = ?").get(userId) as { id: string } | undefined;
+    if (existingDoc) {
+      getDb().prepare(`
+        UPDATE doctors
+        SET name = COALESCE(?, name),
+            specialty = COALESCE(?, specialty),
+            reg_number = COALESCE(?, reg_number),
+            consultation_fee = COALESCE(?, consultation_fee),
+            qualification = COALESCE(?, qualification),
+            opd_room = COALESCE(?, opd_room),
+            opd_timing = COALESCE(?, opd_timing),
+            signature_url = COALESCE(?, signature_url),
+            slot_duration_minutes = COALESCE(?, slot_duration_minutes),
+            rx_template = COALESCE(?, rx_template)
+        WHERE id = ?
+      `).run(
+        doctorName || null,
+        specialty || null,
+        regNumber || null,
+        consultationFee ?? null,
+        qualification || null,
+        opdRoom || null,
+        opdTiming || null,
+        signatureUrl || null,
+        slotDurationMinutes ?? null,
+        rxTemplate || null,
+        existingDoc.id
+      );
+    } else {
+      const docId = `doc-${crypto.randomUUID().slice(0, 8)}`;
+      getDb().prepare(`
+        INSERT INTO doctors (id, user_id, name, qualification, reg_number, specialty, experience_years, consultation_fee, opd_room, available_days, opd_timing, avatar_url, bio, hpr_id, phone, email, signature_url, slot_duration_minutes, rx_template, active)
+        VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, '["Mon","Tue","Wed","Thu","Fri","Sat"]', ?, '', '', ?, ?, ?, ?, ?, ?, 1)
+      `).run(
+        docId,
+        userId,
+        doctorName || (req.user!.name.startsWith("Dr.") ? req.user!.name : `Dr. ${req.user!.name}`),
+        qualification || "",
+        regNumber || "",
+        specialty || "General Medicine",
+        consultationFee || 0,
+        opdRoom || "",
+        opdTiming || "",
+        req.user!.hprId || "",
+        req.user!.phone || "",
+        req.user!.email || "",
+        signatureUrl || "",
+        slotDurationMinutes || 15,
+        rxTemplate || "classic"
+      );
+    }
+
+    if (practiceType === "polyclinic") {
+      const founderName = (doctorName || req.user!.name || "").trim().toLowerCase();
+      for (const raw of rosterDoctors as Array<Record<string, unknown>>) {
+        const rosterName = String(raw?.name || "").trim();
+        const rosterSpecialty = String(raw?.specialty || "").trim();
+        if (!rosterName || !rosterSpecialty) continue;
+        if (rosterName.toLowerCase() === founderName && rosterSpecialty === (specialty || "")) continue;
+        const rosterId = `doc-${crypto.randomUUID().slice(0, 8)}`;
+        getDb().prepare(`
+          INSERT INTO doctors (id, user_id, name, qualification, reg_number, specialty, experience_years, consultation_fee, opd_room, available_days, opd_timing, avatar_url, bio, hpr_id, phone, email, signature_url, slot_duration_minutes, rx_template, active)
+          VALUES (?, NULL, ?, ?, ?, ?, 0, ?, '', '["Mon","Tue","Wed","Thu","Fri","Sat"]', ?, '', '', '', ?, '', '', ?, 'classic', 1)
+        `).run(
+          rosterId,
+          rosterName.startsWith("Dr.") ? rosterName : `Dr. ${rosterName}`,
+          String(raw?.qualification || "").trim(),
+          String(raw?.regNumber || "").trim(),
+          rosterSpecialty,
+          Number(raw?.consultationFee || consultationFee || 0),
+          String(raw?.opdTiming || opdTiming || ""),
+          String(raw?.phone || ""),
+          Number(raw?.slotDurationMinutes || slotDurationMinutes || 15)
+        );
+      }
+    }
+
+    const updatedUserRow = getDb().prepare(`
+      SELECT u.*,
+             COALESCE(NULLIF(u.clinic_name, ''), t.name, '') AS clinic_name,
+             COALESCE(NULLIF(u.hfr_id, ''), t.hfr_id, '') AS hfr_id
+      FROM users u
+      LEFT JOIN tenants t ON u.tenant_id = t.id
+      WHERE u.id = ?
+    `).get(userId) as unknown as DbUser;
+
+    const jwtToken = issueLumeraSession(res, updatedUserRow);
+    writeAudit(
+      getDb(),
+      userId,
+      req.user!.name,
+      "Onboarding Completed",
+      `Completed ${practiceType || "practice"} setup for specialty: ${specialty || "General Medicine"}`
+    );
+
+    return res.json({
+      ok: true,
+      user: publicUser(updatedUserRow),
+      token: jwtToken,
+      homeView: practiceType === "polyclinic" ? "welcome" : "queue",
+      message: "Clinical profile verified & practice suite activated successfully.",
+    });
+  });
+
+  // Password Recovery / Forgot Password
+  api.post("/auth/forgot-password", async (req: Request, res: Response) => {
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    if (!email) {
+      return res.status(400).json({ error: "Please provide your registered email address." });
+    }
+
+    const user = getDb().prepare("SELECT * FROM users WHERE email = ?").get(email) as unknown as DbUser | undefined;
+    const phone = user?.phone || "+91 98234 55667";
+    const name = user?.name || "Clinician";
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const verificationId = crypto.randomUUID();
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+
+    getDb().prepare(`
+      INSERT INTO otp_verifications (id, phone, email, otp, purpose, payload, created_at, expires_at)
+      VALUES (?, ?, ?, ?, 'password_reset', ?, ?, ?)
+    `).run(
+      verificationId,
+      phone,
+      email,
+      otp,
+      JSON.stringify({ userId: user?.id, email }),
