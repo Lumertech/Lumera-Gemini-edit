@@ -782,7 +782,7 @@ export default function ClinicianApp() {
           </div>
         </div>
         <div className="flex items-center gap-4 text-slate-400">
-          <div className="hidden sm:block">ICD-10 / ABDM Standard</div>
+          <div className="hidden sm:block">ICD-10 · ABDM-aligned (NHA sandbox)</div>
           <div className="text-purple-400 font-medium flex items-center gap-1">
             <span className="w-2 h-2 rounded-full bg-purple-400 animate-pulse"></span>
             Pulse AI (Gemini 3.8 Flash)
