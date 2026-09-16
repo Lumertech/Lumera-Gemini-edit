@@ -4,6 +4,15 @@ import { mountGeminiVoiceRoutes } from "./gemini-voice.ts";
 import { generateRuleBasedSoap, getPulseFallbackAnswer } from "./gemini-fallbacks.ts";
 import { aiScribeTenantIdFromRequest, blockedAiScribeResponse, meterSuccessfulGeminiScribe } from "./gemini-scribe-meter.ts";
 
+let testSoapGenerator: ((body: Record<string, unknown>) => Promise<unknown>) | undefined;
+
+/** Test-only Gemini mock so HTTP tests do not need live API keys. */
+export function setGeminiSoapGeneratorForTests(
+  fn?: ((body: Record<string, unknown>) => Promise<unknown>) | undefined
+) {
+  testSoapGenerator = fn;
+}
+
 /** Clinical Gemini HTTP routes. Split from server.ts so MCP can upload both files intact. */
 export function mountGeminiClinicalRoutes(app: Express) {
   // Lazy Google GenAI initialization
@@ -42,6 +51,17 @@ export function mountGeminiClinicalRoutes(app: Express) {
       const blocked = blockedAiScribeResponse(tenantId);
       if (blocked) {
         return res.status(blocked.status).json(blocked.body);
+      }
+
+      if (testSoapGenerator) {
+        const soap = await testSoapGenerator(req.body);
+        meterSuccessfulGeminiScribe({
+          tenantId,
+          durationMinutes: req.body?.durationMinutes,
+          transcript,
+          metadata: { source: "gemini-3.7-flash", endpoint: "generate-soap" },
+        });
+        return res.json({ success: true, soap, source: "gemini-3.7-flash" });
       }
 
       const ai = getGenAI();
