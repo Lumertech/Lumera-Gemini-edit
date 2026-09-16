@@ -92,20 +92,24 @@ describe("LoginPage Google + Facebook SSO (side-by-side, no demo logins)", () =>
 
   it("locks verified OAuth name/email and makes the master password optional", () => {
     assert.match(loginSrc, /params\.get\("unregistered"\) === "1"/);
-    assert.match(loginSrc, /params\.get\("oauthToken"\)/);
-    assert.match(loginSrc, /oauthOnboarding/);
+    assert.match(loginSrc, /unregisteredOauthFromSearch/);
+    assert.match(loginSrc, /verifiedOauthBanner/);
+    assert.match(loginSrc, /data-testid="register-oauth-verified-banner"/);
     assert.match(loginSrc, /readOnly=\{oauthOnboarding\}/);
     assert.match(loginSrc, /aria-readonly=\{oauthOnboarding\}/);
+    assert.match(loginSrc, /tabIndex=\{oauthOnboarding \? -1 : undefined\}/);
     assert.match(loginSrc, /data-oauth-locked=\{oauthOnboarding \? "true" : "false"\}/);
     assert.match(loginSrc, /required=\{!oauthOnboarding\}/);
     assert.match(loginSrc, /minLength=\{oauthOnboarding \? undefined : 6\}/);
-    assert.match(loginSrc, /Fallback password for email sign-in/);
-    assert.match(loginSrc, /REGISTER_OAUTH_PASSWORD_PLACEHOLDER/);
+    assert.match(loginSrc, /REGISTER_OAUTH_PASSWORD_LABEL/);
+    assert.match(loginSrc, /data-testid="register-oauth-password-toggle"/);
+    assert.match(loginSrc, /data-testid="register-clinic-name"/);
+    assert.match(loginSrc, /clinicNameRef\.current\?\.focus\(\)/);
+    assert.match(loginSrc, /autoFocus=\{oauthOnboarding\}/);
     assert.match(loginSrc, /data-testid="register-oauth-token"/);
-    assert.match(loginSrc, /data-testid="register-oauth-password-hint"/);
     assert.match(loginSrc, /oauthToken: oauthToken \|\| undefined/);
+    assert.match(loginSrc, /oauthProvider: oauthProvider \|\| undefined/);
     assert.match(loginSrc, /password: oauthOnboarding \? adminPassword\.trim\(\) \|\| undefined : adminPassword/);
-    assert.match(loginSrc, /Your name and email are locked|Those fields are locked/);
     const authSrc = readFileSync(join(here, "../auth/AuthContext.tsx"), "utf8");
     assert.match(authSrc, /oauthToken\?: string/);
     assert.match(authSrc, /oauthProvider\?: "google" \| "facebook"/);
