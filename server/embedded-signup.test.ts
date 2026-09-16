@@ -254,6 +254,30 @@ describe("Embedded Signup v4 handshake", () => {
     assert.equal(authed.json.simulatorsEnabled, true);
   });
 
+  it("GET /api/admin/meta/platform-credentials is Super Admin only and masks secrets", async () => {
+    const anon = await jsonRequest(port, "GET", "/api/admin/meta/platform-credentials");
+    assert.equal(anon.status, 401);
+
+    const clinic = seedClinic("platform-creds");
+    const clinicToken = await login(clinic.email);
+    const clinicRes = await jsonRequest(port, "GET", "/api/admin/meta/platform-credentials", undefined, {
+      Authorization: `Bearer ${clinicToken}`,
+    });
+    assert.equal(clinicRes.status, 403);
+
+    const adminToken = await login("admin@lumera.me");
+    const adminRes = await jsonRequest(port, "GET", "/api/admin/meta/platform-credentials", undefined, {
+      Authorization: `Bearer ${adminToken}`,
+    });
+    assert.equal(adminRes.status, 200, String(adminRes.json.error || "platform credentials failed"));
+    assert.equal(adminRes.json.appId, APP_ID);
+    assert.equal(adminRes.json.appSecretConfigured, true);
+    assert.match(String(adminRes.json.appSecretPreview || ""), /••••/);
+    assert.equal(String(adminRes.json.appSecretPreview || "").includes(APP_SECRET), false);
+    assert.match(String(adminRes.json.webhookUrl || ""), /\/api\/meta\/webhook/);
+    assert.match(String(adminRes.json.notice || ""), /does not trigger Embedded Signup/);
+  });
+
   it("POST /api/whatsapp-numbers/embedded-signup/complete exchanges, subscribes, and stores the token", async () => {
     const clinic = seedClinic("http-complete");
     const token = await login(clinic.email);
