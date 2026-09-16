@@ -29,15 +29,16 @@ describe("LoginPage create-clinic / register defaults (founder P0)", () => {
 
   it("starts Google Sign-in at /api/auth/google when credentials are configured", () => {
     assert.match(loginSrc, /oauthConfig\?\.googleConfigured/);
-    assert.match(loginSrc, /window\.location\.href = "\/api\/auth\/google"/);
+    assert.match(loginSrc, /window\.location\.href = provider === "google" \? "\/api\/auth\/google" : "\/api\/auth\/facebook"/);
     assert.match(loginSrc, /GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET/);
     assert.match(loginSrc, /oauth !== "google"/);
   });
 
   it("starts Facebook Login at /api/auth/facebook when credentials are configured", () => {
     assert.match(loginSrc, /oauthConfig\?\.facebookConfigured/);
-    assert.match(loginSrc, /window\.location\.href = "\/api\/auth\/facebook"/);
+    assert.match(loginSrc, /window\.location\.href = provider === "google" \? "\/api\/auth\/google" : "\/api\/auth\/facebook"/);
     assert.match(loginSrc, /FACEBOOK_APP_ID and FACEBOOK_APP_SECRET/);
+    assert.match(loginSrc, /FACEBOOK_CLIENT_ID \/ FACEBOOK_CLIENT_SECRET/);
   });
 
   it("does not read URL params to select Multispecialty", () => {
@@ -59,29 +60,33 @@ describe("LoginPage WhatsApp country code (founder P0)", () => {
   });
 });
 
-describe("LoginPage Google SSO visibility (complements PR #64)", () => {
-  it("shows Google when googleConfigured or sandboxClientOAuthAllowed, hidden while loading", () => {
+describe("LoginPage Google + Facebook SSO (side-by-side, no demo logins)", () => {
+  it("always offers Google and Facebook via /api/auth/{provider}", () => {
     assert.match(loginSrc, /showGoogleOAuthButton\(oauthConfig\)/);
     assert.match(loginSrc, /googleConfigured\?: boolean/);
     assert.match(loginSrc, /useState<\{[\s\S]*sandboxClientOAuthAllowed: boolean;[\s\S]*\} \| null>\(null\)/);
     assert.match(loginSrc, /oauthConfig\?\.googleConfigured/);
-    assert.match(loginSrc, /window\.location\.href = "\/api\/auth\/google"/);
+    assert.match(loginSrc, /window\.location\.href = provider === "google" \? "\/api\/auth\/google" : "\/api\/auth\/facebook"/);
     assert.equal(loginSrc.includes("oauthConfig?.sandboxClientOAuthAllowed === true"), false);
     assert.equal(loginSrc.includes("oauthConfig?.sandboxClientOAuthAllowed !== true"), false);
   });
 
-  it("gates both Google and Facebook button clusters the same way", () => {
+  it("places Google and Facebook side-by-side with matching handlers", () => {
     const googleClicks = loginSrc.match(/handleOAuthSignIn\("google"\)/g) || [];
     const facebookClicks = loginSrc.match(/handleOAuthSignIn\("facebook"\)/g) || [];
     assert.equal(googleClicks.length, 2);
     assert.equal(facebookClicks.length, 2);
-    assert.match(loginSrc, /data-testid="oauth-google-signin"/);
-    assert.match(loginSrc, /data-testid="oauth-google-register"/);
-    assert.match(loginSrc, /data-testid="oauth-facebook-signin"/);
-    assert.match(loginSrc, /data-testid="oauth-facebook-register"/);
+    assert.match(loginSrc, /googleTestId="oauth-google-signin"/);
+    assert.match(loginSrc, /googleTestId="oauth-google-register"/);
+    assert.match(loginSrc, /facebookTestId="oauth-facebook-signin"/);
+    assert.match(loginSrc, /facebookTestId="oauth-facebook-register"/);
     assert.match(loginSrc, /showFacebookOAuthButton\(oauthConfig\)/);
-    assert.match(loginSrc, /window\.location\.href = "\/api\/auth\/facebook"/);
-    assert.equal((loginSrc.match(/\{showGoogleOAuth && \(/g) || []).length, 2);
-    assert.equal((loginSrc.match(/\{showFacebookOAuth && \(/g) || []).length, 2);
+    assert.match(loginSrc, /grid grid-cols-2 gap-3/);
+    assert.match(loginSrc, /data-testid="oauth-social-row"/);
+    assert.doesNotMatch(loginSrc, /DEMO_LOGIN_MATRIX/);
+    assert.doesNotMatch(loginSrc, /demo-account-picker/);
+    assert.doesNotMatch(loginSrc, /handleQuickDemoClinician/);
+    assert.doesNotMatch(loginSrc, /SANDBOX \/ DEMO logins/);
+    assert.doesNotMatch(loginSrc, /physio\.doctor@lumera\.me/);
   });
 });

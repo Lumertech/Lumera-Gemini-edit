@@ -34,6 +34,7 @@ describe("public login form defaults", () => {
 
   it("strips only known seeded demo emails, not arbitrary clinic emails", () => {
     assert.equal(isSeededDemoEmail("doctor@lumera.me"), true);
+    assert.equal(isSeededDemoEmail("physio.doctor@lumera.me"), true);
     assert.equal(isSeededDemoEmail("  ADMIN@lumera.me  "), true);
     assert.equal(isSeededDemoEmail("clinic.admin@example.com"), false);
     assert.equal(stripSeededPublicLoginValue("email", "doctor@lumera.me"), "");
@@ -112,7 +113,8 @@ describe("public login form defaults", () => {
     assert.match(loginPage, /autoComplete="tel-national"/);
     assert.match(loginPage, /sanitizeNationalPhoneDigits/);
     assert.match(loginPage, /composeWhatsAppNumber/);
-    assert.match(loginPage, /data-testid="admin-password-login-note"/);
+    assert.doesNotMatch(loginPage, /data-testid="demo-account-picker"/);
+    assert.doesNotMatch(loginPage, /data-testid="admin-password-login-note"/);
     assert.match(loginPage, /data-testid="login-password"/);
     assert.match(loginPage, /testId="login-whatsapp"/);
     assert.match(loginPage, /data-testid=\{testId\}/);
