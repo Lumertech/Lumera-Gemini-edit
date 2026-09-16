@@ -196,13 +196,14 @@ export const ENV_CATALOG: EnvKeyDoc[] = [
   },
   {
     name: "FACEBOOK_APP_ID",
-    aliases: ["META_APP_ID"],
-    description: "Facebook Login numeric app id. Optional until founder provisions the Meta app.",
+    aliases: ["FACEBOOK_CLIENT_ID", "META_APP_ID"],
+    description: "Facebook Login numeric app id (FACEBOOK_CLIENT_ID alias). Optional until founder provisions the Meta app.",
     dummy: "replace-with-facebook-app-id",
   },
   {
     name: "FACEBOOK_APP_SECRET",
-    description: "Facebook Login app secret. Falls back to META_APP_SECRET.",
+    aliases: ["FACEBOOK_CLIENT_SECRET", "META_APP_SECRET"],
+    description: "Facebook Login app secret (FACEBOOK_CLIENT_SECRET or META_APP_SECRET aliases).",
     dummy: "replace-with-facebook-app-secret",
   },
   {
