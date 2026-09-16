@@ -1,11 +1,10 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import express from "express";
 import { buildAbdmStatusPayload, createAbdmRouter } from "./abdm.ts";
+import { jsonRequest, startTestServer } from "./test-http.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, "..");
@@ -258,17 +257,15 @@ describe("Compliance #44 honesty gate (clinician / admin / DHIS / CMS / ABDM sta
     assert.equal(/"CONNECTED"/.test(serialized), false);
     assert.equal(/sandboxAuditStatus/.test(serialized), false);
 
-    const app = express();
-    app.use("/abdm", createAbdmRouter());
-    app.use("/v3", createAbdmRouter());
-    const server = app.listen(0);
+    const server = await startTestServer((app) => {
+      app.use("/abdm", createAbdmRouter());
+      app.use("/v3", createAbdmRouter());
+    });
     try {
-      const { port } = server.address() as AddressInfo;
-
       for (const urlPath of ["/abdm/status", "/v3/status"]) {
-        const res = await fetch(`http://127.0.0.1:${port}${urlPath}`);
+        const res = await jsonRequest(server.port, "GET", urlPath);
         assert.equal(res.status, 200);
-        const json = (await res.json()) as Record<string, unknown>;
+        const json = res.json;
         assert.equal(json.abdmMode, "stub");
         assert.equal(json.bridgeReady, true);
         assert.equal(json.sandboxAuditStatus, undefined);
@@ -277,9 +274,7 @@ describe("Compliance #44 honesty gate (clinician / admin / DHIS / CMS / ABDM sta
         assert.deepEqual(Object.keys(json).sort(), ["abdmMode", "bridgeReady"]);
       }
     } finally {
-      await new Promise<void>((resolve, reject) => {
-        server.close((err) => (err ? reject(err) : resolve()));
-      });
+      await server.close();
     }
   });
 
