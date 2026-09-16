@@ -79,7 +79,7 @@ describe("public vs app surface routing (founder lock #48)", () => {
     assert.equal(surfaceToPath("app", { appView: "billing", workspaceSlug: "dr-demo-physio" }), "/w/dr-demo-physio/billing");
     assert.equal(pathToNav("/app/queue").appView, "queue");
     assert.equal(pathToNav("/app/smart-rx").appView, "rx");
-    assert.equal(pathToNav("/app/queue").appView, "queue");
+    assert.equal(pathToNav("/app").appView, "queue");
     assert.equal(pathToNav("/admin/users").surface, "admin");
     assert.equal(pathToNav("/admin/users").adminTab, "users");
     assert.equal(pathToNav("/admin/people").adminTab, "people");
@@ -97,7 +97,7 @@ describe("public vs app surface routing (founder lock #48)", () => {
     assert.equal(canonicalizeAdminTab("media"), "media");
     assert.equal(appViewToPath("rx"), "/app/rx");
     assert.equal(adminTabToPath("users"), "/admin/users");
-    assert.equal(surfaceToPath("app", { appView: "billing" }), "/app/billing");
+    assert.equal(surfaceToPath("app", { appView: "billing"}), "/app/billing");
     assert.equal(surfaceToPath("admin", { adminTab: "site" }), "/admin/site");
     assert.notEqual(pathToNav("/app/rx").surface, "landing");
   });
