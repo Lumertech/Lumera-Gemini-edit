@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { showGoogleOAuthButton } from "./oauthUi.ts";
+import { showFacebookOAuthButton, showGoogleOAuthButton } from "./oauthUi.ts";
 
 describe("showGoogleOAuthButton (complements PR #64)", () => {
   it("hides Google while oauth-config is loading", () => {
@@ -27,6 +27,32 @@ describe("showGoogleOAuthButton (complements PR #64)", () => {
   it("shows Google when googleConfigured even if sandbox client OAuth is disabled", () => {
     assert.equal(
       showGoogleOAuthButton({ googleConfigured: true, sandboxClientOAuthAllowed: false }),
+      true
+    );
+  });
+});
+
+describe("showFacebookOAuthButton", () => {
+  it("hides Facebook while oauth-config is loading", () => {
+    assert.equal(showFacebookOAuthButton(null), false);
+    assert.equal(showFacebookOAuthButton(undefined), false);
+  });
+
+  it("hides Facebook in production when App credentials are missing", () => {
+    assert.equal(showFacebookOAuthButton({ sandboxClientOAuthAllowed: false }), false);
+    assert.equal(
+      showFacebookOAuthButton({ facebookConfigured: false, sandboxClientOAuthAllowed: false }),
+      false
+    );
+  });
+
+  it("shows Facebook when sandbox client-email OAuth is allowed", () => {
+    assert.equal(showFacebookOAuthButton({ sandboxClientOAuthAllowed: true }), true);
+  });
+
+  it("shows Facebook when facebookConfigured even if sandbox client OAuth is disabled", () => {
+    assert.equal(
+      showFacebookOAuthButton({ facebookConfigured: true, sandboxClientOAuthAllowed: false }),
       true
     );
   });
