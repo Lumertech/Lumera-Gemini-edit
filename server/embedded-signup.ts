@@ -82,6 +82,17 @@ export function embeddedSignupPublicConfig() {
 
 type FetchImpl = typeof fetch;
 
+let injectedFetchImpl: FetchImpl | undefined;
+
+/** Test hook — HTTP tests mock Graph via completeEmbeddedSignup's fetchImpl path. */
+export function setEmbeddedSignupFetchImpl(impl?: FetchImpl) {
+  injectedFetchImpl = impl;
+}
+
+function resolveFetchImpl(impl?: FetchImpl): FetchImpl {
+  return impl || injectedFetchImpl || fetch;
+}
+
 async function graphCall(opts: {
   url: string;
   method?: string;
@@ -138,7 +149,7 @@ export async function exchangeEmbeddedSignupCode(opts: {
   });
   const result = await graphCall({
     url: `https://graph.facebook.com/${version}/oauth/access_token?${params.toString()}`,
-    fetchImpl: opts.fetchImpl || fetch,
+    fetchImpl: resolveFetchImpl(opts.fetchImpl),
   });
   if (!result.ok || (result.data && typeof result.data === "object" && result.data.error)) {
     throw new EmbeddedSignupError(graphErrorMessage(result.data, result.status), 401, "CODE_EXCHANGE_FAILED", {
@@ -190,7 +201,7 @@ export async function inspectEmbeddedSignupToken(opts: {
   });
   const result = await graphCall({
     url: `https://graph.facebook.com/debug_token?${params.toString()}`,
-    fetchImpl: opts.fetchImpl || fetch,
+    fetchImpl: resolveFetchImpl(opts.fetchImpl),
   });
   if (!result.ok || (result.data && typeof result.data === "object" && result.data.error)) {
     throw new EmbeddedSignupError(graphErrorMessage(result.data, result.status), 401, "DEBUG_TOKEN_FAILED");
@@ -238,7 +249,7 @@ export async function confirmWabaAndPhoneGrants(opts: {
 
   const version = graphApiVersion();
   const tokenQ = new URLSearchParams({ access_token: opts.accessToken });
-  const fetchImpl = opts.fetchImpl || fetch;
+  const fetchImpl = resolveFetchImpl(opts.fetchImpl);
 
   const waba = await graphCall({
     url: `https://graph.facebook.com/${version}/${encodeURIComponent(wabaId)}?fields=id,name&${tokenQ.toString()}`,
@@ -290,7 +301,7 @@ export async function subscribeAppToCustomerWaba(opts: {
     url: `https://graph.facebook.com/${version}/${encodeURIComponent(opts.wabaId)}/subscribed_apps`,
     method: "POST",
     headers: { Authorization: `Bearer ${opts.accessToken}` },
-    fetchImpl: opts.fetchImpl || fetch,
+    fetchImpl: resolveFetchImpl(opts.fetchImpl),
   });
   if (!result.ok || result.data?.success === false || (result.data && typeof result.data === "object" && result.data.error)) {
     throw new EmbeddedSignupError(
@@ -320,7 +331,7 @@ export async function completeEmbeddedSignup(opts: {
   displayName?: string;
   fetchImpl?: FetchImpl;
 }) {
-  const fetchImpl = opts.fetchImpl || fetch;
+  const fetchImpl = resolveFetchImpl(opts.fetchImpl);
   if (isUnsetOrPlaceholder(opts.code)) {
     throw new EmbeddedSignupError("Embedded Signup authorization code is required.", 400, "CODE_REQUIRED");
   }
