@@ -2,6 +2,7 @@ import type { NextFunction, Request, Response } from "express";
 import jwt from "jsonwebtoken";
 import { isDemoAccountEmail } from "../src/lib/demoAccounts.ts";
 import { getDb, publicUser, type DbUser, type UserRole } from "./db.ts";
+import { CSRF_COOKIE, csrfCookieValue, csrfSetCookieHeader } from "./http-security.ts";
 import { clinicTenantAccessError } from "./platform-tenants.ts";
 
 const COOKIE = "lumera_sid";
@@ -120,14 +121,15 @@ function parseCookies(header?: string): Record<string, string> {
 
 export function setSessionCookie(res: Response, sessionId: string) {
   const maxAge = SESSION_DAYS * 24 * 60 * 60;
-  res.setHeader(
-    "Set-Cookie",
-    `${COOKIE}=${encodeURIComponent(sessionId)}; HttpOnly; Path=/; SameSite=None; Secure; Partitioned; Max-Age=${maxAge}`
-  );
+  const sid = `${COOKIE}=${encodeURIComponent(sessionId)}; HttpOnly; Path=/; SameSite=None; Secure; Partitioned; Max-Age=${maxAge}`;
+  res.setHeader("Set-Cookie", [sid, csrfSetCookieHeader(csrfCookieValue())]);
 }
 
 export function clearSessionCookie(res: Response) {
-  res.setHeader("Set-Cookie", `${COOKIE}=; HttpOnly; Path=/; SameSite=None; Secure; Partitioned; Max-Age=0`);
+  res.setHeader("Set-Cookie", [
+    `${COOKIE}=; HttpOnly; Path=/; SameSite=None; Secure; Partitioned; Max-Age=0`,
+    `${CSRF_COOKIE}=; Path=/; SameSite=None; Secure; Partitioned; Max-Age=0`,
+  ]);
 }
 
 export function createSession(userId: string): string {
@@ -183,8 +185,40 @@ export function loadUserFromSession(req: Request): AuthUser | null {
   return publicUser(row);
 }
 
-export function attachUser(req: Request, _res: Response, next: NextFunction) {
+function isDashboardWhatsAppPath(req: Request): boolean {
+  const raw = String(req.originalUrl || req.path || "").split("?")[0];
+  const p = raw.startsWith("/api/whatsapp") ? raw.slice("/api".length) : raw.startsWith("/whatsapp") ? raw : `/whatsapp${raw.startsWith("/") ? raw : `/${raw}`}`;
+  if (p.startsWith("/whatsapp/prescription/") || p.startsWith("/whatsapp/lab-report/")) return false;
+  const protectedPrefixes = [
+    "/whatsapp/conversations",
+    "/whatsapp/messages",
+    "/whatsapp/send",
+    "/whatsapp/emr-action",
+    "/whatsapp/voice-process",
+    "/whatsapp/translate",
+    "/whatsapp/send-rx",
+    "/whatsapp/outbound/trigger",
+    "/whatsapp/outbound-trigger",
+    "/whatsapp/outbound/events",
+    "/whatsapp/outbound-events",
+    "/whatsapp/reminders/run",
+  ];
+  return protectedPrefixes.some((prefix) => p === prefix || p.startsWith(`${prefix}/`));
+}
+
+export function attachUser(req: Request, res: Response, next: NextFunction) {
   req.user = loadUserFromSession(req) || undefined;
+  if (isDashboardWhatsAppPath(req)) {
+    if (!req.user) {
+      return res.status(401).json({ error: "Authentication required" });
+    }
+    const role = req.user.role;
+    const allowed =
+      (CLINICIAN_ROLES as readonly string[]).includes(role) || isPlatformAdminRole(role);
+    if (!allowed) {
+      return res.status(403).json({ error: "Insufficient permissions" });
+    }
+  }
   next();
 }
 
