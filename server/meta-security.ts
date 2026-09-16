@@ -126,6 +126,7 @@ export function buildMetaReadinessOverview(opts: {
   privacyUrl?: string;
   termsUrl?: string;
   dataDeletionUrl?: string;
+  governmentDataRequestUrl?: string;
   graphOtpConfigured: boolean;
   webhookSecretConfigured: boolean;
   verifyTokenConfigured: boolean;
@@ -156,6 +157,12 @@ export function buildMetaReadinessOverview(opts: {
       note: signedRequestReady
         ? "HMAC-SHA256 signed_request verification runs when META_APP_SECRET is set. Not App Review complete. Lumera is not a certified Tech Provider."
         : "Callback scaffold only — signed_request verification requires META_APP_SECRET. Not App Review complete.",
+    },
+    {
+      item: "Government & public-authority data request policy (Data Handling four areas)",
+      passed: true,
+      url: opts.governmentDataRequestUrl || "/government-data-request-policy",
+      note: "Legal review, challenge unlawful requests, data minimization, and request logging.",
     },
     {
       item: "Webhook GET verify token configured",
