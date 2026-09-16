@@ -1,7 +1,7 @@
 /**
  * CORS allowlist, cookie CSRF, and auth-endpoint rate limits.
- * Meta / Razorpay webhooks and /healthz are exempt so signature-verified
- * callbacks are not blocked by browser Origin / CSRF / login throttles.
+ * Meta / Razorpay / Google Calendar webhooks and /healthz are exempt so
+ * signature-verified callbacks are not blocked by browser Origin / CSRF / login throttles.
  */
 import { type Express, type NextFunction, type Request, type Response } from "express";
 import { isUnsetOrPlaceholder } from "./runtime.ts";
@@ -53,6 +53,7 @@ export function isSecurityExemptPath(path: string): boolean {
   if (p === "/api/meta/webhook" || p === "/meta/webhook") return true;
   if (p === "/api/meta/data-deletion" || p === "/meta/data-deletion") return true;
   if (p === "/api/billing/razorpay/webhook") return true;
+  if (p === "/api/webhooks/google-calendar") return true;
   return false;
 }
 

@@ -14,6 +14,7 @@ describe("Drizzle schema vs server/db.ts migrate (Epic 0.1)", () => {
     const migrateSrc = [
       path.join(root, "server/db-migrate.ts"),
       path.join(root, "server/db-bootstrap-ddl.ts"),
+      path.join(root, "server/doctor-schedule-schema.ts"),
     ]
       .filter((p) => fs.existsSync(p))
       .map((p) => fs.readFileSync(p, "utf8"))
@@ -38,7 +39,7 @@ describe("Drizzle schema vs server/db.ts migrate (Epic 0.1)", () => {
       fs.readFileSync(path.join(root, "src/db/schema-a.ts"), "utf8"),
       fs.readFileSync(path.join(root, "src/db/schema-b.ts"), "utf8"),
     ].join("\n");
-    assert.doesNotMatch(schema, /pgTable\('entries'/);
+    assert.doesNotMatch(schema, /pgTable\('entries'/) ;
     assert.match(schema, /pack_id/);
     assert.match(schema, /idx_patients_tenant_abha/);
     assert.match(schema, /practice_settings/);

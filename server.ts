@@ -27,6 +27,7 @@ import { mountGeminiClinicalRoutes } from "./server/gemini-clinical.ts";
 import { installWhatsAppRouterPatch, protectWhatsAppDashboard } from "./server/whatsapp-dashboard-guard.ts";
 import { createLiveRegistrationRouter } from "./server/live-registration-routes.ts";
 import { ensureUsageWalletSchema, seedDemoUsageWallet } from "./server/usage-billing.ts";
+import { ensureDoctorScheduleSchema } from "./server/doctor-schedule-schema.ts";
 
 dotenv.config();
 applyBundledServerNodeEnv();
@@ -134,6 +135,7 @@ async function startServer() {
 
   // Heavy work after the Cloud Run socket is open. /healthz is already registered.
   initDatabase();
+  ensureDoctorScheduleSchema(getDb());
   ensureUsageWalletSchema(getDb());
   seedDemoUsageWallet(getDb());
   bootWhatsAppOwnershipSchema();
