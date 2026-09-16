@@ -8,6 +8,9 @@ import {
   LOGIN_PASSWORD_PLACEHOLDER,
   LOGIN_WHATSAPP_PLACEHOLDER,
   REGISTER_OAUTH_PASSWORD_PLACEHOLDER,
+  REGISTER_OAUTH_PASSWORD_LABEL,
+  unregisteredOauthFromSearch,
+  verifiedOauthBanner,
   isSeededDemoEmail,
   persistRememberedLoginEmail,
   readRememberedLoginEmail,
@@ -103,8 +106,13 @@ describe("public login form defaults", () => {
     assert.match(loginPage, /placeholder=\{REGISTER_EMAIL_PLACEHOLDER\}/);
     assert.match(loginPage, /placeholder=\{REGISTER_PASSWORD_PLACEHOLDER\}/);
     assert.match(loginPage, /REGISTER_OAUTH_PASSWORD_PLACEHOLDER/);
+    assert.match(loginPage, /REGISTER_OAUTH_PASSWORD_LABEL/);
     assert.match(loginPage, /required=\{!oauthOnboarding\}/);
     assert.equal(REGISTER_OAUTH_PASSWORD_PLACEHOLDER, "Optional fallback for email sign-in");
+    assert.equal(
+      REGISTER_OAUTH_PASSWORD_LABEL,
+      "(Optional) Set a fallback password for direct email login"
+    );
     assert.doesNotMatch(loginPage, /useState\(loginDemo \? "/);
     assert.doesNotMatch(loginPage, /useState\("doctor@lumera\.me"\)/);
     assert.doesNotMatch(loginPage, /useState\("Lumera@2026"\)/);
@@ -168,5 +176,22 @@ describe("public login form defaults", () => {
     assert.match(loginPage, /sticky bottom-0/);
     assert.match(loginPage, /safe-area-inset-bottom/);
     assert.match(loginPage, /form="create-clinic-form"/);
+  });
+});
+
+describe("unregistered OAuth onboarding prefill", () => {
+  it("reads facebook/google unregistered query identity", () => {
+    const facebook = unregisteredOauthFromSearch(
+      "?oauth=facebook&unregistered=1&email=doc%40clinic.example&name=Dr.+Anika&oauthToken=tok"
+    );
+    assert.equal(facebook.provider, "facebook");
+    assert.equal(facebook.email, "doc@clinic.example");
+    assert.equal(facebook.name, "Dr. Anika");
+    assert.equal(facebook.oauthToken, "tok");
+    const google = unregisteredOauthFromSearch("oauth=google&unregistered=1&email=a@b.co&name=A");
+    assert.equal(google.provider, "google");
+    assert.equal(unregisteredOauthFromSearch("?oauth=facebook&error=access_denied").provider, null);
+    assert.equal(verifiedOauthBanner("facebook", "doc@clinic.example"), "Verified via Facebook (doc@clinic.example)");
+    assert.equal(verifiedOauthBanner("google", "a@b.co"), "Verified via Google (a@b.co)");
   });
 });
