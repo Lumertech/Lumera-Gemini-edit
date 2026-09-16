@@ -2,6 +2,7 @@ import React from "react";
 import { Stethoscope, UserPlus, Sparkles, Building2 } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { PersonalWabaConnect } from "./PersonalWabaConnect";
+import { formatAbdmRegistryLabel } from "../lib/abdmRegistryLabel";
 
 interface WelcomeSetupDashboardProps {
   onAddPatients: () => void;
@@ -35,6 +36,17 @@ export const WelcomeSetupDashboard: React.FC<WelcomeSetupDashboardProps> = ({
             <p className="text-sm text-slate-600 mt-1">
               Your clinic account is ready. This workspace starts empty — no demo doctors or sample patients.
               Register a patient first; check-in issues a Waiting OPD token. Records are saved to your clinic and survive refresh.
+            </p>
+            <p className="text-xs text-amber-800 mt-2">
+              {user?.hfrLabel ||
+                formatAbdmRegistryLabel("HFR", user?.hfrId, user?.registryIdsPlaceholder !== false)}
+              {user?.hprId || user?.hprLabel ? (
+                <>
+                  {" · "}
+                  {user?.hprLabel ||
+                    formatAbdmRegistryLabel("HPR", user?.hprId, user?.registryIdsPlaceholder !== false)}
+                </>
+              ) : null}
             </p>
           </div>
         </div>

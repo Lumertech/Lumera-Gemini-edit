@@ -25,6 +25,7 @@ import { useAuth } from "../auth/AuthContext";
 import { useNav } from "../nav/NavigationContext";
 import { PolyclinicSpecialty } from "../types";
 import { displayDoctorName, markWelcomeDashboard } from "../lib/sessionWorkspace";
+import { formatAbdmRegistryLabel } from "../lib/abdmRegistryLabel";
 import { letterheadFromSessionHints, patchTenantLetterhead } from "../lib/letterhead";
 import {
   DEFAULT_FRONT_DESK,
@@ -321,7 +322,10 @@ export const OnboardingWizard: React.FC = () => {
           <div className="flex items-center gap-2 flex-wrap">
             <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-950/40 border border-emerald-600/30 text-emerald-400 text-xs font-medium">
               <ShieldCheck className="w-3.5 h-3.5" />
-              <span>HFR: {user?.hfrId || "Pending"} · sandbox</span>
+              <span>
+                {user?.hfrLabel ||
+                  formatAbdmRegistryLabel("HFR", user?.hfrId, user?.registryIdsPlaceholder !== false)}
+              </span>
             </div>
           </div>
         </div>

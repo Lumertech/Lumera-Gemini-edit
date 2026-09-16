@@ -199,7 +199,7 @@ export const PolyclinicManager: React.FC<PolyclinicManagerProps> = ({
                   <div className="mt-1.5">
                     <span className="px-2 py-0.5 rounded bg-blue-50 text-blue-700 text-[10px] font-mono border border-blue-200/50 flex items-center gap-1 w-fit">
                       <Award className="w-3 h-3 text-blue-600" />
-                      {doc.hprId}
+                      {doc.hprLabel || doc.hprId}
                     </span>
                   </div>
                 )}
