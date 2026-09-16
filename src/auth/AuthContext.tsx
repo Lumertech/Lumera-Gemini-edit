@@ -33,6 +33,8 @@ export interface RegisterClinicData {
   password?: string;
   avatarUrl?: string;
   practiceType?: "individual" | "multispecialty" | "polyclinic";
+  oauthToken?: string;
+  oauthProvider?: "google" | "facebook";
 }
 
 export interface OnboardingPayload {
@@ -234,6 +236,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       body: JSON.stringify({
         ...data,
         practiceName: data.practiceName || data.clinicName,
+        oauthToken: data.oauthToken || undefined,
+        oauthProvider: data.oauthProvider || undefined,
       }),
     });
   }, []);
