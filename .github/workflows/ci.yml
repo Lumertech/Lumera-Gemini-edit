@@ -1,11 +1,18 @@
+# Required status check on main: "lint-and-test"
+# (lint + unit/integration tests + production build). See docs/BRANCH_PROTECTION.md.
 name: CI
 
 on:
   push:
   pull_request:
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint-and-test:
+    name: lint-and-test
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -21,11 +28,16 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
 
       - name: Lint (tsc --noEmit)
         run: npm run lint
 
-      # Exact globs from package.json "test" script — a failing step fails the workflow.
+      # package.json "test" script — unit + integration. A failing step fails the workflow.
       - name: Test
-        run: npx tsx --test --test-concurrency=1 server/*.test.ts src/lib/*.test.ts src/nav/*.test.ts src/pages/*.test.ts src/components/admin/*.test.ts
+        run: npm run test
+
+      # Production Vite + esbuild bundle. Must pass before merge to main.
+      - name: Build
+        run: npm run build
