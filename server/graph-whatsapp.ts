@@ -507,7 +507,7 @@ export async function dispatchWhatsAppCloudMessage(opts: {
         messageId: graph.messageId,
         source: creds.source,
       });
-      return { ok: true; channel: "graph", messageId: graph.messageId, source: creds.source };
+      return { ok: true, channel: "graph", messageId: graph.messageId, source: creds.source };
     }
     const graphError = "error" in graph ? graph.error : "Graph send failed.";
     return { ok: false, error: graphError, channel: "graph" };
