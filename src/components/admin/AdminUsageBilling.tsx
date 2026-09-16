@@ -225,7 +225,7 @@ export const AdminUsageBilling: React.FC = () => {
               <div className="text-lg font-bold">₹{margin.billedAmount.toFixed(2)}</div>
             </div>
             <div className="bg-emerald-50 rounded-lg p-3">
-              <div className="text-[10px] uppercase text-slate-500">Margin</div>
+              <div className="text-[10px] uppercase text-emerald-700">Margin</div>
               <div className="text-lg font-bold text-emerald-800">₹{margin.margin.toFixed(2)}</div>
             </div>
           </div>
