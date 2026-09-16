@@ -23,7 +23,7 @@ import {
 export type GraphCredentials = {
   token: string;
   phoneNumberId: string;
-  source: "env" | "tenant";
+  source: "env" | "tenant" | "fallback";
 };
 
 export type CloudMessageKind =
@@ -34,7 +34,7 @@ export type CloudMessageKind =
   | "text";
 
 export type CloudDispatchResult =
-  | { ok: true; channel: "graph" | "sandbox"; messageId?: string }
+  | { ok: true; channel: "graph" | "sandbox"; messageId?: string; source?: GraphCredentials["source"] }
   | { ok: false; error: string; channel: "none" | "graph" };
 
 export function isCloudDispatchFailure(
@@ -43,25 +43,116 @@ export function isCloudDispatchFailure(
   return sent.ok === false;
 }
 
-export function resolveGraphCredentials(db?: DatabaseSync | null): GraphCredentials | null {
+export function resolveFallbackGraphCredentials(): GraphCredentials | null {
+  const token = readSecret("META_FALLBACK_ACCESS_TOKEN", "META_ACCESS_TOKEN", "WHATSAPP_ACCESS_TOKEN");
+  const phone = readSecret("META_FALLBACK_PHONE_NUMBER_ID", "META_PHONE_NUMBER_ID", "WHATSAPP_PHONE_NUMBER_ID");
+  if (isUsableGraphToken(token) && isUsablePhoneNumberId(phone)) {
+    return { token, phoneNumberId: phone, source: "fallback" };
+  }
+  return null;
+}
+
+type TenantWabaSendRow = {
+  meta_access_token?: string;
+  phone_number_id?: string;
+  meta_code_verification_status?: string;
+  meta_display_name_status?: string;
+  meta_phone_status?: string;
+  meta_onboarding_status?: string;
+};
+
+/** True when the clinic's own number is Graph-usable AND Meta has verified phone + display name. */
+export function tenantCustomNumberReadyForSend(row?: TenantWabaSendRow | null): boolean {
+  if (!row) return false;
+  if (!isUsableGraphToken(row.meta_access_token) || !isUsablePhoneNumberId(row.phone_number_id)) return false;
+  const code = String(row.meta_code_verification_status || "").toUpperCase();
+  const name = String(row.meta_display_name_status || "").toUpperCase();
+  const phone = String(row.meta_phone_status || "").toUpperCase();
+  if (code !== "VERIFIED") return false;
+  if (name && name !== "APPROVED") return false;
+  if (phone && phone !== "CONNECTED" && phone !== "AVAILABLE") return false;
+  return true;
+}
+
+function readTenantWabaSendRow(db: DatabaseSync, tenantId: string): TenantWabaSendRow | null {
+  try {
+    const row = db
+      .prepare(
+        `SELECT meta_access_token, phone_number_id,
+                COALESCE(meta_code_verification_status, '') AS meta_code_verification_status,
+                COALESCE(meta_display_name_status, '') AS meta_display_name_status,
+                COALESCE(meta_phone_status, '') AS meta_phone_status,
+                COALESCE(meta_onboarding_status, '') AS meta_onboarding_status
+         FROM tenants WHERE id = ?`
+      )
+      .get(tenantId) as TenantWabaSendRow | undefined;
+    return row || null;
+  } catch {
+    try {
+      const row = db
+        .prepare(
+          `SELECT meta_access_token, phone_number_id FROM tenants
+           WHERE id = ? AND COALESCE(meta_access_token, '') != '' AND COALESCE(phone_number_id, '') != ''`
+        )
+        .get(tenantId) as TenantWabaSendRow | undefined;
+      return row || null;
+    } catch {
+      return null;
+    }
+  }
+}
+
+/**
+ * Appointment reminders: use the clinic's own number once Meta verifies it;
+ * otherwise Lumera's shared test number (META_FALLBACK_* falling back to META_ACCESS_TOKEN /
+ * META_PHONE_NUMBER_ID) so clinics can send while display name / phone await verification.
+ */
+export function resolveReminderGraphCredentials(
+  db?: DatabaseSync | null,
+  tenantId?: string
+): GraphCredentials | null {
+  const tid = String(tenantId || "").trim();
+  const tenantRow = db && tid ? readTenantWabaSendRow(db, tid) : null;
+  if (tenantCustomNumberReadyForSend(tenantRow)) {
+    return {
+      token: String(tenantRow!.meta_access_token),
+      phoneNumberId: String(tenantRow!.phone_number_id),
+      source: "tenant",
+    };
+  }
+  const fallback = resolveFallbackGraphCredentials();
+  if (fallback) return fallback;
+  if (tenantRow && isUsableGraphToken(tenantRow.meta_access_token) && isUsablePhoneNumberId(tenantRow.phone_number_id)) {
+    return {
+      token: String(tenantRow.meta_access_token),
+      phoneNumberId: String(tenantRow.phone_number_id),
+      source: "tenant",
+    };
+  }
+  return null;
+}
+
+export function resolveGraphCredentials(
+  db?: DatabaseSync | null,
+  tenantId?: string
+): GraphCredentials | null {
   const envToken = readSecret("META_ACCESS_TOKEN", "WHATSAPP_ACCESS_TOKEN");
   const envPhone = readSecret("META_PHONE_NUMBER_ID", "WHATSAPP_PHONE_NUMBER_ID");
   if (isUsableGraphToken(envToken) && isUsablePhoneNumberId(envPhone)) {
     return { token: envToken, phoneNumberId: envPhone, source: "env" };
   }
 
-  if (!db) return null;
+  const tid = String(tenantId || "").trim();
+  if (!db || !tid) return null;
   try {
-    const rows = db
+    const row = db
       .prepare(
         `SELECT meta_access_token, phone_number_id FROM tenants
-         WHERE COALESCE(meta_access_token, '') != '' AND COALESCE(phone_number_id, '') != ''`
+         WHERE id = ? AND COALESCE(meta_access_token, '') != '' AND COALESCE(phone_number_id, '') != ''`
       )
-      .all() as { meta_access_token: string; phone_number_id: string }[];
-    for (const row of rows) {
-      if (isUsableGraphToken(row.meta_access_token) && isUsablePhoneNumberId(row.phone_number_id)) {
-        return { token: row.meta_access_token, phoneNumberId: row.phone_number_id, source: "tenant" };
-      }
+      .get(tid) as { meta_access_token: string; phone_number_id: string } | undefined;
+    if (row && isUsableGraphToken(row.meta_access_token) && isUsablePhoneNumberId(row.phone_number_id)) {
+      return { token: row.meta_access_token, phoneNumberId: row.phone_number_id, source: "tenant" };
     }
   } catch {
     /* tenants table may be missing in isolated tests */
@@ -358,7 +449,7 @@ export async function dispatchWhatsAppCloudMessage(opts: {
         critical: isCriticalWhatsAppKind(kind),
         database: opts.db,
       });
-      if (!gate.ok) {
+      if (gate.ok === false) {
         return { ok: false, error: gate.error, channel: "none" };
       }
     } catch (err) {
@@ -366,7 +457,10 @@ export async function dispatchWhatsAppCloudMessage(opts: {
     }
   }
 
-  const creds = resolveGraphCredentials(opts.db);
+  const creds =
+    kind === "appointment_reminder"
+      ? resolveReminderGraphCredentials(opts.db, tenantId)
+      : resolveGraphCredentials(opts.db, tenantId);
 
   if (creds) {
     let graph: GraphMessageResult;
@@ -411,8 +505,9 @@ export async function dispatchWhatsAppCloudMessage(opts: {
         inCustomerServiceWindow,
         channel: "graph",
         messageId: graph.messageId,
+        source: creds.source,
       });
-      return { ok: true, channel: "graph", messageId: graph.messageId };
+      return { ok: true; channel: "graph", messageId: graph.messageId, source: creds.source };
     }
     const graphError = "error" in graph ? graph.error : "Graph send failed.";
     return { ok: false, error: graphError, channel: "graph" };
@@ -487,6 +582,7 @@ function meterWhatsAppUsage(opts: {
   inCustomerServiceWindow: boolean;
   channel: "graph" | "sandbox";
   messageId?: string;
+  source?: GraphCredentials["source"];
 }) {
   if (!opts.tenantId || !opts.db) return;
   try {
@@ -496,7 +592,7 @@ function meterWhatsAppUsage(opts: {
       to: opts.to,
       inCustomerServiceWindow: opts.inCustomerServiceWindow,
       database: opts.db,
-      metadata: { channel: opts.channel, messageId: opts.messageId || null },
+      metadata: { channel: opts.channel, messageId: opts.messageId || null, source: opts.source || null },
     });
   } catch (err) {
     console.error("Failed to record WhatsApp usage:", err);
