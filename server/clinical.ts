@@ -49,7 +49,8 @@ function shortId(prefix: string): string {
 }
 
 function yearToken(prefix: string): string {
-  return `${prefix}-${new Date().getFullYear()}-${crypto.randomUUID().replace(/-/g, "").slice(0, 6).toUpperCase()}`;
+  const year = new Date().getFullYear();
+  return `${prefix}-${year}-${crypto.randomUUID().replace(/-/g, "").slice(0, 6).toUpperCase()}`;
 }
 
 export function nextTokenNumber(tenantId: string, date: string): number {
