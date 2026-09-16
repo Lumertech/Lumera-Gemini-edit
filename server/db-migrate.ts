@@ -1,6 +1,7 @@
 import { type SqlDatabase } from "./sql-engine.ts";
 import { ensurePlatformTenantSchema } from "./platform-tenants.ts";
 import { BOOTSTRAP_DDL } from "./db-bootstrap-ddl.ts";
+import { ensureDoctorScheduleSchema } from "./doctor-schedule-schema.ts";
 
 const DEMO_LETTERHEAD_SEED = {
   name: "Lumera Healthcare & Polyclinic Institute",
@@ -165,6 +166,7 @@ export function migrate(database: SqlDatabase) {
   } catch {}
 
   ensurePlatformTenantSchema(database);
+  ensureDoctorScheduleSchema(database);
 
   ensureDemoTenantLetterhead(database);
 

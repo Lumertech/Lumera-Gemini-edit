@@ -248,6 +248,73 @@ export const tenantSubscriptions = pgTable("tenant_subscriptions", {
   updatedAt: text("updated_at").notNull(),
 });
 
+export const doctorSchedules = pgTable(
+  "doctor_schedules",
+  {
+    id: text("id").primaryKey(),
+    doctorId: text("doctor_id").notNull(),
+    dayOfWeek: integer("day_of_week").notNull(),
+    startTime: text("start_time").notNull(),
+    endTime: text("end_time").notNull(),
+    slotDurationMinutes: integer("slot_duration_minutes").notNull().default(15),
+    isActive: integer("is_active").notNull().default(1),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (t) => [index("idx_doctor_schedules_doctor_day").on(t.doctorId, t.dayOfWeek)]
+);
+
+export const doctorOverrides = pgTable(
+  "doctor_overrides",
+  {
+    id: text("id").primaryKey(),
+    doctorId: text("doctor_id").notNull(),
+    overrideDate: text("override_date").notNull(),
+    overrideType: text("override_type").notNull(),
+    customStartTime: text("custom_start_time"),
+    customEndTime: text("custom_end_time"),
+    reason: text("reason"),
+    source: text("source").notNull().default("manual"),
+    googleEventId: text("google_event_id"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (t) => [
+    index("idx_doctor_overrides_doctor_date").on(t.doctorId, t.overrideDate),
+    index("idx_doctor_overrides_source").on(t.doctorId, t.source),
+  ]
+);
+
+export const googleCalendarIntegrations = pgTable("google_calendar_integrations", {
+  id: text("id").primaryKey(),
+  doctorId: text("doctor_id").notNull().unique(),
+  accessToken: text("access_token").notNull(),
+  refreshToken: text("refresh_token").notNull(),
+  tokenExpiry: text("token_expiry").notNull(),
+  calendarId: text("calendar_id").notNull().default("primary"),
+  syncEnabled: integer("sync_enabled").notNull().default(1),
+  blockOpdSlots: integer("block_opd_slots").notNull().default(1),
+  pushAppointments: integer("push_appointments").notNull().default(1),
+  connectedEmail: text("connected_email").notNull().default(""),
+  channelId: text("channel_id").notNull().default(""),
+  resourceId: text("resource_id").notNull().default(""),
+  watchExpiration: text("watch_expiration").notNull().default(""),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+export const googleCalendarEventMap = pgTable(
+  "google_calendar_event_map",
+  {
+    appointmentId: text("appointment_id").primaryKey(),
+    doctorId: text("doctor_id").notNull(),
+    googleEventId: text("google_event_id").notNull(),
+    calendarId: text("calendar_id").notNull().default("primary"),
+    createdAt: text("created_at").notNull(),
+  },
+  (t) => [index("idx_gcal_event_map_doctor").on(t.doctorId)]
+);
+
 /** Table names present after migrate() — used by schema-contract tests. */
 export const LUMERA_TABLE_NAMES = [
   "users",
@@ -277,4 +344,8 @@ export const LUMERA_TABLE_NAMES = [
   "abdm_consent_artefacts",
   "plans",
   "tenant_subscriptions",
+  "doctor_schedules",
+  "doctor_overrides",
+  "google_calendar_integrations",
+  "google_calendar_event_map",
 ] as const;
