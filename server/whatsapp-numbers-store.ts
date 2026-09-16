@@ -25,11 +25,17 @@ export type WhatsAppNumberRow = {
   owner_id: string;
   waba_id: string;
   phone_number_id: string;
+  business_id: string;
   meta_waba_name: string;
   status: WhatsAppNumberStatus;
   connected_via: WhatsAppConnectedVia | "";
   meta_token_ref: string;
   meta_token_expires_at: string;
+  phone_status: string;
+  code_verification_status: string;
+  display_name_status: string;
+  business_verification_status: string;
+  quality_rating: string;
   created_at: string;
   updated_at: string;
 };
@@ -73,11 +79,17 @@ export function ensureWhatsAppOwnershipSchema(database: DatabaseSync) {
       owner_id TEXT NOT NULL,
       waba_id TEXT NOT NULL DEFAULT '',
       phone_number_id TEXT NOT NULL DEFAULT '',
+      business_id TEXT NOT NULL DEFAULT '',
       meta_waba_name TEXT NOT NULL DEFAULT '',
       status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','connected','disconnected')),
       connected_via TEXT CHECK(connected_via IN ('master_admin','embedded_signup') OR connected_via IS NULL OR connected_via = ''),
       meta_token_ref TEXT DEFAULT '',
       meta_token_expires_at TEXT DEFAULT '',
+      phone_status TEXT NOT NULL DEFAULT '',
+      code_verification_status TEXT NOT NULL DEFAULT '',
+      display_name_status TEXT NOT NULL DEFAULT '',
+      business_verification_status TEXT NOT NULL DEFAULT '',
+      quality_rating TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       UNIQUE (owner_type, owner_id)
@@ -113,6 +125,27 @@ export function ensureWhatsAppOwnershipSchema(database: DatabaseSync) {
   try {
     database.exec("CREATE INDEX IF NOT EXISTS idx_practitioners_phone ON practitioners(phone)");
   } catch {}
+
+  const extraColumns: Array<[string, string, string]> = [
+    ["whatsapp_numbers", "business_id", "TEXT NOT NULL DEFAULT ''"],
+    ["whatsapp_numbers", "phone_status", "TEXT NOT NULL DEFAULT ''"],
+    ["whatsapp_numbers", "code_verification_status", "TEXT NOT NULL DEFAULT ''"],
+    ["whatsapp_numbers", "display_name_status", "TEXT NOT NULL DEFAULT ''"],
+    ["whatsapp_numbers", "business_verification_status", "TEXT NOT NULL DEFAULT ''"],
+    ["whatsapp_numbers", "quality_rating", "TEXT NOT NULL DEFAULT ''"],
+    ["tenants", "meta_business_id", "TEXT DEFAULT ''"],
+    ["tenants", "meta_phone_status", "TEXT DEFAULT ''"],
+    ["tenants", "meta_code_verification_status", "TEXT DEFAULT ''"],
+    ["tenants", "meta_display_name_status", "TEXT DEFAULT ''"],
+    ["tenants", "meta_business_verification_status", "TEXT DEFAULT ''"],
+  ];
+  for (const [table, column, ddl] of extraColumns) {
+    try {
+      database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+    } catch {
+      /* already present */
+    }
+  }
 }
 
 export function normalizePractitionerPhone(phone: string): string {
@@ -274,6 +307,11 @@ export function syncTenantWabaColumns(database: DatabaseSync, tenantId: string) 
                meta_token_expires_at = COALESCE(meta_token_expires_at, ''),
                meta_waba_name = COALESCE(meta_waba_name, ''),
                meta_onboarding_status = 'disconnected',
+               meta_business_id = '',
+               meta_phone_status = '',
+               meta_code_verification_status = '',
+               meta_display_name_status = '',
+               meta_business_verification_status = '',
                updated_at = ?
            WHERE id = ?`
         )
@@ -289,6 +327,12 @@ export function syncTenantWabaColumns(database: DatabaseSync, tenantId: string) 
              meta_token_expires_at = ?,
              meta_waba_name = ?,
              meta_onboarding_status = ?,
+             meta_business_id = ?,
+             meta_phone_status = ?,
+             meta_code_verification_status = ?,
+             meta_display_name_status = ?,
+             meta_business_verification_status = ?,
+             meta_quality_rating = ?,
              updated_at = ?
          WHERE id = ?`
       )
@@ -299,6 +343,12 @@ export function syncTenantWabaColumns(database: DatabaseSync, tenantId: string) 
         row.meta_token_expires_at || "",
         row.meta_waba_name || "",
         row.status === "connected" ? "connected" : row.status,
+        row.business_id || "",
+        row.phone_status || "",
+        row.code_verification_status || "",
+        row.display_name_status || "",
+        row.business_verification_status || "",
+        row.quality_rating || "",
         now,
         tenantId
       );
@@ -509,10 +559,16 @@ export type UpsertWhatsAppNumberInput = {
   ownerId: string;
   wabaId?: string;
   phoneNumberId?: string;
+  businessId?: string;
   metaWabaName?: string;
   metaAccessToken?: string;
   status?: WhatsAppNumberStatus;
   connectedVia?: WhatsAppConnectedVia;
   metaTokenExpiresAt?: string;
+  phoneStatus?: string;
+  codeVerificationStatus?: string;
+  displayNameStatus?: string;
+  businessVerificationStatus?: string;
+  qualityRating?: string;
   allowCreate?: boolean;
 };
