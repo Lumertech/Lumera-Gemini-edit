@@ -1,0 +1,34 @@
+diff --git a/.env.example b/.env.example
+index 24a6ac58e3fedbe1c2d063ec2c28af3dfc6d60e8..c39bcd28cab5fa5e22504583085e1e354e3e21b4 100644
+--- a/.env.example
++++ b/.env.example
+@@ -97,9 +97,26 @@ APP_URL="http://localhost:3000"
+ # APPOINTMENT_REMINDER_SCHEDULER=true
+ # APPOINTMENT_REMINDER_INTERVAL_MS=900000
+ 
+-# Facebook Login (server-side token exchange) — issue #16
+-# Redirect URI to allow in the Facebook Login product:
+-#   {APP_URL}/api/auth/facebook/callback
++# Facebook Login — OAuth 2.0 authorization code (confidential server).
++# Founder: Meta App Review for Facebook Login (email, public_profile) is approved.
++# This is NOT WhatsApp Tech Provider certification and does NOT auto-enable
++# whatsapp_business_* scopes. Contact ravee@lumer.me.
++#
++# Cloud Run / production must set:
++#   FACEBOOK_APP_ID=<numeric Meta app id>
++#   FACEBOOK_APP_SECRET=<app secret>   (or META_APP_SECRET)
++#   APP_URL=https://www.mylumera.in
++# Meta App Dashboard → Facebook Login → Settings:
++#   Client OAuth Login = Yes
++#   Web OAuth Login = Yes
++#   Enforce HTTPS = Yes
++#   Use Strict Mode for Redirect URIs = Yes
++#   Valid OAuth Redirect URIs (exact, no trailing slash):
++#     https://www.mylumera.in/api/auth/facebook/callback
++#   Site URL: https://www.mylumera.in/
++#   App domains: www.mylumera.in
++# Local:
++#     http://localhost:3000/api/auth/facebook/callback
+ # FACEBOOK_APP_ID=
+ # FACEBOOK_APP_SECRET=
+ # FACEBOOK_REDIRECT_URI=http://localhost:3000/api/auth/facebook/callback

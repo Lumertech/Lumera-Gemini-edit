@@ -1,0 +1,60 @@
+diff --git a/docs/FIREBASE_CLOUD_RUN_DEPLOY.md b/docs/FIREBASE_CLOUD_RUN_DEPLOY.md
+index 509df9cc36fcc06b864d8b936c6f32fa74d9fcb3..6e630a94869e7f8cced49a8a9f6cd71539f7dd69 100644
+--- a/docs/FIREBASE_CLOUD_RUN_DEPLOY.md
++++ b/docs/FIREBASE_CLOUD_RUN_DEPLOY.md
+@@ -15,7 +15,7 @@ Gemini AI Studio **Publish** may produce the Cloud Run service. Firebase Hosting
+ Today’s live symptom (2026-09-10): www TLS presents `CN=firebaseapp.com` (SAN mismatch) and apex `mylumera.in` is 404. That is an unfinished Hosting custom-domain / cert mint, not a reason to change nameservers.
+ 
+ **Canonical public origin:** `https://www.mylumera.in`  
+-**Honesty:** Lumera is **not** a certified Meta Tech Provider. Do not paste Dashboard URLs until the smoke curls below return HTTPS 200.
++**Honesty:** Lumera is **not** a certified Meta Tech Provider. Facebook Login App Review is not WhatsApp Tech Provider certification. Do not paste Dashboard URLs until the smoke curls below return HTTPS 200.
+ 
+ Firebase project (from `firebase-applet-config.json` / `.firebaserc`): **`gen-lang-client-0108182367`**.
+ 
+@@ -236,11 +236,11 @@ done
+ 
+ ---
+ 
+-## 6. Meta App Dashboard URL checklist (sandbox-honest)
++## 6. Meta App Dashboard URL checklist
+ 
+ Canonical host: **`https://www.mylumera.in`**. Set `APP_URL` to that origin.
+ 
+-**Do not claim:** certified Meta Tech Provider, App Review approved/submitted, live WhatsApp Cloud send, or HIPAA.
++**Facebook Login App Review:** founder confirmed **approved** for Login (`email`, `public_profile`). Still **not** a certified Meta Tech Provider. WhatsApp `whatsapp_business_*` scopes stay SANDBOX-honest unless `META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED=true` is set on Cloud Run after *those* permissions are actually approved.
+ 
+ Paste **only after** the smoke gate in §5 is green:
+ 
+@@ -255,6 +255,32 @@ Paste **only after** the smoke gate in §5 is green:
+ | Valid OAuth Redirect URIs (Facebook Login) | `https://www.mylumera.in/api/auth/facebook/callback` |
+ | WhatsApp webhook callback URL | `https://www.mylumera.in/api/meta/webhook` (`GET` challenge + `POST`) |
+ 
++### Facebook Login product (OAuth 2.0)
++
++Cloud Run env (same service as `APP_URL`):
++
++| Variable | Value |
++| --- | --- |
++| `FACEBOOK_APP_ID` | Numeric Meta app id |
++| `FACEBOOK_APP_SECRET` | App secret (never commit; alias `META_APP_SECRET`) |
++| `APP_URL` | `https://www.mylumera.in` (no trailing slash) |
++| `FACEBOOK_REDIRECT_URI` | Optional override; default `{APP_URL}/api/auth/facebook/callback` |
++
++Meta App Dashboard → Facebook Login → Settings:
++
++| Setting | Value |
++| --- | --- |
++| Client OAuth Login | Yes |
++| Web OAuth Login | Yes |
++| Enforce HTTPS | Yes |
++| Use Strict Mode for Redirect URIs | Yes |
++| Valid OAuth Redirect URIs (**required**) | `https://www.mylumera.in/api/auth/facebook/callback` |
++| Valid OAuth Redirect URIs (local) | `http://localhost:3000/api/auth/facebook/callback` |
++
++`www` and apex are different origins. Production `APP_URL` is **www**, so the callback Meta must whitelist is **`https://www.mylumera.in/api/auth/facebook/callback`** (no trailing slash). The server stores that URI inside the signed `state` parameter and reuses it on `GET /oauth/access_token` — Meta rejects the code if they differ.
++
++Login path in this app: **GET `/api/auth/facebook`** → Facebook dialog (`response_type=code`) → **GET `/api/auth/facebook/callback`** → `debug_token` + `/me` → Lumera session cookie. Production never accepts a client-supplied email.
++
+ Optional override: `FACEBOOK_REDIRECT_URI=https://www.mylumera.in/api/auth/facebook/callback`.
+ 
+ ### Google Cloud Console (Google Sign-in)
