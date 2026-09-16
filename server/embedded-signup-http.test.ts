@@ -168,4 +168,121 @@ describe("HTTP Embedded Signup complete", () => {
     });
     assert.equal(res.status, 401);
   });
+
+  it("POST /api/integrations/whatsapp/embedded-signup links waba, phone, business and subscribes the webhook", async () => {
+    const wabaId = `waba-int-${RUN}`;
+    const phoneId = `10654${RUN.replace(/\D/g, "").padEnd(10, "2").slice(0, 10)}`;
+    const businessId = `biz-${RUN}`;
+    const impl: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url.includes("/oauth/access_token")) {
+        return new Response(JSON.stringify({ access_token: "EAA-test-business-token" }), { status: 200 });
+      }
+      if (url.includes("debug_token")) {
+        return new Response(
+          JSON.stringify({
+            data: {
+              app_id: APP_ID,
+              is_valid: true,
+              granular_scopes: [{ scope: "whatsapp_business_management", target_ids: [wabaId] }],
+            },
+          }),
+          { status: 200 }
+        );
+      }
+      if (url.includes(`/${wabaId}/phone_numbers`)) {
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: phoneId,
+                display_phone_number: "+91 90000 00000",
+                code_verification_status: "NOT_VERIFIED",
+                name_status: "PENDING_REVIEW",
+                status: "PENDING",
+              },
+            ],
+          }),
+          { status: 200 }
+        );
+      }
+      if (url.includes(`/${wabaId}?`) || url.endsWith(`/${wabaId}`)) {
+        return new Response(
+          JSON.stringify({
+            id: wabaId,
+            name: "Integrations WABA",
+            account_review_status: "PENDING",
+            on_behalf_of_business_info: { id: businessId },
+          }),
+          { status: 200 }
+        );
+      }
+      if (url.includes("/subscribed_apps")) {
+        return new Response(JSON.stringify({ success: true }), { status: 200 });
+      }
+      if (url.includes(`/${businessId}`)) {
+        return new Response(JSON.stringify({ id: businessId, verification_status: "not_verified" }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ error: { message: `unexpected ${url}` } }), { status: 500 });
+    };
+    setEmbeddedSignupFetchImpl(impl);
+    const token = await login();
+    const res = await jsonRequest(
+      port,
+      "POST",
+      "/api/integrations/whatsapp/embedded-signup",
+      { code: "ES-CODE-INT", wabaId, phoneNumberId: phoneId, businessId },
+      { Authorization: `Bearer ${token}` }
+    );
+    assert.equal(res.status, 200, String(res.json.error || JSON.stringify(res.json)));
+    const row = getDb()
+      .prepare(
+        "SELECT owner_type, waba_id, phone_number_id, business_id, code_verification_status FROM whatsapp_numbers WHERE owner_id = ? AND waba_id = ?"
+      )
+      .get(clinic.tenantId, wabaId) as {
+      owner_type: string;
+      waba_id: string;
+      phone_number_id: string;
+      business_id: string;
+      code_verification_status: string;
+    };
+    assert.equal(row.owner_type, "tenant");
+    assert.equal(row.waba_id, wabaId);
+    assert.equal(row.phone_number_id, phoneId);
+    assert.equal(row.business_id, businessId);
+    assert.equal(row.code_verification_status, "NOT_VERIFIED");
+    const tenant = getDb()
+      .prepare("SELECT meta_business_id FROM tenants WHERE id = ?")
+      .get(clinic.tenantId) as { meta_business_id?: string };
+    assert.equal(tenant.meta_business_id, businessId);
+    assert.equal((res.json.webhook as { subscribed?: boolean } | undefined)?.subscribed, true);
+  });
+
+  it("POST /api/integrations/whatsapp/embedded-signup rejects Super Admin", async () => {
+    const now = new Date().toISOString();
+    const email = `sa.${RUN}@es-admin.example`.toLowerCase();
+    const userId = `user-sa-${RUN}`;
+    getDb()
+      .prepare(
+        `INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, clinic_name, onboarding_completed, practice_type, specialty, last_login, created_at)
+         VALUES (?, ?, ?, ?, 'Super Admin', 'super_admin', 'active', '+910000000001', 'Lumera', 1, 'individual', 'General Medicine', ?, ?)`
+      )
+      .run(userId, clinic.tenantId, email, hashPassword("Lumera@2026"), now, now);
+    const loginRes = await jsonRequest(port, "POST", "/api/auth/login", {
+      email,
+      password: "Lumera@2026",
+      skipOtp: true,
+    });
+    assert.equal(loginRes.status, 200, String(loginRes.json.error || "super admin login failed"));
+    const token = String(loginRes.json.token || "");
+    const res = await jsonRequest(
+      port,
+      "POST",
+      "/api/integrations/whatsapp/embedded-signup",
+      { code: "ES-CODE-SA", wabaId: "1", phoneNumberId: "2" },
+      { Authorization: `Bearer ${token}` }
+    );
+    assert.equal(res.status, 403);
+    assert.match(String(res.json.error || ""), /tenant clinic|does not trigger|Insufficient permissions/i);
+  });
 });
