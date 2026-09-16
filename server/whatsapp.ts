@@ -19,6 +19,7 @@ import {
   runAppointmentReminders,
 } from "./whatsapp-calendar.ts";
 import { isProduction } from "./runtime.ts";
+import { reportCaughtError } from "./error-tracker.ts";
 
 let defaultGenAIClient: GoogleGenAI | null = null;
 function getDefaultGenAI(): GoogleGenAI | null {
@@ -308,7 +309,8 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
       if (sender === "agent" && targetLanguage && targetLanguage !== "en") {
         try {
           translatedContent = await translateWithGeminiOrFallback(content, targetLanguage, getGenAI());
-        } catch {
+        } catch (err) {
+          reportCaughtError(err, "whatsapp.translate.outbound");
           translatedContent = null;
         }
       }
@@ -319,7 +321,8 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
         if (detectedLanguage !== "en") {
           try {
             translatedContent = await translateWithGeminiOrFallback(content, "en", getGenAI());
-          } catch {
+          } catch (err) {
+            reportCaughtError(err, "whatsapp.translate.inbound");
             translatedContent = null;
           }
         }
@@ -1549,7 +1552,8 @@ Suggest relevant quick actions (booking appointment, checking timings, viewing l
         content: res.text || "Thank you for reaching out to Lumera Polyclinic. How may we assist you further?",
         buttons: ["📅 Book Doctor Appointment", "💊 Refill Prescription", "🔬 View Lab Reports", "👤 Speak with Receptionist"],
       };
-    } catch {
+    } catch (err) {
+      reportCaughtError(err, "whatsapp.gemini.fallback");
       /* fallback below */
     }
   }
@@ -1600,7 +1604,8 @@ async function translateWithGeminiOrFallback(text: string, targetLang: string, a
         ],
       });
       if (response.text) return response.text.trim();
-    } catch {
+    } catch (err) {
+      reportCaughtError(err, "whatsapp.translate.gemini");
       /* fallback */
     }
   }

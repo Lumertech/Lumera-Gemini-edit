@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { getDb } from "./db.ts";
+import { reportCaughtError } from "./error-tracker.ts";
 
 /** Public Meta App Review document paths that must embed cms_policies in HTML. */
 export const PUBLIC_POLICY_HTML_PATHS = [
@@ -94,7 +95,8 @@ function sendPolicyHtml(res: Response, slug: string): void {
       return;
     }
     res.status(200).type("html").send(renderPolicyDocumentHtml(row.title, row.body, row.updated_at));
-  } catch {
+  } catch (err) {
+    reportCaughtError(err, "policy-html.send");
     res
       .status(503)
       .type("html")

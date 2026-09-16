@@ -12,6 +12,7 @@
 import crypto from "node:crypto";
 import type { Request, Response } from "express";
 import { findDataDeletionRequest, getDb, insertDataDeletionRequest } from "./db.ts";
+import { reportCaughtError } from "./error-tracker.ts";
 import { getMetaAppSecret } from "./meta-security.ts";
 import { appPublicUrl, isProduction } from "./runtime.ts";
 
@@ -152,8 +153,8 @@ export function handleMetaDataDeletionPost(req: Request, res: Response) {
         `Data erasure request code ${code} initialized for ${userIdOrPhone}`,
         now
       );
-    } catch {
-      /* audit is best-effort */
+    } catch (err) {
+      reportCaughtError(err, "meta.data-deletion.audit");
     }
 
     return res.status(200).json({
@@ -164,8 +165,8 @@ export function handleMetaDataDeletionPost(req: Request, res: Response) {
     console.error("[Meta Data Deletion Callback Error]", err);
     try {
       insertDataDeletionRequest(getDb(), code, userIdOrPhone);
-    } catch {
-      /* persist fallback is best-effort */
+    } catch (err) {
+      reportCaughtError(err, "meta.data-deletion.persist-fallback");
     }
     return res.status(200).json({
       url: `${origin}/data-deletion-instructions?code=${encodeURIComponent(code)}`,

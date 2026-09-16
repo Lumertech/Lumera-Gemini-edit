@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import { findDataDeletionRequest, getDb } from "./db.ts";
 import { appPublicUrl, isProduction, sandboxSimulatorsEnabled } from "./runtime.ts";
+import { reportCaughtError } from "./error-tracker.ts";
 import { resolveGraphCredentials } from "./graph-whatsapp.ts";
 import { facebookOAuthConfigured } from "./facebook-oauth.ts";
 import {
@@ -89,7 +90,9 @@ export function createMetaRouter(): Router {
                       SET status = ?, sent_at = ?
                       WHERE id = ? OR patient_phone = ?
                     `).run(status, now, messageId, recipientId);
-                  } catch {}
+                  } catch (err) {
+                    reportCaughtError(err, "meta.webhook.outbound-status");
+                  }
                 }
               }
 
