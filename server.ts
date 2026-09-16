@@ -9,6 +9,7 @@ import { startAppointmentReminderScheduler } from "./server/whatsapp-calendar.ts
 import { attachUser, requireAuth } from "./server/auth.ts";
 import { createApiRouter } from "./server/api.ts";
 import { createWhatsAppNumbersRouter, practitionerLinkMiddleware, bootWhatsAppOwnershipSchema } from "./server/whatsapp-numbers-routes.ts";
+import { wrapAbdmRegistryJson } from "./server/abdm-registry-public.ts";
 import { createMetaRouter } from "./server/meta.ts";
 import { createAbdmRouter } from "./server/abdm.ts";
 import { applyBundledServerNodeEnv, failFastRequiredProductionEnv, resolveListenPort } from "./server/runtime.ts";
@@ -53,7 +54,7 @@ app.use("/api/v3", createAbdmRouter());
 app.use("/v3", createAbdmRouter());
 app.use("/api", practitionerLinkMiddleware);
 app.use("/api", createWhatsAppNumbersRouter());
-app.use("/api", createApiRouter());
+app.use("/api", wrapAbdmRegistryJson(createApiRouter()));
 app.use("/meta", createMetaRouter());
 app.post("/data-deletion-callback", (req, res, next) => {
   req.url = "/data-deletion";
