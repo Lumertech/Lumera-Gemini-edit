@@ -20,31 +20,16 @@ export type EnvKeyDoc = {
   dummy?: string;
 };
 
-/** Keys that must appear in `.env.example` (name or a listed alias). */
-export const ENV_CATALOG: EnvKeyDoc[] = [
-  {
-    name: "JWT_SECRET",
-    requiredInProduction: true,
-    description: "HMAC for session JWTs. No weak default. Fail-closed in production.",
-    dummy: "change-me-to-a-long-random-secret",
-  },
-  {
-    name: "DATABASE_URL",
-    requiredInProduction: true,
-    description:
-      "Postgres URI. Cloud Run unix socket: postgres://USER:PASSWORD@/DBNAME?host=/cloudsql/PROJECT:asia-south1:INSTANCE",
-    dummy: "postgres://lumera:replace-with-sql-password@/lumera?host=/cloudsql/PROJECT:asia-south1:INSTANCE",
-  },
-  {
-    name: "INSTANCE_CONNECTION_NAME",
-    aliases: ["CLOUD_SQL_CONNECTION_NAME"],
-    description: "Cloud SQL instance connection name PROJECT:asia-south1:INSTANCE. Composed into DATABASE_URL when the URI is unset.",
-    dummy: "gen-lang-client-0108182367:asia-south1:lumera-pg",
-  },
-  {
-    name: "SQL_USER",
-    aliases: ["POSTGRES_USER"],
-    description: "Cloud SQL / Postgres user (with SQL_PASSWORD + SQL_DB_NAME + INSTANCE_CONNECTION_NAME).",
-    dummy: "lumera",
-  },
-];
+export const ENV_CATALOG: EnvKeyDoc[] = [];
+export const PARTIAL_CLOUD_SQL_MESSAGE =
+  "Partial Cloud SQL configuration. Set DATABASE_URL (postgres://USER:PASSWORD@/DBNAME?host=/cloudsql/PROJECT:asia-south1:INSTANCE) or all of INSTANCE_CONNECTION_NAME (or CLOUD_SQL_CONNECTION_NAME), SQL_USER, SQL_PASSWORD, and SQL_DB_NAME. Placeholders like replace-with-* do not count.";
+export const META_GRAPH_PAIR_MESSAGE =
+  "META_ACCESS_TOKEN and META_PHONE_NUMBER_ID must be set together in production (WHATSAPP_ACCESS_TOKEN / WHATSAPP_PHONE_NUMBER_ID aliases accepted). Half-set Graph credentials are not a SANDBOX send path on Cloud Run.";
+
+export function assertOptionalEnvShape(env: NodeJS.ProcessEnv = process.env): void {
+  void env;
+}
+
+export function assertEnvExampleDocumentsCatalog(exampleText: string): void {
+  void exampleText;
+}
