@@ -1,0 +1,189 @@
+      const tenant = createAdminTenant((req.body || {}) as Record<string, unknown>, {
+        id: req.user?.id,
+        name: req.user?.name,
+      });
+      res.status(201).json({ tenant });
+    } catch (err) {
+      const { status, error } = httpStatusError(err, "Could not create tenant");
+      res.status(status === 500 ? 400 : status).json({ error });
+    }
+  });
+
+  api.get("/admin/tenants/:id", requireAuth, requirePlatformAdmin, (req, res) => {
+    const tenant = getAdminTenant(req.params.id);
+    if (!tenant) return res.status(404).json({ error: "Tenant not found" });
+    res.json({ tenant });
+  });
+
+  api.patch("/admin/tenants/:id", requireAuth, requirePlatformAdmin, (req, res) => {
+    try {
+      const tenant = patchAdminTenant(req.params.id, (req.body || {}) as Record<string, unknown>, {
+        id: req.user?.id,
+        name: req.user?.name,
+      });
+      res.json({ tenant });
+    } catch (err) {
+      const { status, error } = httpStatusError(err, "Could not update tenant");
+      res.status(status === 500 ? 400 : status).json({ error });
+    }
+  });
+
+  api.get("/admin/tenants/:id/subscription", requireAuth, requirePlatformAdmin, (req, res) => {
+    const subscription = getAdminTenantSubscription(req.params.id);
+    if (!subscription) return res.status(404).json({ error: "Tenant not found" });
+    res.json({ subscription });
+  });
+
+  api.patch("/admin/tenants/:id/subscription", requireAuth, requirePlatformAdmin, (req, res) => {
+    try {
+      const subscription = patchAdminTenantSubscription(req.params.id, (req.body || {}) as Record<string, unknown>, {
+        id: req.user?.id,
+        name: req.user?.name,
+      });
+      res.json({ subscription });
+    } catch (err) {
+      const { status, error } = httpStatusError(err, "Could not update subscription");
+      res.status(status === 500 ? 400 : status).json({ error });
+    }
+  });
+
+  api.get("/admin/overview", requireAuth, requireRole(...ADMIN_ROLES), (_req, res) => {
+    const count = (sql: string) => (getDb().prepare(sql).get() as { c: number }).c;
+    const recent = getDb()
+      .prepare("SELECT * FROM audit_logs ORDER BY timestamp DESC LIMIT 8")
+      .all();
+    res.json({
+      users: count("SELECT COUNT(*) AS c FROM users"),
+      subscriptions: count("SELECT COUNT(*) AS c FROM subscriptions"),
+      activePlans: count("SELECT COUNT(*) AS c FROM subscriptions WHERE status = 'active'"),
+      trials: count("SELECT COUNT(*) AS c FROM subscriptions WHERE status = 'trial'"),
+      mrr: (getDb().prepare("SELECT COALESCE(SUM(monthly_price),0) AS c FROM subscriptions WHERE status = 'active'").get() as { c: number }).c,
+      media: count("SELECT COUNT(*) AS c FROM cms_media"),
+      policies: count("SELECT COUNT(*) AS c FROM cms_policies"),
+      geminiConfigured: Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== "MY_GEMINI_API_KEY"),
+      recentAudit: recent,
+    });
+  });
+
+  api.get("/users", requireAuth, requireRole(...USER_MANAGER_ROLES), (req, res) => {
+    const q = String(req.query.q || "").toLowerCase();
+    const role = String(req.query.role || "");
+    const status = String(req.query.status || "");
+    const tenantFilter = String(req.query.tenantId || req.query.tenant_id || "");
+    let sql = `
+      SELECT u.*,
+             COALESCE(NULLIF(u.clinic_name, ''), t.name, '') AS clinic_name,
+             COALESCE(NULLIF(u.hfr_id, ''), t.hfr_id, '') AS hfr_id
+      FROM users u
+      LEFT JOIN tenants t ON u.tenant_id = t.id
+      WHERE 1=1
+    `;
+    const args: unknown[] = [];
+    if (!isSuperAdmin(req)) {
+      sql += " AND u.tenant_id = ?";
+      args.push(req.user?.tenantId || "");
+    } else if (tenantFilter) {
+      sql += " AND u.tenant_id = ?";
+      args.push(tenantFilter);
+    }
+    if (q) {
+      sql += " AND (lower(u.name) LIKE ? OR lower(u.email) LIKE ? OR lower(COALESCE(u.clinic_name, t.name, '')) LIKE ? OR lower(COALESCE(u.hpr_id, '')) LIKE ? OR lower(COALESCE(u.hfr_id, t.hfr_id, '')) LIKE ?)";
+      args.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
+    }
+    if (role) {
+      sql += " AND u.role = ?";
+      args.push(role);
+    }
+    if (status) {
+      sql += " AND u.status = ?";
+      args.push(status);
+    }
+    sql += " ORDER BY u.created_at DESC";
+    const rows = getDb().prepare(sql).all(...(args as string[])) as unknown as DbUser[];
+    res.json({ users: rows.map(publicUser) });
+  });
+
+  api.post("/users", requireAuth, requireRole(...USER_MANAGER_ROLES), (req, res) => {
+    const body = (req.body || {}) as Record<string, unknown>;
+    const email = String(body.email || "").trim().toLowerCase();
+    const name = requestedDisplayName(body);
+    const role = String(body.role || "") as UserRole;
+    if (!email || !name || !role) {
+      return res.status(400).json({ error: "name, email, and role are required" });
+    }
+
+    const packParsed = parseSpecialtyPackInput(specialtyInputFromBody(body));
+    if (packParsed && "error" in packParsed) {
+      return res.status(400).json({ error: packParsed.error });
+    }
+
+    let tenantId = requestedTenantId(body);
+    if (!isSuperAdmin(req)) {
+      if (tenantId && tenantId !== (req.user?.tenantId || "")) {
+        return res.status(403).json({ error: "Clinic admins cannot create users on another tenant" });
+      }
+      tenantId = req.user?.tenantId || "";
+    } else if (!tenantId) {
+      tenantId = req.user?.tenantId || DEMO_TENANT_ID;
+    }
+
+    const passwordProvided = Boolean(body.password);
+    const pwd = passwordProvided ? String(body.password) : generateTemporaryPassword();
+    const passwordError = passwordRuleError(pwd);
+    if (passwordError) return res.status(400).json({ error: passwordError });
+
+    const status = requestedStatus(body, "active");
+    const practiceType = normalizePracticeType(body.practiceType ? String(body.practiceType) : "individual");
+    const id = crypto.randomUUID();
+    try {
+      getDb()
+        .prepare(
+          `INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, last_login, created_at, practice_type, specialty, pack_id, onboarding_completed)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, 1)`
+        )
+        .run(
+          id,
+          tenantId,
+          email,
+          hashPassword(pwd),
+          name,
+          role,
+          status,
+          String(body.phone || ""),
+          new Date().toISOString(),
+          practiceType,
+          packParsed && "specialty" in packParsed ? packParsed.specialty : "",
+          packParsed && "specialty" in packParsed ? packParsed.specialty : ""
+        );
+    } catch {
+      return res.status(409).json({ error: "Email already exists" });
+    }
+    audit(req, "User created", `${name} <${email}> as ${role}`);
+    seedSubscriptionsIfMissing(getDb());
+    const user = loadUserRow(id)!;
+    syncDoctorPackProfile(user);
+    const created = loadUserRow(id)!;
+    res.status(201).json({
+      user: publicUser(created),
+      temporaryPassword: passwordProvided ? undefined : pwd,
+    });
+  });
+
+  api.patch("/users/:id", requireAuth, requireRole(...USER_MANAGER_ROLES), (req, res) => {
+    const existing = loadUserRow(req.params.id);
+    if (!existing) return res.status(404).json({ error: "User not found" });
+    if (!canManageUser(req, existing)) {
+      return res.status(403).json({ error: "User not found" });
+    }
+
+    const body = (req.body || {}) as Record<string, unknown>;
+    const name = requestedDisplayName(body, existing.name) || existing.name;
+    const role = (body.role ? String(body.role) : existing.role) as UserRole;
+    const status = requestedStatus(body, existing.status);
+    const phone = body.phone != null ? String(body.phone) : existing.phone;
+    const email = body.email ? String(body.email).trim().toLowerCase() : existing.email;
+
+    let tenantId = existing.tenant_id || "";
+    const wantsTenant =
+      Object.prototype.hasOwnProperty.call(body, "tenantId") ||
+      Object.prototype.hasOwnProperty.call(body, "tenant_id");
