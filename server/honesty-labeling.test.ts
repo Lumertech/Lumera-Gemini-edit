@@ -74,7 +74,13 @@ describe("Compliance #18 honesty labeling (LandingPage / Admin Meta)", () => {
 
   it("cms policy seed has WhatsApp STOP opt-out and stays sandbox-honest", () => {
     const seed = readRepo("server/cms-policy-seed.ts");
-    const db = readRepo("server/db.ts");
+    const db = [
+      readRepo("server/db.ts"),
+      readRepo("server/db-seed.ts"),
+      readRepo("server/db-seed-maps.ts"),
+      readRepo("server/db-seed-clinical.ts"),
+      readRepo("server/db-seed-meta.ts"),
+    ].join("\n");
     assert.match(seed, /replying \*\*STOP\*\*/);
     assert.match(seed, /not a certified Meta Tech Provider/i);
     assert.match(seed, /App Review is not submitted/);
@@ -169,6 +175,10 @@ const ISSUE44_SURFACES = [
   ...walkSourceFiles("src/pages"),
   "server/abdm.ts",
   "server/db.ts",
+  "server/db-seed.ts",
+  "server/db-seed-maps.ts",
+  "server/db-seed-clinical.ts",
+  "server/db-seed-meta.ts",
   "server/cms-policy-seed.ts",
 ];
 
@@ -279,7 +289,13 @@ describe("Compliance #44 honesty gate (clinician / admin / DHIS / CMS / ABDM sta
     assert.equal(/Certified Transactions/i.test(dhis), false);
     assert.match(dhis, /NHA sandbox/);
 
-    const db = readRepo("server/db.ts");
+    const db = [
+      readRepo("server/db.ts"),
+      readRepo("server/db-seed.ts"),
+      readRepo("server/db-seed-maps.ts"),
+      readRepo("server/db-seed-clinical.ts"),
+      readRepo("server/db-seed-meta.ts"),
+    ].join("\n");
     assert.equal(/ABDM Compliant/i.test(db), false);
     assert.match(db, /ABDM-aligned \(NHA sandbox\)/);
   });

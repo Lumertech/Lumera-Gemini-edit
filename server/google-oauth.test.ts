@@ -326,11 +326,13 @@ describe("Google OAuth HTTP routes", () => {
   });
 
   it("POST /api/auth/oauth rejects production client-email Google login", async () => {
-    process.env.NODE_ENV = "production";
     process.env.JWT_SECRET = "test-jwt-secret-lock-phi";
     delete process.env.GOOGLE_CLIENT_ID;
     delete process.env.GOOGLE_CLIENT_SECRET;
+    // sqlite fallback is forbidden while NODE_ENV=production; open the test db first.
+    delete process.env.NODE_ENV;
     initDatabase();
+    process.env.NODE_ENV = "production";
 
     const app = express();
     app.use(express.json());
