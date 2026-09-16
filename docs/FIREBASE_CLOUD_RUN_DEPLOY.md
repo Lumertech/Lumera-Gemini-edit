@@ -156,7 +156,7 @@ Boot order and the JWT vs PORT confusion: `deploy/CLOUD_RUN_BOOT_CHECK.md`.
 
 Leave unset for the URL-hosting stage. Production **does not fake** Graph delivery, Facebook Login, or Razorpay capture without these.
 
-| Variable | Needed when |
+| Variable | Value |
 | --- | --- |
 | `META_VERIFY_TOKEN` | Meta can verify `GET /api/meta/webhook` |
 | `META_APP_SECRET` | Webhook HMAC (`X-Hub-Signature-256`) in production |
@@ -164,6 +164,7 @@ Leave unset for the URL-hosting stage. Production **does not fake** Graph delive
 | `FACEBOOK_REDIRECT_URI` | Override; default is `{APP_URL}/api/auth/facebook/callback` |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Live Google Sign-in (Web application OAuth client) |
 | `GOOGLE_REDIRECT_URI` | Override; default is `{APP_URL}/api/auth/google/callback` |
+| Calendar redirect | Also whitelist `{APP_URL}/api/tenant/doctor/google-calendar/callback` for OPD schedule sync |
 | `META_ACCESS_TOKEN` / `META_PHONE_NUMBER_ID` | Live Graph send |
 | `GEMINI_API_KEY` | Pulse AI / SOAP (landing + policy pages work without it; AI Studio often injects this) |
 | Razorpay keys | Payments — not required to host Review URLs |
