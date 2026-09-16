@@ -12,6 +12,7 @@ import { clinicLine, getTenantLetterhead } from "./letterhead.ts";
 import { requireAuth } from "./auth.ts";
 import { reportCaughtError } from "./error-tracker.ts";
 import { resolveAbdmMode, type AbdmMode } from "./abdm-mode.ts";
+import { scheduleOutboundAppointmentSync } from "./google-calendar-sync.ts";
 
 function tenantIdOf(req: Request): string {
   return String(req.user?.tenantId || "").trim();
@@ -48,8 +49,7 @@ function shortId(prefix: string): string {
 }
 
 function yearToken(prefix: string): string {
-  const year = new Date().getFullYear();
-  return `${prefix}-${year}-${crypto.randomUUID().replace(/-/g, "").slice(0, 6).toUpperCase()}`;
+  return `${prefix}-${new Date().getFullYear()}-${crypto.randomUUID().replace(/-/g, "").slice(0, 6).toUpperCase()}`;
 }
 
 export function nextTokenNumber(tenantId: string, date: string): number {
@@ -604,7 +604,9 @@ export function insertAppointment(tenantId: string, body: Record<string, unknown
   getDb()
     .prepare("UPDATE patients SET last_visit = ? WHERE id = ? AND tenant_id = ?")
     .run(date, mappedPatient.id, tenantId);
-  return getTenantAppointment(tenantId, id)!;
+  const created = getTenantAppointment(tenantId, id)!;
+  scheduleOutboundAppointmentSync(created);
+  return created;
 }
 
 export function updateAppointment(
@@ -663,7 +665,9 @@ export function updateAppointment(
       appointmentId,
       tenantId
     );
-  return getTenantAppointment(tenantId, appointmentId)!;
+  const updated = getTenantAppointment(tenantId, appointmentId)!;
+  scheduleOutboundAppointmentSync(updated);
+  return updated;
 }
 
 function insertPrescription(tenantId: string, body: Record<string, unknown>) {
