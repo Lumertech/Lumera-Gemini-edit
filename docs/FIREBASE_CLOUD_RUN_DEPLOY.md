@@ -75,7 +75,7 @@ SQLite is `data/lumera.db` under the process cwd. Cloud Run instances are epheme
 Root `cloudbuild.yaml` builds the Dockerfile, pushes `${_IMAGE}`, clears leftover source metadata, then deploys **that image only** (no `--source`).
 
 | Substitution | Default | Meaning |
-| --- | --- | --- |
+| --- | --- |
 | `_SERVICE` | `lumera-gemini-edit` | Cloud Run service name |
 | `_REGION` | `asia-south1` | Must match `firebase.json` Hosting rewrite |
 | `_IMAGE` | `gcr.io/${PROJECT_ID}/lumera-gemini-edit:${SHORT_SHA}` | Image URI Cloud Run pulls |
@@ -160,7 +160,7 @@ Leave unset for the URL-hosting stage. Production **does not fake** Graph delive
 | --- | --- |
 | `META_VERIFY_TOKEN` | Meta can verify `GET /api/meta/webhook` |
 | `META_APP_SECRET` | Webhook HMAC (`X-Hub-Signature-256`) in production |
-| `FACEBOOK_APP_ID` / `FACEBOOK_APP_SECRET` | Live Facebook Login |
+| `FACEBOOK_APP_ID` / `FACEBOOK_APP_SECRET` | Live Facebook Login (`FACEBOOK_CLIENT_ID` / `FACEBOOK_CLIENT_SECRET` aliases) |
 | `FACEBOOK_REDIRECT_URI` | Override; default is `{APP_URL}/api/auth/facebook/callback` |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Live Google Sign-in (Web application OAuth client) |
 | `GOOGLE_REDIRECT_URI` | Override; default is `{APP_URL}/api/auth/google/callback` |
@@ -263,8 +263,8 @@ Cloud Run env (same service as `APP_URL`):
 
 | Variable | Value |
 | --- | --- |
-| `FACEBOOK_APP_ID` | Numeric Meta app id |
-| `FACEBOOK_APP_SECRET` | App secret (never commit; alias `META_APP_SECRET`) |
+| `FACEBOOK_APP_ID` | Numeric Meta app id (`FACEBOOK_CLIENT_ID` alias) |
+| `FACEBOOK_APP_SECRET` | App secret (never commit; aliases `FACEBOOK_CLIENT_SECRET`, `META_APP_SECRET`) |
 | `APP_URL` | `https://www.mylumera.in` (no trailing slash) |
 | `FACEBOOK_REDIRECT_URI` | Optional override; default `{APP_URL}/api/auth/facebook/callback` |
 
