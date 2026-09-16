@@ -1,0 +1,189 @@
+      new Date().toISOString(),
+      expiresAt
+    );
+
+    const sent = await dispatchWhatsAppOtpMessage(phone, name, otp, "password_reset");
+    if (otpDispatchFailure(res, sent)) return;
+
+    return res.json({
+      ok: true,
+      verificationId,
+      phone,
+      ...otpEchoPayload(otp),
+      otpChannel: sent.ok ? sent.channel : undefined,
+      message:
+        sent.ok && sent.channel === "graph"
+          ? `Password reset code sent via WhatsApp Cloud API to ${phone}.`
+          : `SANDBOX / DEV-ONLY: password reset code recorded locally for ${phone} (not sent via Graph).`,
+    });
+  });
+
+  // Password Reset Finalization
+  api.post("/auth/reset-password", (req: Request, res: Response) => {
+    const verificationId = String(req.body?.verificationId || "").trim();
+    const otp = String(req.body?.otp || "").trim();
+    const newPassword = String(req.body?.newPassword || "");
+
+    if (!verificationId || !otp || !newPassword) {
+      return res.status(400).json({ error: "Verification ID, 6-digit OTP, and new password are required." });
+    }
+    if (newPassword.length < 6) {
+      return res.status(400).json({ error: "Password must be at least 6 characters long." });
+    }
+
+    const record = getDb()
+      .prepare("SELECT * FROM otp_verifications WHERE id = ?")
+      .get(verificationId) as {
+        id: string;
+        email: string;
+        otp: string;
+        payload: string;
+        expires_at: string;
+      } | undefined;
+
+    if (!record || record.otp !== otp || new Date(record.expires_at).getTime() < Date.now()) {
+      return res.status(400).json({ error: "Invalid or expired reset code. Please request a fresh OTP." });
+    }
+
+    let payload: Record<string, any> = {};
+    try {
+      payload = JSON.parse(record.payload || "{}");
+    } catch {
+      payload = {};
+    }
+
+    const userEmail = record.email || payload.email;
+    const user = getDb().prepare("SELECT * FROM users WHERE email = ?").get(userEmail) as unknown as DbUser | undefined;
+
+    if (!user) {
+      return res.status(404).json({ error: "User account not found." });
+    }
+
+    const newHash = hashPassword(newPassword);
+    getDb().prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(newHash, user.id);
+    getDb().prepare("UPDATE otp_verifications SET verified_at = ? WHERE id = ?").run(new Date().toISOString(), verificationId);
+
+    writeAudit(getDb(), user.id, user.name, "Password Reset", `Password reset via WhatsApp OTP for ${user.email}`);
+
+    return res.json({
+      ok: true,
+      message: "Password reset successful! You may now sign in with your new credentials.",
+    });
+  });
+
+  api.post("/auth/logout", (req: Request, res: Response) => {
+    const sid = getSessionId(req);
+    if (sid) destroySession(sid);
+    clearSessionCookie(res);
+    return res.json({ ok: true });
+  });
+
+  api.get("/auth/me", (req: Request, res: Response) => {
+    if (!req.user) return res.json({ user: null });
+    if (rejectClinicTenantBlocked(req.user, res)) return;
+    let tenant = null;
+    if (req.user.tenantId) {
+      tenant = getDb().prepare("SELECT * FROM tenants WHERE id = ?").get(req.user.tenantId) as any;
+    }
+    return res.json({ user: req.user, tenant, token: getSessionId(req) });
+  });
+
+  api.patch("/auth/me", requireAuth, (req: Request, res: Response) => {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ error: "Authentication required" });
+    const existing = getDb().prepare("SELECT * FROM users WHERE id = ?").get(userId) as unknown as DbUser | undefined;
+    if (!existing) return res.status(404).json({ error: "User not found" });
+
+    const name = req.body?.name != null ? String(req.body.name).trim() : existing.name;
+    const phone = req.body?.phone != null ? String(req.body.phone).trim() : existing.phone;
+    const email = req.body?.email ? String(req.body.email).trim().toLowerCase() : existing.email;
+    const avatarUrl = req.body?.avatarUrl != null ? String(req.body.avatarUrl).trim() : existing.avatar_url || "";
+    if (!name) return res.status(400).json({ error: "Name is required" });
+    if (!email || !email.includes("@")) return res.status(400).json({ error: "A valid email is required" });
+
+    try {
+      getDb()
+        .prepare("UPDATE users SET name = ?, phone = ?, email = ?, avatar_url = ? WHERE id = ?")
+        .run(name, phone, email, avatarUrl, existing.id);
+    } catch {
+      return res.status(409).json({ error: "Email already exists" });
+    }
+
+    const newPassword = req.body?.newPassword != null ? String(req.body.newPassword) : "";
+    const currentPassword = req.body?.currentPassword != null ? String(req.body.currentPassword) : "";
+    if (newPassword) {
+      if (newPassword.length < 8) return res.status(400).json({ error: "New password must be at least 8 characters" });
+      if (!currentPassword || !verifyPassword(currentPassword, existing.password_hash)) {
+        return res.status(400).json({ error: "Current password is incorrect" });
+      }
+      getDb().prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(hashPassword(newPassword), existing.id);
+    }
+
+    audit(req, "Profile updated", `${email}${newPassword ? " (password changed)" : ""}`);
+    const user = getDb().prepare("SELECT * FROM users WHERE id = ?").get(existing.id) as unknown as DbUser;
+    res.json({ user: publicUser(user) });
+  });
+
+  api.get("/tenant/current", requireAuth, (req: Request, res: Response) => {
+    const tenantId = req.user?.tenantId;
+    if (!tenantId) {
+      return res.status(404).json({ error: "No tenant associated with this account." });
+    }
+    const tenant = getDb().prepare("SELECT * FROM tenants WHERE id = ?").get(tenantId) as any;
+    if (!tenant) {
+      return res.status(404).json({ error: "Tenant record not found." });
+    }
+    const currentMonth = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
+    const dhis = getDb().prepare("SELECT * FROM dhis_transactions WHERE tenant_id = ? AND month_year = ?").get(tenantId, currentMonth) as any;
+
+    return res.json({
+      tenant,
+      letterhead: getTenantLetterhead(tenantId, req.user?.id),
+      dhis: dhis || { claims_count: 0, claims_threshold: 100, month_year: currentMonth, status: "active" },
+    });
+  });
+
+  api.get("/tenant/letterhead", requireAuth, (req: Request, res: Response) => {
+    const tenantId = req.user?.tenantId;
+    if (!tenantId) {
+      return res.status(404).json({ error: "No tenant associated with this account." });
+    }
+    const tenant = getDb().prepare("SELECT id FROM tenants WHERE id = ?").get(tenantId) as { id: string } | undefined;
+    if (!tenant) {
+      return res.status(404).json({ error: "Tenant record not found." });
+    }
+    return res.json({
+      letterhead: getTenantLetterhead(tenantId, req.user?.id),
+    });
+  });
+
+  const saveTenantLetterhead = (req: Request, res: Response) => {
+    const tenantId = req.user?.tenantId;
+    if (!tenantId) {
+      return res.status(404).json({ error: "No tenant associated with this account." });
+    }
+    const tenant = getDb().prepare("SELECT id FROM tenants WHERE id = ?").get(tenantId) as { id: string } | undefined;
+    if (!tenant) {
+      return res.status(404).json({ error: "Tenant record not found." });
+    }
+    const patch = parseLetterheadPatch(req.body);
+    const letterhead = updateTenantLetterhead(tenantId, patch, req.user?.id);
+    writeAudit(
+      getDb(),
+      req.user!.id,
+      req.user!.name,
+      "Tenant Letterhead Updated",
+      `Updated letterhead fields for tenant ${tenantId}`
+    );
+    return res.json({ letterhead });
+  };
+
+  api.patch("/tenant/letterhead", requireAuth, requireRole(...CLINIC_MANAGER_ROLES), saveTenantLetterhead);
+  api.put("/tenant/letterhead", requireAuth, requireRole(...CLINIC_MANAGER_ROLES), saveTenantLetterhead);
+
+  api.get("/public/site", (_req, res) => {
+    res.json(assemblePublicSite());
+  });
+
+  api.get("/public/policies/:slug", (req, res) => {
+    const row = getDb()
