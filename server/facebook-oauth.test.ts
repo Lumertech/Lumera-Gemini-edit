@@ -469,6 +469,56 @@ describe("Facebook OAuth HTTP routes", () => {
     }
   });
 
+  it("GET /api/auth/facebook/callback sends unregistered users to /login with a signed oauthToken", async () => {
+    process.env.JWT_SECRET = "test-jwt-secret-lock-phi";
+    process.env.APP_URL = "https://www.mylumera.in";
+    process.env.FACEBOOK_APP_ID = APP_ID;
+    process.env.FACEBOOK_APP_SECRET = APP_SECRET;
+    delete process.env.NODE_ENV;
+    initDatabase();
+    process.env.NODE_ENV = "production";
+
+    const origFetch = globalThis.fetch;
+    const graphFetch = mockFacebookGraph({ email: "unregistered.fb@clinic.example" });
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("graph.facebook.com")) return graphFetch(input, init);
+      return origFetch(input, init);
+    }) as typeof fetch;
+
+    const { createOauthLoginRouter } = await import("./oauth-login-routes.ts");
+    const app = express();
+    app.use(express.json());
+    app.use(attachUser);
+    app.use("/api", createOauthLoginRouter());
+    const server = app.listen(0, "127.0.0.1");
+    try {
+      await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+      const addr = server.address();
+      if (!addr || typeof addr === "string") throw new Error("no port");
+      const start = await fetch(`http://127.0.0.1:${addr.port}/api/auth/facebook`, { redirect: "manual" });
+      const dialog = new URL(start.headers.get("location") || "");
+      const state = dialog.searchParams.get("state") || "";
+      const res = await fetch(
+        `http://127.0.0.1:${addr.port}/api/auth/facebook/callback?code=unit-code&state=${encodeURIComponent(state)}`,
+        { redirect: "manual" }
+      );
+      assert.equal(res.status, 302);
+      const location = res.headers.get("location") || "";
+      const dest = new URL(location);
+      assert.equal(dest.pathname, "/login");
+      assert.equal(dest.searchParams.get("oauth"), "facebook");
+      assert.equal(dest.searchParams.get("unregistered"), "1");
+      assert.equal(dest.searchParams.get("email"), "unregistered.fb@clinic.example");
+      assert.ok(dest.searchParams.get("oauthToken"));
+      assert.match(res.headers.get("set-cookie") || "", /lumera_oauth_onboard=/);
+      assert.doesNotMatch(res.headers.get("set-cookie") || "", /lumera_sid=/);
+    } finally {
+      globalThis.fetch = origFetch;
+      await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+    }
+  });
+
   it("POST /api/auth/oauth rejects production client-email Facebook login", async () => {
     process.env.JWT_SECRET = "test-jwt-secret-lock-phi";
     delete process.env.FACEBOOK_APP_ID;
