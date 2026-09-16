@@ -1,30 +1,16 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { showFacebookOAuthButton, showGoogleOAuthButton } from "./oauthUi.ts";
+import { publicOauthErrorMessage, showFacebookOAuthButton, showGoogleOAuthButton } from "./oauthUi.ts";
 
-describe("showGoogleOAuthButton (complements PR #64)", () => {
-  it("hides Google while oauth-config is loading", () => {
-    assert.equal(showGoogleOAuthButton(null), false);
-    assert.equal(showGoogleOAuthButton(undefined), false);
-  });
-
-  it("hides Google in production when neither Identity nor sandbox is available", () => {
-    assert.equal(showGoogleOAuthButton({ sandboxClientOAuthAllowed: false }), false);
+describe("showGoogleOAuthButton", () => {
+  it("always shows Google on the public login row", () => {
+    assert.equal(showGoogleOAuthButton(null), true);
+    assert.equal(showGoogleOAuthButton(undefined), true);
+    assert.equal(showGoogleOAuthButton({ sandboxClientOAuthAllowed: false }), true);
     assert.equal(
       showGoogleOAuthButton({ googleConfigured: false, sandboxClientOAuthAllowed: false }),
-      false
-    );
-  });
-
-  it("shows Google when sandbox client-email OAuth is allowed", () => {
-    assert.equal(showGoogleOAuthButton({ sandboxClientOAuthAllowed: true }), true);
-    assert.equal(
-      showGoogleOAuthButton({ googleConfigured: false, sandboxClientOAuthAllowed: true }),
       true
     );
-  });
-
-  it("shows Google when googleConfigured even if sandbox client OAuth is disabled", () => {
     assert.equal(
       showGoogleOAuthButton({ googleConfigured: true, sandboxClientOAuthAllowed: false }),
       true
@@ -33,27 +19,28 @@ describe("showGoogleOAuthButton (complements PR #64)", () => {
 });
 
 describe("showFacebookOAuthButton", () => {
-  it("hides Facebook while oauth-config is loading", () => {
-    assert.equal(showFacebookOAuthButton(null), false);
-    assert.equal(showFacebookOAuthButton(undefined), false);
-  });
-
-  it("hides Facebook in production when App credentials are missing", () => {
-    assert.equal(showFacebookOAuthButton({ sandboxClientOAuthAllowed: false }), false);
+  it("always shows Facebook beside Google on the public login row", () => {
+    assert.equal(showFacebookOAuthButton(null), true);
+    assert.equal(showFacebookOAuthButton(undefined), true);
+    assert.equal(showFacebookOAuthButton({ sandboxClientOAuthAllowed: false }), true);
     assert.equal(
       showFacebookOAuthButton({ facebookConfigured: false, sandboxClientOAuthAllowed: false }),
-      false
+      true
     );
-  });
-
-  it("shows Facebook when sandbox client-email OAuth is allowed", () => {
-    assert.equal(showFacebookOAuthButton({ sandboxClientOAuthAllowed: true }), true);
-  });
-
-  it("shows Facebook when facebookConfigured even if sandbox client OAuth is disabled", () => {
     assert.equal(
       showFacebookOAuthButton({ facebookConfigured: true, sandboxClientOAuthAllowed: false }),
       true
     );
+  });
+});
+
+describe("publicOauthErrorMessage", () => {
+  it("maps Facebook cancel and missing configuration to login copy", () => {
+    assert.match(publicOauthErrorMessage("facebook", "access_denied"), /cancelled/i);
+    assert.match(publicOauthErrorMessage("facebook", "user_denied"), /cancelled/i);
+    assert.match(publicOauthErrorMessage("facebook", "not_configured"), /FACEBOOK_APP_ID \/ FACEBOOK_APP_SECRET/);
+    assert.match(publicOauthErrorMessage("google", "not_configured"), /GOOGLE_CLIENT_ID \/ GOOGLE_CLIENT_SECRET/);
+    assert.match(publicOauthErrorMessage("facebook", "missing_code"), /authorization code/i);
+    assert.match(publicOauthErrorMessage("google", "invalid_state"), /could not be verified/i);
   });
 });
