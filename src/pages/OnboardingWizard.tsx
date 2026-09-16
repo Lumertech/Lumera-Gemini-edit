@@ -27,6 +27,7 @@ import { PolyclinicSpecialty } from "../types";
 import { displayDoctorName, markWelcomeDashboard } from "../lib/sessionWorkspace";
 import { formatAbdmRegistryLabel } from "../lib/abdmRegistryLabel";
 import { letterheadFromSessionHints, patchTenantLetterhead } from "../lib/letterhead";
+import { ClinicWabaConnect } from "../components/ClinicWabaConnect";
 import {
   DEFAULT_FRONT_DESK,
   DEFAULT_PRACTICE_TYPE,
@@ -527,6 +528,7 @@ export const OnboardingWizard: React.FC = () => {
             setRxTemplate={setRxTemplate}
             inputClass={inputClass}
           />
+          <ClinicWabaConnect variant="onboarding" />
           <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
             <button type="button" className={`${backBtn} w-full sm:w-auto justify-center`} onClick={() => setIndividualStep(2)}>
               <ArrowLeft className="w-3.5 h-3.5" /> Back
@@ -777,6 +779,7 @@ export const OnboardingWizard: React.FC = () => {
             setRxTemplate={setRxTemplate}
             inputClass={inputClass}
           />
+          <ClinicWabaConnect variant="onboarding" />
           <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
             <button type="button" className={`${backBtn} w-full sm:w-auto justify-center`} onClick={() => setPolyclinicStep(3)}>
               <ArrowLeft className="w-3.5 h-3.5" /> Back
