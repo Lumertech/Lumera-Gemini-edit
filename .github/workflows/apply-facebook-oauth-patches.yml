@@ -1,0 +1,57 @@
+name: apply-facebook-oauth-patches
+on:
+  push:
+    paths:
+      - .github/workflows/apply-facebook-oauth-patches.yml
+      - patches/facebook-oauth-api.ts.patch
+      - patches/facebook-oauth-LoginPage.tsx.patch
+      - patches/facebook-oauth-facebook-oauth.ts.patch
+      - patches/facebook-oauth-env.example.patch
+      - patches/facebook-oauth-firebase-docs.patch
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: cursor/facebook-oauth-complete-0c0a
+      - name: Apply Facebook OAuth patches and verify git blob SHAs
+        run: |
+          set -euo pipefail
+          git apply --whitespace=nowarn \
+            patches/facebook-oauth-api.ts.patch \
+            patches/facebook-oauth-LoginPage.tsx.patch \
+            patches/facebook-oauth-facebook-oauth.ts.patch \
+            patches/facebook-oauth-env.example.patch \
+            patches/facebook-oauth-firebase-docs.patch
+          python3 - <<'PY2'
+          from pathlib import Path
+          import hashlib
+          expected = {
+            "server/api.ts": "df06a6d0c1a434dfe5fb66d3c8ffe65f02d0eda6",
+            "src/pages/LoginPage.tsx": "19a7cfc9b7d6188adb3a89d76b593842d363d5bd",
+            "server/facebook-oauth.ts": "a4b69ab594c8bf3d0b2a6a9ff1fbca7a801e5846",
+            ".env.example": "c39bcd28cab5fa5e22504583085e1e354e3e21b4",
+            "docs/FIREBASE_CLOUD_RUN_DEPLOY.md": "6e630a94869e7f8cced49a8a9f6cd71539f7dd69",
+          }
+          for p, exp in expected.items():
+              b = Path(p).read_bytes()
+              blob = hashlib.sha1(b"blob %d\0" % len(b) + b).hexdigest()
+              print(p, "bytes", len(b), "gitblob", blob)
+              assert blob == exp, (p, blob, exp)
+          PY2
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add server/api.ts src/pages/LoginPage.tsx server/facebook-oauth.ts .env.example docs/FIREBASE_CLOUD_RUN_DEPLOY.md
+          git rm -f \
+            patches/facebook-oauth-api.ts.patch \
+            patches/facebook-oauth-LoginPage.tsx.patch \
+            patches/facebook-oauth-facebook-oauth.ts.patch \
+            patches/facebook-oauth-env.example.patch \
+            patches/facebook-oauth-firebase-docs.patch \
+            .github/workflows/apply-facebook-oauth-patches.yml
+          git commit -m "Complete Meta Facebook Login OAuth 2.0 (full api.ts, LoginPage.tsx, facebook-oauth.ts)."
+          git push origin HEAD:cursor/facebook-oauth-complete-0c0a
