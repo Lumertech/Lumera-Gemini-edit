@@ -12,8 +12,8 @@ describe("LoginPage create-clinic / register defaults (founder P0)", () => {
   it("never initializes practice-type state to Multispecialty", () => {
     assert.equal(loginSrc.includes('useState<"individual" | "multispecialty">("multispecialty")'), false);
     assert.equal(loginSrc.includes('useState("multispecialty")'), false);
-    assert.equal(/useState<PracticeType>\(\s*"multispecialty"\s*\)/.test(loginSrc), false);
-    assert.equal(/useState<PracticeType>\(\s*"polyclinic"\s*\)/.test(loginSrc), false);
+    assert.equal(/useState<PracticeType>(\s*"multispecialty"\s*)/.test(loginSrc), false);
+    assert.equal(/useState<PracticeType>(\s*"polyclinic"\s*)/.test(loginSrc), false);
     assert.match(loginSrc, /initialRegisterPracticeType/);
     assert.match(loginSrc, /registerPracticeTypePayload/);
     assert.match(loginSrc, /DEFAULT_PRACTICE_TYPE/);
@@ -54,6 +54,7 @@ describe("LoginPage WhatsApp country code (founder P0)", () => {
     assert.match(loginSrc, /flex items-stretch rounded-xl/);
     assert.match(loginSrc, /aria-label="Country code"/);
     assert.match(loginSrc, /composeWhatsAppNumber\(loginCountry\.code, whatsappPhone\)/);
+    assert.match(loginSrc, /data-testid=\{\`\$\{testId\}-country\`\}/);
     assert.match(loginSrc, /data-testid=\{\`\$\{testId\}-country\`\}/);
     assert.doesNotMatch(loginSrc, /id="login-whatsapp"[\s\S]{0,400}className="w-full pl-9/);
   });
