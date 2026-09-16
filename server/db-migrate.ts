@@ -129,6 +129,21 @@ export function migrate(database: SqlDatabase) {
     database.exec("ALTER TABLE tenants ADD COLUMN meta_onboarding_status TEXT DEFAULT 'pending'");
   } catch {}
   try {
+    database.exec("ALTER TABLE tenants ADD COLUMN meta_business_id TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE tenants ADD COLUMN meta_phone_status TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE tenants ADD COLUMN meta_code_verification_status TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE tenants ADD COLUMN meta_display_name_status TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE tenants ADD COLUMN meta_business_verification_status TEXT DEFAULT ''");
+  } catch {}
+  try {
     database.exec("ALTER TABLE tenants ADD COLUMN tagline TEXT DEFAULT ''");
   } catch {}
   try {
