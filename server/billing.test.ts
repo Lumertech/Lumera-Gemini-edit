@@ -10,6 +10,7 @@ import { attachUser } from "./auth.ts";
 import { createApiRouter } from "./api.ts";
 import { DEMO_TENANT_ID, getDb, initDatabase } from "./db.ts";
 import { hashPassword } from "./password.ts";
+import { applyWalletTransaction } from "./usage-wallet.ts";
 import {
   decideRazorpayWebhookSignature,
   extractRazorpayPaidRefs,
@@ -62,6 +63,10 @@ function createClinicUser(label: string) {
     now,
     now
   );
+  applyWalletTransaction(tenantId, "adjustment", 1000, {
+    note: "Test seed credit for WhatsApp metering",
+    createdBy: "system",
+  });
   return { tenantId, userId, email };
 }
 
@@ -177,7 +182,7 @@ describe("Wave 2 Razorpay UPI collect", () => {
     server = app.listen(0, "127.0.0.1");
     await new Promise<void>((resolve) => server!.once("listening", () => resolve()));
     const addr = server.address();
-    if (!addr || typeof addr === "string") throw new Error("server did not bind a port");
+    if (typeof addr === "string" || !addr) throw new Error("server did not bind a port");
     port = addr.port;
   });
 
@@ -644,6 +649,7 @@ describe("Wave 2 Razorpay UPI collect", () => {
     const letterhead = fs.readFileSync(path.join(dir, "letterhead.ts"), "utf8");
     assert.match(billing, /sendPaymentReceipt/);
     assert.match(billing, /getTenantLetterhead/);
+    assert.match(billing, /tenantId: invoice.tenantId/);
     assert.equal(/sendWhatsAppGraphText/.test(billing), false);
     assert.equal(/resolveGraphCredentials/.test(billing), false);
     assert.equal(/createLetterheadReadRouter/.test(api), false);

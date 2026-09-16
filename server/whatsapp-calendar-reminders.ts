@@ -224,6 +224,7 @@ export async function dispatchAppointmentReminder(opts: {
     ],
     db: getDb(),
     fetchImpl: opts.fetchImpl,
+    tenantId: opts.tenantId,
   });
   return recordCloudDispatch({
     eventType: "appointment_reminder",
@@ -257,6 +258,7 @@ export async function dispatchWhatsAppBookConfirmation(opts: {
     ],
     db: getDb(),
     fetchImpl: opts.fetchImpl,
+    tenantId: opts.tenantId,
   });
   return recordCloudDispatch({
     eventType: "book_confirmation",

@@ -224,6 +224,8 @@ export type RazorpayPaidRefs = {
   paymentId: string;
   paymentLinkId: string;
   event: string;
+  purpose: string;
+  amountRupees: number;
 };
 
 function notesOf(entity: Record<string, unknown> | undefined): Record<string, string> {
@@ -254,6 +256,10 @@ export function extractRazorpayPaidRefs(payload: unknown): RazorpayPaidRefs | nu
   const order = body.payload?.order?.entity;
   const link = body.payload?.payment_link?.entity;
   const notes = { ...notesOf(link), ...notesOf(order), ...notesOf(payment) };
+  const amountPaise = Number(payment?.amount ?? order?.amount ?? link?.amount ?? notes.amount_paise ?? 0);
+  const amountFromNotes = Number(notes.amount_rupees || 0);
+  const amountRupees =
+    amountFromNotes > 0 ? amountFromNotes : amountPaise > 0 ? amountPaise / 100 : 0;
 
   return {
     invoiceId: notes.invoice_id || "",
@@ -262,5 +268,119 @@ export function extractRazorpayPaidRefs(payload: unknown): RazorpayPaidRefs | nu
     paymentId: String(payment?.id || "").trim(),
     paymentLinkId: String(link?.id || "").trim(),
     event: event || "payment.captured",
+    purpose: String(notes.purpose || "").trim(),
+    amountRupees,
   };
+}
+
+/** Parallel to createRazorpayCollectOrder — tenant wallet top-up, no patient / invoice. */
+export async function createRazorpayWalletTopupOrder(opts: {
+  amountRupees: number;
+  tenantId: string;
+  requestedBy?: { name?: string; phone?: string };
+  description?: string;
+  fetchImpl?: typeof fetch;
+  publicUrl?: string;
+}): Promise<RazorpayLinkResult> {
+  const amountPaise = rupeesToPaise(opts.amountRupees);
+  if (amountPaise < 100) {
+    return { ok: false, error: "Amount must be at least ₹1.", sandbox: sandboxSimulatorsEnabled() };
+  }
+
+  const notes = {
+    purpose: "wallet_topup",
+    tenant_id: opts.tenantId,
+    amount_rupees: String(opts.amountRupees),
+  };
+  const receipt = `wallet-${opts.tenantId.replace(/[^a-zA-Z0-9]/g, "").slice(-12)}-${Date.now()}`.slice(0, 40);
+
+  if (!razorpayKeysConfigured()) {
+    if (isProduction()) {
+      return {
+        ok: false,
+        sandbox: false,
+        error: "Razorpay is not configured. Set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET. Wallet was not credited.",
+      };
+    }
+    const origin = opts.publicUrl || appPublicUrl();
+    return {
+      ok: true,
+      sandbox: true,
+      orderId: `order_wallet_${opts.tenantId}`,
+      paymentLinkId: `plink_wallet_${opts.tenantId}`,
+      payLink: `${origin}/sandbox/wallet/${opts.tenantId}`,
+      keyId: "",
+    };
+  }
+
+  const fetchImpl = opts.fetchImpl || fetch;
+  try {
+    const order = await razorpayRequest(
+      "/orders",
+      {
+        amount: amountPaise,
+        currency: "INR",
+        receipt,
+        notes,
+        payment_capture: 1,
+      },
+      fetchImpl
+    );
+    if (order.status >= 400 || !order.json.id) {
+      const apiError =
+        (order.json.error as { description?: string } | undefined)?.description ||
+        `Razorpay wallet order failed (HTTP ${order.status}).`;
+      return { ok: false, error: apiError, sandbox: false };
+    }
+
+    const link = await razorpayRequest(
+      "/payment_links",
+      {
+        amount: amountPaise,
+        currency: "INR",
+        accept_partial: false,
+        description: opts.description || `Lumera usage wallet top-up ₹${opts.amountRupees}`,
+        customer: {
+          name: opts.requestedBy?.name || "Clinic",
+          contact: String(opts.requestedBy?.phone || "").replace(/[^\d]/g, "").slice(-10),
+        },
+        notify: { sms: false, email: false },
+        reminder_enable: false,
+        notes,
+        callback_url: `${opts.publicUrl || appPublicUrl()}/billing/razorpay/callback`,
+        callback_method: "get",
+        options: {
+          checkout: {
+            name: "Lumera usage wallet",
+            method: { upi: 1, card: 1, netbanking: 1 },
+          },
+        },
+      },
+      fetchImpl
+    );
+    const payLink = String(link.json.short_url || link.json.shortUrl || "").trim();
+    const paymentLinkId = String(link.json.id || "").trim();
+    if (link.status >= 400 || !payLink) {
+      const apiError =
+        (link.json.error as { description?: string } | undefined)?.description ||
+        `Razorpay wallet payment link failed (HTTP ${link.status}).`;
+      return { ok: false, error: apiError, sandbox: false };
+    }
+
+    return {
+      ok: true,
+      sandbox: false,
+      orderId: String(order.json.id),
+      paymentLinkId,
+      payLink,
+      keyId: getRazorpayKeyId(),
+      raw: { order: order.json, paymentLink: link.json },
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      sandbox: false,
+      error: err instanceof Error ? err.message : "Razorpay request failed.",
+    };
+  }
 }

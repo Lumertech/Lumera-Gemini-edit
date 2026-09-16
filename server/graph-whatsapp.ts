@@ -1,6 +1,14 @@
 import type { DatabaseSync } from "node:sqlite";
 import { graphApiVersion, isProduction, readSecret } from "./runtime.ts";
 import { isUsableGraphToken, isUsablePhoneNumberId } from "./meta-security.ts";
+import {
+  assertWalletAllowsDebit,
+  billedAmountFromRaw,
+  estimateWhatsAppRawCostInr,
+  getMarkupPercent,
+  isCriticalWhatsAppKind,
+  recordWhatsAppUsageAndDebit,
+} from "./usage-billing.ts";
 
 /**
  * Shared Meta WhatsApp Cloud API send module (Wave 1B OTP + Wave 2 utilities).
@@ -302,7 +310,7 @@ export function buildReceiptText(receipt: ReceiptFields): string {
   const invoice = receipt.invoiceId ? `\nInvoice: ${receipt.invoiceId}` : "";
   const date = receipt.date ? `\nDate: ${receipt.date}` : "";
   return (
-    `🧾 *Payment receipt — Lumera*\n\n` +
+    `🧰 *Payment receipt — Lumera*\n\n` +
     `Namaste ${name},\n` +
     `We received *${currency}${amount}* for your consultation.${invoice}${date}\n\n` +
     `Thank you.`
@@ -328,8 +336,36 @@ export async function dispatchWhatsAppCloudMessage(opts: {
   previewUrl?: boolean;
   db?: DatabaseSync | null;
   fetchImpl?: typeof fetch;
+  tenantId?: string;
+  inCustomerServiceWindow?: boolean;
 }): Promise<CloudDispatchResult> {
   const kind: CloudMessageKind = opts.kind || (opts.otp ? "otp" : "text");
+  const tenantId = resolveUsageTenantId(opts.tenantId, opts.to, opts.db);
+  const inCustomerServiceWindow = opts.inCustomerServiceWindow ?? kind === "text";
+
+  if (tenantId && opts.db) {
+    try {
+      const estimate = estimateWhatsAppRawCostInr({
+        kind,
+        to: opts.to,
+        inCustomerServiceWindow,
+      });
+      const markupPercent = getMarkupPercent(tenantId, "whatsapp_message", opts.db);
+      const billedAmount = billedAmountFromRaw(estimate.rawCost, markupPercent);
+      const gate = assertWalletAllowsDebit({
+        tenantId,
+        billedAmount,
+        critical: isCriticalWhatsAppKind(kind),
+        database: opts.db,
+      });
+      if (!gate.ok) {
+        return { ok: false, error: gate.error, channel: "none" };
+      }
+    } catch (err) {
+      console.error("Wallet pre-check failed:", err);
+    }
+  }
+
   const creds = resolveGraphCredentials(opts.db);
 
   if (creds) {
@@ -366,7 +402,18 @@ export async function dispatchWhatsAppCloudMessage(opts: {
         });
       }
     }
-    if (graph.ok) return { ok: true, channel: "graph", messageId: graph.messageId };
+    if (graph.ok) {
+      meterWhatsAppUsage({
+        tenantId,
+        db: opts.db,
+        kind,
+        to: opts.to,
+        inCustomerServiceWindow,
+        channel: "graph",
+        messageId: graph.messageId,
+      });
+      return { ok: true, channel: "graph", messageId: graph.messageId };
+    }
     const graphError = "error" in graph ? graph.error : "Graph send failed.";
     return { ok: false, error: graphError, channel: "graph" };
   }
@@ -375,7 +422,85 @@ export async function dispatchWhatsAppCloudMessage(opts: {
     return { ok: false, channel: "none", error: CLOUD_NOT_CONFIGURED };
   }
 
+  meterWhatsAppUsage({
+    tenantId,
+    db: opts.db,
+    kind,
+    to: opts.to,
+    inCustomerServiceWindow,
+    channel: "sandbox",
+  });
   return { ok: true, channel: "sandbox" };
+}
+
+/**
+ * Prefer the caller-supplied tenantId (calendar, receipts, staff/bot replies).
+ * OTP may omit it and resolve from users.phone. Patient recipients are not users —
+ * never skip them: if the phone uniquely maps to one patients.tenant_id, meter that clinic.
+ */
+export function resolveUsageTenantId(
+  tenantId: string | undefined,
+  to: string,
+  db?: DatabaseSync | null
+): string {
+  const explicit = String(tenantId || "").trim();
+  if (explicit) return explicit;
+  if (!db) return "";
+  const digits = toWhatsAppRecipient(to);
+  if (digits.length < 10) return "";
+  const local10 = digits.slice(-10);
+  const like = `%${local10}`;
+  try {
+    const userRow = db
+      .prepare(
+        `SELECT tenant_id FROM users
+         WHERE replace(replace(replace(replace(phone, ' ', ''), '-', ''), '+', ''), '(', '') LIKE ?
+         ORDER BY last_login DESC
+         LIMIT 1`
+      )
+      .get(like) as { tenant_id?: string } | undefined;
+    const fromUser = String(userRow?.tenant_id || "").trim();
+    if (fromUser) return fromUser;
+  } catch {
+    /* users table may be missing in isolated tests */
+  }
+  try {
+    const patientRows = db
+      .prepare(
+        `SELECT DISTINCT tenant_id FROM patients
+         WHERE tenant_id != '' AND replace(replace(replace(replace(phone, ' ', ''), '-', ''), '+', ''), '(', '') LIKE ?`
+      )
+      .all(like) as { tenant_id?: string }[];
+    const tenantIds = [...new Set(patientRows.map((row) => String(row.tenant_id || "").trim()).filter(Boolean))];
+    if (tenantIds.length === 1) return tenantIds[0];
+  } catch {
+    /* patients table may be missing in isolated tests */
+  }
+  return "";
+}
+
+function meterWhatsAppUsage(opts: {
+  tenantId: string;
+  db?: DatabaseSync | null;
+  kind: CloudMessageKind;
+  to: string;
+  inCustomerServiceWindow: boolean;
+  channel: "graph" | "sandbox";
+  messageId?: string;
+}) {
+  if (!opts.tenantId || !opts.db) return;
+  try {
+    recordWhatsAppUsageAndDebit({
+      tenantId: opts.tenantId,
+      kind: opts.kind,
+      to: opts.to,
+      inCustomerServiceWindow: opts.inCustomerServiceWindow,
+      database: opts.db,
+      metadata: { channel: opts.channel, messageId: opts.messageId || null },
+    });
+  } catch (err) {
+    console.error("Failed to record WhatsApp usage:", err);
+  }
 }
 
 export async function sendAppointmentReminder(opts: {
@@ -391,6 +516,7 @@ export async function sendAppointmentReminder(opts: {
   templateParameters?: string[];
   db?: DatabaseSync | null;
   fetchImpl?: typeof fetch;
+  tenantId?: string;
 }): Promise<CloudDispatchResult> {
   return dispatchWhatsAppCloudMessage({
     to: opts.to,
@@ -400,6 +526,7 @@ export async function sendAppointmentReminder(opts: {
     templateParameters: opts.templateParameters,
     db: opts.db,
     fetchImpl: opts.fetchImpl,
+    tenantId: opts.tenantId,
   });
 }
 
@@ -417,6 +544,7 @@ export async function sendBookConfirmation(opts: {
   templateParameters?: string[];
   db?: DatabaseSync | null;
   fetchImpl?: typeof fetch;
+  tenantId?: string;
 }): Promise<CloudDispatchResult> {
   return dispatchWhatsAppCloudMessage({
     to: opts.to,
@@ -426,6 +554,7 @@ export async function sendBookConfirmation(opts: {
     templateParameters: opts.templateParameters,
     db: opts.db,
     fetchImpl: opts.fetchImpl,
+    tenantId: opts.tenantId,
   });
 }
 
@@ -443,6 +572,7 @@ export async function sendPaymentReceipt(opts: {
   templateParameters?: string[];
   db?: DatabaseSync | null;
   fetchImpl?: typeof fetch;
+  tenantId?: string;
 }): Promise<CloudDispatchResult> {
   return dispatchWhatsAppCloudMessage({
     to: opts.to,
@@ -453,5 +583,6 @@ export async function sendPaymentReceipt(opts: {
     templateParameters: opts.templateParameters,
     db: opts.db,
     fetchImpl: opts.fetchImpl,
+    tenantId: opts.tenantId,
   });
 }

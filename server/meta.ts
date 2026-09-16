@@ -2,7 +2,7 @@ import { Router, type Request, type Response } from "express";
 import { findDataDeletionRequest, getDb } from "./db.ts";
 import { appPublicUrl, isProduction, sandboxSimulatorsEnabled } from "./runtime.ts";
 import { reportCaughtError } from "./error-tracker.ts";
-import { resolveGraphCredentials } from "./graph-whatsapp.ts";
+import { dispatchWhatsAppCloudMessage, isCloudDispatchFailure, resolveGraphCredentials } from "./graph-whatsapp.ts";
 import { facebookOAuthConfigured } from "./facebook-oauth.ts";
 import {
   buildMetaReadinessOverview,
@@ -386,39 +386,66 @@ export function createMetaRouter(): Router {
     }
   });
 
-  // POST /api/meta/send-test — SANDBOX fake-success path, disabled in production
-  router.post("/send-test", rejectProductionSimulator, (req: Request, res: Response) => {
+  // POST /api/meta/send-test — dual-path Cloud send in non-prod; disabled in production
+  router.post("/send-test", rejectProductionSimulator, async (req: Request, res: Response) => {
     try {
-      const { recipientPhone, messageText, templateName } = req.body;
+      const { recipientPhone, messageText, templateName, tenantId: bodyTenantId } = req.body;
       if (!recipientPhone) return res.status(400).json({ error: "Recipient phone number is required" });
 
       const db = getDb();
       const now = new Date().toISOString();
-      const eventId = `sandbox-test-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-      const content = messageText || `SANDBOX / DEV-ONLY test notification (not sent via Graph).\nTemplate: ${templateName || "appointment_reminder_v1"}\nTimestamp: ${now}`;
+      const tenantId = String(req.user?.tenantId || bodyTenantId || "").trim();
+      const content = messageText || `SANDBOX / DEV-ONLY test notification.\nTemplate: ${templateName || "appointment_reminder_v1"}\nTimestamp: ${now}`;
 
-      // Record in outbound events
+      const sent = await dispatchWhatsAppCloudMessage({
+        to: recipientPhone,
+        kind: "text",
+        textBody: content,
+        db,
+        tenantId: tenantId || undefined,
+        inCustomerServiceWindow: true,
+      });
+      if (isCloudDispatchFailure(sent)) {
+        const walletBlocked = /Top up now/i.test(sent.error);
+        return res.status(walletBlocked ? 402 : 502).json({
+          error: sent.error,
+          code: walletBlocked ? "WALLET_INSUFFICIENT" : undefined,
+          channel: sent.channel,
+        });
+      }
+
+      const eventId = sent.messageId || `sandbox-test-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+
       db.prepare(`
         INSERT INTO whatsapp_outbound_events (id, event_type, patient_phone, patient_name, status, details, action_payload, sent_at)
-        VALUES (?, 'test_notification', ?, 'Verified Test Recipient', 'delivered', ?, ?, ?)
+        VALUES (?, 'test_notification', ?, 'Verified Test Recipient', ?, ?, ?, ?)
       `).run(
         eventId,
         recipientPhone,
-        `SANDBOX / DEV-ONLY: test message recorded locally (not dispatched via Graph)`,
-        JSON.stringify({ text: content, sandbox: true }),
+        sent.channel === "graph"
+          ? "WhatsApp Cloud API test message accepted"
+          : "SANDBOX / DEV-ONLY: test message recorded locally (not dispatched via Graph)",
+        JSON.stringify({ text: content, sandbox: sent.channel === "sandbox", channel: sent.channel, tenantId }),
         now
       );
 
       return res.json({
         success: true,
-        sandbox: true,
-        notice: "SANDBOX / DEV-ONLY — no Graph send; no live wamid.",
+        sandbox: sent.channel === "sandbox",
+        notice:
+          sent.channel === "sandbox"
+            ? "SANDBOX / DEV-ONLY — no Graph send; no live wamid."
+            : undefined,
         messageId: eventId,
-        status: "sandbox_recorded",
+        status: sent.channel === "graph" ? "sent" : "sandbox_recorded",
+        channel: sent.channel,
         recipient: recipientPhone,
         qualityScore: "UNKNOWN",
         deliveredAt: now,
-        message: "SANDBOX / DEV-ONLY: test payload stored in SQLite. This is not a Meta Cloud API delivery."
+        message:
+          sent.channel === "graph"
+            ? "WhatsApp Cloud API accepted the test message."
+            : "SANDBOX / DEV-ONLY: test payload stored in SQLite. This is not a Meta Cloud API delivery.",
       });
     } catch (err: unknown) {
       console.error("[Meta Send Test Error]", err);

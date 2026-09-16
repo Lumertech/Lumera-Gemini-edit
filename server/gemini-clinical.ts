@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import { GoogleGenAI } from "@google/genai";
 import { mountGeminiVoiceRoutes } from "./gemini-voice.ts";
 import { generateRuleBasedSoap, getPulseFallbackAnswer } from "./gemini-fallbacks.ts";
+import { aiScribeTenantIdFromRequest, blockedAiScribeResponse, meterSuccessfulGeminiScribe } from "./gemini-scribe-meter.ts";
 
 /** Clinical Gemini HTTP routes. Split from server.ts so MCP can upload both files intact. */
 export function mountGeminiClinicalRoutes(app: Express) {
@@ -37,6 +38,12 @@ export function mountGeminiClinicalRoutes(app: Express) {
         return res.status(400).json({ error: "Consultation transcript is required" });
       }
 
+      const tenantId = aiScribeTenantIdFromRequest(req);
+      const blocked = blockedAiScribeResponse(tenantId);
+      if (blocked) {
+        return res.status(blocked.status).json(blocked.body);
+      }
+
       const ai = getGenAI();
       if (ai) {
         try {
@@ -48,6 +55,12 @@ export function mountGeminiClinicalRoutes(app: Express) {
           });
           const text = response.text?.trim() || "";
           const parsed = JSON.parse(text);
+          meterSuccessfulGeminiScribe({
+            tenantId,
+            durationMinutes: req.body?.durationMinutes,
+            transcript,
+            metadata: { source: "gemini-3.7-flash", endpoint: "generate-soap" },
+          });
           return res.json({ success: true, soap: parsed, source: "gemini-3.7-flash" });
         } catch (geminiError: any) {
           console.error("Gemini SOAP generation error, using fallback clinical synthesis:", geminiError?.message);
