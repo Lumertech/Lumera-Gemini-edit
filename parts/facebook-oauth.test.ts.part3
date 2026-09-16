@@ -1,0 +1,104 @@
+((resolve) => server.once("listening", () => resolve()));
+      const addr = server.address();
+      if (!addr || typeof addr === "string") throw new Error("no port");
+      const res = await fetch(`http://127.0.0.1:${addr.port}/api/auth/facebook`, { redirect: "manual" });
+      assert.equal(res.status, 503);
+      const json = (await res.json()) as { error?: string };
+      assert.match(json.error || "", /FACEBOOK_APP_ID/);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+    }
+  });
+
+  it("GET /api/auth/facebook/callback exchanges the code and issues a session cookie", async () => {
+    process.env.NODE_ENV = "production";
+    process.env.JWT_SECRET = "test-jwt-secret-lock-phi";
+    process.env.APP_URL = "https://www.mylumera.in";
+    process.env.FACEBOOK_APP_ID = APP_ID;
+    process.env.FACEBOOK_APP_SECRET = APP_SECRET;
+    initDatabase();
+
+    const origFetch = globalThis.fetch;
+    const graphFetch = mockFacebookGraph();
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("graph.facebook.com")) return graphFetch(input, init);
+      return origFetch(input, init);
+    }) as typeof fetch;
+
+    const app = express();
+    app.use(express.json());
+    app.use(attachUser);
+    app.use("/api", createApiRouter());
+    const server = app.listen(0, "127.0.0.1");
+    try {
+      await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+      const addr = server.address();
+      if (!addr || typeof addr === "string") throw new Error("no port");
+      const start = await fetch(`http://127.0.0.1:${addr.port}/api/auth/facebook`, { redirect: "manual" });
+      const dialog = new URL(start.headers.get("location") || "");
+      const state = dialog.searchParams.get("state") || "";
+      const res = await fetch(
+        `http://127.0.0.1:${addr.port}/api/auth/facebook/callback?code=unit-code&state=${encodeURIComponent(state)}`,
+        { redirect: "manual" }
+      );
+      assert.equal(res.status, 302);
+      const location = res.headers.get("location") || "";
+      assert.match(location, /oauth=facebook/);
+      assert.match(location, /status=ok/);
+      assert.match(res.headers.get("set-cookie") || "", /lumera_sid=/);
+    } finally {
+      globalThis.fetch = origFetch;
+      await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+    }
+  });
+
+  it("POST /api/auth/oauth rejects production client-email Facebook login", async () => {
+    process.env.NODE_ENV = "production";
+    process.env.JWT_SECRET = "test-jwt-secret-lock-phi";
+    delete process.env.FACEBOOK_APP_ID;
+    delete process.env.FACEBOOK_APP_SECRET;
+    initDatabase();
+
+    const app = express();
+    app.use(express.json());
+    app.use(attachUser);
+    app.use("/api", createApiRouter());
+    const server = app.listen(0, "127.0.0.1");
+    try {
+      await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+      const addr = server.address();
+      if (!addr || typeof addr === "string") throw new Error("no port");
+      const res = await fetch(`http://127.0.0.1:${addr.port}/api/auth/oauth`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider: "facebook",
+          profile: { email: "attacker@example.com", name: "Attacker" },
+          skipOtp: true,
+        }),
+      });
+      assert.equal(res.status, 503);
+      const json = (await res.json()) as { error?: string };
+      assert.match(json.error || "", /FACEBOOK_APP_ID|not configured/i);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+    }
+  });
+});
+
+describe("Facebook authorization-code exchange URI match", () => {
+  const restore = saveEnv(["FACEBOOK_APP_ID", "FACEBOOK_APP_SECRET", "META_APP_ID", "META_APP_SECRET"]);
+  after(restore);
+
+  it("sends the same redirect_uri used in the Login dialog", async () => {
+    process.env.FACEBOOK_APP_ID = APP_ID;
+    process.env.FACEBOOK_APP_SECRET = APP_SECRET;
+    const token = await exchangeFacebookAuthorizationCode({
+      code: "unit-code",
+      redirectUri: CALLBACK,
+      fetchImpl: mockFacebookGraph(),
+    });
+    assert.equal(token, "EAA_unit_user_token");
+  });
+});

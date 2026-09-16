@@ -1,0 +1,112 @@
+", async () => {
+    process.env.FACEBOOK_APP_ID = APP_ID;
+    process.env.FACEBOOK_APP_SECRET = APP_SECRET;
+    await assert.rejects(
+      () =>
+        verifyFacebookIdentity({
+          accessToken: "EAA_no_email",
+          redirectUri: CALLBACK,
+          fetchImpl: mockFacebookGraph({ scopes: ["public_profile"] }),
+        }),
+      /email permission/i
+    );
+  });
+
+  it("binds redirect_uri into OAuth state", () => {
+    delete process.env.FACEBOOK_OAUTH_STATE_SECRET;
+    process.env.JWT_SECRET = "unit-test-facebook-oauth-state-jwt";
+    const state = signFacebookOAuthState(CALLBACK);
+    assert.equal(verifyFacebookOAuthState(state), true);
+    const parsed = parseFacebookOAuthState(state);
+    assert.equal(parsed?.redirectUri, CALLBACK);
+    assert.equal(verifyFacebookOAuthState("tampered." + state), false);
+  });
+});
+
+describe("Facebook OAuth HTTP routes", () => {
+  const restore = saveEnv([
+    "NODE_ENV",
+    "JWT_SECRET",
+    "APP_URL",
+    "FACEBOOK_APP_ID",
+    "FACEBOOK_APP_SECRET",
+    "FACEBOOK_REDIRECT_URI",
+    "GOOGLE_CLIENT_ID",
+    "GOOGLE_CLIENT_SECRET",
+    "META_APP_ID",
+    "META_APP_SECRET",
+  ]);
+  after(restore);
+
+  it("GET /api/auth/oauth-config exposes facebookConfigured + www redirect URI", async () => {
+    process.env.NODE_ENV = "production";
+    process.env.JWT_SECRET = "test-jwt-secret-lock-phi";
+    process.env.APP_URL = "https://www.mylumera.in";
+    process.env.FACEBOOK_APP_ID = APP_ID;
+    process.env.FACEBOOK_APP_SECRET = APP_SECRET;
+    delete process.env.FACEBOOK_REDIRECT_URI;
+
+    const app = express();
+    app.use("/api", createApiRouter());
+    const server = app.listen(0, "127.0.0.1");
+    try {
+      await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+      const addr = server.address();
+      if (!addr || typeof addr === "string") throw new Error("no port");
+      const res = await fetch(`http://127.0.0.1:${addr.port}/api/auth/oauth-config`);
+      assert.equal(res.status, 200);
+      const json = (await res.json()) as {
+        facebookConfigured?: boolean;
+        facebookRedirectUri?: string;
+        sandboxClientOAuthAllowed?: boolean;
+      };
+      assert.equal(json.facebookConfigured, true);
+      assert.equal(json.facebookRedirectUri, CALLBACK);
+      assert.equal(json.sandboxClientOAuthAllowed, false);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+    }
+  });
+
+  it("GET /api/auth/facebook redirects to facebook.com dialog/oauth with the www callback", async () => {
+    process.env.NODE_ENV = "production";
+    process.env.JWT_SECRET = "test-jwt-secret-lock-phi";
+    process.env.APP_URL = "https://www.mylumera.in";
+    process.env.FACEBOOK_APP_ID = APP_ID;
+    process.env.FACEBOOK_APP_SECRET = APP_SECRET;
+
+    const app = express();
+    app.use("/api", createApiRouter());
+    const server = app.listen(0, "127.0.0.1");
+    try {
+      await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+      const addr = server.address();
+      if (!addr || typeof addr === "string") throw new Error("no port");
+      const res = await fetch(`http://127.0.0.1:${addr.port}/api/auth/facebook`, { redirect: "manual" });
+      assert.equal(res.status, 302);
+      const location = res.headers.get("location") || "";
+      const url = new URL(location);
+      assert.match(url.origin + url.pathname, /facebook\.com\/v\d+\.\d+\/dialog\/oauth/);
+      assert.equal(url.searchParams.get("redirect_uri"), CALLBACK);
+      assert.equal(url.searchParams.get("response_type"), "code");
+      const state = url.searchParams.get("state") || "";
+      assert.ok(state);
+      assert.equal(parseFacebookOAuthState(state)?.redirectUri, CALLBACK);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+    }
+  });
+
+  it("GET /api/auth/facebook is 503 in production when credentials are missing", async () => {
+    process.env.NODE_ENV = "production";
+    process.env.JWT_SECRET = "test-jwt-secret-lock-phi";
+    delete process.env.FACEBOOK_APP_ID;
+    delete process.env.FACEBOOK_APP_SECRET;
+    delete process.env.META_APP_ID;
+    delete process.env.META_APP_SECRET;
+
+    const app = express();
+    app.use("/api", createApiRouter());
+    const server = app.listen(0, "127.0.0.1");
+    try {
+      await new Promise<void>
