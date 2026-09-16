@@ -1,1 +1,1 @@
-PLACEHOLDER_USE_DISK_JSON
+USE_FILE:/tmp/lumera-push-json/server__whatsapp.ts.json
