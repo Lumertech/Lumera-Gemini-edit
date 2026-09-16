@@ -4,6 +4,7 @@ import { after, before, describe, it } from "node:test";
 import express from "express";
 import { attachUser } from "./auth.ts";
 import { createApiRouter } from "./api.ts";
+import { createLiveRegistrationRouter } from "./live-registration-routes.ts";
 import { assignedRoleForPracticeType, getDb, initDatabase, normalizePracticeType } from "./db.ts";
 import { hashPassword } from "./password.ts";
 
@@ -78,6 +79,7 @@ describe("practice type onboarding", () => {
     const app = express();
     app.use(express.json());
     app.use(attachUser);
+    app.use("/api", createLiveRegistrationRouter());
     app.use("/api", createApiRouter());
 
     server = app.listen(0, "127.0.0.1");
