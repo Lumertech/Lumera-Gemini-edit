@@ -4,6 +4,7 @@ export const LOGIN_PASSWORD_PLACEHOLDER = "Password";
 export const LOGIN_WHATSAPP_PLACEHOLDER = "WhatsApp number";
 export const REGISTER_EMAIL_PLACEHOLDER = "doctor@clinic.com";
 export const REGISTER_PASSWORD_PLACEHOLDER = "Minimum 6 characters";
+export const REGISTER_OAUTH_PASSWORD_PLACEHOLDER = "Optional fallback for email sign-in";
 
 const SEEDED_DEMO_EMAILS = new Set([
   "doctor@lumera.me",
