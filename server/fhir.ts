@@ -8,6 +8,8 @@
  */
 
 import crypto from "node:crypto";
+import { isAbdmPlaceholderRegistryMode } from "./abdm-mode.ts";
+import { ABDM_REGISTRY_PENDING_NOTE } from "../src/lib/abdmRegistryLabel.ts";
 
 // Common NRCeS Profiles
 export const NRCES_PROFILES = {
@@ -222,7 +224,9 @@ export function buildFhirPractitioner(d: DoctorContext) {
           {
             system: "https://nrces.in/ndhm/fhir/r4/CodeSystem/ndhm-identifier-type-code",
             code: "HPR",
-            display: "Healthcare Professional Registry ID",
+            display: isAbdmPlaceholderRegistryMode()
+              ? `Healthcare Professional Registry ID (${ABDM_REGISTRY_PENDING_NOTE})`
+              : "Healthcare Professional Registry ID",
           },
         ],
       },
@@ -283,7 +287,9 @@ export function buildFhirOrganization(t: TenantContext) {
             {
               system: "https://nrces.in/ndhm/fhir/r4/CodeSystem/ndhm-identifier-type-code",
               code: "HFR",
-              display: "Health Facility Registry ID",
+              display: isAbdmPlaceholderRegistryMode()
+                ? `Health Facility Registry ID (${ABDM_REGISTRY_PENDING_NOTE})`
+                : "Health Facility Registry ID",
             },
           ],
         },
