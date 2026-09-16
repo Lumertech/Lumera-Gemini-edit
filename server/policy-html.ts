@@ -6,12 +6,14 @@ export const PUBLIC_POLICY_HTML_PATHS = [
   "/privacy-policy",
   "/terms-of-service",
   "/data-deletion-instructions",
+  "/government-data-request-policy",
 ] as const;
 
 const PATH_TO_SLUG: Record<(typeof PUBLIC_POLICY_HTML_PATHS)[number], string> = {
   "/privacy-policy": "privacy-policy",
   "/terms-of-service": "terms-of-service",
   "/data-deletion-instructions": "data-deletion-instructions",
+  "/government-data-request-policy": "government-data-request-policy",
 };
 
 export function normalizePublicPath(pathname: string): string {
@@ -62,6 +64,7 @@ export function renderPolicyDocumentHtml(title: string, body: string, updatedAt?
       <a href="/privacy-policy">Privacy Policy</a>
       <a href="/terms-of-service">Terms of Service</a>
       <a href="/data-deletion-instructions">Data Deletion Instructions</a>
+      <a href="/government-data-request-policy">Government Data Requests</a>
     </nav>
   </header>
   <main>

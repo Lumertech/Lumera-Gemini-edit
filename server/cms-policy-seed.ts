@@ -9,6 +9,11 @@
  * overclaim rows cannot persist.
  */
 
+import {
+  GOVERNMENT_DATA_REQUEST_POLICY_BODY,
+  GOVERNMENT_DATA_REQUEST_POLICY_TITLE,
+} from "./government-data-request-policy.ts";
+
 export const PRODUCTION_POLICY_ORIGIN = "https://www.mylumera.in";
 
 export type CmsPolicySeed = {
@@ -62,6 +67,8 @@ We do **not** use WhatsApp or Facebook Login data to sell ads, build advertising
 
 #### Contact
 Data Protection / privacy requests: **ravee@lumer.me**
+
+Government or public-authority requests for user personal data are handled under our [Government & Public Authority Data Request Policy](https://www.mylumera.in/government-data-request-policy).
 
 ---
 
@@ -163,6 +170,16 @@ export const CMS_POLICY_UPSERTS: CmsPolicySeed[] = [
   { slug: "terms", title: "Terms of Service", body: TERMS_OF_SERVICE_BODY },
   { slug: "data-deletion-instructions", title: "Data Deletion Instructions", body: DATA_DELETION_INSTRUCTIONS_BODY },
   { slug: "data-deletion", title: "Data Deletion Instructions", body: DATA_DELETION_INSTRUCTIONS_BODY },
+  {
+    slug: "government-data-request-policy",
+    title: GOVERNMENT_DATA_REQUEST_POLICY_TITLE,
+    body: GOVERNMENT_DATA_REQUEST_POLICY_BODY,
+  },
+  {
+    slug: "government-requests",
+    title: GOVERNMENT_DATA_REQUEST_POLICY_TITLE,
+    body: GOVERNMENT_DATA_REQUEST_POLICY_BODY,
+  },
 ];
 
 export const CMS_POLICY_FORCE_UPSERT_SLUGS = CMS_POLICY_UPSERTS.map((row) => row.slug);
