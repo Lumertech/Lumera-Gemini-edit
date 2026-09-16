@@ -482,7 +482,7 @@ Return JSON:
     return res.json({
       language: targetLanguage,
       translatedAdvice: advice,
-      formattedWhatsAppMessage: `\u092a\u094d\u0930\u093f\u092f \u092e\u0930\u0940\u091c, \u0906\u092a\u0915\u0947 \u0921\u0949\u0915\u094d\u091f\u0930 \u0926\u094d\u0935\u093e\u0930\u093e \u0926\u0940 \u0917\u0908 \u0938\u0932\u093e\u0939:\\n${advice.join('\\n\u2022 ')}\\n\u0915\u0943\u092a\u092f\u093e \u0926\u0935\u093e\u0907\u092f\u093e\u0902 \u0938\u092e\u092f \u092a\u0930 \u0932\u0947\u0902\u0964`
+      formattedWhatsAppMessage: `प्रिय मरीज, आपके डॉक्टर द्वारा दी गई सलाह:\n${advice.join('\n• ')}\nकृपया दवाइयां समय पर लें।`
     });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
