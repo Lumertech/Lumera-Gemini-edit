@@ -1,23 +1,28 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" fill="none">
   <defs>
-    <!-- Tailwind bg-gradient-to-br from-purple-500 via-indigo-600 to-blue-600 -->
-    <linearGradient id="lumera-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#A855F7" />
-      <stop offset="50%" stop-color="#4F46E5" />
-      <stop offset="100%" stop-color="#2563EB" />
+    <linearGradient id="lumera-grad" x1="8%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#A855F7"/>
+      <stop offset="50%" stop-color="#7C3AED"/>
+      <stop offset="100%" stop-color="#6366F1"/>
     </linearGradient>
   </defs>
 
-  <!-- Rounded tile is the mark (do not wrap BrandMark in a second tile) -->
-  <rect x="0" y="0" width="64" height="64" rx="16" fill="url(#lumera-grad)" />
-  <rect x="0.75" y="0.75" width="62.5" height="62.5" rx="15.25" stroke="rgba(255,255,255,0.22)" stroke-width="1.5" fill="none" />
+  <!-- Rounded tile is the mark (BrandMark should not wrap this in a second tile) -->
+  <rect width="64" height="64" rx="16" fill="url(#lumera-grad)"/>
+  <rect x="0.75" y="0.75" width="62.5" height="62.5" rx="15.25" stroke="rgba(255,255,255,0.22)" stroke-width="1.5"/>
 
-  <!--
-    Lucide Sparkles four-pointed star (v0.546 main glyph), filled white.
-    Same shape landing used as <Sparkles className="w-6 h-6 text-white" />.
-    Scale matches that 24px icon inside a 40px tile (60% of the square).
-  -->
-  <g transform="translate(12 12) scale(1.6666667)" fill="#FFFFFF">
-    <path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z" />
+  <!-- Four-point concave sparkle -->
+  <path fill="#fff" d="M32 10C33.05 23.2 40.8 30.95 54 32C40.8 33.05 33.05 40.8 32 54C30.95 40.8 23.2 33.05 10 32C23.2 30.95 30.95 23.2 32 10Z"/>
+
+  <!-- Larger plus, upper-right -->
+  <g stroke="#fff" stroke-width="2.7" stroke-linecap="round">
+    <path d="M46.5 14.8v8.6"/>
+    <path d="M42.2 19.1h8.6"/>
+  </g>
+
+  <!-- Smaller plus, lower-left -->
+  <g stroke="#fff" stroke-width="2.1" stroke-linecap="round">
+    <path d="M16.2 41.9v6.2"/>
+    <path d="M13.1 45h6.2"/>
   </g>
 </svg>
