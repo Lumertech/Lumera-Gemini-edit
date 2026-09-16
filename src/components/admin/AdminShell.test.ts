@@ -48,8 +48,10 @@ describe("AdminShell tab remounts", () => {
     assert.equal(isAdminNavItemVisible("super_admin", "settings"), true);
     assert.equal(isAdminNavItemVisible("super_admin", "tenants"), true);
     assert.equal(isAdminNavItemVisible("super_admin", "subscriptions"), true);
+    assert.equal(isAdminNavItemVisible("super_admin", "usage"), true);
     assert.equal(isAdminNavItemVisible("CLINIC_ADMIN", "tenants"), false);
     assert.equal(isAdminNavItemVisible("CLINIC_ADMIN", "subscriptions"), false);
+    assert.equal(isAdminNavItemVisible("CLINIC_ADMIN", "usage"), false);
     assert.equal(isAdminNavItemVisible("polyclinic_admin", "tenants"), false);
     assert.match(src, /\{ id: "branches", label: "Branches"/);
     assert.match(src, /CLINIC_BRANCH_TABS\.has\(adminTab\) && isPlatformAdmin/);
