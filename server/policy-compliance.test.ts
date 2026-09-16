@@ -13,6 +13,7 @@ import {
   PRIVACY_POLICY_BODY,
   TERMS_OF_SERVICE_BODY,
 } from "./cms-policy-seed.ts";
+import { GOVERNMENT_DATA_REQUEST_POLICY_BODY } from "./government-data-request-policy.ts";
 import { ensureMetaTechProviderAndPolicies, getDb, initDatabase } from "./db.ts";
 import { createMetaRouter } from "./meta.ts";
 import { attachPublicPolicyHtml, PUBLIC_POLICY_HTML_PATHS } from "./policy-html.ts";
@@ -65,6 +66,7 @@ const RESKIM_SURFACES = [
   "src/components/LandingPage.tsx",
   "src/pages/PolicyPage.tsx",
   "server/cms-policy-seed.ts",
+  "server/government-data-request-policy.ts",
   "server/db.ts",
   "server/policy-html.ts",
   "server/meta.ts",
@@ -142,11 +144,29 @@ describe("Compliance #26 policy seed grep", () => {
     assert.match(PRIVACY_POLICY_BODY, /ravee@lumer\.me/);
     assert.match(TERMS_OF_SERVICE_BODY, /ravee@lumer\.me/);
     assert.match(DATA_DELETION_INSTRUCTIONS_BODY, /ravee@lumer\.me/);
+    assert.match(GOVERNMENT_DATA_REQUEST_POLICY_BODY, /ravee@lumer\.me/);
     assert.match(policyPage, /ravee@lumer\.me/);
+    const govPolicy = readRepo("server/government-data-request-policy.ts");
+    for (const email of retired) {
+      assert.equal(govPolicy.includes(email), false, `government policy still lists ${email}`);
+    }
     assert.equal(
-      /dpo@|compliance@lumera|privacy@lumera|legal@lumera/i.test(`${seed}\n${policyPage}`),
+      /dpo@|compliance@lumera|privacy@lumera|legal@lumera/i.test(`${seed}\n${policyPage}\n${govPolicy}`),
       false
     );
+  });
+
+  it("government data request policy covers Meta Data Handling four areas", () => {
+    assert.match(GOVERNMENT_DATA_REQUEST_POLICY_BODY, /## Required Legal Review/);
+    assert.match(GOVERNMENT_DATA_REQUEST_POLICY_BODY, /## Challenging Unlawful Requests/);
+    assert.match(GOVERNMENT_DATA_REQUEST_POLICY_BODY, /## Data Minimization/);
+    assert.match(GOVERNMENT_DATA_REQUEST_POLICY_BODY, /## Documentation & Record-Keeping/);
+    assert.match(GOVERNMENT_DATA_REQUEST_POLICY_BODY, /before.*any data is searched/i);
+    assert.match(GOVERNMENT_DATA_REQUEST_POLICY_BODY, /absolute minimum personal data necessary/);
+    assert.match(GOVERNMENT_DATA_REQUEST_POLICY_BODY, /challenge, object to, or contest/i);
+    assert.match(PRIVACY_POLICY_BODY, /government-data-request-policy/);
+    assert.ok(CMS_POLICY_UPSERTS.some((row) => row.slug === "government-data-request-policy"));
+    assert.ok(CMS_POLICY_UPSERTS.some((row) => row.slug === "government-requests"));
   });
 });
 
@@ -218,11 +238,23 @@ describe("Compliance #26 public policy HTML + deletion-status", () => {
       if (p === "/data-deletion-instructions") {
         assert.match(html, /https:\/\/www\.mylumera\.in\/api\/meta\/data-deletion/);
       }
+      if (p === "/government-data-request-policy") {
+        assert.match(html, /Required Legal Review/);
+        assert.match(html, /Challenging Unlawful Requests/);
+        assert.match(html, /Data Minimization/);
+        assert.match(html, /Documentation &amp; Record-Keeping/);
+        assert.match(html, /absolute minimum personal data necessary/);
+      }
     }
   });
 
   it("GET /api/public/policies/:slug returns the honest seeded bodies", async () => {
-    for (const slug of ["privacy-policy", "terms-of-service", "data-deletion-instructions"]) {
+    for (const slug of [
+      "privacy-policy",
+      "terms-of-service",
+      "data-deletion-instructions",
+      "government-data-request-policy",
+    ]) {
       const res = await fetch(`http://127.0.0.1:${port}/api/public/policies/${slug}`);
       assert.equal(res.status, 200, slug);
       const json = (await res.json()) as { slug: string; body: string; title: string };
@@ -233,6 +265,12 @@ describe("Compliance #26 public policy HTML + deletion-status", () => {
       if (slug === "privacy-policy") assert.match(json.body, /\bSTOP\b/);
       if (slug === "data-deletion-instructions") {
         assert.match(json.body, /https:\/\/www\.mylumera\.in\/api\/meta\/data-deletion/);
+      }
+      if (slug === "government-data-request-policy") {
+        assert.match(json.body, /## Required Legal Review/);
+        assert.match(json.body, /## Challenging Unlawful Requests/);
+        assert.match(json.body, /## Data Minimization/);
+        assert.match(json.body, /## Documentation & Record-Keeping/);
       }
     }
   });

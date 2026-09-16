@@ -7,6 +7,7 @@ import {
   FileText,
   Lock,
   Trash2,
+  Scale,
   ExternalLink,
   Search,
   Printer,
@@ -34,11 +35,14 @@ export const PolicyPage: React.FC<{ slug: string }> = ({ slug: initialSlug }) =>
   const [checking, setChecking] = useState(false);
 
   // Normalize slug
-  const activeTab = currentSlug.includes("data-deletion")
-    ? "data-deletion"
-    : currentSlug.includes("terms")
-    ? "terms"
-    : "privacy";
+  const activeTab =
+    currentSlug.includes("government") || currentSlug.includes("data-request")
+      ? "government"
+      : currentSlug.includes("data-deletion")
+      ? "data-deletion"
+      : currentSlug.includes("terms")
+      ? "terms"
+      : "privacy";
 
   const fetchPolicy = (s: string) => {
     fetch(`/api/public/policies/${s}`)
@@ -62,6 +66,8 @@ export const PolicyPage: React.FC<{ slug: string }> = ({ slug: initialSlug }) =>
         ? "terms-of-service"
         : currentSlug === "data-deletion"
         ? "data-deletion-instructions"
+        : currentSlug === "government" || currentSlug === "government-requests"
+        ? "government-data-request-policy"
         : currentSlug;
     fetchPolicy(slugToLoad);
   }, [currentSlug]);
@@ -196,6 +202,17 @@ export const PolicyPage: React.FC<{ slug: string }> = ({ slug: initialSlug }) =>
               }`}
             >
               <Trash2 className="w-3.5 h-3.5" /> Data Deletion Instructions
+            </Link>
+            <Link
+              to={surfaceToPath("legal", { policySlug: "government-data-request-policy" })}
+              data-testid="policy-tab-government"
+              className={`inline-flex items-center gap-2 px-4 py-2 rounded-t-lg text-xs font-bold transition border-b-2 ${
+                activeTab === "government"
+                  ? "border-emerald-600 text-emerald-700 bg-white shadow-xs"
+                  : "border-transparent text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              <Scale className="w-3.5 h-3.5" /> Government Data Requests
             </Link>
           </div>
         </div>

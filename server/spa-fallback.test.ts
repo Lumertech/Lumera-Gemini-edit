@@ -161,7 +161,12 @@ describe("production SPA history fallback", () => {
   it("classifies landing as SPA, policy URLs as HTML documents, and API as backend", () => {
     assert.equal(isSpaHistoryFallbackPath("/"), true);
     assert.equal(isBackendPath("/"), false);
-    for (const p of ["/privacy-policy", "/terms-of-service", "/data-deletion-instructions"]) {
+    for (const p of [
+      "/privacy-policy",
+      "/terms-of-service",
+      "/data-deletion-instructions",
+      "/government-data-request-policy",
+    ]) {
       assert.equal(isSpaHistoryFallbackPath(p), false, p);
       assert.equal(isBackendPath(p), false, p);
     }
@@ -221,7 +226,12 @@ describe("production SPA history fallback", () => {
         assert.equal(res.status, 200, `${p} must rewrite to the SPA shell`);
         assert.match(await res.text(), /Lumera SPA/);
       }
-      for (const p of ["/privacy-policy", "/terms-of-service", "/data-deletion-instructions"]) {
+      for (const p of [
+        "/privacy-policy",
+        "/terms-of-service",
+        "/data-deletion-instructions",
+        "/government-data-request-policy",
+      ]) {
         const res = await fetch(`${origin}${p}`);
         assert.equal(res.status, 404, `${p} must not fall through to an empty SPA shell`);
       }

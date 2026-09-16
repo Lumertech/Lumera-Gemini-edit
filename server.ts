@@ -8,6 +8,7 @@ import { initDatabase } from "./server/db.ts";
 import { startAppointmentReminderScheduler } from "./server/whatsapp-calendar.ts";
 import { attachUser, requireAuth } from "./server/auth.ts";
 import { createApiRouter } from "./server/api.ts";
+import { createWhatsAppNumbersRouter, practitionerLinkMiddleware, bootWhatsAppOwnershipSchema } from "./server/whatsapp-numbers-routes.ts";
 import { createMetaRouter } from "./server/meta.ts";
 import { createAbdmRouter } from "./server/abdm.ts";
 import { applyBundledServerNodeEnv, failFastRequiredProductionEnv, resolveListenPort } from "./server/runtime.ts";
@@ -40,6 +41,8 @@ app.use(attachUser);
 app.use("/api/gemini", requireAuth);
 app.use("/api/v3", createAbdmRouter());
 app.use("/v3", createAbdmRouter());
+app.use("/api", practitionerLinkMiddleware);
+app.use("/api", createWhatsAppNumbersRouter());
 app.use("/api", createApiRouter());
 app.use("/meta", createMetaRouter());
 app.post("/data-deletion-callback", (req, res, next) => {
@@ -512,7 +515,7 @@ function generateRuleBasedSoap(name: string, age: number, gender: string, transc
     advice = ["Bland khichdi and curd diet", "Avoid spicy, oily and street food", "Continue ORS hydration"];
   } else {
     meds = [
-      { id: "m1", drugName: "Paracetamol 650 mg (Dolo 650)", composition: "Paracetamol 650mg", form: "Tablet", dosage: "650 mg", frequency: "1-0-1", timing: "After Food", durationDays: 3, instructions: "For fever >99°F" },
+      { id: "m1", drugName: "Paracetamol 650 mg (Dolo 650)", composition: "Paracetamol 650mg", form: "Tablet", dosage: "650 mg", frequency: "1-0-1", timing: "After Food", durationDays: 3, instructions: "For fever >99\u00b0F" },
       { id: "m2", drugName: "Montelukast + Levocetirizine (Montair-LC)", composition: "Montelukast 10mg + Levocetirizine 5mg", form: "Tablet", dosage: "1 Tablet", frequency: "0-0-1", timing: "At Bedtime", durationDays: 5, instructions: "Night dose" },
       { id: "m3", drugName: "Pantoprazole 40 mg (Pan 40)", composition: "Pantoprazole 40mg", form: "Tablet", dosage: "40 mg", frequency: "1-0-0", timing: "Before Food", durationDays: 5, instructions: "Before breakfast" }
     ];
@@ -551,7 +554,7 @@ function generateRuleBasedSoap(name: string, age: number, gender: string, transc
       medicines: meds,
       labTests: tests,
       lifestyleAdvice: advice,
-      redFlags: ["High fever >102°F persisting >48 hrs", "Difficulty breathing or chest tightness", "Inability to keep liquids down"],
+      redFlags: ["High fever >102\u00b0F persisting >48 hrs", "Difficulty breathing or chest tightness", "Inability to keep liquids down"],
       followUpDays: 5,
       followUpDate: new Date(Date.now() + 5 * 86400000).toISOString().split('T')[0]
     },
@@ -640,6 +643,7 @@ async function startServer() {
 
   // Heavy work after the Cloud Run socket is open. /healthz is already registered.
   initDatabase();
+  bootWhatsAppOwnershipSchema();
   startAppointmentReminderScheduler();
 }
 

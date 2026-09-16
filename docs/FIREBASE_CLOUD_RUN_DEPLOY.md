@@ -15,7 +15,7 @@ Gemini AI Studio **Publish** may produce the Cloud Run service. Firebase Hosting
 Today’s live symptom (2026-09-10): www TLS presents `CN=firebaseapp.com` (SAN mismatch) and apex `mylumera.in` is 404. That is an unfinished Hosting custom-domain / cert mint, not a reason to change nameservers.
 
 **Canonical public origin:** `https://www.mylumera.in`  
-**Honesty:** Lumera is **not** a certified Meta Tech Provider. Do not paste Dashboard URLs until the smoke curls below return HTTPS 200.
+**Honesty:** Lumera is **not** a certified Meta Tech Provider. Facebook Login App Review is not WhatsApp Tech Provider certification. Do not paste Dashboard URLs until the smoke curls below return HTTPS 200.
 
 Firebase project (from `firebase-applet-config.json` / `.firebaserc`): **`gen-lang-client-0108182367`**.
 
@@ -194,7 +194,7 @@ Hosting rewrite regions must be one of [Firebase’s Cloud Run rewrite regions](
 After rewrite + cert mint, from any laptop:
 
 ```bash
-for p in / /privacy-policy /terms-of-service /data-deletion-instructions; do
+for p in / /privacy-policy /terms-of-service /data-deletion-instructions /government-data-request-policy; do
   echo "== $p"
   curl -sI "https://www.mylumera.in$p" | head -n 1
 done
@@ -207,7 +207,7 @@ curl -sI "https://www.mylumera.in/api/meta/webhook"
 Expect:
 
 - `/` → **HTTP 200** (SPA landing; no login wall).
-- `/privacy-policy`, `/terms-of-service`, `/data-deletion-instructions` → **HTTP 200** HTML that **embeds the `cms_policies` body** (title + article). Meta crawlers must see “not a certified Meta Tech Provider” and WhatsApp **STOP** in the document, not an empty SPA shell.
+- `/privacy-policy`, `/terms-of-service`, `/data-deletion-instructions`, `/government-data-request-policy` → **HTTP 200** HTML that **embeds the `cms_policies` body** (title + article). Meta crawlers must see “not a certified Meta Tech Provider” and WhatsApp **STOP** in the document, not an empty SPA shell. The government-request page must include the four Data Handling headers (Required Legal Review, Challenging Unlawful Requests, Data Minimization, Documentation & Record-Keeping).
 - `/healthz` → **200** `ok`.
 - `/api/public/policies/privacy-policy` → **200** JSON (same honest CMS body, including WhatsApp STOP opt-out).
 - `GET /api/meta/webhook` without hub params → **403/500** until `META_VERIFY_TOKEN` is set. It must still be **reachable over HTTPS** (not a Firebase static 404 / cert mismatch).
@@ -217,7 +217,7 @@ After a policy-seed merge, **Cloud Run must redeploy (or restart)** so live www 
 
 **Do not claim Dashboard-ready** until Compliance re-skims the live HTML.
 
-**Do not paste these URLs into Meta App Dashboard until the four document paths return HTTPS 200 with a cert for www.mylumera.in.**
+**Do not paste these URLs into Meta App Dashboard until the public document paths return HTTPS 200 with a cert for www.mylumera.in.**
 
 Local production smoke (same process Cloud Run runs):
 
@@ -229,18 +229,18 @@ export PORT=8080
 npm run build
 npm start
 # in another terminal:
-for p in / /privacy-policy /terms-of-service /data-deletion-instructions; do
+for p in / /privacy-policy /terms-of-service /data-deletion-instructions /government-data-request-policy; do
   curl -sI "http://127.0.0.1:8080$p" | head -n 1
 done
 ```
 
 ---
 
-## 6. Meta App Dashboard URL checklist (sandbox-honest)
+## 6. Meta App Dashboard URL checklist
 
 Canonical host: **`https://www.mylumera.in`**. Set `APP_URL` to that origin.
 
-**Do not claim:** certified Meta Tech Provider, App Review approved/submitted, live WhatsApp Cloud send, or HIPAA.
+**Facebook Login App Review:** founder confirmed **approved** for Login (`email`, `public_profile`). Still **not** a certified Meta Tech Provider. WhatsApp `whatsapp_business_*` scopes stay SANDBOX-honest unless `META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED=true` is set on Cloud Run after *those* permissions are actually approved.
 
 Paste **only after** the smoke gate in §5 is green:
 
@@ -251,9 +251,36 @@ Paste **only after** the smoke gate in §5 is green:
 | Privacy Policy URL | `https://www.mylumera.in/privacy-policy` |
 | Terms of Service URL | `https://www.mylumera.in/terms-of-service` |
 | User data deletion instructions (human page) | `https://www.mylumera.in/data-deletion-instructions` |
+| Government / public-authority data request policy (Data Handling) | `https://www.mylumera.in/government-data-request-policy` |
 | Data deletion request callback | `https://www.mylumera.in/api/meta/data-deletion` (`POST`) |
 | Valid OAuth Redirect URIs (Facebook Login) | `https://www.mylumera.in/api/auth/facebook/callback` |
 | WhatsApp webhook callback URL | `https://www.mylumera.in/api/meta/webhook` (`GET` challenge + `POST`) |
+
+### Facebook Login product (OAuth 2.0)
+
+Cloud Run env (same service as `APP_URL`):
+
+| Variable | Value |
+| --- | --- |
+| `FACEBOOK_APP_ID` | Numeric Meta app id |
+| `FACEBOOK_APP_SECRET` | App secret (never commit; alias `META_APP_SECRET`) |
+| `APP_URL` | `https://www.mylumera.in` (no trailing slash) |
+| `FACEBOOK_REDIRECT_URI` | Optional override; default `{APP_URL}/api/auth/facebook/callback` |
+
+Meta App Dashboard → Facebook Login → Settings:
+
+| Setting | Value |
+| --- | --- |
+| Client OAuth Login | Yes |
+| Web OAuth Login | Yes |
+| Enforce HTTPS | Yes |
+| Use Strict Mode for Redirect URIs | Yes |
+| Valid OAuth Redirect URIs (**required**) | `https://www.mylumera.in/api/auth/facebook/callback` |
+| Valid OAuth Redirect URIs (local) | `http://localhost:3000/api/auth/facebook/callback` |
+
+`www` and apex are different origins. Production `APP_URL` is **www**, so the callback Meta must whitelist is **`https://www.mylumera.in/api/auth/facebook/callback`** (no trailing slash). The server stores that URI inside the signed `state` parameter and reuses it on `GET /oauth/access_token` — Meta rejects the code if they differ.
+
+Login path in this app: **GET `/api/auth/facebook`** → Facebook dialog (`response_type=code`) → **GET `/api/auth/facebook/callback`** → `debug_token` + `/me` → Lumera session cookie. Production never accepts a client-supplied email.
 
 Optional override: `FACEBOOK_REDIRECT_URI=https://www.mylumera.in/api/auth/facebook/callback`.
 

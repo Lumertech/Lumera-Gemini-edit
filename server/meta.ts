@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from "express";
-import { findDataDeletionRequest, getDb, insertDataDeletionRequest } from "./db.ts";
+import { findDataDeletionRequest, getDb } from "./db.ts";
 import { appPublicUrl, isProduction, sandboxSimulatorsEnabled } from "./runtime.ts";
 import { resolveGraphCredentials } from "./graph-whatsapp.ts";
 import { facebookOAuthConfigured } from "./facebook-oauth.ts";
@@ -10,6 +10,7 @@ import {
   getMetaVerifyToken,
   rejectProductionSimulator,
 } from "./meta-security.ts";
+import { handleMetaDataDeletionPost } from "./meta-signed-request.ts";
 
 export function createMetaRouter(): Router {
   const router = Router();
@@ -143,49 +144,7 @@ export function createMetaRouter(): Router {
 
   // POST /api/meta/data-deletion - Callback endpoint for Meta App Review & User Data Erasure
   // Production must set APP_URL=https://www.mylumera.in so confirmation links are not the Cloud Run host.
-  router.post("/data-deletion", (req: Request, res: Response) => {
-    const host = req.get("host") || undefined;
-    const proto = req.protocol === "https" || req.get("x-forwarded-proto") === "https" ? "https" : req.protocol;
-    const origin = appPublicUrl(host, proto);
-    const code = `DEL-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
-    const userIdOrPhone = String(req.body?.user_id || req.body?.phone || req.body?.id || "meta_user_session");
-
-    try {
-      const db = getDb();
-      insertDataDeletionRequest(db, code, userIdOrPhone);
-      const now = new Date().toISOString();
-      try {
-        db.prepare(`
-          INSERT INTO audit_logs (id, user_id, user_name, action, details, timestamp)
-          VALUES (?, ?, ?, 'Meta Data Deletion Request', ?, ?)
-        `).run(
-          `audit-${Date.now()}`,
-          "system-meta-compliance",
-          "Meta Compliance Agent",
-          `Data erasure request code ${code} initialized for ${userIdOrPhone}`,
-          now
-        );
-      } catch {
-        /* audit is best-effort */
-      }
-
-      return res.status(200).json({
-        url: `${origin}/data-deletion-instructions?code=${encodeURIComponent(code)}`,
-        confirmation_code: code,
-      });
-    } catch (err) {
-      console.error("[Meta Data Deletion Callback Error]", err);
-      try {
-        insertDataDeletionRequest(getDb(), code, userIdOrPhone);
-      } catch {
-        /* persist fallback is best-effort */
-      }
-      return res.status(200).json({
-        url: `${origin}/data-deletion-instructions?code=${encodeURIComponent(code)}`,
-        confirmation_code: code,
-      });
-    }
-  });
+  router.post("/data-deletion", handleMetaDataDeletionPost);
 
   // GET /api/meta/data-deletion-status — only COMPLETED for codes that exist and are completed.
   router.get("/data-deletion-status", (req: Request, res: Response) => {

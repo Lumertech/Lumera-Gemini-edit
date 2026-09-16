@@ -2,6 +2,8 @@ import crypto from "node:crypto";
 import type { Request, Response, NextFunction } from "express";
 import { envFlag, isProduction, readSecret, sandboxSimulatorsEnabled } from "./runtime.ts";
 
+export const META_APP_REVIEW_WHATSAPP_SCOPES_FLAG = "META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED";
+
 export const META_UNSIGNED_WEBHOOK_FLAG = "META_WEBHOOK_ALLOW_UNSIGNED";
 
 export function getMetaAppSecret(): string {
@@ -106,6 +108,14 @@ export function rejectProductionSimulator(req: Request, res: Response, next: Nex
 
 export type ChecklistItem = { item: string; passed: boolean; url?: string; note?: string };
 
+export function embeddedSignupConfigConfigured(): boolean {
+  return Boolean(readSecret("META_EMBEDDED_SIGNUP_CONFIG_ID"));
+}
+
+export function appReviewWhatsAppScopesApproved(): boolean {
+  return envFlag(META_APP_REVIEW_WHATSAPP_SCOPES_FLAG);
+}
+
 export function buildMetaReadinessOverview(opts: {
   connectedWabasCount: number;
   totalClinics: number;
@@ -116,12 +126,16 @@ export function buildMetaReadinessOverview(opts: {
   privacyUrl?: string;
   termsUrl?: string;
   dataDeletionUrl?: string;
+  governmentDataRequestUrl?: string;
   graphOtpConfigured: boolean;
   webhookSecretConfigured: boolean;
   verifyTokenConfigured: boolean;
   facebookOAuthConfigured: boolean;
 }) {
   const simulatorsEnabled = sandboxSimulatorsEnabled();
+  const signedRequestReady = Boolean(getMetaAppSecret());
+  const configIdReady = embeddedSignupConfigConfigured();
+  const scopesApproved = appReviewWhatsAppScopesApproved();
   const checklist: ChecklistItem[] = [
     {
       item: "Privacy Policy URL exists (public page; Compliance must confirm live copy)",
@@ -135,10 +149,20 @@ export function buildMetaReadinessOverview(opts: {
       url: opts.termsUrl || "/terms-of-service",
     },
     {
-      item: "Data deletion callback endpoint exists (signed_request verification still SANDBOX)",
-      passed: false,
+      item: signedRequestReady
+        ? "Data deletion callback verifies signed_request (HMAC-SHA256 vs META_APP_SECRET)"
+        : "Data deletion callback endpoint exists (signed_request verification still SANDBOX)",
+      passed: signedRequestReady,
       url: opts.dataDeletionUrl || "/data-deletion-instructions",
-      note: "Callback scaffold only — not App Review complete.",
+      note: signedRequestReady
+        ? "HMAC-SHA256 signed_request verification runs when META_APP_SECRET is set. Not App Review complete. Lumera is not a certified Tech Provider."
+        : "Callback scaffold only — signed_request verification requires META_APP_SECRET. Not App Review complete.",
+    },
+    {
+      item: "Government & public-authority data request policy (Data Handling four areas)",
+      passed: true,
+      url: opts.governmentDataRequestUrl || "/government-data-request-policy",
+      note: "Legal review, challenge unlawful requests, data minimization, and request logging.",
     },
     {
       item: "Webhook GET verify token configured",
@@ -158,6 +182,20 @@ export function buildMetaReadinessOverview(opts: {
       item: "Facebook Login server-side token exchange configured",
       passed: opts.facebookOAuthConfigured,
     },
+    {
+      item: "Embedded Signup config_id configured",
+      passed: configIdReady,
+      note: configIdReady
+        ? "META_EMBEDDED_SIGNUP_CONFIG_ID is set. Handshake is still SANDBOX-honest until App Review; Lumera is not a certified Tech Provider."
+        : "Unset META_EMBEDDED_SIGNUP_CONFIG_ID — Facebook Login for Business configuration not provisioned. Contact ravee@lumer.me.",
+    },
+    {
+      item: "App Review approved for whatsapp_business_management / business_management / whatsapp_business_messaging",
+      passed: scopesApproved,
+      note: scopesApproved
+        ? "Manually set via META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED=true. Not auto-detected from Meta's dashboard."
+        : "SANDBOX-honest: App Review is not submitted/approved unless META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED=true. Contact ravee@lumer.me.",
+    },
   ];
 
   const passedCount = checklist.filter((c) => c.passed).length;
@@ -169,7 +207,7 @@ export function buildMetaReadinessOverview(opts: {
     environment: isProduction() ? "production" : "sandbox",
     simulatorsEnabled,
     appReviewStatus: {
-      status: "NOT_SUBMITTED",
+      status: scopesApproved ? "WHATSAPP_SCOPES_MARKED_APPROVED" : "NOT_SUBMITTED",
       checklist,
       passedCount,
       totalCount: checklist.length,

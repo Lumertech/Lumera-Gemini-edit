@@ -94,6 +94,9 @@ const POLICY_PATHS: Record<string, string> = {
   "/terms": "terms-of-service",
   "/data-deletion-instructions": "data-deletion-instructions",
   "/data-deletion": "data-deletion-instructions",
+  "/government-data-request-policy": "government-data-request-policy",
+  "/government-requests": "government-data-request-policy",
+  "/government": "government-data-request-policy",
   "/security": "security",
 };
 
