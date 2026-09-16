@@ -12,11 +12,11 @@ function oauthStateSecret(): string {
 }
 
 export function facebookAppId(): string {
-  return readSecret("FACEBOOK_APP_ID", "META_APP_ID");
+  return readSecret("FACEBOOK_APP_ID", "FACEBOOK_CLIENT_ID", "META_APP_ID");
 }
 
 export function facebookAppSecret(): string {
-  return readSecret("FACEBOOK_APP_SECRET", "META_APP_SECRET");
+  return readSecret("FACEBOOK_APP_SECRET", "FACEBOOK_CLIENT_SECRET", "META_APP_SECRET");
 }
 
 export function facebookOAuthConfigured(): boolean {
@@ -110,7 +110,10 @@ export async function exchangeFacebookAuthorizationCode(opts: {
   const appId = facebookAppId();
   const appSecret = facebookAppSecret();
   if (!appId || !appSecret) {
-    throw new FacebookOAuthError("Facebook Login is not configured (FACEBOOK_APP_ID / FACEBOOK_APP_SECRET).", 503);
+    throw new FacebookOAuthError(
+      "Facebook Login is not configured (FACEBOOK_APP_ID / FACEBOOK_APP_SECRET, or FACEBOOK_CLIENT_ID / FACEBOOK_CLIENT_SECRET).",
+      503
+    );
   }
   const version = graphApiVersion();
   const params = new URLSearchParams({
@@ -137,7 +140,10 @@ export async function inspectFacebookAccessToken(opts: {
   const appId = facebookAppId();
   const appSecret = facebookAppSecret();
   if (!appId || !appSecret) {
-    throw new FacebookOAuthError("Facebook Login is not configured (FACEBOOK_APP_ID / FACEBOOK_APP_SECRET).", 503);
+    throw new FacebookOAuthError(
+      "Facebook Login is not configured (FACEBOOK_APP_ID / FACEBOOK_APP_SECRET, or FACEBOOK_CLIENT_ID / FACEBOOK_CLIENT_SECRET).",
+      503
+    );
   }
   const appToken = `${appId}|${appSecret}`;
   const params = new URLSearchParams({
@@ -187,7 +193,10 @@ export async function verifyFacebookIdentity(opts: {
   fetchImpl?: typeof fetch;
 }): Promise<FacebookProfile> {
   if (!facebookOAuthConfigured()) {
-    throw new FacebookOAuthError("Facebook Login is not configured (FACEBOOK_APP_ID / FACEBOOK_APP_SECRET).", 503);
+    throw new FacebookOAuthError(
+      "Facebook Login is not configured (FACEBOOK_APP_ID / FACEBOOK_APP_SECRET, or FACEBOOK_CLIENT_ID / FACEBOOK_CLIENT_SECRET).",
+      503
+    );
   }
 
   let token = String(opts.accessToken || "").trim();
@@ -337,7 +346,7 @@ export function oauthPublicConfig() {
     googleRedirectUri: googleOAuthConfigured() ? googleRedirectUri() : null,
     sandboxClientOAuthAllowed: !isProduction(),
     notice: isProduction()
-      ? "Production requires Google/Facebook Login server-side token exchange. Client-supplied emails are rejected. Missing GOOGLE_CLIENT_ID/SECRET or FACEBOOK_APP_ID/SECRET is a hard configuration error for that provider."
+      ? "Production requires Google/Facebook Login server-side token exchange. Client-supplied emails are rejected. Missing GOOGLE_CLIENT_ID/SECRET or FACEBOOK_APP_ID/SECRET (FACEBOOK_CLIENT_ID/SECRET aliases) is a hard configuration error for that provider."
       : "SANDBOX / DEV-ONLY: Google/Facebook credentials are optional. Client-supplied OAuth email is accepted only when NODE_ENV is not production.",
   };
 }
