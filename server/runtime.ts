@@ -1,8 +1,11 @@
 /** Shared environment helpers. Simulators stay SANDBOX / DEV-ONLY. */
 
 import { databaseUrlFromEnv } from "../src/db/url.ts";
+import { isUnsetOrPlaceholder, readEnvSecret } from "../src/db/env-value.ts";
+import { assertOptionalEnvShape } from "./env-catalog.ts";
 
 export { databaseUrlFromEnv };
+export { isUnsetOrPlaceholder };
 
 export function isProduction(): boolean {
   return process.env.NODE_ENV === "production";
@@ -13,26 +16,9 @@ export function envFlag(name: string): boolean {
   return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
 }
 
-/**
- * Live Meta / Facebook app values are provisioned separately.
- * `.env.example` placeholders must not count as configured credentials.
- */
-export function isUnsetOrPlaceholder(value?: string | null): boolean {
-  const v = String(value || "").trim();
-  if (!v) return true;
-  if (/^(undefined|null)$/i.test(v)) return true;
-  if (/^(replace-with-|changeme|change-me|change\.me|your-|todo\b|xxx+|placeholder)/i.test(v)) return true;
-  if (/replace-with-|not-a-secret|dummy-secret|example\.invalid/i.test(v)) return true;
-  return false;
-}
-
 /** First non-placeholder env var among the given names. */
 export function readSecret(...names: string[]): string {
-  for (const name of names) {
-    const value = String(process.env[name] || "").trim();
-    if (!isUnsetOrPlaceholder(value)) return value;
-  }
-  return "";
+  return readEnvSecret(process.env, ...names);
 }
 
 /** Non-prod simulators and fake-success Meta routes. Always false in production. */
@@ -98,6 +84,7 @@ export function applyBundledServerNodeEnv(
 /**
  * Production hosting requires JWT_SECRET and a durable Postgres URL.
  * Meta / Facebook / Razorpay secrets stay optional until the founder provisions them.
+ * Malformed usage-billing / Cloud SQL / Graph pairs fail in every environment.
  */
 export function assertRequiredProductionEnv(env: NodeJS.ProcessEnv = process.env): void {
   if (env.NODE_ENV !== "production") return;
@@ -115,12 +102,13 @@ export function assertRequiredProductionEnv(env: NodeJS.ProcessEnv = process.env
       "[Lumera] APP_URL is unset. Set APP_URL=https://www.mylumera.in for Google/Meta OAuth and policy links."
     );
   }
+  assertOptionalEnvShape(env);
 }
 
 /**
- * Fail-closed on missing/placeholder JWT_SECRET in production.
- * Logs the exact `JWT_SECRET is required…` line Cloud Run should surface, then exits.
- * Does not listen — that crash is not a PORT/bind bug.
+ * Fail-closed on missing/placeholder JWT_SECRET or DATABASE_URL in production,
+ * and on malformed optional env in every NODE_ENV. Logs `[Lumera] BOOT FATAL:`
+ * then exits. Does not listen — that crash is not a PORT/bind bug.
  */
 export function failFastRequiredProductionEnv(
   env: NodeJS.ProcessEnv = process.env,
@@ -129,6 +117,7 @@ export function failFastRequiredProductionEnv(
   }
 ): void {
   try {
+    assertOptionalEnvShape(env);
     assertRequiredProductionEnv(env);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

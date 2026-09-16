@@ -38,10 +38,10 @@ steps:
       - -c
       - |
         set -euo pipefail
-        npm ci
+        if [ -f package-lock.json ]; then npm ci; else npm install; fi
         npm run lint
         export JWT_SECRET="$${JWT_SECRET:-test-jwt-secret}"
-        npx tsx --test --test-concurrency=1 server/*.test.ts src/lib/*.test.ts src/nav/*.test.ts src/pages/*.test.ts src/components/admin/*.test.ts
+        npm run test
     waitFor: ['-']
 
   # 1. Build the repo Dockerfile (Node 22, npm run build / npm start).

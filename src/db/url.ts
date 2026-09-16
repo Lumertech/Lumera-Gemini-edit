@@ -5,16 +5,31 @@
  *   postgres://USER:PASSWORD@/DBNAME?host=/cloudsql/PROJECT:asia-south1:INSTANCE
  *
  * INSTANCE_CONNECTION_NAME + SQL_USER/SQL_PASSWORD/SQL_DB_NAME are composed
- * into that URI when DATABASE_URL is unset.
+ * into that URI when DATABASE_URL is unset or a placeholder (replace-with-*,
+ * change-me, …). Placeholders never count as a live connection string.
  */
+
+import { isUnsetOrPlaceholder } from "./env-value.ts";
+
+export { isUnsetOrPlaceholder } from "./env-value.ts";
+
 export function databaseUrlFromEnv(env: NodeJS.ProcessEnv = process.env): string {
   const direct = String(env.DATABASE_URL || "").trim();
-  if (direct) return direct;
+  if (direct && !isUnsetOrPlaceholder(direct)) return direct;
   const instance = String(env.INSTANCE_CONNECTION_NAME || env.CLOUD_SQL_CONNECTION_NAME || "").trim();
   const user = String(env.SQL_USER || env.POSTGRES_USER || "").trim();
   const password = String(env.SQL_PASSWORD || env.POSTGRES_PASSWORD || "");
   const database = String(env.SQL_DB_NAME || env.POSTGRES_DB || "").trim();
-  if (instance && user && password && database) {
+  if (
+    instance &&
+    user &&
+    password &&
+    database &&
+    !isUnsetOrPlaceholder(instance) &&
+    !isUnsetOrPlaceholder(user) &&
+    !isUnsetOrPlaceholder(password) &&
+    !isUnsetOrPlaceholder(database)
+  ) {
     return `postgres://${encodeURIComponent(user)}:${encodeURIComponent(password)}@/${encodeURIComponent(database)}?host=/cloudsql/${instance}`;
   }
   return "";
