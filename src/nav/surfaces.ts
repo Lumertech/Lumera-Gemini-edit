@@ -9,6 +9,7 @@ export const ADMIN_TABS = [
   "profile",
   "settings",
   "subscriptions",
+  "usage",
   "audit",
   "dhis",
   "meta",
