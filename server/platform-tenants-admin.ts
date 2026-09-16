@@ -174,7 +174,7 @@ export function createAdminTenant(
   const now = new Date().toISOString();
   const trialEndsAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
   const tenantId = `tenant-${crypto.randomUUID().slice(0, 8)}`;
-  const hfrId = `IN-HFR-${Math.floor(10000000 + Math.random() * 90000000)}`;
+  const hfrId = `IN-HFR-${Math.floor(10000000 + Math.random() * 90000000)}`; // local placeholder until NHA verifies
   const phone = String(body.phone || owner.phone || "");
   const email = String(body.email || owner.email || "");
   const specialty = String(body.specialty || "gp");
