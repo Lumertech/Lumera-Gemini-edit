@@ -8,7 +8,12 @@ import { createMetaRouter } from "./meta.ts";
 import { bootWhatsAppOwnershipSchema, createWhatsAppNumbersRouter, practitionerLinkMiddleware } from "./whatsapp-numbers-routes.ts";
 import { getDb, initDatabase } from "./db.ts";
 import { hashPassword } from "./password.ts";
-import { completeEmbeddedSignup, exchangeEmbeddedSignupCode, subscribeAppToCustomerWaba } from "./embedded-signup.ts";
+import {
+  completeEmbeddedSignup,
+  exchangeEmbeddedSignupCode,
+  platformMetaCredentialsOverview,
+  subscribeAppToCustomerWaba,
+} from "./embedded-signup.ts";
 import { clinicActor, getTenantWabaNumber } from "./whatsapp-numbers.ts";
 import { buildMetaReadinessOverview } from "./meta-security.ts";
 import { decideDataDeletionSignedRequest, signMetaSignedRequest } from "./meta-signed-request.ts";
@@ -276,6 +281,38 @@ describe("Embedded Signup v4 handshake", () => {
     assert.equal(String(adminRes.json.appSecretPreview || "").includes(APP_SECRET), false);
     assert.match(String(adminRes.json.webhookUrl || ""), /\/api\/meta\/webhook/);
     assert.match(String(adminRes.json.notice || ""), /does not trigger Embedded Signup/);
+    assert.match(String(adminRes.json.notice || ""), /META_GRAPH_TOKEN/);
+  });
+
+  it("platformMetaCredentialsOverview masks META_GRAPH_TOKEN and reports phone + WABA ids", () => {
+    const prev = {
+      META_GRAPH_TOKEN: process.env.META_GRAPH_TOKEN,
+      META_ACCESS_TOKEN: process.env.META_ACCESS_TOKEN,
+      WHATSAPP_ACCESS_TOKEN: process.env.WHATSAPP_ACCESS_TOKEN,
+      META_PHONE_NUMBER_ID: process.env.META_PHONE_NUMBER_ID,
+      META_WABA_ID: process.env.META_WABA_ID,
+    };
+    const live = "EAAGisAlongEnoughTokenWithoutEllipsis0123456789abcdef";
+    try {
+      delete process.env.META_ACCESS_TOKEN;
+      delete process.env.WHATSAPP_ACCESS_TOKEN;
+      process.env.META_GRAPH_TOKEN = live;
+      process.env.META_PHONE_NUMBER_ID = "1294483843748285";
+      process.env.META_WABA_ID = "1042004418619457";
+      const overview = platformMetaCredentialsOverview({ host: "www.mylumera.in", proto: "https" });
+      assert.equal(overview.systemTokenConfigured, true);
+      assert.equal(overview.graphTokenEnvName, "META_GRAPH_TOKEN");
+      assert.equal(overview.phoneNumberId, "1294483843748285");
+      assert.equal(overview.wabaId, "1042004418619457");
+      assert.equal(String(overview.systemTokenPreview).includes(live), false);
+      assert.match(overview.systemTokenPreview, /••••/);
+      assert.match(overview.webhookUrl, /https:\/\/www\.mylumera\.in\/api\/meta\/webhook/);
+    } finally {
+      for (const [key, value] of Object.entries(prev)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
   });
 
   it("POST /api/whatsapp-numbers/embedded-signup/complete exchanges, subscribes, and stores the token", async () => {
