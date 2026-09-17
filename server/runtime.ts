@@ -21,6 +21,31 @@ export function readSecret(...names: string[]): string {
   return readEnvSecret(process.env, ...names);
 }
 
+/** MasterAdmin / Lumera platform Graph send token. Prefer META_GRAPH_TOKEN on Cloud Run. */
+export const PLATFORM_META_GRAPH_TOKEN_KEYS = [
+  "META_GRAPH_TOKEN",
+  "META_ACCESS_TOKEN",
+  "WHATSAPP_ACCESS_TOKEN",
+] as const;
+
+export const PLATFORM_META_PHONE_NUMBER_ID_KEYS = [
+  "META_PHONE_NUMBER_ID",
+  "WHATSAPP_PHONE_NUMBER_ID",
+] as const;
+
+export function platformMetaGraphToken(env: NodeJS.ProcessEnv = process.env): string {
+  return readEnvSecret(env, ...PLATFORM_META_GRAPH_TOKEN_KEYS);
+}
+
+export function platformMetaPhoneNumberId(env: NodeJS.ProcessEnv = process.env): string {
+  return readEnvSecret(env, ...PLATFORM_META_PHONE_NUMBER_ID_KEYS);
+}
+
+/** Platform WABA id for the shared test number — not a tenant Embedded Signup WABA. */
+export function platformMetaWabaId(env: NodeJS.ProcessEnv = process.env): string {
+  return readEnvSecret(env, "META_WABA_ID", "WHATSAPP_WABA_ID");
+}
+
 /** Non-prod simulators and fake-success Meta routes. Always false in production. */
 export function sandboxSimulatorsEnabled(): boolean {
   return !isProduction();
