@@ -17,6 +17,7 @@ import {
   Sparkles,
   Info,
 } from "lucide-react";
+import { apiFetch } from "../../api/http";
 import { useNav } from "../../nav/NavigationContext";
 import { MetaWhatsAppTemplate } from "../../types";
 
@@ -27,7 +28,9 @@ interface PlatformCredentials {
   appSecretPreview?: string;
   systemTokenConfigured?: boolean;
   systemTokenPreview?: string;
+  graphTokenEnvName?: string | null;
   phoneNumberId?: string | null;
+  wabaId?: string | null;
   fallbackPhoneNumberId?: string | null;
   fallbackTokenConfigured?: boolean;
   embeddedSignupConfigIdConfigured?: boolean;
@@ -123,15 +126,17 @@ export const AdminMetaTechProvider: React.FC = () => {
     setLoading(true);
     try {
       const [ovRes, wabasRes, tplRes, credRes] = await Promise.all([
-        fetch("/api/meta/overview").then((r) => r.json()),
-        fetch("/api/meta/wabas").then((r) => r.json()),
-        fetch("/api/meta/templates").then((r) => r.json()),
-        fetch("/api/admin/meta/platform-credentials").then((r) => r.json()).catch(() => null),
+        apiFetch<MetaOverview>("/api/meta/overview").catch(() => null),
+        apiFetch<{ wabas?: WabaItem[] }>("/api/meta/wabas").catch(() => ({ wabas: [] as WabaItem[] })),
+        apiFetch<{ templates?: MetaWhatsAppTemplate[] }>("/api/meta/templates").catch(() => ({
+          templates: [] as MetaWhatsAppTemplate[],
+        })),
+        apiFetch<PlatformCredentials>("/api/admin/meta/platform-credentials").catch(() => null),
       ]);
-      setOverview(ovRes);
+      if (ovRes) setOverview(ovRes);
       setWabas(wabasRes.wabas || []);
       setTemplates(tplRes.templates || []);
-      if (credRes && !credRes.error) setPlatform(credRes);
+      if (credRes) setPlatform(credRes);
       if (wabasRes.wabas?.length && !selectedTenantId) {
         setSelectedTenantId(wabasRes.wabas[0].tenantId);
       }
@@ -382,8 +387,9 @@ export const AdminMetaTechProvider: React.FC = () => {
               <div>
                 <h2 className="text-lg font-bold text-slate-900">Platform Meta credentials</h2>
                 <p className="text-sm text-slate-500">
-                  Global App ID, App Secret, Tech Provider-style system tokens, and the central webhook receiver. Super Admin
-                  does not trigger Embedded Signup — clinic tenants connect from Settings.
+                  Global App ID, App Secret, MasterAdmin META_GRAPH_TOKEN, platform phone / WABA IDs, and the central webhook
+                  receiver. Super Admin does not paste tokens and does not trigger Embedded Signup — clinic tenants connect
+                  from Settings.
                 </p>
               </div>
               <span className="px-3 py-1 bg-amber-50 text-amber-800 font-semibold text-xs rounded-full border border-amber-200">
@@ -401,11 +407,26 @@ export const AdminMetaTechProvider: React.FC = () => {
                   {platform?.appSecretConfigured ? platform.appSecretPreview : "not set"}
                 </code>
               </div>
-              <div className="p-3 rounded-lg border border-slate-200 bg-slate-50">
-                <div className="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">System user token</div>
+              <div className="p-3 rounded-lg border border-slate-200 bg-slate-50" data-testid="admin-meta-graph-token">
+                <div className="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">
+                  MasterAdmin Graph token (META_GRAPH_TOKEN)
+                </div>
                 <code className="text-xs font-mono text-slate-800">
                   {platform?.systemTokenConfigured ? platform.systemTokenPreview : "not set"}
                 </code>
+                {platform?.graphTokenEnvName ? (
+                  <p className="text-[11px] text-slate-500 mt-1">Loaded from {platform.graphTokenEnvName}</p>
+                ) : null}
+              </div>
+              <div className="p-3 rounded-lg border border-slate-200 bg-slate-50" data-testid="admin-meta-phone-number-id">
+                <div className="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">Platform phone number ID</div>
+                <code className="text-xs font-mono text-slate-800 break-all">
+                  {platform?.phoneNumberId || platform?.fallbackPhoneNumberId || "not set"}
+                </code>
+              </div>
+              <div className="p-3 rounded-lg border border-slate-200 bg-slate-50" data-testid="admin-meta-waba-id">
+                <div className="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">Platform WABA ID</div>
+                <code className="text-xs font-mono text-slate-800 break-all">{platform?.wabaId || "not set"}</code>
               </div>
               <div className="p-3 rounded-lg border border-slate-200 bg-slate-50">
                 <div className="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">Shared test phone number ID</div>
