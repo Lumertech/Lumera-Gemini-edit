@@ -1,1 +1,1 @@
-FILE:/tmp/lumera-schedule/src/components/admin/AdminMetaTechProvider.tsx
+@/tmp/lumera-schedule/src/components/admin/AdminMetaTechProvider.tsx
