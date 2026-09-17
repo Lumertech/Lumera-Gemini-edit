@@ -75,7 +75,7 @@ SQLite is `data/lumera.db` under the process cwd. Cloud Run instances are epheme
 Root `cloudbuild.yaml` builds the Dockerfile, pushes `${_IMAGE}`, clears leftover source metadata, then deploys **that image only** (no `--source`).
 
 | Substitution | Default | Meaning |
-| --- | --- | --- |
+| --- | --- |
 | `_SERVICE` | `lumera-gemini-edit` | Cloud Run service name |
 | `_REGION` | `asia-south1` | Must match `firebase.json` Hosting rewrite |
 | `_IMAGE` | `gcr.io/${PROJECT_ID}/lumera-gemini-edit:${SHORT_SHA}` | Image URI Cloud Run pulls |
@@ -168,6 +168,32 @@ Leave unset for the URL-hosting stage. Production **does not fake** Graph delive
 | `META_GRAPH_TOKEN` / `META_PHONE_NUMBER_ID` | Live Graph send (`META_ACCESS_TOKEN` alias). Optional `META_WABA_ID` for the platform WABA. |
 | `GEMINI_API_KEY` | Pulse AI / SOAP (landing + policy pages work without it; AI Studio often injects this) |
 | Razorpay keys | Payments — not required to host Review URLs |
+
+### MasterAdmin platform messaging (testing, not Tech Provider)
+
+Store the Lumera platform Graph send credential on Cloud Run **Variables & secrets** for service **`lumera-gemini-edit`** (`asia-south1`, project **`gen-lang-client-0108182367`**). Super Admin never pastes this token. Do **not** set `META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED`. Do **not** commit the token.
+
+| Variable | Where |
+| --- | --- |
+| `META_GRAPH_TOKEN` | Secret Manager secret of the same name (preferred). Alias: `META_ACCESS_TOKEN`. |
+| `META_PHONE_NUMBER_ID` | `1294483843748285` (Lumera platform WhatsApp Cloud API phone-number-id). |
+| `META_WABA_ID` | `1042004418619457` (platform WABA inventory; Graph send uses the phone-number-id). |
+
+```bash
+# Create or add a Secret Manager version from a local gitignored file — never echo the token.
+# printf '%s' "$META_GRAPH_TOKEN" | gcloud secrets create META_GRAPH_TOKEN --data-file=- \
+#   --project=gen-lang-client-0108182367
+# printf '%s' "$META_GRAPH_TOKEN" | gcloud secrets versions add META_GRAPH_TOKEN --data-file=- \
+#   --project=gen-lang-client-0108182367
+
+gcloud run services update lumera-gemini-edit \
+  --region=asia-south1 \
+  --project=gen-lang-client-0108182367 \
+  --update-env-vars=META_PHONE_NUMBER_ID=1294483843748285,META_WABA_ID=1042004418619457 \
+  --update-secrets=META_GRAPH_TOKEN=META_GRAPH_TOKEN:latest
+```
+
+This agent cannot apply those Cloud Run values from this VM (no `gcloud` credentials). After the revision is live, Super Admin → Meta → Platform credentials shows a **masked** `META_GRAPH_TOKEN` plus the phone and WABA IDs.
 
 ---
 
