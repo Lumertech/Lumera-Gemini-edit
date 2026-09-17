@@ -75,7 +75,7 @@ SQLite is `data/lumera.db` under the process cwd. Cloud Run instances are epheme
 Root `cloudbuild.yaml` builds the Dockerfile, pushes `${_IMAGE}`, clears leftover source metadata, then deploys **that image only** (no `--source`).
 
 | Substitution | Default | Meaning |
-| --- | --- |
+| --- | --- | --- |
 | `_SERVICE` | `lumera-gemini-edit` | Cloud Run service name |
 | `_REGION` | `asia-south1` | Must match `firebase.json` Hosting rewrite |
 | `_IMAGE` | `gcr.io/${PROJECT_ID}/lumera-gemini-edit:${SHORT_SHA}` | Image URI Cloud Run pulls |
