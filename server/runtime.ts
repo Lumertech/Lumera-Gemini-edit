@@ -37,6 +37,14 @@ export function platformMetaGraphToken(env: NodeJS.ProcessEnv = process.env): st
   return readEnvSecret(env, ...PLATFORM_META_GRAPH_TOKEN_KEYS);
 }
 
+/** Which env name supplied the MasterAdmin Graph token — never the secret itself. */
+export function platformMetaGraphTokenSource(env: NodeJS.ProcessEnv = process.env): string | null {
+  for (const key of PLATFORM_META_GRAPH_TOKEN_KEYS) {
+    if (readEnvSecret(env, key)) return key;
+  }
+  return null;
+}
+
 export function platformMetaPhoneNumberId(env: NodeJS.ProcessEnv = process.env): string {
   return readEnvSecret(env, ...PLATFORM_META_PHONE_NUMBER_ID_KEYS);
 }
