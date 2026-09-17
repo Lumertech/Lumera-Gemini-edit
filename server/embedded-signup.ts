@@ -19,7 +19,7 @@
  * (same SQLite TEXT pattern as tenants.meta_access_token). Not Secret Manager.
  */
 
-import { appPublicUrl, envFlag, graphApiVersion, isProduction, isUnsetOrPlaceholder, platformMetaGraphToken, platformMetaPhoneNumberId, platformMetaWabaId, readSecret, sandboxSimulatorsEnabled } from "./runtime.ts";
+import { appPublicUrl, envFlag, graphApiVersion, isProduction, isUnsetOrPlaceholder, platformMetaGraphToken, platformMetaGraphTokenSource, platformMetaPhoneNumberId, platformMetaWabaId, readSecret, sandboxSimulatorsEnabled } from "./runtime.ts";
 import { upsertWhatsAppNumber, publicWhatsAppNumber, type WabaActor, type WhatsAppOwnerType } from "./whatsapp-numbers.ts";
 
 export const EMBEDDED_SIGNUP_SCOPES = [
@@ -361,6 +361,7 @@ export function platformMetaCredentialsOverview(opts?: { host?: string; proto?: 
     appSecretPreview: appSecret ? maskSecretPreview(appSecret) : "",
     systemTokenConfigured: Boolean(systemToken),
     systemTokenPreview: systemToken ? maskSecretPreview(systemToken) : "",
+    graphTokenEnvName: platformMetaGraphTokenSource() || null,
     phoneNumberId: phoneNumberId || null,
     wabaId: platformMetaWabaId() || null,
     fallbackPhoneNumberId: fallbackPhoneNumberId || null,
@@ -369,7 +370,7 @@ export function platformMetaCredentialsOverview(opts?: { host?: string; proto?: 
     webhookUrl,
     webhookVerifyTokenConfigured: Boolean(readSecret("META_VERIFY_TOKEN")),
     notice:
-      "Platform Meta App ID, App Secret, Tech Provider-style system tokens, and the central webhook receiver are env-configured. Super Admin does not trigger Embedded Signup — clinic tenants connect from Settings. Lumera is not a certified Meta Tech Provider. Contact ravee@lumer.me.",
+      "Platform Meta App ID, App Secret, META_GRAPH_TOKEN (MasterAdmin Graph send), and the central webhook receiver are env-configured on Cloud Run. Super Admin does not paste tokens and does not trigger Embedded Signup — clinic tenants connect from Settings. Lumera is not a certified Meta Tech Provider. Contact ravee@lumer.me.",
   };
 }
 
