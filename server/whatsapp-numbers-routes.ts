@@ -1,7 +1,7 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { getDb } from "./db.ts";
 import { CLINIC_MANAGER_ROLES, isPlatformAdminRole, requireAuth, requirePlatformAdmin, requireRole } from "./auth.ts";
-import { isProduction, readSecret } from "./runtime.ts";
+import { isProduction, platformMetaGraphToken, platformMetaPhoneNumberId, readSecret } from "./runtime.ts";
 import { isUsableGraphToken, isUsablePhoneNumberId, rejectProductionSimulator } from "./meta-security.ts";
 import {
   clinicActor,
@@ -54,12 +54,8 @@ function tenantClinicRoleAllowed(role?: string | null): boolean {
 }
 
 function fallbackSharedTestNumber() {
-  const token = readSecret("META_FALLBACK_ACCESS_TOKEN", "META_ACCESS_TOKEN", "WHATSAPP_ACCESS_TOKEN");
-  const phoneNumberId = readSecret(
-    "META_FALLBACK_PHONE_NUMBER_ID",
-    "META_PHONE_NUMBER_ID",
-    "WHATSAPP_PHONE_NUMBER_ID"
-  );
+  const token = readSecret("META_FALLBACK_ACCESS_TOKEN") || platformMetaGraphToken();
+  const phoneNumberId = readSecret("META_FALLBACK_PHONE_NUMBER_ID") || platformMetaPhoneNumberId();
   const available = isUsableGraphToken(token) && isUsablePhoneNumberId(phoneNumberId);
   return {
     available,
