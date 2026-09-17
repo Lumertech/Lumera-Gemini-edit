@@ -127,15 +127,23 @@ export const ENV_CATALOG: EnvKeyDoc[] = [
   },
   {
     name: "META_ACCESS_TOKEN",
-    aliases: ["WHATSAPP_ACCESS_TOKEN"],
-    description: "WhatsApp Cloud API / Graph send token. Pair with META_PHONE_NUMBER_ID.",
+    aliases: ["META_GRAPH_TOKEN", "WHATSAPP_ACCESS_TOKEN"],
+    description:
+      "MasterAdmin / Lumera platform WhatsApp Cloud API token (Graph send + shared test number). Prefer META_GRAPH_TOKEN on Cloud Run. Pair with META_PHONE_NUMBER_ID. Never git.",
     dummy: "replace-with-meta-access-token",
   },
   {
     name: "META_PHONE_NUMBER_ID",
     aliases: ["WHATSAPP_PHONE_NUMBER_ID"],
-    description: "WhatsApp Cloud API phone-number-id. Pair with META_ACCESS_TOKEN.",
-    dummy: "replace-with-meta-phone-number-id",
+    description: "Lumera platform WhatsApp Cloud API phone-number-id. Pair with META_GRAPH_TOKEN / META_ACCESS_TOKEN.",
+    dummy: "1294483843748285",
+  },
+  {
+    name: "META_WABA_ID",
+    aliases: ["WHATSAPP_WABA_ID"],
+    description:
+      "Lumera platform WhatsApp Business Account ID for the shared test number. Not a clinic Embedded Signup WABA.",
+    dummy: "1042004418619457",
   },
   {
     name: "META_FALLBACK_ACCESS_TOKEN",
@@ -343,7 +351,7 @@ export const PARTIAL_CLOUD_SQL_MESSAGE =
   "Partial Cloud SQL configuration. Set DATABASE_URL (postgres://USER:PASSWORD@/DBNAME?host=/cloudsql/PROJECT:asia-south1:INSTANCE) or all of INSTANCE_CONNECTION_NAME (or CLOUD_SQL_CONNECTION_NAME), SQL_USER, SQL_PASSWORD, and SQL_DB_NAME. Placeholders like replace-with-* do not count.";
 
 export const META_GRAPH_PAIR_MESSAGE =
-  "META_ACCESS_TOKEN and META_PHONE_NUMBER_ID must be set together in production (WHATSAPP_ACCESS_TOKEN / WHATSAPP_PHONE_NUMBER_ID aliases accepted). Half-set Graph credentials are not a SANDBOX send path on Cloud Run.";
+  "META_GRAPH_TOKEN (or META_ACCESS_TOKEN / WHATSAPP_ACCESS_TOKEN) and META_PHONE_NUMBER_ID must be set together in production. Half-set Graph credentials are not a SANDBOX send path on Cloud Run.";
 
 const BOOL_RE = /^(1|0|true|false|yes|no|on|off)$/i;
 
@@ -413,7 +421,7 @@ export function assertOptionalEnvShape(env: NodeJS.ProcessEnv = process.env): vo
     throw new Error(PARTIAL_CLOUD_SQL_MESSAGE);
   }
 
-  const token = readEnvSecret(env, "META_ACCESS_TOKEN", "WHATSAPP_ACCESS_TOKEN");
+  const token = readEnvSecret(env, "META_GRAPH_TOKEN", "META_ACCESS_TOKEN", "WHATSAPP_ACCESS_TOKEN");
   const phone = readEnvSecret(env, "META_PHONE_NUMBER_ID", "WHATSAPP_PHONE_NUMBER_ID");
   if (env.NODE_ENV === "production" && Boolean(token) !== Boolean(phone)) {
     throw new Error(META_GRAPH_PAIR_MESSAGE);
