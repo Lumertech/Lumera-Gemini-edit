@@ -1,1 +1,1 @@
-@/tmp/lumera-schedule/src/components/admin/AdminMetaTechProvider.tsx
+LOAD_FROM_TMP_FILE
