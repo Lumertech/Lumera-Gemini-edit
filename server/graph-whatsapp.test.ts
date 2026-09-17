@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   dispatchWhatsAppCloudMessage,
   postGraphWhatsAppMessage,
+  resolveGraphCredentials,
   resolveReminderGraphCredentials,
   sendAppointmentReminder,
   sendBookConfirmation,
@@ -31,6 +32,7 @@ function mockGraphFetch(captured: Array<{ url: string; body: Record<string, unkn
 
 describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
   const prevToken = process.env.META_ACCESS_TOKEN;
+  const prevGraphToken = process.env.META_GRAPH_TOKEN;
   const prevPhone = process.env.META_PHONE_NUMBER_ID;
   const prevWaToken = process.env.WHATSAPP_ACCESS_TOKEN;
   const prevWaPhone = process.env.WHATSAPP_PHONE_NUMBER_ID;
@@ -43,6 +45,8 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
   after(() => {
     if (prevToken === undefined) delete process.env.META_ACCESS_TOKEN;
     else process.env.META_ACCESS_TOKEN = prevToken;
+    if (prevGraphToken === undefined) delete process.env.META_GRAPH_TOKEN;
+    else process.env.META_GRAPH_TOKEN = prevGraphToken;
     if (prevPhone === undefined) delete process.env.META_PHONE_NUMBER_ID;
     else process.env.META_PHONE_NUMBER_ID = prevPhone;
     if (prevWaToken === undefined) delete process.env.WHATSAPP_ACCESS_TOKEN;
@@ -182,6 +186,7 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
 
   it("sandbox path in non-prod without creds does not call Graph", async () => {
     delete process.env.META_ACCESS_TOKEN;
+    delete process.env.META_GRAPH_TOKEN;
     delete process.env.META_PHONE_NUMBER_ID;
     delete process.env.WHATSAPP_ACCESS_TOKEN;
     delete process.env.WHATSAPP_PHONE_NUMBER_ID;
@@ -205,6 +210,7 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
 
   it("production hard-fails without creds (no fake Graph success)", async () => {
     delete process.env.META_ACCESS_TOKEN;
+    delete process.env.META_GRAPH_TOKEN;
     delete process.env.META_PHONE_NUMBER_ID;
     delete process.env.WHATSAPP_ACCESS_TOKEN;
     delete process.env.WHATSAPP_PHONE_NUMBER_ID;
@@ -240,7 +246,21 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
     assert.match(envExample, /META_BOOK_CONFIRMATION_TEMPLATE_NAME/);
     assert.match(envExample, /META_RECEIPT_TEMPLATE_NAME/);
     assert.match(envExample, /META_ACCESS_TOKEN/);
+    assert.match(envExample, /META_GRAPH_TOKEN/);
+    assert.match(envExample, /META_WABA_ID/);
     assert.match(envExample, /META_FALLBACK_PHONE_NUMBER_ID/);
+  });
+
+  it("resolves MasterAdmin Graph send creds from META_GRAPH_TOKEN", () => {
+    delete process.env.META_ACCESS_TOKEN;
+    delete process.env.WHATSAPP_ACCESS_TOKEN;
+    process.env.META_GRAPH_TOKEN = LIVE_TOKEN;
+    process.env.META_PHONE_NUMBER_ID = "1294483843748285";
+    const creds = resolveGraphCredentials();
+    assert.ok(creds);
+    assert.equal(creds?.source, "env");
+    assert.equal(creds?.phoneNumberId, "1294483843748285");
+    assert.equal(creds?.token, LIVE_TOKEN);
   });
 
   it("pending clinic numbers are not ready; verified custom numbers are", () => {
