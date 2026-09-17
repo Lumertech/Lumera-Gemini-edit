@@ -29,6 +29,11 @@ describe("role-scoped WhatsApp Embedded Signup UI", () => {
     assert.match(meta, /admin-meta-platform-credentials/);
     assert.match(meta, /\/api\/admin\/meta\/platform-credentials/);
     assert.match(meta, /does not trigger Embedded Signup/);
+    assert.match(meta, /META_GRAPH_TOKEN/);
+    assert.match(meta, /MasterAdmin Graph token/);
+    assert.match(meta, /Platform WABA ID/);
+    assert.match(meta, /admin-meta-graph-token/);
+    assert.match(meta, /admin-meta-waba-id/);
     assert.match(meta, /Central webhook receiver/);
     assert.equal(meta.includes("launchEmbeddedSignupV4"), false);
     assert.equal(meta.includes("handleSimulateEmbeddedSignup"), false);
