@@ -28,6 +28,7 @@ describe("role-scoped WhatsApp Embedded Signup UI", () => {
     const meta = readFileSync(join(here, "admin", "AdminMetaTechProvider.tsx"), "utf8");
     assert.match(meta, /admin-meta-platform-credentials/);
     assert.match(meta, /\/api\/admin\/meta\/platform-credentials/);
+    assert.match(meta, /apiFetch/);
     assert.match(meta, /does not trigger Embedded Signup/);
     assert.match(meta, /META_GRAPH_TOKEN/);
     assert.match(meta, /MasterAdmin Graph token/);
