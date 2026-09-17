@@ -52,18 +52,18 @@ describe("Firebase Hosting → Cloud Run config (#26)", () => {
     assert.match(readRepo("deploy/CLOUD_RUN_BOOT_CHECK.md"), /JWT_SECRET is required/);
     assert.match(readRepo("deploy/CLOUD_RUN_BOOT_CHECK.md"), /DATABASE_URL is required/);
     assert.match(readRepo("docs/CLOUD_SQL_POSTGRES.md"), /asia-south1/);
+    assert.match(readRepo("docs/BRANCH_PROTECTION.md"), /lint-and-test/);
     assert.match(readRepo(".env.example"), /DATABASE_URL=/);
+    assert.match(readRepo(".env.example"), /CLOUD_SQL_CONNECTION_NAME=/);
     assert.match(readRepo("package.json"), /alias:node:sqlite/);
     assert.match(readRepo("server/sqlite-compat.ts"), /createPgShim/);
   });
 
   it("cloudbuild runs lint + test before Docker build as a sequential hard gate", () => {
     const yaml = readRepo("cloudbuild.yaml");
-    const pkg = JSON.parse(readRepo("package.json")) as { scripts: { test: string } };
-    const testGlobs = pkg.scripts.test.replace(/^tsx\s+/, "");
     assert.match(yaml, /id: lint-test/);
     assert.match(yaml, /npm run lint/);
-    assert.ok(yaml.includes(testGlobs), "cloudbuild test command must use package.json test globs");
+    assert.match(yaml, /npm run test/);
     assert.match(yaml, /JWT_SECRET/);
     const lintIdx = yaml.indexOf("id: lint-test");
     const buildIdx = yaml.indexOf("id: build");
@@ -86,6 +86,13 @@ describe("Firebase Hosting → Cloud Run config (#26)", () => {
     assert.match(runbook, /https:\/\/www\.mylumera\.in\/api\/auth\/facebook\/callback/);
     assert.match(runbook, /https:\/\/www\.mylumera\.in\/api\/auth\/google\/callback/);
     assert.match(runbook, /https:\/\/www\.mylumera\.in\/api\/meta\/webhook/);
+    assert.match(runbook, /META_GRAPH_TOKEN=META_GRAPH_TOKEN:latest/);
+    assert.match(runbook, /META_PHONE_NUMBER_ID=1294483843748285/);
+    assert.match(runbook, /META_WABA_ID=1042004418619457/);
+    assert.match(runbook, /Do \*\*not\*\* set `META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED`/);
+    const updateCmd = runbook.match(/gcloud run services update lumera-gemini-edit[\s\S]*?META_GRAPH_TOKEN:latest/);
+    assert.ok(updateCmd);
+    assert.equal(updateCmd[0].includes("META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED"), false);
     assert.equal(/do not (point the domain at|leave Gemini).*(Firebase|AI Studio)/i.test(runbook), false);
     const retired = JSON.parse(readRepo("deploy/hostinger-webapp.settings.json")) as { status: string };
     assert.equal(retired.status, "retired");
