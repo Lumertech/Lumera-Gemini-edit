@@ -1,1 +1,684 @@
-PLACEHOLDER
+import type { DatabaseSync } from "node:sqlite";
+import { graphApiVersion, isProduction, platformMetaGraphToken, platformMetaPhoneNumberId, readSecret } from "./runtime.ts";
+import { isUsableGraphToken, isUsablePhoneNumberId } from "./meta-security.ts";
+import {
+  assertWalletAllowsDebit,
+  billedAmountFromRaw,
+  estimateWhatsAppRawCostInr,
+  getMarkupPercent,
+  isCriticalWhatsAppKind,
+  recordWhatsAppUsageAndDebit,
+} from "./usage-billing.ts";
+
+/**
+ * Shared Meta WhatsApp Cloud API send module (Wave 1B OTP + Wave 2 utilities).
+ *
+ * Platform owns appointment CRUD, reminder scheduling, WhatsApp book, and PSP/invoices.
+ * Import these helpers instead of duplicating Graph POST / dual-path logic.
+ *
+ * Dual-path: Graph when usable credentials are present; SANDBOX in non-prod when
+ * missing; production hard-fails (no fake wamid). App Review is NOT_SUBMITTED.
+ */
+
+export type GraphCredentials = {
+  token: string;
+  phoneNumberId: string;
+  source: "env" | "tenant" | "fallback";
+};
+
+export type CloudMessageKind =
+  | "otp"
+  | "appointment_reminder"
+  | "book_confirmation"
+  | "payment_receipt"
+  | "text";
+
+export type CloudDispatchResult =
+  | { ok: true; channel: "graph" | "sandbox"; messageId?: string; source?: GraphCredentials["source"] }
+  | { ok: false; error: string; channel: "none" | "graph" };
+
+export function isCloudDispatchFailure(
+  sent: CloudDispatchResult
+): sent is { ok: false; error: string; channel: "none" | "graph" } {
+  return sent.ok === false;
+}
+
+export function resolveFallbackGraphCredentials(): GraphCredentials | null {
+  const token = readSecret("META_FALLBACK_ACCESS_TOKEN") || platformMetaGraphToken();
+  const phone = readSecret("META_FALLBACK_PHONE_NUMBER_ID") || platformMetaPhoneNumberId();
+  if (isUsableGraphToken(token) && isUsablePhoneNumberId(phone)) {
+    return { token, phoneNumberId: phone, source: "fallback" };
+  }
+  return null;
+}
+
+type TenantWabaSendRow = {
+  meta_access_token?: string;
+  phone_number_id?: string;
+  meta_code_verification_status?: string;
+  meta_display_name_status?: string;
+  meta_phone_status?: string;
+  meta_onboarding_status?: string;
+};
+
+/** True when the clinic's own number is Graph-usable AND Meta has verified phone + display name. */
+export function tenantCustomNumberReadyForSend(row?: TenantWabaSendRow | null): boolean {
+  if (!row) return false;
+  if (!isUsableGraphToken(row.meta_access_token) || !isUsablePhoneNumberId(row.phone_number_id)) return false;
+  const code = String(row.meta_code_verification_status || "").toUpperCase();
+  const name = String(row.meta_display_name_status || "").toUpperCase();
+  const phone = String(row.meta_phone_status || "").toUpperCase();
+  if (code !== "VERIFIED") return false;
+  if (name && name !== "APPROVED") return false;
+  if (phone && phone !== "CONNECTED" && phone !== "AVAILABLE") return false;
+  return true;
+}
+
+function readTenantWabaSendRow(db: DatabaseSync, tenantId: string): TenantWabaSendRow | null {
+  try {
+    const row = db
+      .prepare(
+        `SELECT meta_access_token, phone_number_id,
+                COALESCE(meta_code_verification_status, '') AS meta_code_verification_status,
+                COALESCE(meta_display_name_status, '') AS meta_display_name_status,
+                COALESCE(meta_phone_status, '') AS meta_phone_status,
+                COALESCE(meta_onboarding_status, '') AS meta_onboarding_status
+         FROM tenants WHERE id = ?`
+      )
+      .get(tenantId) as TenantWabaSendRow | undefined;
+    return row || null;
+  } catch {
+    try {
+      const row = db
+        .prepare(
+          `SELECT meta_access_token, phone_number_id FROM tenants
+           WHERE id = ? AND COALESCE(meta_access_token, '') != '' AND COALESCE(phone_number_id, '') != ''`
+        )
+        .get(tenantId) as TenantWabaSendRow | undefined;
+      return row || null;
+    } catch {
+      return null;
+    }
+  }
+}
+
+/**
+ * Appointment reminders: use the clinic's own number once Meta verifies it;
+ * otherwise Lumera's shared test number (META_FALLBACK_* falling back to META_ACCESS_TOKEN /
+ * META_PHONE_NUMBER_ID) so clinics can send while display name / phone await verification.
+ */
+export function resolveReminderGraphCredentials(
+  db?: DatabaseSync | null,
+  tenantId?: string
+): GraphCredentials | null {
+  const tid = String(tenantId || "").trim();
+  const tenantRow = db && tid ? readTenantWabaSendRow(db, tid) : null;
+  if (tenantCustomNumberReadyForSend(tenantRow)) {
+    return {
+      token: String(tenantRow!.meta_access_token),
+      phoneNumberId: String(tenantRow!.phone_number_id),
+      source: "tenant",
+    };
+  }
+  const fallback = resolveFallbackGraphCredentials();
+  if (fallback) return fallback;
+  if (tenantRow && isUsableGraphToken(tenantRow.meta_access_token) && isUsablePhoneNumberId(tenantRow.phone_number_id)) {
+    return {
+      token: String(tenantRow.meta_access_token),
+      phoneNumberId: String(tenantRow.phone_number_id),
+      source: "tenant",
+    };
+  }
+  return null;
+}
+
+export function resolveGraphCredentials(
+  db?: DatabaseSync | null,
+  tenantId?: string
+): GraphCredentials | null {
+  const envToken = platformMetaGraphToken();
+  const envPhone = platformMetaPhoneNumberId();
+  if (isUsableGraphToken(envToken) && isUsablePhoneNumberId(envPhone)) {
+    return { token: envToken, phoneNumberId: envPhone, source: "env" };
+  }
+
+  const tid = String(tenantId || "").trim();
+  if (!db || !tid) return null;
+  try {
+    const row = db
+      .prepare(
+        `SELECT meta_access_token, phone_number_id FROM tenants
+         WHERE id = ? AND COALESCE(meta_access_token, '') != '' AND COALESCE(phone_number_id, '') != ''`
+      )
+      .get(tid) as { meta_access_token: string; phone_number_id: string } | undefined;
+    if (row && isUsableGraphToken(row.meta_access_token) && isUsablePhoneNumberId(row.phone_number_id)) {
+      return { token: row.meta_access_token, phoneNumberId: row.phone_number_id, source: "tenant" };
+    }
+  } catch {
+    /* tenants table may be missing in isolated tests */
+  }
+  return null;
+}
+
+export function toWhatsAppRecipient(phone: string): string {
+  return phone.replace(/[^\d]/g, "");
+}
+
+export type GraphMessageResult =
+  | { ok: true; messageId: string; graphResponse: unknown }
+  | { ok: false; error: string; graphResponse?: unknown };
+
+/** Low-level Graph POST. Platform #25 billing uses this via sendWhatsAppGraphText. */
+export async function postGraphWhatsAppMessage(opts: {
+  credentials: GraphCredentials;
+  to: string;
+  payload: Record<string, unknown>;
+  fetchImpl?: typeof fetch;
+  failureLabel?: string;
+}): Promise<GraphMessageResult> {
+  const recipient = toWhatsAppRecipient(opts.to);
+  if (!recipient || recipient.length < 8) {
+    return { ok: false, error: "Recipient phone number is not a valid E.164 / numeric WhatsApp id." };
+  }
+
+  const version = graphApiVersion();
+  const url = `https://graph.facebook.com/${version}/${opts.credentials.phoneNumberId}/messages`;
+  const fetchImpl = opts.fetchImpl || fetch;
+  try {
+    const res = await fetchImpl(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${opts.credentials.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ ...opts.payload, to: recipient }),
+    });
+    const graphResponse = await res.json().catch(() => ({}));
+    const messageId = String(
+      (graphResponse as { messages?: Array<{ id?: string }> })?.messages?.[0]?.id || ""
+    ).trim();
+
+    if (!res.ok || !messageId) {
+      const graphError =
+        (graphResponse as { error?: { message?: string } })?.error?.message ||
+        `Graph API rejected the ${opts.failureLabel || "message"} send (HTTP ${res.status}).`;
+      return { ok: false, error: graphError, graphResponse };
+    }
+
+    return { ok: true, messageId, graphResponse };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Graph API request failed.",
+    };
+  }
+}
+
+export async function sendWhatsAppGraphText(opts: {
+  credentials: GraphCredentials;
+  to: string;
+  body: string;
+  previewUrl?: boolean;
+  fetchImpl?: typeof fetch;
+}): Promise<GraphMessageResult> {
+  return postGraphWhatsAppMessage({
+    credentials: opts.credentials,
+    to: opts.to,
+    fetchImpl: opts.fetchImpl,
+    failureLabel: "text",
+    payload: {
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      type: "text",
+      text: {
+        preview_url: Boolean(opts.previewUrl),
+        body: opts.body,
+      },
+    },
+  });
+}
+
+export async function sendWhatsAppGraphTemplate(opts: {
+  credentials: GraphCredentials;
+  to: string;
+  name: string;
+  language?: string;
+  bodyParameters?: string[];
+  otpButtonParameter?: string;
+  fetchImpl?: typeof fetch;
+  failureLabel?: string;
+}): Promise<GraphMessageResult> {
+  const language = String(opts.language || "en").trim() || "en";
+  const parameters = (opts.bodyParameters || []).map((text) => ({ type: "text", text: String(text) }));
+  const components: Array<Record<string, unknown>> = [];
+  if (parameters.length > 0) {
+    components.push({ type: "body", parameters });
+  }
+  if (opts.otpButtonParameter) {
+    components.push({
+      type: "button",
+      sub_type: "url",
+      index: "0",
+      parameters: [{ type: "text", text: opts.otpButtonParameter }],
+    });
+  }
+  return postGraphWhatsAppMessage({
+    credentials: opts.credentials,
+    to: opts.to,
+    fetchImpl: opts.fetchImpl,
+    failureLabel: opts.failureLabel || "template",
+    payload: {
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      type: "template",
+      template: {
+        name: opts.name,
+        language: { code: language },
+        ...(components.length > 0 ? { components } : {}),
+      },
+    },
+  });
+}
+
+/** Wave 1B OTP Graph send. Signature matches Platform #25 rebase of this file. */
+export async function sendWhatsAppGraphMessage(opts: {
+  credentials: GraphCredentials;
+  to: string;
+  otp: string;
+  purpose: string;
+  fetchImpl?: typeof fetch;
+}): Promise<GraphMessageResult> {
+  const templateName = String(process.env.META_OTP_TEMPLATE_NAME || "").trim();
+  const language = String(process.env.META_OTP_TEMPLATE_LANGUAGE || "en").trim() || "en";
+
+  if (templateName) {
+    return sendWhatsAppGraphTemplate({
+      credentials: opts.credentials,
+      to: opts.to,
+      name: templateName,
+      language,
+      bodyParameters: [opts.otp],
+      otpButtonParameter: process.env.META_OTP_TEMPLATE_BUTTON === "true" ? opts.otp : undefined,
+      fetchImpl: opts.fetchImpl,
+      failureLabel: "OTP",
+    });
+  }
+
+  return sendWhatsAppGraphText({
+    credentials: opts.credentials,
+    to: opts.to,
+    body: `Lumera verification code: ${opts.otp}\nAction: ${opts.purpose}\nValid for 5 minutes. Do not share this code.`,
+    fetchImpl: opts.fetchImpl,
+  });
+}
+
+function envTrim(name: string): string {
+  return String(process.env[name] || "").trim();
+}
+
+function utilityTemplateLanguage(): string {
+  return envTrim("META_UTILITY_TEMPLATE_LANGUAGE") || envTrim("META_OTP_TEMPLATE_LANGUAGE") || "en";
+}
+
+/** Optional Cloud API template for a kind. Unset → session text body (same as OTP #20). */
+export function templateConfigForKind(kind: CloudMessageKind): { name: string; language: string } | null {
+  const envName =
+    kind === "otp"
+      ? "META_OTP_TEMPLATE_NAME"
+      : kind === "appointment_reminder"
+        ? "META_REMINDER_TEMPLATE_NAME"
+        : kind === "book_confirmation"
+          ? "META_BOOK_CONFIRMATION_TEMPLATE_NAME"
+          : kind === "payment_receipt"
+            ? "META_RECEIPT_TEMPLATE_NAME"
+            : "";
+  if (!envName) return null;
+  const name = envTrim(envName);
+  if (!name) return null;
+  const language =
+    kind === "otp" ? envTrim("META_OTP_TEMPLATE_LANGUAGE") || "en" : utilityTemplateLanguage();
+  return { name, language };
+}
+
+export type ReminderFields = {
+  patientName?: string;
+  doctorName?: string;
+  specialty?: string;
+  date?: string;
+  timeSlot?: string;
+  tokenNumber?: number;
+};
+
+export type ReceiptFields = {
+  patientName?: string;
+  amount?: number | string;
+  currency?: string;
+  invoiceId?: string;
+  date?: string;
+};
+
+export function sandboxBanner(body: string): string {
+  return `SANDBOX / DEV-ONLY (not sent via Graph)\n\n${body}`;
+}
+
+export function buildReminderText(fields: ReminderFields): string {
+  const name = fields.patientName || "Patient";
+  const token =
+    fields.tokenNumber != null && Number(fields.tokenNumber) > 0
+      ? `#${String(fields.tokenNumber).padStart(2, "0")}`
+      : "pending";
+  return (
+    `⏰ *Appointment reminder — Lumera*\n\n` +
+    `Namaste ${name},\n` +
+    `Your consultation with *${fields.doctorName || "your clinician"}* is scheduled for *${fields.date || "the upcoming slot"}* at *${fields.timeSlot || "TBD"}*.\n\n` +
+    `🎫 Token: *${token}*\n` +
+    (fields.specialty ? `📍 ${fields.specialty}\n\n` : "\n") +
+    `Please arrive 10 minutes early for vitals.`
+  );
+}
+
+export function buildBookConfirmationText(fields: ReminderFields & { uhid?: string }): string {
+  const name = fields.patientName || "Patient";
+  const token =
+    fields.tokenNumber != null && Number(fields.tokenNumber) > 0
+      ? `#${String(fields.tokenNumber).padStart(2, "0")}`
+      : "pending";
+  return (
+    `✅ *Appointment confirmed — Lumera*\n\n` +
+    `Namaste ${name},\n` +
+    `Your visit with *${fields.doctorName || "your clinician"}*` +
+    (fields.specialty ? ` (${fields.specialty})` : "") +
+    ` is booked for *${fields.date || "the scheduled date"}* at *${fields.timeSlot || "TBD"}*.\n\n` +
+    `🎫 Token: *${token}*` +
+    (fields.uhid ? `\nUHID: ${fields.uhid}` : "")
+  );
+}
+
+export function buildReceiptText(receipt: ReceiptFields): string {
+  const name = receipt.patientName || "Patient";
+  const currency = String(receipt.currency || "₹").trim() || "₹";
+  const amount = String(receipt.amount ?? "").trim() || "0";
+  const invoice = receipt.invoiceId ? `\nInvoice: ${receipt.invoiceId}` : "";
+  const date = receipt.date ? `\nDate: ${receipt.date}` : "";
+  return (
+    `🧰 *Payment receipt — Lumera*\n\n` +
+    `Namaste ${name},\n` +
+    `We received *${currency}${amount}* for your consultation.${invoice}${date}\n\n` +
+    `Thank you.`
+  );
+}
+
+const CLOUD_NOT_CONFIGURED =
+  "WhatsApp Cloud API is not configured. Set META_ACCESS_TOKEN and META_PHONE_NUMBER_ID (or a real tenant phone_number_id + token). Message was not delivered.";
+
+/**
+ * Dual-path Cloud send for Platform to import (reminders, book confirmations, receipts, OTP).
+ * Does not schedule, look up appointments, or own invoice rows.
+ */
+export async function dispatchWhatsAppCloudMessage(opts: {
+  to: string;
+  textBody: string;
+  kind?: CloudMessageKind;
+  otp?: string;
+  purpose?: string;
+  templateName?: string;
+  templateLanguage?: string;
+  templateParameters?: string[];
+  previewUrl?: boolean;
+  db?: DatabaseSync | null;
+  fetchImpl?: typeof fetch;
+  tenantId?: string;
+  inCustomerServiceWindow?: boolean;
+}): Promise<CloudDispatchResult> {
+  const kind: CloudMessageKind = opts.kind || (opts.otp ? "otp" : "text");
+  const tenantId = resolveUsageTenantId(opts.tenantId, opts.to, opts.db);
+  const inCustomerServiceWindow = opts.inCustomerServiceWindow ?? kind === "text";
+
+  if (tenantId && opts.db) {
+    try {
+      const estimate = estimateWhatsAppRawCostInr({
+        kind,
+        to: opts.to,
+        inCustomerServiceWindow,
+      });
+      const markupPercent = getMarkupPercent(tenantId, "whatsapp_message", opts.db);
+      const billedAmount = billedAmountFromRaw(estimate.rawCost, markupPercent);
+      const gate = assertWalletAllowsDebit({
+        tenantId,
+        billedAmount,
+        critical: isCriticalWhatsAppKind(kind),
+        database: opts.db,
+      });
+      if (gate.ok === false) {
+        return { ok: false, error: gate.error, channel: "none" };
+      }
+    } catch (err) {
+      console.error("Wallet pre-check failed:", err);
+    }
+  }
+
+  const creds =
+    kind === "appointment_reminder"
+      ? resolveReminderGraphCredentials(opts.db, tenantId)
+      : resolveGraphCredentials(opts.db, tenantId);
+
+  if (creds) {
+    let graph: GraphMessageResult;
+    if (kind === "otp" && opts.otp) {
+      graph = await sendWhatsAppGraphMessage({
+        credentials: creds,
+        to: opts.to,
+        otp: opts.otp,
+        purpose: opts.purpose || "login",
+        fetchImpl: opts.fetchImpl,
+      });
+    } else {
+      const templateName = (opts.templateName || "").trim() || templateConfigForKind(kind)?.name || "";
+      const templateLanguage =
+        (opts.templateLanguage || "").trim() || templateConfigForKind(kind)?.language || "en";
+      if (templateName) {
+        graph = await sendWhatsAppGraphTemplate({
+          credentials: creds,
+          to: opts.to,
+          name: templateName,
+          language: templateLanguage,
+          bodyParameters: opts.templateParameters,
+          fetchImpl: opts.fetchImpl,
+          failureLabel: kind,
+        });
+      } else {
+        graph = await sendWhatsAppGraphText({
+          credentials: creds,
+          to: opts.to,
+          body: opts.textBody,
+          previewUrl: opts.previewUrl,
+          fetchImpl: opts.fetchImpl,
+        });
+      }
+    }
+    if (graph.ok) {
+      meterWhatsAppUsage({
+        tenantId,
+        db: opts.db,
+        kind,
+        to: opts.to,
+        inCustomerServiceWindow,
+        channel: "graph",
+        messageId: graph.messageId,
+        source: creds.source,
+      });
+      return { ok: true, channel: "graph", messageId: graph.messageId, source: creds.source };
+    }
+    const graphError = "error" in graph ? graph.error : "Graph send failed.";
+    return { ok: false, error: graphError, channel: "graph" };
+  }
+
+  if (isProduction()) {
+    return { ok: false, channel: "none", error: CLOUD_NOT_CONFIGURED };
+  }
+
+  meterWhatsAppUsage({
+    tenantId,
+    db: opts.db,
+    kind,
+    to: opts.to,
+    inCustomerServiceWindow,
+    channel: "sandbox",
+  });
+  return { ok: true, channel: "sandbox" };
+}
+
+/**
+ * Prefer the caller-supplied tenantId (calendar, receipts, staff/bot replies).
+ * OTP may omit it and resolve from users.phone. Patient recipients are not users —
+ * never skip them: if the phone uniquely maps to one patients.tenant_id, meter that clinic.
+ */
+export function resolveUsageTenantId(
+  tenantId: string | undefined,
+  to: string,
+  db?: DatabaseSync | null
+): string {
+  const explicit = String(tenantId || "").trim();
+  if (explicit) return explicit;
+  if (!db) return "";
+  const digits = toWhatsAppRecipient(to);
+  if (digits.length < 10) return "";
+  const local10 = digits.slice(-10);
+  const like = `%${local10}`;
+  try {
+    const userRow = db
+      .prepare(
+        `SELECT tenant_id FROM users
+         WHERE replace(replace(replace(replace(phone, ' ', ''), '-', ''), '+', ''), '(', '') LIKE ?
+         ORDER BY last_login DESC
+         LIMIT 1`
+      )
+      .get(like) as { tenant_id?: string } | undefined;
+    const fromUser = String(userRow?.tenant_id || "").trim();
+    if (fromUser) return fromUser;
+  } catch {
+    /* users table may be missing in isolated tests */
+  }
+  try {
+    const patientRows = db
+      .prepare(
+        `SELECT DISTINCT tenant_id FROM patients
+         WHERE tenant_id != '' AND replace(replace(replace(replace(phone, ' ', ''), '-', ''), '+', ''), '(', '') LIKE ?`
+      )
+      .all(like) as { tenant_id?: string }[];
+    const tenantIds = [...new Set(patientRows.map((row) => String(row.tenant_id || "").trim()).filter(Boolean))];
+    if (tenantIds.length === 1) return tenantIds[0];
+  } catch {
+    /* patients table may be missing in isolated tests */
+  }
+  return "";
+}
+
+function meterWhatsAppUsage(opts: {
+  tenantId: string;
+  db?: DatabaseSync | null;
+  kind: CloudMessageKind;
+  to: string;
+  inCustomerServiceWindow: boolean;
+  channel: "graph" | "sandbox";
+  messageId?: string;
+  source?: GraphCredentials["source"];
+}) {
+  if (!opts.tenantId || !opts.db) return;
+  try {
+    recordWhatsAppUsageAndDebit({
+      tenantId: opts.tenantId,
+      kind: opts.kind,
+      to: opts.to,
+      inCustomerServiceWindow: opts.inCustomerServiceWindow,
+      database: opts.db,
+      metadata: { channel: opts.channel, messageId: opts.messageId || null, source: opts.source || null },
+    });
+  } catch (err) {
+    console.error("Failed to record WhatsApp usage:", err);
+  }
+}
+
+export async function sendAppointmentReminder(opts: {
+  to: string;
+  patientName?: string;
+  doctorName?: string;
+  specialty?: string;
+  date?: string;
+  timeSlot?: string;
+  tokenNumber?: number;
+  textBody?: string;
+  templateName?: string;
+  templateParameters?: string[];
+  db?: DatabaseSync | null;
+  fetchImpl?: typeof fetch;
+  tenantId?: string;
+}): Promise<CloudDispatchResult> {
+  return dispatchWhatsAppCloudMessage({
+    to: opts.to,
+    kind: "appointment_reminder",
+    textBody: opts.textBody || buildReminderText(opts),
+    templateName: opts.templateName,
+    templateParameters: opts.templateParameters,
+    db: opts.db,
+    fetchImpl: opts.fetchImpl,
+    tenantId: opts.tenantId,
+  });
+}
+
+export async function sendBookConfirmation(opts: {
+  to: string;
+  patientName?: string;
+  doctorName?: string;
+  specialty?: string;
+  date?: string;
+  timeSlot?: string;
+  tokenNumber?: number;
+  uhid?: string;
+  textBody?: string;
+  templateName?: string;
+  templateParameters?: string[];
+  db?: DatabaseSync | null;
+  fetchImpl?: typeof fetch;
+  tenantId?: string;
+}): Promise<CloudDispatchResult> {
+  return dispatchWhatsAppCloudMessage({
+    to: opts.to,
+    kind: "book_confirmation",
+    textBody: opts.textBody || buildBookConfirmationText(opts),
+    templateName: opts.templateName,
+    templateParameters: opts.templateParameters,
+    db: opts.db,
+    fetchImpl: opts.fetchImpl,
+    tenantId: opts.tenantId,
+  });
+}
+
+/** #25 assist: Graph dual-path only. Platform owns Razorpay/invoices and can pass textBody. */
+export async function sendPaymentReceipt(opts: {
+  to: string;
+  patientName?: string;
+  amount?: number | string;
+  currency?: string;
+  invoiceId?: string;
+  date?: string;
+  textBody?: string;
+  previewUrl?: boolean;
+  templateName?: string;
+  templateParameters?: string[];
+  db?: DatabaseSync | null;
+  fetchImpl?: typeof fetch;
+  tenantId?: string;
+}): Promise<CloudDispatchResult> {
+  return dispatchWhatsAppCloudMessage({
+    to: opts.to,
+    kind: "payment_receipt",
+    textBody: opts.textBody || buildReceiptText(opts),
+    previewUrl: opts.previewUrl,
+    templateName: opts.templateName,
+    templateParameters: opts.templateParameters,
+    db: opts.db,
+    fetchImpl: opts.fetchImpl,
+    tenantId: opts.tenantId,
+  });
+}
