@@ -34,8 +34,11 @@ jobs:
       - name: Lint (tsc --noEmit)
         run: npm run lint
 
-      # package.json "test" script — unit + integration. A failing step fails the workflow.
+      # package.json "test" script sets NODE_ENV=test and mocks Google Calendar.
+      # GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET are intentionally unset.
       - name: Test
+        env:
+          NODE_ENV: test
         run: npm run test
 
       # Production Vite + esbuild bundle. Must pass before merge to main.
