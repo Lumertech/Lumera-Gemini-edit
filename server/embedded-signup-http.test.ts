@@ -171,7 +171,7 @@ describe("HTTP Embedded Signup complete", () => {
 
   it("POST /api/integrations/whatsapp/embedded-signup links waba, phone, business and subscribes the webhook", async () => {
     const wabaId = `waba-int-${RUN}`;
-    const phoneId = `10654${RUN.replace(/\D/g, "").padEnd(10, "2").slice(0, 10)}`;
+    const phoneId = `phone-int-${RUN}`;
     const businessId = `biz-${RUN}`;
     const impl: typeof fetch = async (input) => {
       const url = String(input);
