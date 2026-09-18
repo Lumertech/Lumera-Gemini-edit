@@ -1,6 +1,7 @@
 import { getDb, mapAppointment } from "./db.ts";
 import { reportCaughtError } from "./error-tracker.ts";
 import { appPublicUrl, isProduction, sandboxSimulatorsEnabled } from "./runtime.ts";
+import { resolveGoogleCalendarFetch, setGoogleCalendarFetchImpl } from "./google-calendar-http.ts";
 import { decryptSecret, encryptSecret } from "./token-crypto.ts";
 import { ensureDoctorScheduleSchema } from "./doctor-schedule-schema.ts";
 import { replaceGoogleBusyOverrides } from "./doctor-schedule.ts";
@@ -28,14 +29,10 @@ export type GoogleCalendarIntegration = {
   connected: boolean;
 };
 
-let calendarFetchImpl: typeof fetch | null = null;
-
-export function setGoogleCalendarFetchImpl(impl: typeof fetch | null) {
-  calendarFetchImpl = impl;
-}
+export { setGoogleCalendarFetchImpl };
 
 function calendarFetch(): typeof fetch {
-  return calendarFetchImpl || fetch;
+  return resolveGoogleCalendarFetch();
 }
 
 function db() {
