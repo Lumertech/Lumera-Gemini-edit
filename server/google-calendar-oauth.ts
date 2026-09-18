@@ -2,12 +2,13 @@ import crypto from "node:crypto";
 import jwt from "jsonwebtoken";
 import { getJwtSecret } from "./auth.ts";
 import { appPublicUrl, readSecret } from "./runtime.ts";
+import { GoogleOAuthError } from "./google-oauth.ts";
 import {
-  GoogleOAuthError,
-  googleClientId,
-  googleClientSecret,
-  googleOAuthConfigured,
-} from "./google-oauth.ts";
+  googleCalendarClientId,
+  googleCalendarClientSecret,
+  googleCalendarOAuthConfigured,
+  resolveGoogleCalendarFetch,
+} from "./google-calendar-http.ts";
 
 export const GOOGLE_CALENDAR_SCOPES = [
   "https://www.googleapis.com/auth/calendar.events.readonly",
@@ -68,7 +69,7 @@ export function verifyGoogleCalendarOAuthState(state: string): {
 
 export function googleCalendarDialogUrl(opts: { redirectUri: string; state: string }): string {
   const params = new URLSearchParams({
-    client_id: googleClientId(),
+    client_id: googleCalendarClientId(),
     redirect_uri: opts.redirectUri,
     response_type: "code",
     scope: GOOGLE_CALENDAR_SCOPES.join(" "),
@@ -98,9 +99,9 @@ export async function exchangeGoogleCalendarAuthorizationCode(opts: {
   redirectUri: string;
   fetchImpl?: typeof fetch;
 }): Promise<{ accessToken: string; refreshToken: string; expiresIn: number; email?: string }> {
-  const clientId = googleClientId();
-  const clientSecret = googleClientSecret();
-  if (!clientId || !clientSecret || !googleOAuthConfigured()) {
+  const clientId = googleCalendarClientId();
+  const clientSecret = googleCalendarClientSecret();
+  if (!clientId || !clientSecret || !googleCalendarOAuthConfigured()) {
     throw new GoogleOAuthError("Google Calendar is not configured (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET).", 503);
   }
   const body = new URLSearchParams({
@@ -117,7 +118,7 @@ export async function exchangeGoogleCalendarAuthorizationCode(opts: {
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: body.toString(),
     },
-    opts.fetchImpl || fetch
+    opts.fetchImpl || resolveGoogleCalendarFetch()
   );
   const accessToken = String(data?.access_token || "").trim();
   if (!accessToken) {
@@ -135,8 +136,8 @@ export async function refreshGoogleCalendarAccessToken(opts: {
   refreshToken: string;
   fetchImpl?: typeof fetch;
 }): Promise<{ accessToken: string; expiresIn: number }> {
-  const clientId = googleClientId();
-  const clientSecret = googleClientSecret();
+  const clientId = googleCalendarClientId();
+  const clientSecret = googleCalendarClientSecret();
   if (!clientId || !clientSecret) {
     throw new GoogleOAuthError("Google Calendar is not configured (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET).", 503);
   }
@@ -153,7 +154,7 @@ export async function refreshGoogleCalendarAccessToken(opts: {
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: body.toString(),
     },
-    opts.fetchImpl || fetch
+    opts.fetchImpl || resolveGoogleCalendarFetch()
   );
   const accessToken = String(data?.access_token || "").trim();
   if (!accessToken) {
@@ -169,9 +170,9 @@ export async function fetchGoogleCalendarUserEmail(opts: {
   const data = await googleJson(
     "https://www.googleapis.com/oauth2/v3/userinfo",
     { headers: { Authorization: `Bearer ${opts.accessToken}` } },
-    opts.fetchImpl || fetch
+    opts.fetchImpl || resolveGoogleCalendarFetch()
   );
   return String(data?.email || "").trim().toLowerCase();
 }
 
-export { googleOAuthConfigured as googleCalendarOAuthConfigured, GoogleOAuthError };
+export { googleCalendarOAuthConfigured, GoogleOAuthError };
