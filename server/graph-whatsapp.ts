@@ -207,7 +207,10 @@ export async function sendWhatsAppGraphMessage(opts: {
       name: templateName,
       language,
       bodyParameters: [opts.otp],
-      otpButtonParameter: process.env.META_OTP_TEMPLATE_BUTTON === "true" ? opts.otp : undefined,
+      // AUTH templates (copy-code and URL OTP) require the button component.
+      // Omitting it makes Graph return (#131008) Required parameter is missing.
+      // META_OTP_TEMPLATE_BUTTON is not a gate; leaving it "true" is harmless.
+      otpButtonParameter: opts.otp,
       fetchImpl: opts.fetchImpl,
       failureLabel: "OTP",
     });
