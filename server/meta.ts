@@ -12,6 +12,77 @@ import {
   rejectProductionSimulator,
 } from "./meta-security.ts";
 import { handleMetaDataDeletionPost } from "./meta-signed-request.ts";
+import { normalizePhoneDigits, phonesMatch } from "./whatsapp-calendar-booking.ts";
+import type { SqlDatabase } from "./sql-engine.ts";
+
+function graphWamidFromPayload(raw: unknown): string {
+  if (raw == null || raw === "") return "";
+  try {
+    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (!parsed || typeof parsed !== "object") return "";
+    const rec = parsed as { messageId?: unknown; wamid?: unknown };
+    return String(rec.messageId || rec.wamid || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Apply a Meta Cloud API message-status webhook to the matching outbound event.
+ * Graph stores the wamid in action_payload.messageId (row id is evt-*), and
+ * status.recipient_id is digits-only while patient_phone is often E.164 (+91…).
+ * Match wamid first; phone is a secondary fallback using phonesMatch.
+ */
+export function applyWhatsAppOutboundStatus(
+  db: SqlDatabase,
+  opts: { messageId?: string; recipientId?: string; status?: string; sentAt: string }
+): number {
+  const messageId = String(opts.messageId || "").trim();
+  const recipientId = String(opts.recipientId || "").trim();
+  const status = String(opts.status || "").trim();
+  if (!status) return 0;
+
+  const matchedIds = new Set<string>();
+
+  if (messageId) {
+    const candidates = db
+      .prepare(
+        `SELECT id, action_payload FROM whatsapp_outbound_events
+         WHERE id = ? OR (action_payload IS NOT NULL AND action_payload LIKE '%' || ? || '%')`
+      )
+      .all(messageId, messageId) as Array<{ id: string; action_payload?: string | null }>;
+    for (const row of candidates) {
+      if (row.id === messageId || graphWamidFromPayload(row.action_payload) === messageId) {
+        matchedIds.add(row.id);
+      }
+    }
+  }
+
+  if (matchedIds.size === 0 && recipientId) {
+    const plusPrefixed = recipientId.startsWith("+") ? recipientId : `+${recipientId}`;
+    const last10 = normalizePhoneDigits(recipientId).slice(-10);
+    const candidates = db
+      .prepare(
+        `SELECT id, patient_phone FROM whatsapp_outbound_events
+         WHERE patient_phone = ?
+            OR patient_phone = ?
+            OR (? != '' AND patient_phone LIKE '%' || ? || '%')`
+      )
+      .all(recipientId, plusPrefixed, last10, last10) as Array<{ id: string; patient_phone: string }>;
+    for (const row of candidates) {
+      if (phonesMatch(row.patient_phone, recipientId)) matchedIds.add(row.id);
+    }
+  }
+
+  if (matchedIds.size === 0) return 0;
+
+  let changes = 0;
+  const stmt = db.prepare("UPDATE whatsapp_outbound_events SET status = ?, sent_at = ? WHERE id = ?");
+  for (const id of matchedIds) {
+    changes += Number(stmt.run(status, opts.sentAt, id).changes || 0);
+  }
+  return changes;
+}
 
 export function createMetaRouter(): Router {
   const router = Router();
@@ -82,14 +153,14 @@ export function createMetaRouter(): Router {
                   const messageId = st.id;
                   const status = st.status; // 'sent' | 'delivered' | 'read' | 'failed'
                   const recipientId = st.recipient_id;
-                  
-                  // Update outbound event if tracked
+
                   try {
-                    db.prepare(`
-                      UPDATE whatsapp_outbound_events 
-                      SET status = ?, sent_at = ?
-                      WHERE id = ? OR patient_phone = ?
-                    `).run(status, now, messageId, recipientId);
+                    applyWhatsAppOutboundStatus(db, {
+                      messageId,
+                      recipientId,
+                      status,
+                      sentAt: now,
+                    });
                   } catch (err) {
                     reportCaughtError(err, "meta.webhook.outbound-status");
                   }

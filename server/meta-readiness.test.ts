@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import { after, describe, it } from "node:test";
-import { createMetaRouter } from "./meta.ts";
+import { applyWhatsAppOutboundStatus, createMetaRouter } from "./meta.ts";
 import {
   buildMetaReadinessOverview,
   decideWebhookSignature,
@@ -14,7 +14,7 @@ import { resolveGraphCredentials } from "./graph-whatsapp.ts";
 import { isUnsetOrPlaceholder } from "./runtime.ts";
 import { verifyJwtToken } from "./auth.ts";
 import { createApiRouter } from "./api.ts";
-import { initDatabase } from "./db.ts";
+import { getDb, initDatabase } from "./db.ts";
 import { jsonRequest, startTestServer } from "./test-http.ts";
 
 function hmacSha256(secret: string, body: string): string {
@@ -378,6 +378,198 @@ describe("Production-gated simulate routes", () => {
       process.env.META_APP_SECRET = prevSecret;
       process.env.META_WEBHOOK_ALLOW_UNSIGNED = prevFlag;
       await server.close();
+    }
+  });
+});
+
+describe("WhatsApp Cloud API outbound status matching", () => {
+  function ensureDb() {
+    try {
+      getDb();
+    } catch {
+      initDatabase();
+    }
+  }
+
+  function insertOutbound(opts: {
+    id: string;
+    phone: string;
+    status?: string;
+    payload: Record<string, unknown>;
+  }) {
+    const db = getDb();
+    db.prepare(
+      `INSERT INTO whatsapp_outbound_events (id, event_type, patient_phone, patient_name, status, details, action_payload, sent_at)
+       VALUES (?, 'otp_verification', ?, 'Status Match Patient', ?, 'Graph accepted', ?, ?)`
+    ).run(
+      opts.id,
+      opts.phone,
+      opts.status || "sent",
+      JSON.stringify(opts.payload),
+      new Date().toISOString()
+    );
+  }
+
+  function readStatus(id: string): string {
+    const row = getDb()
+      .prepare("SELECT status FROM whatsapp_outbound_events WHERE id = ?")
+      .get(id) as { status: string } | undefined;
+    return String(row?.status || "");
+  }
+
+  function cleanup(ids: string[]) {
+    const db = getDb();
+    for (const id of ids) {
+      db.prepare("DELETE FROM whatsapp_outbound_events WHERE id = ?").run(id);
+    }
+  }
+
+  it("matches Graph wamid in action_payload when row id is evt-* and recipient_id lacks +", () => {
+    ensureDb();
+    const eventId = `evt-status-${crypto.randomUUID().slice(0, 8)}`;
+    const wamid = `wamid.STATUS_TEST_${crypto.randomUUID().slice(0, 8)}`;
+    insertOutbound({
+      id: eventId,
+      phone: "+919999973271",
+      payload: { channel: "graph", messageId: wamid },
+    });
+    try {
+      const updated = applyWhatsAppOutboundStatus(getDb(), {
+        messageId: wamid,
+        recipientId: "919999973271",
+        status: "delivered",
+        sentAt: new Date().toISOString(),
+      });
+      assert.equal(updated, 1);
+      assert.equal(readStatus(eventId), "delivered");
+    } finally {
+      cleanup([eventId]);
+    }
+  });
+
+  it("updates only the outbound event whose stored wamid matches, not sibling events for the same phone", () => {
+    ensureDb();
+    const hitId = `evt-status-${crypto.randomUUID().slice(0, 8)}`;
+    const missId = `evt-status-${crypto.randomUUID().slice(0, 8)}`;
+    const hitWamid = `wamid.HIT_${crypto.randomUUID().slice(0, 8)}`;
+    const missWamid = `wamid.MISS_${crypto.randomUUID().slice(0, 8)}`;
+    insertOutbound({
+      id: hitId,
+      phone: "+919999973271",
+      payload: { channel: "graph", messageId: hitWamid },
+    });
+    insertOutbound({
+      id: missId,
+      phone: "+919999973271",
+      payload: { channel: "graph", messageId: missWamid },
+    });
+    try {
+      applyWhatsAppOutboundStatus(getDb(), {
+        messageId: hitWamid,
+        recipientId: "919999973271",
+        status: "read",
+        sentAt: new Date().toISOString(),
+      });
+      assert.equal(readStatus(hitId), "read");
+      assert.equal(readStatus(missId), "sent");
+    } finally {
+      cleanup([hitId, missId]);
+    }
+  });
+
+  it("still matches when the outbound row id is the Graph wamid (send-test path)", () => {
+    ensureDb();
+    const wamid = `wamid.IDROW_${crypto.randomUUID().slice(0, 8)}`;
+    insertOutbound({
+      id: wamid,
+      phone: "+919888877766",
+      payload: { channel: "graph", sandbox: false },
+    });
+    try {
+      const updated = applyWhatsAppOutboundStatus(getDb(), {
+        messageId: wamid,
+        recipientId: "91888877766",
+        status: "failed",
+        sentAt: new Date().toISOString(),
+      });
+      assert.equal(updated, 1);
+      assert.equal(readStatus(wamid), "failed");
+    } finally {
+      cleanup([wamid]);
+    }
+  });
+
+  it("falls back to normalized phone match when no wamid is stored", () => {
+    ensureDb();
+    const eventId = `evt-status-${crypto.randomUUID().slice(0, 8)}`;
+    insertOutbound({
+      id: eventId,
+      phone: "+91 91111 22233",
+      payload: { channel: "graph" },
+    });
+    try {
+      const updated = applyWhatsAppOutboundStatus(getDb(), {
+        messageId: `wamid.UNKNOWN_${crypto.randomUUID().slice(0, 8)}`,
+        recipientId: "919111122233",
+        status: "delivered",
+        sentAt: new Date().toISOString(),
+      });
+      assert.equal(updated, 1);
+      assert.equal(readStatus(eventId), "delivered");
+    } finally {
+      cleanup([eventId]);
+    }
+  });
+
+  it("POST /api/meta/webhook applies a statuses UPDATE onto the Graph send row", async () => {
+    ensureDb();
+    const eventId = `evt-status-${crypto.randomUUID().slice(0, 8)}`;
+    const wamid = `wamid.HTTP_${crypto.randomUUID().slice(0, 8)}`;
+    insertOutbound({
+      id: eventId,
+      phone: "+919999973271",
+      payload: { channel: "graph", messageId: wamid },
+    });
+
+    const prevSecret = process.env.META_APP_SECRET;
+    const prevFlag = process.env.META_WEBHOOK_ALLOW_UNSIGNED;
+    process.env.META_APP_SECRET = "unit-status-secret";
+    process.env.META_WEBHOOK_ALLOW_UNSIGNED = "false";
+    const server = await startTestServer((app) => {
+      app.use("/api/meta", createMetaRouter());
+    });
+    try {
+      const payload = {
+        object: "whatsapp_business_account",
+        entry: [
+          {
+            changes: [
+              {
+                value: {
+                  statuses: [
+                    {
+                      id: wamid,
+                      status: "delivered",
+                      recipient_id: "919999973271",
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      };
+      const raw = JSON.stringify(payload);
+      const res = await jsonRequest(server.port, "POST", "/api/meta/webhook", payload, {
+        "X-Hub-Signature-256": hmacSha256("unit-status-secret", raw),
+      });
+      assert.equal(res.status, 200);
+      assert.equal(readStatus(eventId), "delivered");
+    } finally {
+      process.env.META_APP_SECRET = prevSecret;
+      process.env.META_WEBHOOK_ALLOW_UNSIGNED = prevFlag;
+      await server.close();
+      cleanup([eventId]);
     }
   });
 });
