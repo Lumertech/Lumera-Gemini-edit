@@ -81,6 +81,35 @@ export function phoneMatchKey(phone: string): string {
   return digits.length >= 10 ? digits.slice(-10) : digits;
 }
 
+/**
+ * India-first E.164. 10-digit nationals become +91…; numbers that already
+ * include a country code keep that prefix. Empty when there are no usable digits.
+ */
+export function toE164Phone(phone: string): string {
+  let digits = digitsOnly(phone);
+  if (digits.startsWith("00")) digits = digits.slice(2);
+  if (digits.length === 10) return `+91${digits}`;
+  if (digits.length === 11 && digits.startsWith("0")) return `+91${digits.slice(1)}`;
+  if (digits.length >= 11 && digits.length <= 15) return `+${digits}`;
+  return "";
+}
+
+/** E.164 when possible. A non-empty phone we cannot normalize is kept so the snapshot is not blank. */
+export function canonicalAppointmentPhone(phone: string): string {
+  const raw = String(phone || "").trim();
+  return toE164Phone(raw) || raw;
+}
+
+/** Live patient phone for an appointment row. Falls back to the existing snapshot when the patient has none. */
+export function appointmentPhoneFromPatient(tenantId: string, patientId: string, snapshot = ""): string {
+  const patient = patientId ? getTenantPatient(tenantId, patientId) : undefined;
+  const live = canonicalAppointmentPhone(String(patient?.phone || ""));
+  if (live) return live;
+  return String(snapshot || "").trim();
+}
+
+const CLOSED_APPOINTMENT_STATUSES = `('Completed', 'Cancelled', 'No-Show')`;
+
 export function normalizeAbhaNumber(value: string): string {
   return digitsOnly(value);
 }
@@ -572,6 +601,7 @@ export function insertAppointment(tenantId: string, body: Record<string, unknown
   const doctor = getDoctorById(doctorId);
   const now = new Date().toISOString();
   const vitals = body.vitals == null ? null : jsonText(body.vitals, "null");
+  const patientPhone = canonicalAppointmentPhone(String(mappedPatient.phone || ""));
   getDb()
     .prepare(
       `INSERT INTO appointments (
@@ -586,7 +616,7 @@ export function insertAppointment(tenantId: string, body: Record<string, unknown
       tokenNumber,
       mappedPatient.id,
       mappedPatient.name,
-      mappedPatient.phone,
+      patientPhone,
       mappedPatient.uhid,
       doctorId,
       String(body.doctorName || body.doctor_name || doctor?.name || actor?.name || ""),
@@ -642,11 +672,17 @@ export function updateAppointment(
           ? 1
           : 0
         : existing.is_paid;
+  const patientPhone = appointmentPhoneFromPatient(
+    tenantId,
+    String(existing.patient_id || mapped.patientId || ""),
+    String(existing.patient_phone || "")
+  );
   getDb()
     .prepare(
       `UPDATE appointments SET
         status = ?, token_number = ?, vitals = ?, is_paid = ?,
-        type = ?, time_slot = ?, date = ?, doctor_id = ?, doctor_name = ?, specialty = ?
+        type = ?, time_slot = ?, date = ?, doctor_id = ?, doctor_name = ?, specialty = ?,
+        patient_phone = ?
        WHERE id = ? AND tenant_id = ?`
     )
     .run(
@@ -660,6 +696,7 @@ export function updateAppointment(
       String(body.doctorId ?? body.doctor_id ?? mapped.doctorId),
       String(body.doctorName ?? body.doctor_name ?? mapped.doctorName),
       String(body.specialty ?? mapped.specialty),
+      patientPhone,
       appointmentId,
       tenantId
     );
@@ -892,6 +929,15 @@ export function createClinicalRouter(): Router {
         req.params.id,
         tenantId
       );
+    const syncedPhone = canonicalAppointmentPhone(String(next.phone || ""));
+    if (syncedPhone) {
+      getDb()
+        .prepare(
+          `UPDATE appointments SET patient_phone = ?
+           WHERE tenant_id = ? AND patient_id = ? AND status NOT IN ${CLOSED_APPOINTMENT_STATUSES}`
+        )
+        .run(syncedPhone, tenantId, req.params.id);
+    }
     res.json({ patient: mapPatient(getTenantPatient(tenantId, req.params.id)!) });
   });
 

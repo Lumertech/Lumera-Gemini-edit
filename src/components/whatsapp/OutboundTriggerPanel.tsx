@@ -38,6 +38,7 @@ export const OutboundTriggerPanel: React.FC<OutboundTriggerPanelProps> = ({
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [statusIsError, setStatusIsError] = useState(false);
   const [customMsg, setCustomMsg] = useState('');
 
   const fetchEvents = async () => {
@@ -60,9 +61,11 @@ export const OutboundTriggerPanel: React.FC<OutboundTriggerPanelProps> = ({
   }, []);
 
   const triggerEvent = async (eventType: string, customPayload: Record<string, any> = {}) => {
+    let failed = false;
     try {
       setSending(eventType);
       setStatusMessage(null);
+      setStatusIsError(false);
 
       const res = await fetch('/api/whatsapp/outbound/trigger', {
         method: 'POST',
@@ -76,18 +79,28 @@ export const OutboundTriggerPanel: React.FC<OutboundTriggerPanelProps> = ({
       });
 
       if (res.ok) {
+        setStatusIsError(false);
         setStatusMessage(`Successfully dispatched ${eventType.replace(/_/g, ' ')} to WhatsApp!`);
         fetchEvents();
         if (onNotificationSent) onNotificationSent();
       } else {
-        setStatusMessage('Error dispatching outbound notification');
+        const data = await res.json().catch(() => ({}));
+        const apiError = typeof data?.error === 'string' ? data.error.trim() : '';
+        setStatusIsError(true);
+        failed = true;
+        setStatusMessage(apiError || 'Error dispatching outbound notification');
       }
     } catch (err) {
       console.error('Error triggering notification:', err);
+      setStatusIsError(true);
+      failed = true;
       setStatusMessage('Network error triggering notification');
     } finally {
       setSending(null);
-      setTimeout(() => setStatusMessage(null), 4000);
+      setTimeout(() => {
+        setStatusMessage(null);
+        setStatusIsError(false);
+      }, failed ? 8000 : 4000);
     }
   };
 
@@ -116,8 +129,18 @@ export const OutboundTriggerPanel: React.FC<OutboundTriggerPanelProps> = ({
       </div>
 
       {statusMessage && (
-        <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-xs flex items-center gap-2 animate-in fade-in">
-          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+        <div
+          className={`p-3 rounded-xl text-xs flex items-center gap-2 animate-in fade-in ${
+            statusIsError
+              ? 'bg-rose-50 border border-rose-200 text-rose-800'
+              : 'bg-emerald-50 border border-emerald-200 text-emerald-800'
+          }`}
+        >
+          {statusIsError ? (
+            <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+          ) : (
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+          )}
           <span>{statusMessage}</span>
         </div>
       )}

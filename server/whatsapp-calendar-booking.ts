@@ -1,6 +1,8 @@
 import { getDb, mapAppointment, mapPatient, writeAudit } from "./db.ts";
 import {
+  appointmentPhoneFromPatient,
   getTenantAppointment,
+  getTenantPatient,
   insertAppointment,
   insertPatient,
   updateAppointment,
@@ -63,6 +65,25 @@ export function findOrCreateWhatsAppPatient(opts: {
 
 const ACTIVE_APPOINTMENT_SQL = `status NOT IN ('Completed', 'Cancelled', 'No-Show')`;
 
+function withLivePatientPhone(
+  tenantId: string,
+  row: Record<string, unknown> | undefined
+): Record<string, unknown> | undefined {
+  if (!row) return undefined;
+  const status = String(row.status || "");
+  if (status === "Completed" || status === "Cancelled" || status === "No-Show") return row;
+  const patientId = String(row.patient_id || "");
+  if (!patientId || !getTenantPatient(tenantId, patientId)) return row;
+  const next = appointmentPhoneFromPatient(tenantId, patientId, String(row.patient_phone || ""));
+  const snapshot = String(row.patient_phone || "").trim();
+  if (!next || next === snapshot) return row;
+  getDb()
+    .prepare("UPDATE appointments SET patient_phone = ? WHERE id = ? AND tenant_id = ?")
+    .run(next, String(row.id), tenantId);
+  row.patient_phone = next;
+  return row;
+}
+
 export function findActiveAppointment(opts: {
   tenantId: string;
   patientId?: string;
@@ -72,7 +93,7 @@ export function findActiveAppointment(opts: {
   appointmentId?: string;
 }): Record<string, unknown> | undefined {
   if (opts.appointmentId) {
-    return getTenantAppointment(opts.tenantId, opts.appointmentId);
+    return withLivePatientPhone(opts.tenantId, getTenantAppointment(opts.tenantId, opts.appointmentId));
   }
 
   const db = getDb();
@@ -92,17 +113,18 @@ export function findActiveAppointment(opts: {
              ORDER BY created_at DESC LIMIT 1`
           )
           .get(opts.tenantId, opts.patientId, opts.date) as Record<string, unknown> | undefined);
-    if (row) return row;
+    if (row) return withLivePatientPhone(opts.tenantId, row);
   }
 
   if (opts.patientId) {
-    return db
+    const row = db
       .prepare(
         `SELECT * FROM appointments
          WHERE tenant_id = ? AND patient_id = ? AND ${ACTIVE_APPOINTMENT_SQL}
          ORDER BY date ASC, created_at DESC LIMIT 1`
       )
       .get(opts.tenantId, opts.patientId) as Record<string, unknown> | undefined;
+    return withLivePatientPhone(opts.tenantId, row);
   }
 
   if (opts.patientPhone) {
@@ -113,7 +135,12 @@ export function findActiveAppointment(opts: {
          ORDER BY date ASC, created_at DESC`
       )
       .all(opts.tenantId) as Record<string, unknown>[];
-    return rows.find((row) => phonesMatch(String(row.patient_phone || ""), opts.patientPhone || ""));
+    const bySnapshot = rows.find((row) => phonesMatch(String(row.patient_phone || ""), opts.patientPhone || ""));
+    if (bySnapshot) return withLivePatientPhone(opts.tenantId, bySnapshot);
+    const patient = findPatientByPhoneInTenant(opts.tenantId, opts.patientPhone);
+    if (!patient?.id) return undefined;
+    const byPatient = rows.find((row) => String(row.patient_id || "") === String(patient.id));
+    return withLivePatientPhone(opts.tenantId, byPatient);
   }
 
   return undefined;
