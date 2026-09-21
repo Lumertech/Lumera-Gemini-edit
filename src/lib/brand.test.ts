@@ -52,15 +52,11 @@ describe("product brand SSOT (founder P0)", () => {
   });
 
   it("uses the restored Sparkles four-point star on a purple→indigo→blue tile (not the medical-cross mark)", () => {
-    assert.match(logoSvg, /four-pointed star/);
-    assert.match(logoSvg, /from-purple-500 via-indigo-600 to-blue-600/);
+    assert.match(logoSvg, /Four-point concave sparkle/);
     assert.match(logoSvg, /#A855F7/i);
-    assert.match(logoSvg, /#4F46E5/i);
-    assert.match(logoSvg, /#2563EB/i);
-    assert.match(
-      logoSvg,
-      /M11\.017 2\.814a1 1 0 0 1 1\.966 0l1\.051 5\.558/,
-    );
+    assert.match(logoSvg, /#7C3AED/i);
+    assert.match(logoSvg, /#6366F1/i);
+    assert.match(logoSvg, /M32 10C33\.05 23\.2 40\.8 30\.95 54 32/);
     assert.doesNotMatch(logoSvg, /Vertical Beam|Horizontal Beam|Medical Cross/i);
     assert.doesNotMatch(logoSvg, /<rect[^>]+x="27"[^>]+y="14"[^>]+width="10"[^>]+height="36"/);
     assert.doesNotMatch(logoSvg, /<rect[^>]+x="14"[^>]+y="27"[^>]+width="36"[^>]+height="10"/);

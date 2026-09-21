@@ -38,10 +38,12 @@ steps:
       - -c
       - |
         set -euo pipefail
-        npm ci
+        # Same as Dockerfile: npm ci when the lockfile is present, otherwise npm install.
+        # A missing package-lock.json must not fail the lint-test gate.
+        if [ -f package-lock.json ]; then npm ci; else npm install; fi
         npm run lint
         export JWT_SECRET="$${JWT_SECRET:-test-jwt-secret}"
-        npx tsx --test --test-concurrency=1 server/*.test.ts src/lib/*.test.ts src/nav/*.test.ts src/pages/*.test.ts src/components/admin/*.test.ts
+        npx tsx --test --test-concurrency=1 server/*.test.ts src/lib/*.test.ts src/nav/*.test.ts src/pages/*.test.ts src/components/admin/*.test.ts src/db/*.test.ts
     waitFor: ['-']
 
   # 1. Build the repo Dockerfile (Node 22, npm run build / npm start).

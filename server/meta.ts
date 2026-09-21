@@ -88,6 +88,14 @@ export function applyWhatsAppOutboundStatus(
   return changes;
 }
 
+/**
+ * Facebook App Dashboard validates these callback URLs with GET and treats 404 as invalid.
+ * Body is a health check only. POST (signed_request) is unchanged and is the real callback.
+ */
+export function handleMetaCallbackGetProbe(_req: Request, res: Response) {
+  res.status(200).json({ ok: true, status: "ok" });
+}
+
 export function createMetaRouter(): Router {
   const router = Router();
 
@@ -223,10 +231,13 @@ export function createMetaRouter(): Router {
   // POST /api/meta/data-deletion - Callback endpoint for Meta App Review & User Data Erasure
   // Production must set APP_URL=https://www.mylumera.in so confirmation links are not the Cloud Run host.
   router.post("/data-deletion", handleMetaDataDeletionPost);
+  // GET is a dashboard probe only. Facebook rejects the callback URL when GET is 404.
+  router.get("/data-deletion", handleMetaCallbackGetProbe);
 
   // POST /api/meta/deauthorize — Facebook Login Deauthorize Callback.
   // Paste: https://www.mylumera.in/api/meta/deauthorize
   router.post("/deauthorize", handleMetaDeauthorizePost);
+  router.get("/deauthorize", handleMetaCallbackGetProbe);
 
   // GET /api/meta/data-deletion-status — only COMPLETED for codes that exist and are completed.
   router.get("/data-deletion-status", (req: Request, res: Response) => {

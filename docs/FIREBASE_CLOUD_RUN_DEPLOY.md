@@ -252,10 +252,12 @@ Paste **only after** the smoke gate in §5 is green:
 | Terms of Service URL | `https://www.mylumera.in/terms-of-service` |
 | User data deletion instructions (human page) | `https://www.mylumera.in/data-deletion-instructions` |
 | Government / public-authority data request policy (Data Handling) | `https://www.mylumera.in/government-data-request-policy` |
-| Data deletion request callback | `https://www.mylumera.in/api/meta/data-deletion` (`POST`) |
-| Deauthorize Callback URL (Facebook Login) | `https://www.mylumera.in/api/meta/deauthorize` (`POST`) |
+| Data Deletion Request URL (Facebook Login callback) | `https://www.mylumera.in/api/meta/data-deletion` |
+| Deauthorize Callback URL (Facebook Login) | `https://www.mylumera.in/api/meta/deauthorize` |
 | Valid OAuth Redirect URIs (Facebook Login) | `https://www.mylumera.in/api/auth/facebook/callback` |
 | WhatsApp webhook callback URL | `https://www.mylumera.in/api/meta/webhook` (`GET` challenge + `POST`) |
+
+Facebook Login → Settings → **Data Deletion Request URL** must be `https://www.mylumera.in/api/meta/data-deletion`. Do not paste `https://www.mylumera.in/data-deletion-instructions` or any other policy page into that callback field. The instructions URL is only the separate human “User data deletion” field above. Meta validates the callback with **GET** and rejects 404. `GET` returns `200` `{ "ok": true, "status": "ok" }` and changes nothing. `POST` still requires `signed_request`. The same GET health body is on `GET /api/meta/deauthorize`; deauthorize `POST` is unchanged.
 
 ### Facebook Login product (OAuth 2.0)
 

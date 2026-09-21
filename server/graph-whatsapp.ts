@@ -43,7 +43,22 @@ export function isCloudDispatchFailure(
   return sent.ok === false;
 }
 
-export function resolveGraphCredentials(db?: DatabaseSync | null): GraphCredentials | null {
+function usableTenantGraphRow(row: { meta_access_token?: string; phone_number_id?: string } | undefined): GraphCredentials | null {
+  if (!row) return null;
+  const token = String(row.meta_access_token || "");
+  const phoneNumberId = String(row.phone_number_id || "");
+  if (isUsableGraphToken(token) && isUsablePhoneNumberId(phoneNumberId)) {
+    return { token, phoneNumberId, source: "tenant" };
+  }
+  return null;
+}
+
+/**
+ * Env credentials win for every send.
+ * A tenant id (including "") uses only that clinic's row — never another clinic's WABA.
+ * Omit tenantId to scan any connected clinic (readiness overview only).
+ */
+export function resolveGraphCredentials(db?: DatabaseSync | null, tenantId?: string | null): GraphCredentials | null {
   const envToken = readSecret("META_ACCESS_TOKEN", "WHATSAPP_ACCESS_TOKEN");
   const envPhone = readSecret("META_PHONE_NUMBER_ID", "WHATSAPP_PHONE_NUMBER_ID");
   if (isUsableGraphToken(envToken) && isUsablePhoneNumberId(envPhone)) {
@@ -52,6 +67,17 @@ export function resolveGraphCredentials(db?: DatabaseSync | null): GraphCredenti
 
   if (!db) return null;
   try {
+    if (tenantId !== undefined) {
+      const id = String(tenantId || "").trim();
+      if (!id) return null;
+      const row = db
+        .prepare(
+          `SELECT meta_access_token, phone_number_id FROM tenants WHERE id = ?`
+        )
+        .get(id) as { meta_access_token?: string; phone_number_id?: string } | undefined;
+      return usableTenantGraphRow(row);
+    }
+
     const rows = db
       .prepare(
         `SELECT meta_access_token, phone_number_id FROM tenants
@@ -59,9 +85,8 @@ export function resolveGraphCredentials(db?: DatabaseSync | null): GraphCredenti
       )
       .all() as { meta_access_token: string; phone_number_id: string }[];
     for (const row of rows) {
-      if (isUsableGraphToken(row.meta_access_token) && isUsablePhoneNumberId(row.phone_number_id)) {
-        return { token: row.meta_access_token, phoneNumberId: row.phone_number_id, source: "tenant" };
-      }
+      const creds = usableTenantGraphRow(row);
+      if (creds) return creds;
     }
   } catch {
     /* tenants table may be missing in isolated tests */
@@ -364,7 +389,7 @@ export async function dispatchWhatsAppCloudMessage(opts: {
         critical: isCriticalWhatsAppKind(kind),
         database: opts.db,
       });
-      if (!gate.ok) {
+      if (gate.ok === false) {
         return { ok: false, error: gate.error, channel: "none" };
       }
     } catch (err) {
@@ -372,7 +397,7 @@ export async function dispatchWhatsAppCloudMessage(opts: {
     }
   }
 
-  const creds = resolveGraphCredentials(opts.db);
+  const creds = resolveGraphCredentials(opts.db, tenantId);
 
   if (creds) {
     let graph: GraphMessageResult;

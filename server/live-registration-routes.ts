@@ -13,7 +13,7 @@ import { dispatchWhatsAppCloudMessage, isCloudDispatchFailure } from "./graph-wh
  * including inside the esbuild bundle dist/server.cjs
  * (`node dist/server.cjs` / Cloud Run). DEMO_PASSWORD seed paths are unchanged.
  */
-async function dispatchRegisterOtp(phone: string, name: string, otp: string, purpose: string) {
+async function dispatchRegisterOtp(phone: string, name: string, otp: string, purpose: string, tenantId: string) {
   return dispatchWhatsAppCloudMessage({
     to: phone,
     kind: "otp",
@@ -21,6 +21,7 @@ async function dispatchRegisterOtp(phone: string, name: string, otp: string, pur
     otp,
     purpose,
     db: getDb(),
+    tenantId,
   });
 }
 
@@ -152,7 +153,7 @@ async function handleRegisterPractice(req: Request, res: Response) {
     )
     .run(verificationId, phone, email, otp, JSON.stringify(otpPayload), now, expiresAt);
 
-  const sent = await dispatchRegisterOtp(phone, name, otp, "register");
+  const sent = await dispatchRegisterOtp(phone, name, otp, "register", tenantId);
   if (otpDispatchFailure(res, sent)) return;
 
   return res.json({

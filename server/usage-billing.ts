@@ -1,4 +1,4 @@
-import type { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { getDb } from "./db.ts";
 import {
   GEMINI_SCRIBE_RAW_COST_NOTE,
@@ -320,7 +320,7 @@ export function usageBreakdown(opts: {
   const db = opts.database || getDb();
   const from = String(opts.from || "").trim() || "1970-01-01T00:00:00.000Z";
   const to = String(opts.to || "").trim() || new Date().toISOString();
-  const params: unknown[] = [from, to];
+  const params: SQLInputValue[] = [from, to];
   let tenantSql = "";
   if (opts.tenantId) {
     tenantSql = "AND e.tenant_id = ?";
