@@ -253,6 +253,7 @@ Paste **only after** the smoke gate in §5 is green:
 | User data deletion instructions (human page) | `https://www.mylumera.in/data-deletion-instructions` |
 | Government / public-authority data request policy (Data Handling) | `https://www.mylumera.in/government-data-request-policy` |
 | Data deletion request callback | `https://www.mylumera.in/api/meta/data-deletion` (`POST`) |
+| Deauthorize Callback URL (Facebook Login) | `https://www.mylumera.in/api/meta/deauthorize` (`POST`) |
 | Valid OAuth Redirect URIs (Facebook Login) | `https://www.mylumera.in/api/auth/facebook/callback` |
 | WhatsApp webhook callback URL | `https://www.mylumera.in/api/meta/webhook` (`GET` challenge + `POST`) |
 

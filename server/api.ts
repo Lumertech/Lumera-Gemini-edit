@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createWhatsAppRouter } from "./whatsapp.ts";
 import { createMetaRouter } from "./meta.ts";
+import { rememberFacebookAppUser } from "./meta-signed-request.ts";
 import { createAbdmRouter } from "./abdm.ts";
 import {
   DEMO_TENANT_ID,
@@ -569,6 +570,13 @@ export function createApiRouter(): Router {
       getDb()
         .prepare("UPDATE users SET last_login = ?, whatsapp_verified = 1, avatar_url = COALESCE(NULLIF(?, ''), avatar_url) WHERE id = ?")
         .run(new Date().toISOString(), identity.avatarUrl, user.id);
+      if (identity.facebookId) {
+        try {
+          rememberFacebookAppUser(getDb(), user.id, identity.facebookId);
+        } catch (err) {
+          reportCaughtError(err, "facebook.oauth.remember-id");
+        }
+      }
       writeAudit(getDb(), user.id, user.name, "OAuth Sign In", `${user.email} signed in via facebook (Graph-verified)`);
       return res.redirect(`${appUrl}/login?oauth=facebook&status=ok`);
     } catch (err) {
@@ -628,6 +636,14 @@ export function createApiRouter(): Router {
       return res.status(403).json({ error: "This account has been disabled" });
     }
     if (rejectClinicTenantBlocked(user, res)) return;
+
+    if (identity.facebookId) {
+      try {
+        rememberFacebookAppUser(getDb(), user.id, identity.facebookId);
+      } catch (err) {
+        reportCaughtError(err, "facebook.oauth.remember-id");
+      }
+    }
 
     const skipOtp = Boolean(req.body?.skipOtp) && allowSkipOtp();
     const federatedVerified =

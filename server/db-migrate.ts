@@ -95,6 +95,9 @@ export function migrate(database: SqlDatabase) {
     database.exec("ALTER TABLE users ADD COLUMN pack_id TEXT DEFAULT ''");
   } catch {}
   try {
+    database.exec("ALTER TABLE users ADD COLUMN facebook_id TEXT DEFAULT ''");
+  } catch {}
+  try {
     database.exec("ALTER TABLE doctors ADD COLUMN pack_id TEXT DEFAULT ''");
   } catch {}
   try {

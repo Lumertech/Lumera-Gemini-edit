@@ -17,7 +17,8 @@ export const BOOTSTRAP_DDL = `
       hfr_id TEXT DEFAULT '',
       onboarding_completed INTEGER DEFAULT 0,
       practice_type TEXT DEFAULT 'individual',
-      specialty TEXT DEFAULT ''
+      specialty TEXT DEFAULT '',
+      facebook_id TEXT DEFAULT ''
     );
 
     CREATE TABLE IF NOT EXISTS sessions (
