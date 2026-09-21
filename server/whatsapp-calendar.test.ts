@@ -12,11 +12,13 @@ import { installWhatsAppRouterPatch, protectWhatsAppDashboard } from "./whatsapp
 import { DEMO_TENANT_ID, getDb, initDatabase } from "./db.ts";
 import { hashPassword } from "./password.ts";
 import { applyWalletTransaction } from "./usage-wallet.ts";
+import { canonicalAppointmentPhone } from "./clinical.ts";
 import {
   appointmentInstantUtc,
   bookWhatsAppAppointment,
   dispatchAppointmentReminder,
   dispatchWhatsAppBookConfirmation,
+  findActiveAppointment,
   parseTimeSlot,
   runAppointmentReminders,
   tenantUtcOffsetMinutes,
@@ -222,7 +224,7 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
 
     const count = getDb()
       .prepare("SELECT COUNT(*) AS c FROM appointments WHERE tenant_id = ? AND patient_phone = ?")
-      .get(clinic.tenantId, phone) as { c: number };
+      .get(clinic.tenantId, canonicalAppointmentPhone(phone)) as { c: number };
     assert.equal(count.c, 1);
   });
 
@@ -511,6 +513,167 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
       if (prevPhone === undefined) delete process.env.META_PHONE_NUMBER_ID;
       else process.env.META_PHONE_NUMBER_ID = prevPhone;
     }
+  });
+
+  it("booking stores E.164 patient_phone and Reminder matches +919999973271 variants", async () => {
+    const saved: Record<string, string | undefined> = {};
+    for (const key of ["META_ACCESS_TOKEN", "META_PHONE_NUMBER_ID", "WHATSAPP_ACCESS_TOKEN", "WHATSAPP_PHONE_NUMBER_ID"]) {
+      saved[key] = process.env[key];
+      delete process.env[key];
+    }
+    try {
+      const clinic = createClinicUser("clipA");
+      const token = await login(clinic.email);
+      const auth = { Authorization: `Bearer ${token}` };
+      const spaced = "+91 99999 73271";
+      const e164 = "+919999973271";
+
+      const created = await jsonRequest(
+        port,
+        "POST",
+        "/api/patients",
+        { name: "A1 Test Recipient", age: 34, gender: "Female", phone: spaced },
+        auth
+      );
+      assert.equal(created.status, 201, String(created.json.error || ""));
+      const patientId = String((created.json.patient as { id: string }).id);
+
+      const booked = await jsonRequest(
+        port,
+        "POST",
+        "/api/appointments",
+        {
+          patientId,
+          doctorId: clinic.doctorId,
+          date: "2026-10-02",
+          timeSlot: "11:15 AM",
+          type: "New Consultation",
+          source: "Walk-in",
+        },
+        auth
+      );
+      assert.equal(booked.status, 201, String(booked.json.error || ""));
+      const appointment = booked.json.appointment as { id: string; patientPhone: string };
+      assert.equal(appointment.patientPhone, e164);
+
+      for (const variant of [e164, spaced, "9999973271", "91 99999 73271"]) {
+        const found = findActiveAppointment({ tenantId: clinic.tenantId, patientPhone: variant });
+        assert.equal(found?.id, appointment.id, variant);
+        assert.equal(String(found?.patient_phone || ""), e164);
+      }
+
+      getDb().prepare("UPDATE appointments SET patient_phone = '' WHERE id = ?").run(appointment.id);
+      const recovered = findActiveAppointment({ tenantId: clinic.tenantId, patientPhone: spaced });
+      assert.equal(recovered?.id, appointment.id);
+      assert.equal(String(recovered?.patient_phone || ""), e164);
+
+      getDb().prepare("UPDATE appointments SET patient_phone = ? WHERE id = ?").run("+910000000000", appointment.id);
+      const reminded = await jsonRequest(
+        port,
+        "POST",
+        "/api/whatsapp/outbound/trigger",
+        {
+          eventType: "appointment_reminder_24h",
+          patientPhone: spaced,
+          patientName: "A1 Test Recipient",
+          tenantId: clinic.tenantId,
+        },
+        auth
+      );
+      assert.equal(reminded.status, 201, String(reminded.json.error || ""));
+      const healed = getDb()
+        .prepare("SELECT patient_phone FROM appointments WHERE id = ?")
+        .get(appointment.id) as { patient_phone: string };
+      assert.equal(healed.patient_phone, e164);
+      const event = getDb()
+        .prepare(
+          "SELECT patient_phone, event_type FROM whatsapp_outbound_events WHERE id = ?"
+        )
+        .get(String(reminded.json.eventId || "")) as { patient_phone: string; event_type: string };
+      assert.equal(event.event_type, "appointment_reminder");
+      assert.equal(event.patient_phone, e164);
+
+      const renamed = await jsonRequest(
+        port,
+        "PATCH",
+        `/api/patients/${patientId}`,
+        { phone: "9999900001" },
+        auth
+      );
+      assert.equal(renamed.status, 200, String(renamed.json.error || ""));
+      const afterRename = getDb()
+        .prepare("SELECT patient_phone FROM appointments WHERE id = ?")
+        .get(appointment.id) as { patient_phone: string };
+      assert.equal(afterRename.patient_phone, "+919999900001");
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+
+  it("Reminder rejects a phone with no active upcoming appointment and writes no outbound event", async () => {
+    const clinic = createClinicUser("noSlot");
+    const token = await login(clinic.email);
+    const auth = { Authorization: `Bearer ${token}` };
+    const created = await jsonRequest(
+      port,
+      "POST",
+      "/api/patients",
+      { name: "No Slot", age: 40, gender: "Male", phone: "+919999973271" },
+      auth
+    );
+    assert.equal(created.status, 201, String(created.json.error || ""));
+    const patientId = String((created.json.patient as { id: string }).id);
+    const booked = await jsonRequest(
+      port,
+      "POST",
+      "/api/appointments",
+      { patientId, doctorId: clinic.doctorId, date: "2026-10-03", timeSlot: "09:00 AM" },
+      auth
+    );
+    const appointmentId = String((booked.json.appointment as { id: string }).id);
+    getDb().prepare("UPDATE appointments SET status = 'Cancelled', patient_phone = '' WHERE id = ?").run(appointmentId);
+
+    const phone = "+91 99999 73271";
+    const before = getDb()
+      .prepare("SELECT COUNT(*) AS c FROM whatsapp_outbound_events WHERE patient_phone LIKE ?")
+      .get("%9999973271%") as { c: number };
+    const missed = await jsonRequest(
+      port,
+      "POST",
+      "/api/whatsapp/outbound/trigger",
+      {
+        eventType: "appointment_reminder_24h",
+        patientPhone: phone,
+        patientName: "No Slot",
+        tenantId: clinic.tenantId,
+      },
+      auth
+    );
+    assert.equal(missed.status, 404);
+    assert.match(String(missed.json.error || ""), /active upcoming appointment/i);
+    assert.match(String(missed.json.error || ""), /Book a slot/i);
+    const after = getDb()
+      .prepare("SELECT COUNT(*) AS c FROM whatsapp_outbound_events WHERE patient_phone LIKE ?")
+      .get("%9999973271%") as { c: number };
+    assert.equal(after.c, before.c);
+
+    const unknown = await jsonRequest(
+      port,
+      "POST",
+      "/api/whatsapp/outbound/trigger",
+      {
+        eventType: "appointment_reminder",
+        patientPhone: "+919111100000",
+        patientName: "Nobody",
+        tenantId: clinic.tenantId,
+      },
+      auth
+    );
+    assert.equal(unknown.status, 404);
+    assert.match(String(unknown.json.error || ""), /No active upcoming appointment/);
   });
 
   it("calendar send path imports Meta Graph helpers instead of a competing Graph POST", () => {

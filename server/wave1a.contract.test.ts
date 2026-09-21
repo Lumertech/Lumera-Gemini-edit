@@ -4,6 +4,7 @@ import { after, before, describe, it } from "node:test";
 import express from "express";
 import { attachUser } from "./auth.ts";
 import { createApiRouter } from "./api.ts";
+import { canonicalAppointmentPhone } from "./clinical.ts";
 import { DEMO_TENANT_ID, getDb, initDatabase } from "./db.ts";
 import { hashPassword } from "./password.ts";
 
@@ -205,7 +206,7 @@ describe("Wave 1A patient/appointment contract", () => {
     assert.equal(appointment.patientId, patient.id);
     assert.equal(appointment.patientName, "Meera Shah");
     assert.equal(appointment.uhid, patient.uhid);
-    assert.equal(appointment.patientPhone, patient.phone);
+    assert.equal(appointment.patientPhone, canonicalAppointmentPhone(String(patient.phone)));
     assert.equal(appointment.doctorId, clinic.doctorId);
     assert.equal(appointment.doctorName, `Dr w1a`);
     assert.equal(appointment.vitals, null);

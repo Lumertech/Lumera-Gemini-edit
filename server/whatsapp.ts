@@ -663,7 +663,10 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
           patientPhone,
         });
         if (!existing) {
-          return res.status(404).json({ error: "No upcoming appointment found for this patient." });
+          return res.status(404).json({
+            error:
+              "No active upcoming appointment matches this patient phone. Book a slot for the selected patient in this clinic, then trigger the reminder again.",
+          });
         }
         const window = eventType === "appointment_reminder_2h" ? "2h" : "24h";
         const result = await dispatchAppointmentReminder({
