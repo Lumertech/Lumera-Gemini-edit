@@ -60,15 +60,19 @@ export function applyWhatsAppOutboundStatus(
 
   if (matchedIds.size === 0 && recipientId) {
     const plusPrefixed = recipientId.startsWith("+") ? recipientId : `+${recipientId}`;
-    const last10 = normalizePhoneDigits(recipientId).slice(-10);
+    const digits = normalizePhoneDigits(recipientId);
+    const last10 = digits.slice(-10);
+    const phoneDigitsExpr =
+      "replace(replace(replace(replace(patient_phone, '+', ''), ' ', ''), '-', ''), '(', '')";
     const candidates = db
       .prepare(
         `SELECT id, patient_phone FROM whatsapp_outbound_events
          WHERE patient_phone = ?
             OR patient_phone = ?
-            OR (? != '' AND patient_phone LIKE '%' || ? || '%')`
+            OR ${phoneDigitsExpr} = ?
+            OR (? != '' AND ${phoneDigitsExpr} LIKE '%' || ? || '%')`
       )
-      .all(recipientId, plusPrefixed, last10, last10) as Array<{ id: string; patient_phone: string }>;
+      .all(recipientId, plusPrefixed, digits, last10, last10) as Array<{ id: string; patient_phone: string }>;
     for (const row of candidates) {
       if (phonesMatch(row.patient_phone, recipientId)) matchedIds.add(row.id);
     }
