@@ -168,11 +168,17 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
     }
 
     try {
-      for (const buttonEnv of [undefined, "false"] as const) {
-        if (buttonEnv === undefined) delete process.env.META_OTP_TEMPLATE_BUTTON;
-        else process.env.META_OTP_TEMPLATE_BUTTON = buttonEnv;
+      const cases = [
+        { buttonEnv: undefined, language: undefined, otp: "654321" },
+        { buttonEnv: "false" as const, language: "en", otp: "111222" },
+      ];
+      for (const testCase of cases) {
+        if (testCase.buttonEnv === undefined) delete process.env.META_OTP_TEMPLATE_BUTTON;
+        else process.env.META_OTP_TEMPLATE_BUTTON = testCase.buttonEnv;
+        if (testCase.language === undefined) delete process.env.META_OTP_TEMPLATE_LANGUAGE;
+        else process.env.META_OTP_TEMPLATE_LANGUAGE = testCase.language;
 
-        const { result, captured } = await send(buttonEnv === undefined ? "654321" : "111222", "wamid.OTP_TPL");
+        const { result, captured } = await send(testCase.otp, "wamid.OTP_TPL");
         assert.equal(result.ok, true);
         assert.equal(captured.length, 1);
         assert.equal(captured[0].body.type, "template");
@@ -183,7 +189,7 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
             type?: string;
             sub_type?: string;
             index?: string;
-            parameters?: Array<{ type?: string; text?: string }>;
+            parameters?: Array<{ type?: string; text?: string; coupon_code?: string }>;
           }>;
         };
         assert.equal(template.name, "lumera_login_otp");
@@ -191,11 +197,11 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
         const body = template.components?.find((component) => component.type === "body");
         const button = template.components?.find((component) => component.type === "button");
         assert.equal(body?.parameters?.[0]?.type, "text");
-        assert.equal(body?.parameters?.[0]?.text, buttonEnv === undefined ? "654321" : "111222");
-        assert.equal(button?.sub_type, "url");
+        assert.equal(body?.parameters?.[0]?.text, testCase.otp);
+        assert.equal(button?.sub_type, "copy_code");
         assert.equal(button?.index, "0");
-        assert.equal(button?.parameters?.[0]?.type, "text");
-        assert.equal(button?.parameters?.[0]?.text, buttonEnv === undefined ? "654321" : "111222");
+        assert.equal(button?.parameters?.[0]?.type, "coupon_code");
+        assert.equal(button?.parameters?.[0]?.coupon_code, testCase.otp);
       }
     } finally {
       if (prevName === undefined) delete process.env.META_OTP_TEMPLATE_NAME;
