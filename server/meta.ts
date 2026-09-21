@@ -89,17 +89,11 @@ export function applyWhatsAppOutboundStatus(
 }
 
 /**
- * Facebook App Dashboard probes callback URLs with GET and treats 404 as invalid.
- * The real callback stays POST (signed_request). This probe changes no data.
+ * Facebook App Dashboard validates these callback URLs with GET and treats 404 as invalid.
+ * Body is a health check only. POST (signed_request) is unchanged and is the real callback.
  */
-export function handleMetaCallbackGetProbe(req: Request, res: Response) {
-  const callback = req.path.includes("deauthorize") ? "deauthorize" : "data-deletion";
-  res.status(200).json({
-    ok: true,
-    callback,
-    message:
-      "This Meta callback accepts POST only. A signed_request is required. This GET probe does not change any data.",
-  });
+export function handleMetaCallbackGetProbe(_req: Request, res: Response) {
+  res.status(200).json({ ok: true, status: "ok" });
 }
 
 export function createMetaRouter(): Router {

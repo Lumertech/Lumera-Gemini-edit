@@ -354,9 +354,7 @@ describe("Data deletion signed_request", () => {
     try {
       const probe = await jsonRequest(port, "GET", "/api/meta/data-deletion");
       assert.equal(probe.status, 200);
-      assert.equal(probe.json.ok, true);
-      assert.equal(probe.json.callback, "data-deletion");
-      assert.match(String(probe.json.message || ""), /POST only/);
+      assert.deepEqual(probe.json, { ok: true, status: "ok" });
 
       const signed = signMetaSignedRequest({ user_id: "meta-user-42" }, "deletion-http-secret");
       const good = await jsonRequest(port, "POST", "/api/meta/data-deletion", { signed_request: signed });

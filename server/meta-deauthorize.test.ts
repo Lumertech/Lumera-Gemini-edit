@@ -81,6 +81,8 @@ describe("POST /api/meta/deauthorize", () => {
     const runbook = fs.readFileSync(path.join(root, "docs/FIREBASE_CLOUD_RUN_DEPLOY.md"), "utf8");
     const meta = fs.readFileSync(path.join(root, "server/meta.ts"), "utf8");
     assert.match(runbook, /https:\/\/www\.mylumera\.in\/api\/meta\/deauthorize/);
+    assert.match(runbook, /https:\/\/www\.mylumera\.in\/api\/meta\/data-deletion/);
+    assert.match(runbook, /Do not paste `https:\/\/www\.mylumera\.in\/data-deletion-instructions`/);
     assert.match(meta, /router\.post\("\/deauthorize", handleMetaDeauthorizePost\)/);
     assert.match(meta, /router\.get\("\/deauthorize", handleMetaCallbackGetProbe\)/);
   });
@@ -94,10 +96,9 @@ describe("POST /api/meta/deauthorize", () => {
     try {
       const res = await fetch(`http://127.0.0.1:${port}/api/meta/deauthorize`);
       assert.equal(res.status, 200);
-      const body = (await res.json()) as { ok?: boolean; callback?: string; message?: string };
+      const body = (await res.json()) as { ok?: boolean; status?: string };
       assert.equal(body.ok, true);
-      assert.equal(body.callback, "deauthorize");
-      assert.match(body.message || "", /POST only/);
+      assert.equal(body.status, "ok");
       assert.equal(facebookIdOf(linked.id), "probe-fb-1");
     } finally {
       await close();
