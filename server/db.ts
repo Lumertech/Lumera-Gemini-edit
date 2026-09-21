@@ -44,6 +44,7 @@ export interface DbUser {
   practice_type?: string;
   specialty?: string;
   pack_id?: string;
+  facebook_id?: string;
 }
 
 export const DEMO_TENANT_ID = "tenant-lumera-main";

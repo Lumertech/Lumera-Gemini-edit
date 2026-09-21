@@ -52,6 +52,7 @@ export function isSecurityExemptPath(path: string): boolean {
   if (p === "/data-deletion-callback") return true;
   if (p === "/api/meta/webhook" || p === "/meta/webhook") return true;
   if (p === "/api/meta/data-deletion" || p === "/meta/data-deletion") return true;
+  if (p === "/api/meta/deauthorize" || p === "/meta/deauthorize") return true;
   if (p === "/api/billing/razorpay/webhook") return true;
   return false;
 }

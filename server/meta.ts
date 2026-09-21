@@ -11,7 +11,7 @@ import {
   getMetaVerifyToken,
   rejectProductionSimulator,
 } from "./meta-security.ts";
-import { handleMetaDataDeletionPost } from "./meta-signed-request.ts";
+import { handleMetaDataDeletionPost, handleMetaDeauthorizePost } from "./meta-signed-request.ts";
 import { normalizePhoneDigits, phonesMatch } from "./whatsapp-calendar-booking.ts";
 import type { SqlDatabase } from "./sql-engine.ts";
 
@@ -223,6 +223,10 @@ export function createMetaRouter(): Router {
   // POST /api/meta/data-deletion - Callback endpoint for Meta App Review & User Data Erasure
   // Production must set APP_URL=https://www.mylumera.in so confirmation links are not the Cloud Run host.
   router.post("/data-deletion", handleMetaDataDeletionPost);
+
+  // POST /api/meta/deauthorize — Facebook Login Deauthorize Callback.
+  // Paste: https://www.mylumera.in/api/meta/deauthorize
+  router.post("/deauthorize", handleMetaDeauthorizePost);
 
   // GET /api/meta/data-deletion-status — only COMPLETED for codes that exist and are completed.
   router.get("/data-deletion-status", (req: Request, res: Response) => {

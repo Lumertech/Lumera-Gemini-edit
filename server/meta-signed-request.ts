@@ -1,20 +1,22 @@
 /**
- * Meta / Facebook signed_request parser for the Data Deletion Request callback.
+ * Meta / Facebook signed_request parser for Data Deletion and Deauthorize callbacks.
  *
- * Spec (App Dashboard → Data Deletion Request Callback):
+ * Spec (App Dashboard → Data Deletion Request Callback / Facebook Login Deauthorize):
  * POST signed_request = "{base64url_sig}.{base64url_payload}"
  * HMAC-SHA256(payload_encoded, META_APP_SECRET) compared to decoded signature.
  * Payload algorithm must be HMAC-SHA256; user_id is the app-scoped Facebook id.
  *
  * https://developers.facebook.com/docs/development/create-an-app/app-dashboard/data-deletion-callback
+ * https://developers.facebook.com/docs/facebook-login/guides/advanced/manual-flow#deauth-callback
  */
 
 import crypto from "node:crypto";
 import type { Request, Response } from "express";
-import { findDataDeletionRequest, getDb, insertDataDeletionRequest } from "./db.ts";
+import { getDb, insertDataDeletionRequest, writeAudit } from "./db.ts";
 import { reportCaughtError } from "./error-tracker.ts";
 import { getMetaAppSecret } from "./meta-security.ts";
 import { appPublicUrl, isProduction } from "./runtime.ts";
+import type { SqlDatabase } from "./sql-engine.ts";
 
 export type SignedRequestPayload = {
   algorithm?: string;
@@ -173,4 +175,70 @@ export function handleMetaDataDeletionPost(req: Request, res: Response) {
       confirmation_code: code,
     });
   }
+}
+
+type FacebookLinkRow = { id: string; name: string };
+
+/** Store the app-scoped Facebook id on the Lumera user so deauthorize can unlink it. */
+export function rememberFacebookAppUser(database: SqlDatabase, lumeraUserId: string, facebookUserId: string): void {
+  const fb = String(facebookUserId || "").trim();
+  const id = String(lumeraUserId || "").trim();
+  if (!fb || !id) return;
+  database.prepare("UPDATE users SET facebook_id = '' WHERE facebook_id = ? AND id <> ?").run(fb, id);
+  database.prepare("UPDATE users SET facebook_id = ? WHERE id = ?").run(fb, id);
+}
+
+/** Clear facebook_id for every Lumera user linked to this app-scoped Facebook id. */
+export function clearFacebookAppUser(database: SqlDatabase, facebookUserId: string): FacebookLinkRow[] {
+  const fb = String(facebookUserId || "").trim();
+  if (!fb) return [];
+  const rows = database.prepare("SELECT id, name FROM users WHERE facebook_id = ?").all(fb) as FacebookLinkRow[];
+  if (!rows.length) return [];
+  database.prepare("UPDATE users SET facebook_id = '' WHERE facebook_id = ?").run(fb);
+  return rows;
+}
+
+/**
+ * POST /api/meta/deauthorize — Facebook Login deauthorize callback.
+ * Production requires a valid HMAC-SHA256 signed_request (META_APP_SECRET).
+ * Non-prod without a secret uses the same SANDBOX unsigned body.user_id bypass as data deletion.
+ * A verified payload's user_id is the only identity that can be unlinked.
+ */
+export function handleMetaDeauthorizePost(req: Request, res: Response) {
+  const signedDecision = decideDataDeletionSignedRequest({
+    signedRequest: req.body?.signed_request,
+    appSecret: getMetaAppSecret(),
+  });
+  if (signedDecision.ok === false) {
+    return res.status(signedDecision.status).json({ error: signedDecision.error });
+  }
+
+  const facebookUserId = signedDecision.unsignedDevBypass
+    ? String(req.body?.user_id || req.body?.userId || "").trim()
+    : String(signedDecision.userId || "").trim();
+
+  try {
+    const db = getDb();
+    const unlinked = facebookUserId ? clearFacebookAppUser(db, facebookUserId) : [];
+    const posture = signedDecision.unsignedDevBypass ? "SANDBOX unsigned" : "HMAC-SHA256 verified";
+    const subject = facebookUserId || "(none)";
+    const detail = unlinked.length
+      ? `Facebook deauthorize (${posture}) for app-scoped user ${subject}; unlinked Lumera user ${unlinked.map((row) => row.id).join(", ")}`
+      : `Facebook deauthorize (${posture}) for app-scoped user ${subject}; no matching Lumera account`;
+    try {
+      writeAudit(
+        db,
+        unlinked.length === 1 ? unlinked[0].id : "system-meta-compliance",
+        unlinked.length === 1 ? unlinked[0].name : "Meta Compliance Agent",
+        "Facebook Deauthorize",
+        detail
+      );
+    } catch (err) {
+      reportCaughtError(err, "meta.deauthorize.audit");
+    }
+  } catch (err) {
+    reportCaughtError(err, "meta.deauthorize.unlink");
+  }
+
+  return res.status(200).json({});
 }
