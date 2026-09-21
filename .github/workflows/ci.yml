@@ -18,14 +18,16 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: npm
+          # Skip the npm cache when the lockfile is absent so setup does not fail before install.
+          cache: ${{ hashFiles('package-lock.json') != '' && 'npm' || '' }}
 
       - name: Install dependencies
-        run: npm ci
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
 
       - name: Lint (tsc --noEmit)
         run: npm run lint
 
       # Exact globs from package.json "test" script — a failing step fails the workflow.
       - name: Test
-        run: npx tsx --test --test-concurrency=1 server/*.test.ts src/lib/*.test.ts src/nav/*.test.ts src/pages/*.test.ts src/components/admin/*.test.ts
+        run: npx tsx --test --test-concurrency=1 server/*.test.ts src/lib/*.test.ts src/nav/*.test.ts src/pages/*.test.ts src/components/admin/*.test.ts src/db/*.test.ts
