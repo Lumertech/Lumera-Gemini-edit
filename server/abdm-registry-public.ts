@@ -40,7 +40,7 @@ export function annotateAbdmRegistryJson(body: unknown): unknown {
 
   if (typeof body.message === "string") {
     const activated = body.message.match(
-      /^Welcome to Lumera! (.+) has been activated with 500 AI Scribe minutes and 100 monthly DHIS transactions\.$
+      /^Welcome to Lumera! (.+) has been activated with 500 AI Scribe minutes and 100 monthly DHIS transactions\.$/
     );
     if (activated) {
       body.message = practiceRegisteredWelcomeMessage(activated[1], placeholder);

@@ -733,7 +733,15 @@ describe("#35 overclaim grep (Platform ABHA / ABDM)", () => {
 
   it("NHA sandbox notices are present on Platform ABHA/ABDM files", () => {
     const clinical = fs.readFileSync(path.join(root, "server/clinical.ts"), "utf8");
-    const abdm = fs.readFileSync(path.join(root, "server/abdm.ts"), "utf8");
+    // Gateway routes live in the split modules so abdm.ts stays uploadable.
+    const abdm = [
+      "server/abdm.ts",
+      "server/abdm-consent-routes.ts",
+      "server/abdm-identity-routes.ts",
+      "server/abdm-internal.ts",
+    ]
+      .map((rel) => fs.readFileSync(path.join(root, rel), "utf8"))
+      .join("\n");
     assert.match(clinical, /NHA sandbox/);
     assert.match(abdm, /NHA sandbox/);
     assert.match(clinical, /LINKED_SANDBOX/);

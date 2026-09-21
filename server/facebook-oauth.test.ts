@@ -273,6 +273,18 @@ describe("Facebook OAuth identity", () => {
   });
 });
 
+/** Open sqlite before NODE_ENV=production; production refuses a fresh sqlite open. */
+function ensureSqliteBeforeProduction() {
+  const nodeEnv = process.env.NODE_ENV;
+  if (nodeEnv === "production") process.env.NODE_ENV = "test";
+  try {
+    initDatabase();
+  } finally {
+    if (nodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = nodeEnv;
+  }
+}
+
 describe("Facebook OAuth HTTP routes", () => {
   const restore = saveEnv([
     "NODE_ENV",
@@ -372,6 +384,7 @@ describe("Facebook OAuth HTTP routes", () => {
   });
 
   it("GET /api/auth/facebook/callback exchanges the code and issues a session cookie", async () => {
+    ensureSqliteBeforeProduction();
     process.env.NODE_ENV = "production";
     process.env.JWT_SECRET = "test-jwt-secret-lock-phi";
     process.env.APP_URL = "https://www.mylumera.in";
@@ -415,6 +428,7 @@ describe("Facebook OAuth HTTP routes", () => {
   });
 
   it("POST /api/auth/oauth rejects production client-email Facebook login", async () => {
+    ensureSqliteBeforeProduction();
     process.env.NODE_ENV = "production";
     process.env.JWT_SECRET = "test-jwt-secret-lock-phi";
     delete process.env.FACEBOOK_APP_ID;
