@@ -147,6 +147,72 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
     assert.equal((captured[0].body.text as { body?: string }).body, "platform");
   });
 
+  it("OTP named template always includes the button OTP parameter (#131008)", async () => {
+    const prevName = process.env.META_OTP_TEMPLATE_NAME;
+    const prevLang = process.env.META_OTP_TEMPLATE_LANGUAGE;
+    const prevButton = process.env.META_OTP_TEMPLATE_BUTTON;
+    process.env.META_OTP_TEMPLATE_NAME = "lumera_login_otp";
+    process.env.META_OTP_TEMPLATE_LANGUAGE = "en";
+    const credentials = { token: LIVE_TOKEN, phoneNumberId: LIVE_PHONE_ID, source: "env" as const };
+
+    async function send(otp: string, messageId: string) {
+      const captured: Array<{ url: string; body: Record<string, unknown> }> = [];
+      const result = await sendWhatsAppGraphMessage({
+        credentials,
+        to: "+919823455667",
+        otp,
+        purpose: "login",
+        fetchImpl: mockGraphFetch(captured, messageId),
+      });
+      return { result, captured };
+    }
+
+    try {
+      const cases = [
+        { buttonEnv: undefined, language: undefined, otp: "654321" },
+        { buttonEnv: "false" as const, language: "en", otp: "111222" },
+      ];
+      for (const testCase of cases) {
+        if (testCase.buttonEnv === undefined) delete process.env.META_OTP_TEMPLATE_BUTTON;
+        else process.env.META_OTP_TEMPLATE_BUTTON = testCase.buttonEnv;
+        if (testCase.language === undefined) delete process.env.META_OTP_TEMPLATE_LANGUAGE;
+        else process.env.META_OTP_TEMPLATE_LANGUAGE = testCase.language;
+
+        const { result, captured } = await send(testCase.otp, "wamid.OTP_TPL");
+        assert.equal(result.ok, true);
+        assert.equal(captured.length, 1);
+        assert.equal(captured[0].body.type, "template");
+        const template = captured[0].body.template as {
+          name?: string;
+          language?: { code?: string };
+          components?: Array<{
+            type?: string;
+            sub_type?: string;
+            index?: string;
+            parameters?: Array<{ type?: string; text?: string; coupon_code?: string }>;
+          }>;
+        };
+        assert.equal(template.name, "lumera_login_otp");
+        assert.equal(template.language?.code, "en");
+        const body = template.components?.find((component) => component.type === "body");
+        const button = template.components?.find((component) => component.type === "button");
+        assert.equal(body?.parameters?.[0]?.type, "text");
+        assert.equal(body?.parameters?.[0]?.text, testCase.otp);
+        assert.equal(button?.sub_type, "copy_code");
+        assert.equal(button?.index, "0");
+        assert.equal(button?.parameters?.[0]?.type, "coupon_code");
+        assert.equal(button?.parameters?.[0]?.coupon_code, testCase.otp);
+      }
+    } finally {
+      if (prevName === undefined) delete process.env.META_OTP_TEMPLATE_NAME;
+      else process.env.META_OTP_TEMPLATE_NAME = prevName;
+      if (prevLang === undefined) delete process.env.META_OTP_TEMPLATE_LANGUAGE;
+      else process.env.META_OTP_TEMPLATE_LANGUAGE = prevLang;
+      if (prevButton === undefined) delete process.env.META_OTP_TEMPLATE_BUTTON;
+      else process.env.META_OTP_TEMPLATE_BUTTON = prevButton;
+    }
+  });
+
   it("Graph path uses a utility template when META_REMINDER_TEMPLATE_NAME is set", async () => {
     process.env.META_ACCESS_TOKEN = LIVE_TOKEN;
     process.env.META_PHONE_NUMBER_ID = LIVE_PHONE_ID;
