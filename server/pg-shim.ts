@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { MessageChannel, Worker, receiveMessageOnPort } from "node:worker_threads";
+import { moduleAnchorUrl } from "./module-anchor.ts";
 import {
   isSqlitePragma,
   normalizeBindParams,
@@ -21,7 +22,9 @@ type WorkerResponse = {
 const QUERY_TIMEOUT_MS = 30_000;
 
 function resolveWorkerPath(): string {
-  const here = path.dirname(fileURLToPath(import.meta.url));
+  // Same CJS hole as sqlite-compat: import.meta.url is empty in dist/server.cjs.
+  // Anchor on the bundle path so dist/pg-sync-worker.cjs is found beside server.cjs.
+  const here = path.dirname(fileURLToPath(moduleAnchorUrl(import.meta.url)));
   const candidates = [
     path.join(here, "pg-sync-worker.cjs"),
     path.join(process.cwd(), "server", "pg-sync-worker.cjs"),
