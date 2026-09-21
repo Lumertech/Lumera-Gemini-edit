@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   conversationInitial,
+  findConversationIdByPhone,
   normalizeWhatsAppConversation,
   normalizeWhatsAppConversations,
   normalizeWhatsAppMessage,
+  resolveOutboundPatient,
 } from "./whatsappInbox.ts";
 
 describe("WhatsApp inbox API → suite UI mapping", () => {
@@ -61,5 +63,42 @@ describe("WhatsApp inbox API → suite UI mapping", () => {
     assert.equal(msg.time_display, "10:16 AM");
     assert.equal(msg.staff_name, "Meera");
     assert.equal(msg.translated_content, "नमस्ते");
+  });
+});
+
+describe("Outbound target follows the selected EMR patient", () => {
+  const inbox = [
+    { id: "conv-rajiv", patient_phone: "+91 98234 55667", patient_name: "Rajiv Saxena" },
+    { id: "conv-a1", patient_phone: "+91 99999 73271", patient_name: "A1 Test Recipient" },
+  ];
+
+  it("uses the EMR phone for outbound even when an inbox thread is open", () => {
+    const target = resolveOutboundPatient({
+      currentPatientName: "A1 Test Recipient",
+      currentPatientPhone: "+919999973271",
+      conversationName: "Rajiv Saxena",
+      conversationPhone: "+91 98234 55667",
+    });
+    assert.equal(target.name, "A1 Test Recipient");
+    assert.equal(target.phone, "+919999973271");
+  });
+
+  it("falls back to the open conversation when the EMR phone is blank", () => {
+    const target = resolveOutboundPatient({
+      currentPatientName: "Unassigned",
+      currentPatientPhone: "  ",
+      conversationName: "Rajiv Saxena",
+      conversationPhone: "+91 98234 55667",
+    });
+    assert.equal(target.name, "Rajiv Saxena");
+    assert.equal(target.phone, "+91 98234 55667");
+  });
+
+  it("matches +91, 91, and spaced forms and does not invent a conversation", () => {
+    assert.equal(findConversationIdByPhone(inbox, "+919999973271"), "conv-a1");
+    assert.equal(findConversationIdByPhone(inbox, "91 99999 73271"), "conv-a1");
+    assert.equal(findConversationIdByPhone(inbox, "9999973271"), "conv-a1");
+    assert.equal(findConversationIdByPhone(inbox, "+91 90000 00000"), null);
+    assert.equal(findConversationIdByPhone(inbox, ""), null);
   });
 });

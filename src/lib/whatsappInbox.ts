@@ -57,6 +57,49 @@ export function conversationInitial(name?: string | null): string {
   return trimmed ? trimmed.charAt(0) : "?";
 }
 
+/** Digits only, so "+91 99999 73271", "919999973271", and "+919999973271" compare equal. */
+export function phoneDigits(phone?: string | null): string {
+  return String(phone || "").replace(/\D/g, "");
+}
+
+function phonesMatch(a?: string | null, b?: string | null): boolean {
+  const left = phoneDigits(a);
+  const right = phoneDigits(b);
+  if (!left || !right) return false;
+  if (left === right) return true;
+  return left.length >= 10 && right.length >= 10 && left.slice(-10) === right.slice(-10);
+}
+
+/**
+ * Outbound reminder/packet target. A selected EMR phone wins over the open inbox
+ * thread so the panel does not stay stuck on the seed conversation.
+ */
+export function resolveOutboundPatient(input: {
+  currentPatientName?: string | null;
+  currentPatientPhone?: string | null;
+  conversationName?: string | null;
+  conversationPhone?: string | null;
+}): { name: string; phone: string } {
+  const phone = String(input.currentPatientPhone || "").trim();
+  if (phone) {
+    return { name: String(input.currentPatientName || "").trim(), phone };
+  }
+  return {
+    name: String(input.conversationName || input.currentPatientName || "").trim(),
+    phone: String(input.conversationPhone || "").trim(),
+  };
+}
+
+/** Inbox row whose phone matches, or null. Does not create a conversation. */
+export function findConversationIdByPhone<T extends { id: string; patient_phone?: string | null }>(
+  conversations: T[],
+  phone?: string | null,
+): string | null {
+  if (!phoneDigits(phone)) return null;
+  const match = conversations.find((row) => phonesMatch(row.patient_phone, phone));
+  return match?.id || null;
+}
+
 export function normalizeWhatsAppConversation(raw: unknown): WhatsAppConversationItem {
   const row = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
   const handover = str(row, "handover_mode", "handoverMode").toLowerCase();

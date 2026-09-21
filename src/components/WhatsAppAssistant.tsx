@@ -38,8 +38,10 @@ import { DocumentPreviewModal, DocumentPreviewData } from './whatsapp/DocumentPr
 import { OutboundTriggerPanel } from './whatsapp/OutboundTriggerPanel';
 import {
   conversationInitial,
+  findConversationIdByPhone,
   normalizeWhatsAppConversations,
   normalizeWhatsAppMessages,
+  resolveOutboundPatient,
   type WhatsAppChatMessage,
   type WhatsAppConversationItem,
 } from '../lib/whatsappInbox';
@@ -175,9 +177,24 @@ export const WhatsAppAssistant: React.FC<WhatsAppAssistantProps> = ({
   }, [messages, isTyping]);
 
   const activeConversation = conversations.find((c) => c.id === activeConvId) || conversations[0];
-  const activePatientPhone = activeConversation ? activeConversation.patient_phone : currentPatient.phone;
-  const activePatientName = activeConversation ? activeConversation.patient_name : currentPatient.name;
+  const emrPhoneBound = Boolean((currentPatient.phone || '').trim());
+  const outboundPatient = resolveOutboundPatient({
+    currentPatientName: currentPatient.name,
+    currentPatientPhone: currentPatient.phone,
+    conversationName: activeConversation?.patient_name,
+    conversationPhone: activeConversation?.patient_phone,
+  });
+  const activePatientPhone = outboundPatient.phone;
+  const activePatientName = outboundPatient.name;
   const isHumanHandover = activeConversation ? activeConversation.handover_mode === 'human' : false;
+
+  // Rebind the open thread when the EMR patient already has an inbox row.
+  // No row is created; outbound props still use currentPatient above.
+  useEffect(() => {
+    const matchId = findConversationIdByPhone(conversations, currentPatient.phone);
+    if (!matchId) return;
+    setActiveConvId((id) => (id === matchId ? id : matchId));
+  }, [currentPatient.id, currentPatient.phone, conversations]);
 
   // Handle Sending a Message (Patient or Staff)
   const handleSendMessage = async (textToSend?: string, overrideSender?: 'user' | 'bot') => {
@@ -644,7 +661,7 @@ export const WhatsAppAssistant: React.FC<WhatsAppAssistantProps> = ({
                         </span>
                       )}
                       <span>•</span>
-                      <span className="text-slate-400">UHID: {activeConversation?.patient_uhid || 'LUM-2026-0106'}</span>
+                      <span className="text-slate-400">UHID: {emrPhoneBound ? (currentPatient.uhid || '—') : (activeConversation?.patient_uhid || 'LUM-2026-0106')}</span>
                     </div>
                   </div>
                 </div>

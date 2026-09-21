@@ -14,9 +14,13 @@ import {
 async function jsonRequest(
   port: number,
   urlPath: string,
-  headers: Record<string, string> = {}
+  headers: Record<string, string> = {},
+  init: RequestInit = {}
 ): Promise<{ status: number; json: Record<string, unknown> }> {
-  const res = await fetch(`http://127.0.0.1:${port}${urlPath}`, { headers });
+  const res = await fetch(`http://127.0.0.1:${port}${urlPath}`, {
+    ...init,
+    headers,
+  });
   const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   return { status: res.status, json };
 }
@@ -94,5 +98,16 @@ describe("WhatsApp inbox HTTP contract for /app/whatsapp", () => {
     if (messages.length) {
       assert.ok(messages[0].content || messages[0].time_display !== undefined);
     }
+  });
+
+  it("refuses an outbound trigger that omits patientPhone instead of defaulting to Rajiv", async () => {
+    const res = await jsonRequest(
+      port,
+      "/api/whatsapp/outbound/trigger",
+      { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      { method: "POST", body: JSON.stringify({ eventType: "queue_token_update" }) }
+    );
+    assert.equal(res.status, 400);
+    assert.match(String(res.json.error || ""), /patientPhone/i);
   });
 });

@@ -632,15 +632,17 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
     try {
       const {
         eventType, // 'appointment_reminder' | 'post_consultation_dispatch' | 'queue_token_update'
-        patientPhone = "+91 98234 55667",
+        patientPhone: rawPatientPhone,
         patientName = "Rajiv Saxena",
         customPayload = {},
         tenantId: bodyTenantId,
         phoneNumberId,
         wabaId,
       } = req.body;
+      const patientPhone = String(rawPatientPhone ?? "").trim();
 
       if (!eventType) return res.status(400).json({ error: "eventType is required" });
+      if (!patientPhone) return res.status(400).json({ error: "patientPhone is required" });
 
       const reminderEvent =
         eventType === "appointment_reminder" || eventType === "appointment_reminder_24h" || eventType === "appointment_reminder_2h";
