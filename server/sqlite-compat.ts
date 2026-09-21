@@ -13,11 +13,14 @@ import { createRequire } from "node:module";
 import fs from "node:fs";
 import path from "node:path";
 import { databaseUrlFromEnv } from "../src/db/url.ts";
+import { moduleAnchorUrl } from "./module-anchor.ts";
 import { createPgShim } from "./pg-shim.ts";
 import { DATABASE_URL_REQUIRED_MESSAGE, isUnsetOrPlaceholder } from "./runtime.ts";
 import { sqliteFallbackForbidden, type SqlDatabase, type SqlStatement } from "./sql-engine.ts";
 
-const require = createRequire(import.meta.url);
+// import.meta.url is undefined in dist/server.cjs (esbuild CJS). Passing it
+// straight through crashes boot with filename Received undefined.
+const require = createRequire(moduleAnchorUrl(import.meta.url));
 const { DatabaseSync: SqliteDatabase } = require("node:sqlite") as {
   DatabaseSync: new (filename: string) => SqlDatabase;
 };
