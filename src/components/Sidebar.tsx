@@ -29,19 +29,9 @@ import { useNav } from '../nav/NavigationContext';
 import { appViewToPath } from '../nav/surfaces';
 import { isPolyclinicPractice } from '../lib/sessionWorkspace';
 import { allowedViewsForWorkflow, workflowForUser } from '../lib/specialtyWorkflow';
+import { primaryCtaTarget, ROLE_VISIBLE_VIEWS } from '../lib/roleViews';
 
-export const ROLE_VISIBLE_VIEWS: Record<string, NavView[]> = {
-  doctor: ['welcome', 'queue', 'opd-queue', 'rx', 'smart-rx', 'ambient', 'reports', 'appointments', 'polyclinic', 'whatsapp', 'voicebot', 'pharmacy-hub', 'billing', 'dhis', 'team', 'reception', 'kiosk', 'settings', 'wellness', 'therapy-session', 'consult-practice', 'physio-session', 'dental-chart'],
-  receptionist: ['welcome', 'reception', 'queue', 'opd-queue', 'appointments', 'kiosk', 'pharmacy-hub', 'billing', 'whatsapp', 'settings'],
-  polyclinic_admin: ['welcome', 'queue', 'opd-queue', 'reception', 'appointments', 'polyclinic', 'billing', 'reports', 'whatsapp', 'voicebot', 'pharmacy-hub', 'dhis', 'team', 'kiosk', 'settings'],
-  CLINIC_ADMIN: ['welcome', 'queue', 'opd-queue', 'reception', 'appointments', 'polyclinic', 'billing', 'reports', 'whatsapp', 'voicebot', 'pharmacy-hub', 'dhis', 'portal', 'team', 'kiosk', 'settings'],
-  super_admin: ['welcome', 'queue', 'opd-queue', 'reception', 'rx', 'smart-rx', 'ambient', 'reports', 'appointments', 'polyclinic', 'whatsapp', 'voicebot', 'pharmacy-hub', 'billing', 'dhis', 'team', 'kiosk', 'settings'],
-  patient: ['portal'],
-  nurse: ['reception', 'queue', 'opd-queue', 'reports', 'pharmacy-hub', 'settings'],
-  lab_technician: ['reports', 'queue', 'opd-queue', 'pharmacy-hub', 'settings'],
-  pharmacist: ['billing', 'pharmacy-hub', 'queue', 'opd-queue', 'settings'],
-  default: ['welcome', 'queue', 'opd-queue', 'reception', 'appointments', 'pharmacy-hub', 'billing', 'settings']
-};
+export { ROLE_VISIBLE_VIEWS };
 
 interface SidebarProps {
   currentView: NavView;
@@ -75,8 +65,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const pack = workflowForUser(user);
   allowedViews = allowedViewsForWorkflow(allowedViews, pack);
 
-  const canStartConsult = allowedViews.includes('rx') || allowedViews.includes('smart-rx') || allowedViews.includes(pack.homeView as NavView);
-  const startView = (pack.showMedicalRx ? 'rx' : pack.homeView) as NavView;
+  const primaryCta = primaryCtaTarget({
+    role: userRole,
+    showMedicalRx: pack.showMedicalRx,
+    homeView: pack.homeView,
+    allowedViews,
+  });
+  const startView = primaryCta.view as NavView;
   const canOpenAdminCms = userRole === 'super_admin';
 
   const suiteTitle =
@@ -215,7 +210,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       } flex-shrink-0 bg-slate-900 border-r border-slate-800 text-slate-300 flex flex-col justify-between transition-all duration-200 select-none z-20 overflow-hidden`}
     >
       <div className="flex-1 overflow-y-auto p-3 space-y-5 scrollbar-thin scrollbar-thumb-slate-800">
-        {canStartConsult && (
+        {primaryCta.visible && (
           <Link
             to={appViewToPath(startView, workspaceSlug)}
             title={isCollapsed ? pack.primaryCta : undefined}

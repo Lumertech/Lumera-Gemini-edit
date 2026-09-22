@@ -56,6 +56,7 @@ import {
   clinicianRxSpecialty,
   workflowForUser,
 } from './lib/specialtyWorkflow';
+import { consultEntryRedirectView, roleMayStartConsult } from './lib/roleViews';
 import { SpecialtyPackBoard } from './components/specialty-packs/SpecialtyPackBoard';
 
 export default function ClinicianApp() {
@@ -297,6 +298,7 @@ export default function ClinicianApp() {
   };
 
   const handleTransferToRx = (soap: SoapNote) => {
+    if (!roleMayStartConsult(user?.role)) return;
     setActiveSoapData(soap);
     setCurrentView('rx');
   };
@@ -430,6 +432,7 @@ export default function ClinicianApp() {
   };
 
   const handleStartConsultation = (apt: Appointment) => {
+    if (!roleMayStartConsult(user?.role)) return;
     const p = patients.find((pat) => pat.id === apt.patientId) || currentPatient;
     const d = resolveSessionDoctor(user, doctors);
     const selected = doctors.find((doc) => doc.id === apt.doctorId);
@@ -471,10 +474,11 @@ export default function ClinicianApp() {
     allowedViews = allowedViews.filter((v) => v !== 'team' && v !== 'polyclinic');
   }
   allowedViews = allowedViewsForWorkflow(allowedViews, pack);
+  const mayStartConsult = roleMayStartConsult(userRole);
   const isViewAllowed =
     allowedViews.includes(currentView) ||
     currentView === 'opd-queue' ||
-    currentView === 'smart-rx' ||
+    (currentView === 'smart-rx' && mayStartConsult) ||
     currentView === 'welcome' ||
     currentView === 'settings' ||
     currentView === 'wellness' ||
@@ -483,11 +487,22 @@ export default function ClinicianApp() {
     currentView === 'physio-session' ||
     currentView === 'dental-chart';
 
+  const consultRedirect = consultEntryRedirectView(userRole, currentView, clinicianHomeView(user));
+
   useEffect(() => {
     if (!isPolyclinicPractice(user) && (currentView === 'polyclinic' || currentView === 'team')) {
       setCurrentView('queue');
     }
   }, [user?.practiceType, currentView]);
+
+  // Defense in depth: a pasted /rx or Ambient URL must not land reception on Access Restricted.
+  // Server AuthZ for direct /rx remains a Platform follow-up after #107.
+  useEffect(() => {
+    if (!consultRedirect) return;
+    const home = canonicalizeAppView(consultRedirect);
+    if (canonicalizeAppView(currentView) === home) return;
+    go('app', { appView: home, replace: true });
+  }, [consultRedirect, currentView, go]);
 
   const showRxStudio = (currentView === 'rx' || currentView === 'smart-rx') && Boolean(currentPatient.id);
   const showRxEmptyGuard = (currentView === 'rx' || currentView === 'smart-rx') && !currentPatient.id;
@@ -534,7 +549,7 @@ export default function ClinicianApp() {
               {pack.sandboxNotice}
             </div>
           )}
-          {!isViewAllowed ? (
+          {consultRedirect ? null : !isViewAllowed ? (
             <div className="flex flex-col items-center justify-center h-full p-8 bg-white rounded-xl shadow-sm border border-slate-200 text-center my-auto">
               <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center text-red-600 mb-4 mx-auto">
                 <ShieldCheck className="w-8 h-8" />
@@ -561,6 +576,7 @@ export default function ClinicianApp() {
                     setCurrentView('reception');
                   }}
                   onStartFirstConsultation={() => {
+                    if (!mayStartConsult) return;
                     if (currentPatient.id) {
                       setCurrentView('rx');
                       return;
@@ -611,7 +627,7 @@ export default function ClinicianApp() {
               appointments={appointments}
               workflow={pack}
               firstRunHint={intakeIntent !== 'none' || patients.length === 0}
-              openRxAfterSave={intakeIntent === 'start-consult'}
+              openRxAfterSave={mayStartConsult && intakeIntent === 'start-consult'}
               onSelectPatient={setCurrentPatient}
               onAddNewPatient={async (newPat) => {
                 try {
@@ -636,8 +652,11 @@ export default function ClinicianApp() {
                   throw err instanceof Error ? err : new Error('Could not issue OPD token');
                 }
               }}
-              onSwitchToConsultation={() => setCurrentView('rx')}
+              onSwitchToConsultation={() => {
+                if (mayStartConsult) setCurrentView('rx');
+              }}
               onStartConsult={(pat) => {
+                if (!mayStartConsult) return;
                 setCurrentPatient(pat);
                 setIntakeIntent('none');
                 setCurrentView('rx');
@@ -763,7 +782,7 @@ export default function ClinicianApp() {
             <LabReportAnalyzer
               currentPatient={currentPatient}
               onApplyClinicalFindings={() => {
-                setCurrentView('rx');
+                if (mayStartConsult) setCurrentView('rx');
               }}
             />
           )}

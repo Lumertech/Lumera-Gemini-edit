@@ -25,6 +25,8 @@ import {
 import { Patient, Doctor, Appointment, isAbhaLinked } from '../types';
 import type { SpecialtyWorkflowPack } from '../lib/specialtyWorkflow';
 import { PatientRecordModal } from './PatientRecordModal';
+import { useAuth } from '../auth/AuthContext';
+import { roleMayStartConsult } from '../lib/roleViews';
 
 interface ReceptionProps {
   patients: Patient[];
@@ -53,6 +55,8 @@ export const Reception: React.FC<ReceptionProps> = ({
   openRxAfterSave = false,
   workflow,
 }) => {
+  const { user } = useAuth();
+  const showStartConsult = roleMayStartConsult(user?.role);
   // Search & Filter
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<Patient[]>(patients);
@@ -269,7 +273,7 @@ export const Reception: React.FC<ReceptionProps> = ({
       const saved = (await onAddNewPatient(newPatient)) || newPatient;
       await onCheckInPatient(saved, doctor, formData.consultationType);
       onSelectPatient(saved);
-      if (openRxAfterSave && onStartConsult) {
+      if (openRxAfterSave && onStartConsult && showStartConsult) {
         onStartConsult(saved);
       }
 
@@ -663,6 +667,7 @@ export const Reception: React.FC<ReceptionProps> = ({
 
                   <div className="flex items-center gap-2">
                     <button
+                      type="button"
                       onClick={() => setSelectedRecordPatient(p)}
                       className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1 cursor-pointer"
                       title="View Patient Record, History & Uploads"
@@ -670,17 +675,21 @@ export const Reception: React.FC<ReceptionProps> = ({
                       <FileText className="w-3.5 h-3.5 text-indigo-600" />
                       <span>Record & Files</span>
                     </button>
-                    <button
-                      onClick={() => {
-                        onSelectPatient(p);
-                        if (onStartConsult) onStartConsult(p);
-                        else onSwitchToConsultation();
-                      }}
-                      className="px-3 py-1.5 bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1 cursor-pointer"
-                    >
-                      <span>Start Consult</span>
-                      <ArrowRight className="w-3.5 h-3.5" />
-                    </button>
+                    {showStartConsult && (
+                      <button
+                        type="button"
+                        data-testid="start-consult"
+                        onClick={() => {
+                          onSelectPatient(p);
+                          if (onStartConsult) onStartConsult(p);
+                          else onSwitchToConsultation();
+                        }}
+                        className="px-3 py-1.5 bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1 cursor-pointer"
+                      >
+                        <span>Start Consult</span>
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                   </div>
                 </div>
               );

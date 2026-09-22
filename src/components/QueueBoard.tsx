@@ -31,6 +31,8 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { Appointment, Vitals, Patient, Doctor, isAbhaLinked } from '../types';
+import { useAuth } from '../auth/AuthContext';
+import { roleMayStartConsult } from '../lib/roleViews';
 
 interface QueueBoardProps {
   appointments: Appointment[];
@@ -53,6 +55,8 @@ export const QueueBoard: React.FC<QueueBoardProps> = ({
   onOpenBill,
   onAddNewToken,
 }) => {
+  const { user } = useAuth();
+  const showStartConsult = roleMayStartConsult(user?.role);
   const [filterStatus, setFilterStatus] = useState<string>('All');
   const [callingToken, setCallingToken] = useState<Appointment | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -492,15 +496,18 @@ export const QueueBoard: React.FC<QueueBoardProps> = ({
                         <span className="hidden sm:inline">Bill</span>
                       </button>
 
-                      {/* Primary Call & Start Consultation Button */}
-                      <button
-                        onClick={() => handleCallAndStartConsultation(apt)}
-                        className="px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm shadow-blue-200 transition-all cursor-pointer whitespace-nowrap"
-                        title="Call patient and launch Smart Rx Studio directly"
-                      >
-                        <Stethoscope className="w-3.5 h-3.5" />
-                        <span>Start Consult</span>
-                      </button>
+                      {showStartConsult && (
+                        <button
+                          type="button"
+                          data-testid="start-consult"
+                          onClick={() => handleCallAndStartConsultation(apt)}
+                          className="px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm shadow-blue-200 transition-all cursor-pointer whitespace-nowrap"
+                          title="Call patient and launch Smart Rx Studio directly"
+                        >
+                          <Stethoscope className="w-3.5 h-3.5" />
+                          <span>Start Consult</span>
+                        </button>
+                      )}
                     </div>
                   </div>
                 );
@@ -582,13 +589,17 @@ export const QueueBoard: React.FC<QueueBoardProps> = ({
 
                 {/* Primary Action Button */}
                 <div className="flex items-center gap-1.5 pt-1">
-                  <button
-                    onClick={() => handleCallAndStartConsultation(apt)}
-                    className="flex-1 py-1.5 px-3 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs flex items-center justify-center gap-1 shadow-xs transition-all cursor-pointer"
-                  >
-                    <Stethoscope className="w-3.5 h-3.5" />
-                    <span>Start Consult</span>
-                  </button>
+                  {showStartConsult && (
+                    <button
+                      type="button"
+                      data-testid="start-consult"
+                      onClick={() => handleCallAndStartConsultation(apt)}
+                      className="flex-1 py-1.5 px-3 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs flex items-center justify-center gap-1 shadow-xs transition-all cursor-pointer"
+                    >
+                      <Stethoscope className="w-3.5 h-3.5" />
+                      <span>Start Consult</span>
+                    </button>
+                  )}
 
                   <button
                     onClick={() => handleOpenVitalsModal(apt)}
@@ -873,18 +884,22 @@ export const QueueBoard: React.FC<QueueBoardProps> = ({
 
               {/* Drawer Footer Actions */}
               <div className="p-4 bg-slate-50 border-t border-slate-200 space-y-2 shrink-0">
-                <button
-                  onClick={() => {
-                    const apt = drawerData.appointment;
-                    setDrawerData(null);
-                    handleCallAndStartConsultation(apt);
-                  }}
-                  className="w-full py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-sm shadow-blue-200 transition-all cursor-pointer"
-                >
-                  <Stethoscope className="w-4 h-4" />
-                  <span>Start Consultation in Smart Rx Studio</span>
-                  <ArrowRight className="w-4 h-4" />
-                </button>
+                {showStartConsult && (
+                  <button
+                    type="button"
+                    data-testid="start-consult"
+                    onClick={() => {
+                      const apt = drawerData.appointment;
+                      setDrawerData(null);
+                      handleCallAndStartConsultation(apt);
+                    }}
+                    className="w-full py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-sm shadow-blue-200 transition-all cursor-pointer"
+                  >
+                    <Stethoscope className="w-4 h-4" />
+                    <span>Start Consultation in Smart Rx Studio</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                )}
 
                 <div className="grid grid-cols-2 gap-2">
                   <button
