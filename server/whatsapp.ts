@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from "express";
-import { DEMO_TENANT_ID, getDb, mapAppointment } from "./db.ts";
+import { getDb, mapAppointment } from "./db.ts";
 import {
   clinicLine,
   doctorSignatureByDoctorId,
@@ -20,6 +20,7 @@ import {
 } from "./whatsapp-calendar.ts";
 import { isProduction } from "./runtime.ts";
 import { reportCaughtError } from "./error-tracker.ts";
+import { CLINICIAN_ROLES, requireAuth, requireRole } from "./auth.ts";
 import { serializeOutboundEvent } from "./whatsapp-scope.ts";
 
 let defaultGenAIClient: GoogleGenAI | null = null;
@@ -1071,17 +1072,24 @@ Output strictly in JSON:
   // ----------------------------------------------------
   // 6. CLINICAL DOCUMENTS (HTML/PDF PREVIEW & DOWNLOAD)
   // ----------------------------------------------------
-  router.get("/prescription/:id/pdf", (req: Request, res: Response) => {
+  router.get("/prescription/:id/pdf", requireAuth, requireRole(...CLINICIAN_ROLES), (req: Request, res: Response) => {
     try {
+      const tenantId = String(req.user?.tenantId || "").trim();
+      if (!tenantId) {
+        return res.status(403).json({ error: "Insufficient permissions" });
+      }
       const db = getDb();
       const rx = db.prepare("SELECT * FROM prescriptions WHERE id = ? OR rx_number = ?").get(req.params.id, req.params.id) as Record<string, unknown> | undefined;
       if (!rx) return res.status(404).send("Prescription not found");
+      const rxTenant = String(rx.tenant_id || "").trim();
+      if (!rxTenant || rxTenant !== tenantId) {
+        return res.status(403).json({ error: "Insufficient permissions" });
+      }
 
       const medicines = JSON.parse((rx.medicines as string) || "[]");
       const labTests = JSON.parse((rx.lab_tests as string) || "[]");
       const advice = JSON.parse((rx.advice as string) || "[]");
-      const tenantId = String(rx.tenant_id || "");
-      const letterhead = getTenantLetterhead(tenantId || DEMO_TENANT_ID);
+      const letterhead = getTenantLetterhead(tenantId);
       const stamped = clinicLine(letterhead);
       const clinicName = escapeHtml(String(rx.clinic_name || stamped.name || letterhead.clinicName || "Clinic"));
       const clinicAddress = escapeHtml(String(rx.clinic_address || stamped.address || letterhead.address));

@@ -2385,7 +2385,7 @@ export function createApiRouter(): Router {
   api.use("/v3", createAbdmRouter());
 
   // Direct EMR PDF viewer endpoints
-  api.get("/emr/prescription/:id/pdf", (req, res) => {
+  api.get("/emr/prescription/:id/pdf", requireAuth, requireRole(...CLINICIAN_ROLES), (req, res) => {
     res.redirect(`/api/whatsapp/prescription/${req.params.id}/pdf`);
   });
   api.get("/emr/lab-report/:id/pdf", (req, res) => {

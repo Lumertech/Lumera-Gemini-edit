@@ -17,6 +17,7 @@ import {
   Sparkles,
   Info,
 } from "lucide-react";
+import { apiFetch } from "../../api/http";
 import { useNav } from "../../nav/NavigationContext";
 import { MetaWhatsAppTemplate } from "../../types";
 
@@ -114,8 +115,8 @@ export const AdminMetaTechProvider: React.FC = () => {
     setLoading(true);
     try {
       const [ovRes, wabasRes, tplRes] = await Promise.all([
-        fetch("/api/meta/overview").then((r) => r.json()),
-        fetch("/api/meta/wabas").then((r) => r.json()),
+        apiFetch<MetaOverview>("/api/meta/overview"),
+        apiFetch<{ wabas?: WabaItem[] }>("/api/meta/wabas"),
         fetch("/api/meta/templates").then((r) => r.json()),
       ]);
       setOverview(ovRes);
