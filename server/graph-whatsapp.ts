@@ -178,7 +178,10 @@ export async function sendWhatsAppGraphTemplate(opts: {
   name: string;
   language?: string;
   bodyParameters?: string[];
-  otpButtonParameter?: string;
+  /** AUTHENTICATION copy-code OTP. Same value as the body OTP. Not a coupon. */
+  authOtpButtonParameter?: string;
+  /** Marketing/utility coupon COPY_CODE button. Not used for AUTH OTP. */
+  couponCodeButtonParameter?: string;
   fetchImpl?: typeof fetch;
   failureLabel?: string;
 }): Promise<GraphMessageResult> {
@@ -188,16 +191,27 @@ export async function sendWhatsAppGraphTemplate(opts: {
   if (parameters.length > 0) {
     components.push({ type: "body", parameters });
   }
-  if (opts.otpButtonParameter) {
-    // AUTH COPY_CODE (lumera_login_otp). Cloud API button component is
-    // sub_type "copy_code" with { type: "coupon_code", coupon_code: OTP },
-    // not a URL text suffix. Graph (#131008) if this parameter is omitted.
+  if (opts.authOtpButtonParameter) {
+    // AUTHENTICATION copy-code (lumera_login_otp). Creation uses otp_type
+    // COPY_CODE, but WhatsApp stores the button as URL. Send the OTP twice:
+    // body text, then button sub_type "url" with type "text". Graph (#132018)
+    // if this is sent as coupon_code; (#131008) if the button parameter is omitted.
+    // https://developers.facebook.com/docs/whatsapp/business-management-api/authentication-templates/copy-code-button-authentication-templates/
+    components.push({
+      type: "button",
+      sub_type: "url",
+      index: "0",
+      parameters: [{ type: "text", text: String(opts.authOtpButtonParameter) }],
+    });
+  }
+  if (opts.couponCodeButtonParameter) {
+    // Marketing / utility coupon templates. Distinct from AUTH OTP above.
     // https://developers.facebook.com/docs/whatsapp/business-management-api/message-templates/coupon-templates/
     components.push({
       type: "button",
       sub_type: "copy_code",
-      index: "0",
-      parameters: [{ type: "coupon_code", coupon_code: opts.otpButtonParameter }],
+      index: opts.authOtpButtonParameter ? "1" : "0",
+      parameters: [{ type: "coupon_code", coupon_code: String(opts.couponCodeButtonParameter) }],
     });
   }
   return postGraphWhatsAppMessage({
@@ -236,9 +250,9 @@ export async function sendWhatsAppGraphMessage(opts: {
       name: templateName,
       language,
       bodyParameters: [opts.otp],
-      // Always send the button OTP. META_OTP_TEMPLATE_BUTTON is not a gate;
+      // Always send the button OTP (url/text). META_OTP_TEMPLATE_BUTTON is not a gate;
       // leaving it "true" is harmless.
-      otpButtonParameter: opts.otp,
+      authOtpButtonParameter: opts.otp,
       fetchImpl: opts.fetchImpl,
       failureLabel: "OTP",
     });
