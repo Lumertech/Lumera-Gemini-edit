@@ -391,6 +391,7 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
     delete process.env.WHATSAPP_ACCESS_TOKEN;
     delete process.env.WHATSAPP_PHONE_NUMBER_ID;
     process.env.NODE_ENV = "test";
+    try {
     const sessionText = buildQueueNextText({ patientName: "Rajiv Saxena" });
     assert.equal(
       sessionText,
@@ -414,11 +415,10 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
       }),
       ["Rajiv Saxena", "Lumera Rehab", "Dr. Siddharth Varma", "RX-2026-0106"]
     );
-    try {
       delete process.env.META_QUEUE_NEXT_TEMPLATE_NAME;
       delete process.env.META_PRESCRIPTION_READY_TEMPLATE_NAME;
       process.env.META_RECEIPT_TEMPLATE_NAME = "lumera_payment_receipt";
-      const textCaptured: Array<{ body: Record<string, unknown> }> = [];
+      const textCaptured: Array<{ url: string; body: Record<string, unknown> }> = [];
       const textSend = await sendQueueNext({
         to: "+919823455667",
         patientName: "Rajiv Saxena",
@@ -430,7 +430,7 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
       assert.equal(textCaptured[0].body.type, "text");
       assert.equal((textCaptured[0].body.text as { body?: string }).body, sessionText);
 
-      const rxText: Array<{ body: Record<string, unknown> }> = [];
+      const rxText: Array<{ url: string; body: Record<string, unknown> }> = [];
       const rxUnset = await sendPrescriptionReady({
         to: "+919823455667",
         patientName: "Rajiv Saxena",
@@ -449,7 +449,7 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
       process.env.META_PRESCRIPTION_READY_TEMPLATE_NAME = "lumera_prescription_ready";
       process.env.META_UTILITY_TEMPLATE_LANGUAGE = "en_US";
       const queueParams = ["Meera", "Lumera Apex PolyClinic", "02", "Rehab Suite 105"];
-      const queueCaptured: Array<{ body: Record<string, unknown> }> = [];
+      const queueCaptured: Array<{ url: string; body: Record<string, unknown> }> = [];
       const queueSend = await sendQueueNext({
         to: "+919823455667",
         patientName: "Meera",
@@ -477,7 +477,7 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
       );
 
       const rxParams = ["Meera", "Lumera Rehab", "Dr. A", "RX-1"];
-      const rxCaptured: Array<{ body: Record<string, unknown> }> = [];
+      const rxCaptured: Array<{ url: string; body: Record<string, unknown> }> = [];
       const rxSend = await sendPrescriptionReady({
         to: "+919823455667",
         patientName: "Meera",
@@ -543,13 +543,14 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
   it("outbound triggers call queue_next and prescription_ready instead of the receipt template", () => {
     const whatsapp = fs.readFileSync(path.join(__dirname, "whatsapp.ts"), "utf8");
     const usage = fs.readFileSync(path.join(__dirname, "usage-billing-api.ts"), "utf8");
-    const queueBranch = whatsapp.indexOf('eventType === "queue_token_update" || eventType === "queue_next"');
-    const rxBranch = whatsapp.indexOf('eventType === "post_consultation_dispatch" || eventType === "prescription_ready"');
-    const sendQueue = whatsapp.indexOf("sendQueueNext(", queueBranch);
-    const sendRx = whatsapp.indexOf("sendPrescriptionReady(", rxBranch);
-    assert.ok(queueBranch > 0 && rxBranch > queueBranch);
-    assert.ok(sendQueue > queueBranch && sendQueue < rxBranch);
-    assert.ok(sendRx > rxBranch);
+    const queueBranch = whatsapp.indexOf('const queueEvent = eventType === "queue_token_update" || eventType === "queue_next"');
+    const rxBranch = whatsapp.indexOf('const prescriptionEvent = eventType === "post_consultation_dispatch" || eventType === "prescription_ready"');
+    const sendQueue = whatsapp.indexOf("await sendQueueNext(", queueBranch);
+    const sendRx = whatsapp.indexOf("await sendPrescriptionReady(", rxBranch);
+    assert.ok(queueBranch > 0, "queue_token_update branch missing");
+    assert.ok(rxBranch > queueBranch, "prescription_ready branch missing");
+    assert.ok(sendQueue > rxBranch, "sendQueueNext is not in the outbound trigger");
+    assert.ok(sendRx > sendQueue, "sendPrescriptionReady is not in the outbound trigger");
     assert.match(usage, /templateOwnedOutbound/);
     assert.match(usage, /if \(reminderEvent \|\| templateOwnedOutbound\) return next\(\)/);
     const sendRxRoute = usage.slice(usage.indexOf('api.post("/whatsapp/send-rx"'));

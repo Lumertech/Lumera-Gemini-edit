@@ -328,12 +328,13 @@ export function buildQueueNextText(fields: QueueNextFields): string {
   const current = formatQueueToken(fields.currentToken, "01");
   const next = formatQueueToken(fields.tokenNumber, "02");
   const location = templateParamText(fields.location, "Rehab Suite 105");
-  const place = location === "Rehab Suite 105" ? "Rehab Suite 105 near Waiting Lounge B" : location;
+  const place =
+    location === "Rehab Suite 105" ? "*Rehab Suite 105* near Waiting Lounge B" : `*${location}*`;
   return (
     `📢 *OPD Queue Alert - You're Almost Up!*\n\n` +
     `Namaste ${name},\n` +
     `Token *#${current}* is currently completing consultation. You are *NEXT IN LINE* (Token #${next}).\n\n` +
-    `📍 Please proceed to *${place}*.`
+    `📍 Please proceed to ${place}.`
   );
 }
 
