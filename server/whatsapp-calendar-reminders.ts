@@ -230,6 +230,7 @@ export async function dispatchAppointmentReminder(opts: {
     timeSlot: opts.appointment.timeSlot,
     tokenNumber: opts.appointment.tokenNumber,
     textBody: text,
+    // lumera_appointment_reminder (Utility, en_US): {{1}} patient, {{2}} clinic, {{3}} doctor, {{4}} date, {{5}} time. No token.
     templateParameters: [
       opts.appointment.patientName,
       clinicName,

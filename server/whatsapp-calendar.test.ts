@@ -758,14 +758,15 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
 
   it("reminder template parameters are patient, clinic, doctor, date, time and stamp tenant_id", async () => {
     const saved: Record<string, string | undefined> = {};
-    for (const key of ["META_ACCESS_TOKEN", "META_PHONE_NUMBER_ID", "WHATSAPP_ACCESS_TOKEN", "WHATSAPP_PHONE_NUMBER_ID", "META_REMINDER_TEMPLATE_NAME"]) {
+    for (const key of ["META_ACCESS_TOKEN", "META_PHONE_NUMBER_ID", "WHATSAPP_ACCESS_TOKEN", "WHATSAPP_PHONE_NUMBER_ID", "META_REMINDER_TEMPLATE_NAME", "META_UTILITY_TEMPLATE_LANGUAGE"]) {
       saved[key] = process.env[key];
     }
     process.env.META_ACCESS_TOKEN = "EAAGisAlongEnoughTokenWithoutEllipsis0123456789abcdef";
     process.env.META_PHONE_NUMBER_ID = "123456789012345";
     delete process.env.WHATSAPP_ACCESS_TOKEN;
     delete process.env.WHATSAPP_PHONE_NUMBER_ID;
-    process.env.META_REMINDER_TEMPLATE_NAME = "appointment_reminder_v1";
+    process.env.META_REMINDER_TEMPLATE_NAME = "lumera_appointment_reminder";
+    process.env.META_UTILITY_TEMPLATE_LANGUAGE = "en_US";
     try {
       const clinic = createClinicUser("tplParam");
       const booked = bookWhatsAppAppointment({
@@ -792,29 +793,39 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
       assert.equal(result.ok, true, JSON.stringify(result));
       if (result.ok) assert.equal(result.messageId, "wamid.CLIP_A");
       const template = captured[0]?.template as {
+        name?: string;
+        language?: { code?: string };
         components?: Array<{ type?: string; parameters?: Array<{ text?: string }> }>;
       };
+      assert.equal(template.name, "lumera_appointment_reminder");
+      assert.equal(template.language?.code, "en_US");
       const body = template.components?.find((component) => component.type === "body");
       const clinicRow = getDb().prepare("SELECT name FROM tenants WHERE id = ?").get(clinic.tenantId) as { name: string };
-      assert.deepEqual(
-        (body?.parameters || []).map((parameter) => parameter.text),
-        ["Param Patient", clinicRow.name, booked.appointment.doctorName, "2026-10-02", "11:15 AM"]
-      );
+      const parameters = (body?.parameters || []).map((parameter) => parameter.text);
+      assert.deepEqual(parameters, [
+        "Param Patient",
+        clinicRow.name,
+        booked.appointment.doctorName,
+        "2026-10-02",
+        "11:15 AM",
+      ]);
+      assert.equal(parameters.includes(String(booked.appointment.tokenNumber)), false);
       const event = getDb()
         .prepare("SELECT tenant_id, patient_phone FROM whatsapp_outbound_events WHERE id = ?")
         .get(result.ok ? result.eventId : "") as { tenant_id: string; patient_phone: string };
       assert.equal(event.tenant_id, clinic.tenantId);
 
+      const spacedId = `evt-spaced-${crypto.randomUUID().slice(0, 8)}`;
       getDb()
         .prepare(
           `INSERT INTO whatsapp_outbound_events (id, event_type, patient_phone, patient_name, status, details, action_payload, sent_at, tenant_id)
-           VALUES ('evt-spaced-phone', 'appointment_reminder', '+91 99999 73271', 'A1 Test Recipient', 'sent', 'spaced phone', '{}', ?, '')`
+           VALUES (?, 'appointment_reminder', '+91 99999 73271', 'A1 Test Recipient', 'sent', 'spaced phone', '{}', ?, '')`
         )
-        .run(new Date().toISOString());
+        .run(spacedId, new Date().toISOString());
       const listed = listTenantOutboundEvents(DEMO_TENANT_ID);
-      assert.ok(listed.some((row) => row.id === "evt-spaced-phone" && row.patientPhone === "+91 99999 73271"));
+      assert.ok(listed.some((row) => row.id === spacedId && row.patientPhone === "+91 99999 73271"));
       assert.equal(listed[0] && "patient_phone" in listed[0], false);
-      assert.equal(typeof listed.find((row) => row.id === "evt-spaced-phone")?.eventType, "string");
+      assert.equal(typeof listed.find((row) => row.id === spacedId)?.eventType, "string");
     } finally {
       for (const [key, value] of Object.entries(saved)) {
         if (value === undefined) delete process.env[key];
