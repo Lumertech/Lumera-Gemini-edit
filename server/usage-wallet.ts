@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { DEMO_TENANT_ID, getDb, writeAudit } from "./db.ts";
+import type { SqlDatabase } from "./sql-engine.ts";
 import { type UsageResource } from "./usage-rates.ts";
 export type { UsageResource } from "./usage-rates.ts";
 
@@ -19,16 +20,23 @@ export function roundMoney(n: number): number {
 }
 
 export function withSqliteTransaction<T>(database: DatabaseSync, fn: () => T): T {
-  database.exec("BEGIN IMMEDIATE");
+  // The pg shim borrows a pool client per exec()/prepare(). BEGIN IMMEDIATE is
+  // invalid Postgres (`syntax error at or near "IMMEDIATE"`). SQLite keeps one
+  // connection and still uses BEGIN IMMEDIATE. Postgres autocommits each
+  // statement so seedDemoUsageWallet can finish during Cloud SQL boot.
+  const postgres = (database as SqlDatabase).dialect === "postgres";
+  if (!postgres) database.exec("BEGIN IMMEDIATE");
   try {
     const result = fn();
-    database.exec("COMMIT");
+    if (!postgres) database.exec("COMMIT");
     return result;
   } catch (err) {
-    try {
-      database.exec("ROLLBACK");
-    } catch {
-      /* ignore rollback failure */
+    if (!postgres) {
+      try {
+        database.exec("ROLLBACK");
+      } catch {
+        /* ignore rollback failure */
+      }
     }
     throw err;
   }

@@ -29,11 +29,28 @@ pool.on("error", (err) => {
   console.error("[Lumera] Unexpected pg pool error in worker:", err);
 });
 
+function formatPgError(err, sql) {
+  const message = err && err.message ? String(err.message) : String(err);
+  const position = Number(err && err.position);
+  if (!sql || !Number.isFinite(position) || position < 1) return message;
+  const at = position - 1;
+  const snippet = String(sql)
+    .slice(Math.max(0, at - 60), at + 60)
+    .replace(/\s+/g, " ");
+  return `${message} [sql: ${snippet}]`;
+}
+
 parentPort.on("message", async (msg) => {
   const port = msg.port;
   try {
     if (msg.type === "query") {
-      const result = await pool.query(msg.sql, msg.params || []);
+      let result;
+      try {
+        result = await pool.query(msg.sql, msg.params || []);
+      } catch (err) {
+        if (err && typeof err === "object") err.message = formatPgError(err, msg.sql);
+        throw err;
+      }
       port.postMessage({ rows: result.rows, rowCount: result.rowCount ?? 0 });
     } else if (msg.type === "exec") {
       const statements = msg.statements || [];
@@ -45,7 +62,13 @@ parentPort.on("message", async (msg) => {
         let rowCount = 0;
         let rows = [];
         for (const s of statements) {
-          const r = await client.query(s.sql, s.params || []);
+          let r;
+          try {
+            r = await client.query(s.sql, s.params || []);
+          } catch (err) {
+            if (err && typeof err === "object") err.message = formatPgError(err, s.sql);
+            throw err;
+          }
           rowCount += r.rowCount ?? 0;
           rows = r.rows;
         }
