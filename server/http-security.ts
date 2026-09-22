@@ -3,10 +3,12 @@
  * Meta / Razorpay webhooks and /healthz are exempt so signature-verified
  * callbacks are not blocked by browser Origin / CSRF / login throttles.
  *
- * Production is fail-closed for unknown Origins and for missing Origin on
- * mutating / API requests. Top-level document GETs (SPA / HTML) omit Origin
- * in browsers and must not be blocked. Canonical host is www; apex is allowed
- * as a same-site companion and redirected to www on safe navigations.
+ * Production is fail-closed for unknown Origins and for missing / literal
+ * `null` Origin on mutating / API requests. Top-level document GETs
+ * (SPA / HTML) often omit Origin, or send Origin: null after cross-origin
+ * redirects / privacy contexts, and must not be blocked. Canonical host is
+ * www; apex is allowed as a same-site companion and redirected to www on
+ * safe navigations.
  */
 import { type Express, type NextFunction, type Request, type Response } from "express";
 import { isUnsetOrPlaceholder } from "./runtime.ts";
@@ -112,7 +114,8 @@ function requestPathname(req: Request): string {
 }
 
 /**
- * Safe same-site document navigations (GET/HEAD to SPA/HTML) omit Origin.
+ * Safe same-site document navigations (GET/HEAD to SPA/HTML) omit Origin
+ * or send the literal Origin: null (Chrome after cross-origin redirects).
  * Mutating methods and backend/API paths still require an allowlisted Origin
  * in production (except webhook/health exemptions).
  */
@@ -122,15 +125,21 @@ export function isSafeDocumentGetWithoutOrigin(req: Request): boolean {
   return !isBackendPath(requestPathname(req));
 }
 
+/** True when Origin is absent or the opaque literal `null` (case-insensitive). */
+export function isMissingOrNullOrigin(origin: string | undefined): boolean {
+  if (origin == null || origin === "") return true;
+  return origin.trim().toLowerCase() === "null";
+}
+
 /**
- * Production is fail-closed for unknown Origin. Missing Origin is rejected on
- * mutating / API requests, but allowed for top-level SPA/HTML GET/HEAD.
- * Non-prod allows missing Origin (curl, tests).
+ * Production is fail-closed for unknown Origin. Missing / literal `null`
+ * Origin is rejected on mutating / API requests, but allowed for top-level
+ * SPA/HTML GET/HEAD. Non-prod allows missing/null Origin (curl, tests).
  */
 export function corsShouldReject(req: Request, env: NodeJS.ProcessEnv = process.env): boolean {
   if (isSecurityExemptPath(req.path) || isSecurityExemptPath(req.originalUrl || "")) return false;
   const origin = typeof req.headers.origin === "string" ? req.headers.origin : "";
-  if (origin) return !originAllowed(origin, env);
+  if (!isMissingOrNullOrigin(origin)) return !originAllowed(origin, env);
   if (!isProductionFromEnv(env)) return false;
   if (isSafeDocumentGetWithoutOrigin(req)) return false;
   return true;
