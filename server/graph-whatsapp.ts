@@ -178,26 +178,49 @@ export async function sendWhatsAppGraphTemplate(opts: {
   name: string;
   language?: string;
   bodyParameters?: string[];
-  otpButtonParameter?: string;
+  /** AUTHENTICATION copy-code OTP. Same value as the body OTP. Not a coupon. */
+  authOtpButtonParameter?: string;
+  /** Marketing/utility coupon COPY_CODE button. Not used for AUTH OTP. */
+  couponCodeButtonParameter?: string;
   fetchImpl?: typeof fetch;
   failureLabel?: string;
 }): Promise<GraphMessageResult> {
-  const language = String(opts.language || "en").trim() || "en";
-  const parameters = (opts.bodyParameters || []).map((text) => ({ type: "text", text: String(text) }));
+  // lumera_login_otp language is en. Do not let META_UTILITY_TEMPLATE_LANGUAGE
+  // or an en_US OTP env value rewrite it. Utility templates keep opts.language.
+  const language = opts.authOtpButtonParameter
+    ? "en"
+    : String(opts.language || "en").trim() || "en";
+  // lumera_login_otp: exactly one body text parameter (the OTP). Drop any extra
+  // body values such as clinic_name. Footer expiry is rendered by the approved
+  // template — do not add a footer component.
+  const bodyTexts = opts.authOtpButtonParameter
+    ? [String(opts.bodyParameters?.[0] ?? opts.authOtpButtonParameter)]
+    : opts.bodyParameters || [];
+  const parameters = bodyTexts.map((text) => ({ type: "text", text: String(text) }));
   const components: Array<Record<string, unknown>> = [];
   if (parameters.length > 0) {
     components.push({ type: "body", parameters });
   }
-  if (opts.otpButtonParameter) {
-    // AUTH COPY_CODE (lumera_login_otp). Cloud API button component is
-    // sub_type "copy_code" with { type: "coupon_code", coupon_code: OTP },
-    // not a URL text suffix. Graph (#131008) if this parameter is omitted.
+  if (opts.authOtpButtonParameter) {
+    // AUTHENTICATION copy-code. Creation uses otp_type COPY_CODE, but WhatsApp
+    // stores the button as URL. Payload is body text + button sub_type "url"
+    // type "text" with the same OTP. Graph (#132018) if sent as coupon_code.
+    // https://developers.facebook.com/docs/whatsapp/business-management-api/authentication-templates/copy-code-button-authentication-templates/
+    components.push({
+      type: "button",
+      sub_type: "url",
+      index: "0",
+      parameters: [{ type: "text", text: String(opts.authOtpButtonParameter) }],
+    });
+  }
+  if (opts.couponCodeButtonParameter) {
+    // Marketing / utility coupon templates. Distinct from AUTH OTP above.
     // https://developers.facebook.com/docs/whatsapp/business-management-api/message-templates/coupon-templates/
     components.push({
       type: "button",
       sub_type: "copy_code",
-      index: "0",
-      parameters: [{ type: "coupon_code", coupon_code: opts.otpButtonParameter }],
+      index: opts.authOtpButtonParameter ? "1" : "0",
+      parameters: [{ type: "coupon_code", coupon_code: String(opts.couponCodeButtonParameter) }],
     });
   }
   return postGraphWhatsAppMessage({
@@ -207,7 +230,9 @@ export async function sendWhatsAppGraphTemplate(opts: {
     failureLabel: opts.failureLabel || "template",
     payload: {
       messaging_product: "whatsapp",
-      recipient_type: "individual",
+      // AUTH lumera_login_otp matches the re-audit body: no recipient_type.
+      // Utility templates (reminder, book, receipt) still send recipient_type.
+      ...(opts.authOtpButtonParameter ? {} : { recipient_type: "individual" }),
       type: "template",
       template: {
         name: opts.name,
@@ -227,18 +252,18 @@ export async function sendWhatsAppGraphMessage(opts: {
   fetchImpl?: typeof fetch;
 }): Promise<GraphMessageResult> {
   const templateName = String(process.env.META_OTP_TEMPLATE_NAME || "").trim();
-  const language = String(process.env.META_OTP_TEMPLATE_LANGUAGE || "en").trim() || "en";
 
   if (templateName) {
+    // Re-audit body for lumera_login_otp. `to` is added by postGraphWhatsAppMessage.
+    // Manager body is "*{{1}}* is your verification code..."; footer expiry is
+    // platform-rendered. Do not send those strings, clinic_name, or a 2nd param.
     return sendWhatsAppGraphTemplate({
       credentials: opts.credentials,
       to: opts.to,
       name: templateName,
-      language,
+      language: "en",
       bodyParameters: [opts.otp],
-      // Always send the button OTP. META_OTP_TEMPLATE_BUTTON is not a gate;
-      // leaving it "true" is harmless.
-      otpButtonParameter: opts.otp,
+      authOtpButtonParameter: opts.otp,
       fetchImpl: opts.fetchImpl,
       failureLabel: "OTP",
     });
