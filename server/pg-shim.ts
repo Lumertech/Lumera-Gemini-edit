@@ -124,7 +124,7 @@ export function createPgShim(connectionString: string): SqlDatabase {
     });
   };
 
-  return { prepare, exec };
+  return { prepare, exec, dialect: "postgres" };
 }
 
 export function isPgShimAvailable(): boolean {

@@ -16,6 +16,8 @@ export interface SqlStatement {
 export interface SqlDatabase {
   prepare(sql: string): SqlStatement;
   exec(sql: string): void;
+  /** Present on the Postgres shim. SQLite connections omit it. */
+  dialect?: "postgres";
 }
 
 /**
