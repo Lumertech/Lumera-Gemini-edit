@@ -2,9 +2,15 @@
  * CORS allowlist, cookie CSRF, and auth-endpoint rate limits.
  * Meta / Razorpay webhooks and /healthz are exempt so signature-verified
  * callbacks are not blocked by browser Origin / CSRF / login throttles.
+ *
+ * Production is fail-closed for unknown Origins and for missing Origin on
+ * mutating / API requests. Top-level document GETs (SPA / HTML) omit Origin
+ * in browsers and must not be blocked. Canonical host is www; apex is allowed
+ * as a same-site companion and redirected to www on safe navigations.
  */
 import { type Express, type NextFunction, type Request, type Response } from "express";
 import { isUnsetOrPlaceholder } from "./runtime.ts";
+import { isBackendPath } from "./spa-fallback.ts";
 
 export const CSRF_COOKIE = "lumera_csrf";
 export const CSRF_HEADER = "x-csrf-token";
@@ -25,6 +31,48 @@ type HitRecord = { count: number; resetAt: number };
 
 const defaultHitStore = new Map<string, HitRecord>();
 
+function isProductionFromEnv(env: NodeJS.ProcessEnv): boolean {
+  return String(env.NODE_ENV || "") === "production";
+}
+
+/** Skip localhost / loopback / literal IPs when expanding www↔apex pairs. */
+function isExpandablePublicHost(hostname: string): boolean {
+  const h = hostname.toLowerCase();
+  if (!h || h === "localhost") return false;
+  if (h.endsWith(".localhost")) return false;
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(h)) return false;
+  if (h.includes(":")) return false; // IPv6
+  return h.includes(".");
+}
+
+/**
+ * When www.example.com is allowlisted, also allow https://example.com (and the
+ * reverse for bare apex hosts with exactly two DNS labels). Does not open * or
+ * localhost — local defaults stay explicit via ALLOWED_ORIGINS / non-prod.
+ */
+export function withWwwApexCompanions(origins: string[]): string[] {
+  const out = new Set(origins);
+  for (const o of origins) {
+    try {
+      const u = new URL(o);
+      if (u.protocol !== "http:" && u.protocol !== "https:") continue;
+      if (!isExpandablePublicHost(u.hostname)) continue;
+      if (u.hostname.startsWith("www.")) {
+        const apex = new URL(o);
+        apex.hostname = u.hostname.slice(4);
+        out.add(apex.origin);
+      } else if (u.hostname.split(".").length === 2) {
+        const www = new URL(o);
+        www.hostname = `www.${u.hostname}`;
+        out.add(www.origin);
+      }
+    } catch {
+      /* ignore malformed */
+    }
+  }
+  return [...out];
+}
+
 export function parseAllowedOrigins(env: NodeJS.ProcessEnv = process.env): string[] {
   const raw = String(env.ALLOWED_ORIGINS || "").trim();
   const fromEnv = raw
@@ -33,17 +81,13 @@ export function parseAllowedOrigins(env: NodeJS.ProcessEnv = process.env): strin
         .map((s) => s.trim().replace(/\/$/, ""))
         .filter((s) => s && !isUnsetOrPlaceholder(s))
     : [];
-  if (fromEnv.length) return [...new Set(fromEnv)];
+  if (fromEnv.length) return withWwwApexCompanions([...new Set(fromEnv)]);
   const appUrl = String(env.APP_URL || "").trim().replace(/\/$/, "");
-  if (appUrl && !isUnsetOrPlaceholder(appUrl)) return [appUrl];
+  if (appUrl && !isUnsetOrPlaceholder(appUrl)) return withWwwApexCompanions([appUrl]);
   if (!isProductionFromEnv(env)) {
     return ["http://localhost:3000", "http://127.0.0.1:3000"];
   }
   return [];
-}
-
-function isProductionFromEnv(env: NodeJS.ProcessEnv): boolean {
-  return String(env.NODE_ENV || "") === "production";
 }
 
 export function isSecurityExemptPath(path: string): boolean {
@@ -63,16 +107,87 @@ export function originAllowed(origin: string | undefined, env: NodeJS.ProcessEnv
   return parseAllowedOrigins(env).includes(normalized);
 }
 
+function requestPathname(req: Request): string {
+  return String(req.path || req.originalUrl || "").split("?")[0] || "/";
+}
+
 /**
- * Production is fail-closed: missing Origin and unknown Origin are rejected
- * except webhook/health paths. Non-prod allows missing Origin (curl, tests).
+ * Safe same-site document navigations (GET/HEAD to SPA/HTML) omit Origin.
+ * Mutating methods and backend/API paths still require an allowlisted Origin
+ * in production (except webhook/health exemptions).
+ */
+export function isSafeDocumentGetWithoutOrigin(req: Request): boolean {
+  const method = String(req.method || "GET").toUpperCase();
+  if (method !== "GET" && method !== "HEAD") return false;
+  return !isBackendPath(requestPathname(req));
+}
+
+/**
+ * Production is fail-closed for unknown Origin. Missing Origin is rejected on
+ * mutating / API requests, but allowed for top-level SPA/HTML GET/HEAD.
+ * Non-prod allows missing Origin (curl, tests).
  */
 export function corsShouldReject(req: Request, env: NodeJS.ProcessEnv = process.env): boolean {
   if (isSecurityExemptPath(req.path) || isSecurityExemptPath(req.originalUrl || "")) return false;
   const origin = typeof req.headers.origin === "string" ? req.headers.origin : "";
   if (origin) return !originAllowed(origin, env);
-  if (isProductionFromEnv(env)) return true;
-  return false;
+  if (!isProductionFromEnv(env)) return false;
+  if (isSafeDocumentGetWithoutOrigin(req)) return false;
+  return true;
+}
+
+/** Canonical public origin from APP_URL / first ALLOWED_ORIGINS entry (prefer www). */
+export function canonicalPublicOrigin(env: NodeJS.ProcessEnv = process.env): string | null {
+  const appUrl = String(env.APP_URL || "").trim().replace(/\/$/, "");
+  if (appUrl && !isUnsetOrPlaceholder(appUrl)) {
+    try {
+      return new URL(appUrl).origin;
+    } catch {
+      /* fall through */
+    }
+  }
+  const allowed = parseAllowedOrigins(env);
+  const www = allowed.find((o) => {
+    try {
+      return new URL(o).hostname.startsWith("www.");
+    } catch {
+      return false;
+    }
+  });
+  return www || allowed[0] || null;
+}
+
+/**
+ * 301 apex → www for browser document navigations when APP_URL/canonical is www.
+ * Does not redirect API/backend paths (those rely on apex being in the allowlist).
+ */
+export function canonicalHostRedirectMiddleware(env: NodeJS.ProcessEnv = process.env) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const method = String(req.method || "GET").toUpperCase();
+    if (method !== "GET" && method !== "HEAD") return next();
+    if (isBackendPath(requestPathname(req))) return next();
+
+    const canonical = canonicalPublicOrigin(env);
+    if (!canonical) return next();
+    let canonicalUrl: URL;
+    try {
+      canonicalUrl = new URL(canonical);
+    } catch {
+      return next();
+    }
+    if (!canonicalUrl.hostname.startsWith("www.")) return next();
+
+    const rawHost = String(req.headers["x-forwarded-host"] || req.headers.host || "")
+      .split(",")[0]
+      .trim()
+      .toLowerCase();
+    const hostname = rawHost.split(":")[0];
+    const apexHost = canonicalUrl.hostname.slice(4);
+    if (!hostname || hostname !== apexHost) return next();
+
+    const target = new URL(req.originalUrl || req.url || "/", canonicalUrl.origin);
+    return res.redirect(301, target.toString());
+  };
 }
 
 function parseCookieHeader(header?: string): Record<string, string> {
@@ -194,6 +309,7 @@ export function resetAuthRateLimitStore(store: Map<string, HitRecord> = defaultH
 export function attachHttpSecurity(app: Express, env: NodeJS.ProcessEnv = process.env) {
   if ((app as Express & { __lumeraHttpSecurity?: boolean }).__lumeraHttpSecurity) return;
   (app as Express & { __lumeraHttpSecurity?: boolean }).__lumeraHttpSecurity = true;
+  app.use(canonicalHostRedirectMiddleware(env));
   app.use(corsAllowlistMiddleware(env));
   app.use(csrfProtectionMiddleware());
   app.use(createAuthRateLimiter());

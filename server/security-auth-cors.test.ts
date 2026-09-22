@@ -12,6 +12,7 @@ import { getDb, initDatabase } from "./db.ts";
 import { hashPassword } from "./password.ts";
 import {
   AUTH_RATE_LIMITED_PATHS,
+  canonicalHostRedirectMiddleware,
   corsAllowlistMiddleware,
   corsShouldReject,
   createAuthRateLimiter,
@@ -20,6 +21,7 @@ import {
   originAllowed,
   parseAllowedOrigins,
   resetAuthRateLimitStore,
+  withWwwApexCompanions,
 } from "./http-security.ts";
 import { installWhatsAppRouterPatch, protectWhatsAppDashboard } from "./whatsapp-dashboard-guard.ts";
 import { PATIENTS_PHONE_UNIQUE } from "../src/db/patients-tenant-phone.unique.ts";
@@ -289,19 +291,102 @@ describe("Auth / tenant isolation / CORS / CSRF / rate limit", () => {
     void otp;
   });
 
-  it("production CORS is fail-closed for missing and unknown origins", () => {
+  it("production CORS allows SPA GETs without Origin; rejects bad/missing Origin on API", () => {
     const prod = { NODE_ENV: "production", ALLOWED_ORIGINS: "https://www.mylumera.in" } as NodeJS.ProcessEnv;
-    assert.deepEqual(parseAllowedOrigins(prod), ["https://www.mylumera.in"]);
+    assert.deepEqual(parseAllowedOrigins(prod).sort(), ["https://mylumera.in", "https://www.mylumera.in"].sort());
     assert.equal(originAllowed("https://www.mylumera.in", prod), true);
+    assert.equal(originAllowed("https://mylumera.in", prod), true);
     assert.equal(originAllowed("https://evil.example", prod), false);
-    const fakeReq = (origin?: string, p = "/api/patients") =>
-      ({ headers: origin ? { origin } : {}, path: p, originalUrl: p, method: "GET" }) as unknown as express.Request;
+    assert.equal(originAllowed("http://localhost:3000", prod), false);
+
+    const fakeReq = (origin: string | undefined, p = "/api/patients", method = "GET") =>
+      ({ headers: origin ? { origin } : {}, path: p, originalUrl: p, method }) as unknown as express.Request;
+
     assert.equal(corsShouldReject(fakeReq("https://evil.example"), prod), true);
-    assert.equal(corsShouldReject(fakeReq(undefined), prod), true);
+    assert.equal(corsShouldReject(fakeReq("https://evil.example", "/login"), prod), true);
+    // Missing Origin on API / mutating stays fail-closed in production.
+    assert.equal(corsShouldReject(fakeReq(undefined, "/api/patients"), prod), true);
+    assert.equal(corsShouldReject(fakeReq(undefined, "/api/auth/login", "POST"), prod), true);
+    assert.equal(corsShouldReject(fakeReq(undefined, "/login", "POST"), prod), true);
+    // Top-level SPA/HTML navigations omit Origin — must not 403.
+    assert.equal(corsShouldReject(fakeReq(undefined, "/login"), prod), false);
+    assert.equal(corsShouldReject(fakeReq(undefined, "/app"), prod), false);
+    assert.equal(corsShouldReject(fakeReq(undefined, "/"), prod), false);
+    assert.equal(corsShouldReject(fakeReq(undefined, "/admin/tenants"), prod), false);
+    // Allowlisted Origins (www + apex companion) still pass.
+    assert.equal(corsShouldReject(fakeReq("https://www.mylumera.in"), prod), false);
+    assert.equal(corsShouldReject(fakeReq("https://mylumera.in", "/api/auth/login", "POST"), prod), false);
     assert.equal(corsShouldReject(fakeReq(undefined, "/api/meta/webhook"), prod), false);
     assert.equal(corsShouldReject(fakeReq(undefined, "/api/meta/deauthorize"), prod), false);
     assert.equal(corsShouldReject(fakeReq(undefined, "/api/billing/razorpay/webhook"), prod), false);
-    assert.equal(corsShouldReject(fakeReq("https://www.mylumera.in"), prod), false);
+  });
+
+  it("APP_URL-only production allowlist expands www↔apex companions", () => {
+    const prod = { NODE_ENV: "production", APP_URL: "https://www.mylumera.in" } as NodeJS.ProcessEnv;
+    assert.equal(originAllowed("https://www.mylumera.in", prod), true);
+    assert.equal(originAllowed("https://mylumera.in", prod), true);
+    assert.deepEqual(withWwwApexCompanions(["https://www.mylumera.in"]).sort(), [
+      "https://mylumera.in",
+      "https://www.mylumera.in",
+    ].sort());
+    assert.deepEqual(withWwwApexCompanions(["http://localhost:3000"]), ["http://localhost:3000"]);
+  });
+
+  it("canonical host middleware 301s apex document GETs to www", async () => {
+    const prod = {
+      NODE_ENV: "production",
+      APP_URL: "https://www.mylumera.in",
+      ALLOWED_ORIGINS: "https://www.mylumera.in",
+    } as NodeJS.ProcessEnv;
+    const app = express();
+    app.use(canonicalHostRedirectMiddleware(prod));
+    app.use(corsAllowlistMiddleware(prod));
+    app.get("/login", (_req, res) => res.type("html").send("<!doctype html><title>login</title>"));
+    app.get("/api/ping", (_req, res) => res.json({ ok: true }));
+    const srv = app.listen(0, "127.0.0.1");
+    await new Promise<void>((resolve) => srv.once("listening", () => resolve()));
+    const addr = srv.address();
+    if (!addr || typeof addr === "string") throw new Error("no port");
+    const p = addr.port;
+
+    const noOrigin = await fetch(`http://127.0.0.1:${p}/login`, { redirect: "manual" });
+    assert.equal(noOrigin.status, 200);
+    assert.match(await noOrigin.text(), /login/i);
+
+    const wwwOrigin = await fetch(`http://127.0.0.1:${p}/login`, {
+      headers: { Origin: "https://www.mylumera.in" },
+      redirect: "manual",
+    });
+    assert.equal(wwwOrigin.status, 200);
+
+    const apexOriginApi = await fetch(`http://127.0.0.1:${p}/api/ping`, {
+      headers: { Origin: "https://mylumera.in" },
+      redirect: "manual",
+    });
+    assert.equal(apexOriginApi.status, 200);
+
+    const evil = await fetch(`http://127.0.0.1:${p}/login`, {
+      headers: { Origin: "https://evil.com" },
+      redirect: "manual",
+    });
+    assert.equal(evil.status, 403);
+    assert.match(await evil.text(), /Origin not allowed/);
+
+    const apexHost = await fetch(`http://127.0.0.1:${p}/login?x=1`, {
+      headers: { Host: "mylumera.in", "X-Forwarded-Host": "mylumera.in" },
+      redirect: "manual",
+    });
+    assert.equal(apexHost.status, 301);
+    assert.equal(apexHost.headers.get("location"), "https://www.mylumera.in/login?x=1");
+
+    // API on apex host is not redirected (CORS allowlist covers apex Origin).
+    const apexApiHost = await fetch(`http://127.0.0.1:${p}/api/ping`, {
+      headers: { Host: "mylumera.in", "X-Forwarded-Host": "mylumera.in", Origin: "https://mylumera.in" },
+      redirect: "manual",
+    });
+    assert.equal(apexApiHost.status, 200);
+
+    await new Promise<void>((resolve, reject) => srv.close((err) => (err ? reject(err) : resolve())));
   });
 
   it("cookie-authenticated mutating requests require a matching X-CSRF-Token header", () => {
