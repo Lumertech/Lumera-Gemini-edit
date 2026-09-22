@@ -1,4 +1,3 @@
-import type { DatabaseSync } from "node:sqlite";
 import type { SqlDatabase } from "./sql-engine.ts";
 import { DEMO_ACCOUNTS, DEMO_PASSWORD } from "../src/lib/demoAccounts.ts";
 import { packIdLabel } from "../src/lib/specialtyPack.ts";
@@ -15,9 +14,9 @@ const DEMO_TENANT_ID = "tenant-lumera-main";
  * Seed emails already match — this does not invent new personas.
  */
 export function ensureDemoPersonaUsers(database: SqlDatabase) {
-  // Phone migrations are sqlite-shaped (PRAGMA / sqlite_master). The demo seed
-  // only runs on the local sqlite engine, which satisfies DatabaseSync.
-  applyTenantPhoneSecurityMigrations(database as DatabaseSync);
+  // initDatabase runs this on whichever engine was opened. Postgres uses
+  // pg_catalog; sqlite keeps PRAGMA / sqlite_master.
+  applyTenantPhoneSecurityMigrations(database);
   const now = new Date().toISOString();
   const passwordHash = hashPassword(DEMO_PASSWORD);
   const isProd = process.env.NODE_ENV === "production";
