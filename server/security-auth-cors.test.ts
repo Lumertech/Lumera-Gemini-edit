@@ -18,11 +18,13 @@ import {
   createAuthRateLimiter,
   csrfProtectionMiddleware,
   csrfShouldReject,
+  isMissingOrNullOrigin,
   originAllowed,
   parseAllowedOrigins,
   resetAuthRateLimitStore,
   withWwwApexCompanions,
 } from "./http-security.ts";
+import { isBackendPath } from "./spa-fallback.ts";
 import { installWhatsAppRouterPatch, protectWhatsAppDashboard } from "./whatsapp-dashboard-guard.ts";
 import { PATIENTS_PHONE_UNIQUE } from "../src/db/patients-tenant-phone.unique.ts";
 
@@ -291,16 +293,21 @@ describe("Auth / tenant isolation / CORS / CSRF / rate limit", () => {
     void otp;
   });
 
-  it("production CORS allows SPA GETs without Origin; rejects bad/missing Origin on API", () => {
+  it("production CORS allows SPA GETs without Origin or Origin null; rejects bad/missing Origin on API", () => {
     const prod = { NODE_ENV: "production", ALLOWED_ORIGINS: "https://www.mylumera.in" } as NodeJS.ProcessEnv;
     assert.deepEqual(parseAllowedOrigins(prod).sort(), ["https://mylumera.in", "https://www.mylumera.in"].sort());
     assert.equal(originAllowed("https://www.mylumera.in", prod), true);
     assert.equal(originAllowed("https://mylumera.in", prod), true);
     assert.equal(originAllowed("https://evil.example", prod), false);
     assert.equal(originAllowed("http://localhost:3000", prod), false);
+    assert.equal(isMissingOrNullOrigin(undefined), true);
+    assert.equal(isMissingOrNullOrigin(""), true);
+    assert.equal(isMissingOrNullOrigin("null"), true);
+    assert.equal(isMissingOrNullOrigin(" NULL "), true);
+    assert.equal(isMissingOrNullOrigin("https://www.mylumera.in"), false);
 
     const fakeReq = (origin: string | undefined, p = "/api/patients", method = "GET") =>
-      ({ headers: origin ? { origin } : {}, path: p, originalUrl: p, method }) as unknown as express.Request;
+      ({ headers: origin !== undefined ? { origin } : {}, path: p, originalUrl: p, method }) as unknown as express.Request;
 
     assert.equal(corsShouldReject(fakeReq("https://evil.example"), prod), true);
     assert.equal(corsShouldReject(fakeReq("https://evil.example", "/login"), prod), true);
@@ -308,15 +315,40 @@ describe("Auth / tenant isolation / CORS / CSRF / rate limit", () => {
     assert.equal(corsShouldReject(fakeReq(undefined, "/api/patients"), prod), true);
     assert.equal(corsShouldReject(fakeReq(undefined, "/api/auth/login", "POST"), prod), true);
     assert.equal(corsShouldReject(fakeReq(undefined, "/login", "POST"), prod), true);
-    // Top-level SPA/HTML navigations omit Origin — must not 403.
+    // Literal Origin: null on mutating / API stays fail-closed in production.
+    assert.equal(corsShouldReject(fakeReq("null", "/api/auth/login", "POST"), prod), true);
+    assert.equal(corsShouldReject(fakeReq("NULL", "/api/patients", "PUT"), prod), true);
+    assert.equal(corsShouldReject(fakeReq(" null ", "/login", "DELETE"), prod), true);
+    assert.equal(corsShouldReject(fakeReq("null", "/api/patients"), prod), true);
+    // All SPA/HTML document GETs (not login-only): omit Origin or Origin: null — must not 403.
+    // /w/* clinic deep links are SPA shells; isBackendPath must not classify them as API.
+    assert.equal(isBackendPath("/w/lumera-apex-polyclinic/whatsapp"), false);
+    assert.equal(isBackendPath("/w/dr-demo-physio/whatsapp"), false);
+    assert.equal(isBackendPath("/app"), false);
     assert.equal(corsShouldReject(fakeReq(undefined, "/login"), prod), false);
+    assert.equal(corsShouldReject(fakeReq("null", "/login"), prod), false);
+    assert.equal(corsShouldReject(fakeReq("NULL", "/login", "HEAD"), prod), false);
+    assert.equal(corsShouldReject(fakeReq(" null ", "/app"), prod), false);
     assert.equal(corsShouldReject(fakeReq(undefined, "/app"), prod), false);
+    assert.equal(corsShouldReject(fakeReq("null", "/app", "HEAD"), prod), false);
     assert.equal(corsShouldReject(fakeReq(undefined, "/"), prod), false);
     assert.equal(corsShouldReject(fakeReq(undefined, "/admin/tenants"), prod), false);
+    assert.equal(
+      corsShouldReject(fakeReq("null", "/w/lumera-apex-polyclinic/whatsapp"), prod),
+      false
+    );
+    assert.equal(
+      corsShouldReject(fakeReq("NULL", "/w/lumera-apex-polyclinic/whatsapp", "HEAD"), prod),
+      false
+    );
+    assert.equal(corsShouldReject(fakeReq("null", "/w/dr-demo-physio/whatsapp"), prod), false);
+    assert.equal(corsShouldReject(fakeReq(undefined, "/w/lumera-apex-polyclinic/whatsapp"), prod), false);
     // Allowlisted Origins (www + apex companion) still pass.
     assert.equal(corsShouldReject(fakeReq("https://www.mylumera.in"), prod), false);
     assert.equal(corsShouldReject(fakeReq("https://mylumera.in", "/api/auth/login", "POST"), prod), false);
+    // Webhooks remain exempt even with Origin: null.
     assert.equal(corsShouldReject(fakeReq(undefined, "/api/meta/webhook"), prod), false);
+    assert.equal(corsShouldReject(fakeReq("null", "/api/meta/webhook", "POST"), prod), false);
     assert.equal(corsShouldReject(fakeReq(undefined, "/api/meta/deauthorize"), prod), false);
     assert.equal(corsShouldReject(fakeReq(undefined, "/api/billing/razorpay/webhook"), prod), false);
   });
@@ -342,6 +374,7 @@ describe("Auth / tenant isolation / CORS / CSRF / rate limit", () => {
     app.use(canonicalHostRedirectMiddleware(prod));
     app.use(corsAllowlistMiddleware(prod));
     app.get("/login", (_req, res) => res.type("html").send("<!doctype html><title>login</title>"));
+    app.get("/w/:slug/whatsapp", (_req, res) => res.type("html").send("<!doctype html><title>whatsapp</title>"));
     app.get("/api/ping", (_req, res) => res.json({ ok: true }));
     const srv = app.listen(0, "127.0.0.1");
     await new Promise<void>((resolve) => srv.once("listening", () => resolve()));
@@ -352,6 +385,20 @@ describe("Auth / tenant isolation / CORS / CSRF / rate limit", () => {
     const noOrigin = await fetch(`http://127.0.0.1:${p}/login`, { redirect: "manual" });
     assert.equal(noOrigin.status, 200);
     assert.match(await noOrigin.text(), /login/i);
+
+    const nullOrigin = await fetch(`http://127.0.0.1:${p}/login`, {
+      headers: { Origin: "null" },
+      redirect: "manual",
+    });
+    assert.equal(nullOrigin.status, 200);
+    assert.match(await nullOrigin.text(), /login/i);
+
+    const clinicNullOrigin = await fetch(`http://127.0.0.1:${p}/w/lumera-apex-polyclinic/whatsapp`, {
+      headers: { Origin: "null" },
+      redirect: "manual",
+    });
+    assert.equal(clinicNullOrigin.status, 200);
+    assert.match(await clinicNullOrigin.text(), /whatsapp/i);
 
     const wwwOrigin = await fetch(`http://127.0.0.1:${p}/login`, {
       headers: { Origin: "https://www.mylumera.in" },
@@ -371,6 +418,15 @@ describe("Auth / tenant isolation / CORS / CSRF / rate limit", () => {
     });
     assert.equal(evil.status, 403);
     assert.match(await evil.text(), /Origin not allowed/);
+
+    const nullOriginPost = await fetch(`http://127.0.0.1:${p}/api/ping`, {
+      method: "POST",
+      headers: { Origin: "null", "Content-Type": "application/json" },
+      body: "{}",
+      redirect: "manual",
+    });
+    assert.equal(nullOriginPost.status, 403);
+    assert.match(await nullOriginPost.text(), /Origin not allowed/);
 
     const apexHost = await fetch(`http://127.0.0.1:${p}/login?x=1`, {
       headers: { Host: "mylumera.in", "X-Forwarded-Host": "mylumera.in" },
