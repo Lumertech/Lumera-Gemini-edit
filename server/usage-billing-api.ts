@@ -165,11 +165,11 @@ export function createUsageBillingRouter(): Router {
     const clinicName =
       String(body.clinicName || "").trim() ||
       (tenantId ? getTenantLetterhead(tenantId).clinicName : "") ||
-      "Lumera Healthcare Polyclinic";
+        "your clinic";
     const patientName = String(body.patientName || "Patient");
     const uhid = String(body.uhid || "LUM-2026-0001");
     const rxNumber = String(body.rxNumber || "RX-2026-0001");
-    const doctorName = String(body.doctorName || "Doctor");
+    const doctorName = String(body.doctorName || "").trim() || "your clinician";
     const doctorSpecialty = String(body.doctorSpecialty || "General Medicine");
     const diagnosis = String(body.diagnosis || "Clinical Consultation");
     const medicines = Array.isArray(body.medicines) ? body.medicines : [];

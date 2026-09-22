@@ -258,10 +258,6 @@ function envTrim(name: string): string {
   return String(process.env[name] || "").trim();
 }
 
-function utilityTemplateLanguage(): string {
-  return envTrim("META_UTILITY_TEMPLATE_LANGUAGE") || envTrim("META_OTP_TEMPLATE_LANGUAGE") || "en";
-}
-
 const TEMPLATE_ENV_BY_KIND: Partial<Record<CloudMessageKind, string>> = {
   otp: "META_OTP_TEMPLATE_NAME",
   appointment_reminder: "META_REMINDER_TEMPLATE_NAME",
@@ -271,16 +267,46 @@ const TEMPLATE_ENV_BY_KIND: Partial<Record<CloudMessageKind, string>> = {
   prescription_ready: "META_PRESCRIPTION_READY_TEMPLATE_NAME",
 };
 
+/**
+ * Per-kind language. META_UTILITY_TEMPLATE_LANGUAGE stays en_US for Reminder safety.
+ * Booked, receipt, queue, and prescription Manager copies are English (`en`), so each
+ * has its own override. OTP never reads the utility language.
+ */
+const TEMPLATE_LANGUAGE_BY_KIND: Partial<
+  Record<CloudMessageKind, { env: string; fallback: string; useUtility: boolean }>
+> = {
+  otp: { env: "META_OTP_TEMPLATE_LANGUAGE", fallback: "en", useUtility: false },
+  appointment_reminder: { env: "META_REMINDER_TEMPLATE_LANGUAGE", fallback: "en_US", useUtility: true },
+  book_confirmation: { env: "META_BOOK_CONFIRMATION_TEMPLATE_LANGUAGE", fallback: "en", useUtility: true },
+  payment_receipt: { env: "META_RECEIPT_TEMPLATE_LANGUAGE", fallback: "en", useUtility: true },
+  queue_next: { env: "META_QUEUE_NEXT_TEMPLATE_LANGUAGE", fallback: "en", useUtility: true },
+  prescription_ready: { env: "META_PRESCRIPTION_READY_TEMPLATE_LANGUAGE", fallback: "en", useUtility: true },
+};
+
+export function languageForKind(kind: CloudMessageKind): string {
+  const spec = TEMPLATE_LANGUAGE_BY_KIND[kind];
+  if (!spec) return "en";
+  const specific = envTrim(spec.env);
+  if (specific) return specific;
+  if (spec.useUtility) {
+    const utility = envTrim("META_UTILITY_TEMPLATE_LANGUAGE");
+    if (utility) return utility;
+  }
+  return spec.fallback;
+}
+
 /** Optional Cloud API template for a kind. Unset → session text body (same as OTP #20). */
 export function templateConfigForKind(kind: CloudMessageKind): { name: string; language: string } | null {
   const envName = TEMPLATE_ENV_BY_KIND[kind] || "";
   if (!envName) return null;
   const name = envTrim(envName);
   if (!name) return null;
-  const language =
-    kind === "otp" ? envTrim("META_OTP_TEMPLATE_LANGUAGE") || "en" : utilityTemplateLanguage();
-  return { name, language };
+  return { name, language: languageForKind(kind) };
 }
+
+/** Neutral fillers when a tenant row has no display name. Never a Lumera brand string. */
+export const CLINIC_DISPLAY_FALLBACK = "your clinic";
+export const DOCTOR_DISPLAY_FALLBACK = "your clinician";
 
 function templateParamText(value: unknown, fallback: string): string {
   const cleaned = String(value ?? "")
@@ -301,23 +327,25 @@ export function formatQueueToken(value: unknown, fallback = "02"): string {
 export type QueueNextFields = {
   patientName?: string;
   clinicName?: string;
+  doctorName?: string;
   tokenNumber?: string | number;
   currentToken?: string | number;
   location?: string;
 };
 
 /**
- * lumera_queue_next body order (Utility, META_UTILITY_TEMPLATE_LANGUAGE).
- * Manager parameter count is not in this repo — do not copy SANDBOX
- * opd_queue_token_alert. Order follows lumera_appointment_reminder
- * (patient, clinic, then the facts): {{1}} patient, {{2}} clinic,
- * {{3}} your token, {{4}} room. The token currently in consultation
- * stays in the session text only.
+ * lumera_queue_next body order (language: META_QUEUE_NEXT_TEMPLATE_LANGUAGE,
+ * else META_UTILITY_TEMPLATE_LANGUAGE, else en).
+ * Manager count is not in this repo. Order follows lumera_appointment_reminder:
+ * {{1}} patient, {{2}} clinic display name, {{3}} doctor, {{4}} your token, {{5}} room.
+ * Clinic and doctor come from the tenant / appointment. The token currently in
+ * consultation stays in the session text only.
  */
 export function queueNextTemplateParameters(fields: QueueNextFields): string[] {
   return [
     templateParamText(fields.patientName, "Patient"),
-    templateParamText(fields.clinicName, "Lumera Clinic"),
+    templateParamText(fields.clinicName, CLINIC_DISPLAY_FALLBACK),
+    templateParamText(fields.doctorName, DOCTOR_DISPLAY_FALLBACK),
     formatQueueToken(fields.tokenNumber, "02"),
     templateParamText(fields.location, "Rehab Suite 105"),
   ];
@@ -346,23 +374,73 @@ export type PrescriptionReadyFields = {
 };
 
 /**
- * lumera_prescription_ready body order (Utility). Never META_RECEIPT_TEMPLATE_NAME.
- * Manager count is unknown; shape follows lumera_appointment_reminder:
- * {{1}} patient, {{2}} clinic, {{3}} doctor, {{4}} Rx number.
- * The PDF link stays on the session text / local media card.
+ * lumera_prescription_ready body order. Never META_RECEIPT_TEMPLATE_NAME.
+ * {{1}} patient, {{2}} clinic display name, {{3}} doctor, {{4}} Rx number.
+ * Clinic and doctor come from the tenant / appointment. The PDF link stays on
+ * the session text / local media card.
  */
 export function prescriptionReadyTemplateParameters(fields: PrescriptionReadyFields): string[] {
   return [
     templateParamText(fields.patientName, "Patient"),
-    templateParamText(fields.clinicName, "Lumera Clinic"),
-    templateParamText(fields.doctorName, "your clinician"),
+    templateParamText(fields.clinicName, CLINIC_DISPLAY_FALLBACK),
+    templateParamText(fields.doctorName, DOCTOR_DISPLAY_FALLBACK),
     templateParamText(fields.rxNumber, "RX"),
+  ];
+}
+
+export type BookConfirmationFields = {
+  patientName?: string;
+  clinicName?: string;
+  doctorName?: string;
+  date?: string;
+  timeSlot?: string;
+  tokenNumber?: string | number;
+};
+
+/**
+ * lumera_appointment_booked body order.
+ * {{1}} patient, {{2}} clinic display name, {{3}} doctor, {{4}} date, {{5}} time, {{6}} token.
+ * Clinic is the tenant display name. Doctor is the appointment clinician.
+ */
+export function bookConfirmationTemplateParameters(fields: BookConfirmationFields): string[] {
+  const token = templateParamText(fields.tokenNumber, "");
+  return [
+    templateParamText(fields.patientName, "Patient"),
+    templateParamText(fields.clinicName, CLINIC_DISPLAY_FALLBACK),
+    templateParamText(fields.doctorName, DOCTOR_DISPLAY_FALLBACK),
+    templateParamText(fields.date, "the scheduled date"),
+    templateParamText(fields.timeSlot, "OPD"),
+    token || "pending",
+  ];
+}
+
+export type ReceiptTemplateFields = {
+  patientName?: string;
+  clinicName?: string;
+  doctorName?: string;
+  amount?: number | string;
+  invoiceId?: string;
+};
+
+/**
+ * lumera_payment_receipt body order. Not used for prescription_ready.
+ * {{1}} patient, {{2}} clinic display name, {{3}} doctor, {{4}} amount, {{5}} invoice.
+ */
+export function receiptTemplateParameters(fields: ReceiptTemplateFields): string[] {
+  const amount = templateParamText(fields.amount, "0");
+  return [
+    templateParamText(fields.patientName, "Patient"),
+    templateParamText(fields.clinicName, CLINIC_DISPLAY_FALLBACK),
+    templateParamText(fields.doctorName, DOCTOR_DISPLAY_FALLBACK),
+    amount,
+    templateParamText(fields.invoiceId, "invoice"),
   ];
 }
 
 export type ReminderFields = {
   patientName?: string;
   doctorName?: string;
+  clinicName?: string;
   specialty?: string;
   date?: string;
   timeSlot?: string;
@@ -371,6 +449,8 @@ export type ReminderFields = {
 
 export type ReceiptFields = {
   patientName?: string;
+  clinicName?: string;
+  doctorName?: string;
   amount?: number | string;
   currency?: string;
   invoiceId?: string;
@@ -388,7 +468,7 @@ export function buildReminderText(fields: ReminderFields): string {
       ? `#${String(fields.tokenNumber).padStart(2, "0")}`
       : "pending";
   return (
-    `⏰ *Appointment reminder — Lumera*\n\n` +
+    `⏰ *Appointment reminder — ${templateParamText(fields.clinicName, CLINIC_DISPLAY_FALLBACK)}*\n\n` +
     `Namaste ${name},\n` +
     `Your consultation with *${fields.doctorName || "your clinician"}* is scheduled for *${fields.date || "the upcoming slot"}* at *${fields.timeSlot || "TBD"}*.\n\n` +
     `🎫 Token: *${token}*\n` +
@@ -404,7 +484,7 @@ export function buildBookConfirmationText(fields: ReminderFields & { uhid?: stri
       ? `#${String(fields.tokenNumber).padStart(2, "0")}`
       : "pending";
   return (
-    `✅ *Appointment confirmed — Lumera*\n\n` +
+    `✅ *Appointment confirmed — ${templateParamText(fields.clinicName, CLINIC_DISPLAY_FALLBACK)}*\n\n` +
     `Namaste ${name},\n` +
     `Your visit with *${fields.doctorName || "your clinician"}*` +
     (fields.specialty ? ` (${fields.specialty})` : "") +
@@ -421,7 +501,7 @@ export function buildReceiptText(receipt: ReceiptFields): string {
   const invoice = receipt.invoiceId ? `\nInvoice: ${receipt.invoiceId}` : "";
   const date = receipt.date ? `\nDate: ${receipt.date}` : "";
   return (
-    `🧰 *Payment receipt — Lumera*\n\n` +
+    `🧰 *Payment receipt — ${templateParamText(receipt.clinicName, CLINIC_DISPLAY_FALLBACK)}*\n\n` +
     `Namaste ${name},\n` +
     `We received *${currency}${amount}* for your consultation.${invoice}${date}\n\n` +
     `Thank you.`
@@ -644,6 +724,7 @@ export async function sendAppointmentReminder(opts: {
 export async function sendBookConfirmation(opts: {
   to: string;
   patientName?: string;
+  clinicName?: string;
   doctorName?: string;
   specialty?: string;
   date?: string;
@@ -662,7 +743,7 @@ export async function sendBookConfirmation(opts: {
     kind: "book_confirmation",
     textBody: opts.textBody || buildBookConfirmationText(opts),
     templateName: opts.templateName,
-    templateParameters: opts.templateParameters,
+    templateParameters: opts.templateParameters || bookConfirmationTemplateParameters(opts),
     db: opts.db,
     fetchImpl: opts.fetchImpl,
     tenantId: opts.tenantId,
@@ -681,6 +762,7 @@ export async function sendQueueNext(opts: {
   to: string;
   patientName?: string;
   clinicName?: string;
+  doctorName?: string;
   tokenNumber?: string | number;
   currentToken?: string | number;
   location?: string;
@@ -756,6 +838,8 @@ export async function sendPaymentReceipt(opts: {
   date?: string;
   textBody?: string;
   previewUrl?: boolean;
+  clinicName?: string;
+  doctorName?: string;
   templateName?: string;
   templateParameters?: string[];
   db?: DatabaseSync | null;
@@ -768,7 +852,15 @@ export async function sendPaymentReceipt(opts: {
     textBody: opts.textBody || buildReceiptText(opts),
     previewUrl: opts.previewUrl,
     templateName: opts.templateName,
-    templateParameters: opts.templateParameters,
+    templateParameters:
+      opts.templateParameters ||
+      receiptTemplateParameters({
+        patientName: opts.patientName,
+        clinicName: opts.clinicName,
+        doctorName: opts.doctorName,
+        amount: opts.amount,
+        invoiceId: opts.invoiceId,
+      }),
     db: opts.db,
     fetchImpl: opts.fetchImpl,
     tenantId: opts.tenantId,

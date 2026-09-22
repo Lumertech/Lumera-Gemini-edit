@@ -100,7 +100,7 @@ function payloadString(payload: Record<string, unknown>, keys: string[]): string
   return "";
 }
 
-function clinicNameForOutbound(tenantId: string, override: string, fallback: string): string {
+function clinicNameForOutbound(tenantId: string, override: string): string {
   const explicit = override.trim();
   if (explicit) return explicit;
   const id = tenantId.trim();
@@ -113,7 +113,18 @@ function clinicNameForOutbound(tenantId: string, override: string, fallback: str
       /* tenants table may be missing in isolated tests */
     }
   }
-  return fallback;
+  return "your clinic";
+}
+
+function doctorNameForOutbound(tenantId: string, patientPhone: string, override: string): string {
+  const explicit = override.trim();
+  if (explicit) return explicit;
+  if (tenantId) {
+    const appointment = findActiveAppointment({ tenantId, patientPhone });
+    const doctor = String(appointment?.doctor_name || "").trim();
+    if (doctor) return doctor;
+  }
+  return "your clinician";
 }
 
 function cloudFailureStatus(error: string, channel: "none" | "graph"): number {
@@ -815,7 +826,8 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
           const currentToken = payloadString(payload, ["currentToken", "servingToken"]) || "01";
           const tokenNumber = payloadString(payload, ["tokenNumber", "token"]) || "02";
           const location = payloadString(payload, ["location", "room"]) || "Rehab Suite 105";
-          const clinicName = clinicNameForOutbound(tenantId, payloadString(payload, ["clinicName", "clinic"]), "Lumera Clinic");
+          const clinicName = clinicNameForOutbound(tenantId, payloadString(payload, ["clinicName", "clinic"]));
+          const doctorName = doctorNameForOutbound(tenantId, patientPhone, payloadString(payload, ["doctorName"]));
           details = `Live OPD Queue Alert dispatched: Patient is next in line.`;
           messageContent = buildQueueNextText({
             patientName,
@@ -826,16 +838,17 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
           templateParameters = queueNextTemplateParameters({
             patientName,
             clinicName,
+            doctorName,
             tokenNumber,
             location,
           });
           buttons = ["✅ I am at OPD Room", "🚶 Need 5 Mins", "📞 Reception Call"];
         } else {
-          const doctorName = payloadString(payload, ["doctorName"]) || "Dr. Siddharth Varma";
-          const rxNumber = payloadString(payload, ["rxNumber", "rx"]) || "RX-2026-0106";
-          const clinicName = clinicNameForOutbound(tenantId, payloadString(payload, ["clinicName", "clinic"]), "Lumera Rehab");
-          details = `Post-consultation digital packet dispatched: Prescription & Diagnostic invoice.`;
-          messageContent = `📋 *Consultation Summary & Prescription Signed*\n\nNamaste ${patientName},\nDr. Siddharth Varma has signed your clinical prescription (*RX-2026-0106*).\n\nYour digital consultation receipt (#INV-9921 for ₹700) has been generated. You can preview or download your verified medical documents below.`;
+          const doctorName = doctorNameForOutbound(tenantId, patientPhone, payloadString(payload, ["doctorName"]));
+          const rxNumber = payloadString(payload, ["rxNumber", "rx"]) || "RX";
+          const clinicName = clinicNameForOutbound(tenantId, payloadString(payload, ["clinicName", "clinic"]));
+          details = `Post-consultation digital packet dispatched: Prescription ready.`;
+          messageContent = `📋 *Consultation Summary & Prescription Signed*\n\nNamaste ${patientName},\n${doctorName} has signed your clinical prescription (*${rxNumber}*) at *${clinicName}*.\n\nYou can preview or download your verified medical documents below.`;
           templateParameters = prescriptionReadyTemplateParameters({
             patientName,
             clinicName,
@@ -845,10 +858,10 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
           buttons = ["📄 View Prescription Slip", "📥 Download PDF", "💊 Order Medicine Home Delivery"];
           media = {
             type: "pdf",
-            title: "Prescription_RX-2026-0106_Rajiv_Saxena.pdf",
-            url: "/api/emr/prescription/rx-101/pdf",
+            title: `Prescription_${rxNumber}.pdf`,
+            url: payloadString(payload, ["pdfUrl"]) || `/api/emr/prescription/${rxNumber}/pdf`,
             size: "245 KB",
-            subtitle: "Signed by Dr. Siddharth Varma (PT) • Lumera Rehab",
+            subtitle: `Signed by ${doctorName} • ${clinicName}`,
           };
         }
 
@@ -857,9 +870,10 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
               to: patientPhone,
               patientName,
               clinicName: templateParameters[1],
-              tokenNumber: templateParameters[2],
+              doctorName: templateParameters[2],
+              tokenNumber: templateParameters[3],
               currentToken: payloadString(payload, ["currentToken", "servingToken"]) || "01",
-              location: templateParameters[3],
+              location: templateParameters[4],
               textBody: messageContent,
               templateParameters,
               db: getDb(),
@@ -936,7 +950,7 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
       const eventId = `evt-${crypto.randomUUID().slice(0, 8)}`;
 
       const details = `Custom broadcast sent to ${patientName}.`;
-      const messageContent = customPayload.message || "Important health notification from Lumera Polyclinic.";
+      const messageContent = customPayload.message || "Important health notification from your clinic.";
       const buttons: string[] | null = null;
       const media: Record<string, unknown> | null = null;
 
@@ -1193,7 +1207,7 @@ Output strictly in JSON:
       const clinicName =
         String(req.body?.clinicName || "").trim() ||
         (tenantId ? getTenantLetterhead(tenantId).clinicName : "") ||
-        "Lumera Healthcare Polyclinic";
+        "your clinic";
 
       const db = getDb();
       const now = new Date().toISOString();

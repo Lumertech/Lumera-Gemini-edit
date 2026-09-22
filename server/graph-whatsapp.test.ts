@@ -4,11 +4,13 @@ import path from "node:path";
 import { after, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
+  bookConfirmationTemplateParameters,
   buildQueueNextText,
   dispatchWhatsAppCloudMessage,
   postGraphWhatsAppMessage,
   prescriptionReadyTemplateParameters,
   queueNextTemplateParameters,
+  receiptTemplateParameters,
   sendAppointmentReminder,
   sendBookConfirmation,
   sendPaymentReceipt,
@@ -321,8 +323,14 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
     assert.match(envExample, /META_RECEIPT_TEMPLATE_NAME/);
     assert.match(envExample, /META_QUEUE_NEXT_TEMPLATE_NAME/);
     assert.match(envExample, /META_PRESCRIPTION_READY_TEMPLATE_NAME/);
+    assert.match(envExample, /META_REMINDER_TEMPLATE_LANGUAGE=en_US/);
+    assert.match(envExample, /META_BOOK_CONFIRMATION_TEMPLATE_NAME=lumera_appointment_booked/);
+    assert.match(envExample, /META_BOOK_CONFIRMATION_TEMPLATE_LANGUAGE=en/);
+    assert.match(envExample, /META_RECEIPT_TEMPLATE_NAME=lumera_payment_receipt/);
+    assert.match(envExample, /META_RECEIPT_TEMPLATE_LANGUAGE=en/);
+    assert.match(envExample, /META_QUEUE_NEXT_TEMPLATE_LANGUAGE=en/);
+    assert.match(envExample, /META_PRESCRIPTION_READY_TEMPLATE_LANGUAGE=en/);
     assert.match(envExample, /META_ACCESS_TOKEN/);
-    assert.match(envExample, /Leave these unset/);
   });
 
   it("templateConfigForKind maps queue_next and prescription_ready onto utility language", () => {
@@ -331,6 +339,13 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
     const prevReceipt = process.env.META_RECEIPT_TEMPLATE_NAME;
     const prevLang = process.env.META_UTILITY_TEMPLATE_LANGUAGE;
     const prevOtpLang = process.env.META_OTP_TEMPLATE_LANGUAGE;
+    const prevReminder = process.env.META_REMINDER_TEMPLATE_NAME;
+    const prevReminderLang = process.env.META_REMINDER_TEMPLATE_LANGUAGE;
+    const prevBook = process.env.META_BOOK_CONFIRMATION_TEMPLATE_NAME;
+    const prevBookLang = process.env.META_BOOK_CONFIRMATION_TEMPLATE_LANGUAGE;
+    const prevReceiptLang = process.env.META_RECEIPT_TEMPLATE_LANGUAGE;
+    const prevQueueLang = process.env.META_QUEUE_NEXT_TEMPLATE_LANGUAGE;
+    const prevRxLang = process.env.META_PRESCRIPTION_READY_TEMPLATE_LANGUAGE;
     delete process.env.META_QUEUE_NEXT_TEMPLATE_NAME;
     delete process.env.META_PRESCRIPTION_READY_TEMPLATE_NAME;
     process.env.META_RECEIPT_TEMPLATE_NAME = "lumera_payment_receipt";
@@ -344,14 +359,38 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
 
       process.env.META_QUEUE_NEXT_TEMPLATE_NAME = "lumera_queue_next";
       process.env.META_PRESCRIPTION_READY_TEMPLATE_NAME = "lumera_prescription_ready";
+      process.env.META_REMINDER_TEMPLATE_NAME = "lumera_appointment_reminder";
+      process.env.META_BOOK_CONFIRMATION_TEMPLATE_NAME = "lumera_appointment_booked";
+      process.env.META_BOOK_CONFIRMATION_TEMPLATE_LANGUAGE = "en";
+      process.env.META_RECEIPT_TEMPLATE_LANGUAGE = "en";
+      process.env.META_QUEUE_NEXT_TEMPLATE_LANGUAGE = "en";
+      process.env.META_PRESCRIPTION_READY_TEMPLATE_LANGUAGE = "en";
+      process.env.META_REMINDER_TEMPLATE_LANGUAGE = "en_US";
       assert.deepEqual(templateConfigForKind("queue_next"), {
         name: "lumera_queue_next",
-        language: "en_US",
+        language: "en",
       });
       assert.deepEqual(templateConfigForKind("prescription_ready"), {
         name: "lumera_prescription_ready",
-        language: "en_US",
+        language: "en",
       });
+      assert.equal(templateConfigForKind("appointment_reminder")?.language, "en_US");
+      assert.equal(templateConfigForKind("book_confirmation")?.language, "en");
+      assert.equal(templateConfigForKind("payment_receipt")?.language, "en");
+      if (process.env.META_OTP_TEMPLATE_NAME) {
+        assert.equal(templateConfigForKind("otp")?.language, "en");
+      }
+      delete process.env.META_REMINDER_TEMPLATE_LANGUAGE;
+      delete process.env.META_BOOK_CONFIRMATION_TEMPLATE_LANGUAGE;
+      assert.equal(templateConfigForKind("appointment_reminder")?.language, "en_US");
+      assert.equal(templateConfigForKind("book_confirmation")?.language, "en_US");
+      delete process.env.META_UTILITY_TEMPLATE_LANGUAGE;
+      delete process.env.META_QUEUE_NEXT_TEMPLATE_LANGUAGE;
+      delete process.env.META_PRESCRIPTION_READY_TEMPLATE_LANGUAGE;
+      assert.equal(templateConfigForKind("appointment_reminder")?.language, "en_US");
+      assert.equal(templateConfigForKind("book_confirmation")?.language, "en");
+      assert.equal(templateConfigForKind("queue_next")?.language, "en");
+      assert.equal(templateConfigForKind("prescription_ready")?.language, "en");
       if (process.env.META_OTP_TEMPLATE_NAME) {
         assert.equal(templateConfigForKind("otp")?.language, "en");
       } else {
@@ -368,6 +407,20 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
       else process.env.META_UTILITY_TEMPLATE_LANGUAGE = prevLang;
       if (prevOtpLang === undefined) delete process.env.META_OTP_TEMPLATE_LANGUAGE;
       else process.env.META_OTP_TEMPLATE_LANGUAGE = prevOtpLang;
+      if (prevReminder === undefined) delete process.env.META_REMINDER_TEMPLATE_NAME;
+      else process.env.META_REMINDER_TEMPLATE_NAME = prevReminder;
+      if (prevReminderLang === undefined) delete process.env.META_REMINDER_TEMPLATE_LANGUAGE;
+      else process.env.META_REMINDER_TEMPLATE_LANGUAGE = prevReminderLang;
+      if (prevBook === undefined) delete process.env.META_BOOK_CONFIRMATION_TEMPLATE_NAME;
+      else process.env.META_BOOK_CONFIRMATION_TEMPLATE_NAME = prevBook;
+      if (prevBookLang === undefined) delete process.env.META_BOOK_CONFIRMATION_TEMPLATE_LANGUAGE;
+      else process.env.META_BOOK_CONFIRMATION_TEMPLATE_LANGUAGE = prevBookLang;
+      if (prevReceiptLang === undefined) delete process.env.META_RECEIPT_TEMPLATE_LANGUAGE;
+      else process.env.META_RECEIPT_TEMPLATE_LANGUAGE = prevReceiptLang;
+      if (prevQueueLang === undefined) delete process.env.META_QUEUE_NEXT_TEMPLATE_LANGUAGE;
+      else process.env.META_QUEUE_NEXT_TEMPLATE_LANGUAGE = prevQueueLang;
+      if (prevRxLang === undefined) delete process.env.META_PRESCRIPTION_READY_TEMPLATE_LANGUAGE;
+      else process.env.META_PRESCRIPTION_READY_TEMPLATE_LANGUAGE = prevRxLang;
     }
   });
 
@@ -400,12 +453,40 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
     assert.deepEqual(
       queueNextTemplateParameters({
         patientName: "Rajiv Saxena",
-        clinicName: "Lumera Apex PolyClinic",
+        clinicName: "City Care Clinic",
+        doctorName: "Dr. A",
         tokenNumber: 2,
         location: "Rehab Suite 105",
       }),
-      ["Rajiv Saxena", "Lumera Apex PolyClinic", "02", "Rehab Suite 105"]
+      ["Rajiv Saxena", "City Care Clinic", "Dr. A", "02", "Rehab Suite 105"]
     );
+    const queueFallback = queueNextTemplateParameters({});
+    assert.equal(queueFallback[1], "your clinic");
+    assert.equal(queueFallback[2], "your clinician");
+    assert.equal(queueFallback.some((part) => /lumera/i.test(part)), false);
+    assert.deepEqual(
+      bookConfirmationTemplateParameters({
+        patientName: "Rajiv Saxena",
+        clinicName: "City Care Clinic",
+        doctorName: "Dr. A",
+        date: "2026-09-12",
+        timeSlot: "11:00 AM",
+        tokenNumber: 4,
+      }),
+      ["Rajiv Saxena", "City Care Clinic", "Dr. A", "2026-09-12", "11:00 AM", "4"]
+    );
+    assert.equal(bookConfirmationTemplateParameters({})[1], "your clinic");
+    assert.deepEqual(
+      receiptTemplateParameters({
+        patientName: "Rajiv Saxena",
+        clinicName: "City Care Clinic",
+        doctorName: "Dr. A",
+        amount: 700,
+        invoiceId: "INV-1",
+      }),
+      ["Rajiv Saxena", "City Care Clinic", "Dr. A", "700", "INV-1"]
+    );
+    assert.equal(receiptTemplateParameters({}).some((part) => /lumera/i.test(part)), false);
     assert.deepEqual(
       prescriptionReadyTemplateParameters({
         patientName: "Rajiv Saxena",
@@ -448,12 +529,13 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
       process.env.META_QUEUE_NEXT_TEMPLATE_NAME = "lumera_queue_next";
       process.env.META_PRESCRIPTION_READY_TEMPLATE_NAME = "lumera_prescription_ready";
       process.env.META_UTILITY_TEMPLATE_LANGUAGE = "en_US";
-      const queueParams = ["Meera", "Lumera Apex PolyClinic", "02", "Rehab Suite 105"];
+      const queueParams = ["Meera", "City Care Clinic", "Dr. A", "02", "Rehab Suite 105"];
       const queueCaptured: Array<{ url: string; body: Record<string, unknown> }> = [];
       const queueSend = await sendQueueNext({
         to: "+919823455667",
         patientName: "Meera",
-        clinicName: "Lumera Apex PolyClinic",
+        clinicName: "City Care Clinic",
+        doctorName: "Dr. A",
         tokenNumber: "02",
         location: "Rehab Suite 105",
         templateParameters: queueParams,
@@ -563,5 +645,17 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
     assert.match(graph, /sub_type: "copy_code"/);
     assert.match(graph, /queue_next: "META_QUEUE_NEXT_TEMPLATE_NAME"/);
     assert.match(graph, /prescription_ready: "META_PRESCRIPTION_READY_TEMPLATE_NAME"/);
+    assert.match(graph, /META_REMINDER_TEMPLATE_LANGUAGE/);
+    assert.match(graph, /META_BOOK_CONFIRMATION_TEMPLATE_LANGUAGE/);
+    assert.match(graph, /META_QUEUE_NEXT_TEMPLATE_LANGUAGE/);
+    const reminders = fs.readFileSync(path.join(__dirname, "whatsapp-calendar-reminders.ts"), "utf8");
+    const billing = fs.readFileSync(path.join(__dirname, "billing.ts"), "utf8");
+    assert.match(reminders, /bookConfirmationTemplateParameters/);
+    assert.match(reminders, /clinicDisplayNameForTenant/);
+    assert.equal(/Lumera Clinic/.test(reminders), false);
+    assert.match(billing, /receiptTemplateParameters/);
+    assert.equal(whatsapp.includes('fallback: "Lumera'), false);
+    assert.equal(/"Lumera Clinic"/.test(whatsapp), false);
+    assert.equal(/"Lumera Rehab"/.test(whatsapp), false);
   });
 });
