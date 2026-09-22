@@ -295,3 +295,49 @@ describe("Compliance #44 honesty gate (clinician / admin / DHIS / CMS / ABDM sta
     assert.match(db, /ABDM-aligned \(NHA sandbox\)/);
   });
 });
+
+/** Compliance #110 — Rx letterhead / WhatsApp must not claim NHA digital verification. */
+const ISSUE110_BANNED: Array<{ id: string; re: RegExp }> = [
+  { id: "digitally verified under NHA", re: /digitally verified under.*NHA/i },
+  { id: "Valid under NHA Telemedicine", re: /Valid under NHA Telemedicine/i },
+];
+
+const ISSUE110_COPY_FILES = [
+  "server/letterhead.ts",
+  "server/db-migrate.ts",
+  "src/data/clinicalData.ts",
+];
+
+const SANDBOX_RX_DISCLAIMER =
+  "Sandbox / demo prescription — not ABDM certified. Please report any adverse drug reactions to your clinician.";
+
+describe("Compliance #110 Rx letterhead honesty", () => {
+  it("demo letterhead and WhatsApp Rx footer use sandbox copy, not NHA verification", () => {
+    for (const rel of ISSUE110_COPY_FILES) {
+      const src = readRepo(rel);
+      assert.match(src, new RegExp(SANDBOX_RX_DISCLAIMER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+      assert.match(src, /Authorized medical seal \(sandbox \/ demo\)/);
+    }
+    const templates = readRepo("src/data/clinicalData.ts");
+    assert.match(templates, /Sandbox \/ demo Rx — not ABDM certified/);
+    assert.equal(/Digital Signature Verified/i.test(templates), false);
+    assert.equal(/Digital Signature Verified/i.test(readRepo("server/letterhead.ts")), false);
+    assert.equal(/Digital Signature Verified/i.test(readRepo("server/db-migrate.ts")), false);
+  });
+
+  it("grep gate blocks NHA digitally-verified and Telemedicine-validity overclaims", () => {
+    const files = [...walkSourceFiles("src"), ...walkSourceFiles("server")].filter(
+      (rel) => !rel.endsWith(".test.ts")
+    );
+    const leftovers: string[] = [];
+    for (const rel of files) {
+      const lines = readRepo(rel).split(/\n/);
+      lines.forEach((line, i) => {
+        for (const rule of ISSUE110_BANNED) {
+          if (rule.re.test(line)) leftovers.push(`${rel}:${i + 1} [${rule.id}] ${line.trim()}`);
+        }
+      });
+    }
+    assert.deepEqual(leftovers, [], leftovers.join("\n"));
+  });
+});

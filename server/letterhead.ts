@@ -30,10 +30,10 @@ export const DEMO_LETTERHEAD: TenantLetterhead = {
   regId: "WB-CLINIC-REG-2023/8892",
   upiId: "lumerahealth@icici",
   whatsappNumber: "+91 98000 12345",
-  sealText: "Authorized Medical Seal & Digital Signature Verified",
+  sealText: "Authorized medical seal (sandbox / demo)",
   signatureUrl: "",
   footerDisclaimer:
-    "This prescription is digitally verified under National Health Authority (NHA) & Telemedicine Practice Guidelines. Please report any adverse drug reactions immediately.",
+    "Sandbox / demo prescription — not ABDM certified. Please report any adverse drug reactions to your clinician.",
 };
 
 const EMPTY_LETTERHEAD: TenantLetterhead = {
