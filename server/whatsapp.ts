@@ -20,6 +20,7 @@ import {
 } from "./whatsapp-calendar.ts";
 import { isProduction } from "./runtime.ts";
 import { reportCaughtError } from "./error-tracker.ts";
+import { serializeOutboundEvent } from "./whatsapp-scope.ts";
 
 let defaultGenAIClient: GoogleGenAI | null = null;
 function getDefaultGenAI(): GoogleGenAI | null {
@@ -773,10 +774,12 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
   const handleOutboundEvents = (_req: Request, res: Response) => {
     try {
       const db = getDb();
-      const events = db.prepare(`
+      const events = (
+        db.prepare(`
         SELECT * FROM whatsapp_outbound_events
         ORDER BY sent_at DESC LIMIT 50
-      `).all();
+      `).all() as Record<string, unknown>[]
+      ).map(serializeOutboundEvent);
 
       res.json({ events });
     } catch (err: unknown) {

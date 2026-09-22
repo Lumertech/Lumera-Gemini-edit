@@ -213,28 +213,45 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
     }
   });
 
-  it("Graph path uses a utility template when META_REMINDER_TEMPLATE_NAME is set", async () => {
+  it("Graph path uses lumera_appointment_reminder with Manager body order when META_REMINDER_TEMPLATE_NAME is set", async () => {
+    const prevLang = process.env.META_UTILITY_TEMPLATE_LANGUAGE;
     process.env.META_ACCESS_TOKEN = LIVE_TOKEN;
     process.env.META_PHONE_NUMBER_ID = LIVE_PHONE_ID;
-    process.env.META_REMINDER_TEMPLATE_NAME = "appointment_reminder_v1";
+    process.env.META_REMINDER_TEMPLATE_NAME = "lumera_appointment_reminder";
+    process.env.META_UTILITY_TEMPLATE_LANGUAGE = "en_US";
     process.env.NODE_ENV = "test";
-    const captured: Array<{ url: string; body: Record<string, unknown> }> = [];
-    const reminder = await sendAppointmentReminder({
-      to: "+919823455667",
-      patientName: "Meera",
-      doctorName: "Dr. A",
-      date: "2026-09-12",
-      timeSlot: "11:00 AM",
-      tokenNumber: 2,
-      templateParameters: ["Meera", "Dr. A", "Tomorrow", "11:00 AM", "02"],
-      db: null,
-      fetchImpl: mockGraphFetch(captured, "wamid.TPL"),
-    });
-    assert.equal(reminder.ok, true);
-    assert.equal(captured[0].body.type, "template");
-    const template = captured[0].body.template as { name?: string };
-    assert.equal(template.name, "appointment_reminder_v1");
-    delete process.env.META_REMINDER_TEMPLATE_NAME;
+    try {
+      const captured: Array<{ url: string; body: Record<string, unknown> }> = [];
+      const managerParameters = ["Meera", "Lumera Apex PolyClinic", "Dr. A", "2026-09-12", "11:00 AM"];
+      const reminder = await sendAppointmentReminder({
+        to: "+919823455667",
+        patientName: "Meera",
+        doctorName: "Dr. A",
+        date: "2026-09-12",
+        timeSlot: "11:00 AM",
+        tokenNumber: 2,
+        templateParameters: managerParameters,
+        db: null,
+        fetchImpl: mockGraphFetch(captured, "wamid.TPL"),
+      });
+      assert.equal(reminder.ok, true);
+      assert.equal(captured[0].body.type, "template");
+      const template = captured[0].body.template as {
+        name?: string;
+        language?: { code?: string };
+        components?: Array<{ type?: string; parameters?: Array<{ text?: string }> }>;
+      };
+      assert.equal(template.name, "lumera_appointment_reminder");
+      assert.equal(template.language?.code, "en_US");
+      assert.deepEqual(
+        template.components?.find((component) => component.type === "body")?.parameters?.map((parameter) => parameter.text),
+        managerParameters
+      );
+    } finally {
+      delete process.env.META_REMINDER_TEMPLATE_NAME;
+      if (prevLang === undefined) delete process.env.META_UTILITY_TEMPLATE_LANGUAGE;
+      else process.env.META_UTILITY_TEMPLATE_LANGUAGE = prevLang;
+    }
   });
 
   it("sandbox path in non-prod without creds does not call Graph", async () => {

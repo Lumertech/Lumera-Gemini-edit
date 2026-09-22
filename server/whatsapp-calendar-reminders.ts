@@ -105,15 +105,27 @@ function recordOutboundEvent(opts: {
   status: string;
   details: string;
   payload: Record<string, unknown>;
+  tenantId?: string;
   conversationContent?: string;
 }): string {
   const db = getDb();
   const now = new Date().toISOString();
   const eventId = `evt-${crypto.randomUUID().slice(0, 8)}`;
+  const tenantId = String(opts.tenantId || opts.payload.tenantId || "").trim();
   db.prepare(
-    `INSERT INTO whatsapp_outbound_events (id, event_type, patient_phone, patient_name, status, details, action_payload, sent_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(eventId, opts.eventType, opts.phone, opts.name, opts.status, opts.details, JSON.stringify(opts.payload), now);
+    `INSERT INTO whatsapp_outbound_events (id, event_type, patient_phone, patient_name, status, details, action_payload, sent_at, tenant_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    eventId,
+    opts.eventType,
+    opts.phone,
+    opts.name,
+    opts.status,
+    opts.details,
+    JSON.stringify(opts.payload),
+    now,
+    tenantId
+  );
 
   if (opts.conversationContent) {
     const timeDisplay = new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
@@ -162,6 +174,7 @@ function recordCloudDispatch(opts: {
       status: "sent",
       details: `WhatsApp Cloud API ${opts.eventType} accepted`,
       payload: { ...opts.payload, channel: "graph", messageId: opts.sent.messageId },
+      tenantId: String(opts.payload.tenantId || ""),
     });
     return { ok: true, channel: "graph", messageId: opts.sent.messageId, eventId };
   }
@@ -174,6 +187,7 @@ function recordCloudDispatch(opts: {
       status: "failed",
       details: `${opts.eventType} not delivered: ${opts.sent.error}`,
       payload: { ...opts.payload, channel: opts.sent.channel, error: opts.sent.error, sandbox: false },
+      tenantId: String(opts.payload.tenantId || ""),
     });
     return { ok: false, error: opts.sent.error, channel: opts.sent.channel, eventId };
   }
@@ -185,6 +199,7 @@ function recordCloudDispatch(opts: {
     status: "sandbox_recorded",
     details: `SANDBOX / DEV-ONLY ${opts.eventType} recorded locally (not Graph)`,
     payload: { ...opts.payload, channel: "sandbox", sandbox: true },
+    tenantId: String(opts.payload.tenantId || ""),
     conversationContent: sandboxBanner(opts.sandboxText),
   });
   return { ok: true, channel: "sandbox", eventId };
@@ -215,12 +230,13 @@ export async function dispatchAppointmentReminder(opts: {
     timeSlot: opts.appointment.timeSlot,
     tokenNumber: opts.appointment.tokenNumber,
     textBody: text,
+    // lumera_appointment_reminder (Utility, en_US): {{1}} patient, {{2}} clinic, {{3}} doctor, {{4}} date, {{5}} time. No token.
     templateParameters: [
       opts.appointment.patientName,
+      clinicName,
       opts.appointment.doctorName,
       opts.appointment.date,
       opts.appointment.timeSlot || "OPD",
-      String(opts.appointment.tokenNumber),
     ],
     db: getDb(),
     fetchImpl: opts.fetchImpl,

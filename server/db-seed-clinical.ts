@@ -100,12 +100,13 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
 
   if (patientCount.c === 0) {
     const insertPatient = database.prepare(`
-      INSERT INTO patients (id, uhid, name, age, gender, phone, email, blood_group, allergies, chronic_conditions, emergency_contact, address, last_visit, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO patients (id, tenant_id, uhid, name, age, gender, phone, email, blood_group, allergies, chronic_conditions, emergency_contact, address, last_visit, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     insertPatient.run(
       "pat-6",
+      DEMO_TENANT_ID,
       "LUM-2026-0106",
       "Rajiv Saxena",
       44,
@@ -123,6 +124,7 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
 
     insertPatient.run(
       "pat-7",
+      DEMO_TENANT_ID,
       "LUM-2026-0107",
       "Priyanka Mukherjee",
       52,
@@ -140,6 +142,7 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
 
     insertPatient.run(
       "pat-1",
+      DEMO_TENANT_ID,
       "LUM-2026-0101",
       "Sunita Roy",
       48,
@@ -157,6 +160,7 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
 
     insertPatient.run(
       "pat-2",
+      DEMO_TENANT_ID,
       "LUM-2026-0102",
       "Rohan Deshmukh",
       32,
@@ -174,6 +178,7 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
 
     insertPatient.run(
       "pat-3",
+      DEMO_TENANT_ID,
       "LUM-2026-0103",
       "Aarav Gupta",
       6,
@@ -191,6 +196,7 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
 
     insertPatient.run(
       "pat-4",
+      DEMO_TENANT_ID,
       "LUM-2026-0104",
       "Mohammed Tariq",
       58,
@@ -208,6 +214,7 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
 
     insertPatient.run(
       "pat-5",
+      DEMO_TENANT_ID,
       "LUM-2026-0105",
       "Kavita Menon",
       27,
@@ -227,12 +234,13 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
   const apptCount = database.prepare("SELECT COUNT(*) AS c FROM appointments").get() as { c: number };
   if (apptCount.c === 0) {
     const insertAppt = database.prepare(`
-      INSERT INTO appointments (id, token_number, patient_id, patient_name, patient_phone, uhid, doctor_id, doctor_name, specialty, date, time_slot, type, status, source, consultation_fee, is_paid, vitals, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO appointments (id, tenant_id, token_number, patient_id, patient_name, patient_phone, uhid, doctor_id, doctor_name, specialty, date, time_slot, type, status, source, consultation_fee, is_paid, vitals, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     insertAppt.run(
       "apt-1",
+      DEMO_TENANT_ID,
       1,
       "pat-6",
       "Rajiv Saxena",
@@ -265,6 +273,7 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
 
     insertAppt.run(
       "apt-2",
+      DEMO_TENANT_ID,
       2,
       "pat-7",
       "Priyanka Mukherjee",
@@ -286,6 +295,7 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
 
     insertAppt.run(
       "apt-3",
+      DEMO_TENANT_ID,
       3,
       "pat-1",
       "Sunita Roy",
@@ -315,6 +325,7 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
 
     insertAppt.run(
       "apt-4",
+      DEMO_TENANT_ID,
       4,
       "pat-2",
       "Rohan Deshmukh",
@@ -336,6 +347,7 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
 
     insertAppt.run(
       "apt-5",
+      DEMO_TENANT_ID,
       5,
       "pat-3",
       "Aarav Gupta",
@@ -357,6 +369,7 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
 
     insertAppt.run(
       "apt-6",
+      DEMO_TENANT_ID,
       6,
       "pat-4",
       "Mohammed Tariq",
@@ -739,5 +752,197 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
       now
     );
   }
+
+  try {
+    database.prepare("UPDATE patients SET tenant_id = ? WHERE tenant_id IS NULL OR tenant_id = ''").run(DEMO_TENANT_ID);
+    database.prepare("UPDATE appointments SET tenant_id = ? WHERE tenant_id IS NULL OR tenant_id = ''").run(DEMO_TENANT_ID);
+  } catch {
+    /* tenant_id column is created in bootstrap before this seed */
+  }
+
+  ensureClipAReminderFixture(database, now);
+}
+
+const CLIP_A_PHONE = "+919999973271";
+const CLIP_A_PHONE_KEY = "9999973271";
+const CLIP_A_PATIENT_ID = "pat-a1-clip";
+const CLIP_A_CONV_ID = "conv-a1-clip";
+const CLIP_A_APPT_ID = "apt-a1-reminder";
+const CLIP_A_NAME = "A1 Test Recipient";
+const CLIP_A_UHID = "LUM-A1-73271";
+
+function phoneKey(phone: string): string {
+  const digits = String(phone || "").replace(/\D/g, "");
+  return digits.length >= 10 ? digits.slice(-10) : digits;
+}
+
+/** IST wall clock about 20 hours ahead, inside the 24h reminder window. */
+function clipAReminderSlot(now = new Date()): { date: string; timeSlot: string } {
+  const wall = new Date(now.getTime() + 20 * 60 * 60 * 1000 + 330 * 60 * 1000);
+  const date = `${wall.getUTCFullYear()}-${String(wall.getUTCMonth() + 1).padStart(2, "0")}-${String(wall.getUTCDate()).padStart(2, "0")}`;
+  let hours = wall.getUTCHours();
+  const minutes = wall.getUTCMinutes();
+  const mer = hours >= 12 ? "PM" : "AM";
+  let h12 = hours % 12;
+  if (h12 === 0) h12 = 12;
+  return { date, timeSlot: `${String(h12).padStart(2, "0")}:${String(minutes).padStart(2, "0")} ${mer}` };
+}
+
+function istHoursUntil(date: string, timeSlot: string, now: Date): number {
+  const match = String(timeSlot || "").trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  let hours = 9;
+  let minutes = 0;
+  if (match) {
+    hours = Number(match[1]);
+    minutes = Number(match[2]);
+    const mer = match[3].toUpperCase();
+    if (mer === "PM" && hours < 12) hours += 12;
+    if (mer === "AM" && hours === 12) hours = 0;
+  }
+  const [year, month, day] = String(date || "").split("-").map(Number);
+  const start = Date.UTC(year, (month || 1) - 1, day || 1, hours, minutes) - 330 * 60 * 1000;
+  return (start - now.getTime()) / 3_600_000;
+}
+
+/**
+ * Demo tenant only. Fresh Postgres has no row for the Clip A handset, so
+ * Trigger 24h Reminder 404s before Graph. Re-running keeps a single Waiting
+ * appointment inside the next 24 hours.
+ */
+function ensureClipAReminderFixture(database: SqlDatabase, now: string) {
+  const tenant = database.prepare("SELECT id FROM tenants WHERE id = ?").get(DEMO_TENANT_ID) as { id: string } | undefined;
+  if (!tenant) return;
+
+  const patients = database.prepare("SELECT * FROM patients WHERE tenant_id = ? OR id = ?").all(DEMO_TENANT_ID, CLIP_A_PATIENT_ID) as Record<string, unknown>[];
+  let patient = patients.find(
+    (row) => String(row.id) === CLIP_A_PATIENT_ID || phoneKey(String(row.phone || "")) === CLIP_A_PHONE_KEY
+  );
+  if (!patient) {
+    database.prepare(`
+      INSERT INTO patients (id, tenant_id, uhid, name, age, gender, phone, email, blood_group, allergies, chronic_conditions, emergency_contact, address, last_visit, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      CLIP_A_PATIENT_ID,
+      DEMO_TENANT_ID,
+      CLIP_A_UHID,
+      CLIP_A_NAME,
+      34,
+      "Female",
+      CLIP_A_PHONE,
+      "",
+      "O+",
+      "[]",
+      "[]",
+      "",
+      "",
+      null,
+      now
+    );
+    patient = { id: CLIP_A_PATIENT_ID };
+  } else if (String(patient.tenant_id || "") === DEMO_TENANT_ID || String(patient.id) === CLIP_A_PATIENT_ID) {
+    database.prepare(
+      "UPDATE patients SET tenant_id = ?, phone = ?, name = COALESCE(NULLIF(name, ''), ?) WHERE id = ?"
+    ).run(DEMO_TENANT_ID, CLIP_A_PHONE, CLIP_A_NAME, String(patient.id));
+  }
+  const patientId = String(patient.id);
+
+  let conversations: Record<string, unknown>[] = [];
+  try {
+    conversations = database.prepare("SELECT id, patient_phone FROM whatsapp_conversations").all() as Record<string, unknown>[];
+  } catch {
+    conversations = [];
+  }
+  const conversation = conversations.find(
+    (row) => String(row.id) === CLIP_A_CONV_ID || phoneKey(String(row.patient_phone || "")) === CLIP_A_PHONE_KEY
+  );
+  if (!conversation) {
+    database.prepare(`
+      INSERT INTO whatsapp_conversations (id, patient_phone, patient_name, patient_id, uhid, handover_mode, assigned_staff, tags, preferred_language, unread_count, last_message, last_message_time, updated_at)
+      VALUES (?, ?, ?, ?, ?, 'bot', 'Unassigned', ?, 'en', 0, ?, '', ?)
+    `).run(
+      CLIP_A_CONV_ID,
+      CLIP_A_PHONE,
+      CLIP_A_NAME,
+      patientId,
+      CLIP_A_UHID,
+      JSON.stringify(["Appointment"]),
+      "Clip A reminder recipient is ready for a 24h trigger.",
+      now
+    );
+  }
+  const convId = conversation ? String(conversation.id) : CLIP_A_CONV_ID;
+  try {
+    database.prepare(
+      "UPDATE whatsapp_conversations SET tenant_id = ?, patient_phone = ?, patient_name = ?, patient_id = ? WHERE id = ?"
+    ).run(DEMO_TENANT_ID, CLIP_A_PHONE, CLIP_A_NAME, patientId, convId);
+  } catch {
+    /* tenant_id is added after this seed on a first boot; the phone migration backfills the demo tenant. */
+  }
+
+  const doctor = DOCTOR_SEED.find((row) => row.id === "doc-1") || DOCTOR_SEED[0];
+  const appointments = database.prepare(
+    "SELECT * FROM appointments WHERE id = ? OR (tenant_id = ? AND patient_id = ?)"
+  ).all(CLIP_A_APPT_ID, DEMO_TENANT_ID, patientId) as Record<string, unknown>[];
+  const appointment =
+    appointments.find((row) => String(row.id) === CLIP_A_APPT_ID) ||
+    appointments.find((row) => !["Completed", "Cancelled", "No-Show"].includes(String(row.status || ""))) ||
+    appointments[0];
+
+  const slot = clipAReminderSlot(new Date(now));
+  const remindable = (row: Record<string, unknown> | undefined) => {
+    if (!row) return false;
+    const status = String(row.status || "");
+    if (status !== "Waiting" && status !== "Confirmed") return false;
+    if (phoneKey(String(row.patient_phone || "")) !== CLIP_A_PHONE_KEY) return false;
+    if (String(row.tenant_id || "") !== DEMO_TENANT_ID) return false;
+    const hours = istHoursUntil(String(row.date || ""), String(row.time_slot || ""), new Date(now));
+    return hours > 0 && hours <= 24;
+  };
+
+  if (!appointment) {
+    const tokenRow = database.prepare(
+      "SELECT COALESCE(MAX(token_number), 0) AS max_token FROM appointments WHERE tenant_id = ? AND date = ?"
+    ).get(DEMO_TENANT_ID, slot.date) as { max_token: number };
+    database.prepare(`
+      INSERT INTO appointments (id, tenant_id, token_number, patient_id, patient_name, patient_phone, uhid, doctor_id, doctor_name, specialty, date, time_slot, type, status, source, consultation_fee, is_paid, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Waiting', 'Demo seed', ?, 1, ?)
+    `).run(
+      CLIP_A_APPT_ID,
+      DEMO_TENANT_ID,
+      Number(tokenRow?.max_token || 0) + 1,
+      patientId,
+      CLIP_A_NAME,
+      CLIP_A_PHONE,
+      CLIP_A_UHID,
+      doctor.id,
+      doctor.name,
+      doctor.specialty,
+      slot.date,
+      slot.timeSlot,
+      "New Consultation",
+      doctor.consultationFee,
+      now
+    );
+    return;
+  }
+
+  if (remindable(appointment)) return;
+  database.prepare(`
+    UPDATE appointments
+    SET tenant_id = ?, patient_id = ?, patient_name = ?, patient_phone = ?, doctor_id = ?, doctor_name = ?, specialty = ?,
+        date = ?, time_slot = ?, status = 'Waiting'
+    WHERE id = ?
+  `).run(
+    DEMO_TENANT_ID,
+    patientId,
+    CLIP_A_NAME,
+    CLIP_A_PHONE,
+    doctor.id,
+    doctor.name,
+    doctor.specialty,
+    slot.date,
+    slot.timeSlot,
+    String(appointment.id)
+  );
 }
 
