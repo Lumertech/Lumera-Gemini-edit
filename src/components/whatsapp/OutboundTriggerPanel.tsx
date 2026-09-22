@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { apiFetch } from '../../api/http';
 import { 
   Bell, 
   Send, 
@@ -44,11 +45,8 @@ export const OutboundTriggerPanel: React.FC<OutboundTriggerPanelProps> = ({
   const fetchEvents = async () => {
     try {
       setLoading(true);
-      const res = await fetch('/api/whatsapp/outbound/events');
-      if (res.ok) {
-        const data = await res.json();
-        setEvents(data.events || []);
-      }
+      const data = await apiFetch<{ events?: OutboundEvent[] }>('/api/whatsapp/outbound/events');
+      setEvents(data.events || []);
     } catch (err) {
       console.error('Failed to load outbound events:', err);
     } finally {
@@ -67,9 +65,8 @@ export const OutboundTriggerPanel: React.FC<OutboundTriggerPanelProps> = ({
       setStatusMessage(null);
       setStatusIsError(false);
 
-      const res = await fetch('/api/whatsapp/outbound/trigger', {
+      await apiFetch('/api/whatsapp/outbound/trigger', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           eventType,
           patientPhone: activePatientPhone,
@@ -78,23 +75,16 @@ export const OutboundTriggerPanel: React.FC<OutboundTriggerPanelProps> = ({
         }),
       });
 
-      if (res.ok) {
-        setStatusIsError(false);
-        setStatusMessage(`Successfully dispatched ${eventType.replace(/_/g, ' ')} to WhatsApp!`);
-        fetchEvents();
-        if (onNotificationSent) onNotificationSent();
-      } else {
-        const data = await res.json().catch(() => ({}));
-        const apiError = typeof data?.error === 'string' ? data.error.trim() : '';
-        setStatusIsError(true);
-        failed = true;
-        setStatusMessage(apiError || 'Error dispatching outbound notification');
-      }
+      setStatusIsError(false);
+      setStatusMessage(`Successfully dispatched ${eventType.replace(/_/g, ' ')} to WhatsApp!`);
+      fetchEvents();
+      if (onNotificationSent) onNotificationSent();
     } catch (err) {
       console.error('Error triggering notification:', err);
+      const apiError = err instanceof Error ? err.message.trim() : '';
       setStatusIsError(true);
       failed = true;
-      setStatusMessage('Network error triggering notification');
+      setStatusMessage(apiError || 'Error dispatching outbound notification');
     } finally {
       setSending(null);
       setTimeout(() => {

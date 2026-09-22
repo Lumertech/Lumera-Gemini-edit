@@ -100,6 +100,21 @@ describe("WhatsApp inbox HTTP contract for /app/whatsapp", () => {
     }
   });
 
+  it("returns camelCase outbound events the trigger panel already reads", async () => {
+    const res = await jsonRequest(port, "/api/whatsapp/outbound/events", { Authorization: `Bearer ${token}` });
+    assert.equal(res.status, 200);
+    const events = res.json.events as Array<Record<string, unknown>>;
+    assert.ok(events.length > 0);
+    const ev = events[0];
+    for (const key of ["id", "patientPhone", "patientName", "eventType", "sentAt", "status", "details"]) {
+      assert.equal(typeof ev[key], "string", key);
+      assert.ok(String(ev[key]).length > 0, key);
+    }
+    assert.equal(ev.patient_phone, undefined);
+    assert.equal(ev.event_type, undefined);
+    assert.equal(ev.sent_at, undefined);
+  });
+
   it("refuses an outbound trigger that omits patientPhone instead of defaulting to Rajiv", async () => {
     const res = await jsonRequest(
       port,

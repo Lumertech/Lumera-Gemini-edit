@@ -35,15 +35,47 @@ export function listTenantConversations(tenantId: string) {
     .all(tenantId, tenantId) as Record<string, unknown>[];
 }
 
+/** Last-10 digits so "+91 99999 73271" and "+919999973271" compare equal in SQL. */
+function phoneLast10Sql(column: string): string {
+  const digits = `replace(replace(replace(replace(${column}, '+', ''), ' ', ''), '-', ''), '(', '')`;
+  return `substr(${digits}, length(${digits}) - 9, 10)`;
+}
+
+export function serializeOutboundEvent(row: Record<string, unknown>) {
+  return {
+    id: String(row.id ?? ""),
+    eventType: String(row.event_type ?? row.eventType ?? ""),
+    patientPhone: String(row.patient_phone ?? row.patientPhone ?? ""),
+    patientName: String(row.patient_name ?? row.patientName ?? ""),
+    status: String(row.status ?? ""),
+    details: String(row.details ?? ""),
+    sentAt: String(row.sent_at ?? row.sentAt ?? ""),
+  };
+}
+
 export function listTenantOutboundEvents(tenantId: string) {
-  return getDb()
+  const patientDigits = phoneLast10Sql("p.phone");
+  const eventDigits = phoneLast10Sql("e.patient_phone");
+  const rows = getDb()
     .prepare(
       `SELECT e.* FROM whatsapp_outbound_events e
        WHERE COALESCE(e.tenant_id, '') = ?
-          OR EXISTS (SELECT 1 FROM patients p WHERE p.tenant_id = ? AND p.phone = e.patient_phone)
+          OR EXISTS (
+            SELECT 1 FROM patients p
+            WHERE p.tenant_id = ?
+              AND (
+                p.phone = e.patient_phone
+                OR (
+                  length(replace(replace(replace(replace(p.phone, '+', ''), ' ', ''), '-', ''), '(', '')) >= 10
+                  AND length(replace(replace(replace(replace(e.patient_phone, '+', ''), ' ', ''), '-', ''), '(', '')) >= 10
+                  AND ${patientDigits} = ${eventDigits}
+                )
+              )
+          )
        ORDER BY e.sent_at DESC LIMIT 50`
     )
     .all(tenantId, tenantId) as Record<string, unknown>[];
+  return rows.map(serializeOutboundEvent);
 }
 
 export function stampWhatsAppTenant(table: "whatsapp_conversations" | "whatsapp_messages" | "whatsapp_outbound_events", id: string, tenantId: string) {
