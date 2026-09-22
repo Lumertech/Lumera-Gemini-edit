@@ -256,7 +256,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       await apiFetch("/api/auth/logout", { method: "POST" });
     } catch {
-      /* ignore */
+      /* still clear local credentials if the network call fails */
     }
     setStoredToken(null);
     setUser(null);

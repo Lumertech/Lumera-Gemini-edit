@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { NextFunction, Request, Response } from "express";
 import jwt from "jsonwebtoken";
 import { isDemoAccountEmail } from "../src/lib/demoAccounts.ts";
@@ -43,7 +44,7 @@ export interface JwtTokenPayload {
 }
 
 export function signJwtToken(payload: JwtTokenPayload): string {
-  return jwt.sign(payload, getJwtSecret(), { expiresIn: `${SESSION_DAYS}d` });
+  return jwt.sign({ ...payload, jti: crypto.randomUUID() }, getJwtSecret(), { expiresIn: `${SESSION_DAYS}d` });
 }
 
 /** Cookie + Bearer share one JWT shape (OTP verify, Facebook OAuth, skipOtp). */
@@ -146,6 +147,77 @@ export function destroySession(sessionId: string) {
   getDb().prepare("DELETE FROM sessions WHERE id = ?").run(sessionId);
 }
 
+function credentialHash(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
+
+function ensureRevokedCredentialsTable() {
+  getDb().exec(
+    `CREATE TABLE IF NOT EXISTS revoked_credentials (
+      token_hash TEXT PRIMARY KEY,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )`
+  );
+}
+
+function credentialExpiryIso(token: string): string {
+  const decoded = jwt.decode(token);
+  if (decoded && typeof decoded === "object" && typeof (decoded as { exp?: unknown }).exp === "number") {
+    return new Date(Number((decoded as { exp: number }).exp) * 1000).toISOString();
+  }
+  return new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000).toISOString();
+}
+
+export function isCredentialRevoked(token: string): boolean {
+  const raw = String(token || "").trim();
+  if (!raw) return false;
+  try {
+    ensureRevokedCredentialsTable();
+    const row = getDb()
+      .prepare("SELECT token_hash FROM revoked_credentials WHERE token_hash = ? AND expires_at > ?")
+      .get(credentialHash(raw), new Date().toISOString()) as { token_hash?: string } | undefined;
+    return Boolean(row?.token_hash);
+  } catch {
+    return false;
+  }
+}
+
+/** Invalidate the presented Bearer / cookie JWT. Other unrevoked bearers keep working. */
+export function revokePresentedCredential(token: string): void {
+  const raw = String(token || "").trim();
+  if (!raw) return;
+  ensureRevokedCredentialsTable();
+  const now = new Date().toISOString();
+  const hash = credentialHash(raw);
+  const existing = getDb().prepare("SELECT token_hash FROM revoked_credentials WHERE token_hash = ?").get(hash);
+  if (existing) {
+    getDb().prepare("UPDATE revoked_credentials SET expires_at = ? WHERE token_hash = ?").run(credentialExpiryIso(raw), hash);
+    return;
+  }
+  getDb()
+    .prepare("INSERT INTO revoked_credentials (token_hash, expires_at, created_at) VALUES (?, ?, ?)")
+    .run(hash, credentialExpiryIso(raw), now);
+}
+
+/**
+ * Drop server session rows for this login and revoke the presented credential.
+ * Does not revoke a different bearer still held by another client.
+ */
+export function endPresentedSession(token: string | null): void {
+  const raw = String(token || "").trim();
+  if (!raw) return;
+  if (!isCredentialRevoked(raw)) {
+    const payload = verifyJwtToken(raw);
+    if (payload?.userId) {
+      getDb().prepare("DELETE FROM sessions WHERE user_id = ?").run(payload.userId);
+    } else {
+      destroySession(raw);
+    }
+  }
+  revokePresentedCredential(raw);
+}
+
 export function getSessionId(req: Request): string | null {
   const auth = req.headers.authorization;
   if (auth && typeof auth === "string" && auth.toLowerCase().startsWith("bearer ")) {
@@ -162,6 +234,7 @@ export function getSessionId(req: Request): string | null {
 export function loadUserFromSession(req: Request): AuthUser | null {
   const sid = getSessionId(req);
   if (!sid) return null;
+  if (isCredentialRevoked(sid)) return null;
 
   // 1. Try decoding as JWT token (which contains userId & tenantId)
   const jwtPayload = verifyJwtToken(sid);

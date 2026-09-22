@@ -153,6 +153,30 @@ describe("LUM-TIP-001 / LUM-TIP-003 prescription and meta catalog authz", () => 
     assert.equal(clinicOverview.status, 200);
   });
 
+  it("logout revokes the presented bearer and clears the session cookie", async () => {
+    const token = await login("doctor@lumera.me");
+    const auth = { Authorization: `Bearer ${token}` };
+    const before = await textGet("/api/whatsapp/prescription/rx-101/pdf", auth);
+    assert.equal(before.status, 200);
+
+    const loggedOut = await fetch(`http://127.0.0.1:${port}/api/auth/logout`, {
+      method: "POST",
+      headers: auth,
+    });
+    assert.equal(loggedOut.status, 200);
+    const setCookie = loggedOut.headers.get("set-cookie") || "";
+    assert.match(setCookie, /lumera_sid=;/);
+    assert.match(setCookie, /Max-Age=0/i);
+
+    const after = await textGet("/api/whatsapp/prescription/rx-101/pdf", auth);
+    assert.equal(after.status, 401);
+    assertNoPhi(after.body);
+
+    const fresh = await login("doctor@lumera.me");
+    const again = await textGet("/api/whatsapp/prescription/rx-101/pdf", { Authorization: `Bearer ${fresh}` });
+    assert.equal(again.status, 200);
+  });
+
   it("appointment_reminder_24h stays on the clinician bearer path", async () => {
     const anon = await jsonRequest(port, "POST", "/api/whatsapp/outbound/trigger", {
       eventType: "appointment_reminder_24h",

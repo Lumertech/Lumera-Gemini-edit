@@ -257,6 +257,16 @@ describe("Auth / tenant isolation / CORS / CSRF / rate limit", () => {
     });
     assert.equal(res.status, 403);
     assert.match(String(res.json.error || ""), /origin/i);
+    const wabas = await jsonRequest(port, "GET", "/api/meta/wabas", undefined, {
+      Origin: "https://evil.example",
+    });
+    assert.equal(wabas.status, 403);
+    assert.match(String(wabas.json.error || ""), /origin/i);
+    const overview = await jsonRequest(port, "GET", "/api/meta/overview", undefined, {
+      Origin: "https://evil.example",
+    });
+    assert.equal(overview.status, 403);
+    assert.match(String(overview.json.error || ""), /origin/i);
 
     const webhook = await jsonRequest(port, "POST", "/api/billing/razorpay/webhook", { event: "ping" }, {
       Origin: "https://evil.example",
@@ -514,9 +524,13 @@ describe("Auth / tenant isolation / CORS / CSRF / rate limit", () => {
       assert.equal(login.status, 200);
       const csp = login.headers.get("content-security-policy") || "";
       assert.match(csp, /default-src 'self'/);
+      assert.match(csp, /frame-ancestors 'none'/);
       assert.match(csp, /https:\/\/connect\.facebook\.net/);
       assert.doesNotMatch(csp, /script-src[^;]*'unsafe-inline'/);
       assert.equal(login.headers.get("x-content-type-options"), "nosniff");
+      assert.equal(login.headers.get("x-frame-options"), "DENY");
+      assert.match(login.headers.get("permissions-policy") || "", /microphone=\(self\)/);
+      assert.equal(login.headers.get("x-powered-by"), null);
       const missingOrigin = await fetch(`${origin}/login`);
       assert.equal(missingOrigin.status, 200);
       assert.match(missingOrigin.headers.get("content-security-policy") || "", /default-src 'self'/);

@@ -337,6 +337,7 @@ export function htmlDocumentSecurityMiddleware(env: NodeJS.ProcessEnv = process.
 export function attachHttpSecurity(app: Express, env: NodeJS.ProcessEnv = process.env) {
   if ((app as Express & { __lumeraHttpSecurity?: boolean }).__lumeraHttpSecurity) return;
   (app as Express & { __lumeraHttpSecurity?: boolean }).__lumeraHttpSecurity = true;
+  app.disable("x-powered-by");
   app.use(canonicalHostRedirectMiddleware(env));
   app.use(corsAllowlistMiddleware(env));
   app.use(htmlDocumentSecurityMiddleware(env));

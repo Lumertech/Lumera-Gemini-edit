@@ -39,7 +39,7 @@ import {
   allowSkipOtp,
   isSeededDemoPasswordSessionEmail,
   clearSessionCookie,
-  destroySession,
+  endPresentedSession,
   getSessionId,
   issueLumeraSession,
   isPlatformAdminRole,
@@ -1448,8 +1448,7 @@ export function createApiRouter(): Router {
   });
 
   api.post("/auth/logout", (req: Request, res: Response) => {
-    const sid = getSessionId(req);
-    if (sid) destroySession(sid);
+    endPresentedSession(getSessionId(req));
     clearSessionCookie(res);
     return res.json({ ok: true });
   });
