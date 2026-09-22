@@ -1,7 +1,7 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { getDb, writeAudit } from "./db.ts";
 import { requireAuth, requirePlatformAdmin } from "./auth.ts";
-import { isCloudDispatchFailure } from "./graph-whatsapp.ts";
+import { isCloudDispatchFailure, sendPrescriptionReady } from "./graph-whatsapp.ts";
 import { getTenantLetterhead } from "./letterhead.ts";
 import { appPublicUrl, isProduction, sandboxSimulatorsEnabled } from "./runtime.ts";
 import { WALLET_INSUFFICIENT_ERROR } from "./usage-wallet.ts";
@@ -182,11 +182,16 @@ export function createUsageBillingRouter(): Router {
     const moreMeds = medicines.length > 3 ? `\n  _...and ${medicines.length - 3} more medications_` : "";
     const pdfUrl = `/api/whatsapp/prescription/${rxNumber}/pdf`;
     const content = `🩺 *${clinicName}*\n*Official Digital Prescription*\n\nNamaste *${patientName}* (UHID: ${uhid}),\nYour consultation prescription has been finalized and signed by *${doctorName}* (${doctorSpecialty}).\n\n📋 *Diagnosis:* ${diagnosis}\n💊 *Prescribed Medications (${medicines.length}):*\n${medsText}${moreMeds}\n\n📄 *Download Official PDF Prescription:*\n${pdfUrl}\n\n_Please follow the dosage schedule strictly. For emergency follow-up, reply to this chat._`;
-    const sent = await dispatchPatientCloudText({
+    const sent = await sendPrescriptionReady({
       tenantId: tenantId || undefined,
       to: patientPhone,
+      patientName,
+      clinicName,
+      doctorName,
+      rxNumber,
       textBody: content,
       previewUrl: true,
+      db: getDb(),
     });
     if (isCloudDispatchFailure(sent)) return walletBlockedJson(res, sent);
     next();
@@ -199,18 +204,20 @@ export function createUsageBillingRouter(): Router {
       eventType === "appointment_reminder" ||
       eventType === "appointment_reminder_24h" ||
       eventType === "appointment_reminder_2h";
-    if (reminderEvent) return next();
+    // Queue-next and prescription-ready dispatch inside the WhatsApp router
+    // (sendQueueNext / sendPrescriptionReady), which meters itself. Sending
+    // session text here would double-deliver.
+    const templateOwnedOutbound =
+      eventType === "queue_token_update" ||
+      eventType === "queue_next" ||
+      eventType === "post_consultation_dispatch" ||
+      eventType === "prescription_ready";
+    if (reminderEvent || templateOwnedOutbound) return next();
     const patientPhone = String(body.patientPhone || "").trim();
     if (!eventType || !patientPhone) return next();
     const customPayload = (body.customPayload || {}) as { message?: string; tenantId?: string };
     const tenantId = requestTenantId(req, patientPhone) || String(customPayload.tenantId || "").trim();
-    const patientName = String(body.patientName || "Patient");
-    let messageContent = customPayload.message || "Important health notification from Lumera Polyclinic.";
-    if (eventType === "post_consultation_dispatch") {
-      messageContent = `📋 *Consultation Summary & Prescription Signed*\n\nNamaste ${patientName},\nYour digital consultation documents have been generated.`;
-    } else if (eventType === "queue_token_update") {
-      messageContent = `📢 *OPD Queue Alert - You're Almost Up!*\n\nNamaste ${patientName},\nPlease proceed to the OPD waiting lounge.`;
-    }
+    const messageContent = customPayload.message || "Important health notification from Lumera Polyclinic.";
     const sent = await dispatchPatientCloudText({
       tenantId: tenantId || undefined,
       to: patientPhone,

@@ -4,13 +4,19 @@ import path from "node:path";
 import { after, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
+  buildQueueNextText,
   dispatchWhatsAppCloudMessage,
   postGraphWhatsAppMessage,
+  prescriptionReadyTemplateParameters,
+  queueNextTemplateParameters,
   sendAppointmentReminder,
   sendBookConfirmation,
   sendPaymentReceipt,
+  sendPrescriptionReady,
+  sendQueueNext,
   sendWhatsAppGraphMessage,
   sendWhatsAppGraphText,
+  templateConfigForKind,
 } from "./graph-whatsapp.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -313,6 +319,248 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
     assert.match(envExample, /META_REMINDER_TEMPLATE_NAME/);
     assert.match(envExample, /META_BOOK_CONFIRMATION_TEMPLATE_NAME/);
     assert.match(envExample, /META_RECEIPT_TEMPLATE_NAME/);
+    assert.match(envExample, /META_QUEUE_NEXT_TEMPLATE_NAME/);
+    assert.match(envExample, /META_PRESCRIPTION_READY_TEMPLATE_NAME/);
     assert.match(envExample, /META_ACCESS_TOKEN/);
+    assert.match(envExample, /Leave these unset/);
+  });
+
+  it("templateConfigForKind maps queue_next and prescription_ready onto utility language", () => {
+    const prevQueue = process.env.META_QUEUE_NEXT_TEMPLATE_NAME;
+    const prevRx = process.env.META_PRESCRIPTION_READY_TEMPLATE_NAME;
+    const prevReceipt = process.env.META_RECEIPT_TEMPLATE_NAME;
+    const prevLang = process.env.META_UTILITY_TEMPLATE_LANGUAGE;
+    const prevOtpLang = process.env.META_OTP_TEMPLATE_LANGUAGE;
+    delete process.env.META_QUEUE_NEXT_TEMPLATE_NAME;
+    delete process.env.META_PRESCRIPTION_READY_TEMPLATE_NAME;
+    process.env.META_RECEIPT_TEMPLATE_NAME = "lumera_payment_receipt";
+    process.env.META_UTILITY_TEMPLATE_LANGUAGE = "en_US";
+    process.env.META_OTP_TEMPLATE_LANGUAGE = "en";
+    try {
+      assert.equal(templateConfigForKind("queue_next"), null);
+      assert.equal(templateConfigForKind("prescription_ready"), null);
+      assert.equal(templateConfigForKind("text"), null);
+      assert.equal(templateConfigForKind("payment_receipt")?.name, "lumera_payment_receipt");
+
+      process.env.META_QUEUE_NEXT_TEMPLATE_NAME = "lumera_queue_next";
+      process.env.META_PRESCRIPTION_READY_TEMPLATE_NAME = "lumera_prescription_ready";
+      assert.deepEqual(templateConfigForKind("queue_next"), {
+        name: "lumera_queue_next",
+        language: "en_US",
+      });
+      assert.deepEqual(templateConfigForKind("prescription_ready"), {
+        name: "lumera_prescription_ready",
+        language: "en_US",
+      });
+      if (process.env.META_OTP_TEMPLATE_NAME) {
+        assert.equal(templateConfigForKind("otp")?.language, "en");
+      } else {
+        assert.equal(templateConfigForKind("otp"), null);
+      }
+    } finally {
+      if (prevQueue === undefined) delete process.env.META_QUEUE_NEXT_TEMPLATE_NAME;
+      else process.env.META_QUEUE_NEXT_TEMPLATE_NAME = prevQueue;
+      if (prevRx === undefined) delete process.env.META_PRESCRIPTION_READY_TEMPLATE_NAME;
+      else process.env.META_PRESCRIPTION_READY_TEMPLATE_NAME = prevRx;
+      if (prevReceipt === undefined) delete process.env.META_RECEIPT_TEMPLATE_NAME;
+      else process.env.META_RECEIPT_TEMPLATE_NAME = prevReceipt;
+      if (prevLang === undefined) delete process.env.META_UTILITY_TEMPLATE_LANGUAGE;
+      else process.env.META_UTILITY_TEMPLATE_LANGUAGE = prevLang;
+      if (prevOtpLang === undefined) delete process.env.META_OTP_TEMPLATE_LANGUAGE;
+      else process.env.META_OTP_TEMPLATE_LANGUAGE = prevOtpLang;
+    }
+  });
+
+  it("queue_next and prescription_ready use their own templates and keep session text when unset", async () => {
+    const saved: Record<string, string | undefined> = {};
+    for (const key of [
+      "META_ACCESS_TOKEN",
+      "META_PHONE_NUMBER_ID",
+      "WHATSAPP_ACCESS_TOKEN",
+      "WHATSAPP_PHONE_NUMBER_ID",
+      "META_QUEUE_NEXT_TEMPLATE_NAME",
+      "META_PRESCRIPTION_READY_TEMPLATE_NAME",
+      "META_RECEIPT_TEMPLATE_NAME",
+      "META_UTILITY_TEMPLATE_LANGUAGE",
+      "NODE_ENV",
+    ]) {
+      saved[key] = process.env[key];
+    }
+    process.env.META_ACCESS_TOKEN = LIVE_TOKEN;
+    process.env.META_PHONE_NUMBER_ID = LIVE_PHONE_ID;
+    delete process.env.WHATSAPP_ACCESS_TOKEN;
+    delete process.env.WHATSAPP_PHONE_NUMBER_ID;
+    process.env.NODE_ENV = "test";
+    const sessionText = buildQueueNextText({ patientName: "Rajiv Saxena" });
+    assert.equal(
+      sessionText,
+      "📢 *OPD Queue Alert - You're Almost Up!*\n\nNamaste Rajiv Saxena,\nToken *#01* is currently completing consultation. You are *NEXT IN LINE* (Token #02).\n\n📍 Please proceed to *Rehab Suite 105* near Waiting Lounge B."
+    );
+    assert.deepEqual(
+      queueNextTemplateParameters({
+        patientName: "Rajiv Saxena",
+        clinicName: "Lumera Apex PolyClinic",
+        tokenNumber: 2,
+        location: "Rehab Suite 105",
+      }),
+      ["Rajiv Saxena", "Lumera Apex PolyClinic", "02", "Rehab Suite 105"]
+    );
+    assert.deepEqual(
+      prescriptionReadyTemplateParameters({
+        patientName: "Rajiv Saxena",
+        clinicName: "Lumera Rehab",
+        doctorName: "Dr. Siddharth Varma",
+        rxNumber: "RX-2026-0106",
+      }),
+      ["Rajiv Saxena", "Lumera Rehab", "Dr. Siddharth Varma", "RX-2026-0106"]
+    );
+    try {
+      delete process.env.META_QUEUE_NEXT_TEMPLATE_NAME;
+      delete process.env.META_PRESCRIPTION_READY_TEMPLATE_NAME;
+      process.env.META_RECEIPT_TEMPLATE_NAME = "lumera_payment_receipt";
+      const textCaptured: Array<{ body: Record<string, unknown> }> = [];
+      const textSend = await sendQueueNext({
+        to: "+919823455667",
+        patientName: "Rajiv Saxena",
+        textBody: sessionText,
+        db: null,
+        fetchImpl: mockGraphFetch(textCaptured, "wamid.QUEUE_TEXT"),
+      });
+      assert.equal(textSend.ok, true);
+      assert.equal(textCaptured[0].body.type, "text");
+      assert.equal((textCaptured[0].body.text as { body?: string }).body, sessionText);
+
+      const rxText: Array<{ body: Record<string, unknown> }> = [];
+      const rxUnset = await sendPrescriptionReady({
+        to: "+919823455667",
+        patientName: "Rajiv Saxena",
+        clinicName: "Lumera Rehab",
+        doctorName: "Dr. Siddharth Varma",
+        rxNumber: "RX-2026-0106",
+        textBody: "session rx",
+        db: null,
+        fetchImpl: mockGraphFetch(rxText, "wamid.RX_TEXT"),
+      });
+      assert.equal(rxUnset.ok, true);
+      assert.equal(rxText[0].body.type, "text");
+      assert.equal(rxText[0].body.template, undefined);
+
+      process.env.META_QUEUE_NEXT_TEMPLATE_NAME = "lumera_queue_next";
+      process.env.META_PRESCRIPTION_READY_TEMPLATE_NAME = "lumera_prescription_ready";
+      process.env.META_UTILITY_TEMPLATE_LANGUAGE = "en_US";
+      const queueParams = ["Meera", "Lumera Apex PolyClinic", "02", "Rehab Suite 105"];
+      const queueCaptured: Array<{ body: Record<string, unknown> }> = [];
+      const queueSend = await sendQueueNext({
+        to: "+919823455667",
+        patientName: "Meera",
+        clinicName: "Lumera Apex PolyClinic",
+        tokenNumber: "02",
+        location: "Rehab Suite 105",
+        templateParameters: queueParams,
+        db: null,
+        fetchImpl: mockGraphFetch(queueCaptured, "wamid.QUEUE_TPL"),
+      });
+      assert.equal(queueSend.ok, true);
+      if (queueSend.ok) assert.equal(queueSend.messageId, "wamid.QUEUE_TPL");
+      assert.equal(queueCaptured[0].body.type, "template");
+      const queueTemplate = queueCaptured[0].body.template as {
+        name?: string;
+        language?: { code?: string };
+        components?: Array<{ type?: string; sub_type?: string; parameters?: Array<{ text?: string }> }>;
+      };
+      assert.equal(queueTemplate.name, "lumera_queue_next");
+      assert.equal(queueTemplate.language?.code, "en_US");
+      assert.equal(queueTemplate.components?.some((component) => component.type === "button"), false);
+      assert.deepEqual(
+        queueTemplate.components?.find((component) => component.type === "body")?.parameters?.map((parameter) => parameter.text),
+        queueParams
+      );
+
+      const rxParams = ["Meera", "Lumera Rehab", "Dr. A", "RX-1"];
+      const rxCaptured: Array<{ body: Record<string, unknown> }> = [];
+      const rxSend = await sendPrescriptionReady({
+        to: "+919823455667",
+        patientName: "Meera",
+        clinicName: "Lumera Rehab",
+        doctorName: "Dr. A",
+        rxNumber: "RX-1",
+        textBody: "session rx",
+        templateParameters: rxParams,
+        db: null,
+        fetchImpl: mockGraphFetch(rxCaptured, "wamid.RX_TPL"),
+      });
+      assert.equal(rxSend.ok, true);
+      const rxTemplate = rxCaptured[0].body.template as {
+        name?: string;
+        language?: { code?: string };
+        components?: Array<{ type?: string; parameters?: Array<{ text?: string }> }>;
+      };
+      assert.equal(rxTemplate.name, "lumera_prescription_ready");
+      assert.notEqual(rxTemplate.name, "lumera_payment_receipt");
+      assert.equal(rxTemplate.language?.code, "en_US");
+      assert.deepEqual(
+        rxTemplate.components?.find((component) => component.type === "body")?.parameters?.map((parameter) => parameter.text),
+        rxParams
+      );
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+
+  it("production queue_next without creds hard-fails and does not invent a wamid", async () => {
+    const saved: Record<string, string | undefined> = {};
+    for (const key of ["META_ACCESS_TOKEN", "META_PHONE_NUMBER_ID", "WHATSAPP_ACCESS_TOKEN", "WHATSAPP_PHONE_NUMBER_ID", "NODE_ENV"]) {
+      saved[key] = process.env[key];
+    }
+    delete process.env.META_ACCESS_TOKEN;
+    delete process.env.META_PHONE_NUMBER_ID;
+    delete process.env.WHATSAPP_ACCESS_TOKEN;
+    delete process.env.WHATSAPP_PHONE_NUMBER_ID;
+    process.env.NODE_ENV = "production";
+    try {
+      const sent = await sendQueueNext({
+        to: "+919800011122",
+        patientName: "Rajiv Saxena",
+        db: null,
+      });
+      assert.equal(sent.ok, false);
+      if (!sent.ok) {
+        assert.equal(sent.channel, "none");
+        assert.match(sent.error, /not configured/i);
+        assert.equal("messageId" in sent, false);
+      }
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+
+  it("outbound triggers call queue_next and prescription_ready instead of the receipt template", () => {
+    const whatsapp = fs.readFileSync(path.join(__dirname, "whatsapp.ts"), "utf8");
+    const usage = fs.readFileSync(path.join(__dirname, "usage-billing-api.ts"), "utf8");
+    const queueBranch = whatsapp.indexOf('eventType === "queue_token_update" || eventType === "queue_next"');
+    const rxBranch = whatsapp.indexOf('eventType === "post_consultation_dispatch" || eventType === "prescription_ready"');
+    const sendQueue = whatsapp.indexOf("sendQueueNext(", queueBranch);
+    const sendRx = whatsapp.indexOf("sendPrescriptionReady(", rxBranch);
+    assert.ok(queueBranch > 0 && rxBranch > queueBranch);
+    assert.ok(sendQueue > queueBranch && sendQueue < rxBranch);
+    assert.ok(sendRx > rxBranch);
+    assert.match(usage, /templateOwnedOutbound/);
+    assert.match(usage, /if \(reminderEvent \|\| templateOwnedOutbound\) return next\(\)/);
+    const sendRxRoute = usage.slice(usage.indexOf('api.post("/whatsapp/send-rx"'));
+    const sendRxBlock = sendRxRoute.slice(0, sendRxRoute.indexOf("meterCustomOutbound"));
+    assert.match(sendRxBlock, /sendPrescriptionReady\(/);
+    assert.equal(sendRxBlock.includes("dispatchPatientCloudText"), false);
+    assert.equal(sendRxBlock.includes("META_RECEIPT_TEMPLATE_NAME"), false);
+    assert.match(whatsapp, /kind: "appointment_reminder"|dispatchAppointmentReminder/);
+    const graph = fs.readFileSync(path.join(__dirname, "graph-whatsapp.ts"), "utf8");
+    assert.match(graph, /sub_type: "copy_code"/);
+    assert.match(graph, /queue_next: "META_QUEUE_NEXT_TEMPLATE_NAME"/);
+    assert.match(graph, /prescription_ready: "META_PRESCRIPTION_READY_TEMPLATE_NAME"/);
   });
 });

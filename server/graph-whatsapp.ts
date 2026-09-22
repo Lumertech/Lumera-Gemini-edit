@@ -31,6 +31,8 @@ export type CloudMessageKind =
   | "appointment_reminder"
   | "book_confirmation"
   | "payment_receipt"
+  | "queue_next"
+  | "prescription_ready"
   | "text";
 
 export type CloudDispatchResult =
@@ -260,24 +262,101 @@ function utilityTemplateLanguage(): string {
   return envTrim("META_UTILITY_TEMPLATE_LANGUAGE") || envTrim("META_OTP_TEMPLATE_LANGUAGE") || "en";
 }
 
+const TEMPLATE_ENV_BY_KIND: Partial<Record<CloudMessageKind, string>> = {
+  otp: "META_OTP_TEMPLATE_NAME",
+  appointment_reminder: "META_REMINDER_TEMPLATE_NAME",
+  book_confirmation: "META_BOOK_CONFIRMATION_TEMPLATE_NAME",
+  payment_receipt: "META_RECEIPT_TEMPLATE_NAME",
+  queue_next: "META_QUEUE_NEXT_TEMPLATE_NAME",
+  prescription_ready: "META_PRESCRIPTION_READY_TEMPLATE_NAME",
+};
+
 /** Optional Cloud API template for a kind. Unset → session text body (same as OTP #20). */
 export function templateConfigForKind(kind: CloudMessageKind): { name: string; language: string } | null {
-  const envName =
-    kind === "otp"
-      ? "META_OTP_TEMPLATE_NAME"
-      : kind === "appointment_reminder"
-        ? "META_REMINDER_TEMPLATE_NAME"
-        : kind === "book_confirmation"
-          ? "META_BOOK_CONFIRMATION_TEMPLATE_NAME"
-          : kind === "payment_receipt"
-            ? "META_RECEIPT_TEMPLATE_NAME"
-            : "";
+  const envName = TEMPLATE_ENV_BY_KIND[kind] || "";
   if (!envName) return null;
   const name = envTrim(envName);
   if (!name) return null;
   const language =
     kind === "otp" ? envTrim("META_OTP_TEMPLATE_LANGUAGE") || "en" : utilityTemplateLanguage();
   return { name, language };
+}
+
+function templateParamText(value: unknown, fallback: string): string {
+  const cleaned = String(value ?? "")
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/ {2,}/g, " ")
+    .trim();
+  return cleaned || fallback;
+}
+
+/** Numeric tokens are zero-padded. A leading # is stripped so the Manager body can say "Token {{n}}". */
+export function formatQueueToken(value: unknown, fallback = "02"): string {
+  const raw = templateParamText(value, "").replace(/^#/, "");
+  if (!raw) return fallback;
+  if (/^\d+$/.test(raw)) return raw.padStart(2, "0");
+  return raw;
+}
+
+export type QueueNextFields = {
+  patientName?: string;
+  clinicName?: string;
+  tokenNumber?: string | number;
+  currentToken?: string | number;
+  location?: string;
+};
+
+/**
+ * lumera_queue_next body order (Utility, META_UTILITY_TEMPLATE_LANGUAGE).
+ * Manager parameter count is not in this repo — do not copy SANDBOX
+ * opd_queue_token_alert. Order follows lumera_appointment_reminder
+ * (patient, clinic, then the facts): {{1}} patient, {{2}} clinic,
+ * {{3}} your token, {{4}} room. The token currently in consultation
+ * stays in the session text only.
+ */
+export function queueNextTemplateParameters(fields: QueueNextFields): string[] {
+  return [
+    templateParamText(fields.patientName, "Patient"),
+    templateParamText(fields.clinicName, "Lumera Clinic"),
+    formatQueueToken(fields.tokenNumber, "02"),
+    templateParamText(fields.location, "Rehab Suite 105"),
+  ];
+}
+
+export function buildQueueNextText(fields: QueueNextFields): string {
+  const name = templateParamText(fields.patientName, "Patient");
+  const current = formatQueueToken(fields.currentToken, "01");
+  const next = formatQueueToken(fields.tokenNumber, "02");
+  const location = templateParamText(fields.location, "Rehab Suite 105");
+  const place = location === "Rehab Suite 105" ? "Rehab Suite 105 near Waiting Lounge B" : location;
+  return (
+    `📢 *OPD Queue Alert - You're Almost Up!*\n\n` +
+    `Namaste ${name},\n` +
+    `Token *#${current}* is currently completing consultation. You are *NEXT IN LINE* (Token #${next}).\n\n` +
+    `📍 Please proceed to *${place}*.`
+  );
+}
+
+export type PrescriptionReadyFields = {
+  patientName?: string;
+  clinicName?: string;
+  doctorName?: string;
+  rxNumber?: string;
+};
+
+/**
+ * lumera_prescription_ready body order (Utility). Never META_RECEIPT_TEMPLATE_NAME.
+ * Manager count is unknown; shape follows lumera_appointment_reminder:
+ * {{1}} patient, {{2}} clinic, {{3}} doctor, {{4}} Rx number.
+ * The PDF link stays on the session text / local media card.
+ */
+export function prescriptionReadyTemplateParameters(fields: PrescriptionReadyFields): string[] {
+  return [
+    templateParamText(fields.patientName, "Patient"),
+    templateParamText(fields.clinicName, "Lumera Clinic"),
+    templateParamText(fields.doctorName, "your clinician"),
+    templateParamText(fields.rxNumber, "RX"),
+  ];
 }
 
 export type ReminderFields = {
@@ -586,6 +665,83 @@ export async function sendBookConfirmation(opts: {
     db: opts.db,
     fetchImpl: opts.fetchImpl,
     tenantId: opts.tenantId,
+  });
+}
+
+function utilityTemplateActive(kind: CloudMessageKind, explicitName?: string): boolean {
+  return Boolean((explicitName || "").trim() || templateConfigForKind(kind)?.name);
+}
+
+/**
+ * Queue-next alert. META_QUEUE_NEXT_TEMPLATE_NAME set → lumera_queue_next.
+ * Unset → session text (buildQueueNextText). No fake wamid when Graph is down.
+ */
+export async function sendQueueNext(opts: {
+  to: string;
+  patientName?: string;
+  clinicName?: string;
+  tokenNumber?: string | number;
+  currentToken?: string | number;
+  location?: string;
+  textBody?: string;
+  templateName?: string;
+  templateParameters?: string[];
+  db?: DatabaseSync | null;
+  fetchImpl?: typeof fetch;
+  tenantId?: string;
+  inCustomerServiceWindow?: boolean;
+}): Promise<CloudDispatchResult> {
+  const fields: QueueNextFields = opts;
+  const named = utilityTemplateActive("queue_next", opts.templateName);
+  return dispatchWhatsAppCloudMessage({
+    to: opts.to,
+    kind: "queue_next",
+    textBody: opts.textBody || buildQueueNextText(fields),
+    templateName: opts.templateName,
+    templateParameters: opts.templateParameters || queueNextTemplateParameters(fields),
+    db: opts.db,
+    fetchImpl: opts.fetchImpl,
+    tenantId: opts.tenantId,
+    // Session-text fallback stays inside the customer-service window (pre-cutover free).
+    // A configured template is business-initiated utility and is billed.
+    inCustomerServiceWindow: opts.inCustomerServiceWindow ?? !named,
+  });
+}
+
+/**
+ * Prescription-ready alert. Uses META_PRESCRIPTION_READY_TEMPLATE_NAME only —
+ * never META_RECEIPT_TEMPLATE_NAME. Unset → session textBody.
+ */
+export async function sendPrescriptionReady(opts: {
+  to: string;
+  patientName?: string;
+  clinicName?: string;
+  doctorName?: string;
+  rxNumber?: string;
+  textBody?: string;
+  previewUrl?: boolean;
+  templateName?: string;
+  templateParameters?: string[];
+  db?: DatabaseSync | null;
+  fetchImpl?: typeof fetch;
+  tenantId?: string;
+  inCustomerServiceWindow?: boolean;
+}): Promise<CloudDispatchResult> {
+  const fields: PrescriptionReadyFields = opts;
+  const named = utilityTemplateActive("prescription_ready", opts.templateName);
+  return dispatchWhatsAppCloudMessage({
+    to: opts.to,
+    kind: "prescription_ready",
+    textBody:
+      opts.textBody ||
+      `Namaste ${templateParamText(fields.patientName, "Patient")}, your prescription ${templateParamText(fields.rxNumber, "RX")} from ${templateParamText(fields.doctorName, "your clinician")} is ready.`,
+    previewUrl: opts.previewUrl,
+    templateName: opts.templateName,
+    templateParameters: opts.templateParameters || prescriptionReadyTemplateParameters(fields),
+    db: opts.db,
+    fetchImpl: opts.fetchImpl,
+    tenantId: opts.tenantId,
+    inCustomerServiceWindow: opts.inCustomerServiceWindow ?? !named,
   });
 }
 
