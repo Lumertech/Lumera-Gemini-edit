@@ -100,12 +100,13 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
 
   if (patientCount.c === 0) {
     const insertPatient = database.prepare(`
-      INSERT INTO patients (id, uhid, name, age, gender, phone, email, blood_group, allergies, chronic_conditions, emergency_contact, address, last_visit, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO patients (id, tenant_id, uhid, name, age, gender, phone, email, blood_group, allergies, chronic_conditions, emergency_contact, address, last_visit, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     insertPatient.run(
       "pat-6",
+      DEMO_TENANT_ID,
       "LUM-2026-0106",
       "Rajiv Saxena",
       44,
@@ -123,6 +124,7 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
 
     insertPatient.run(
       "pat-7",
+      DEMO_TENANT_ID,
       "LUM-2026-0107",
       "Priyanka Mukherjee",
       52,
@@ -140,6 +142,7 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
 
     insertPatient.run(
       "pat-1",
+      DEMO_TENANT_ID,
       "LUM-2026-0101",
       "Sunita Roy",
       48,
@@ -157,6 +160,7 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
 
     insertPatient.run(
       "pat-2",
+      DEMO_TENANT_ID,
       "LUM-2026-0102",
       "Rohan Deshmukh",
       32,
@@ -174,6 +178,7 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
 
     insertPatient.run(
       "pat-3",
+      DEMO_TENANT_ID,
       "LUM-2026-0103",
       "Aarav Gupta",
       6,
@@ -191,6 +196,7 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
 
     insertPatient.run(
       "pat-4",
+      DEMO_TENANT_ID,
       "LUM-2026-0104",
       "Mohammed Tariq",
       58,
@@ -208,6 +214,7 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
 
     insertPatient.run(
       "pat-5",
+      DEMO_TENANT_ID,
       "LUM-2026-0105",
       "Kavita Menon",
       27,
@@ -227,12 +234,13 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
   const apptCount = database.prepare("SELECT COUNT(*) AS c FROM appointments").get() as { c: number };
   if (apptCount.c === 0) {
     const insertAppt = database.prepare(`
-      INSERT INTO appointments (id, token_number, patient_id, patient_name, patient_phone, uhid, doctor_id, doctor_name, specialty, date, time_slot, type, status, source, consultation_fee, is_paid, vitals, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO appointments (id, tenant_id, token_number, patient_id, patient_name, patient_phone, uhid, doctor_id, doctor_name, specialty, date, time_slot, type, status, source, consultation_fee, is_paid, vitals, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     insertAppt.run(
       "apt-1",
+      DEMO_TENANT_ID,
       1,
       "pat-6",
       "Rajiv Saxena",
@@ -265,6 +273,7 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
 
     insertAppt.run(
       "apt-2",
+      DEMO_TENANT_ID,
       2,
       "pat-7",
       "Priyanka Mukherjee",
@@ -286,6 +295,7 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
 
     insertAppt.run(
       "apt-3",
+      DEMO_TENANT_ID,
       3,
       "pat-1",
       "Sunita Roy",
@@ -315,6 +325,7 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
 
     insertAppt.run(
       "apt-4",
+      DEMO_TENANT_ID,
       4,
       "pat-2",
       "Rohan Deshmukh",
@@ -336,6 +347,7 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
 
     insertAppt.run(
       "apt-5",
+      DEMO_TENANT_ID,
       5,
       "pat-3",
       "Aarav Gupta",
@@ -357,6 +369,7 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
 
     insertAppt.run(
       "apt-6",
+      DEMO_TENANT_ID,
       6,
       "pat-4",
       "Mohammed Tariq",
@@ -738,6 +751,13 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
       JSON.stringify({ token: 2, queuePosition: 1, room: "Rehab Suite 105" }),
       now
     );
+  }
+
+  try {
+    database.prepare("UPDATE patients SET tenant_id = ? WHERE tenant_id IS NULL OR tenant_id = ''").run(DEMO_TENANT_ID);
+    database.prepare("UPDATE appointments SET tenant_id = ? WHERE tenant_id IS NULL OR tenant_id = ''").run(DEMO_TENANT_ID);
+  } catch {
+    /* tenant_id column is created in bootstrap before this seed */
   }
 
   ensureClipAReminderFixture(database, now);

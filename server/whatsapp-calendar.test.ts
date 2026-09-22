@@ -698,6 +698,13 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
       .get("pat-a1-clip") as { name: string; tenant_id: string };
     assert.equal(patient.name, "A1 Test Recipient");
     assert.equal(patient.tenant_id, DEMO_TENANT_ID);
+    const seedSrc = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "db-seed-clinical.ts"), "utf8");
+    assert.match(seedSrc, /INSERT INTO patients \(id, tenant_id,/);
+    assert.match(seedSrc, /INSERT INTO appointments \(id, tenant_id,/);
+    const unscoped = getDb()
+      .prepare("SELECT COUNT(*) AS c FROM appointments WHERE tenant_id IS NULL OR tenant_id = ''")
+      .get() as { c: number };
+    assert.equal(unscoped.c, 0);
     const conv = getDb()
       .prepare("SELECT patient_phone, patient_name FROM whatsapp_conversations WHERE patient_phone = ?")
       .get("+919999973271") as { patient_phone: string; patient_name: string };
