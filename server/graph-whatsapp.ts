@@ -308,6 +308,19 @@ export function templateConfigForKind(kind: CloudMessageKind): { name: string; l
 export const CLINIC_DISPLAY_FALLBACK = "your clinic";
 export const DOCTOR_DISPLAY_FALLBACK = "your clinician";
 
+/**
+ * Current Active queue, prescription, and receipt Manager bodies are not the v2 shape.
+ * A name ending in `_v2` is the Meta-submitted replacement (doctor, and for receipt
+ * clinic_name). Exact Manager names can differ; the suffix is the switch.
+ */
+export function templateNameUsesV2Body(templateName: string | null | undefined): boolean {
+  return /_v2$/i.test(String(templateName || "").trim());
+}
+
+function configuredTemplateName(kind: CloudMessageKind, explicitName?: string): string {
+  return String(explicitName || "").trim() || templateConfigForKind(kind)?.name || "";
+}
+
 function templateParamText(value: unknown, fallback: string): string {
   const cleaned = String(value ?? "")
     .replace(/[\r\n\t]+/g, " ")
@@ -334,21 +347,23 @@ export type QueueNextFields = {
 };
 
 /**
- * lumera_queue_next body order (language: META_QUEUE_NEXT_TEMPLATE_LANGUAGE,
- * else META_UTILITY_TEMPLATE_LANGUAGE, else en).
- * Manager count is not in this repo. Order follows lumera_appointment_reminder:
- * {{1}} patient, {{2}} clinic display name, {{3}} doctor, {{4}} your token, {{5}} room.
- * Clinic and doctor come from the tenant / appointment. The token currently in
- * consultation stays in the session text only.
+ * Queue-next Graph body. clinic_name and doctor are always taken from the
+ * tenant / appointment fields passed in — never a Lumera or platform brand.
+ *
+ * Current Active `lumera_queue_next` (VERSION_NEEDED — Manager has no doctor variable):
+ * {{1}} patient, {{2}} clinic_name, {{3}} token, {{4}} room.
+ * `*_v2` once Quality/Active:
+ * {{1}} patient, {{2}} clinic_name, {{3}} doctor, {{4}} token, {{5}} room.
+ * The token currently in consultation stays in the session text only.
  */
-export function queueNextTemplateParameters(fields: QueueNextFields): string[] {
-  return [
-    templateParamText(fields.patientName, "Patient"),
-    templateParamText(fields.clinicName, CLINIC_DISPLAY_FALLBACK),
-    templateParamText(fields.doctorName, DOCTOR_DISPLAY_FALLBACK),
-    formatQueueToken(fields.tokenNumber, "02"),
-    templateParamText(fields.location, "Rehab Suite 105"),
-  ];
+export function queueNextTemplateParameters(fields: QueueNextFields, templateName?: string | null): string[] {
+  const patient = templateParamText(fields.patientName, "Patient");
+  const clinic = templateParamText(fields.clinicName, CLINIC_DISPLAY_FALLBACK);
+  const doctor = templateParamText(fields.doctorName, DOCTOR_DISPLAY_FALLBACK);
+  const token = formatQueueToken(fields.tokenNumber, "02");
+  const room = templateParamText(fields.location, "Rehab Suite 105");
+  if (templateNameUsesV2Body(templateName)) return [patient, clinic, doctor, token, room];
+  return [patient, clinic, token, room];
 }
 
 export function buildQueueNextText(fields: QueueNextFields): string {
@@ -374,18 +389,25 @@ export type PrescriptionReadyFields = {
 };
 
 /**
- * lumera_prescription_ready body order. Never META_RECEIPT_TEMPLATE_NAME.
- * {{1}} patient, {{2}} clinic display name, {{3}} doctor, {{4}} Rx number.
- * Clinic and doctor come from the tenant / appointment. The PDF link stays on
- * the session text / local media card.
+ * Prescription-ready Graph body. Never META_RECEIPT_TEMPLATE_NAME.
+ * clinic_name and doctor come from the tenant / appointment — never a Lumera brand.
+ *
+ * Current Active `lumera_prescription_ready` (VERSION_NEEDED — no doctor variable):
+ * {{1}} patient, {{2}} clinic_name, {{3}} Rx number.
+ * `*_v2` once Quality/Active:
+ * {{1}} patient, {{2}} clinic_name, {{3}} doctor, {{4}} Rx number.
+ * The PDF link stays on the session text / local media card.
  */
-export function prescriptionReadyTemplateParameters(fields: PrescriptionReadyFields): string[] {
-  return [
-    templateParamText(fields.patientName, "Patient"),
-    templateParamText(fields.clinicName, CLINIC_DISPLAY_FALLBACK),
-    templateParamText(fields.doctorName, DOCTOR_DISPLAY_FALLBACK),
-    templateParamText(fields.rxNumber, "RX"),
-  ];
+export function prescriptionReadyTemplateParameters(
+  fields: PrescriptionReadyFields,
+  templateName?: string | null
+): string[] {
+  const patient = templateParamText(fields.patientName, "Patient");
+  const clinic = templateParamText(fields.clinicName, CLINIC_DISPLAY_FALLBACK);
+  const doctor = templateParamText(fields.doctorName, DOCTOR_DISPLAY_FALLBACK);
+  const rx = templateParamText(fields.rxNumber, "RX");
+  if (templateNameUsesV2Body(templateName)) return [patient, clinic, doctor, rx];
+  return [patient, clinic, rx];
 }
 
 export type BookConfirmationFields = {
@@ -423,18 +445,23 @@ export type ReceiptTemplateFields = {
 };
 
 /**
- * lumera_payment_receipt body order. Not used for prescription_ready.
- * {{1}} patient, {{2}} clinic display name, {{3}} doctor, {{4}} amount, {{5}} invoice.
+ * Payment-receipt Graph body. Not used for prescription_ready.
+ * clinic_name and doctor come from the tenant / invoice appointment — never Lumera.
+ *
+ * Current Active `lumera_payment_receipt` FAILs audit: the Manager copy hardcodes
+ * Lumera and has no clinic_name or doctor variables.
+ * {{1}} patient, {{2}} amount, {{3}} invoice.
+ * `*_v2` once Quality/Active:
+ * {{1}} patient, {{2}} clinic_name, {{3}} doctor, {{4}} amount, {{5}} invoice.
  */
-export function receiptTemplateParameters(fields: ReceiptTemplateFields): string[] {
+export function receiptTemplateParameters(fields: ReceiptTemplateFields, templateName?: string | null): string[] {
+  const patient = templateParamText(fields.patientName, "Patient");
+  const clinic = templateParamText(fields.clinicName, CLINIC_DISPLAY_FALLBACK);
+  const doctor = templateParamText(fields.doctorName, DOCTOR_DISPLAY_FALLBACK);
   const amount = templateParamText(fields.amount, "0");
-  return [
-    templateParamText(fields.patientName, "Patient"),
-    templateParamText(fields.clinicName, CLINIC_DISPLAY_FALLBACK),
-    templateParamText(fields.doctorName, DOCTOR_DISPLAY_FALLBACK),
-    amount,
-    templateParamText(fields.invoiceId, "invoice"),
-  ];
+  const invoice = templateParamText(fields.invoiceId, "invoice");
+  if (templateNameUsesV2Body(templateName)) return [patient, clinic, doctor, amount, invoice];
+  return [patient, amount, invoice];
 }
 
 export type ReminderFields = {
@@ -776,12 +803,13 @@ export async function sendQueueNext(opts: {
 }): Promise<CloudDispatchResult> {
   const fields: QueueNextFields = opts;
   const named = utilityTemplateActive("queue_next", opts.templateName);
+  const templateName = configuredTemplateName("queue_next", opts.templateName);
   return dispatchWhatsAppCloudMessage({
     to: opts.to,
     kind: "queue_next",
     textBody: opts.textBody || buildQueueNextText(fields),
     templateName: opts.templateName,
-    templateParameters: opts.templateParameters || queueNextTemplateParameters(fields),
+    templateParameters: opts.templateParameters || queueNextTemplateParameters(fields, templateName),
     db: opts.db,
     fetchImpl: opts.fetchImpl,
     tenantId: opts.tenantId,
@@ -812,15 +840,16 @@ export async function sendPrescriptionReady(opts: {
 }): Promise<CloudDispatchResult> {
   const fields: PrescriptionReadyFields = opts;
   const named = utilityTemplateActive("prescription_ready", opts.templateName);
+  const templateName = configuredTemplateName("prescription_ready", opts.templateName);
   return dispatchWhatsAppCloudMessage({
     to: opts.to,
     kind: "prescription_ready",
     textBody:
       opts.textBody ||
-      `Namaste ${templateParamText(fields.patientName, "Patient")}, your prescription ${templateParamText(fields.rxNumber, "RX")} from ${templateParamText(fields.doctorName, "your clinician")} is ready.`,
+      `Namaste ${templateParamText(fields.patientName, "Patient")}, your prescription ${templateParamText(fields.rxNumber, "RX")} from ${templateParamText(fields.doctorName, DOCTOR_DISPLAY_FALLBACK)} at ${templateParamText(fields.clinicName, CLINIC_DISPLAY_FALLBACK)} is ready.`,
     previewUrl: opts.previewUrl,
     templateName: opts.templateName,
-    templateParameters: opts.templateParameters || prescriptionReadyTemplateParameters(fields),
+    templateParameters: opts.templateParameters || prescriptionReadyTemplateParameters(fields, templateName),
     db: opts.db,
     fetchImpl: opts.fetchImpl,
     tenantId: opts.tenantId,
@@ -846,6 +875,7 @@ export async function sendPaymentReceipt(opts: {
   fetchImpl?: typeof fetch;
   tenantId?: string;
 }): Promise<CloudDispatchResult> {
+  const templateName = configuredTemplateName("payment_receipt", opts.templateName);
   return dispatchWhatsAppCloudMessage({
     to: opts.to,
     kind: "payment_receipt",
@@ -854,13 +884,16 @@ export async function sendPaymentReceipt(opts: {
     templateName: opts.templateName,
     templateParameters:
       opts.templateParameters ||
-      receiptTemplateParameters({
-        patientName: opts.patientName,
-        clinicName: opts.clinicName,
-        doctorName: opts.doctorName,
-        amount: opts.amount,
-        invoiceId: opts.invoiceId,
-      }),
+      receiptTemplateParameters(
+        {
+          patientName: opts.patientName,
+          clinicName: opts.clinicName,
+          doctorName: opts.doctorName,
+          amount: opts.amount,
+          invoiceId: opts.invoiceId,
+        },
+        templateName
+      ),
     db: opts.db,
     fetchImpl: opts.fetchImpl,
     tenantId: opts.tenantId,

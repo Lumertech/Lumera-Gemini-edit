@@ -326,7 +326,13 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
     assert.match(envExample, /META_REMINDER_TEMPLATE_LANGUAGE=en_US/);
     assert.match(envExample, /META_BOOK_CONFIRMATION_TEMPLATE_NAME=lumera_appointment_booked/);
     assert.match(envExample, /META_BOOK_CONFIRMATION_TEMPLATE_LANGUAGE=en/);
-    assert.match(envExample, /META_RECEIPT_TEMPLATE_NAME=lumera_payment_receipt/);
+    assert.match(envExample, /META_RECEIPT_TEMPLATE_NAME=lumera_payment_receipt\n/);
+    assert.match(envExample, /META_QUEUE_NEXT_TEMPLATE_NAME=lumera_queue_next\n/);
+    assert.match(envExample, /META_PRESCRIPTION_READY_TEMPLATE_NAME=lumera_prescription_ready\n/);
+    assert.match(envExample, /META_RECEIPT_TEMPLATE_NAME=lumera_payment_receipt_v2/);
+    assert.match(envExample, /META_QUEUE_NEXT_TEMPLATE_NAME=lumera_queue_next_v2/);
+    assert.match(envExample, /META_PRESCRIPTION_READY_TEMPLATE_NAME=lumera_prescription_ready_v2/);
+    assert.match(envExample, /Quality\/Active/);
     assert.match(envExample, /META_RECEIPT_TEMPLATE_LANGUAGE=en/);
     assert.match(envExample, /META_QUEUE_NEXT_TEMPLATE_LANGUAGE=en/);
     assert.match(envExample, /META_PRESCRIPTION_READY_TEMPLATE_LANGUAGE=en/);
@@ -450,20 +456,31 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
       sessionText,
       "📢 *OPD Queue Alert - You're Almost Up!*\n\nNamaste Rajiv Saxena,\nToken *#01* is currently completing consultation. You are *NEXT IN LINE* (Token #02).\n\n📍 Please proceed to *Rehab Suite 105* near Waiting Lounge B."
     );
-    assert.deepEqual(
-      queueNextTemplateParameters({
-        patientName: "Rajiv Saxena",
-        clinicName: "City Care Clinic",
-        doctorName: "Dr. A",
-        tokenNumber: 2,
-        location: "Rehab Suite 105",
-      }),
-      ["Rajiv Saxena", "City Care Clinic", "Dr. A", "02", "Rehab Suite 105"]
-    );
-    const queueFallback = queueNextTemplateParameters({});
+    const queueFields = {
+      patientName: "Rajiv Saxena",
+      clinicName: "City Care Clinic",
+      doctorName: "Dr. A",
+      tokenNumber: 2,
+      location: "Rehab Suite 105",
+    };
+    assert.deepEqual(queueNextTemplateParameters(queueFields, "lumera_queue_next"), [
+      "Rajiv Saxena",
+      "City Care Clinic",
+      "02",
+      "Rehab Suite 105",
+    ]);
+    assert.deepEqual(queueNextTemplateParameters(queueFields, "lumera_queue_next_v2"), [
+      "Rajiv Saxena",
+      "City Care Clinic",
+      "Dr. A",
+      "02",
+      "Rehab Suite 105",
+    ]);
+    const queueFallback = queueNextTemplateParameters({}, "lumera_queue_next_v2");
     assert.equal(queueFallback[1], "your clinic");
     assert.equal(queueFallback[2], "your clinician");
     assert.equal(queueFallback.some((part) => /lumera/i.test(part)), false);
+    assert.equal(queueNextTemplateParameters({}, "lumera_queue_next").includes("your clinician"), false);
     assert.deepEqual(
       bookConfirmationTemplateParameters({
         patientName: "Rajiv Saxena",
@@ -476,26 +493,45 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
       ["Rajiv Saxena", "City Care Clinic", "Dr. A", "2026-09-12", "11:00 AM", "4"]
     );
     assert.equal(bookConfirmationTemplateParameters({})[1], "your clinic");
-    assert.deepEqual(
-      receiptTemplateParameters({
-        patientName: "Rajiv Saxena",
-        clinicName: "City Care Clinic",
-        doctorName: "Dr. A",
-        amount: 700,
-        invoiceId: "INV-1",
-      }),
-      ["Rajiv Saxena", "City Care Clinic", "Dr. A", "700", "INV-1"]
-    );
-    assert.equal(receiptTemplateParameters({}).some((part) => /lumera/i.test(part)), false);
-    assert.deepEqual(
-      prescriptionReadyTemplateParameters({
-        patientName: "Rajiv Saxena",
-        clinicName: "Lumera Rehab",
-        doctorName: "Dr. Siddharth Varma",
-        rxNumber: "RX-2026-0106",
-      }),
-      ["Rajiv Saxena", "Lumera Rehab", "Dr. Siddharth Varma", "RX-2026-0106"]
-    );
+    const receiptFields = {
+      patientName: "Rajiv Saxena",
+      clinicName: "City Care Clinic",
+      doctorName: "Dr. A",
+      amount: 700,
+      invoiceId: "INV-1",
+    };
+    assert.deepEqual(receiptTemplateParameters(receiptFields, "lumera_payment_receipt"), [
+      "Rajiv Saxena",
+      "700",
+      "INV-1",
+    ]);
+    assert.deepEqual(receiptTemplateParameters(receiptFields, "lumera_payment_receipt_v2"), [
+      "Rajiv Saxena",
+      "City Care Clinic",
+      "Dr. A",
+      "700",
+      "INV-1",
+    ]);
+    assert.equal(receiptTemplateParameters({}, "lumera_payment_receipt").some((part) => /lumera/i.test(part)), false);
+    assert.equal(receiptTemplateParameters({}, "lumera_payment_receipt_v2")[1], "your clinic");
+    assert.equal(receiptTemplateParameters({}, "lumera_payment_receipt_v2")[2], "your clinician");
+    const rxFields = {
+      patientName: "Rajiv Saxena",
+      clinicName: "City Care Clinic",
+      doctorName: "Dr. Siddharth Varma",
+      rxNumber: "RX-2026-0106",
+    };
+    assert.deepEqual(prescriptionReadyTemplateParameters(rxFields, "lumera_prescription_ready"), [
+      "Rajiv Saxena",
+      "City Care Clinic",
+      "RX-2026-0106",
+    ]);
+    assert.deepEqual(prescriptionReadyTemplateParameters(rxFields, "lumera_prescription_ready_v2"), [
+      "Rajiv Saxena",
+      "City Care Clinic",
+      "Dr. Siddharth Varma",
+      "RX-2026-0106",
+    ]);
       delete process.env.META_QUEUE_NEXT_TEMPLATE_NAME;
       delete process.env.META_PRESCRIPTION_READY_TEMPLATE_NAME;
       process.env.META_RECEIPT_TEMPLATE_NAME = "lumera_payment_receipt";
@@ -529,7 +565,6 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
       process.env.META_QUEUE_NEXT_TEMPLATE_NAME = "lumera_queue_next";
       process.env.META_PRESCRIPTION_READY_TEMPLATE_NAME = "lumera_prescription_ready";
       process.env.META_UTILITY_TEMPLATE_LANGUAGE = "en_US";
-      const queueParams = ["Meera", "City Care Clinic", "Dr. A", "02", "Rehab Suite 105"];
       const queueCaptured: Array<{ url: string; body: Record<string, unknown> }> = [];
       const queueSend = await sendQueueNext({
         to: "+919823455667",
@@ -538,7 +573,6 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
         doctorName: "Dr. A",
         tokenNumber: "02",
         location: "Rehab Suite 105",
-        templateParameters: queueParams,
         db: null,
         fetchImpl: mockGraphFetch(queueCaptured, "wamid.QUEUE_TPL"),
       });
@@ -555,19 +589,40 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
       assert.equal(queueTemplate.components?.some((component) => component.type === "button"), false);
       assert.deepEqual(
         queueTemplate.components?.find((component) => component.type === "body")?.parameters?.map((parameter) => parameter.text),
-        queueParams
+        ["Meera", "City Care Clinic", "02", "Rehab Suite 105"]
       );
 
-      const rxParams = ["Meera", "Lumera Rehab", "Dr. A", "RX-1"];
+      const queueV2Captured: Array<{ url: string; body: Record<string, unknown> }> = [];
+      const queueV2 = await sendQueueNext({
+        to: "+919823455667",
+        patientName: "Meera",
+        clinicName: "City Care Clinic",
+        doctorName: "Dr. A",
+        tokenNumber: "02",
+        location: "Rehab Suite 105",
+        templateName: "lumera_queue_next_v2",
+        db: null,
+        fetchImpl: mockGraphFetch(queueV2Captured, "wamid.QUEUE_V2"),
+      });
+      assert.equal(queueV2.ok, true);
+      const queueV2Template = queueV2Captured[0].body.template as {
+        name?: string;
+        components?: Array<{ type?: string; parameters?: Array<{ text?: string }> }>;
+      };
+      assert.equal(queueV2Template.name, "lumera_queue_next_v2");
+      assert.deepEqual(
+        queueV2Template.components?.find((component) => component.type === "body")?.parameters?.map((parameter) => parameter.text),
+        ["Meera", "City Care Clinic", "Dr. A", "02", "Rehab Suite 105"]
+      );
+
       const rxCaptured: Array<{ url: string; body: Record<string, unknown> }> = [];
       const rxSend = await sendPrescriptionReady({
         to: "+919823455667",
         patientName: "Meera",
-        clinicName: "Lumera Rehab",
+        clinicName: "City Care Clinic",
         doctorName: "Dr. A",
         rxNumber: "RX-1",
         textBody: "session rx",
-        templateParameters: rxParams,
         db: null,
         fetchImpl: mockGraphFetch(rxCaptured, "wamid.RX_TPL"),
       });
@@ -582,7 +637,30 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
       assert.equal(rxTemplate.language?.code, "en_US");
       assert.deepEqual(
         rxTemplate.components?.find((component) => component.type === "body")?.parameters?.map((parameter) => parameter.text),
-        rxParams
+        ["Meera", "City Care Clinic", "RX-1"]
+      );
+
+      const rxV2Captured: Array<{ url: string; body: Record<string, unknown> }> = [];
+      const rxV2 = await sendPrescriptionReady({
+        to: "+919823455667",
+        patientName: "Meera",
+        clinicName: "City Care Clinic",
+        doctorName: "Dr. A",
+        rxNumber: "RX-1",
+        textBody: "session rx",
+        templateName: "lumera_prescription_ready_v2",
+        db: null,
+        fetchImpl: mockGraphFetch(rxV2Captured, "wamid.RX_V2"),
+      });
+      assert.equal(rxV2.ok, true);
+      const rxV2Template = rxV2Captured[0].body.template as {
+        name?: string;
+        components?: Array<{ type?: string; parameters?: Array<{ text?: string }> }>;
+      };
+      assert.equal(rxV2Template.name, "lumera_prescription_ready_v2");
+      assert.deepEqual(
+        rxV2Template.components?.find((component) => component.type === "body")?.parameters?.map((parameter) => parameter.text),
+        ["Meera", "City Care Clinic", "Dr. A", "RX-1"]
       );
     } finally {
       for (const [key, value] of Object.entries(saved)) {
@@ -653,7 +731,13 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
     assert.match(reminders, /bookConfirmationTemplateParameters/);
     assert.match(reminders, /clinicDisplayNameForTenant/);
     assert.equal(/Lumera Clinic/.test(reminders), false);
-    assert.match(billing, /receiptTemplateParameters/);
+    assert.match(billing, /sendPaymentReceipt\(/);
+    assert.match(billing, /clinicName/);
+    assert.match(billing, /doctorName/);
+    assert.equal(billing.includes("receiptTemplateParameters"), false);
+    assert.match(graph, /templateNameUsesV2Body/);
+    assert.match(usage, /Important health notification from your clinic/);
+    assert.equal(usage.includes("Lumera Polyclinic"), false);
     assert.equal(whatsapp.includes('fallback: "Lumera'), false);
     assert.equal(/"Lumera Clinic"/.test(whatsapp), false);
     assert.equal(/"Lumera Rehab"/.test(whatsapp), false);

@@ -14,6 +14,7 @@ import {
   queueNextTemplateParameters,
   sendPrescriptionReady,
   sendQueueNext,
+  templateConfigForKind,
 } from "./graph-whatsapp.ts";
 import {
   bookWhatsAppAppointment,
@@ -820,14 +821,19 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
         let messageContent = "";
         let buttons: string[] | null = null;
         let media: Record<string, unknown> | null = null;
-        let templateParameters: string[] = [];
+        let clinicName = "";
+        let doctorName = "";
+        let tokenNumber = "";
+        let currentToken = "";
+        let location = "";
+        let rxNumber = "";
 
         if (queueEvent) {
-          const currentToken = payloadString(payload, ["currentToken", "servingToken"]) || "01";
-          const tokenNumber = payloadString(payload, ["tokenNumber", "token"]) || "02";
-          const location = payloadString(payload, ["location", "room"]) || "Rehab Suite 105";
-          const clinicName = clinicNameForOutbound(tenantId, payloadString(payload, ["clinicName", "clinic"]));
-          const doctorName = doctorNameForOutbound(tenantId, patientPhone, payloadString(payload, ["doctorName"]));
+          currentToken = payloadString(payload, ["currentToken", "servingToken"]) || "01";
+          tokenNumber = payloadString(payload, ["tokenNumber", "token"]) || "02";
+          location = payloadString(payload, ["location", "room"]) || "Rehab Suite 105";
+          clinicName = clinicNameForOutbound(tenantId, payloadString(payload, ["clinicName", "clinic"]));
+          doctorName = doctorNameForOutbound(tenantId, patientPhone, payloadString(payload, ["doctorName"]));
           details = `Live OPD Queue Alert dispatched: Patient is next in line.`;
           messageContent = buildQueueNextText({
             patientName,
@@ -835,26 +841,13 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
             tokenNumber,
             location,
           });
-          templateParameters = queueNextTemplateParameters({
-            patientName,
-            clinicName,
-            doctorName,
-            tokenNumber,
-            location,
-          });
           buttons = ["✅ I am at OPD Room", "🚶 Need 5 Mins", "📞 Reception Call"];
         } else {
-          const doctorName = doctorNameForOutbound(tenantId, patientPhone, payloadString(payload, ["doctorName"]));
-          const rxNumber = payloadString(payload, ["rxNumber", "rx"]) || "RX";
-          const clinicName = clinicNameForOutbound(tenantId, payloadString(payload, ["clinicName", "clinic"]));
+          doctorName = doctorNameForOutbound(tenantId, patientPhone, payloadString(payload, ["doctorName"]));
+          rxNumber = payloadString(payload, ["rxNumber", "rx"]) || "RX";
+          clinicName = clinicNameForOutbound(tenantId, payloadString(payload, ["clinicName", "clinic"]));
           details = `Post-consultation digital packet dispatched: Prescription ready.`;
           messageContent = `📋 *Consultation Summary & Prescription Signed*\n\nNamaste ${patientName},\n${doctorName} has signed your clinical prescription (*${rxNumber}*) at *${clinicName}*.\n\nYou can preview or download your verified medical documents below.`;
-          templateParameters = prescriptionReadyTemplateParameters({
-            patientName,
-            clinicName,
-            doctorName,
-            rxNumber,
-          });
           buttons = ["📄 View Prescription Slip", "📥 Download PDF", "💊 Order Medicine Home Delivery"];
           media = {
             type: "pdf",
@@ -865,15 +858,25 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
           };
         }
 
+        const templateParameters = queueEvent
+          ? queueNextTemplateParameters(
+              { patientName, clinicName, doctorName, tokenNumber, location },
+              templateConfigForKind("queue_next")?.name
+            )
+          : prescriptionReadyTemplateParameters(
+              { patientName, clinicName, doctorName, rxNumber },
+              templateConfigForKind("prescription_ready")?.name
+            );
+
         const sent = queueEvent
           ? await sendQueueNext({
               to: patientPhone,
               patientName,
-              clinicName: templateParameters[1],
-              doctorName: templateParameters[2],
-              tokenNumber: templateParameters[3],
-              currentToken: payloadString(payload, ["currentToken", "servingToken"]) || "01",
-              location: templateParameters[4],
+              clinicName,
+              doctorName,
+              tokenNumber,
+              currentToken,
+              location,
               textBody: messageContent,
               templateParameters,
               db: getDb(),
@@ -882,9 +885,9 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
           : await sendPrescriptionReady({
               to: patientPhone,
               patientName,
-              clinicName: templateParameters[1],
-              doctorName: templateParameters[2],
-              rxNumber: templateParameters[3],
+              clinicName,
+              doctorName,
+              rxNumber,
               textBody: messageContent,
               templateParameters,
               previewUrl: true,

@@ -217,7 +217,7 @@ export function createUsageBillingRouter(): Router {
     if (!eventType || !patientPhone) return next();
     const customPayload = (body.customPayload || {}) as { message?: string; tenantId?: string };
     const tenantId = requestTenantId(req, patientPhone) || String(customPayload.tenantId || "").trim();
-    const messageContent = customPayload.message || "Important health notification from Lumera Polyclinic.";
+    const messageContent = customPayload.message || "Important health notification from your clinic.";
     const sent = await dispatchPatientCloudText({
       tenantId: tenantId || undefined,
       to: patientPhone,

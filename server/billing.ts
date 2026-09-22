@@ -7,7 +7,7 @@ import {
 } from "./db.ts";
 import { getTenantLetterhead } from "./letterhead.ts";
 import { scrubSeedBillingIds } from "./seed-branding.ts";
-import { isCloudDispatchFailure, receiptTemplateParameters, sendPaymentReceipt } from "./graph-whatsapp.ts";
+import { isCloudDispatchFailure, sendPaymentReceipt } from "./graph-whatsapp.ts";
 import {
   createRazorpayCollectOrder,
   decideRazorpayWebhookSignature,
@@ -295,13 +295,6 @@ async function dispatchInvoiceReceipt(
     date: invoice.date || todayDate(),
     textBody: receiptBody(invoice, false),
     previewUrl: Boolean(invoice.payLink),
-    templateParameters: receiptTemplateParameters({
-      patientName: invoice.patientName,
-      clinicName,
-      doctorName,
-      amount: invoice.totalAmount,
-      invoiceId: invoice.invoiceNumber,
-    }),
     db: getDb(),
     tenantId: invoice.tenantId,
   });
