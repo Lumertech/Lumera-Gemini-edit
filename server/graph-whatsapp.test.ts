@@ -171,7 +171,7 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
     try {
       const cases = [
         { buttonEnv: undefined, language: undefined, otp: "654321" },
-        { buttonEnv: "false" as const, language: "en", otp: "111222" },
+        { buttonEnv: "true" as const, language: "en_US", otp: "111222" },
       ];
       for (const testCase of cases) {
         if (testCase.buttonEnv === undefined) delete process.env.META_OTP_TEMPLATE_BUTTON;
@@ -277,10 +277,11 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
         fetchImpl: mockGraphFetch(captured, "wamid.MANAGER_OTP"),
       });
       assert.equal(result.ok, true);
-      assert.deepEqual(captured[0].body, {
+      const { to, ...withoutRecipient } = captured[0].body;
+      assert.equal(to, "919999973271");
+      assert.equal("recipient_type" in captured[0].body, false);
+      assert.deepEqual(withoutRecipient, {
         messaging_product: "whatsapp",
-        recipient_type: "individual",
-        to: "919999973271",
         type: "template",
         template: {
           name: "lumera_login_otp",
@@ -420,6 +421,7 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
       };
       assert.equal(template.name, "lumera_appointment_reminder");
       assert.equal(template.language?.code, "en_US");
+      assert.equal(captured[0].body.recipient_type, "individual");
       assert.deepEqual(
         template.components?.find((component) => component.type === "body")?.parameters?.map((parameter) => parameter.text),
         managerParameters

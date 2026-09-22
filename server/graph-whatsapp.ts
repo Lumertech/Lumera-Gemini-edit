@@ -185,7 +185,11 @@ export async function sendWhatsAppGraphTemplate(opts: {
   fetchImpl?: typeof fetch;
   failureLabel?: string;
 }): Promise<GraphMessageResult> {
-  const language = String(opts.language || "en").trim() || "en";
+  // lumera_login_otp language is en. Do not let META_UTILITY_TEMPLATE_LANGUAGE
+  // or an en_US OTP env value rewrite it. Utility templates keep opts.language.
+  const language = opts.authOtpButtonParameter
+    ? "en"
+    : String(opts.language || "en").trim() || "en";
   // lumera_login_otp: exactly one body text parameter (the OTP). Drop any extra
   // body values such as clinic_name. Footer expiry is rendered by the approved
   // template — do not add a footer component.
@@ -226,7 +230,9 @@ export async function sendWhatsAppGraphTemplate(opts: {
     failureLabel: opts.failureLabel || "template",
     payload: {
       messaging_product: "whatsapp",
-      recipient_type: "individual",
+      // AUTH lumera_login_otp matches the re-audit body: no recipient_type.
+      // Utility templates (reminder, book, receipt) still send recipient_type.
+      ...(opts.authOtpButtonParameter ? {} : { recipient_type: "individual" }),
       type: "template",
       template: {
         name: opts.name,
@@ -246,17 +252,17 @@ export async function sendWhatsAppGraphMessage(opts: {
   fetchImpl?: typeof fetch;
 }): Promise<GraphMessageResult> {
   const templateName = String(process.env.META_OTP_TEMPLATE_NAME || "").trim();
-  const language = String(process.env.META_OTP_TEMPLATE_LANGUAGE || "en").trim() || "en";
 
   if (templateName) {
+    // Re-audit body for lumera_login_otp. `to` is added by postGraphWhatsAppMessage.
+    // Manager body is "*{{1}}* is your verification code..."; footer expiry is
+    // platform-rendered. Do not send those strings, clinic_name, or a 2nd param.
     return sendWhatsAppGraphTemplate({
       credentials: opts.credentials,
       to: opts.to,
       name: templateName,
-      language,
+      language: "en",
       bodyParameters: [opts.otp],
-      // META_OTP_TEMPLATE_BUTTON=true on tip. The flag is not a gate: this
-      // template always needs the URL button parameter or Graph returns (#131008).
       authOtpButtonParameter: opts.otp,
       fetchImpl: opts.fetchImpl,
       failureLabel: "OTP",
