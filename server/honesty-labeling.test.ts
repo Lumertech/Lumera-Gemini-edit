@@ -302,11 +302,22 @@ const ISSUE110_BANNED: Array<{ id: string; re: RegExp }> = [
   { id: "Valid under NHA Telemedicine", re: /Valid under NHA Telemedicine/i },
 ];
 
+/** Issue #110 ships-from seeds plus the Rx chrome that renders those fields. */
 const ISSUE110_COPY_FILES = [
   "server/letterhead.ts",
   "server/db-migrate.ts",
   "src/data/clinicalData.ts",
+  "src/components/PrescriptionWriter.tsx",
+  "server/whatsapp.ts",
+  "src/components/ClinicProfileSettings.tsx",
 ];
+
+const ISSUE110_OLD = {
+  footerDisclaimer:
+    "This prescription is digitally verified under National Health Authority (NHA) & Telemedicine Practice Guidelines. Please report any adverse drug reactions immediately.",
+  sealText: "Authorized Medical Seal & Digital Signature Verified",
+  footerText: "Valid under NHA Telemedicine Guidelines",
+};
 
 const SANDBOX_RX_DISCLAIMER =
   "Sandbox / demo prescription — not ABDM certified. Please report any adverse drug reactions to your clinician.";
@@ -314,6 +325,12 @@ const SANDBOX_RX_DISCLAIMER =
 describe("Compliance #110 Rx letterhead honesty", () => {
   it("demo letterhead and WhatsApp Rx footer use sandbox copy, not NHA verification", () => {
     for (const rel of ISSUE110_COPY_FILES) {
+      const src = readRepo(rel);
+      assert.equal(src.includes(ISSUE110_OLD.footerDisclaimer), false, rel);
+      assert.equal(src.includes(ISSUE110_OLD.sealText), false, rel);
+      assert.equal(src.includes(ISSUE110_OLD.footerText), false, rel);
+    }
+    for (const rel of ["server/letterhead.ts", "server/db-migrate.ts", "src/data/clinicalData.ts"]) {
       const src = readRepo(rel);
       assert.match(src, new RegExp(SANDBOX_RX_DISCLAIMER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
       assert.match(src, /Authorized medical seal \(sandbox \/ demo\)/);
