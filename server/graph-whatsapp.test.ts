@@ -253,6 +253,105 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
     }
   });
 
+  it("lumera_login_otp matches the confirmed Manager AUTH shape (en, one body OTP, url button, no footer)", async () => {
+    const prevName = process.env.META_OTP_TEMPLATE_NAME;
+    const prevLang = process.env.META_OTP_TEMPLATE_LANGUAGE;
+    const prevButton = process.env.META_OTP_TEMPLATE_BUTTON;
+    const prevUtility = process.env.META_UTILITY_TEMPLATE_LANGUAGE;
+    process.env.META_OTP_TEMPLATE_NAME = "lumera_login_otp";
+    process.env.META_OTP_TEMPLATE_LANGUAGE = "en";
+    process.env.META_OTP_TEMPLATE_BUTTON = "true";
+    process.env.META_UTILITY_TEMPLATE_LANGUAGE = "en_US";
+    process.env.META_ACCESS_TOKEN = LIVE_TOKEN;
+    process.env.META_PHONE_NUMBER_ID = LIVE_PHONE_ID;
+    process.env.NODE_ENV = "test";
+    const credentials = { token: LIVE_TOKEN, phoneNumberId: LIVE_PHONE_ID, source: "env" as const };
+    const otp = "482913";
+    try {
+      const captured: Array<{ url: string; body: Record<string, unknown> }> = [];
+      const result = await sendWhatsAppGraphMessage({
+        credentials,
+        to: "+919999973271",
+        otp,
+        purpose: "login",
+        fetchImpl: mockGraphFetch(captured, "wamid.MANAGER_OTP"),
+      });
+      assert.equal(result.ok, true);
+      assert.deepEqual(captured[0].body, {
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: "919999973271",
+        type: "template",
+        template: {
+          name: "lumera_login_otp",
+          language: { code: "en" },
+          components: [
+            { type: "body", parameters: [{ type: "text", text: otp }] },
+            {
+              type: "button",
+              sub_type: "url",
+              index: "0",
+              parameters: [{ type: "text", text: otp }],
+            },
+          ],
+        },
+      });
+      const template = captured[0].body.template as { language?: { code?: string }; components?: Array<{ type?: string }> };
+      assert.notEqual(template.language?.code, "en_US");
+      assert.equal(template.components?.some((component) => component.type === "footer"), false);
+
+      const extraCaptured: Array<{ url: string; body: Record<string, unknown> }> = [];
+      await sendWhatsAppGraphTemplate({
+        credentials,
+        to: "+919999973271",
+        name: "lumera_login_otp",
+        language: "en",
+        bodyParameters: [otp, "Lumera Clinic"],
+        authOtpButtonParameter: otp,
+        fetchImpl: mockGraphFetch(extraCaptured, "wamid.NO_CLINIC"),
+      });
+      const extraTemplate = extraCaptured[0].body.template as {
+        components?: Array<{ type?: string; parameters?: Array<{ text?: string }> }>;
+      };
+      const extraBody = extraTemplate.components?.find((component) => component.type === "body");
+      assert.deepEqual(extraBody?.parameters, [{ type: "text", text: otp }]);
+      assert.equal(JSON.stringify(extraTemplate).includes("Lumera Clinic"), false);
+      assert.equal(extraTemplate.components?.some((component) => component.type === "footer"), false);
+
+      const dispatchedCaptured: Array<{ url: string; body: Record<string, unknown> }> = [];
+      const dispatched = await dispatchWhatsAppCloudMessage({
+        to: "+919999973271",
+        kind: "otp",
+        otp,
+        purpose: "login",
+        textBody: "session fallback must not be used",
+        templateParameters: [otp, "Lumera Clinic"],
+        db: null,
+        fetchImpl: mockGraphFetch(dispatchedCaptured, "wamid.OTP_NO_CLINIC"),
+      });
+      assert.equal(dispatched.ok, true);
+      const dispatchedTemplate = dispatchedCaptured[0].body.template as {
+        name?: string;
+        language?: { code?: string };
+        components?: Array<{ type?: string; parameters?: Array<{ text?: string }> }>;
+      };
+      assert.equal(dispatchedTemplate.name, "lumera_login_otp");
+      assert.equal(dispatchedTemplate.language?.code, "en");
+      assert.deepEqual(dispatchedTemplate.components?.find((component) => component.type === "body")?.parameters, [
+        { type: "text", text: otp },
+      ]);
+    } finally {
+      if (prevName === undefined) delete process.env.META_OTP_TEMPLATE_NAME;
+      else process.env.META_OTP_TEMPLATE_NAME = prevName;
+      if (prevLang === undefined) delete process.env.META_OTP_TEMPLATE_LANGUAGE;
+      else process.env.META_OTP_TEMPLATE_LANGUAGE = prevLang;
+      if (prevButton === undefined) delete process.env.META_OTP_TEMPLATE_BUTTON;
+      else process.env.META_OTP_TEMPLATE_BUTTON = prevButton;
+      if (prevUtility === undefined) delete process.env.META_UTILITY_TEMPLATE_LANGUAGE;
+      else process.env.META_UTILITY_TEMPLATE_LANGUAGE = prevUtility;
+    }
+  });
+
   it("marketing coupon templates still use copy_code coupon_code, separate from AUTH OTP", async () => {
     const captured: Array<{ url: string; body: Record<string, unknown> }> = [];
     const result = await sendWhatsAppGraphTemplate({

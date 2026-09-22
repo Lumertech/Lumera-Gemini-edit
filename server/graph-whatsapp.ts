@@ -186,16 +186,21 @@ export async function sendWhatsAppGraphTemplate(opts: {
   failureLabel?: string;
 }): Promise<GraphMessageResult> {
   const language = String(opts.language || "en").trim() || "en";
-  const parameters = (opts.bodyParameters || []).map((text) => ({ type: "text", text: String(text) }));
+  // lumera_login_otp: exactly one body text parameter (the OTP). Drop any extra
+  // body values such as clinic_name. Footer expiry is rendered by the approved
+  // template — do not add a footer component.
+  const bodyTexts = opts.authOtpButtonParameter
+    ? [String(opts.bodyParameters?.[0] ?? opts.authOtpButtonParameter)]
+    : opts.bodyParameters || [];
+  const parameters = bodyTexts.map((text) => ({ type: "text", text: String(text) }));
   const components: Array<Record<string, unknown>> = [];
   if (parameters.length > 0) {
     components.push({ type: "body", parameters });
   }
   if (opts.authOtpButtonParameter) {
-    // AUTHENTICATION copy-code (lumera_login_otp). Creation uses otp_type
-    // COPY_CODE, but WhatsApp stores the button as URL. Send the OTP twice:
-    // body text, then button sub_type "url" with type "text". Graph (#132018)
-    // if this is sent as coupon_code; (#131008) if the button parameter is omitted.
+    // AUTHENTICATION copy-code. Creation uses otp_type COPY_CODE, but WhatsApp
+    // stores the button as URL. Payload is body text + button sub_type "url"
+    // type "text" with the same OTP. Graph (#132018) if sent as coupon_code.
     // https://developers.facebook.com/docs/whatsapp/business-management-api/authentication-templates/copy-code-button-authentication-templates/
     components.push({
       type: "button",
@@ -250,8 +255,8 @@ export async function sendWhatsAppGraphMessage(opts: {
       name: templateName,
       language,
       bodyParameters: [opts.otp],
-      // Always send the button OTP (url/text). META_OTP_TEMPLATE_BUTTON is not a gate;
-      // leaving it "true" is harmless.
+      // META_OTP_TEMPLATE_BUTTON=true on tip. The flag is not a gate: this
+      // template always needs the URL button parameter or Graph returns (#131008).
       authOtpButtonParameter: opts.otp,
       fetchImpl: opts.fetchImpl,
       failureLabel: "OTP",
