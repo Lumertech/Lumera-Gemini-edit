@@ -143,10 +143,18 @@ function asError(err: unknown, fallbackMessage: string): Error {
   return new Error(fallbackMessage);
 }
 
+/** Strip session JWTs and bearer tokens before they reach Cloud Logging. */
+export function redactSensitiveLogText(text: string): string {
+  return String(text || "")
+    .replace(/Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi, "Bearer [redacted]")
+    .replace(/(lumera_sid|lumera_session_token|x-session-token)\s*[=:]\s*[^;\s,"']+/gi, "$1=[redacted]")
+    .replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, "[redacted-jwt]");
+}
+
 export function reportError(err: unknown, context?: Record<string, unknown>): void {
   ensureInitialized();
   const error = asError(err, "Unknown error");
-  const message = error.stack || error.message || String(err);
+  const message = redactSensitiveLogText(error.stack || error.message || String(err));
 
   if (status.mode === "gcp") {
     const payload: Record<string, unknown> = {

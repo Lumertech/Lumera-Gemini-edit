@@ -9,7 +9,9 @@
  *  - 404s cross-tenant conversation mutations
  *
  * Meta webhooks stay on /api/meta and /meta — they are not on this router.
- * Prescription / lab-report PDFs stay public.
+ * Prescription PDF auth is on the whatsapp route handler (not this inbox guard).
+ * Lab-report HTML is still outside this guard. Neither path is an inbox route:
+ * req.params.id is the document id, not a conversation id.
  */
 import { Router, type NextFunction, type Request, type RequestHandler, type Response } from "express";
 import {
@@ -39,12 +41,13 @@ function serializeConversation(c: Record<string, unknown>) {
   };
 }
 
-function isPublicPdf(path: string): boolean {
+/** Clinical document routes. Not inbox paths — do not apply conversation tenant filters here. */
+function isClinicalDocumentPath(path: string): boolean {
   return path.startsWith("/prescription/") || path.startsWith("/lab-report/");
 }
 
 function isDashboardPath(path: string): boolean {
-  if (isPublicPdf(path)) return false;
+  if (isClinicalDocumentPath(path)) return false;
   const prefixes = [
     "/conversations",
     "/messages",

@@ -269,7 +269,9 @@ describe("Tenant letterhead API", () => {
     assert.match(prescription.clinicAddress, /88 Ring Road/);
     assert.equal(prescription.clinicPhone, "+91 73100 11111");
 
-    const pdf = await fetch(`http://127.0.0.1:${port}/api/whatsapp/prescription/${prescription.id}/pdf`);
+    const pdf = await fetch(`http://127.0.0.1:${port}/api/whatsapp/prescription/${prescription.id}/pdf`, {
+      headers: auth,
+    });
     assert.equal(pdf.status, 200);
     const html = await pdf.text();
     assert.match(html, /Narmada Ortho Clinic/);

@@ -13,6 +13,7 @@ import { hashPassword } from "./password.ts";
 import {
   AUTH_RATE_LIMITED_PATHS,
   canonicalHostRedirectMiddleware,
+  attachHttpSecurity,
   corsAllowlistMiddleware,
   corsShouldReject,
   createAuthRateLimiter,
@@ -256,6 +257,16 @@ describe("Auth / tenant isolation / CORS / CSRF / rate limit", () => {
     });
     assert.equal(res.status, 403);
     assert.match(String(res.json.error || ""), /origin/i);
+    const wabas = await jsonRequest(port, "GET", "/api/meta/wabas", undefined, {
+      Origin: "https://evil.example",
+    });
+    assert.equal(wabas.status, 403);
+    assert.match(String(wabas.json.error || ""), /origin/i);
+    const overview = await jsonRequest(port, "GET", "/api/meta/overview", undefined, {
+      Origin: "https://evil.example",
+    });
+    assert.equal(overview.status, 403);
+    assert.match(String(overview.json.error || ""), /origin/i);
 
     const webhook = await jsonRequest(port, "POST", "/api/billing/razorpay/webhook", { event: "ping" }, {
       Origin: "https://evil.example",
@@ -491,5 +502,47 @@ describe("Auth / tenant isolation / CORS / CSRF / rate limit", () => {
       headers: { cookie: "lumera_sid=abc.def" },
     } as unknown as express.Request;
     assert.equal(csrfShouldReject(deauthorizeReq), false);
+  });
+
+  it("CSP is on SPA HTML and Origin: null document GETs stay open", async () => {
+    const prod = {
+      NODE_ENV: "production",
+      APP_URL: "https://www.mylumera.in",
+      ALLOWED_ORIGINS: "https://www.mylumera.in",
+    } as NodeJS.ProcessEnv;
+    const app = express();
+    attachHttpSecurity(app, prod);
+    app.get("/login", (_req, res) => res.type("html").send("<!doctype html><title>login</title>"));
+    app.get("/api/ping", (_req, res) => res.json({ ok: true }));
+    const srv = app.listen(0, "127.0.0.1");
+    await new Promise<void>((resolve) => srv.once("listening", () => resolve()));
+    const addr = srv.address();
+    if (!addr || typeof addr === "string") throw new Error("no port");
+    const origin = `http://127.0.0.1:${addr.port}`;
+    try {
+      const login = await fetch(`${origin}/login`, { headers: { Origin: "null" } });
+      assert.equal(login.status, 200);
+      const csp = login.headers.get("content-security-policy") || "";
+      assert.match(csp, /default-src 'self'/);
+      assert.match(csp, /frame-ancestors 'none'/);
+      assert.match(csp, /https:\/\/connect\.facebook\.net/);
+      assert.doesNotMatch(csp, /script-src[^;]*'unsafe-inline'/);
+      assert.equal(login.headers.get("x-content-type-options"), "nosniff");
+      assert.equal(login.headers.get("x-frame-options"), "DENY");
+      assert.match(login.headers.get("permissions-policy") || "", /microphone=\(self\)/);
+      assert.equal(login.headers.get("x-powered-by"), null);
+      const missingOrigin = await fetch(`${origin}/login`);
+      assert.equal(missingOrigin.status, 200);
+      assert.match(missingOrigin.headers.get("content-security-policy") || "", /default-src 'self'/);
+
+      const api = await fetch(`${origin}/api/ping`, { headers: { Origin: "https://www.mylumera.in" } });
+      assert.equal(api.status, 200);
+      assert.equal(api.headers.get("content-security-policy"), null);
+
+      const apiNull = await fetch(`${origin}/api/ping`, { headers: { Origin: "null" } });
+      assert.equal(apiNull.status, 403);
+    } finally {
+      await new Promise<void>((resolve, reject) => srv.close((err) => (err ? reject(err) : resolve())));
+    }
   });
 });

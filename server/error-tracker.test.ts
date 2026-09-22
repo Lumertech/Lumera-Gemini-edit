@@ -12,6 +12,7 @@ import {
   getErrorTrackerStatus,
   initErrorTracker,
   reportCaughtError,
+  redactSensitiveLogText,
   reportError,
   resetErrorTrackerForTests,
 } from "./error-tracker.ts";
@@ -21,6 +22,16 @@ afterEach(() => {
 });
 
 describe("error tracker", () => {
+  it("redacts bearer tokens and session JWTs before they are logged", () => {
+    const jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJ1MSJ9.signaturevalue";
+    const raw = `Authorization: Bearer ${jwt} lumera_sid=${jwt} x-session-token: ${jwt}`;
+    const redacted = redactSensitiveLogText(raw);
+    assert.equal(redacted.includes(jwt), false);
+    assert.match(redacted, /Bearer \[redacted\]/);
+    assert.match(redacted, /lumera_sid=\[redacted\]/);
+    assert.match(redacted, /x-session-token=\[redacted\]/);
+  });
+
   it("uses console fallback locally without GCP creds and does not throw", () => {
     const logs: string[] = [];
     const origLog = console.log;

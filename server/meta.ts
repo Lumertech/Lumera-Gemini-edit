@@ -1,4 +1,5 @@
-import { Router, type Request, type Response } from "express";
+import { Router, type NextFunction, type Request, type Response } from "express";
+import { isPlatformAdminRole, requireAuth } from "./auth.ts";
 import { findDataDeletionRequest, getDb } from "./db.ts";
 import { appPublicUrl, isProduction, sandboxSimulatorsEnabled } from "./runtime.ts";
 import { reportCaughtError } from "./error-tracker.ts";
@@ -94,6 +95,21 @@ export function applyWhatsAppOutboundStatus(
  */
 export function handleMetaCallbackGetProbe(_req: Request, res: Response) {
   res.status(200).json({ ok: true, status: "ok" });
+}
+
+/** Admin desk + clinic-admin. Doctors, reception, and patients are 403. Anonymous is 401 via requireAuth. */
+const META_CATALOG_ROLES = ["super_admin", "polyclinic_admin", "CLINIC_ADMIN"] as const;
+
+export function requireMetaCatalog(req: Request, res: Response, next: NextFunction) {
+  if (!req.user) {
+    return res.status(401).json({ error: "Authentication required" });
+  }
+  const role = String(req.user.role || "");
+  const allowed = (META_CATALOG_ROLES as readonly string[]).includes(role) || isPlatformAdminRole(role);
+  if (!allowed) {
+    return res.status(403).json({ error: "Insufficient permissions" });
+  }
+  next();
 }
 
 export function createMetaRouter(): Router {
@@ -283,7 +299,7 @@ export function createMetaRouter(): Router {
   // ----------------------------------------------------
 
   // GET /api/meta/overview - High level overview for Admin Dashboard
-  router.get("/overview", (_req: Request, res: Response) => {
+  router.get("/overview", requireAuth, requireMetaCatalog, (_req: Request, res: Response) => {
     try {
       const db = getDb();
       const tenants = db.prepare("SELECT id, name, waba_id, phone_number_id, meta_quality_rating, meta_onboarding_status FROM tenants").all() as any[];
@@ -313,7 +329,7 @@ export function createMetaRouter(): Router {
   });
 
   // GET /api/meta/wabas - List all clinic WABAs
-  router.get("/wabas", (_req: Request, res: Response) => {
+  router.get("/wabas", requireAuth, requireMetaCatalog, (_req: Request, res: Response) => {
     try {
       const db = getDb();
       const rows = db.prepare(`

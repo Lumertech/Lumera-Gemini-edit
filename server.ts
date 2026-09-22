@@ -40,6 +40,7 @@ installWhatsAppRouterPatch();
 
 const app = express();
 const PORT = resolveListenPort();
+app.disable("x-powered-by");
 app.set("trust proxy", 1);
 attachHttpSecurity(app);
 

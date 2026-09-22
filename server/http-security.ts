@@ -11,8 +11,9 @@
  * safe navigations.
  */
 import { type Express, type NextFunction, type Request, type Response } from "express";
+import { applyHtmlDocumentSecurityHeaders } from "./html-security-headers.ts";
 import { isUnsetOrPlaceholder } from "./runtime.ts";
-import { isBackendPath } from "./spa-fallback.ts";
+import { isBackendPath, isHtmlDocumentPath } from "./spa-fallback.ts";
 
 export const CSRF_COOKIE = "lumera_csrf";
 export const CSRF_HEADER = "x-csrf-token";
@@ -317,11 +318,29 @@ export function resetAuthRateLimitStore(store: Map<string, HitRecord> = defaultH
   store.clear();
 }
 
+/** Document navigations only. API JSON must not pick up a page CSP. */
+export function shouldAttachHtmlSecurityHeaders(req: Request): boolean {
+  const method = String(req.method || "GET").toUpperCase();
+  if (method !== "GET" && method !== "HEAD") return false;
+  return isHtmlDocumentPath(requestPathname(req));
+}
+
+export function htmlDocumentSecurityMiddleware(env: NodeJS.ProcessEnv = process.env) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    if (shouldAttachHtmlSecurityHeaders(req)) {
+      applyHtmlDocumentSecurityHeaders(res, env);
+    }
+    next();
+  };
+}
+
 export function attachHttpSecurity(app: Express, env: NodeJS.ProcessEnv = process.env) {
   if ((app as Express & { __lumeraHttpSecurity?: boolean }).__lumeraHttpSecurity) return;
   (app as Express & { __lumeraHttpSecurity?: boolean }).__lumeraHttpSecurity = true;
+  app.disable("x-powered-by");
   app.use(canonicalHostRedirectMiddleware(env));
   app.use(corsAllowlistMiddleware(env));
+  app.use(htmlDocumentSecurityMiddleware(env));
   app.use(csrfProtectionMiddleware());
   app.use(createAuthRateLimiter());
 }
