@@ -187,6 +187,9 @@ describe("production SPA history fallback", () => {
     assert.equal(isSpaHistoryFallbackPath("/admin/users"), true);
     assert.equal(isSpaHistoryFallbackPath("/app/billing"), true);
     assert.equal(isSpaHistoryFallbackPath("/w/dr-demo-physio/whatsapp"), true);
+    assert.equal(isSpaHistoryFallbackPath("/w/lumera-apex-polyclinic/whatsapp"), true);
+    assert.equal(isBackendPath("/w/lumera-apex-polyclinic/whatsapp"), false);
+    assert.equal(isBackendPath("/w/dr-demo-physio/whatsapp"), false);
     assert.equal(isSpaHistoryFallbackPath("/api/public/policies/privacy-policy"), false);
     assert.equal(isSpaHistoryFallbackPath("/assets/index-abc.js"), false);
     assert.equal(isBackendPath("/healthz"), true);

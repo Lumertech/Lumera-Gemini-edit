@@ -114,8 +114,10 @@ function requestPathname(req: Request): string {
 }
 
 /**
- * Safe same-site document navigations (GET/HEAD to SPA/HTML) omit Origin
- * or send the literal Origin: null (Chrome after cross-origin redirects).
+ * Safe document navigations (GET/HEAD to any SPA/HTML path — /login, /app,
+ * /w/{clinic}/… deep links, admin shells, etc.) omit Origin or send the
+ * literal Origin: null (Chrome after cross-origin redirects). Not login-only:
+ * anything that is not isBackendPath (/api, /uploads, /meta, /v3, …) qualifies.
  * Mutating methods and backend/API paths still require an allowlisted Origin
  * in production (except webhook/health exemptions).
  */

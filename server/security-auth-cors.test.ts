@@ -24,6 +24,7 @@ import {
   resetAuthRateLimitStore,
   withWwwApexCompanions,
 } from "./http-security.ts";
+import { isBackendPath } from "./spa-fallback.ts";
 import { installWhatsAppRouterPatch, protectWhatsAppDashboard } from "./whatsapp-dashboard-guard.ts";
 import { PATIENTS_PHONE_UNIQUE } from "../src/db/patients-tenant-phone.unique.ts";
 
@@ -319,14 +320,29 @@ describe("Auth / tenant isolation / CORS / CSRF / rate limit", () => {
     assert.equal(corsShouldReject(fakeReq("NULL", "/api/patients", "PUT"), prod), true);
     assert.equal(corsShouldReject(fakeReq(" null ", "/login", "DELETE"), prod), true);
     assert.equal(corsShouldReject(fakeReq("null", "/api/patients"), prod), true);
-    // Top-level SPA/HTML navigations omit Origin or send Origin: null — must not 403.
+    // All SPA/HTML document GETs (not login-only): omit Origin or Origin: null — must not 403.
+    // /w/* clinic deep links are SPA shells; isBackendPath must not classify them as API.
+    assert.equal(isBackendPath("/w/lumera-apex-polyclinic/whatsapp"), false);
+    assert.equal(isBackendPath("/w/dr-demo-physio/whatsapp"), false);
+    assert.equal(isBackendPath("/app"), false);
     assert.equal(corsShouldReject(fakeReq(undefined, "/login"), prod), false);
     assert.equal(corsShouldReject(fakeReq("null", "/login"), prod), false);
     assert.equal(corsShouldReject(fakeReq("NULL", "/login", "HEAD"), prod), false);
     assert.equal(corsShouldReject(fakeReq(" null ", "/app"), prod), false);
     assert.equal(corsShouldReject(fakeReq(undefined, "/app"), prod), false);
+    assert.equal(corsShouldReject(fakeReq("null", "/app", "HEAD"), prod), false);
     assert.equal(corsShouldReject(fakeReq(undefined, "/"), prod), false);
     assert.equal(corsShouldReject(fakeReq(undefined, "/admin/tenants"), prod), false);
+    assert.equal(
+      corsShouldReject(fakeReq("null", "/w/lumera-apex-polyclinic/whatsapp"), prod),
+      false
+    );
+    assert.equal(
+      corsShouldReject(fakeReq("NULL", "/w/lumera-apex-polyclinic/whatsapp", "HEAD"), prod),
+      false
+    );
+    assert.equal(corsShouldReject(fakeReq("null", "/w/dr-demo-physio/whatsapp"), prod), false);
+    assert.equal(corsShouldReject(fakeReq(undefined, "/w/lumera-apex-polyclinic/whatsapp"), prod), false);
     // Allowlisted Origins (www + apex companion) still pass.
     assert.equal(corsShouldReject(fakeReq("https://www.mylumera.in"), prod), false);
     assert.equal(corsShouldReject(fakeReq("https://mylumera.in", "/api/auth/login", "POST"), prod), false);
@@ -358,6 +374,7 @@ describe("Auth / tenant isolation / CORS / CSRF / rate limit", () => {
     app.use(canonicalHostRedirectMiddleware(prod));
     app.use(corsAllowlistMiddleware(prod));
     app.get("/login", (_req, res) => res.type("html").send("<!doctype html><title>login</title>"));
+    app.get("/w/:slug/whatsapp", (_req, res) => res.type("html").send("<!doctype html><title>whatsapp</title>"));
     app.get("/api/ping", (_req, res) => res.json({ ok: true }));
     const srv = app.listen(0, "127.0.0.1");
     await new Promise<void>((resolve) => srv.once("listening", () => resolve()));
@@ -375,6 +392,13 @@ describe("Auth / tenant isolation / CORS / CSRF / rate limit", () => {
     });
     assert.equal(nullOrigin.status, 200);
     assert.match(await nullOrigin.text(), /login/i);
+
+    const clinicNullOrigin = await fetch(`http://127.0.0.1:${p}/w/lumera-apex-polyclinic/whatsapp`, {
+      headers: { Origin: "null" },
+      redirect: "manual",
+    });
+    assert.equal(clinicNullOrigin.status, 200);
+    assert.match(await clinicNullOrigin.text(), /whatsapp/i);
 
     const wwwOrigin = await fetch(`http://127.0.0.1:${p}/login`, {
       headers: { Origin: "https://www.mylumera.in" },
