@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Express, NextFunction, Request, Response } from "express";
 import express from "express";
+import { applyHtmlDocumentSecurityHeaders } from "./html-security-headers.ts";
 import { isPublicPolicyHtmlPath, PUBLIC_POLICY_HTML_PATHS } from "./policy-html.ts";
 
 /** Public paths that must 200 without login. Policy slugs are SSR HTML, not SPA shells. */
@@ -46,6 +47,12 @@ export function isSpaHistoryFallbackPath(pathname: string): boolean {
   return true;
 }
 
+/** SPA shells and public policy documents — the responses that need CSP. */
+export function isHtmlDocumentPath(pathname: string): boolean {
+  if (isPublicPolicyHtmlPath(pathname)) return true;
+  return isSpaHistoryFallbackPath(pathname);
+}
+
 /**
  * Cloud Run may start with cwd at the app root (`dist/index.html`)
  * or already inside `dist/` (`./index.html`). Prefer a directory that actually
@@ -68,6 +75,7 @@ export function attachProductionSpaFallback(app: Express, distPath = resolveClie
     if (!fs.existsSync(indexFile)) {
       return res.status(500).send("Client build missing (dist/index.html). Run npm run build.");
     }
+    applyHtmlDocumentSecurityHeaders(res);
     res.sendFile(indexFile);
   });
 }

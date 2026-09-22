@@ -302,4 +302,14 @@ export function migrate(database: SqlDatabase) {
   try {
     database.exec("CREATE INDEX IF NOT EXISTS idx_invoices_payment_link ON invoices(razorpay_payment_link_id)");
   } catch {}
+
+  try {
+    database.exec(
+      `CREATE TABLE IF NOT EXISTS revoked_credentials (
+        token_hash TEXT PRIMARY KEY,
+        expires_at TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      )`
+    );
+  } catch {}
 }

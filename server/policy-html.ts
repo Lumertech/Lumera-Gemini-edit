@@ -1,6 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { getDb } from "./db.ts";
 import { reportCaughtError } from "./error-tracker.ts";
+import { applyHtmlDocumentSecurityHeaders } from "./html-security-headers.ts";
 
 /** Public Meta App Review document paths that must embed cms_policies in HTML. */
 export const PUBLIC_POLICY_HTML_PATHS = [
@@ -83,6 +84,7 @@ function sendPolicyHtml(res: Response, slug: string): void {
       .prepare("SELECT slug, title, body, updated_at FROM cms_policies WHERE slug = ?")
       .get(slug) as { slug: string; title: string; body: string; updated_at: string } | undefined;
     if (!row) {
+      applyHtmlDocumentSecurityHeaders(res);
       res
         .status(404)
         .type("html")
@@ -94,9 +96,11 @@ function sendPolicyHtml(res: Response, slug: string): void {
         );
       return;
     }
+    applyHtmlDocumentSecurityHeaders(res);
     res.status(200).type("html").send(renderPolicyDocumentHtml(row.title, row.body, row.updated_at));
   } catch (err) {
     reportCaughtError(err, "policy-html.send");
+    applyHtmlDocumentSecurityHeaders(res);
     res
       .status(503)
       .type("html")

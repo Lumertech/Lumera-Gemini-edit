@@ -39,7 +39,7 @@ import {
   allowSkipOtp,
   isSeededDemoPasswordSessionEmail,
   clearSessionCookie,
-  destroySession,
+  endPresentedSession,
   getSessionId,
   issueLumeraSession,
   isPlatformAdminRole,
@@ -1448,8 +1448,7 @@ export function createApiRouter(): Router {
   });
 
   api.post("/auth/logout", (req: Request, res: Response) => {
-    const sid = getSessionId(req);
-    if (sid) destroySession(sid);
+    endPresentedSession(getSessionId(req));
     clearSessionCookie(res);
     return res.json({ ok: true });
   });
@@ -2385,7 +2384,7 @@ export function createApiRouter(): Router {
   api.use("/v3", createAbdmRouter());
 
   // Direct EMR PDF viewer endpoints
-  api.get("/emr/prescription/:id/pdf", (req, res) => {
+  api.get("/emr/prescription/:id/pdf", requireAuth, requireRole(...CLINICIAN_ROLES), (req, res) => {
     res.redirect(`/api/whatsapp/prescription/${req.params.id}/pdf`);
   });
   api.get("/emr/lab-report/:id/pdf", (req, res) => {
