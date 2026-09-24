@@ -197,6 +197,14 @@ export const BOOTSTRAP_DDL = `
       created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS prescription_drafts (
+      patient_id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      doctor_id TEXT NOT NULL,
+      draft_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS lab_reports (
       id TEXT PRIMARY KEY,
       patient_id TEXT NOT NULL,

@@ -196,12 +196,39 @@ export const CompactAmbientScribe: React.FC<CompactAmbientScribeProps> = ({
           }
           setInterimTranscript(interim);
         },
+        onAudioRecorded: async (audioBlob) => {
+          if (audioBlob.size > 100) {
+            // If SpeechRecognition wasn't available or transcript is brief, send audio to Gemini 3.5 transcribe API
+            if (!isSpeechRecognitionAvailable() || finalTranscript.trim().length < 15) {
+              setMicError(null);
+              try {
+                const reader = new FileReader();
+                reader.readAsDataURL(audioBlob);
+                reader.onloadend = async () => {
+                  const base64Audio = reader.result as string;
+                  const mimeType = audioBlob.type || "audio/webm";
+                  const res = await fetch("/api/gemini/transcribe", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ audioBase64: base64Audio, mimeType }),
+                  });
+                  const data = await res.json();
+                  if (data.success && data.transcription) {
+                    setFinalTranscript((prev) => (prev ? `${prev} ${data.transcription}` : data.transcription));
+                  }
+                };
+              } catch (err) {
+                console.error("Gemini transcribe error on mobile:", err);
+              }
+            }
+          }
+        },
       });
       sessionRef.current = session;
       setIsRecording(true);
       if (!isSpeechRecognitionAvailable()) {
         setMicError(
-          "Live microphone is on, but this browser has no Speech Recognition. Type the consult in the box, or use Chrome / Edge for live captions."
+          "Mobile recording active (Gemini 3.5 Transcribe engine will process audio upon stop)."
         );
       }
     } catch (err) {

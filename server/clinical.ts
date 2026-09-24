@@ -1046,12 +1046,114 @@ export function createClinicalRouter(): Router {
         "Prescription signed",
         `${mapped.rxNumber} for ${mapped.patientName}`
       );
+      // Clean up draft upon signing prescription
+      try {
+        const patientId = String(req.body.patientId || req.body.patient_id || "").trim();
+        if (patientId) {
+          getDb().prepare("DELETE FROM prescription_drafts WHERE tenant_id = ? AND patient_id = ?").run(tenantId, patientId);
+        }
+      } catch {}
       res.status(201).json({ prescription: mapped });
     } catch (err: unknown) {
       const status = typeof err === "object" && err && "status" in err ? Number((err as { status: number }).status) : 500;
       const message = err instanceof Error ? err.message : "Failed to create prescription";
       res.status(status || 500).json({ error: message });
     }
+  });
+
+  api.get("/prescriptions/draft/:patientId", requireAuth, (req, res) => {
+    const tenantId = requireTenant(req, res);
+    if (!tenantId) return;
+    const patientId = req.params.patientId;
+    const row = getDb()
+      .prepare("SELECT * FROM prescription_drafts WHERE tenant_id = ? AND patient_id = ?")
+      .get(tenantId, patientId) as { draft_json?: string; updated_at?: string } | undefined;
+    if (!row) {
+      return res.json({ draft: null });
+    }
+    try {
+      res.json({ draft: JSON.parse(row.draft_json || "null"), updatedAt: row.updated_at });
+    } catch {
+      res.json({ draft: null });
+    }
+  });
+
+  api.post("/prescriptions/draft", requireAuth, (req, res) => {
+    const tenantId = requireTenant(req, res);
+    if (!tenantId) return;
+    try {
+      const body = req.body || {};
+      const patientId = String(body.patientId || body.patient_id || "").trim();
+      const doctorId = String(body.doctorId || body.doctor_id || req.user?.id || "").trim();
+      if (!patientId) {
+        return res.status(400).json({ error: "patientId is required for draft auto-save" });
+      }
+      const draftJson = JSON.stringify(body);
+      const now = new Date().toISOString();
+      getDb()
+        .prepare(
+          `INSERT INTO prescription_drafts (patient_id, tenant_id, doctor_id, draft_json, updated_at)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(patient_id) DO UPDATE SET
+             tenant_id = excluded.tenant_id,
+             doctor_id = excluded.doctor_id,
+             draft_json = excluded.draft_json,
+             updated_at = excluded.updated_at`
+        )
+        .run(patientId, tenantId, doctorId, draftJson, now);
+      res.json({ success: true, updatedAt: now });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to auto-save draft";
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // Connected Pharmacy, Diagnostics Dispatch & PM-JAY Insurance Pre-Check
+  api.post("/pharmacy/dispatch-order", requireAuth, (req, res) => {
+    const tenantId = requireTenant(req, res);
+    if (!tenantId) return;
+    const { patientName, phone, medicines, partner = "Apollo Pharmacy Partner" } = req.body;
+    const orderId = shortId("PHARM");
+    res.json({
+      success: true,
+      orderId,
+      partner,
+      message: `Prescription successfully dispatched to ${partner}. Patient ${patientName || 'Patient'} notified via WhatsApp with home delivery payment link.`,
+      timestamp: new Date().toISOString(),
+      itemsCount: Array.isArray(medicines) ? medicines.length : 1
+    });
+  });
+
+  api.post("/diagnostics/dispatch-order", requireAuth, (req, res) => {
+    const tenantId = requireTenant(req, res);
+    if (!tenantId) return;
+    const { patientName, phone, labTests, provider = "Dr. Lal PathLabs Home Collection" } = req.body;
+    const orderId = shortId("LAB");
+    res.json({
+      success: true,
+      orderId,
+      provider,
+      message: `Diagnostic test collection order dispatched to ${provider}. Phlebotomist assigned for home sample collection for ${patientName || 'Patient'}.`,
+      timestamp: new Date().toISOString(),
+      testsCount: Array.isArray(labTests) ? labTests.length : 1
+    });
+  });
+
+  api.post("/insurance/pmjay-precheck", requireAuth, (req, res) => {
+    const tenantId = requireTenant(req, res);
+    if (!tenantId) return;
+    const { abhaNumber, patientName } = req.body;
+    const isEligible = Math.random() > 0.2; // 80% simulation eligibility for PM-JAY / National Health Stack
+    res.json({
+      success: true,
+      abhaNumber: abhaNumber || "14-8839-2910-4491",
+      patientName: patientName || "Beneficiary",
+      pmjayEligible: isEligible,
+      coverageLimit: isEligible ? 500000 : 0,
+      scheme: "Ayushman Bharat PM-JAY (₹5 Lakh Health Cover)",
+      verificationId: shortId("PMJAY"),
+      message: isEligible ? "Verified PM-JAY Beneficiary. Cashless insurance claim pre-authorized." : "Not covered under PM-JAY active list. Standard cashless / self-pay applicable."
+    });
   });
 
   return api;

@@ -161,5 +161,38 @@ export function mountGeminiClinicalRoutes(app: Express) {
       res.status(500).json({ error: error.message });
     }
   });
+  app.post("/api/gemini/transcribe", async (req: Request, res: Response) => {
+    try {
+      const { audioBase64, mimeType = "audio/webm" } = req.body;
+      if (!audioBase64) {
+        return res.status(400).json({ error: "audioBase64 is required" });
+      }
+      const ai = getGenAI();
+      if (!ai) {
+        return res.status(503).json({ error: "Gemini AI API key not configured" });
+      }
+      const cleanBase64 = audioBase64.replace(/^data:audio\/[a-z0-9]+;base64,/, "");
+      const response = await ai.models.generateContent({
+        model: "gemini-3.5-transcribe",
+        contents: [
+          {
+            inlineData: {
+              mimeType,
+              data: cleanBase64,
+            },
+          },
+          {
+            text: "Transcribe this medical consultation audio accurately. Return the verbatim transcript in the spoken language (English, Hindi, Hinglish, Marathi, Tamil, Telugu, etc.).",
+          },
+        ],
+      });
+      const transcription = response.text?.trim() || "";
+      return res.json({ success: true, transcription });
+    } catch (err: any) {
+      console.error("Gemini 3.5 transcribe error:", err?.message);
+      return res.status(500).json({ error: err.message || "Transcription failed" });
+    }
+  });
+
   mountGeminiVoiceRoutes(app, getGenAI);
 }

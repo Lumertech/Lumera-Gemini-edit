@@ -148,7 +148,7 @@ export function assertWalletAllowsDebit(opts: {
   billedAmount: number;
   critical: boolean;
   database?: DatabaseSync;
-}): { ok: true } | { ok: false; error: string; code: "WALLET_INSUFFICIENT"; status: number; wallet: ReturnType<typeof publicWalletStatus> } {
+}): { readonly ok: true } | { ok: false; error: string; code: "WALLET_INSUFFICIENT"; status: number; wallet: ReturnType<typeof publicWalletStatus> } {
   const wallet = publicWalletStatus(opts.tenantId, opts.database);
   if (opts.critical) return { ok: true };
   const next = roundMoney(wallet.balance - Math.abs(opts.billedAmount));
@@ -337,7 +337,7 @@ export function usageBreakdown(opts: {
        WHERE e.created_at >= ? AND e.created_at <= ? ${tenantSql}
        GROUP BY e.tenant_id, e.resource`
     )
-    .all(...params) as Array<{
+    .all(...(params as any[])) as Array<{
     tenant_id: string;
     resource: string;
     quantity: number;

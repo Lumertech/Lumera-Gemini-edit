@@ -124,6 +124,8 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
   const [generatedSoap, setGeneratedSoap] = useState<SoapNote | null>(null);
   const [generationSource, setGenerationSource] = useState<string>('');
   const [audioLevel, setAudioLevel] = useState(0);
+  const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
+  const [isTranscribing, setIsTranscribing] = useState(false);
 
   // Timer simulation
   useEffect(() => {
@@ -140,13 +142,57 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
     return () => clearInterval(interval);
   }, [isRecording]);
 
-  const handleStartStopRecording = () => {
+  const handleStartStopRecording = async () => {
     if (!isRecording) {
-      setIsRecording(true);
-      if (!transcript) {
-        setTranscript(`[Ambient Recording in progress at ${new Date().toLocaleTimeString()}]...\nDoctor: Please tell me how you are feeling today.`);
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+        const chunks: Blob[] = [];
+        recorder.ondataavailable = (e) => {
+          if (e.data.size > 0) chunks.push(e.data);
+        };
+        recorder.onstop = async () => {
+          stream.getTracks().forEach((track) => track.stop());
+          const audioBlob = new Blob(chunks, { type: 'audio/webm' });
+          if (audioBlob.size > 100) {
+            setIsTranscribing(true);
+            try {
+              const reader = new FileReader();
+              reader.readAsDataURL(audioBlob);
+              reader.onloadend = async () => {
+                const base64Audio = reader.result as string;
+                const res = await fetch('/api/gemini/transcribe', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ audioBase64: base64Audio, mimeType: 'audio/webm' }),
+                });
+                const data = await res.json();
+                if (data.success && data.transcription) {
+                  setTranscript(data.transcription);
+                }
+              };
+            } catch (err) {
+              console.error('Gemini 3.5 transcribe error:', err);
+            } finally {
+              setIsTranscribing(false);
+            }
+          }
+        };
+        recorder.start();
+        setMediaRecorder(recorder);
+        setIsRecording(true);
+        setTranscript('[Listening via microphone... Speak consultation. Gemini 3.5 Transcribe will process upon stop.]');
+      } catch (err) {
+        console.warn('Microphone permission denied or unsupported:', err);
+        setIsRecording(true);
+        if (!transcript) {
+          setTranscript(`[Ambient Recording in progress at ${new Date().toLocaleTimeString()}]...\nDoctor: Please tell me how you are feeling today.`);
+        }
       }
     } else {
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop();
+      }
       setIsRecording(false);
     }
   };
@@ -361,6 +407,12 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
                   Clear
                 </button>
               </div>
+              {isTranscribing && (
+                <div className="flex items-center gap-2 p-2 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-800 animate-pulse">
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-600" />
+                  <span>Transcribing audio with Gemini 3.5 Transcribe model...</span>
+                </div>
+              )}
               <textarea
                 value={transcript}
                 onChange={(e) => setTranscript(e.target.value)}

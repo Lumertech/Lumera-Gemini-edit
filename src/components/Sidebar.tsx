@@ -18,7 +18,8 @@ import {
   LogOut,
   Plus,
   Settings,
-  Shield
+  Shield,
+  Pill
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { NavView } from './Navbar';
@@ -30,16 +31,16 @@ import { isPolyclinicPractice } from '../lib/sessionWorkspace';
 import { allowedViewsForWorkflow, workflowForUser } from '../lib/specialtyWorkflow';
 
 export const ROLE_VISIBLE_VIEWS: Record<string, NavView[]> = {
-  doctor: ['welcome', 'queue', 'opd-queue', 'rx', 'smart-rx', 'ambient', 'reports', 'appointments', 'polyclinic', 'whatsapp', 'voicebot', 'billing', 'dhis', 'team', 'reception', 'kiosk', 'settings', 'wellness', 'therapy-session', 'consult-practice', 'physio-session', 'dental-chart'],
-  receptionist: ['welcome', 'reception', 'queue', 'opd-queue', 'appointments', 'kiosk', 'billing', 'whatsapp', 'settings'],
-  polyclinic_admin: ['welcome', 'queue', 'opd-queue', 'reception', 'appointments', 'polyclinic', 'billing', 'reports', 'whatsapp', 'voicebot', 'dhis', 'team', 'kiosk', 'settings'],
-  CLINIC_ADMIN: ['welcome', 'queue', 'opd-queue', 'reception', 'appointments', 'polyclinic', 'billing', 'reports', 'whatsapp', 'voicebot', 'dhis', 'portal', 'team', 'kiosk', 'settings'],
-  super_admin: ['welcome', 'queue', 'opd-queue', 'reception', 'rx', 'smart-rx', 'ambient', 'reports', 'appointments', 'polyclinic', 'whatsapp', 'voicebot', 'billing', 'dhis', 'team', 'kiosk', 'settings'],
+  doctor: ['welcome', 'queue', 'opd-queue', 'rx', 'smart-rx', 'ambient', 'reports', 'appointments', 'polyclinic', 'whatsapp', 'voicebot', 'pharmacy-hub', 'billing', 'dhis', 'team', 'reception', 'kiosk', 'settings', 'wellness', 'therapy-session', 'consult-practice', 'physio-session', 'dental-chart'],
+  receptionist: ['welcome', 'reception', 'queue', 'opd-queue', 'appointments', 'kiosk', 'pharmacy-hub', 'billing', 'whatsapp', 'settings'],
+  polyclinic_admin: ['welcome', 'queue', 'opd-queue', 'reception', 'appointments', 'polyclinic', 'billing', 'reports', 'whatsapp', 'voicebot', 'pharmacy-hub', 'dhis', 'team', 'kiosk', 'settings'],
+  CLINIC_ADMIN: ['welcome', 'queue', 'opd-queue', 'reception', 'appointments', 'polyclinic', 'billing', 'reports', 'whatsapp', 'voicebot', 'pharmacy-hub', 'dhis', 'portal', 'team', 'kiosk', 'settings'],
+  super_admin: ['welcome', 'queue', 'opd-queue', 'reception', 'rx', 'smart-rx', 'ambient', 'reports', 'appointments', 'polyclinic', 'whatsapp', 'voicebot', 'pharmacy-hub', 'billing', 'dhis', 'team', 'kiosk', 'settings'],
   patient: ['portal'],
-  nurse: ['reception', 'queue', 'opd-queue', 'reports', 'settings'],
-  lab_technician: ['reports', 'queue', 'opd-queue', 'settings'],
-  pharmacist: ['billing', 'queue', 'opd-queue', 'settings'],
-  default: ['welcome', 'queue', 'opd-queue', 'reception', 'appointments', 'billing', 'settings']
+  nurse: ['reception', 'queue', 'opd-queue', 'reports', 'pharmacy-hub', 'settings'],
+  lab_technician: ['reports', 'queue', 'opd-queue', 'pharmacy-hub', 'settings'],
+  pharmacist: ['billing', 'pharmacy-hub', 'queue', 'opd-queue', 'settings'],
+  default: ['welcome', 'queue', 'opd-queue', 'reception', 'appointments', 'pharmacy-hub', 'billing', 'settings']
 };
 
 interface SidebarProps {
@@ -162,9 +163,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
       title: '3. Practice & Financial Management',
       items: [
         {
-          id: 'billing' as NavView,
-          label: pack.billingLabel || 'Billing, Claims & E-Invoicing',
-          icon: Receipt,
+          id: 'pharmacy-hub' as NavView,
+          label: 'Connected Pharmacy & Labs Hub',
+          icon: Pill,
+          badge: 'India',
+          badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
         },
         {
           id: 'whatsapp' as NavView,

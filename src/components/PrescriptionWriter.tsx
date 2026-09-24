@@ -80,6 +80,7 @@ import { FollowUpSlotPicker, ReservedFollowUp } from './FollowUpSlotPicker';
 import { clonePresetExercises, presetHepToastMessage } from '../lib/rxPresetHep';
 import { followUpBookingRef } from '../lib/followUpSlots';
 import { resolveRxModule } from '../lib/specialtyWorkflow';
+import { PatientRecordModal } from './PatientRecordModal';
 
 interface PrescriptionWriterProps {
   currentPatient: Patient;
@@ -92,6 +93,7 @@ interface PrescriptionWriterProps {
   onProceedToBilling?: () => void;
   appointments?: Appointment[];
   onBookFollowUp?: (input: Partial<Appointment>) => Promise<Appointment | void>;
+  onAutoSave?: (prescription: Prescription) => void;
 }
 
 export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
@@ -105,6 +107,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
   onProceedToBilling,
   appointments = [],
   onBookFollowUp,
+  onAutoSave,
 }) => {
   // Determine initial specialty from current doctor
   const getInitialSpecialty = (doctorSpec: string): PolyclinicSpecialty =>
@@ -120,6 +123,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
   const [physioSubTab, setPhysioSubTab] = useState<'assessment' | 'procedures' | 'exercises'>('assessment');
   const [hepRevision, setHepRevision] = useState(0);
   const [followUpReservation, setFollowUpReservation] = useState<ReservedFollowUp | null>(null);
+  const [isPatientRecordModalOpen, setIsPatientRecordModalOpen] = useState(false);
 
   // Dynamic patient intake: when active patient changes or is called from queue, update context
   useEffect(() => {
@@ -614,6 +618,30 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     gynecologyAssessment: activeSpecialty === 'Gynecology' ? gynecologyAssessment : undefined,
   });
 
+  useEffect(() => {
+    if (!currentPatient.id) return;
+    onAutoSave?.(buildCurrentRx());
+  }, [
+    chiefComplaints,
+    diagnosis,
+    icd10,
+    medicines,
+    labTests,
+    adviceList,
+    followUpDays,
+    physioAssessment,
+    performedProcedures,
+    prescribedExercises,
+    cardiologyAssessment,
+    dermatologyAssessment,
+    pediatricAssessment,
+    orthopedicAssessment,
+    ophthalmologyAssessment,
+    dentalAssessment,
+    gynecologyAssessment,
+    activeSpecialty,
+  ]);
+
   const handleFinalizeAndSignRx = () => {
     // Defense in depth: block here too, not just via the disabled button, in
     // case this is ever called from another code path.
@@ -1056,6 +1084,16 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
           </div>
         </div>
 
+        <div className="flex justify-end">
+          <button
+            onClick={() => setIsPatientRecordModalOpen(true)}
+            className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
+          >
+            <FileText className="w-3.5 h-3.5" />
+            <span>View Full Patient Record, History, Uploads & Photos</span>
+          </button>
+        </div>
+
         {/* Clinical Summary & Diagnosis Inputs */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {/* Chief Complaints */}
@@ -1232,6 +1270,181 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* PRINT/PREVIEW SECTION FOR DENTAL SURGERY ASSESSMENTS & PROCEDURES */}
+        {activeSpecialty === 'Dental Surgery' && dentalAssessment && (
+          <div className="space-y-3 pt-2 border-t border-slate-200 bg-amber-50/40 p-3.5 rounded-lg border border-amber-200">
+            <h4 className="text-xs font-bold text-amber-900 uppercase tracking-wider flex items-center gap-1.5">
+              🦷 Dental Examination & FDI Odontogram Findings
+            </h4>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+              <div>
+                <span className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Tooth Condition & Charting:</span>
+                <ul className="space-y-1 text-[11px] text-slate-700">
+                  {Object.entries(dentalAssessment.teethStatus || {}).map(([toothNo, val]: [string, any]) => (
+                    <li key={toothNo} className="flex justify-between border-b border-amber-100 pb-0.5">
+                      <span className="font-bold text-slate-900">Tooth #{toothNo}:</span>
+                      <span className="text-amber-900 font-semibold">{val.condition} — {val.notes}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <span className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Periodontal & Planned Procedures:</span>
+                <p className="text-[11px] text-slate-700 mb-1">Periodontal Status: <span className="font-bold text-slate-900">{dentalAssessment.periodontalStatus}</span></p>
+                <div className="space-y-1">
+                  {dentalAssessment.plannedProcedures?.map((p: any, i: number) => (
+                    <div key={i} className="text-[11px] bg-white p-1.5 rounded border border-amber-100 flex justify-between">
+                      <span>{p.toothNumber ? `Tooth #${p.toothNumber}: ` : ''}{p.procedure}</span>
+                      <span className="font-bold text-amber-800">₹{p.estimatedCost}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* PRINT/PREVIEW SECTION FOR DERMATOLOGY */}
+        {activeSpecialty === 'Dermatology' && dermatologyAssessment && (
+          <div className="space-y-2 pt-2 border-t border-slate-200 bg-rose-50/40 p-3.5 rounded-lg border border-rose-200 text-xs">
+            <h4 className="font-bold text-rose-900 uppercase tracking-wider flex items-center gap-1.5">
+              ✨ Dermatology & Skin Mapping Findings
+            </h4>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-slate-700">
+              <div>
+                <span className="font-semibold text-slate-900 block">Fitzpatrick Phototype:</span>
+                <span className="text-rose-900 font-bold">{dermatologyAssessment.fitzpatrickSkinType}</span>
+              </div>
+              <div>
+                <span className="font-semibold text-slate-900 block">Lesion Distribution & Topography:</span>
+                <span>{dermatologyAssessment.distribution}</span>
+              </div>
+            </div>
+            <div className="pt-1 text-[11px] text-slate-600 bg-white p-2 rounded border border-rose-100">
+              <span className="font-bold text-rose-800 block">Photoprotection & Topical Directives:</span>
+              {dermatologyAssessment.sunProtectionAdvice}
+            </div>
+          </div>
+        )}
+
+        {/* PRINT/PREVIEW SECTION FOR ORTHOPEDICS */}
+        {activeSpecialty === 'Orthopedics' && orthopedicAssessment && (
+          <div className="space-y-2 pt-2 border-t border-slate-200 bg-blue-50/40 p-3.5 rounded-lg border border-blue-200 text-xs">
+            <h4 className="font-bold text-blue-900 uppercase tracking-wider flex items-center gap-1.5">
+              🦴 Orthopedic & Musculoskeletal Assessment
+            </h4>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-slate-700">
+              <div>
+                <span className="font-semibold text-slate-900 block">Affected Joint / Limb:</span>
+                <span className="text-blue-900 font-bold">{orthopedicAssessment.affectedJointLimb}</span>
+              </div>
+              <div>
+                <span className="font-semibold text-slate-900 block">Weight Bearing:</span>
+                <span>{orthopedicAssessment.weightBearingStatus}</span>
+              </div>
+              <div>
+                <span className="font-semibold text-slate-900 block">Brace / Splint:</span>
+                <span>{orthopedicAssessment.splintOrBraceApplied}</span>
+              </div>
+            </div>
+            {orthopedicAssessment.xrayFindingsSummary && (
+              <div className="pt-1 text-[11px] text-slate-600 bg-white p-2 rounded border border-blue-100">
+                <span className="font-bold text-blue-800 block">Imaging / X-Ray Findings:</span>
+                {orthopedicAssessment.xrayFindingsSummary}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* PRINT/PREVIEW SECTION FOR CARDIOLOGY */}
+        {activeSpecialty === 'Cardiology' && cardiologyAssessment && (
+          <div className="space-y-2 pt-2 border-t border-slate-200 bg-red-50/40 p-3.5 rounded-lg border border-red-200 text-xs">
+            <h4 className="font-bold text-red-900 uppercase tracking-wider flex items-center gap-1.5">
+              ❤️ Cardiology & Hemodynamic Assessment
+            </h4>
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 text-slate-700">
+              <div>
+                <span className="font-semibold text-slate-900 block">NYHA Class:</span>
+                <span className="font-bold text-red-800">{cardiologyAssessment.nyhaFunctionalClass}</span>
+              </div>
+              <div>
+                <span className="font-semibold text-slate-900 block">Target BP:</span>
+                <span>{cardiologyAssessment.targetBloodPressure}</span>
+              </div>
+              <div>
+                <span className="font-semibold text-slate-900 block">Sodium Limit:</span>
+                <span>{cardiologyAssessment.dailySodiumLimitGrams} g/day</span>
+              </div>
+              <div>
+                <span className="font-semibold text-slate-900 block">Fluid Limit:</span>
+                <span>{cardiologyAssessment.dailyFluidLimitMl} ml/day</span>
+              </div>
+            </div>
+            {cardiologyAssessment.ecgSummary && (
+              <div className="text-[11px] bg-white p-2 rounded border border-red-100 text-slate-700">
+                <span className="font-bold text-red-800 block">ECG & Echo Summary:</span>
+                {cardiologyAssessment.ecgSummary} {cardiologyAssessment.echoFindings ? `• ${cardiologyAssessment.echoFindings}` : ''}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* PRINT/PREVIEW SECTION FOR OPHTHALMOLOGY */}
+        {activeSpecialty === 'Ophthalmology' && ophthalmologyAssessment && (
+          <div className="space-y-2 pt-2 border-t border-slate-200 bg-cyan-50/40 p-3.5 rounded-lg border border-cyan-200 text-xs">
+            <h4 className="font-bold text-cyan-900 uppercase tracking-wider flex items-center gap-1.5">
+              👁️ Ophthalmology Refraction & Slit Lamp Findings
+            </h4>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-slate-700">
+              <div>
+                <span className="font-semibold text-slate-900 block">Visual Acuity (OD / OS):</span>
+                <span>OD: {ophthalmologyAssessment.visualAcuityOD} | OS: {ophthalmologyAssessment.visualAcuityOS}</span>
+              </div>
+              <div>
+                <span className="font-semibold text-slate-900 block">Intraocular Pressure (IOP):</span>
+                <span>OD: {ophthalmologyAssessment.iopOD} mmHg | OS: {ophthalmologyAssessment.iopOS} mmHg</span>
+              </div>
+              <div>
+                <span className="font-semibold text-slate-900 block">Pupillary Distance:</span>
+                <span>{ophthalmologyAssessment.pupillaryDistanceMm} mm</span>
+              </div>
+            </div>
+            {ophthalmologyAssessment.anteriorSegment && (
+              <div className="text-[11px] bg-white p-2 rounded border border-cyan-100 text-slate-700">
+                <span className="font-bold text-cyan-800 block">Anterior Segment & Fundus:</span>
+                {ophthalmologyAssessment.anteriorSegment} {ophthalmologyAssessment.fundusExam?.retinaFindings ? `• Fundus: ${ophthalmologyAssessment.fundusExam.retinaFindings}` : ''}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* PRINT/PREVIEW SECTION FOR GYNECOLOGY */}
+        {activeSpecialty === 'Gynecology' && gynecologyAssessment && (
+          <div className="space-y-2 pt-2 border-t border-slate-200 bg-purple-50/40 p-3.5 rounded-lg border border-purple-200 text-xs">
+            <h4 className="font-bold text-purple-900 uppercase tracking-wider flex items-center gap-1.5">
+              🌸 Gynecology & Obstetric Assessment
+            </h4>
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 text-slate-700">
+              <div>
+                <span className="font-semibold text-slate-900 block">LMP / EDD:</span>
+                <span>{gynecologyAssessment.lmpDate} (EDD: {gynecologyAssessment.calculatedEdd})</span>
+              </div>
+              <div>
+                <span className="font-semibold text-slate-900 block">Gestational Age:</span>
+                <span className="font-bold text-purple-800">{gynecologyAssessment.gestationalAgeWeeks} Wks ({gynecologyAssessment.trimester})</span>
+              </div>
+              <div>
+                <span className="font-semibold text-slate-900 block">Gravida / Para:</span>
+                <span>G{gynecologyAssessment.gravidaPara.g} P{gynecologyAssessment.gravidaPara.p} L{gynecologyAssessment.gravidaPara.l} A{gynecologyAssessment.gravidaPara.a}</span>
+              </div>
+              <div>
+                <span className="font-semibold text-slate-900 block">Fetal Heart Rate:</span>
+                <span>{gynecologyAssessment.fetalHeartRateBpm || 142} bpm</span>
+              </div>
+            </div>
           </div>
         )}
 
@@ -1873,6 +2086,13 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
           </div>
         </div>
       )}
+
+      {/* Patient Record, History & Uploads Modal */}
+      <PatientRecordModal
+        patient={currentPatient}
+        isOpen={isPatientRecordModalOpen}
+        onClose={() => setIsPatientRecordModalOpen(false)}
+      />
     </div>
   );
 };

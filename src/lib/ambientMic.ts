@@ -83,11 +83,12 @@ export interface StartAmbientMicOptions {
   onLevel: (level: number) => void;
   onSpeechEnded?: () => void;
   onError?: (message: string) => void;
+  onAudioRecorded?: (blob: Blob) => void;
 }
 
 /**
  * Requests a real MediaStream, drives an analyser for the visualizer,
- * and streams Web Speech API results while the session is open.
+ * sets up MediaRecorder for robust mobile audio capture, and streams Web Speech API results while the session is open.
  */
 export async function startAmbientMic(options: StartAmbientMicOptions): Promise<AmbientMicSession> {
   if (typeof window === "undefined" || typeof navigator === "undefined") {
@@ -116,7 +117,10 @@ export async function startAmbientMic(options: StartAmbientMicOptions): Promise<
     throw new AmbientMicError(mapped.code, mapped.message);
   }
 
-  const audioCtx = new AudioContext();
+  const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+  if (audioCtx.state === "suspended") {
+    await audioCtx.resume().catch(() => {});
+  }
   const source = audioCtx.createMediaStreamSource(stream);
   const analyser = audioCtx.createAnalyser();
   analyser.fftSize = 64;
@@ -131,6 +135,27 @@ export async function startAmbientMic(options: StartAmbientMicOptions): Promise<
     raf = requestAnimationFrame(tick);
   };
   raf = requestAnimationFrame(tick);
+
+  // Setup MediaRecorder for mobile recording (webm, mp4, aac)
+  const mimeType = MediaRecorder.isTypeSupported("audio/webm")
+    ? "audio/webm"
+    : MediaRecorder.isTypeSupported("audio/mp4")
+      ? "audio/mp4"
+      : MediaRecorder.isTypeSupported("audio/aac")
+        ? "audio/aac"
+        : "";
+
+  let mediaRecorder: MediaRecorder | null = null;
+  const audioChunks: Blob[] = [];
+  try {
+    mediaRecorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) audioChunks.push(e.data);
+    };
+    mediaRecorder.start(250);
+  } catch (err) {
+    console.warn("MediaRecorder start warning:", err);
+  }
 
   const Ctor = speechRecognitionCtor();
   let recognition: SpeechRecognitionLike | null = null;
@@ -193,9 +218,25 @@ export async function startAmbientMic(options: StartAmbientMicOptions): Promise<
       } catch {
         /* ignore */
       }
-      stream.getTracks().forEach((track) => track.stop());
-      void audioCtx.close();
-      options.onLevel(0);
+
+      const finalizeAudio = () => {
+        const audioBlob = new Blob(audioChunks, { type: mimeType || "audio/webm" });
+        options.onAudioRecorded?.(audioBlob);
+        stream.getTracks().forEach((track) => track.stop());
+        void audioCtx.close();
+        options.onLevel(0);
+      };
+
+      if (mediaRecorder && mediaRecorder.state !== "inactive") {
+        mediaRecorder.onstop = finalizeAudio;
+        try {
+          mediaRecorder.stop();
+        } catch {
+          finalizeAudio();
+        }
+      } else {
+        finalizeAudio();
+      }
     },
   };
 }

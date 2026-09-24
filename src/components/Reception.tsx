@@ -19,10 +19,12 @@ import {
   ArrowRight,
   Camera,
   Upload,
-  X
+  X,
+  FileText
 } from 'lucide-react';
 import { Patient, Doctor, Appointment, isAbhaLinked } from '../types';
 import type { SpecialtyWorkflowPack } from '../lib/specialtyWorkflow';
+import { PatientRecordModal } from './PatientRecordModal';
 
 interface ReceptionProps {
   patients: Patient[];
@@ -91,6 +93,7 @@ export const Reception: React.FC<ReceptionProps> = ({
 
   const [savingIntake, setSavingIntake] = useState(false);
   const [intakeError, setIntakeError] = useState<string | null>(null);
+  const [selectedRecordPatient, setSelectedRecordPatient] = useState<Patient | null>(null);
 
   // Filter patients on search
   useEffect(() => {
@@ -660,12 +663,20 @@ export const Reception: React.FC<ReceptionProps> = ({
 
                   <div className="flex items-center gap-2">
                     <button
+                      onClick={() => setSelectedRecordPatient(p)}
+                      className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1 cursor-pointer"
+                      title="View Patient Record, History & Uploads"
+                    >
+                      <FileText className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>Record & Files</span>
+                    </button>
+                    <button
                       onClick={() => {
                         onSelectPatient(p);
                         if (onStartConsult) onStartConsult(p);
                         else onSwitchToConsultation();
                       }}
-                      className="px-3 py-1.5 bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1"
+                      className="px-3 py-1.5 bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1 cursor-pointer"
                     >
                       <span>Start Consult</span>
                       <ArrowRight className="w-3.5 h-3.5" />
@@ -771,6 +782,13 @@ export const Reception: React.FC<ReceptionProps> = ({
           </div>
         </div>
       )}
+
+      {/* Patient Record, History & Uploads Modal */}
+      <PatientRecordModal
+        patient={selectedRecordPatient}
+        isOpen={Boolean(selectedRecordPatient)}
+        onClose={() => setSelectedRecordPatient(null)}
+      />
     </div>
   );
 };

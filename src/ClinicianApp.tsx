@@ -19,6 +19,7 @@ import { Reception } from './components/Reception';
 import { DhisMeter } from './components/dhis/DhisMeter';
 import { WelcomeSetupDashboard } from './components/WelcomeSetupDashboard';
 import { ClinicProfileSettings } from './components/ClinicProfileSettings';
+import { PharmacyDiagnosticsHub } from './components/PharmacyDiagnosticsHub';
 import {
   MOCK_DOCTORS,
   MOCK_PATIENTS,
@@ -86,6 +87,81 @@ export default function ClinicianApp() {
   const [isHexaOpen, setIsHexaOpen] = useState(false);
   const [letterhead, setLetterhead] = useState<TenantLetterhead | null>(null);
   const [intakeIntent, setIntakeIntent] = useState<'none' | 'register' | 'start-consult'>('none');
+  const [autoSaveStatus, setAutoSaveStatus] = useState<'saved' | 'saving' | 'unsaved'>('saved');
+  const [currentDraftRx, setCurrentDraftRx] = useState<Prescription | null>(null);
+
+  useEffect(() => {
+    if (!currentPatient.id || isDemo) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await apiFetch<{ draft: Prescription | null }>(`/api/prescriptions/draft/${currentPatient.id}`);
+        if (cancelled) return;
+        if (res.draft) {
+          const soapFromDraft = {
+            id: 'soap-draft-' + currentPatient.id,
+            patientId: currentPatient.id,
+            uhid: currentPatient.uhid,
+            doctorId: currentDoctor.id,
+            date: new Date().toISOString().split('T')[0],
+            subjective: { chiefComplaints: res.draft.chiefComplaints || [], historyOfPresentIllness: '' },
+            objective: { vitals: { bp: '', pulse: '', temp: '', spo2: '' }, physicalExamination: '', clinicalFindings: [] },
+            assessment: { primaryDiagnosis: res.draft.diagnosis || '', icd10Code: res.draft.icd10Code || '', differentialDiagnoses: [], riskLevel: 'Low' },
+            plan: {
+              medicines: res.draft.medicines || [],
+              labTests: res.draft.labTests || [],
+              lifestyleAdvice: res.draft.advice || [],
+              redFlags: [],
+              followUpDays: 7,
+              followUpDate: '',
+            },
+            physiotherapyAssessment: res.draft.physiotherapyAssessment,
+            performedTherapies: res.draft.performedTherapies,
+            prescribedExercises: res.draft.prescribedExercises,
+            cardiologyAssessment: res.draft.cardiologyAssessment,
+            dermatologyAssessment: res.draft.dermatologyAssessment,
+            pediatricAssessment: res.draft.pediatricAssessment,
+            orthopedicAssessment: res.draft.orthopedicAssessment,
+            ophthalmologyAssessment: res.draft.ophthalmologyAssessment,
+            dentalAssessment: res.draft.dentalAssessment,
+            gynecologyAssessment: res.draft.gynecologyAssessment,
+          } as unknown as SoapNote;
+          setActiveSoapData(soapFromDraft);
+        } else {
+          setActiveSoapData(null);
+        }
+      } catch (err) {
+        console.error('Failed to load patient draft', err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentPatient.id, isDemo]);
+
+  useEffect(() => {
+    if (!currentDraftRx || !currentPatient.id || isDemo) return;
+    setAutoSaveStatus('unsaved');
+    const timer = setTimeout(async () => {
+      try {
+        setAutoSaveStatus('saving');
+        await apiFetch('/api/prescriptions/draft', {
+          method: 'POST',
+          body: JSON.stringify({
+            patientId: currentPatient.id,
+            doctorId: currentDoctor.id,
+            ...currentDraftRx,
+          }),
+        });
+        setAutoSaveStatus('saved');
+      } catch (err) {
+        console.error('Failed to auto-save draft', err);
+        setAutoSaveStatus('unsaved');
+      }
+    }, 1200);
+
+    return () => clearTimeout(timer);
+  }, [currentDraftRx, currentPatient.id]);
 
   const clinicSettings = useMemo(
     () => clinicSettingsFromSession(user, currentDoctor, letterhead),
@@ -603,18 +679,32 @@ export default function ClinicianApp() {
           )}
 
           {showRxStudio && (
-            <PrescriptionWriter
-              currentPatient={currentPatient}
-              currentDoctor={currentDoctor}
-              initialSoapData={activeSoapData}
-              onSavePrescription={handleSavePrescription}
-              clinicSettings={clinicSettings}
-              isSpecialtyLocked={isSpecialtyLocked}
-              lockedSpecialty={lockedSpecialty}
-              onProceedToBilling={() => setCurrentView('billing')}
-              appointments={appointments}
-              onBookFollowUp={async (input) => persistAppointmentCreate(input)}
-            />
+            <div className="flex-1 flex flex-col overflow-hidden relative">
+              <div className="bg-white border-b border-slate-200 px-4 py-1.5 flex items-center justify-between text-xs text-slate-500 shadow-xs z-10">
+                <span className="font-medium flex items-center gap-1.5">
+                  <span className={`inline-block w-2 h-2 rounded-full ${autoSaveStatus === 'saved' ? 'bg-emerald-500' : autoSaveStatus === 'saving' ? 'bg-amber-500 animate-pulse' : 'bg-slate-400'}`}></span>
+                  {autoSaveStatus === 'saved' && 'Draft securely auto-saved to database'}
+                  {autoSaveStatus === 'saving' && 'Saving draft to database...'}
+                  {autoSaveStatus === 'unsaved' && 'Unsaved changes (auto-saving soon...)'}
+                </span>
+                <span className="text-slate-400">SOAP Notes & Prescription Auto-Sync Active</span>
+              </div>
+              <div className="flex-1 overflow-hidden flex flex-col">
+                <PrescriptionWriter
+                  currentPatient={currentPatient}
+                  currentDoctor={currentDoctor}
+                  initialSoapData={activeSoapData}
+                  onSavePrescription={handleSavePrescription}
+                  clinicSettings={clinicSettings}
+                  isSpecialtyLocked={isSpecialtyLocked}
+                  lockedSpecialty={lockedSpecialty}
+                  onProceedToBilling={() => setCurrentView('billing')}
+                  appointments={appointments}
+                  onBookFollowUp={async (input) => persistAppointmentCreate(input)}
+                  onAutoSave={(rx) => setCurrentDraftRx(rx)}
+                />
+              </div>
+            </div>
           )}
 
           {(currentView === 'queue' || currentView === 'opd-queue') && (
@@ -714,6 +804,13 @@ export default function ClinicianApp() {
             <VoiceBotAssistant
               currentPatient={currentPatient}
               doctors={doctors}
+            />
+          )}
+
+          {currentView === 'pharmacy-hub' && (
+            <PharmacyDiagnosticsHub
+              currentPatient={currentPatient}
+              currentPrescription={prescriptions.find((p) => p.patientId === currentPatient.id) || null}
             />
           )}
 

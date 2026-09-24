@@ -30,6 +30,7 @@ export type NavView =
   | 'polyclinic' 
   | 'whatsapp' 
   | 'voicebot' 
+  | 'pharmacy-hub'
   | 'billing' 
   | 'portal'
   | 'dhis'
@@ -89,9 +90,10 @@ export const Navbar: React.FC<NavbarProps> = ({
     reports: 'AI Lab OCR & Diagnostic Trends',
     appointments: 'Appointments & Schedule',
     polyclinic: 'Polyclinic Specialty Roster',
-    billing: 'Billing, Claims & E-Invoicing',
     whatsapp: 'WhatsApp Suite & Patient Engagement',
     voicebot: 'AI Voice Receptionist',
+    'pharmacy-hub': 'Connected Pharmacy & Labs Hub',
+    billing: 'Billing, Claims & E-Invoicing',
     portal: 'Patient EMR Portal',
     dhis: 'DHIS Incentive & Analytics Meter',
     team: 'Clinic Team & Staff',
