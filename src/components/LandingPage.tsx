@@ -376,7 +376,7 @@ export const LandingPage: React.FC = () => {
               </div>
               <div className="text-left">
                 <span className="block text-xs font-bold text-slate-100 uppercase tracking-wider">WhatsApp Cloud API · Meta Tech Provider path</span>
-                <span className="text-[11px] text-slate-400 font-medium">SANDBOX readiness — App Review not submitted</span>
+                <span className="text-[11px] text-slate-400 font-medium">Not a certified Tech Provider — WhatsApp permissions under review</span>
               </div>
             </div>
 
@@ -959,7 +959,7 @@ export const LandingPage: React.FC = () => {
           {/* Compliance declaration */}
           <div className="pt-2 text-[11px] text-slate-500 space-y-1">
             <p>
-              {PRODUCT_NAME} is building toward Meta Tech Provider. App Review is not submitted.
+              Lumera is not a certified Meta Tech Provider. WhatsApp permissions are under Meta App Review.
             </p>
             <p>
               Designed for ABDM M1–M3 &amp; DPDP (sandbox path).
