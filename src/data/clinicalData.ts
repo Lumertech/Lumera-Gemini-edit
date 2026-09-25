@@ -1334,8 +1334,8 @@ export const DEFAULT_CLINIC_SETTINGS: ClinicSettings = {
   accentColor: '#0d9488',
   showLogo: true,
   showQrCode: true,
-  sealText: 'Authorized Medical Seal & Digital Signature Verified',
-  footerDisclaimer: 'This prescription is digitally verified under National Health Authority (NHA) & Telemedicine Practice Guidelines. Please report any adverse drug reactions immediately.'
+  sealText: 'Authorized medical seal (sandbox / demo)',
+  footerDisclaimer: 'Sandbox / demo prescription — not ABDM certified. Please report any adverse drug reactions to your clinician.'
 };
 
 export const DEFAULT_WHATSAPP_TEMPLATES: WhatsAppTemplate[] = [
@@ -1360,7 +1360,7 @@ export const DEFAULT_WHATSAPP_TEMPLATES: WhatsAppTemplate[] = [
     language: 'English (en_US)',
     headerText: '📄 Digital Rx Ready - Lumera Health',
     bodyText: 'Dear {{1}},\n\nYour digital prescription from {{2}} has been generated successfully.\n\n📋 Rx No: *{{3}}*\n💊 Medications: {{4}} items\n🗓️ Follow-up: *{{5}}*\n\nTap the button below to view or print your digital prescription anytime.',
-    footerText: 'Valid under NHA Telemedicine Guidelines',
+    footerText: 'Sandbox / demo Rx — not ABDM certified',
     buttons: [
       { type: 'URL', text: 'View Digital Rx PDF', payload: 'https://lumera.health/rx/{{3}}' },
       { type: 'QUICK_REPLY', text: 'Order Medicines', payload: 'ORDER_MEDS' }

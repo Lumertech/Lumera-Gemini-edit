@@ -15,6 +15,7 @@ import { Doctor, UserRole } from '../types';
 import { useAuth } from '../auth/AuthContext';
 import { useNav } from '../nav/NavigationContext';
 import { appViewToPath } from '../nav/surfaces';
+import { roleMayStartConsult } from '../lib/roleViews';
 
 export type NavView = 
   | 'welcome'
@@ -76,7 +77,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   isSpecialtyLocked,
 }) => {
   const toggleCopilot = onTogglePulse || onToggleGemini || onToggleHexa || (() => {});
-  const { logout } = useAuth();
+  const { logout, user } = useAuth();
+  const showNewRx = roleMayStartConsult(userRole || user?.role);
   const { go, workspaceSlug } = useNav();
   const VIEW_TITLES: Record<NavView, string> = {
     welcome: 'Welcome & Initial Setup',
@@ -209,15 +211,17 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
         )}
 
-        {/* Quick New Rx Action */}
-        <Link
-          to={appViewToPath('rx', workspaceSlug)}
-          className="flex items-center space-x-1 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-all shadow-sm shadow-blue-600/30"
-          title="Create New Digital Prescription"
-        >
-          <Plus className="w-3.5 h-3.5" />
-          <span className="hidden sm:inline">New Rx</span>
-        </Link>
+        {showNewRx && (
+          <Link
+            to={appViewToPath('rx', workspaceSlug)}
+            data-testid="new-rx"
+            className="flex items-center space-x-1 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-all shadow-sm shadow-blue-600/30"
+            title="Create New Digital Prescription"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">New Rx</span>
+          </Link>
+        )}
 
         {/* Pulse AI Clinical Copilot button */}
         <button

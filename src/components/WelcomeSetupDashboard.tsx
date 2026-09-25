@@ -3,6 +3,7 @@ import { Stethoscope, UserPlus, Sparkles, Building2 } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { PersonalWabaConnect } from "./PersonalWabaConnect";
 import { formatAbdmRegistryLabel } from "../lib/abdmRegistryLabel";
+import { roleMayStartConsult } from "../lib/roleViews";
 
 interface WelcomeSetupDashboardProps {
   onAddPatients: () => void;
@@ -22,6 +23,7 @@ export const WelcomeSetupDashboard: React.FC<WelcomeSetupDashboardProps> = ({
   const { user } = useAuth();
   const clinic = user?.clinicName || "your practice";
   const showStaff = user?.practiceType === "polyclinic";
+  const showStartConsult = roleMayStartConsult(user?.role);
   const consultNeedsPatient = !hasSelectedPatient;
 
   return (
@@ -51,20 +53,23 @@ export const WelcomeSetupDashboard: React.FC<WelcomeSetupDashboardProps> = ({
           </div>
         </div>
 
-        <div className={`grid grid-cols-1 ${showStaff ? "md:grid-cols-2" : "md:grid-cols-2"} gap-4`}>
-          <button
-            type="button"
-            onClick={onStartFirstConsultation}
-            className="text-left p-5 rounded-xl border-2 border-blue-200 bg-blue-50 hover:border-blue-400 hover:bg-blue-100 transition-colors"
-          >
-            <Stethoscope className="w-6 h-6 text-blue-700 mb-3" />
-            <div className="text-base font-bold text-slate-900">Start First Consultation</div>
-            <p className="text-xs text-slate-600 mt-1">
-              {consultNeedsPatient
-                ? "No patient is selected yet. We'll take you to OPD Reception to register a chart, issue a Waiting token, then open Smart Rx."
-                : "Open Smart Rx Studio for the selected patient."}
-            </p>
-          </button>
+        <div className={`grid grid-cols-1 ${showStaff || showStartConsult ? "md:grid-cols-2" : ""} gap-4`}>
+          {showStartConsult && (
+            <button
+              type="button"
+              data-testid="start-first-consultation"
+              onClick={onStartFirstConsultation}
+              className="text-left p-5 rounded-xl border-2 border-blue-200 bg-blue-50 hover:border-blue-400 hover:bg-blue-100 transition-colors"
+            >
+              <Stethoscope className="w-6 h-6 text-blue-700 mb-3" />
+              <div className="text-base font-bold text-slate-900">Start First Consultation</div>
+              <p className="text-xs text-slate-600 mt-1">
+                {consultNeedsPatient
+                  ? "No patient is selected yet. We'll take you to OPD Reception to register a chart, issue a Waiting token, then open Smart Rx."
+                  : "Open Smart Rx Studio for the selected patient."}
+              </p>
+            </button>
+          )}
 
           <button
             type="button"
