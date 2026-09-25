@@ -235,10 +235,12 @@ describe("production SPA history fallback", () => {
       assert.match(csp, /default-src 'self'/);
       assert.match(csp, /frame-ancestors 'none'/);
       assert.match(csp, /https:\/\/connect\.facebook\.net/);
+      assert.match(csp, /https:\/\/www\.google\.com/);
       assert.doesNotMatch(csp, /script-src[^;]*'unsafe-inline'/);
       assert.equal(home.headers.get("x-content-type-options"), "nosniff");
       assert.equal(home.headers.get("x-frame-options"), "DENY");
       assert.match(home.headers.get("permissions-policy") || "", /microphone=\(self\)/);
+      assert.equal(home.headers.get("cache-control"), "no-cache");
       assert.match(home.headers.get("referrer-policy") || "", /strict-origin-when-cross-origin/);
       for (const p of ["/app/rx", "/admin/users", "/signup", "/login"]) {
         const res = await fetch(`${origin}${p}`);

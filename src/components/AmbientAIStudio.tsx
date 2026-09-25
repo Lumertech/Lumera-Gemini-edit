@@ -20,7 +20,18 @@ import {
   ShieldCheck
 } from 'lucide-react';
 import { SoapNote, Patient, Doctor, isAbhaLinked } from '../types';
-import { apiFetch } from '../api/http';
+import {
+  beginAmbientMicGesture,
+  isSpeechRecognitionAvailable,
+  micErrorMessage,
+  microphoneStatusLabel,
+  SPEECH_UNSUPPORTED_NOTICE,
+  startAmbientMic,
+  transcriptBadge,
+  transcribeRecordedAudio,
+  type AmbientMicGesture,
+  type TranscriptOrigin,
+} from '../lib/ambientMic';
 
 interface AmbientAIStudioProps {
   currentPatient: Patient;
@@ -119,86 +130,198 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
   allPatients,
 }) => {
   const [isRecording, setIsRecording] = useState(false);
+  const [isRequesting, setIsRequesting] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
-  const [transcript, setTranscript] = useState(SAMPLE_CONSULTATIONS[0].text);
+  const [transcript, setTranscript] = useState('');
+  const [interimTranscript, setInterimTranscript] = useState('');
+  const [transcriptOrigin, setTranscriptOrigin] = useState<TranscriptOrigin>('empty');
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedSoap, setGeneratedSoap] = useState<SoapNote | null>(null);
   const [generationSource, setGenerationSource] = useState<string>('');
   const [audioLevel, setAudioLevel] = useState(0);
-  const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
   const [isTranscribing, setIsTranscribing] = useState(false);
+  const [micError, setMicError] = useState<string | null>(null);
+  const [speechNotice, setSpeechNotice] = useState<string | null>(null);
+  const sessionRef = React.useRef<{ stop: () => void } | null>(null);
+  const speechSawTextRef = React.useRef(false);
+  const speechFallbackRef = React.useRef(false);
+  const uploadLockRef = React.useRef(false);
+  const finalTranscriptRef = React.useRef('');
+  const cancelStartRef = React.useRef(false);
+  const startingRef = React.useRef(false);
 
-  // Timer simulation
   useEffect(() => {
-    let interval: any;
+    let interval: ReturnType<typeof setInterval> | undefined;
     if (isRecording) {
       interval = setInterval(() => {
         setRecordingSeconds((prev) => prev + 1);
-        setAudioLevel(Math.floor(Math.random() * 80) + 20);
       }, 1000);
     } else {
       setRecordingSeconds(0);
-      setAudioLevel(0);
     }
-    return () => clearInterval(interval);
+    return () => {
+      if (interval) clearInterval(interval);
+    };
   }, [isRecording]);
 
-  const handleStartStopRecording = async () => {
-    if (!isRecording) {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
-        const chunks: Blob[] = [];
-        recorder.ondataavailable = (e) => {
-          if (e.data.size > 0) chunks.push(e.data);
-        };
-        recorder.onstop = async () => {
-          stream.getTracks().forEach((track) => track.stop());
-          const audioBlob = new Blob(chunks, { type: 'audio/webm' });
-          if (audioBlob.size > 100) {
-            setIsTranscribing(true);
-            try {
-              const reader = new FileReader();
-              reader.readAsDataURL(audioBlob);
-              reader.onloadend = async () => {
-                const base64Audio = reader.result as string;
-                const data = await apiFetch<{ success?: boolean; transcription?: string }>('/api/gemini/transcribe', {
-                  method: 'POST',
-                  body: JSON.stringify({ audioBase64: base64Audio, mimeType: 'audio/webm' }),
-                });
-                if (data.success && data.transcription) {
-                  setTranscript(data.transcription);
-                }
-              };
-            } catch (err) {
-              console.error('Gemini 3.5 transcribe error:', err);
-            } finally {
-              setIsTranscribing(false);
-            }
+  useEffect(() => {
+    return () => {
+      sessionRef.current?.stop();
+      sessionRef.current = null;
+    };
+  }, []);
+
+  const shownTranscript = [transcript, interimTranscript].filter(Boolean).join(interimTranscript ? ' ' : '');
+
+  const uploadFallback = async (audioBlob: Blob) => {
+    if (!speechFallbackRef.current || speechSawTextRef.current) return;
+    if (uploadLockRef.current) return;
+    if (audioBlob.size < 100) {
+      setMicError('No audio was captured to transcribe. Allow the microphone and speak, or type the consult.');
+      return;
+    }
+    uploadLockRef.current = true;
+    setIsTranscribing(true);
+    try {
+      const text = await transcribeRecordedAudio(audioBlob);
+      finalTranscriptRef.current = text;
+      setTranscript(text);
+      setInterimTranscript('');
+      setTranscriptOrigin('server');
+      setMicError(null);
+      setSpeechNotice(null);
+    } catch (err) {
+      speechFallbackRef.current = false;
+      setMicError(err instanceof Error ? err.message : 'Server transcription failed.');
+    } finally {
+      uploadLockRef.current = false;
+      setIsTranscribing(false);
+    }
+  };
+
+  const stopMic = () => {
+    cancelStartRef.current = true;
+    startingRef.current = false;
+    sessionRef.current?.stop();
+    sessionRef.current = null;
+    setIsRecording(false);
+    setIsRequesting(false);
+    setInterimTranscript('');
+    setAudioLevel(0);
+  };
+
+  const loadSample = (sample: (typeof SAMPLE_CONSULTATIONS)[number]) => {
+    stopMic();
+    finalTranscriptRef.current = sample.text;
+    setTranscript(sample.text);
+    setInterimTranscript('');
+    setTranscriptOrigin('sample');
+    setGeneratedSoap(null);
+    setMicError(null);
+    setSpeechNotice(null);
+    speechSawTextRef.current = false;
+  };
+
+  const handleStartStopRecording = () => {
+    if (isRecording || isRequesting || startingRef.current) {
+      stopMic();
+      return;
+    }
+    if (uploadLockRef.current) return;
+    startingRef.current = true;
+    let gesture: AmbientMicGesture;
+    try {
+      gesture = beginAmbientMicGesture();
+    } catch (err) {
+      startingRef.current = false;
+      const mapped = micErrorMessage(err);
+      setMicError(mapped.message);
+      return;
+    }
+    cancelStartRef.current = false;
+    setMicError(null);
+    setSpeechNotice(null);
+    setIsRequesting(true);
+    speechSawTextRef.current = false;
+    speechFallbackRef.current = !isSpeechRecognitionAvailable();
+    if (transcriptOrigin === 'sample') {
+      finalTranscriptRef.current = '';
+      setTranscript('');
+      setInterimTranscript('');
+      setTranscriptOrigin('empty');
+    }
+    void openStudioMic(gesture);
+  };
+
+  const openStudioMic = async (gesture: AmbientMicGesture) => {
+    try {
+      const session = await startAmbientMic({
+        gesture,
+        lang: 'en-IN',
+        onLevel: setAudioLevel,
+        onError: (message) => {
+          speechFallbackRef.current = true;
+          setMicError(message);
+        },
+        onSpeechNotice: (message) => {
+          speechFallbackRef.current = true;
+          setSpeechNotice(message);
+        },
+        onTranscript: ({ finalChunk, interim }) => {
+          if (finalChunk || interim) {
+            speechSawTextRef.current = true;
+            speechFallbackRef.current = false;
+            setTranscriptOrigin('live');
+            setMicError(null);
+            setSpeechNotice(null);
           }
-        };
-        recorder.start();
-        setMediaRecorder(recorder);
-        setIsRecording(true);
-        setTranscript('[Listening via microphone... Speak consultation. Gemini 3.5 Transcribe will process upon stop.]');
-      } catch (err) {
-        console.warn('Microphone permission denied or unsupported:', err);
-        setIsRecording(true);
-        if (!transcript) {
-          setTranscript(`[Ambient Recording in progress at ${new Date().toLocaleTimeString()}]...\nDoctor: Please tell me how you are feeling today.`);
-        }
+          if (finalChunk) {
+            setTranscript((prev) => {
+              const next = prev ? `${prev.trim()} ${finalChunk}` : finalChunk;
+              finalTranscriptRef.current = next;
+              return next;
+            });
+          }
+          setInterimTranscript(interim);
+        },
+        onAudioRecorded: (blob) => {
+          setIsRecording(false);
+          setIsRequesting(false);
+          setAudioLevel(0);
+          void uploadFallback(blob);
+        },
+        onStopped: () => {
+          setIsRecording(false);
+          setIsRequesting(false);
+        },
+      });
+      if (cancelStartRef.current) {
+        session.stop();
+        return;
       }
-    } else {
-      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-        mediaRecorder.stop();
-      }
+      sessionRef.current = session;
+      startingRef.current = false;
+      setIsRequesting(false);
+      setIsRecording(true);
+      if (!isSpeechRecognitionAvailable()) setSpeechNotice(SPEECH_UNSUPPORTED_NOTICE);
+    } catch (err) {
+      const mapped = micErrorMessage(err);
+      setMicError(mapped.message);
+      startingRef.current = false;
+      setIsRequesting(false);
       setIsRecording(false);
     }
   };
 
   const handleGenerateSOAP = async () => {
-    if (!transcript.trim()) return;
+    const sourceText = (finalTranscriptRef.current || shownTranscript).trim();
+    if (!sourceText) {
+      setMicError('Capture or type a consult, or load a Sample/Demo dialogue, before drafting a note.');
+      return;
+    }
+    stopMic();
     setIsGenerating(true);
+    setMicError(null);
 
     try {
       const response = await fetch('/api/gemini/generate-soap', {
@@ -208,7 +331,7 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
           patientName: currentPatient.name,
           patientAge: currentPatient.age,
           patientGender: currentPatient.gender,
-          transcript: transcript,
+          transcript: sourceText,
           vitals: {
             bloodPressureSystolic: 124,
             bloodPressureDiastolic: 82,
@@ -223,6 +346,10 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
       });
 
       const data = await response.json();
+      if (!response.ok || !data.success || !data.soap) {
+        setMicError(data.error || 'Could not draft a SOAP note. Nothing was written to the chart.');
+        return;
+      }
       if (data.success && data.soap) {
         const fullSoap: SoapNote = {
           id: 'soap-' + Date.now(),
@@ -231,13 +358,13 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
           doctorId: currentDoctor.id,
           date: new Date().toISOString().split('T')[0],
           ...data.soap,
-          ambientRecordingDurationSec: recordingSeconds > 0 ? recordingSeconds : 145,
+          ambientRecordingDurationSec: recordingSeconds > 0 ? recordingSeconds : 0,
         };
         setGeneratedSoap(fullSoap);
         setGenerationSource(data.source || 'gemini-3.7-flash');
       }
     } catch (err) {
-      console.error('Error generating SOAP:', err);
+      setMicError(err instanceof Error ? err.message : 'Could not draft a SOAP note. Nothing was written to the chart.');
     } finally {
       setIsGenerating(false);
     }
@@ -318,31 +445,65 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
               )}
             </div>
 
-            {/* Mic Button & Waveform simulation */}
+            {(isRequesting || speechNotice || micError) && (
+              <div
+                role={micError ? 'alert' : 'status'}
+                data-testid="studio-mic-error"
+                className={`px-3 py-2 rounded-lg border text-xs flex items-start gap-2 ${
+                  micError ? 'border-rose-200 bg-rose-50 text-rose-800' : 'border-amber-200 bg-amber-50 text-amber-900'
+                }`}
+              >
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>
+                  {micError ||
+                    speechNotice ||
+                    'Waiting for the browser microphone prompt. If none appears, allow the microphone in the address bar and try again.'}
+                </span>
+              </div>
+            )}
+
+            {/* Mic Button & real level meter */}
             <div className="flex flex-col sm:flex-row items-center gap-3.5 bg-slate-50 p-3.5 rounded-lg border border-slate-200/80">
               <button
-                onClick={handleStartStopRecording}
+                type="button"
+                data-testid="studio-ambient-mic"
+                onClick={() => handleStartStopRecording()}
+                aria-label={isTranscribing ? 'Transcribing…' : isRecording ? 'Stop listening' : isRequesting ? 'Waiting for microphone permission' : 'Start listening'}
                 className={`w-12 h-12 rounded-lg flex items-center justify-center transition-all duration-200 shadow-sm ${
                   isRecording
                     ? 'bg-red-600 hover:bg-red-700 text-white ring-2 ring-red-200 scale-105'
-                    : 'bg-blue-600 hover:bg-blue-700 text-white hover:scale-105 shadow-blue-100'
+                    : isRequesting || isTranscribing
+                      ? 'bg-amber-600 text-white'
+                      : 'bg-blue-600 hover:bg-blue-700 text-white hover:scale-105 shadow-blue-100'
                 }`}
-                title={isRecording ? 'Stop Ambient Listening' : 'Start Ambient Microphone'}
+                title={isRecording ? 'Stop the microphone' : 'Request microphone access and start transcription'}
               >
                 {isRecording ? <MicOff className="w-5 h-5 animate-pulse" /> : <Mic className="w-5 h-5" />}
               </button>
 
               <div className="flex-1 space-y-1 text-center sm:text-left w-full">
                 <div className="flex items-center justify-between text-xs">
-                  <span className="font-semibold text-slate-700 text-[11px]">
-                    {isRecording ? 'Live Ambient Listening' : 'Microphone Ready'}
+                  <span className="font-semibold text-slate-700 text-[11px]" data-testid="studio-mic-status">
+                    {microphoneStatusLabel({
+                      requesting: isRequesting,
+                      recording: isRecording,
+                      transcriptOrigin,
+                      transcribing: isTranscribing,
+                    })}
                   </span>
                   <span className="text-slate-400 font-mono text-[10px]">
-                    {isRecording ? `${audioLevel} dB` : 'Idle'}
+                    {isRecording ? `${audioLevel}%` : isRequesting ? '…' : 'Idle'}
                   </span>
                 </div>
-                {/* Audio Waveform visualizer */}
-                <div className="flex items-center gap-1 h-5 bg-slate-200/80 px-2 rounded overflow-hidden">
+                <div
+                  className="flex items-end gap-1 h-8 bg-slate-200/80 px-2 py-1 rounded overflow-hidden"
+                  data-testid="studio-mic-level"
+                  role="meter"
+                  aria-label="Microphone level"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={isRecording ? audioLevel : 0}
+                >
                   {[40, 65, 20, 85, 30, 95, 50, 75, 35, 90, 60, 45, 80, 25, 70, 40, 85, 55, 30, 95].map((h, i) => (
                     <div
                       key={i}
@@ -350,7 +511,9 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
                         isRecording ? 'bg-blue-600' : 'bg-slate-300'
                       }`}
                       style={{
-                        height: isRecording ? `${Math.max(15, (h * audioLevel) / 100)}%` : '20%',
+                        height: isRecording
+                          ? `${Math.max(4, Math.round(Math.sqrt(Math.max(audioLevel, 0) / 100) * (h / 100) * 28))}px`
+                          : '4px',
                       }}
                     />
                   ))}
@@ -363,18 +526,16 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
               <div className="flex items-center justify-between mb-1.5">
                 <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
                   <BookOpen className="w-3.5 h-3.5 text-blue-600" />
-                  Multilingual Code-Switching Scenarios
+                  Sample/Demo dialogues — not a live recording
                 </label>
-                <span className="text-[10px] text-slate-400 font-medium">Auto-NLP extraction</span>
+                <span className="text-[10px] text-amber-800 font-semibold">Sample/Demo</span>
               </div>
               <div className="grid grid-cols-1 gap-1.5 max-h-48 overflow-y-auto pr-1">
                 {SAMPLE_CONSULTATIONS.map((sample) => (
                   <button
+                    type="button"
                     key={sample.id}
-                    onClick={() => {
-                      setTranscript(sample.text);
-                      setGeneratedSoap(null);
-                    }}
+                    onClick={() => loadSample(sample)}
                     className={`text-left px-3 py-2 rounded-lg text-xs border transition-all ${
                       transcript === sample.text
                         ? 'bg-blue-50 border-blue-300 text-blue-900 font-medium shadow-xs'
@@ -398,9 +559,17 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
             {/* Live Transcript Textarea */}
             <div className="space-y-1">
               <div className="flex items-center justify-between">
-                <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Conversation Transcript (Hinglish/Regional/English)</label>
+                <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                  {transcriptBadge(transcriptOrigin) || 'Consult transcript'}
+                </label>
                 <button
-                  onClick={() => setTranscript('')}
+                  type="button"
+                  onClick={() => {
+                    finalTranscriptRef.current = '';
+                    setTranscript('');
+                    setInterimTranscript('');
+                    setTranscriptOrigin('empty');
+                  }}
                   className="text-[10px] text-slate-400 hover:text-red-600 transition-colors font-semibold"
                 >
                   Clear
@@ -409,12 +578,17 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
               {isTranscribing && (
                 <div className="flex items-center gap-2 p-2 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-800 animate-pulse">
                   <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-600" />
-                  <span>Transcribing audio with Gemini 3.5 Transcribe model...</span>
+                  <span>Transcribing…</span>
                 </div>
               )}
               <textarea
-                value={transcript}
-                onChange={(e) => setTranscript(e.target.value)}
+                value={shownTranscript}
+                onChange={(e) => {
+                  finalTranscriptRef.current = e.target.value;
+                  setTranscript(e.target.value);
+                  setInterimTranscript('');
+                  setTranscriptOrigin(e.target.value.trim() ? 'typed' : 'empty');
+                }}
                 rows={5}
                 placeholder="Doctor & patient conversation transcribes here in real-time..."
                 className="w-full max-h-36 overflow-y-auto text-xs font-sans bg-slate-50 border border-slate-300 rounded-lg p-3 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:outline-none text-slate-900 resize-none leading-relaxed"
@@ -426,9 +600,9 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
               <div className="flex items-center justify-between">
                 <span className="font-bold text-slate-700 uppercase tracking-wider text-[10px] flex items-center gap-1">
                   <Zap className="w-3 h-3 text-amber-500" />
-                  Live NLP Extracted Entities:
+                  {transcriptOrigin === 'sample' ? 'Sample/Demo terms' : 'Suggested terms'}
                 </span>
-                <span className="text-[10px] text-slate-400">Standardized SOAP</span>
+                <span className="text-[10px] text-slate-400">Suggest-only</span>
               </div>
               <div className="flex flex-wrap gap-1">
                 {transcript.toLowerCase().includes('fever') || transcript.includes('ताप') || transcript.includes('kaichal') || transcript.includes('jwaram') ? (
@@ -477,7 +651,8 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
             {/* Generate SOAP Note Action */}
             <button
               onClick={handleGenerateSOAP}
-              disabled={isGenerating || !transcript.trim()}
+              type="button"
+              disabled={isGenerating || !shownTranscript.trim()}
               className="w-full py-2.5 px-4 rounded-md bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs shadow-sm shadow-blue-100 flex items-center justify-center space-x-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isGenerating ? (
@@ -520,14 +695,20 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
                   </h2>
                 </div>
 
-                <button
-                  onClick={() => onTransferToRx(generatedSoap)}
-                  className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-md bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs shadow-sm shadow-blue-100 transition-all"
-                >
-                  <FileText className="w-3.5 h-3.5" />
-                  <span>Transfer to Smart Rx</span>
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </button>
+                <div className="text-right space-y-1">
+                  <button
+                    type="button"
+                    onClick={() => onTransferToRx(generatedSoap)}
+                    className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-md bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs shadow-sm shadow-blue-100 transition-all"
+                  >
+                    <FileText className="w-3.5 h-3.5" />
+                    <span>Transfer suggestions to Rx</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                  <p className="text-[10px] text-slate-500 max-w-[220px]">
+                    Suggest-only. Fills the Rx draft for review. Does not sign, print, or send WhatsApp.
+                  </p>
+                </div>
               </div>
 
               {/* 4-Section SOAP Grid */}
@@ -707,16 +888,17 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
               <div className="max-w-md space-y-1">
                 <h3 className="font-bold text-sm text-slate-800">No Consultation Synthesized Yet</h3>
                 <p className="text-xs text-slate-500 leading-relaxed">
-                  Start the ambient microphone or pick one of the sample scenarios on the left, then click <strong>"Generate Structured SOAP Note"</strong>.
+                  Start the microphone or load a Sample/Demo dialogue, then click <strong>"Generate Structured SOAP Note"</strong>. The note stays a suggestion until you transfer it.
                 </p>
               </div>
               <div className="pt-2">
                 <button
-                  onClick={handleGenerateSOAP}
-                  className="px-3.5 py-1.5 rounded-md bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-sm shadow-blue-100 flex items-center gap-1.5"
+                  type="button"
+                  onClick={() => loadSample(SAMPLE_CONSULTATIONS[0])}
+                  className="px-3.5 py-1.5 rounded-md bg-amber-700 hover:bg-amber-800 text-white text-xs font-semibold shadow-sm flex items-center gap-1.5"
                 >
                   <Sparkles className="w-3.5 h-3.5" />
-                  Synthesize Default Sample
+                  Load Sample/Demo dialogue
                 </button>
               </div>
             </div>

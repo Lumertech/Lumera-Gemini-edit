@@ -687,7 +687,7 @@ export default function ClinicianApp() {
                   {autoSaveStatus === 'saving' && 'Saving draft to database...'}
                   {autoSaveStatus === 'unsaved' && 'Unsaved changes (auto-saving soon...)'}
                 </span>
-                <span className="text-slate-400">SOAP Notes & Prescription Auto-Sync Active</span>
+                <span className="text-slate-400">Rx draft only — not signed, printed, or sent</span>
               </div>
               <div className="flex-1 overflow-hidden flex flex-col">
                 <PrescriptionWriter

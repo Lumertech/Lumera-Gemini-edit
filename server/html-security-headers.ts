@@ -8,6 +8,8 @@
  * https://connect.facebook.net/en_US/sdk.js and opens facebook.com frames
  * (frame-src, not frame-ancestors). 'unsafe-eval' stays because the Facebook
  * JS SDK still uses eval/new Function; injected <script> tags remain blocked.
+ * connect-src allows Chrome/Edge Web Speech (`www.google.com/speech-api`).
+ * Without that host, live captions fail as soon as a page CSP is present.
  */
 import type { Response } from "express";
 
@@ -22,13 +24,19 @@ export const HTML_CONTENT_SECURITY_POLICY = [
   "font-src 'self' https://fonts.gstatic.com data:",
   "img-src 'self' data: blob: https:",
   "media-src 'self' blob:",
-  "connect-src 'self' https://connect.facebook.net https://*.facebook.net https://graph.facebook.com https://www.facebook.com https://web.facebook.com https://*.facebook.com https://*.fbcdn.net",
+  "connect-src 'self' https://www.google.com wss://www.google.com https://speech.googleapis.com https://connect.facebook.net https://*.facebook.net https://graph.facebook.com https://www.facebook.com https://web.facebook.com https://*.facebook.com https://*.fbcdn.net",
   "frame-src 'self' https://www.facebook.com https://web.facebook.com https://*.facebook.com https://*.fbcdn.net",
   "worker-src 'self' blob:",
 ].join("; ");
 
 /** Ambient scribe needs same-origin microphone. Clipboard and payment stay at browser defaults. */
 export const HTML_PERMISSIONS_POLICY = "camera=(), geolocation=(), microphone=(self), payment=()";
+
+/**
+ * HTML shells must revalidate. There is no service worker; a cached index.html
+ * is how a phone keeps running the previous bundle after a deploy.
+ */
+export const HTML_DOCUMENT_CACHE_CONTROL = "no-cache";
 
 function isProductionFromEnv(env: NodeJS.ProcessEnv): boolean {
   return String(env.NODE_ENV || "") === "production";
@@ -40,6 +48,7 @@ export function applyHtmlDocumentSecurityHeaders(res: Response, env: NodeJS.Proc
   res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("Permissions-Policy", HTML_PERMISSIONS_POLICY);
+  res.setHeader("Cache-Control", HTML_DOCUMENT_CACHE_CONTROL);
   if (isProductionFromEnv(env)) {
     res.setHeader("Strict-Transport-Security", "max-age=15552000; includeSubDomains");
   }
