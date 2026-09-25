@@ -20,6 +20,7 @@ import {
   ShieldCheck
 } from 'lucide-react';
 import { SoapNote, Patient, Doctor, isAbhaLinked } from '../types';
+import { apiFetch } from '../api/http';
 
 interface AmbientAIStudioProps {
   currentPatient: Patient;
@@ -161,12 +162,10 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
               reader.readAsDataURL(audioBlob);
               reader.onloadend = async () => {
                 const base64Audio = reader.result as string;
-                const res = await fetch('/api/gemini/transcribe', {
+                const data = await apiFetch<{ success?: boolean; transcription?: string }>('/api/gemini/transcribe', {
                   method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ audioBase64: base64Audio, mimeType: 'audio/webm' }),
                 });
-                const data = await res.json();
                 if (data.success && data.transcription) {
                   setTranscript(data.transcription);
                 }

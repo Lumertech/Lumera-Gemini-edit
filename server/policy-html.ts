@@ -48,7 +48,7 @@ export function renderPolicyDocumentHtml(title: string, body: string, updatedAt?
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${safeTitle} · Lumera</title>
-  <meta name="description" content="Lumera is a secure clinic software platform offering OPD management, EMR, Smart Rx Studio, and WhatsApp Cloud API communications.">
+  <meta name="description" content="Lumera clinic software. Lumera is not a certified Meta Tech Provider. Meta App Review is not submitted.">
   <meta property="og:title" content="${safeTitle} · Lumera Polyclinic Suite">
   <meta property="og:description" content="Lumera clinic software platform: secure OPD management, EMR, and WhatsApp Cloud API patient communications.">
   <meta property="og:image" content="https://www.mylumera.in/og-image.png">
@@ -66,7 +66,7 @@ export function renderPolicyDocumentHtml(title: string, body: string, updatedAt?
 </head>
 <body>
   <header>
-    <p class="notice"><strong>Lumera Solutions LLP</strong> — secure clinic software &amp; WhatsApp Cloud API platform.</p>
+    <p class="notice"><strong>Lumera Solutions LLP</strong> — clinic software. Lumera is not a certified Meta Tech Provider. Meta App Review is not submitted.</p>
     <nav>
       <a href="/" data-testid="policy-back">Back</a>
       <a href="/">Home</a>
@@ -98,7 +98,7 @@ function sendPolicyHtml(res: Response, slug: string): void {
         .send(
           renderPolicyDocumentHtml(
             "Policy not found",
-            "This policy document is not available."
+            "This policy document is not available. Lumera is not a certified Meta Tech Provider. Meta App Review is not submitted."
           )
         );
       return;
@@ -114,7 +114,7 @@ function sendPolicyHtml(res: Response, slug: string): void {
       .send(
         renderPolicyDocumentHtml(
           "Policy temporarily unavailable",
-          "Unable to load this policy."
+          "Unable to load this policy. Lumera is not a certified Meta Tech Provider. Meta App Review is not submitted."
         )
       );
   }

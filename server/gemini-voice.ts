@@ -1,5 +1,8 @@
 import type { Express, Request, Response } from "express";
 import { GoogleGenAI } from "@google/genai";
+import { requireAuth } from "./auth.ts";
+import { getDb } from "./db.ts";
+import { clinicLine, getTenantLetterhead } from "./letterhead.ts";
 
 export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI | null) {
   // 4. Voice Bot & Triage Simulator with Emergency Escalation
@@ -28,7 +31,7 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
   {
     "speechText": "Natural conversational voice response",
     "intent": ${isEmergency ? '"EMERGENCY"' : '"BOOKING" | "REFILL" | "EMERGENCY" | "INQUIRY"'},
-    "suggestedAction": "e.g. ${isEmergency ? 'EMERGENCY SOS DISPATCHED TO CLINIC DOCTOR' : 'Scheduled token #4 for Tomorrow 10:30 AM'}",
+    "suggestedAction": "e.g. ${isEmergency ? 'Advise emergency room or 108' : 'Scheduled token #4 for Tomorrow 10:30 AM'}",
     "isEmergency": ${isEmergency}
   }`;
 
@@ -52,9 +55,9 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
       // Fallback response
       if (isEmergency) {
         return res.json({
-          speechText: `URGENT ALERT: Based on your symptoms of severe pain or breathlessness, please proceed to the nearest Emergency Room immediately or call 108. I have also dispatched an emergency WhatsApp alert to Dr. Malhotra.`,
+          speechText: `Urgent: these symptoms need in-person emergency care. Please go to the nearest emergency room now or call 108.`,
           intent: "EMERGENCY",
-          suggestedAction: "EMERGENCY SOS DISPATCHED TO DOCTOR",
+          suggestedAction: "Advise emergency room or 108",
           isEmergency: true
         });
       }
@@ -70,22 +73,45 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
     }
   });
 
-  // 4b. ABDM FHIR Health Locker Export Endpoint
-  app.post("/api/abdm/fhir-export", async (req: Request, res: Response) => {
+  // 4b. Local FHIR document for the signed-in clinic. Not an external locker submission.
+  app.post("/api/abdm/fhir-export", requireAuth, async (req: Request, res: Response) => {
     try {
-      const { patientId, patientName, abhaNumber, diagnosis, medicines, doctorName } = req.body;
+      const tenantId = String(req.user?.tenantId || "").trim();
+      if (!tenantId) {
+        return res.status(400).json({ error: "No tenant associated with this account." });
+      }
+      const patientId = String(req.body?.patientId || "").trim();
+      let patientName = String(req.body?.patientName || "").trim();
+      let abhaNumber = String(req.body?.abhaNumber || "").trim();
+      if (patientId) {
+        const owned = getDb()
+          .prepare("SELECT id, name, abha_number FROM patients WHERE id = ? AND tenant_id = ?")
+          .get(patientId, tenantId) as { id?: string; name?: string; abha_number?: string } | undefined;
+        if (!owned?.id) {
+          return res.status(404).json({ error: "Patient not found" });
+        }
+        patientName = String(owned.name || patientName || "Patient");
+        abhaNumber = String(owned.abha_number || "").trim();
+      }
+      const { diagnosis, doctorName } = req.body || {};
+      const clinic = clinicLine(getTenantLetterhead(tenantId, req.user?.id));
+      const author = String(doctorName || req.user?.name || "").trim() || "Attending clinician";
+      const subjectId = patientId || "local-patient";
+      const identifier = abhaNumber
+        ? [{ system: "https://healthid.ndhm.gov.in", value: abhaNumber }]
+        : [];
       const fhirBundle = {
         resourceType: "Bundle",
-        id: `lumera-fhir-${Date.now()}`,
+        id: `clinic-fhir-${Date.now()}`,
         type: "document",
         timestamp: new Date().toISOString(),
         entry: [
           {
             resource: {
               resourceType: "Patient",
-              id: patientId || "pat-1",
+              id: subjectId,
               name: [{ text: patientName || "Patient" }],
-              identifier: [{ system: "https://healthid.ndhm.gov.in", value: abhaNumber || "14-2345-6789-0123" }]
+              identifier
             }
           },
           {
@@ -93,9 +119,9 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
               resourceType: "Composition",
               status: "final",
               type: { coding: [{ system: "http://loinc.org", code: "60591-5", display: "Patient consultation note" }] },
-              subject: { reference: `Patient/${patientId || "pat-1"}` },
-              author: [{ display: doctorName || "Dr. Lumera Physician" }],
-              title: "Lumera Polyclinic Consultation & Prescription FHIR Record"
+              subject: { reference: `Patient/${subjectId}` },
+              author: [{ display: author }],
+              title: `${clinic.name || "Clinic"} consultation note`
             }
           },
           {
@@ -103,7 +129,7 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
               resourceType: "Condition",
               clinicalStatus: { coding: [{ system: "http://terminology.hl7.org/CodeSystem/condition-clinical", code: "active" }] },
               code: { text: diagnosis || "General Consultation" },
-              subject: { reference: `Patient/${patientId || "pat-1"}` }
+              subject: { reference: `Patient/${subjectId}` }
             }
           }
         ]
@@ -111,8 +137,8 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
 
       res.json({
         success: true,
-        message: "FHIR bundle successfully synchronized to ABDM / ABHA Health Locker",
-        abhaNumber: abhaNumber || "14-2345-6789-0123",
+        message: "Local FHIR document prepared for this clinic. It has not been sent to an external health locker.",
+        abhaNumber,
         fhirBundleId: fhirBundle.id,
         timestamp: fhirBundle.timestamp,
         bundle: fhirBundle

@@ -303,6 +303,15 @@ export const prescriptions = pgTable(
   ]
 );
 
+/** Autosaved Rx drafts. patient_id is the primary key, matching BOOTSTRAP_DDL. */
+export const prescriptionDrafts = pgTable("prescription_drafts", {
+  patientId: text("patient_id").primaryKey(),
+  tenantId: text("tenant_id").notNull(),
+  doctorId: text("doctor_id").notNull(),
+  draftJson: text("draft_json").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
 export const labReports = pgTable("lab_reports", {
   id: text("id").primaryKey(),
   patientId: text("patient_id").notNull(),

@@ -170,6 +170,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
           badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
         },
         {
+          id: 'billing' as NavView,
+          label: pack.billingLabel || 'Billing, Claims & E-Invoicing',
+          icon: Receipt,
+        },
+        {
           id: 'whatsapp' as NavView,
           label: 'WhatsApp Suite & Patient Engagement',
           icon: MessageSquare,

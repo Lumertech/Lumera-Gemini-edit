@@ -26,13 +26,13 @@ export const PRIVACY_POLICY_BODY = `# Privacy Policy
 
 **Last updated:** September 2026  
 **Controller / product:** Lumera Solutions LLP (“Lumera”) — clinic software with optional WhatsApp Cloud API and Facebook Login  
-**Contact:** ravee@lumera.me
+**Contact:** ravee@lumer.me
 
 ---
 
-### WhatsApp Cloud API & Meta data use
+### WhatsApp Cloud API & Meta data use (App Review)
 
-Lumera Solutions LLP (“Lumera”) provides clinic software that can send and receive WhatsApp messages through Meta’s WhatsApp Cloud API after a clinic connects a WhatsApp Business Account (WABA). This section describes data processing that applies when Cloud API / Facebook Login features are configured by healthcare practices.
+Lumera Solutions LLP (“Lumera”) provides clinic software that can send and receive WhatsApp messages through Meta’s WhatsApp Cloud API after a clinic connects a WhatsApp Business Account (WABA). **Lumera is not a certified Meta Tech Provider. This section describes processing that applies when Cloud API / Facebook Login are configured. Meta App Review is not submitted.**
 
 #### What we collect via WhatsApp / Meta
 - Phone numbers used for WhatsApp (patient or clinic staff), and related Meta identifiers (e.g. phone_number_id, WABA id) when a clinic connects WhatsApp
@@ -63,10 +63,10 @@ We do **not** use WhatsApp or Facebook Login data to sell ads, build advertising
 #### Retention
 - WhatsApp operational logs and conversation copies are retained only as needed for clinic care continuity, security, and legal retention, then deleted or anonymised
 - Meta access tokens are stored for the connected clinic WABA and revoked/deleted when the clinic disconnects WhatsApp or requests deletion
-- Please see our official [Data Deletion Instructions](https://www.mylumera.in/data-deletion-instructions) for complete details on how to request erasure of your data.
+- See [Data Deletion Instructions](https://www.mylumera.in/data-deletion-instructions) for how to request erasure
 
 #### Contact
-Data Protection / privacy requests: **ravee@lumera.me**
+Data Protection / privacy requests: **ravee@lumer.me**
 
 Government or public-authority requests for user personal data are handled under our [Government & Public Authority Data Request Policy](https://www.mylumera.in/government-data-request-policy).
 
