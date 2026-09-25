@@ -252,6 +252,7 @@ export const tenantSubscriptions = pgTable("tenant_subscriptions", {
 export const LUMERA_TABLE_NAMES = [
   "users",
   "sessions",
+  "revoked_credentials",
   "cms_settings",
   "cms_sections",
   "cms_policies",

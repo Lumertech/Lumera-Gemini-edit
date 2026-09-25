@@ -60,6 +60,12 @@ export const sessions = pgTable(
   ]
 );
 
+export const revokedCredentials = pgTable("revoked_credentials", {
+  tokenHash: text("token_hash").primaryKey(),
+  expiresAt: text("expires_at").notNull(),
+  createdAt: text("created_at").notNull(),
+});
+
 export const cmsSettings = pgTable("cms_settings", {
   key: text("key").primaryKey(),
   value: text("value").notNull(),
