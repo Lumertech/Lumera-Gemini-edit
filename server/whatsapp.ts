@@ -8,6 +8,15 @@ import {
 } from "./letterhead.ts";
 import { GoogleGenAI } from "@google/genai";
 import {
+  buildQueueNextText,
+  isCloudDispatchFailure,
+  prescriptionReadyTemplateParameters,
+  queueNextTemplateParameters,
+  sendPrescriptionReady,
+  sendQueueNext,
+  templateConfigForKind,
+} from "./graph-whatsapp.ts";
+import {
   bookWhatsAppAppointment,
   dispatchAppointmentReminder,
   dispatchWhatsAppBookConfirmation,
@@ -83,6 +92,105 @@ function respondWhatsAppMessages(res: Response, convId?: string, phone?: string)
     return;
   }
   res.json({ messages: rows.map(serializeWhatsAppMessage) });
+}
+
+function payloadString(payload: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const value = String(payload[key] ?? "").trim();
+    if (value) return value;
+  }
+  return "";
+}
+
+function clinicNameForOutbound(tenantId: string, override: string): string {
+  const explicit = override.trim();
+  if (explicit) return explicit;
+  const id = tenantId.trim();
+  if (id) {
+    try {
+      const row = getDb().prepare("SELECT name FROM tenants WHERE id = ?").get(id) as { name?: string } | undefined;
+      const name = String(row?.name || "").trim();
+      if (name) return name;
+    } catch {
+      /* tenants table may be missing in isolated tests */
+    }
+  }
+  return "your clinic";
+}
+
+function doctorNameForOutbound(tenantId: string, patientPhone: string, override: string): string {
+  const explicit = override.trim();
+  if (explicit) return explicit;
+  if (tenantId) {
+    const appointment = findActiveAppointment({ tenantId, patientPhone });
+    const doctor = String(appointment?.doctor_name || "").trim();
+    if (doctor) return doctor;
+  }
+  return "your clinician";
+}
+
+function cloudFailureStatus(error: string, channel: "none" | "graph"): number {
+  if (String(error).includes("Top up now")) return 402;
+  return channel === "none" && isProduction() ? 503 : 502;
+}
+
+function recordTriggerDelivery(opts: {
+  eventType: string;
+  patientPhone: string;
+  patientName: string;
+  details: string;
+  messageContent: string;
+  buttons: string[] | null;
+  media: Record<string, unknown> | null;
+  actionPayload: Record<string, unknown>;
+  tenantId: string;
+  status: string;
+  timeDisplay: string;
+}): string {
+  const db = getDb();
+  const now = new Date().toISOString();
+  const eventId = `evt-${crypto.randomUUID().slice(0, 8)}`;
+  db.prepare(
+    `INSERT INTO whatsapp_outbound_events (id, event_type, patient_phone, patient_name, status, details, action_payload, sent_at, tenant_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    eventId,
+    opts.eventType,
+    opts.patientPhone,
+    opts.patientName,
+    opts.status,
+    opts.details,
+    JSON.stringify(opts.actionPayload),
+    now,
+    opts.tenantId
+  );
+  if (opts.status === "failed") return eventId;
+
+  const conv = db.prepare("SELECT id FROM whatsapp_conversations WHERE patient_phone = ?").get(opts.patientPhone) as
+    | { id: string }
+    | undefined;
+  const convId = conv ? conv.id : "conv-rajiv";
+  const msgId = `msg-out-${crypto.randomUUID().slice(0, 8)}`;
+  db.prepare(
+    `INSERT INTO whatsapp_messages (id, conversation_id, patient_phone, sender, staff_name, content, time_display, buttons, media, status, created_at)
+     VALUES (?, ?, ?, 'bot', 'Automated Trigger Engine', ?, ?, ?, ?, ?, ?)`
+  ).run(
+    msgId,
+    convId,
+    opts.patientPhone,
+    opts.messageContent,
+    opts.timeDisplay,
+    opts.buttons ? JSON.stringify(opts.buttons) : null,
+    opts.media ? JSON.stringify(opts.media) : null,
+    opts.status,
+    now
+  );
+  db.prepare(
+    `UPDATE whatsapp_conversations
+     SET last_message = ?, last_message_time = ?, updated_at = ?
+     WHERE id = ?`
+  ).run(opts.messageContent.slice(0, 80), opts.timeDisplay, now, convId);
+  return eventId;
 }
 
 export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null): Router {
@@ -633,7 +741,7 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
   const handleOutboundTrigger = async (req: Request, res: Response) => {
     try {
       const {
-        eventType, // 'appointment_reminder' | 'post_consultation_dispatch' | 'queue_token_update'
+        eventType, // appointment_reminder | post_consultation_dispatch | prescription_ready | queue_token_update | queue_next
         patientPhone: rawPatientPhone,
         patientName = "Rajiv Saxena",
         customPayload = {},
@@ -695,35 +803,160 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
         });
       }
 
+      const payload =
+        customPayload && typeof customPayload === "object" ? (customPayload as Record<string, unknown>) : {};
+      const tenantId =
+        resolveWhatsAppTenantId({
+          tenantId: bodyTenantId || payload.tenantId,
+          sessionTenantId: String(req.user?.tenantId || "").trim(),
+          phoneNumberId,
+          wabaId,
+          patientPhone,
+        }) || "";
+      const timeDisplay = getDisplayTime();
+      const queueEvent = eventType === "queue_token_update" || eventType === "queue_next";
+      const prescriptionEvent = eventType === "post_consultation_dispatch" || eventType === "prescription_ready";
+
+      if (queueEvent || prescriptionEvent) {
+        let details = "";
+        let messageContent = "";
+        let buttons: string[] | null = null;
+        let media: Record<string, unknown> | null = null;
+        let clinicName = "";
+        let doctorName = "";
+        let tokenNumber = "";
+        let currentToken = "";
+        let location = "";
+        let rxNumber = "";
+
+        if (queueEvent) {
+          currentToken = payloadString(payload, ["currentToken", "servingToken"]) || "01";
+          tokenNumber = payloadString(payload, ["tokenNumber", "token"]) || "02";
+          location = payloadString(payload, ["location", "room"]) || "Rehab Suite 105";
+          clinicName = clinicNameForOutbound(tenantId, payloadString(payload, ["clinicName", "clinic"]));
+          doctorName = doctorNameForOutbound(tenantId, patientPhone, payloadString(payload, ["doctorName"]));
+          details = `Live OPD Queue Alert dispatched: Patient is next in line.`;
+          messageContent = buildQueueNextText({
+            patientName,
+            currentToken,
+            tokenNumber,
+            location,
+          });
+          buttons = ["✅ I am at OPD Room", "🚶 Need 5 Mins", "📞 Reception Call"];
+        } else {
+          doctorName = doctorNameForOutbound(tenantId, patientPhone, payloadString(payload, ["doctorName"]));
+          rxNumber = payloadString(payload, ["rxNumber", "rx"]) || "RX";
+          clinicName = clinicNameForOutbound(tenantId, payloadString(payload, ["clinicName", "clinic"]));
+          details = `Post-consultation digital packet dispatched: Prescription ready.`;
+          messageContent = `📋 *Consultation Summary & Prescription Signed*\n\nNamaste ${patientName},\n${doctorName} has signed your clinical prescription (*${rxNumber}*) at *${clinicName}*.\n\nYou can preview or download your verified medical documents below.`;
+          buttons = ["📄 View Prescription Slip", "📥 Download PDF", "💊 Order Medicine Home Delivery"];
+          media = {
+            type: "pdf",
+            title: `Prescription_${rxNumber}.pdf`,
+            url: payloadString(payload, ["pdfUrl"]) || `/api/emr/prescription/${rxNumber}/pdf`,
+            size: "245 KB",
+            subtitle: `Signed by ${doctorName} • ${clinicName}`,
+          };
+        }
+
+        const templateParameters = queueEvent
+          ? queueNextTemplateParameters(
+              { patientName, clinicName, doctorName, tokenNumber, location },
+              templateConfigForKind("queue_next")?.name
+            )
+          : prescriptionReadyTemplateParameters(
+              { patientName, clinicName, doctorName, rxNumber },
+              templateConfigForKind("prescription_ready")?.name
+            );
+
+        const sent = queueEvent
+          ? await sendQueueNext({
+              to: patientPhone,
+              patientName,
+              clinicName,
+              doctorName,
+              tokenNumber,
+              currentToken,
+              location,
+              textBody: messageContent,
+              templateParameters,
+              db: getDb(),
+              tenantId: tenantId || undefined,
+            })
+          : await sendPrescriptionReady({
+              to: patientPhone,
+              patientName,
+              clinicName,
+              doctorName,
+              rxNumber,
+              textBody: messageContent,
+              templateParameters,
+              previewUrl: true,
+              db: getDb(),
+              tenantId: tenantId || undefined,
+            });
+
+        if (isCloudDispatchFailure(sent)) {
+          const eventId = recordTriggerDelivery({
+            eventType,
+            patientPhone,
+            patientName,
+            details: `${eventType} not delivered: ${sent.error}`,
+            messageContent,
+            buttons: null,
+            media: null,
+            actionPayload: { ...payload, channel: sent.channel, error: sent.error, templateParameters },
+            tenantId,
+            status: "failed",
+            timeDisplay,
+          });
+          return res.status(cloudFailureStatus(sent.error, sent.channel)).json({
+            ok: false,
+            error: sent.error,
+            channel: sent.channel,
+            eventId,
+          });
+        }
+
+        const status = sent.channel === "graph" ? "sent" : "sandbox_recorded";
+        const eventId = recordTriggerDelivery({
+          eventType,
+          patientPhone,
+          patientName,
+          details,
+          messageContent,
+          buttons,
+          media,
+          actionPayload: {
+            ...payload,
+            channel: sent.channel,
+            messageId: sent.messageId,
+            templateParameters,
+            sandbox: sent.channel === "sandbox",
+          },
+          tenantId,
+          status,
+          timeDisplay,
+        });
+        return res.status(201).json({
+          ok: true,
+          eventId,
+          eventType,
+          details,
+          messageDispatched: messageContent,
+          channel: sent.channel,
+          ...(sent.messageId ? { messageId: sent.messageId } : {}),
+        });
+      }
+
       const db = getDb();
       const now = new Date().toISOString();
-      const timeDisplay = getDisplayTime();
       const eventId = `evt-${crypto.randomUUID().slice(0, 8)}`;
 
-      let details = "";
-      let messageContent = "";
-      let buttons: string[] | null = null;
-      let media: Record<string, unknown> | null = null;
-
-      if (eventType === "post_consultation_dispatch") {
-        details = `Post-consultation digital packet dispatched: Prescription & Diagnostic invoice.`;
-        messageContent = `📋 *Consultation Summary & Prescription Signed*\n\nNamaste ${patientName},\nDr. Siddharth Varma has signed your clinical prescription (*RX-2026-0106*).\n\nYour digital consultation receipt (#INV-9921 for ₹700) has been generated. You can preview or download your verified medical documents below.`;
-        buttons = ["📄 View Prescription Slip", "📥 Download PDF", "💊 Order Medicine Home Delivery"];
-        media = {
-          type: "pdf",
-          title: "Prescription_RX-2026-0106_Rajiv_Saxena.pdf",
-          url: "/api/emr/prescription/rx-101/pdf",
-          size: "245 KB",
-          subtitle: "Signed by Dr. Siddharth Varma (PT) • Lumera Rehab",
-        };
-      } else if (eventType === "queue_token_update") {
-        details = `Live OPD Queue Alert dispatched: Patient is next in line.`;
-        messageContent = `📢 *OPD Queue Alert - You're Almost Up!*\n\nNamaste ${patientName},\nToken *#01* is currently completing consultation. You are *NEXT IN LINE* (Token #02).\n\n📍 Please proceed to *Rehab Suite 105* near Waiting Lounge B.`;
-        buttons = ["✅ I am at OPD Room", "🚶 Need 5 Mins", "📞 Reception Call"];
-      } else {
-        details = `Custom broadcast sent to ${patientName}.`;
-        messageContent = customPayload.message || "Important health notification from Lumera Polyclinic.";
-      }
+      const details = `Custom broadcast sent to ${patientName}.`;
+      const messageContent = customPayload.message || "Important health notification from your clinic.";
+      const buttons: string[] | null = null;
+      const media: Record<string, unknown> | null = null;
 
       db.prepare(`
         INSERT INTO whatsapp_outbound_events (id, event_type, patient_phone, patient_name, status, details, action_payload, sent_at)
@@ -978,7 +1211,7 @@ Output strictly in JSON:
       const clinicName =
         String(req.body?.clinicName || "").trim() ||
         (tenantId ? getTenantLetterhead(tenantId).clinicName : "") ||
-        "Lumera Healthcare Polyclinic";
+        "your clinic";
 
       const db = getDb();
       const now = new Date().toISOString();

@@ -42,7 +42,14 @@ export {
 } from "./usage-wallet.ts";
 export type { UsageResource, WalletAlertState, WalletRow, WalletTxType } from "./usage-wallet.ts";
 
-export type CloudUsageKind = "otp" | "appointment_reminder" | "book_confirmation" | "payment_receipt" | "text";
+export type CloudUsageKind =
+  | "otp"
+  | "appointment_reminder"
+  | "book_confirmation"
+  | "payment_receipt"
+  | "queue_next"
+  | "prescription_ready"
+  | "text";
 
 const CRITICAL_WHATSAPP_KINDS = new Set<CloudUsageKind>(["otp", "book_confirmation"]);
 
