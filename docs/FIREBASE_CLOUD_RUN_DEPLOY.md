@@ -318,7 +318,7 @@ Hosting + TLS on www, Privacy, Terms, data-deletion page + callback, OAuth redir
 
 ### May stay SANDBOX until credentials + Review clear
 
-Graph OTP / reminder / receipt without tokens; `simulate-embedded-signup`; unsigned webhook (non-prod only — production rejects unsigned); in-product `NOT_SUBMITTED` / “building toward Meta Tech Provider”.
+Graph OTP / reminder / receipt without tokens; `simulate-embedded-signup`; unsigned webhook (non-prod only — production rejects unsigned); readiness status stays `NOT_SUBMITTED` until `META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED=true`. Public copy: Lumera is not a certified Meta Tech Provider; WhatsApp permissions are under Meta App Review.
 
 ---
 

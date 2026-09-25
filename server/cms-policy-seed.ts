@@ -2,11 +2,12 @@
  * Canonical cms_policies bodies for Meta App Review URL surfaces.
  * Source: https://github.com/Lumertech/Lumera-Gemini-edit/issues/26#issuecomment-5624794761
  *
- * Honesty (do not edit out): Lumera is NOT a certified Meta Tech Provider;
- * Meta App Review is NOT submitted. Keep DPDP / subprocessor honesty.
+ * Honesty (do not edit out): Lumera is NOT a certified Meta Tech Provider.
+ * WhatsApp permissions are under Meta App Review. Keep DPDP / subprocessor honesty.
  *
- * These slugs are force-upserted on every boot so pre-#26 certification
- * overclaim rows cannot persist.
+ * These slugs are force-upserted on every boot (ON CONFLICT replaces title and
+ * body; there is no version or hash gate) so pre-#26 certification overclaim
+ * rows and stale App Review status copy cannot persist.
  */
 
 import {
@@ -32,7 +33,7 @@ export const PRIVACY_POLICY_BODY = `# Privacy Policy
 
 ### WhatsApp Cloud API & Meta data use (App Review)
 
-Lumera Solutions LLP (“Lumera”) provides clinic software that can send and receive WhatsApp messages through Meta’s WhatsApp Cloud API after a clinic connects a WhatsApp Business Account (WABA). **Lumera is not a certified Meta Tech Provider. This section describes processing that applies when Cloud API / Facebook Login are configured. Meta App Review is not submitted.**
+Lumera Solutions LLP (“Lumera”) provides clinic software that can send and receive WhatsApp messages through Meta’s WhatsApp Cloud API after a clinic connects a WhatsApp Business Account (WABA). **Lumera is not a certified Meta Tech Provider. WhatsApp permissions are under Meta App Review.** This section describes processing that applies when Cloud API / Facebook Login are configured.
 
 #### What we collect via WhatsApp / Meta
 - Phone numbers used for WhatsApp (patient or clinic staff), and related Meta identifiers (e.g. phone_number_id, WABA id) when a clinic connects WhatsApp
@@ -89,7 +90,7 @@ export const TERMS_OF_SERVICE_BODY = `# Lumera Terms of Service
 **Jurisdiction:** India  
 **Contact:** ravee@lumer.me
 
-**Lumera is not a certified Meta Tech Provider. Meta App Review is not submitted.** These Terms describe the clinic software product and the optional WhatsApp Cloud API / Facebook Login path. They are not a certification or App Review approval claim.
+**Lumera is not a certified Meta Tech Provider. WhatsApp permissions are under Meta App Review.** These Terms describe the clinic software product and the optional WhatsApp Cloud API / Facebook Login path. They are not a certification or App Review approval claim.
 
 ---
 
@@ -97,7 +98,7 @@ export const TERMS_OF_SERVICE_BODY = `# Lumera Terms of Service
 These Terms of Service (“Terms”) constitute a binding legal agreement between Lumera Solutions LLP (“Lumera”) and the registered healthcare facility or medical practitioner (“Tenant”, “Clinic”, or “You”). By utilizing the Lumera Clinician Suite, Admin CMS, or WhatsApp Embedded Signup, you agree to be bound by these Terms.
 
 ### 2. WhatsApp Business Account (WABA) & Cloud API governance
-- **Integration role:** Lumera may act as software that calls Meta Graph APIs on behalf of a clinic after the clinic connects a WABA. This is not Meta Tech Provider certification and does not mean App Review is submitted or approved.
+- **Integration role:** Lumera may act as software that calls Meta Graph APIs on behalf of a clinic after the clinic connects a WABA. This is not Meta Tech Provider certification. WhatsApp permissions are under Meta App Review.
 - **Account Ownership:** The Clinic retains full ownership and control of its WhatsApp Business Account, verified phone numbers, and display names.
 - **Acceptable Use & Anti-Spam:** Clinics must strictly adhere to the Meta WhatsApp Business Messaging Policy. Unsolicited promotional broadcasts, deceptive advertising, or non-consented bulk messages are strictly prohibited and constitute grounds for immediate service suspension.
 - **Prior Patient Consent:** The Clinic warrants that it has collected valid, revocable patient consent prior to initiating outbound WhatsApp notifications. Patients may opt out by replying **STOP** (see the Privacy Policy).
@@ -125,7 +126,7 @@ export const DATA_DELETION_INSTRUCTIONS_BODY = `# Data Deletion Instructions (Me
 **Status check:** https://www.mylumera.in/api/meta/data-deletion-status?code=YOUR_CODE  
 **Email:** ravee@lumer.me
 
-**Lumera is not a certified Meta Tech Provider. Meta App Review is not submitted.**
+**Lumera is not a certified Meta Tech Provider. WhatsApp permissions are under Meta App Review.**
 
 ## Your right to delete
 You can request deletion of personal data Lumera stored because you used Facebook Login, connected a WhatsApp Business Account through Lumera, or messaged a clinic that uses Lumera’s WhatsApp desk. This supports Meta Platform Terms (including user data deletion) and India’s DPDP Act. Clinical records a clinic must keep under medical law may be **anonymised** rather than fully erased where retention is legally required.

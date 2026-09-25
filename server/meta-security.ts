@@ -194,7 +194,7 @@ export function buildMetaReadinessOverview(opts: {
       passed: scopesApproved,
       note: scopesApproved
         ? "Manually set via META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED=true. Not auto-detected from Meta's dashboard."
-        : "SANDBOX-honest: App Review is not submitted/approved unless META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED=true. Contact ravee@lumer.me.",
+        : "SANDBOX-honest: WhatsApp permissions are under Meta App Review unless META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED=true. Lumera is not a certified Meta Tech Provider. Contact ravee@lumer.me.",
     },
   ];
 
@@ -223,6 +223,6 @@ export function buildMetaReadinessOverview(opts: {
     facebookOAuthConfigured: opts.facebookOAuthConfigured,
     qualityRating: "UNKNOWN — not fetched from Graph (do not treat local GREEN as live)",
     notice:
-      "SANDBOX / DEV-ONLY readiness view. Live Meta/Facebook app credentials are optional until provisioned separately. Lumera is not Meta Tech Provider certified and App Review is NOT_SUBMITTED. Do not use this payload for marketing claims.",
+      "SANDBOX / DEV-ONLY readiness view. Live Meta/Facebook app credentials are optional until provisioned separately. Lumera is not a certified Meta Tech Provider. WhatsApp permissions are under Meta App Review. Do not use this payload for marketing claims.",
   };
 }

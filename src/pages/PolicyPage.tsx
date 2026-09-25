@@ -287,7 +287,7 @@ export const PolicyPage: React.FC<{ slug: string }> = ({ slug: initialSlug }) =>
               <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">Statutory Notice</span>
             </div>
             <p className="text-xs text-slate-300 leading-relaxed">
-              {PRODUCT_NAME} is building a WhatsApp Cloud API integration. This is not Meta Tech Provider certification and App Review is not submitted. Policies below describe intended processing:
+              Lumera is not a certified Meta Tech Provider. WhatsApp permissions are under Meta App Review. Policies below describe intended processing:
             </p>
             <ul className="text-xs space-y-1.5 text-slate-200">
               <li className="flex items-center gap-1.5">

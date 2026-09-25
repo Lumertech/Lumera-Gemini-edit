@@ -54,6 +54,35 @@ function overclaimWithoutHonesty(src: string): string[] {
   return leftovers;
 }
 
+/** Public copy Meta reviewers can read. "not submitted" must not return. */
+const APP_REVIEW_COPY_SURFACES = [
+  "server/cms-policy-seed.ts",
+  "server/policy-html.ts",
+  "server/government-data-request-policy.ts",
+  "src/pages/PolicyPage.tsx",
+  "src/components/LandingPage.tsx",
+  "index.html",
+];
+
+const CANONICAL_APP_REVIEW =
+  "Lumera is not a certified Meta Tech Provider. WhatsApp permissions are under Meta App Review.";
+
+function stripHonestTechProviderNegation(src: string): string {
+  return src
+    .replace(/not a certified Meta Tech Provider/gi, "")
+    .replace(/not a certified Tech Provider/gi, "")
+    .replace(/not Tech Provider certified/gi, "")
+    .replace(/not Meta Tech Provider certified/gi, "");
+}
+
+function techProviderOverclaims(src: string): string[] {
+  const re =
+    /certified Meta Tech Provider|certified Tech Provider|approved Tech Provider|official Tech Provider|authorized Tech Provider|Tech Provider certified|Tech Provider approved/i;
+  return stripHonestTechProviderNegation(src)
+    .split(/\n/)
+    .flatMap((line, i) => (re.test(line) ? [`L${i + 1}: ${line.trim()}`] : []));
+}
+
 /** #18/#47 theatre this PR must not reintroduce on landing/CMS/policy surfaces. */
 const RESKIM_THEATRE: Array<{ id: string; re: RegExp }> = [
   { id: "Certified M1-M3", re: /Certified M1.?M3|ABDM M1,\s*M2,\s*M3 Certified|M1.?M3 Certified/i },
@@ -121,11 +150,45 @@ describe("Compliance #26 policy seed grep", () => {
     assert.match(src, /\bSTOP\b/);
     assert.match(src, /https:\/\/www\.mylumera\.in\/api\/meta\/data-deletion/);
     assert.match(src, /not a certified Meta Tech Provider/i);
-    assert.match(src, /App Review is not submitted/);
+    assert.match(src, /WhatsApp permissions are under Meta App Review/);
+    assert.equal(/not submitted/i.test(src), false);
+    assert.match(PRIVACY_POLICY_BODY, /Lumera is not a certified Meta Tech Provider\. WhatsApp permissions are under Meta App Review\./);
     assert.match(PRIVACY_POLICY_BODY, /replying \*\*STOP\*\*/);
-    assert.match(TERMS_OF_SERVICE_BODY, /not a certified Meta Tech Provider/i);
+    assert.match(TERMS_OF_SERVICE_BODY, /Lumera is not a certified Meta Tech Provider\. WhatsApp permissions are under Meta App Review\./);
+    assert.match(DATA_DELETION_INSTRUCTIONS_BODY, /Lumera is not a certified Meta Tech Provider\. WhatsApp permissions are under Meta App Review\./);
     assert.match(DATA_DELETION_INSTRUCTIONS_BODY, /https:\/\/www\.mylumera\.in\/api\/meta\/data-deletion/);
     assert.ok(CMS_POLICY_UPSERTS.some((row) => row.slug === "privacy-policy"));
+  });
+
+  it("App Review copy is under review, never 'not submitted' or a certified/approved Tech Provider claim", () => {
+    const leftovers: string[] = [];
+    for (const rel of APP_REVIEW_COPY_SURFACES) {
+      const src = readRepo(rel);
+      if (/not submitted/i.test(src)) leftovers.push(`${rel} still says App Review is not submitted`);
+      for (const hit of techProviderOverclaims(src)) leftovers.push(`${rel} ${hit}`);
+    }
+    assert.deepEqual(leftovers, [], leftovers.join("\n"));
+
+    for (const rel of [
+      "server/cms-policy-seed.ts",
+      "server/policy-html.ts",
+      "src/pages/PolicyPage.tsx",
+      "src/components/LandingPage.tsx",
+    ]) {
+      assert.match(readRepo(rel), /WhatsApp permissions are under Meta App Review/);
+      assert.match(readRepo(rel), /not a certified Meta Tech Provider/i);
+    }
+
+    assert.match(PRIVACY_POLICY_BODY, new RegExp(CANONICAL_APP_REVIEW.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.match(TERMS_OF_SERVICE_BODY, new RegExp(CANONICAL_APP_REVIEW.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.match(DATA_DELETION_INSTRUCTIONS_BODY, new RegExp(CANONICAL_APP_REVIEW.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+
+    const html = readRepo("server/policy-html.ts");
+    assert.match(html, /name="description" content="Lumera clinic software\. Lumera is not a certified Meta Tech Provider\. WhatsApp permissions are under Meta App Review\."/);
+    assert.match(html, /This policy document is not available\. Lumera is not a certified Meta Tech Provider\. WhatsApp permissions are under Meta App Review\./);
+    assert.match(html, /Unable to load this policy\. Lumera is not a certified Meta Tech Provider\. WhatsApp permissions are under Meta App Review\./);
+    assert.match(readRepo("server/db-seed-meta.ts"), /ON CONFLICT/);
+    assert.match(readRepo("server/db-seed-meta.ts"), /no version or hash gate/);
   });
 
   it("founder lock: public policy contacts are ravee@lumer.me only", () => {
@@ -212,6 +275,8 @@ describe("Compliance #26 public policy HTML + deletion-status", () => {
       .prepare("SELECT body FROM cms_policies WHERE slug = ?")
       .get("privacy-policy") as { body: string };
     assert.match(row.body, /not a certified Meta Tech Provider/i);
+    assert.match(row.body, /WhatsApp permissions are under Meta App Review/);
+    assert.equal(/not submitted/i.test(row.body), false);
     assert.equal(/official Meta Tech Provider/i.test(row.body), false);
     assert.equal(/Authorized Tech Provider/i.test(row.body), false);
     assert.match(row.body, /\bSTOP\b/);
@@ -226,6 +291,12 @@ describe("Compliance #26 public policy HTML + deletion-status", () => {
       assert.match(res.headers.get("content-type") || "", /html/i);
       const html = await res.text();
       assert.match(html, /not a certified Meta Tech Provider/i);
+      assert.match(html, /WhatsApp permissions are under Meta App Review/);
+      assert.equal(/not submitted/i.test(html), false, p);
+      assert.match(
+        html,
+        /name="description" content="Lumera clinic software\. Lumera is not a certified Meta Tech Provider\. WhatsApp permissions are under Meta App Review\."/
+      );
       assert.equal(/id="root"/.test(html), false, `${p} should not be the Vite SPA shell`);
       assert.match(html, /ravee@lumer\.me/);
       assert.equal(/dpo@lumera\.me|compliance@lumera\.health|privacy@lumera\.health|legal@lumera\.health/.test(html), false);
