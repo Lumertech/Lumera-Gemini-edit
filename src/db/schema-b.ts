@@ -266,6 +266,7 @@ export const LUMERA_TABLE_NAMES = [
   "patients",
   "appointments",
   "prescriptions",
+  "prescription_drafts",
   "lab_reports",
   "whatsapp_conversations",
   "whatsapp_messages",

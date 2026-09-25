@@ -26,6 +26,20 @@ function requireTenant(req: Request, res: Response): string | null {
   return tenantId;
 }
 
+/** Patient must belong to the caller's clinic. Empty id skips the check. */
+function requireTenantPatient(tenantId: string, patientId: string, res: Response): boolean {
+  const id = String(patientId || "").trim();
+  if (!id) return true;
+  const row = getDb()
+    .prepare("SELECT id FROM patients WHERE id = ? AND tenant_id = ?")
+    .get(id, tenantId) as { id?: string } | undefined;
+  if (!row?.id) {
+    res.status(404).json({ error: "Patient not found" });
+    return false;
+  }
+  return true;
+}
+
 function jsonText(value: unknown, fallback: string): string {
   if (value == null) return fallback;
   if (typeof value === "string") {
@@ -1065,6 +1079,7 @@ export function createClinicalRouter(): Router {
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     const patientId = req.params.patientId;
+    if (!requireTenantPatient(tenantId, patientId, res)) return;
     const row = getDb()
       .prepare("SELECT * FROM prescription_drafts WHERE tenant_id = ? AND patient_id = ?")
       .get(tenantId, patientId) as { draft_json?: string; updated_at?: string } | undefined;
@@ -1088,19 +1103,23 @@ export function createClinicalRouter(): Router {
       if (!patientId) {
         return res.status(400).json({ error: "patientId is required for draft auto-save" });
       }
+      if (!requireTenantPatient(tenantId, patientId, res)) return;
       const draftJson = JSON.stringify(body);
       const now = new Date().toISOString();
-      getDb()
+      const saved = getDb()
         .prepare(
           `INSERT INTO prescription_drafts (patient_id, tenant_id, doctor_id, draft_json, updated_at)
            VALUES (?, ?, ?, ?, ?)
            ON CONFLICT(patient_id) DO UPDATE SET
-             tenant_id = excluded.tenant_id,
              doctor_id = excluded.doctor_id,
              draft_json = excluded.draft_json,
-             updated_at = excluded.updated_at`
+             updated_at = excluded.updated_at
+           WHERE prescription_drafts.tenant_id = excluded.tenant_id`
         )
         .run(patientId, tenantId, doctorId, draftJson, now);
+      if (Number(saved.changes) === 0) {
+        return res.status(409).json({ error: "Draft belongs to another clinic." });
+      }
       res.json({ success: true, updatedAt: now });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Failed to auto-save draft";
@@ -1112,13 +1131,14 @@ export function createClinicalRouter(): Router {
   api.post("/pharmacy/dispatch-order", requireAuth, (req, res) => {
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
-    const { patientName, phone, medicines, partner = "Apollo Pharmacy Partner" } = req.body;
+    const { patientName, phone, medicines, partner = "Apollo Pharmacy Partner", patientId, patient_id } = req.body;
+    if (!requireTenantPatient(tenantId, String(patientId || patient_id || ""), res)) return;
     const orderId = shortId("PHARM");
     res.json({
       success: true,
       orderId,
       partner,
-      message: `Prescription successfully dispatched to ${partner}. Patient ${patientName || 'Patient'} notified via WhatsApp with home delivery payment link.`,
+      message: `Pharmacy dispatch recorded for ${partner}. Patient ${patientName || "Patient"} is listed on this clinic order.`,
       timestamp: new Date().toISOString(),
       itemsCount: Array.isArray(medicines) ? medicines.length : 1
     });
@@ -1127,7 +1147,8 @@ export function createClinicalRouter(): Router {
   api.post("/diagnostics/dispatch-order", requireAuth, (req, res) => {
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
-    const { patientName, phone, labTests, provider = "Dr. Lal PathLabs Home Collection" } = req.body;
+    const { patientName, phone, labTests, provider = "Dr. Lal PathLabs Home Collection", patientId, patient_id } = req.body;
+    if (!requireTenantPatient(tenantId, String(patientId || patient_id || ""), res)) return;
     const orderId = shortId("LAB");
     res.json({
       success: true,
@@ -1142,17 +1163,21 @@ export function createClinicalRouter(): Router {
   api.post("/insurance/pmjay-precheck", requireAuth, (req, res) => {
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
-    const { abhaNumber, patientName } = req.body;
-    const isEligible = Math.random() > 0.2; // 80% simulation eligibility for PM-JAY / National Health Stack
+    const { abhaNumber, patientName, patientId, patient_id } = req.body;
+    if (!requireTenantPatient(tenantId, String(patientId || patient_id || ""), res)) return;
+    const isEligible = Math.random() > 0.2; // local simulation only — not an external payer decision
+    const abha = String(abhaNumber || "").trim();
     res.json({
       success: true,
-      abhaNumber: abhaNumber || "14-8839-2910-4491",
+      abhaNumber: abha,
       patientName: patientName || "Beneficiary",
       pmjayEligible: isEligible,
       coverageLimit: isEligible ? 500000 : 0,
-      scheme: "Ayushman Bharat PM-JAY (₹5 Lakh Health Cover)",
+      scheme: "Ayushman Bharat PM-JAY (local eligibility simulation)",
       verificationId: shortId("PMJAY"),
-      message: isEligible ? "Verified PM-JAY Beneficiary. Cashless insurance claim pre-authorized." : "Not covered under PM-JAY active list. Standard cashless / self-pay applicable."
+      message: isEligible
+        ? "PM-JAY eligibility simulation matched. Cashless cover pre-check recorded for this clinic."
+        : "PM-JAY eligibility simulation did not match. Standard self-pay applies."
     });
   });
 

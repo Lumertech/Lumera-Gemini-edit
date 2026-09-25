@@ -100,23 +100,14 @@ export function applyBundledServerNodeEnv(
  * Meta / Facebook / Razorpay secrets stay optional until the founder provisions them.
  */
 export function assertRequiredProductionEnv(env: NodeJS.ProcessEnv = process.env): void {
-  const strict = String(env.REQUIRE_PRODUCTION_DB || "").trim() === "true" || String(env.STRICT_PRODUCTION || "").trim() === "true";
+  if (env.NODE_ENV !== "production") return;
   const jwt = String(env.JWT_SECRET || "").trim();
   if (!jwt || isUnsetOrPlaceholder(jwt)) {
-    if (strict) {
-      throw new Error(JWT_SECRET_REQUIRED_MESSAGE);
-    } else {
-      env.JWT_SECRET = "lumera-default-secret-key-default-382910";
-      console.warn("[Lumera] JWT_SECRET is unset. Using default development secret for preview.");
-    }
+    throw new Error(JWT_SECRET_REQUIRED_MESSAGE);
   }
   const dbUrl = databaseUrlFromEnv(env);
   if (!dbUrl || isUnsetOrPlaceholder(dbUrl)) {
-    if (strict) {
-      throw new Error(DATABASE_URL_REQUIRED_MESSAGE);
-    } else {
-      console.warn("[Lumera] DATABASE_URL is unset. Falling back to local SQLite database (data/lumera.db).");
-    }
+    throw new Error(DATABASE_URL_REQUIRED_MESSAGE);
   }
   const appUrl = String(env.APP_URL || "").trim().replace(/\/$/, "");
   if (!appUrl) {

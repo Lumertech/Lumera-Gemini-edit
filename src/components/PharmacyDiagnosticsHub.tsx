@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Pill, TestTube, ShieldCheck, Send, CheckCircle2, RefreshCw, Truck, Building2, UserCheck, Sparkles } from 'lucide-react';
 import { Patient, Prescription } from '../types';
+import { apiFetch } from '../api/http';
 
 interface PharmacyDiagnosticsHubProps {
   currentPatient: Patient;
@@ -23,17 +24,16 @@ export const PharmacyDiagnosticsHub: React.FC<PharmacyDiagnosticsHubProps> = ({
   const handleDispatchPharmacy = async () => {
     setIsLoadingPharm(true);
     try {
-      const res = await fetch('/api/pharmacy/dispatch-order', {
+      const data = await apiFetch('/api/pharmacy/dispatch-order', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          patientId: currentPatient.id,
           patientName: currentPatient.name,
           phone: currentPatient.phone,
           medicines: currentPrescription?.medicines || [{ name: 'Paracetamol 650mg', dosage: '1-0-1' }],
           partner: selectedPharmacy,
         }),
       });
-      const data = await res.json();
       setPharmacyStatus(data);
     } catch (err) {
       console.error(err);
@@ -45,17 +45,16 @@ export const PharmacyDiagnosticsHub: React.FC<PharmacyDiagnosticsHubProps> = ({
   const handleDispatchDiagnostics = async () => {
     setIsLoadingLab(true);
     try {
-      const res = await fetch('/api/diagnostics/dispatch-order', {
+      const data = await apiFetch('/api/diagnostics/dispatch-order', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          patientId: currentPatient.id,
           patientName: currentPatient.name,
           phone: currentPatient.phone,
           labTests: currentPrescription?.labTests || ['Complete Blood Count (CBC)', 'HbA1c'],
           provider: selectedLabProvider,
         }),
       });
-      const data = await res.json();
       setDiagnosticsStatus(data);
     } catch (err) {
       console.error(err);
@@ -67,15 +66,14 @@ export const PharmacyDiagnosticsHub: React.FC<PharmacyDiagnosticsHubProps> = ({
   const handleCheckInsurance = async () => {
     setIsLoadingIns(true);
     try {
-      const res = await fetch('/api/insurance/pmjay-precheck', {
+      const data = await apiFetch('/api/insurance/pmjay-precheck', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          abhaNumber: currentPatient.abhaNumber || '14-8839-2910-4491',
+          patientId: currentPatient.id,
+          abhaNumber: currentPatient.abhaNumber || '',
           patientName: currentPatient.name,
         }),
       });
-      const data = await res.json();
       setInsuranceStatus(data);
     } catch (err) {
       console.error(err);
@@ -161,7 +159,7 @@ export const PharmacyDiagnosticsHub: React.FC<PharmacyDiagnosticsHubProps> = ({
               <span>Diagnostics Home Collection</span>
             </div>
             <p className="text-xs text-slate-500 leading-relaxed">
-              Dispatch diagnostic test orders to accredited lab partners for certified home phlebotomy sample pickup.
+              Dispatch diagnostic test orders to lab partners for home phlebotomy sample pickup.
             </p>
 
             <div className="space-y-1.5 pt-2">
@@ -213,11 +211,11 @@ export const PharmacyDiagnosticsHub: React.FC<PharmacyDiagnosticsHubProps> = ({
             <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-xs space-y-1 mt-3">
               <div className="flex justify-between">
                 <span className="text-slate-500">ABHA Number:</span>
-                <span className="font-mono font-semibold text-slate-800">{currentPatient.abhaNumber || '14-8839-2910-4491'}</span>
+                <span className="font-mono font-semibold text-slate-800">{currentPatient.abhaNumber || 'Not on file'}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-500">KYC Status:</span>
-                <span className="font-semibold text-emerald-700">VERIFIED (NHA)</span>
+                <span className="font-semibold text-slate-600">Not checked</span>
               </div>
             </div>
 

@@ -33,10 +33,8 @@ export interface SqlDatabase {
  * connection; they must not call initDatabase() again without DATABASE_URL.
  */
 export function sqliteFallbackForbidden(env: NodeJS.ProcessEnv = process.env, argv1 = process.argv[1]): boolean {
-  if (String(env.REQUIRE_PRODUCTION_DB || "").trim() === "true" || String(env.STRICT_PRODUCTION || "").trim() === "true") {
-    if (String(env.NODE_ENV || "").trim() === "production") return true;
-    if (String(env.K_SERVICE || "").trim() || String(env.K_REVISION || "").trim()) return true;
-    if (/(^|[\\/])server\.cjs$/.test(String(argv1 || ""))) return true;
-  }
+  if (String(env.NODE_ENV || "").trim() === "production") return true;
+  if (String(env.K_SERVICE || "").trim() || String(env.K_REVISION || "").trim()) return true;
+  if (/(^|[\\/])server\.cjs$/.test(String(argv1 || ""))) return true;
   return false;
 }

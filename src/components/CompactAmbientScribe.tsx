@@ -12,6 +12,7 @@ import {
   ArrowRight,
 } from "lucide-react";
 import { SoapNote, Patient, Doctor } from "../types";
+import { apiFetch } from "../api/http";
 import { isSpeechRecognitionAvailable, micErrorMessage, startAmbientMic } from "../lib/ambientMic";
 import { extractClinicalTokens, type PulseExtractSource } from "../lib/pulseClinicalTokens";
 import { resolveRxModule } from "../lib/specialtyWorkflow";
@@ -207,12 +208,10 @@ export const CompactAmbientScribe: React.FC<CompactAmbientScribeProps> = ({
                 reader.onloadend = async () => {
                   const base64Audio = reader.result as string;
                   const mimeType = audioBlob.type || "audio/webm";
-                  const res = await fetch("/api/gemini/transcribe", {
+                  const data = await apiFetch<{ success?: boolean; transcription?: string }>("/api/gemini/transcribe", {
                     method: "POST",
-                    headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ audioBase64: base64Audio, mimeType }),
                   });
-                  const data = await res.json();
                   if (data.success && data.transcription) {
                     setFinalTranscript((prev) => (prev ? `${prev} ${data.transcription}` : data.transcription));
                   }

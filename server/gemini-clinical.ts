@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { GoogleGenAI } from "@google/genai";
+import { requireAuth } from "./auth.ts";
 import { mountGeminiVoiceRoutes } from "./gemini-voice.ts";
 import { generateRuleBasedSoap, getPulseFallbackAnswer } from "./gemini-fallbacks.ts";
 import { aiScribeTenantIdFromRequest, blockedAiScribeResponse, meterSuccessfulGeminiScribe } from "./gemini-scribe-meter.ts";
@@ -161,7 +162,11 @@ export function mountGeminiClinicalRoutes(app: Express) {
       res.status(500).json({ error: error.message });
     }
   });
-  app.post("/api/gemini/transcribe", async (req: Request, res: Response) => {
+  app.post("/api/gemini/transcribe", requireAuth, async (req: Request, res: Response) => {
+    const tenantId = String(req.user?.tenantId || "").trim();
+    if (!tenantId) {
+      return res.status(400).json({ error: "No tenant associated with this account." });
+    }
     try {
       const { audioBase64, mimeType = "audio/webm" } = req.body;
       if (!audioBase64) {
