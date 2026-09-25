@@ -282,6 +282,18 @@ export function migrate(database: SqlDatabase) {
   } catch {}
 
   try {
+    database.exec("ALTER TABLE branches ADD COLUMN tenant_id TEXT NOT NULL DEFAULT ''");
+  } catch {}
+  try {
+    database.exec(
+      "UPDATE branches SET tenant_id = 'tenant-lumera-main' WHERE id IN ('b-1', 'b-2', 'b-3') AND (tenant_id IS NULL OR TRIM(tenant_id) = '')"
+    );
+  } catch {}
+  try {
+    database.exec("CREATE INDEX IF NOT EXISTS idx_branches_tenant ON branches(tenant_id)");
+  } catch {}
+
+  try {
     database.exec("CREATE INDEX IF NOT EXISTS idx_patients_tenant ON patients(tenant_id)");
   } catch {}
   try {

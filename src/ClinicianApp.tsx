@@ -7,6 +7,7 @@ import { PrescriptionWriter } from './components/PrescriptionWriter';
 import { QueueBoard } from './components/QueueBoard';
 import { AppointmentsCalendar } from './components/AppointmentsCalendar';
 import { PolyclinicManager } from './components/PolyclinicManager';
+import { ClinicBranchesPanel, type ClinicBranch } from './components/clinic/ClinicBranchesPanel';
 import { WhatsAppAssistant } from './components/WhatsAppAssistant';
 import { VoiceBotAssistant } from './components/VoiceBotAssistant';
 import { BillingManager } from './components/BillingManager';
@@ -49,6 +50,8 @@ import {
   resolveSessionDoctor,
 } from './lib/sessionWorkspace';
 import { postOnboardingHomeView } from './lib/practiceOnboarding';
+import { canManageClinicBranches, withoutClinicBranchView } from './lib/clinicBranches';
+import { readActiveBranch, writeActiveBranch, type ActiveBranch } from './lib/activeBranch';
 import {
   allowedViewsForWorkflow,
   clinicianHomeView,
@@ -89,6 +92,7 @@ export default function ClinicianApp() {
   const [intakeIntent, setIntakeIntent] = useState<'none' | 'register' | 'start-consult'>('none');
   const [autoSaveStatus, setAutoSaveStatus] = useState<'saved' | 'saving' | 'unsaved'>('saved');
   const [currentDraftRx, setCurrentDraftRx] = useState<Prescription | null>(null);
+  const [activeBranch, setActiveBranch] = useState<ActiveBranch | null>(() => readActiveBranch(user?.tenantId));
 
   useEffect(() => {
     if (!currentPatient.id || isDemo) return;
@@ -466,10 +470,12 @@ export default function ClinicianApp() {
   };
 
   const userRole = user?.role || 'doctor';
+  const manageBranches = canManageClinicBranches(user);
   let allowedViews = ROLE_VISIBLE_VIEWS[userRole] || ROLE_VISIBLE_VIEWS.doctor;
   if (!isPolyclinicPractice(user)) {
     allowedViews = allowedViews.filter((v) => v !== 'team' && v !== 'polyclinic');
   }
+  allowedViews = withoutClinicBranchView(allowedViews, user);
   allowedViews = allowedViewsForWorkflow(allowedViews, pack);
   const isViewAllowed =
     allowedViews.includes(currentView) ||
@@ -483,11 +489,24 @@ export default function ClinicianApp() {
     currentView === 'physio-session' ||
     currentView === 'dental-chart';
 
+  const branchViewBlocked = currentView === 'branches' && !manageBranches;
+
   useEffect(() => {
-    if (!isPolyclinicPractice(user) && (currentView === 'polyclinic' || currentView === 'team')) {
+    setActiveBranch(readActiveBranch(user?.tenantId));
+  }, [user?.tenantId]);
+
+  useEffect(() => {
+    if (branchViewBlocked || (!isPolyclinicPractice(user) && (currentView === 'polyclinic' || currentView === 'team'))) {
       setCurrentView('queue');
     }
-  }, [user?.practiceType, currentView]);
+  }, [user?.practiceType, currentView, branchViewBlocked]);
+
+  const openBranchInClinic = (branch: ClinicBranch) => {
+    const next: ActiveBranch = { id: branch.id, name: branch.name, tenantId: user?.tenantId || '' };
+    writeActiveBranch(next);
+    setActiveBranch(next);
+    setCurrentView('queue');
+  };
 
   const showRxStudio = (currentView === 'rx' || currentView === 'smart-rx') && Boolean(currentPatient.id);
   const showRxEmptyGuard = (currentView === 'rx' || currentView === 'smart-rx') && !currentPatient.id;
@@ -534,7 +553,29 @@ export default function ClinicianApp() {
               {pack.sandboxNotice}
             </div>
           )}
-          {!isViewAllowed ? (
+          {activeBranch && (currentView === 'queue' || currentView === 'opd-queue' || currentView === 'settings' || currentView === 'branches' || currentView === 'polyclinic') && (
+            <div
+              className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-slate-800"
+              data-testid="active-branch-banner"
+            >
+              <span>
+                Active branch: <strong data-testid="active-branch-name">{activeBranch.name}</strong>
+              </span>
+              <span className="flex gap-2">
+                <button type="button" className="font-semibold text-blue-800 underline" onClick={() => setCurrentView('queue')}>
+                  Clinic queue
+                </button>
+                <button type="button" className="font-semibold text-blue-800 underline" onClick={() => setCurrentView('settings')}>
+                  Clinic settings
+                </button>
+              </span>
+            </div>
+          )}
+          {branchViewBlocked ? (
+            <p className="text-sm text-slate-600" data-testid="branch-view-handoff">
+              Opening the clinic queue…
+            </p>
+          ) : !isViewAllowed ? (
             <div className="flex flex-col items-center justify-center h-full p-8 bg-white rounded-xl shadow-sm border border-slate-200 text-center my-auto">
               <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center text-red-600 mb-4 mx-auto">
                 <ShieldCheck className="w-8 h-8" />
@@ -790,7 +831,15 @@ export default function ClinicianApp() {
                 setDoctors((prev) => prev.map((d) => (d.id === updated.id ? updated : d)));
                 if (currentDoctor.id === updated.id) setCurrentDoctor(updated);
               }}
+              canManageBranches={manageBranches}
+              onUseBranch={openBranchInClinic}
             />
+          )}
+
+          {currentView === 'branches' && manageBranches && (
+            <div className="max-w-5xl mx-auto bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+              <ClinicBranchesPanel onUseBranch={openBranchInClinic} />
+            </div>
           )}
 
           {currentView === 'whatsapp' && (

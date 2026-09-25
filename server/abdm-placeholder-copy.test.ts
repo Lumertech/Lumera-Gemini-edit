@@ -255,7 +255,10 @@ describe("ABDM placeholder-ID copy (registration + surfaces)", () => {
     assert.match(abdmConsent, /persistCallbackArtefact/);
 
     assert.ok(lineCount("src/pages/OnboardingWizard.tsx") >= 860, "OnboardingWizard.tsx truncated");
-    assert.ok(lineCount("server/api.ts") >= 2370, "server/api.ts truncated");
+    const apiSrc = readRepo("server/api.ts");
+    assert.match(apiSrc, /createClinicBranchesRouter/);
+    const apiLines = lineCount("server/api.ts") + lineCount("server/clinic-branches.ts");
+    assert.ok(apiLines >= 2370, `server/api.ts truncated (${apiLines} with clinic-branches.ts)`);
     assert.ok(lineCount("server/fhir.ts") >= 1000, "server/fhir.ts truncated");
     assert.ok(lineCount("src/components/LandingPage.tsx") >= 970, "LandingPage.tsx truncated");
     assert.ok(lineCount("src/components/admin/AdminMetaTechProvider.tsx") >= 1160, "AdminMetaTechProvider.tsx truncated");
