@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   FileText, 
   Plus, 
@@ -75,7 +75,7 @@ import { OphthalmologyRxModule } from './specialty-rx/OphthalmologyRxModule';
 import { DentalSurgeryRxModule } from './specialty-rx/DentalSurgeryRxModule';
 import { GynecologyRxModule } from './specialty-rx/GynecologyRxModule';
 import { PhysioProgressTracker } from './specialty-rx/PhysioProgressTracker';
-import { CompactAmbientScribe, AmbientScribeStatus } from './CompactAmbientScribe';
+import { CompactAmbientScribe, AmbientScribeStatus, CompactAmbientScribeHandle } from './CompactAmbientScribe';
 import { FollowUpSlotPicker, ReservedFollowUp } from './FollowUpSlotPicker';
 import { clonePresetExercises, presetHepToastMessage } from '../lib/rxPresetHep';
 import { followUpBookingRef } from '../lib/followUpSlots';
@@ -119,6 +119,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
 
   const [isAmbientScribeOpen, setIsAmbientScribeOpen] = useState(true);
   const [scribeStatus, setScribeStatus] = useState<AmbientScribeStatus>('idle');
+  const ambientScribeRef = useRef<CompactAmbientScribeHandle>(null);
   const [hepToast, setHepToast] = useState<string | null>(null);
   const [physioSubTab, setPhysioSubTab] = useState<'assessment' | 'procedures' | 'exercises'>('assessment');
   const [hepRevision, setHepRevision] = useState(0);
@@ -719,6 +720,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
       )}
 
       <CompactAmbientScribe
+        ref={ambientScribeRef}
         currentPatient={currentPatient}
         currentDoctor={currentDoctor}
         practiceSpecialty={activeSpecialty}
@@ -790,30 +792,39 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
 
           {/* Embedded Ambient Scribe Toggle */}
           <button
+            type="button"
+            data-testid="consult-ambient-mic"
             onClick={() => {
               setIsAmbientScribeOpen(true);
-              document.getElementById('ambient-scribe-top')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              if (scribeStatus === 'listening' || scribeStatus === 'requesting') {
+                ambientScribeRef.current?.stopListening();
+              } else if (scribeStatus !== 'processing' && scribeStatus !== 'transcribing') {
+                ambientScribeRef.current?.startListening();
+              }
+              window.setTimeout(() => {
+                document.getElementById('ambient-scribe-top')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              }, 30);
             }}
             className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition-all shadow-xs cursor-pointer ${
               scribeStatus === 'listening'
                 ? 'bg-rose-600 text-white'
-                : scribeStatus === 'processing'
+                : scribeStatus === 'requesting' || scribeStatus === 'processing' || scribeStatus === 'transcribing'
                   ? 'bg-amber-500 text-white'
-                  : isAmbientScribeOpen
-                    ? 'bg-purple-700 text-white ring-2 ring-purple-300'
-                    : 'bg-purple-50 hover:bg-purple-100 text-purple-900 border border-purple-200'
+                  : 'bg-purple-600 hover:bg-purple-700 text-white'
             }`}
-            title="Ambient AI Clinical Scribe status"
+            title={scribeStatus === 'listening' ? 'Stop the microphone' : 'Start the consult microphone'}
           >
-            <Mic className={`w-3.5 h-3.5 ${scribeStatus === 'listening' ? 'animate-pulse' : ''}`} />
+            <Mic className={`w-3.5 h-3.5 ${scribeStatus === 'listening' || scribeStatus === 'requesting' ? 'animate-pulse' : ''}`} />
             <span>
               {scribeStatus === 'listening'
-                ? 'Listening'
-                : scribeStatus === 'processing'
-                  ? 'Processing'
-                  : isAmbientScribeOpen
-                    ? 'Scribe Idle'
-                    : 'Show Ambient AI'}
+                ? 'Stop listening'
+                : scribeStatus === 'requesting'
+                  ? 'Allow microphone…'
+                  : scribeStatus === 'transcribing'
+                    ? 'Transcribing…'
+                    : scribeStatus === 'processing'
+                      ? 'Processing'
+                      : 'Start ambient mic'}
             </span>
           </button>
 

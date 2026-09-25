@@ -526,6 +526,7 @@ describe("Auth / tenant isolation / CORS / CSRF / rate limit", () => {
       assert.match(csp, /default-src 'self'/);
       assert.match(csp, /frame-ancestors 'none'/);
       assert.match(csp, /https:\/\/connect\.facebook\.net/);
+      assert.match(csp, /https:\/\/www\.google\.com/);
       assert.doesNotMatch(csp, /script-src[^;]*'unsafe-inline'/);
       assert.equal(login.headers.get("x-content-type-options"), "nosniff");
       assert.equal(login.headers.get("x-frame-options"), "DENY");

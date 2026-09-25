@@ -68,7 +68,17 @@ export function resolveClientDist(cwd = process.cwd()): string {
 
 export function attachProductionSpaFallback(app: Express, distPath = resolveClientDist()): void {
   const indexFile = path.join(distPath, "index.html");
-  app.use(express.static(distPath, { index: false, fallthrough: true }));
+  app.use(
+    express.static(distPath, {
+      index: false,
+      fallthrough: true,
+      setHeaders(res, filePath) {
+        if (filePath.endsWith(`${path.sep}index.html`) || filePath.endsWith("/index.html")) {
+          res.setHeader("Cache-Control", "no-cache");
+        }
+      },
+    })
+  );
   app.use((req: Request, res: Response, next: NextFunction) => {
     if (req.method !== "GET" && req.method !== "HEAD") return next();
     if (!isSpaHistoryFallbackPath(req.path)) return next();
