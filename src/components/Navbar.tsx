@@ -136,15 +136,20 @@ export const Navbar: React.FC<NavbarProps> = ({
                 Lumera<span className="text-blue-400 font-extrabold">Studio</span>
               </span>
               <span className="hidden sm:inline-block px-1.5 py-0.2 text-[9px] uppercase font-bold tracking-wider rounded bg-blue-500/20 text-blue-300 border border-blue-500/30">
-                EMR Suite
+                Tenant: {workspaceSlug || 'practice'}
               </span>
+            </div>
+            <div className="text-[10px] text-slate-400 font-medium truncate max-w-[140px] sm:max-w-none">
+              {VIEW_TITLES[currentView] || 'Clinical Workspace'}
             </div>
           </div>
         </Link>
 
         {/* Breadcrumb Separator & Current View */}
-        <div className="hidden md:flex items-center space-x-2 text-xs text-slate-400 pl-2 border-l border-slate-800">
-          <span className="text-slate-200 font-medium">{VIEW_TITLES[currentView] || 'Clinical Workspace'}</span>
+        <div className="hidden lg:flex items-center space-x-2 text-xs text-slate-400 pl-2 border-l border-slate-800">
+          <span className="text-slate-200 font-semibold uppercase tracking-wider text-[10px] bg-slate-800 px-2 py-0.5 rounded">
+            {workspaceSlug ? `w/${workspaceSlug}` : 'Multi-Tenant OS'}
+          </span>
         </div>
       </div>
 

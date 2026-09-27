@@ -39,7 +39,7 @@ import { apiFetch } from './api/http';
 import { useAuth } from './auth/AuthContext';
 import { useNav } from './nav/NavigationContext';
 import { canonicalizeAppView } from './nav/surfaces';
-import { isAppWorkspaceRootPath } from './lib/workspacePath';
+import { isAppWorkspaceRootPath, workspaceSlugFromUser } from './lib/workspacePath';
 import {
   UNASSIGNED_PATIENT,
   clinicSettingsFromSession,
@@ -65,8 +65,9 @@ export default function ClinicianApp() {
   const sessionDoctor = doctorFromUser(user);
   const pack = workflowForUser(user);
   const currentView = appView;
+  const sessionWorkspace = user ? workspaceSlugFromUser(user) : 'practice';
   const setCurrentView = (view: NavView) => {
-    go('app', { appView: canonicalizeAppView(view) });
+    go('app', { appView: canonicalizeAppView(view), workspaceSlug: sessionWorkspace });
   };
   const [currentDoctor, setCurrentDoctor] = useState<Doctor>(() =>
     isDemo ? MOCK_DOCTORS[0] : sessionDoctor
@@ -174,17 +175,19 @@ export default function ClinicianApp() {
 
   useEffect(() => {
     if (!user) return;
+    const ws = workspaceSlugFromUser(user);
     if (consumeWelcomeDashboard()) {
       go('app', {
         appView: postOnboardingHomeView(user.practiceType === 'polyclinic' ? 'polyclinic' : 'individual'),
+        workspaceSlug: ws,
         replace: true,
       });
       return;
     }
     if (isAppWorkspaceRootPath(pathname)) {
-      go('app', { appView: canonicalizeAppView(clinicianHomeView(user)), replace: true });
+      go('app', { appView: canonicalizeAppView(clinicianHomeView(user)), workspaceSlug: ws, replace: true });
     }
-  }, [user?.id, user?.practiceType, user?.specialty, pathname, go]);
+  }, [user, pathname, go]);
 
   useEffect(() => {
     if (!user) return;
@@ -526,6 +529,7 @@ export default function ClinicianApp() {
           onSelectPatient={handleSelectPatient}
           allPatients={patients}
           currentDoctor={currentDoctor}
+          onPatientCreated={(p) => setPatients((prev) => [p, ...prev])}
         />
 
         <main className="flex-1 min-w-0 h-full overflow-y-auto bg-slate-100/70 p-4 sm:p-6 lg:p-8 flex flex-col">
@@ -679,8 +683,8 @@ export default function ClinicianApp() {
           )}
 
           {showRxStudio && (
-            <div className="flex-1 flex flex-col overflow-hidden relative">
-              <div className="bg-white border-b border-slate-200 px-4 py-1.5 flex items-center justify-between text-xs text-slate-500 shadow-xs z-10">
+            <div className="flex-1 flex flex-col overflow-y-auto relative">
+              <div className="bg-white border-b border-slate-200 px-4 py-1.5 flex items-center justify-between text-xs text-slate-500 shadow-xs z-10 shrink-0">
                 <span className="font-medium flex items-center gap-1.5">
                   <span className={`inline-block w-2 h-2 rounded-full ${autoSaveStatus === 'saved' ? 'bg-emerald-500' : autoSaveStatus === 'saving' ? 'bg-amber-500 animate-pulse' : 'bg-slate-400'}`}></span>
                   {autoSaveStatus === 'saved' && 'Draft securely auto-saved to database'}
@@ -689,7 +693,7 @@ export default function ClinicianApp() {
                 </span>
                 <span className="text-slate-400">SOAP Notes & Prescription Auto-Sync Active</span>
               </div>
-              <div className="flex-1 overflow-hidden flex flex-col">
+              <div className="flex-1 overflow-y-auto flex flex-col">
                 <PrescriptionWriter
                   currentPatient={currentPatient}
                   currentDoctor={currentDoctor}

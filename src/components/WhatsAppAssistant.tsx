@@ -381,8 +381,24 @@ export const WhatsAppAssistant: React.FC<WhatsAppAssistantProps> = ({
     }
 
     if (q.includes('download pdf')) {
-      // Default to prescription or lab pdf
-      window.open(`/api/whatsapp/prescription/rx-101/pdf`, '_blank');
+      try {
+        const res = await fetch('/api/whatsapp/emr-action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'get_prescription',
+            patientPhone: activePatientPhone,
+          }),
+        });
+        const data = await res.json();
+        if (data.found && data.prescription?.pdfUrl) {
+          window.open(data.prescription.pdfUrl, '_blank');
+          return;
+        }
+      } catch (err) {
+        console.error('Error fetching tenant-scoped prescription PDF:', err);
+      }
+      window.open(`/api/emr/prescription/rx-101/pdf`, '_blank');
       return;
     }
 
@@ -832,7 +848,7 @@ export const WhatsAppAssistant: React.FC<WhatsAppAssistantProps> = ({
                                     type: isRx ? 'prescription' : 'lab-report',
                                     id: m.media?.title || 'doc-1',
                                     title: m.media?.title || 'Clinical Document',
-                                    pdfUrl: m.media?.url || `/api/whatsapp/prescription/rx-101/pdf`,
+                                    pdfUrl: m.media?.url || `/api/emr/prescription/rx-101/pdf`,
                                     data: m.media?.previewData,
                                   });
                                 }}
@@ -841,7 +857,7 @@ export const WhatsAppAssistant: React.FC<WhatsAppAssistantProps> = ({
                                 <Eye className="w-3 h-3 text-blue-400" /> Preview Slip
                               </button>
                               <a
-                                href={m.media.url || `/api/whatsapp/prescription/rx-101/pdf`}
+                                href={m.media.url || `/api/emr/prescription/rx-101/pdf`}
                                 target="_blank"
                                 rel="noreferrer"
                                 className="py-1.5 px-3 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-semibold flex items-center gap-1 transition-colors"

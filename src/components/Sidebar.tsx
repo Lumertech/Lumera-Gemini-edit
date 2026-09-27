@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { 
   Sparkles, 
   FileText, 
@@ -11,6 +11,8 @@ import {
   PhoneCall, 
   Users, 
   User,
+  UserPlus,
+  X,
   ChevronLeft,
   ChevronRight,
   Award,
@@ -29,6 +31,7 @@ import { useNav } from '../nav/NavigationContext';
 import { appViewToPath } from '../nav/surfaces';
 import { isPolyclinicPractice } from '../lib/sessionWorkspace';
 import { allowedViewsForWorkflow, workflowForUser } from '../lib/specialtyWorkflow';
+import { apiFetch } from '../api/http';
 
 export const ROLE_VISIBLE_VIEWS: Record<string, NavView[]> = {
   doctor: ['welcome', 'queue', 'opd-queue', 'rx', 'smart-rx', 'ambient', 'reports', 'appointments', 'polyclinic', 'whatsapp', 'voicebot', 'pharmacy-hub', 'billing', 'dhis', 'team', 'reception', 'kiosk', 'settings', 'wellness', 'therapy-session', 'consult-practice', 'physio-session', 'dental-chart'],
@@ -52,6 +55,7 @@ interface SidebarProps {
   onSelectPatient: (patient: Patient) => void;
   allPatients: Patient[];
   currentDoctor: Doctor;
+  onPatientCreated?: (patient: Patient) => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -63,6 +67,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onSelectPatient,
   allPatients,
   currentDoctor,
+  onPatientCreated,
 }) => {
   const { user, logout } = useAuth();
   const { go, workspaceSlug } = useNav();
@@ -78,6 +83,45 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const canStartConsult = allowedViews.includes('rx') || allowedViews.includes('smart-rx') || allowedViews.includes(pack.homeView as NavView);
   const startView = (pack.showMedicalRx ? 'rx' : pack.homeView) as NavView;
   const canOpenAdminCms = userRole === 'super_admin';
+
+  const [isQuickAddOpen, setIsQuickAddOpen] = useState(false);
+  const [quickName, setQuickName] = useState('');
+  const [quickPhone, setQuickPhone] = useState('');
+  const [quickSubmitting, setQuickSubmitting] = useState(false);
+  const [quickError, setQuickError] = useState<string | null>(null);
+
+  const handleQuickAddSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!quickName.trim() || !quickPhone.trim()) {
+      setQuickError('Please enter both patient name and phone number.');
+      return;
+    }
+    setQuickSubmitting(true);
+    setQuickError(null);
+    try {
+      const data = await apiFetch<{ patient: Patient }>('/api/patients', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: quickName.trim(),
+          phone: quickPhone.trim(),
+          age: 30,
+          gender: 'Other',
+          bloodGroup: 'O+'
+        }),
+      });
+      if (data && data.patient) {
+        onPatientCreated?.(data.patient);
+        onSelectPatient(data.patient);
+        setIsQuickAddOpen(false);
+        setQuickName('');
+        setQuickPhone('');
+      }
+    } catch (err: any) {
+      setQuickError(err?.message || 'Failed to register patient.');
+    } finally {
+      setQuickSubmitting(false);
+    }
+  };
 
   const suiteTitle =
     pack.kind === 'physio' ? '1. Rehab suite' :
@@ -330,9 +374,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <User className="w-3 h-3 text-blue-400" />
                 Active Patient
               </span>
-              <span className="text-[9px] font-mono text-blue-300 bg-blue-500/20 px-1.5 py-0.2 rounded">
-                {currentPatient.uhid}
-              </span>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setIsQuickAddOpen(true)}
+                  className="text-[10px] font-semibold text-blue-400 hover:text-blue-300 bg-blue-500/10 hover:bg-blue-500/20 px-1.5 py-0.5 rounded transition-colors flex items-center gap-0.5"
+                  title="Quick Add Patient (Name & Phone)"
+                >
+                  <UserPlus className="w-3 h-3" />
+                  Quick Add
+                </button>
+                <span className="text-[9px] font-mono text-blue-300 bg-blue-500/20 px-1.5 py-0.2 rounded">
+                  {currentPatient.uhid}
+                </span>
+              </div>
             </div>
 
             {selectablePatients.length > 0 ? (
@@ -366,12 +421,93 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
           </div>
         ) : (
-          <div className="flex justify-center">
+          <div className="flex flex-col items-center space-y-2">
             <div
-              className="w-8 h-8 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-blue-400 text-xs font-bold"
+              className="w-8 h-8 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-blue-400 text-xs font-bold cursor-pointer hover:bg-slate-700"
               title={`${currentPatient.name} (${currentPatient.uhid})`}
             >
               {currentPatient.name.charAt(0)}
+            </div>
+            <button
+              onClick={() => setIsQuickAddOpen(true)}
+              className="w-8 h-8 rounded-lg bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 flex items-center justify-center transition-colors"
+              title="Quick Add Patient"
+            >
+              <UserPlus className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
+        {isQuickAddOpen && (
+          <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4" role="dialog" aria-modal="true">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-6 space-y-4 border border-slate-200 animate-in fade-in zoom-in-95">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <div className="flex items-center space-x-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center font-bold">
+                    <UserPlus className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900">Quick Add Patient</h3>
+                    <p className="text-[11px] text-slate-500">Fast intake with name &amp; phone number</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setIsQuickAddOpen(false)}
+                  className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {quickError && (
+                <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs">
+                  {quickError}
+                </div>
+              )}
+
+              <form onSubmit={handleQuickAddSubmit} className="space-y-3.5">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Patient Full Name *</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Rahul Sharma"
+                    value={quickName}
+                    onChange={(e) => setQuickName(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    autoFocus
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Phone Number *</label>
+                  <input
+                    type="tel"
+                    required
+                    placeholder="e.g. +91 98234 55667"
+                    value={quickPhone}
+                    onChange={(e) => setQuickPhone(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  />
+                </div>
+
+                <div className="pt-2 flex items-center justify-end space-x-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setIsQuickAddOpen(false)}
+                    className="px-4 py-2 rounded-xl text-xs font-medium text-slate-600 hover:bg-slate-100"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={quickSubmitting}
+                    className="px-4 py-2 rounded-xl text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 shadow-sm disabled:opacity-50 flex items-center gap-1.5"
+                  >
+                    {quickSubmitting ? 'Registering...' : 'Register & Select'}
+                  </button>
+                </div>
+              </form>
             </div>
           </div>
         )}
