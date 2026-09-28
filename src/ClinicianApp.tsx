@@ -38,7 +38,7 @@ import {
 import { apiFetch } from './api/http';
 import { useAuth } from './auth/AuthContext';
 import { useNav } from './nav/NavigationContext';
-import { canonicalizeAppView } from './nav/surfaces';
+import { canonicalizeAppView, appViewToPath } from './nav/surfaces';
 import { isAppWorkspaceRootPath, workspaceSlugFromUser } from './lib/workspacePath';
 import {
   UNASSIGNED_PATIENT,
@@ -67,6 +67,7 @@ export default function ClinicianApp() {
   const currentView = appView;
   const sessionWorkspace = user ? workspaceSlugFromUser(user) : 'practice';
   const setCurrentView = (view: NavView) => {
+    const targetPath = appViewToPath(view, sessionWorkspace);
     go('app', { appView: canonicalizeAppView(view), workspaceSlug: sessionWorkspace });
   };
   const [currentDoctor, setCurrentDoctor] = useState<Doctor>(() =>

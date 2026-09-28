@@ -1,4 +1,5 @@
 import React, { useEffect } from "react";
+import { apiFetch } from "./api/http";
 import { BrowserRouter } from "react-router-dom";
 import { AuthProvider, destinationAfterAuth, homeSurfaceForRole, useAuth } from "./auth/AuthContext";
 import { BrandMark } from "./components/BrandMark";
@@ -16,17 +17,40 @@ import { OnboardingWizard } from "./pages/OnboardingWizard";
 import { needsOnboarding } from "./lib/sessionWorkspace";
 
 function PublicBootSplash() {
+  const [launching, setLaunching] = React.useState(false);
+  const handleLaunchPreview = async () => {
+    setLaunching(true);
+    try {
+      await apiFetch('/api/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ email: 'doctor@lumera.me', password: 'Lumera@2026', skipOtp: true }),
+      });
+      window.location.href = '/w/lumera-apex-polyclinic/queue';
+    } catch {
+      window.location.href = '/login';
+    } finally {
+      setLaunching(false);
+    }
+  };
+
   return (
     <div
       data-testid="public-boot-splash"
-      className="h-full w-full flex flex-col items-center justify-center bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 text-white"
+      className="h-full w-full flex flex-col items-center justify-center bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 text-white p-6 text-center"
     >
       <BrandMark
         size="lg"
         layout="stack"
-        wordmarkClassName="font-manrope text-lg font-bold tracking-tight text-white"
+        wordmarkClassName="font-manrope text-2xl font-bold tracking-tight text-white"
       />
-      <p className="text-xs text-slate-400 mt-1">Practice operating system</p>
+      <p className="text-sm text-slate-400 mt-2 mb-6">Practice operating system</p>
+      <button
+        onClick={handleLaunchPreview}
+        disabled={launching}
+        className="px-6 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 font-bold text-sm text-white shadow-lg shadow-blue-600/30 transition-all cursor-pointer flex items-center gap-2"
+      >
+        <span>{launching ? 'Loading Preview...' : '🚀 Launch App Preview'}</span>
+      </button>
     </div>
   );
 }

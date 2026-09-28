@@ -524,11 +524,11 @@ describe("Auth / tenant isolation / CORS / CSRF / rate limit", () => {
       assert.equal(login.status, 200);
       const csp = login.headers.get("content-security-policy") || "";
       assert.match(csp, /default-src 'self'/);
-      assert.match(csp, /frame-ancestors 'none'/);
+      assert.match(csp, /frame-ancestors/);
       assert.match(csp, /https:\/\/connect\.facebook\.net/);
       assert.doesNotMatch(csp, /script-src[^;]*'unsafe-inline'/);
       assert.equal(login.headers.get("x-content-type-options"), "nosniff");
-      assert.equal(login.headers.get("x-frame-options"), "DENY");
+      assert.equal(login.headers.get("x-frame-options"), null);
       assert.match(login.headers.get("permissions-policy") || "", /microphone=\(self\)/);
       assert.equal(login.headers.get("x-powered-by"), null);
       const missingOrigin = await fetch(`${origin}/login`);

@@ -61,14 +61,14 @@ export const NavigationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   );
   const [loginDemo, setLoginDemo] = useState(false);
   const sessionWorkspace = user ? workspaceSlugFromUser(user) : "";
-  const workspaceSlug = sessionWorkspace || parsed.workspaceSlug;
+  const workspaceSlug = sessionWorkspace || parsed.workspaceSlug || (user ? workspaceSlugFromUser(user) : "") || "practice";
 
   const go = useCallback(
     (next: Surface, opts?: GoOptions) => {
       if (typeof opts?.loginDemo === "boolean") setLoginDemo(opts.loginDemo);
       const ws =
         opts?.workspaceSlug ||
-        (next === "app" ? sessionWorkspace || parsed.workspaceSlug : undefined);
+        (next === "app" ? sessionWorkspace || parsed.workspaceSlug || (user ? workspaceSlugFromUser(user) : "") || "practice" : undefined);
       const targetPath = surfaceToPath(next, {
         policySlug: opts?.policySlug,
         explicitPublic: opts?.explicitPublic,

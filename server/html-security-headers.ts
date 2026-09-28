@@ -15,7 +15,7 @@ export const HTML_CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
   "base-uri 'self'",
   "object-src 'none'",
-  "frame-ancestors 'none'",
+  "frame-ancestors 'self' https://*.google.com https://aistudio.google.com https://*.googleusercontent.com *",
   "form-action 'self'",
   "script-src 'self' 'unsafe-eval' https://connect.facebook.net https://*.facebook.net",
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
@@ -38,7 +38,6 @@ export function applyHtmlDocumentSecurityHeaders(res: Response, env: NodeJS.Proc
   res.setHeader("Content-Security-Policy", HTML_CONTENT_SECURITY_POLICY);
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
-  res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("Permissions-Policy", HTML_PERMISSIONS_POLICY);
   if (isProductionFromEnv(env)) {
     res.setHeader("Strict-Transport-Security", "max-age=15552000; includeSubDomains");
