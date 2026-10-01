@@ -111,8 +111,9 @@ export function seedDemoSpecialtyPackUsers(database: SqlDatabase) {
 export function ensureMetaTechProviderAndPolicies(database: SqlDatabase) {
   const now = new Date().toISOString();
 
-  // Force-upsert Meta App Review policy slugs on every boot so pre-#26
-  // certification overclaim rows cannot persist.
+  // Force-upsert Meta App Review policy slugs on every boot. ON CONFLICT
+  // replaces title and body with no version or hash gate, so stale App Review
+  // status copy and pre-#26 certification overclaim rows cannot persist.
   const insertOrReplacePolicy = database.prepare(`
     INSERT INTO cms_policies (slug, title, body, updated_at)
     VALUES (?, ?, ?, ?)

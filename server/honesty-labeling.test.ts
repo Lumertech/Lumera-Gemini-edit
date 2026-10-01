@@ -46,9 +46,10 @@ describe("Compliance #18 honesty labeling (LandingPage / Admin Meta)", () => {
     assert.match(landing, /ABDM sandbox milestone path/);
     assert.match(landing, /Built for DPDP Act 2023/);
     assert.match(landing, /WhatsApp Cloud API · Meta Tech Provider path/);
-    assert.match(landing, /building toward Meta Tech Provider/i);
+    assert.match(landing, /Lumera is not a certified Meta Tech Provider\. WhatsApp permissions are under Meta App Review\./);
+    assert.match(landing, /Not a certified Tech Provider — WhatsApp permissions under review/);
     assert.match(landing, /Designed for ABDM M1–M3/);
-    assert.match(landing, /App Review is not submitted/);
+    assert.equal(/not submitted/i.test(landing), false);
     assert.match(landing, /ABDM-aligned records \(sandbox path\)/);
 
     assert.equal(/ABDM certified/i.test(landing), false);
@@ -56,7 +57,11 @@ describe("Compliance #18 honesty labeling (LandingPage / Admin Meta)", () => {
     assert.equal(/official Meta API/i.test(landing), false);
     assert.equal(/official Meta WhatsApp/i.test(landing), false);
     assert.equal(/Official Tech Provider/i.test(landing), false);
-    assert.equal(/certified Tech Provider/i.test(landing), false);
+    assert.equal(/approved Tech Provider/i.test(landing), false);
+    const landingWithoutNegation = landing
+      .replace(/not a certified Meta Tech Provider/gi, "")
+      .replace(/not a certified Tech Provider/gi, "");
+    assert.equal(/certified Tech Provider/i.test(landingWithoutNegation), false);
     const janLines = landing.split(/\n/).filter((line) => /jan aushadhi/i.test(line));
     assert.equal(janLines.length, 1);
     assert.match(janLines[0], /Jan Aushadhi planned/);
@@ -82,7 +87,8 @@ describe("Compliance #18 honesty labeling (LandingPage / Admin Meta)", () => {
     ].join("\n");
     assert.match(seed, /replying \*\*STOP\*\*/);
     assert.match(seed, /not a certified Meta Tech Provider/i);
-    assert.match(seed, /App Review is not submitted/);
+    assert.match(seed, /WhatsApp permissions are under Meta App Review/);
+    assert.equal(/not submitted/i.test(seed), false);
     assert.match(seed, /https:\/\/www\.mylumera\.in\/api\/meta\/data-deletion/);
     assert.match(db, /ON CONFLICT\(slug\) DO UPDATE/);
     assert.equal(/\bHIPAA\b/i.test(seed), false);
@@ -96,7 +102,13 @@ describe("Compliance #18 honesty labeling (LandingPage / Admin Meta)", () => {
       const leftover = src
         .split(/\n/)
         .map((line, i) => ({ line, n: i + 1 }))
-        .filter(({ line }) => gate.test(line) && !/Jan Aushadhi planned/i.test(line));
+        .filter(({ line }) => {
+          if (/Jan Aushadhi planned/i.test(line)) return false;
+          const stripped = line
+            .replace(/not a certified Meta Tech Provider/gi, "")
+            .replace(/not a certified Tech Provider/gi, "");
+          return gate.test(stripped);
+        });
       assert.deepEqual(
         leftover,
         [],

@@ -17,7 +17,8 @@ import {
  * Import these helpers instead of duplicating Graph POST / dual-path logic.
  *
  * Dual-path: Graph when usable credentials are present; SANDBOX in non-prod when
- * missing; production hard-fails (no fake wamid). App Review is NOT_SUBMITTED.
+ * missing; production hard-fails (no fake wamid). WhatsApp permissions are under
+ * Meta App Review; Lumera is not a certified Meta Tech Provider.
  */
 
 export type GraphCredentials = {

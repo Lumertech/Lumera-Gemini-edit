@@ -394,7 +394,7 @@ export const AdminMetaTechProvider: React.FC = () => {
               <div>
                 <h2 className="text-lg font-bold text-slate-900">Meta App Review submission parameters</h2>
                 <p className="text-sm text-slate-500">
-                  URLs for a future App Review packet. Presence of a page is not approval. Status: <strong>{overview?.appReviewStatus?.status || "NOT_SUBMITTED"}</strong>.
+                  URLs for Meta App Review. Presence of a page is not approval. Lumera is not a certified Meta Tech Provider. WhatsApp permissions are under Meta App Review. Status: <strong>{overview?.appReviewStatus?.status || "NOT_SUBMITTED"}</strong>.
                 </p>
               </div>
               <span className="px-3 py-1 bg-amber-50 text-amber-800 font-semibold text-xs rounded-full border border-amber-200 flex items-center gap-1.5">
