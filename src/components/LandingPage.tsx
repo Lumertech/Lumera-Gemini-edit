@@ -564,7 +564,7 @@ export const LandingPage: React.FC = () => {
         <div className="text-center mb-12">
           <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-purple-500/20 border border-purple-500/30 text-xs text-purple-300 mb-3">
             <Sparkles className="w-3.5 h-3.5 text-purple-400" />
-            <span>Interactive Live Sandbox</span>
+            <span>Interactive Sample/Demo</span>
           </div>
           <h2 className="font-manrope text-3xl sm:text-4xl font-extrabold text-white">Experience Lumera In Action</h2>
           <p className="text-slate-400 mt-2 max-w-2xl mx-auto text-sm">
@@ -614,7 +614,7 @@ export const LandingPage: React.FC = () => {
               <div className="flex items-center justify-between text-[10px] text-slate-400 uppercase font-bold tracking-wider">
                 <span className="flex items-center gap-1 text-rose-400">
                   <span className={`w-2 h-2 rounded-full ${isSimulatingAudio ? 'bg-rose-500 animate-ping' : 'bg-emerald-500'}`} />
-                  {isSimulatingAudio ? "Transcribing Voice Audio..." : "Ambient Mic Complete"}
+                  {isSimulatingAudio ? "Playing sample dialogue…" : "Sample/Demo"}
                 </span>
                 <button
                   onClick={handleSimulateAudio}
