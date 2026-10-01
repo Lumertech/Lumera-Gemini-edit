@@ -841,6 +841,77 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
     }
   });
 
+  it("book confirmation template uses the tenant clinic name and appointment doctor", async () => {
+    const saved: Record<string, string | undefined> = {};
+    for (const key of [
+      "META_ACCESS_TOKEN",
+      "META_PHONE_NUMBER_ID",
+      "WHATSAPP_ACCESS_TOKEN",
+      "WHATSAPP_PHONE_NUMBER_ID",
+      "META_BOOK_CONFIRMATION_TEMPLATE_NAME",
+      "META_BOOK_CONFIRMATION_TEMPLATE_LANGUAGE",
+      "META_UTILITY_TEMPLATE_LANGUAGE",
+    ]) {
+      saved[key] = process.env[key];
+    }
+    process.env.META_ACCESS_TOKEN = "EAAGisAlongEnoughTokenWithoutEllipsis0123456789abcdef";
+    process.env.META_PHONE_NUMBER_ID = "123456789012345";
+    delete process.env.WHATSAPP_ACCESS_TOKEN;
+    delete process.env.WHATSAPP_PHONE_NUMBER_ID;
+    process.env.META_BOOK_CONFIRMATION_TEMPLATE_NAME = "lumera_appointment_booked";
+    process.env.META_BOOK_CONFIRMATION_TEMPLATE_LANGUAGE = "en";
+    process.env.META_UTILITY_TEMPLATE_LANGUAGE = "en_US";
+    try {
+      const clinic = createClinicUser("bookTpl");
+      const booked = bookWhatsAppAppointment({
+        tenantId: clinic.tenantId,
+        patientPhone: uniquePhone(),
+        patientName: "Booked Patient",
+        doctorId: clinic.doctorId,
+        date: "2026-10-03",
+        timeSlot: "09:40 AM",
+      });
+      const captured: Array<Record<string, unknown>> = [];
+      const result = await dispatchWhatsAppBookConfirmation({
+        tenantId: clinic.tenantId,
+        appointment: booked.appointment,
+        fetchImpl: async (_url, init) => {
+          captured.push(JSON.parse(String(init?.body || "{}")) as Record<string, unknown>);
+          return new Response(JSON.stringify({ messaging_product: "whatsapp", messages: [{ id: "wamid.BOOK_A" }] }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        },
+      });
+      assert.equal(result.ok, true, JSON.stringify(result));
+      const template = captured[0]?.template as {
+        name?: string;
+        language?: { code?: string };
+        components?: Array<{ type?: string; parameters?: Array<{ text?: string }> }>;
+      };
+      assert.equal(template.name, "lumera_appointment_booked");
+      assert.equal(template.language?.code, "en");
+      const clinicRow = getDb().prepare("SELECT name FROM tenants WHERE id = ?").get(clinic.tenantId) as { name: string };
+      const parameters = (template.components?.find((component) => component.type === "body")?.parameters || []).map(
+        (parameter) => parameter.text
+      );
+      assert.deepEqual(parameters, [
+        "Booked Patient",
+        clinicRow.name,
+        booked.appointment.doctorName,
+        "2026-10-03",
+        "09:40 AM",
+        String(booked.appointment.tokenNumber),
+      ]);
+      assert.equal(parameters.some((part) => part === "Lumera Clinic" || part === "Lumera"), false);
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+
   it("calendar send path imports Meta Graph helpers instead of a competing Graph POST", () => {
     const src = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "whatsapp-calendar.ts"), "utf8");
     assert.match(src, /sendAppointmentReminder/);

@@ -4,14 +4,22 @@ import path from "node:path";
 import { after, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
+  bookConfirmationTemplateParameters,
+  buildQueueNextText,
   dispatchWhatsAppCloudMessage,
   postGraphWhatsAppMessage,
+  prescriptionReadyTemplateParameters,
+  queueNextTemplateParameters,
+  receiptTemplateParameters,
   sendAppointmentReminder,
   sendBookConfirmation,
   sendPaymentReceipt,
+  sendPrescriptionReady,
+  sendQueueNext,
   sendWhatsAppGraphMessage,
   sendWhatsAppGraphTemplate,
   sendWhatsAppGraphText,
+  templateConfigForKind,
 } from "./graph-whatsapp.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -496,6 +504,425 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
     assert.match(envExample, /META_REMINDER_TEMPLATE_NAME/);
     assert.match(envExample, /META_BOOK_CONFIRMATION_TEMPLATE_NAME/);
     assert.match(envExample, /META_RECEIPT_TEMPLATE_NAME/);
+    assert.match(envExample, /META_QUEUE_NEXT_TEMPLATE_NAME/);
+    assert.match(envExample, /META_PRESCRIPTION_READY_TEMPLATE_NAME/);
+    assert.match(envExample, /META_REMINDER_TEMPLATE_LANGUAGE=en_US/);
+    assert.match(envExample, /META_BOOK_CONFIRMATION_TEMPLATE_NAME=lumera_appointment_booked/);
+    assert.match(envExample, /META_BOOK_CONFIRMATION_TEMPLATE_LANGUAGE=en/);
+    assert.match(envExample, /META_RECEIPT_TEMPLATE_NAME=lumera_payment_receipt\n/);
+    assert.match(envExample, /META_QUEUE_NEXT_TEMPLATE_NAME=lumera_queue_next\n/);
+    assert.match(envExample, /META_PRESCRIPTION_READY_TEMPLATE_NAME=lumera_prescription_ready\n/);
+    assert.match(envExample, /META_RECEIPT_TEMPLATE_NAME=lumera_payment_receipt_v2/);
+    assert.match(envExample, /META_QUEUE_NEXT_TEMPLATE_NAME=lumera_queue_next_v2/);
+    assert.match(envExample, /META_PRESCRIPTION_READY_TEMPLATE_NAME=lumera_prescription_ready_v2/);
+    assert.match(envExample, /Quality\/Active/);
+    assert.match(envExample, /META_RECEIPT_TEMPLATE_LANGUAGE=en/);
+    assert.match(envExample, /META_QUEUE_NEXT_TEMPLATE_LANGUAGE=en/);
+    assert.match(envExample, /META_PRESCRIPTION_READY_TEMPLATE_LANGUAGE=en/);
     assert.match(envExample, /META_ACCESS_TOKEN/);
+  });
+
+  it("templateConfigForKind maps queue_next and prescription_ready onto utility language", () => {
+    const prevQueue = process.env.META_QUEUE_NEXT_TEMPLATE_NAME;
+    const prevRx = process.env.META_PRESCRIPTION_READY_TEMPLATE_NAME;
+    const prevReceipt = process.env.META_RECEIPT_TEMPLATE_NAME;
+    const prevLang = process.env.META_UTILITY_TEMPLATE_LANGUAGE;
+    const prevOtpLang = process.env.META_OTP_TEMPLATE_LANGUAGE;
+    const prevReminder = process.env.META_REMINDER_TEMPLATE_NAME;
+    const prevReminderLang = process.env.META_REMINDER_TEMPLATE_LANGUAGE;
+    const prevBook = process.env.META_BOOK_CONFIRMATION_TEMPLATE_NAME;
+    const prevBookLang = process.env.META_BOOK_CONFIRMATION_TEMPLATE_LANGUAGE;
+    const prevReceiptLang = process.env.META_RECEIPT_TEMPLATE_LANGUAGE;
+    const prevQueueLang = process.env.META_QUEUE_NEXT_TEMPLATE_LANGUAGE;
+    const prevRxLang = process.env.META_PRESCRIPTION_READY_TEMPLATE_LANGUAGE;
+    delete process.env.META_QUEUE_NEXT_TEMPLATE_NAME;
+    delete process.env.META_PRESCRIPTION_READY_TEMPLATE_NAME;
+    process.env.META_RECEIPT_TEMPLATE_NAME = "lumera_payment_receipt";
+    process.env.META_UTILITY_TEMPLATE_LANGUAGE = "en_US";
+    process.env.META_OTP_TEMPLATE_LANGUAGE = "en";
+    try {
+      assert.equal(templateConfigForKind("queue_next"), null);
+      assert.equal(templateConfigForKind("prescription_ready"), null);
+      assert.equal(templateConfigForKind("text"), null);
+      assert.equal(templateConfigForKind("payment_receipt")?.name, "lumera_payment_receipt");
+
+      process.env.META_QUEUE_NEXT_TEMPLATE_NAME = "lumera_queue_next";
+      process.env.META_PRESCRIPTION_READY_TEMPLATE_NAME = "lumera_prescription_ready";
+      process.env.META_REMINDER_TEMPLATE_NAME = "lumera_appointment_reminder";
+      process.env.META_BOOK_CONFIRMATION_TEMPLATE_NAME = "lumera_appointment_booked";
+      process.env.META_BOOK_CONFIRMATION_TEMPLATE_LANGUAGE = "en";
+      process.env.META_RECEIPT_TEMPLATE_LANGUAGE = "en";
+      process.env.META_QUEUE_NEXT_TEMPLATE_LANGUAGE = "en";
+      process.env.META_PRESCRIPTION_READY_TEMPLATE_LANGUAGE = "en";
+      process.env.META_REMINDER_TEMPLATE_LANGUAGE = "en_US";
+      assert.deepEqual(templateConfigForKind("queue_next"), {
+        name: "lumera_queue_next",
+        language: "en",
+      });
+      assert.deepEqual(templateConfigForKind("prescription_ready"), {
+        name: "lumera_prescription_ready",
+        language: "en",
+      });
+      assert.equal(templateConfigForKind("appointment_reminder")?.language, "en_US");
+      assert.equal(templateConfigForKind("book_confirmation")?.language, "en");
+      assert.equal(templateConfigForKind("payment_receipt")?.language, "en");
+      if (process.env.META_OTP_TEMPLATE_NAME) {
+        assert.equal(templateConfigForKind("otp")?.language, "en");
+      }
+      delete process.env.META_REMINDER_TEMPLATE_LANGUAGE;
+      delete process.env.META_BOOK_CONFIRMATION_TEMPLATE_LANGUAGE;
+      assert.equal(templateConfigForKind("appointment_reminder")?.language, "en_US");
+      assert.equal(templateConfigForKind("book_confirmation")?.language, "en_US");
+      delete process.env.META_UTILITY_TEMPLATE_LANGUAGE;
+      delete process.env.META_QUEUE_NEXT_TEMPLATE_LANGUAGE;
+      delete process.env.META_PRESCRIPTION_READY_TEMPLATE_LANGUAGE;
+      assert.equal(templateConfigForKind("appointment_reminder")?.language, "en_US");
+      assert.equal(templateConfigForKind("book_confirmation")?.language, "en");
+      assert.equal(templateConfigForKind("queue_next")?.language, "en");
+      assert.equal(templateConfigForKind("prescription_ready")?.language, "en");
+      if (process.env.META_OTP_TEMPLATE_NAME) {
+        assert.equal(templateConfigForKind("otp")?.language, "en");
+      } else {
+        assert.equal(templateConfigForKind("otp"), null);
+      }
+    } finally {
+      if (prevQueue === undefined) delete process.env.META_QUEUE_NEXT_TEMPLATE_NAME;
+      else process.env.META_QUEUE_NEXT_TEMPLATE_NAME = prevQueue;
+      if (prevRx === undefined) delete process.env.META_PRESCRIPTION_READY_TEMPLATE_NAME;
+      else process.env.META_PRESCRIPTION_READY_TEMPLATE_NAME = prevRx;
+      if (prevReceipt === undefined) delete process.env.META_RECEIPT_TEMPLATE_NAME;
+      else process.env.META_RECEIPT_TEMPLATE_NAME = prevReceipt;
+      if (prevLang === undefined) delete process.env.META_UTILITY_TEMPLATE_LANGUAGE;
+      else process.env.META_UTILITY_TEMPLATE_LANGUAGE = prevLang;
+      if (prevOtpLang === undefined) delete process.env.META_OTP_TEMPLATE_LANGUAGE;
+      else process.env.META_OTP_TEMPLATE_LANGUAGE = prevOtpLang;
+      if (prevReminder === undefined) delete process.env.META_REMINDER_TEMPLATE_NAME;
+      else process.env.META_REMINDER_TEMPLATE_NAME = prevReminder;
+      if (prevReminderLang === undefined) delete process.env.META_REMINDER_TEMPLATE_LANGUAGE;
+      else process.env.META_REMINDER_TEMPLATE_LANGUAGE = prevReminderLang;
+      if (prevBook === undefined) delete process.env.META_BOOK_CONFIRMATION_TEMPLATE_NAME;
+      else process.env.META_BOOK_CONFIRMATION_TEMPLATE_NAME = prevBook;
+      if (prevBookLang === undefined) delete process.env.META_BOOK_CONFIRMATION_TEMPLATE_LANGUAGE;
+      else process.env.META_BOOK_CONFIRMATION_TEMPLATE_LANGUAGE = prevBookLang;
+      if (prevReceiptLang === undefined) delete process.env.META_RECEIPT_TEMPLATE_LANGUAGE;
+      else process.env.META_RECEIPT_TEMPLATE_LANGUAGE = prevReceiptLang;
+      if (prevQueueLang === undefined) delete process.env.META_QUEUE_NEXT_TEMPLATE_LANGUAGE;
+      else process.env.META_QUEUE_NEXT_TEMPLATE_LANGUAGE = prevQueueLang;
+      if (prevRxLang === undefined) delete process.env.META_PRESCRIPTION_READY_TEMPLATE_LANGUAGE;
+      else process.env.META_PRESCRIPTION_READY_TEMPLATE_LANGUAGE = prevRxLang;
+    }
+  });
+
+  it("queue_next and prescription_ready use their own templates and keep session text when unset", async () => {
+    const saved: Record<string, string | undefined> = {};
+    for (const key of [
+      "META_ACCESS_TOKEN",
+      "META_PHONE_NUMBER_ID",
+      "WHATSAPP_ACCESS_TOKEN",
+      "WHATSAPP_PHONE_NUMBER_ID",
+      "META_QUEUE_NEXT_TEMPLATE_NAME",
+      "META_PRESCRIPTION_READY_TEMPLATE_NAME",
+      "META_RECEIPT_TEMPLATE_NAME",
+      "META_UTILITY_TEMPLATE_LANGUAGE",
+      "NODE_ENV",
+    ]) {
+      saved[key] = process.env[key];
+    }
+    process.env.META_ACCESS_TOKEN = LIVE_TOKEN;
+    process.env.META_PHONE_NUMBER_ID = LIVE_PHONE_ID;
+    delete process.env.WHATSAPP_ACCESS_TOKEN;
+    delete process.env.WHATSAPP_PHONE_NUMBER_ID;
+    process.env.NODE_ENV = "test";
+    try {
+    const sessionText = buildQueueNextText({ patientName: "Rajiv Saxena" });
+    assert.equal(
+      sessionText,
+      "📢 *OPD Queue Alert - You're Almost Up!*\n\nNamaste Rajiv Saxena,\nToken *#01* is currently completing consultation. You are *NEXT IN LINE* (Token #02).\n\n📍 Please proceed to *Rehab Suite 105* near Waiting Lounge B."
+    );
+    const queueFields = {
+      patientName: "Rajiv Saxena",
+      clinicName: "City Care Clinic",
+      doctorName: "Dr. A",
+      tokenNumber: 2,
+      location: "Rehab Suite 105",
+    };
+    assert.deepEqual(queueNextTemplateParameters(queueFields, "lumera_queue_next"), [
+      "Rajiv Saxena",
+      "City Care Clinic",
+      "02",
+      "Rehab Suite 105",
+    ]);
+    assert.deepEqual(queueNextTemplateParameters(queueFields, "lumera_queue_next_v2"), [
+      "Rajiv Saxena",
+      "City Care Clinic",
+      "Dr. A",
+      "02",
+      "Rehab Suite 105",
+    ]);
+    const queueFallback = queueNextTemplateParameters({}, "lumera_queue_next_v2");
+    assert.equal(queueFallback[1], "your clinic");
+    assert.equal(queueFallback[2], "your clinician");
+    assert.equal(queueFallback.some((part) => /lumera/i.test(part)), false);
+    assert.equal(queueNextTemplateParameters({}, "lumera_queue_next").includes("your clinician"), false);
+    assert.deepEqual(
+      bookConfirmationTemplateParameters({
+        patientName: "Rajiv Saxena",
+        clinicName: "City Care Clinic",
+        doctorName: "Dr. A",
+        date: "2026-09-12",
+        timeSlot: "11:00 AM",
+        tokenNumber: 4,
+      }),
+      ["Rajiv Saxena", "City Care Clinic", "Dr. A", "2026-09-12", "11:00 AM", "4"]
+    );
+    assert.equal(bookConfirmationTemplateParameters({})[1], "your clinic");
+    const receiptFields = {
+      patientName: "Rajiv Saxena",
+      clinicName: "City Care Clinic",
+      doctorName: "Dr. A",
+      amount: 700,
+      invoiceId: "INV-1",
+    };
+    assert.deepEqual(receiptTemplateParameters(receiptFields, "lumera_payment_receipt"), [
+      "Rajiv Saxena",
+      "700",
+      "INV-1",
+    ]);
+    assert.deepEqual(receiptTemplateParameters(receiptFields, "lumera_payment_receipt_v2"), [
+      "Rajiv Saxena",
+      "City Care Clinic",
+      "Dr. A",
+      "700",
+      "INV-1",
+    ]);
+    assert.equal(receiptTemplateParameters({}, "lumera_payment_receipt").some((part) => /lumera/i.test(part)), false);
+    assert.equal(receiptTemplateParameters({}, "lumera_payment_receipt_v2")[1], "your clinic");
+    assert.equal(receiptTemplateParameters({}, "lumera_payment_receipt_v2")[2], "your clinician");
+    const rxFields = {
+      patientName: "Rajiv Saxena",
+      clinicName: "City Care Clinic",
+      doctorName: "Dr. Siddharth Varma",
+      rxNumber: "RX-2026-0106",
+    };
+    assert.deepEqual(prescriptionReadyTemplateParameters(rxFields, "lumera_prescription_ready"), [
+      "Rajiv Saxena",
+      "City Care Clinic",
+      "RX-2026-0106",
+    ]);
+    assert.deepEqual(prescriptionReadyTemplateParameters(rxFields, "lumera_prescription_ready_v2"), [
+      "Rajiv Saxena",
+      "City Care Clinic",
+      "Dr. Siddharth Varma",
+      "RX-2026-0106",
+    ]);
+      delete process.env.META_QUEUE_NEXT_TEMPLATE_NAME;
+      delete process.env.META_PRESCRIPTION_READY_TEMPLATE_NAME;
+      process.env.META_RECEIPT_TEMPLATE_NAME = "lumera_payment_receipt";
+      const textCaptured: Array<{ url: string; body: Record<string, unknown> }> = [];
+      const textSend = await sendQueueNext({
+        to: "+919823455667",
+        patientName: "Rajiv Saxena",
+        textBody: sessionText,
+        db: null,
+        fetchImpl: mockGraphFetch(textCaptured, "wamid.QUEUE_TEXT"),
+      });
+      assert.equal(textSend.ok, true);
+      assert.equal(textCaptured[0].body.type, "text");
+      assert.equal((textCaptured[0].body.text as { body?: string }).body, sessionText);
+
+      const rxText: Array<{ url: string; body: Record<string, unknown> }> = [];
+      const rxUnset = await sendPrescriptionReady({
+        to: "+919823455667",
+        patientName: "Rajiv Saxena",
+        clinicName: "Lumera Rehab",
+        doctorName: "Dr. Siddharth Varma",
+        rxNumber: "RX-2026-0106",
+        textBody: "session rx",
+        db: null,
+        fetchImpl: mockGraphFetch(rxText, "wamid.RX_TEXT"),
+      });
+      assert.equal(rxUnset.ok, true);
+      assert.equal(rxText[0].body.type, "text");
+      assert.equal(rxText[0].body.template, undefined);
+
+      process.env.META_QUEUE_NEXT_TEMPLATE_NAME = "lumera_queue_next";
+      process.env.META_PRESCRIPTION_READY_TEMPLATE_NAME = "lumera_prescription_ready";
+      process.env.META_UTILITY_TEMPLATE_LANGUAGE = "en_US";
+      const queueCaptured: Array<{ url: string; body: Record<string, unknown> }> = [];
+      const queueSend = await sendQueueNext({
+        to: "+919823455667",
+        patientName: "Meera",
+        clinicName: "City Care Clinic",
+        doctorName: "Dr. A",
+        tokenNumber: "02",
+        location: "Rehab Suite 105",
+        db: null,
+        fetchImpl: mockGraphFetch(queueCaptured, "wamid.QUEUE_TPL"),
+      });
+      assert.equal(queueSend.ok, true);
+      if (queueSend.ok) assert.equal(queueSend.messageId, "wamid.QUEUE_TPL");
+      assert.equal(queueCaptured[0].body.type, "template");
+      const queueTemplate = queueCaptured[0].body.template as {
+        name?: string;
+        language?: { code?: string };
+        components?: Array<{ type?: string; sub_type?: string; parameters?: Array<{ text?: string }> }>;
+      };
+      assert.equal(queueTemplate.name, "lumera_queue_next");
+      assert.equal(queueTemplate.language?.code, "en_US");
+      assert.equal(queueTemplate.components?.some((component) => component.type === "button"), false);
+      assert.deepEqual(
+        queueTemplate.components?.find((component) => component.type === "body")?.parameters?.map((parameter) => parameter.text),
+        ["Meera", "City Care Clinic", "02", "Rehab Suite 105"]
+      );
+
+      const queueV2Captured: Array<{ url: string; body: Record<string, unknown> }> = [];
+      const queueV2 = await sendQueueNext({
+        to: "+919823455667",
+        patientName: "Meera",
+        clinicName: "City Care Clinic",
+        doctorName: "Dr. A",
+        tokenNumber: "02",
+        location: "Rehab Suite 105",
+        templateName: "lumera_queue_next_v2",
+        db: null,
+        fetchImpl: mockGraphFetch(queueV2Captured, "wamid.QUEUE_V2"),
+      });
+      assert.equal(queueV2.ok, true);
+      const queueV2Template = queueV2Captured[0].body.template as {
+        name?: string;
+        components?: Array<{ type?: string; parameters?: Array<{ text?: string }> }>;
+      };
+      assert.equal(queueV2Template.name, "lumera_queue_next_v2");
+      assert.deepEqual(
+        queueV2Template.components?.find((component) => component.type === "body")?.parameters?.map((parameter) => parameter.text),
+        ["Meera", "City Care Clinic", "Dr. A", "02", "Rehab Suite 105"]
+      );
+
+      const rxCaptured: Array<{ url: string; body: Record<string, unknown> }> = [];
+      const rxSend = await sendPrescriptionReady({
+        to: "+919823455667",
+        patientName: "Meera",
+        clinicName: "City Care Clinic",
+        doctorName: "Dr. A",
+        rxNumber: "RX-1",
+        textBody: "session rx",
+        db: null,
+        fetchImpl: mockGraphFetch(rxCaptured, "wamid.RX_TPL"),
+      });
+      assert.equal(rxSend.ok, true);
+      const rxTemplate = rxCaptured[0].body.template as {
+        name?: string;
+        language?: { code?: string };
+        components?: Array<{ type?: string; parameters?: Array<{ text?: string }> }>;
+      };
+      assert.equal(rxTemplate.name, "lumera_prescription_ready");
+      assert.notEqual(rxTemplate.name, "lumera_payment_receipt");
+      assert.equal(rxTemplate.language?.code, "en_US");
+      assert.deepEqual(
+        rxTemplate.components?.find((component) => component.type === "body")?.parameters?.map((parameter) => parameter.text),
+        ["Meera", "City Care Clinic", "RX-1"]
+      );
+
+      const rxV2Captured: Array<{ url: string; body: Record<string, unknown> }> = [];
+      const rxV2 = await sendPrescriptionReady({
+        to: "+919823455667",
+        patientName: "Meera",
+        clinicName: "City Care Clinic",
+        doctorName: "Dr. A",
+        rxNumber: "RX-1",
+        textBody: "session rx",
+        templateName: "lumera_prescription_ready_v2",
+        db: null,
+        fetchImpl: mockGraphFetch(rxV2Captured, "wamid.RX_V2"),
+      });
+      assert.equal(rxV2.ok, true);
+      const rxV2Template = rxV2Captured[0].body.template as {
+        name?: string;
+        components?: Array<{ type?: string; parameters?: Array<{ text?: string }> }>;
+      };
+      assert.equal(rxV2Template.name, "lumera_prescription_ready_v2");
+      assert.deepEqual(
+        rxV2Template.components?.find((component) => component.type === "body")?.parameters?.map((parameter) => parameter.text),
+        ["Meera", "City Care Clinic", "Dr. A", "RX-1"]
+      );
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+
+  it("production queue_next without creds hard-fails and does not invent a wamid", async () => {
+    const saved: Record<string, string | undefined> = {};
+    for (const key of ["META_ACCESS_TOKEN", "META_PHONE_NUMBER_ID", "WHATSAPP_ACCESS_TOKEN", "WHATSAPP_PHONE_NUMBER_ID", "NODE_ENV"]) {
+      saved[key] = process.env[key];
+    }
+    delete process.env.META_ACCESS_TOKEN;
+    delete process.env.META_PHONE_NUMBER_ID;
+    delete process.env.WHATSAPP_ACCESS_TOKEN;
+    delete process.env.WHATSAPP_PHONE_NUMBER_ID;
+    process.env.NODE_ENV = "production";
+    try {
+      const sent = await sendQueueNext({
+        to: "+919800011122",
+        patientName: "Rajiv Saxena",
+        db: null,
+      });
+      assert.equal(sent.ok, false);
+      if (!sent.ok) {
+        assert.equal(sent.channel, "none");
+        assert.match(sent.error, /not configured/i);
+        assert.equal("messageId" in sent, false);
+      }
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+
+  it("outbound triggers call queue_next and prescription_ready instead of the receipt template", () => {
+    const whatsapp = fs.readFileSync(path.join(__dirname, "whatsapp.ts"), "utf8");
+    const usage = fs.readFileSync(path.join(__dirname, "usage-billing-api.ts"), "utf8");
+    const queueBranch = whatsapp.indexOf('const queueEvent = eventType === "queue_token_update" || eventType === "queue_next"');
+    const rxBranch = whatsapp.indexOf('const prescriptionEvent = eventType === "post_consultation_dispatch" || eventType === "prescription_ready"');
+    const sendQueue = whatsapp.indexOf("await sendQueueNext(", queueBranch);
+    const sendRx = whatsapp.indexOf("await sendPrescriptionReady(", rxBranch);
+    assert.ok(queueBranch > 0, "queue_token_update branch missing");
+    assert.ok(rxBranch > queueBranch, "prescription_ready branch missing");
+    assert.ok(sendQueue > rxBranch, "sendQueueNext is not in the outbound trigger");
+    assert.ok(sendRx > sendQueue, "sendPrescriptionReady is not in the outbound trigger");
+    assert.match(usage, /templateOwnedOutbound/);
+    assert.match(usage, /if \(reminderEvent \|\| templateOwnedOutbound\) return next\(\)/);
+    const sendRxRoute = usage.slice(usage.indexOf('api.post("/whatsapp/send-rx"'));
+    const sendRxBlock = sendRxRoute.slice(0, sendRxRoute.indexOf("meterCustomOutbound"));
+    assert.match(sendRxBlock, /sendPrescriptionReady\(/);
+    assert.equal(sendRxBlock.includes("dispatchPatientCloudText"), false);
+    assert.equal(sendRxBlock.includes("META_RECEIPT_TEMPLATE_NAME"), false);
+    assert.match(whatsapp, /kind: "appointment_reminder"|dispatchAppointmentReminder/);
+    const graph = fs.readFileSync(path.join(__dirname, "graph-whatsapp.ts"), "utf8");
+    assert.match(graph, /sub_type: "copy_code"/);
+    assert.match(graph, /queue_next: "META_QUEUE_NEXT_TEMPLATE_NAME"/);
+    assert.match(graph, /prescription_ready: "META_PRESCRIPTION_READY_TEMPLATE_NAME"/);
+    assert.match(graph, /META_REMINDER_TEMPLATE_LANGUAGE/);
+    assert.match(graph, /META_BOOK_CONFIRMATION_TEMPLATE_LANGUAGE/);
+    assert.match(graph, /META_QUEUE_NEXT_TEMPLATE_LANGUAGE/);
+    const reminders = fs.readFileSync(path.join(__dirname, "whatsapp-calendar-reminders.ts"), "utf8");
+    const billing = fs.readFileSync(path.join(__dirname, "billing.ts"), "utf8");
+    assert.match(reminders, /bookConfirmationTemplateParameters/);
+    assert.match(reminders, /clinicDisplayNameForTenant/);
+    assert.equal(/Lumera Clinic/.test(reminders), false);
+    assert.match(billing, /sendPaymentReceipt\(/);
+    assert.match(billing, /clinicName/);
+    assert.match(billing, /doctorName/);
+    assert.equal(billing.includes("receiptTemplateParameters"), false);
+    assert.match(graph, /templateNameUsesV2Body/);
+    assert.match(usage, /Important health notification from your clinic/);
+    assert.equal(usage.includes("Lumera Polyclinic"), false);
+    assert.equal(whatsapp.includes('fallback: "Lumera'), false);
+    assert.equal(/"Lumera Clinic"/.test(whatsapp), false);
+    assert.equal(/"Lumera Rehab"/.test(whatsapp), false);
   });
 });

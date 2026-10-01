@@ -1,5 +1,6 @@
 import { getDb, mapAppointment } from "./db.ts";
 import {
+  bookConfirmationTemplateParameters,
   isCloudDispatchFailure,
   sandboxBanner,
   sendAppointmentReminder,
@@ -71,11 +72,11 @@ function alreadySentReminder(appointmentId: string, window: ReminderWindow): boo
   });
 }
 
-function clinicNameForTenant(tenantId: string): string {
-  const row = getDb().prepare("SELECT name, timezone FROM tenants WHERE id = ?").get(tenantId) as
-    | { name?: string; timezone?: string }
+export function clinicDisplayNameForTenant(tenantId: string): string {
+  const row = getDb().prepare("SELECT name FROM tenants WHERE id = ?").get(tenantId) as
+    | { name?: string }
     | undefined;
-  return String(row?.name || "Lumera Clinic");
+  return String(row?.name || "").trim() || "your clinic";
 }
 
 function timezoneForTenant(tenantId: string): string {
@@ -211,7 +212,7 @@ export async function dispatchAppointmentReminder(opts: {
   window: ReminderWindow;
   fetchImpl?: typeof fetch;
 }): Promise<ReminderDispatchResult> {
-  const clinicName = clinicNameForTenant(opts.tenantId);
+  const clinicName = clinicDisplayNameForTenant(opts.tenantId);
   const text = buildReminderMessage({
     patientName: opts.appointment.patientName,
     doctorName: opts.appointment.doctorName,
@@ -256,22 +257,26 @@ export async function dispatchWhatsAppBookConfirmation(opts: {
   appointment: ReturnType<typeof mapAppointment>;
   fetchImpl?: typeof fetch;
 }): Promise<ReminderDispatchResult> {
+  const clinicName = clinicDisplayNameForTenant(opts.tenantId);
+  const doctorName = String(opts.appointment.doctorName || "").trim() || "your clinician";
   const sent = await sendBookConfirmation({
     to: opts.appointment.patientPhone,
     patientName: opts.appointment.patientName,
-    doctorName: opts.appointment.doctorName,
+    clinicName,
+    doctorName,
     specialty: opts.appointment.specialty,
     date: opts.appointment.date,
     timeSlot: opts.appointment.timeSlot,
     tokenNumber: opts.appointment.tokenNumber,
     uhid: opts.appointment.uhid,
-    templateParameters: [
-      opts.appointment.patientName,
-      opts.appointment.doctorName,
-      opts.appointment.date,
-      opts.appointment.timeSlot || "OPD",
-      String(opts.appointment.tokenNumber),
-    ],
+    templateParameters: bookConfirmationTemplateParameters({
+      patientName: opts.appointment.patientName,
+      clinicName,
+      doctorName,
+      date: opts.appointment.date,
+      timeSlot: opts.appointment.timeSlot || "OPD",
+      tokenNumber: opts.appointment.tokenNumber,
+    }),
     db: getDb(),
     fetchImpl: opts.fetchImpl,
     tenantId: opts.tenantId,

@@ -250,6 +250,24 @@ function recordReceiptEvent(opts: {
   }
 }
 
+function receiptDoctorName(tenantId: string, appointmentId: string, issuedBy: string): string {
+  const issued = String(issuedBy || "").trim();
+  if (issued) return issued;
+  const id = String(appointmentId || "").trim();
+  if (tenantId && id) {
+    try {
+      const row = getDb()
+        .prepare("SELECT doctor_name FROM appointments WHERE tenant_id = ? AND id = ?")
+        .get(tenantId, id) as { doctor_name?: string } | undefined;
+      const doctor = String(row?.doctor_name || "").trim();
+      if (doctor) return doctor;
+    } catch {
+      /* appointments table may be missing in isolated tests */
+    }
+  }
+  return "your clinician";
+}
+
 function receiptBody(invoice: ReturnType<typeof mapInvoice>, sandbox: boolean): string {
   const gstinLine = invoice.gstin ? `\nGSTIN: ${invoice.gstin}` : "";
   const upiLine = invoice.upiId ? `\nUPI: ${invoice.upiId}` : "";
@@ -263,10 +281,14 @@ async function dispatchInvoiceReceipt(
   invoiceRow: Record<string, unknown>
 ): Promise<{ ok: true; channel: "graph" | "sandbox"; messageId?: string } | { ok: false; error: string; channel: "none" | "graph" }> {
   const invoice = mapInvoice(invoiceRow);
+  const clinicName = String(getTenantLetterhead(invoice.tenantId).clinicName || "").trim();
+  const doctorName = receiptDoctorName(invoice.tenantId, invoice.appointmentId, invoice.issuedBy);
   // Dual-path Graph/sandbox lives in Meta #28. Billing records invoice events only.
   const sent = await sendPaymentReceipt({
     to: invoice.patientPhone,
     patientName: invoice.patientName,
+    clinicName,
+    doctorName,
     amount: invoice.totalAmount,
     currency: "₹",
     invoiceId: invoice.invoiceNumber,
