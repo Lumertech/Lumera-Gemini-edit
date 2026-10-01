@@ -1,4 +1,5 @@
 import type { AdminTab } from "../../nav/surfaces";
+import { isClinicBranchRole } from "../../lib/clinicBranches";
 
 /** Clinic desk — CLINIC_ADMIN / polyclinic_admin share these; Super Admin sees desk tabs except Branches. */
 export const DESK_TABS = new Set<AdminTab>(["overview", "users", "people", "branches", "profile", "settings", "audit"]);
@@ -19,7 +20,7 @@ export function isAdminNavItemVisible(role: string | undefined, tab: AdminTab): 
   if (SUPERADMIN_TABS.has(tab) && !isPlatformAdmin) return false;
   if (PLATFORM_TABS.has(tab) && !isPlatformAdmin) return false;
   if (tab === "tenants" && !isPlatformAdmin) return false;
-  if (CLINIC_BRANCH_TABS.has(tab) && isPlatformAdmin) return false;
+  if (CLINIC_BRANCH_TABS.has(tab) && !isClinicBranchRole(role)) return false;
   if (DESK_TABS.has(tab) || SUPERADMIN_TABS.has(tab) || PLATFORM_TABS.has(tab)) return true;
   return true;
 }

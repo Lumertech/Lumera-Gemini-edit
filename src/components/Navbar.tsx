@@ -27,7 +27,8 @@ export type NavView =
   | 'kiosk'
   | 'reports'
   | 'appointments' 
-  | 'polyclinic' 
+  | 'polyclinic'
+  | 'branches'
   | 'whatsapp' 
   | 'voicebot' 
   | 'pharmacy-hub'
@@ -90,6 +91,7 @@ export const Navbar: React.FC<NavbarProps> = ({
     reports: 'AI Lab OCR & Diagnostic Trends',
     appointments: 'Appointments & Schedule',
     polyclinic: 'Polyclinic Specialty Roster',
+    branches: 'Clinic branches',
     whatsapp: 'WhatsApp Suite & Patient Engagement',
     voicebot: 'AI Voice Receptionist',
     'pharmacy-hub': 'Connected Pharmacy & Labs Hub',

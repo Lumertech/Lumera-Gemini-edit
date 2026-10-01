@@ -102,6 +102,7 @@ export const BOOTSTRAP_DDL = `
 
     CREATE TABLE IF NOT EXISTS branches (
       id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT '',
       name TEXT NOT NULL,
       address TEXT NOT NULL DEFAULT '',
       phone TEXT NOT NULL DEFAULT '',

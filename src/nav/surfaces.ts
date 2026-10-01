@@ -30,6 +30,7 @@ export const APP_VIEWS = [
   "reports",
   "appointments",
   "polyclinic",
+  "branches",
   "whatsapp",
   "voicebot",
   "pharmacy-hub",

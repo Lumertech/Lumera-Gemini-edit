@@ -161,6 +161,7 @@ export const staff = pgTable(
 
 export const branches = pgTable("branches", {
   id: text("id").primaryKey(),
+  tenantId: text("tenant_id").notNull().default(""),
   name: text("name").notNull(),
   address: text("address").notNull().default(""),
   phone: text("phone").notNull().default(""),

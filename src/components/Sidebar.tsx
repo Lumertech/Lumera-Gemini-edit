@@ -5,7 +5,8 @@ import {
   Activity, 
   Monitor, 
   Calendar, 
-  Building2, 
+  Building2,
+  Landmark,
   Receipt, 
   MessageSquare, 
   PhoneCall, 
@@ -30,14 +31,15 @@ import { useAuth } from '../auth/AuthContext';
 import { useNav } from '../nav/NavigationContext';
 import { appViewToPath } from '../nav/surfaces';
 import { isPolyclinicPractice } from '../lib/sessionWorkspace';
+import { withoutClinicBranchView } from '../lib/clinicBranches';
 import { allowedViewsForWorkflow, workflowForUser } from '../lib/specialtyWorkflow';
 import { apiFetch } from '../api/http';
 
 export const ROLE_VISIBLE_VIEWS: Record<string, NavView[]> = {
   doctor: ['welcome', 'queue', 'opd-queue', 'rx', 'smart-rx', 'ambient', 'reports', 'appointments', 'polyclinic', 'whatsapp', 'voicebot', 'pharmacy-hub', 'billing', 'dhis', 'team', 'reception', 'kiosk', 'settings', 'wellness', 'therapy-session', 'consult-practice', 'physio-session', 'dental-chart'],
   receptionist: ['welcome', 'reception', 'queue', 'opd-queue', 'appointments', 'kiosk', 'pharmacy-hub', 'billing', 'whatsapp', 'settings'],
-  polyclinic_admin: ['welcome', 'queue', 'opd-queue', 'reception', 'appointments', 'polyclinic', 'billing', 'reports', 'whatsapp', 'voicebot', 'pharmacy-hub', 'dhis', 'team', 'kiosk', 'settings'],
-  CLINIC_ADMIN: ['welcome', 'queue', 'opd-queue', 'reception', 'appointments', 'polyclinic', 'billing', 'reports', 'whatsapp', 'voicebot', 'pharmacy-hub', 'dhis', 'portal', 'team', 'kiosk', 'settings'],
+  polyclinic_admin: ['welcome', 'queue', 'opd-queue', 'reception', 'appointments', 'polyclinic', 'branches', 'billing', 'reports', 'whatsapp', 'voicebot', 'pharmacy-hub', 'dhis', 'team', 'kiosk', 'settings'],
+  CLINIC_ADMIN: ['welcome', 'queue', 'opd-queue', 'reception', 'appointments', 'polyclinic', 'branches', 'billing', 'reports', 'whatsapp', 'voicebot', 'pharmacy-hub', 'dhis', 'portal', 'team', 'kiosk', 'settings'],
   super_admin: ['welcome', 'queue', 'opd-queue', 'reception', 'rx', 'smart-rx', 'ambient', 'reports', 'appointments', 'polyclinic', 'whatsapp', 'voicebot', 'pharmacy-hub', 'billing', 'dhis', 'team', 'kiosk', 'settings'],
   patient: ['portal'],
   nurse: ['reception', 'queue', 'opd-queue', 'reports', 'pharmacy-hub', 'settings'],
@@ -77,6 +79,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   if (!polyclinic) {
     allowedViews = allowedViews.filter(v => v !== 'team' && v !== 'polyclinic');
   }
+  allowedViews = withoutClinicBranchView(allowedViews, user);
   const pack = workflowForUser(user);
   allowedViews = allowedViewsForWorkflow(allowedViews, pack);
 
@@ -195,6 +198,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
           id: 'polyclinic' as NavView,
           label: 'Polyclinic Roster',
           icon: Building2,
+        },
+        {
+          id: 'branches' as NavView,
+          label: 'Branches',
+          icon: Landmark,
         },
         {
           id: 'kiosk' as NavView,

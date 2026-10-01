@@ -77,6 +77,7 @@ import {
   resolveFederatedIdentity,
   signFacebookOAuthState,
 } from "./facebook-oauth.ts";
+import { createClinicBranchesRouter } from "./clinic-branches.ts";
 import {
   GoogleOAuthError,
   googleLoginDialogUrl,
@@ -2219,49 +2220,7 @@ export function createApiRouter(): Router {
     res.json({ ok: true });
   });
 
-  api.get("/branches", (_req, res) => {
-    res.json({ branches: getDb().prepare("SELECT * FROM branches ORDER BY name").all() });
-  });
-
-  api.post("/branches", requireAuth, requireRole(...ADMIN_ROLES), (req, res) => {
-    const b = req.body || {};
-    if (!b.name) return res.status(400).json({ error: "name is required" });
-    const id = `b-${crypto.randomUUID().slice(0, 8)}`;
-    getDb()
-      .prepare(
-        `INSERT INTO branches (id, name, address, phone, opd_hours, active_doctors, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(id, b.name, b.address || "", b.phone || "", b.opdHours || b.opd_hours || "", Number(b.activeDoctors || b.active_doctors || 0), b.status || "Operating");
-    audit(req, "Branch created", b.name);
-    res.status(201).json({ branch: getDb().prepare("SELECT * FROM branches WHERE id = ?").get(id) });
-  });
-
-  api.patch("/branches/:id", requireAuth, requireRole(...ADMIN_ROLES), (req, res) => {
-    const existing = getDb().prepare("SELECT * FROM branches WHERE id = ?").get(req.params.id) as Record<string, unknown> | undefined;
-    if (!existing) return res.status(404).json({ error: "Branch not found" });
-    const next = {
-      name: req.body.name ?? existing.name,
-      address: req.body.address ?? existing.address,
-      phone: req.body.phone ?? existing.phone,
-      opd_hours: req.body.opdHours ?? req.body.opd_hours ?? existing.opd_hours,
-      active_doctors: req.body.activeDoctors ?? req.body.active_doctors ?? existing.active_doctors,
-      status: req.body.status ?? existing.status,
-    };
-    getDb()
-      .prepare(
-        `UPDATE branches SET name = ?, address = ?, phone = ?, opd_hours = ?, active_doctors = ?, status = ? WHERE id = ?`
-      )
-      .run(next.name, next.address, next.phone, next.opd_hours, Number(next.active_doctors), next.status, req.params.id);
-    audit(req, "Branch updated", String(next.name));
-    res.json({ branch: getDb().prepare("SELECT * FROM branches WHERE id = ?").get(req.params.id) });
-  });
-
-  api.delete("/branches/:id", requireAuth, requireRole(...ADMIN_ROLES), (req, res) => {
-    getDb().prepare("DELETE FROM branches WHERE id = ?").run(req.params.id);
-    audit(req, "Branch deleted", req.params.id);
-    res.json({ ok: true });
-  });
+  api.use(createClinicBranchesRouter());
 
   api.get("/cms/settings", requireAuth, requireRole(...ADMIN_ROLES), (_req, res) => {
     res.json({ settings: settingsMap(), geminiConfigured: Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== "MY_GEMINI_API_KEY") });

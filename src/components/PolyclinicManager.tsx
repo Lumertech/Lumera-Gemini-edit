@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { Doctor, PolyclinicSpecialty } from '../types';
 import { DoctorProfileModal } from './DoctorProfileModal';
+import { ClinicBranchesPanel, type ClinicBranch } from './clinic/ClinicBranchesPanel';
 
 interface PolyclinicManagerProps {
   doctors: Doctor[];
@@ -22,6 +23,8 @@ interface PolyclinicManagerProps {
   onSelectSpecialty: (specialty: PolyclinicSpecialty | 'All') => void;
   onSelectDoctor: (doctor: Doctor) => void;
   onDoctorUpdated?: (doctor: Doctor) => void;
+  canManageBranches?: boolean;
+  onUseBranch?: (branch: ClinicBranch) => void;
 }
 
 export const PolyclinicManager: React.FC<PolyclinicManagerProps> = ({
@@ -30,6 +33,8 @@ export const PolyclinicManager: React.FC<PolyclinicManagerProps> = ({
   onSelectSpecialty,
   onSelectDoctor,
   onDoctorUpdated,
+  canManageBranches = false,
+  onUseBranch,
 }) => {
   const [editingDoctor, setEditingDoctor] = useState<Doctor | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -86,6 +91,12 @@ export const PolyclinicManager: React.FC<PolyclinicManagerProps> = ({
           </div>
         </div>
       </div>
+
+      {canManageBranches && (
+        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm" data-testid="polyclinic-branches">
+          <ClinicBranchesPanel onUseBranch={onUseBranch} />
+        </div>
+      )}
 
       {/* Departments Overview Cards */}
       <div>
