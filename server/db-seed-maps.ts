@@ -760,6 +760,16 @@ export function mapInvoice(row: { [key: string]: unknown }) {
   };
 }
 
+function workspaceSlugForTenant(tenantId: string): string {
+  if (!tenantId) return "";
+  try {
+    const row = getDb().prepare("SELECT slug FROM tenants WHERE id = ?").get(tenantId) as { slug?: string } | undefined;
+    return String(row?.slug || "").trim().toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
 export function publicUser(user: DbUser) {
   const billing = getTenantBillingProfile(user.tenant_id || "");
   return {
@@ -774,6 +784,7 @@ export function publicUser(user: DbUser) {
     createdAt: user.created_at,
     avatarUrl: user.avatar_url || "",
     clinicName: user.clinic_name || billing.name || "",
+    workspaceSlug: workspaceSlugForTenant(user.tenant_id || ""),
     whatsappVerified: Boolean(user.whatsapp_verified),
     hprId: user.hpr_id || "",
     hfrId: user.hfr_id || "",

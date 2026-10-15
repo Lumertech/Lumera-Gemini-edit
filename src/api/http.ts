@@ -1,20 +1,17 @@
-const TOKEN_KEY = "lumera_session_token";
+/**
+ * Session lives in the httpOnly `lumera_sid` cookie. Never copy it into
+ * localStorage or sessionStorage (security blocker 002).
+ */
+const LEGACY_TOKEN_KEY = "lumera_session_token";
 
-export function getStoredToken(): string | null {
+export function purgeLegacyAuthToken() {
   try {
-    return localStorage.getItem(TOKEN_KEY);
+    localStorage.removeItem(LEGACY_TOKEN_KEY);
   } catch {
-    return null;
+    /* ignore storage errors */
   }
-}
-
-export function setStoredToken(token: string | null) {
   try {
-    if (token) {
-      localStorage.setItem(TOKEN_KEY, token);
-    } else {
-      localStorage.removeItem(TOKEN_KEY);
-    }
+    sessionStorage.removeItem(LEGACY_TOKEN_KEY);
   } catch {
     /* ignore storage errors */
   }
@@ -24,16 +21,6 @@ export async function apiFetch<T = unknown>(path: string, init: RequestInit = {}
   const headers = new Headers(init.headers);
   if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
-  }
-
-  const token = getStoredToken();
-  if (token) {
-    if (!headers.has("Authorization")) {
-      headers.set("Authorization", `Bearer ${token}`);
-    }
-    if (!headers.has("x-session-token")) {
-      headers.set("x-session-token", token);
-    }
   }
 
   if (!headers.has("X-CSRF-Token") && typeof document !== "undefined") {

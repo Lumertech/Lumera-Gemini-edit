@@ -5,6 +5,7 @@ import { createApiRouter } from "./api.ts";
 import { DEMO_TENANT_ID, getDb, initDatabase, seedDemoSpecialtyPackUsers } from "./db.ts";
 import { hashPassword } from "./password.ts";
 import { DEMO_SPECIALTY_MATRIX, SIBLING_PR55_DEMO_EMAILS, roleHomeForAccount } from "./specialty-packs.ts";
+import { demoWorkspaceForEmail } from "./demo-workspace-tenants.ts";
 
 
 function seedClinicAdmin(label: string) {
@@ -451,7 +452,11 @@ describe("Admin UM users API (UM-1…6)", () => {
 
     for (const row of expected) {
       const session = await login(row.email);
-      assert.equal(session.user.tenantId, DEMO_TENANT_ID, row.email);
+      const expectedTenant = demoWorkspaceForEmail(row.email)?.tenantId || DEMO_TENANT_ID;
+      assert.equal(session.user.tenantId, expectedTenant, row.email);
+      if (row.email !== "admin@lumera.me") {
+        assert.notEqual(session.user.tenantId, DEMO_TENANT_ID, row.email);
+      }
       assert.equal(session.user.role, row.role, row.email);
       assert.equal(session.user.roleHome, row.roleHome, row.email);
       if ("specialty" in row && row.specialty) {

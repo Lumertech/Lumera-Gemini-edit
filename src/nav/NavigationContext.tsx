@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
-import { workspaceSlugFromUser } from "../lib/workspacePath";
+import { reconcileWorkspacePath, workspaceSlugFromUser } from "../lib/workspacePath";
 import {
   type AdminTab,
   type AppView,
@@ -96,29 +96,12 @@ export const NavigationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   );
 
   useEffect(() => {
-    if (!sessionWorkspace || parsed.surface !== "app") return;
-    const p = normalizePath(location.pathname);
-    if (p === "/app") {
-      if (p !== `/w/${sessionWorkspace}`) navigate(`/w/${sessionWorkspace}`, { replace: true });
-      return;
-    }
-    if (p.startsWith("/app/")) {
-      const view = parsed.appView;
-      const next = `/w/${sessionWorkspace}/${view}`;
-      if (p !== next) navigate(next, { replace: true });
-      return;
-    }
-    if (p.startsWith("/w/")) {
-      const parts = p.split("/").filter(Boolean);
-      const urlSlug = parts[1] || "";
-      const viewSeg = parts[2];
-      if (urlSlug && urlSlug !== sessionWorkspace) {
-        navigate(viewSeg ? `/w/${sessionWorkspace}/${viewSeg}` : `/w/${sessionWorkspace}`, {
-          replace: true,
-        });
-      }
-    }
-  }, [sessionWorkspace, parsed.surface, parsed.appView, location.pathname, navigate]);
+    if (!user) return;
+    const next = reconcileWorkspacePath(location.pathname, sessionWorkspace, user.role);
+    if (!next) return;
+    if (normalizePath(location.pathname) === normalizePath(next)) return;
+    navigate(next, { replace: true });
+  }, [user, sessionWorkspace, location.pathname, navigate]);
 
   const value = useMemo(
     () => ({

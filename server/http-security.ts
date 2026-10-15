@@ -351,5 +351,5 @@ export function csrfCookieValue(): string {
 }
 
 export function csrfSetCookieHeader(token: string): string {
-  return `${CSRF_COOKIE}=${encodeURIComponent(token)}; Path=/; SameSite=None; Secure; Partitioned; Max-Age=${7 * 24 * 60 * 60}`;
+  return `${CSRF_COOKIE}=${encodeURIComponent(token)}; Path=/; SameSite=Lax; Secure; Max-Age=${7 * 24 * 60 * 60}`;
 }

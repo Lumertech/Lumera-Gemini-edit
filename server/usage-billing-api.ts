@@ -1,6 +1,7 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { getDb, writeAudit } from "./db.ts";
 import { requireAuth, requirePlatformAdmin } from "./auth.ts";
+import { rejectUntrustedTenantClaim } from "./tenant-guard.ts";
 import { isCloudDispatchFailure } from "./graph-whatsapp.ts";
 import { getTenantLetterhead } from "./letterhead.ts";
 import { appPublicUrl, isProduction, sandboxSimulatorsEnabled } from "./runtime.ts";
@@ -51,6 +52,7 @@ function isPlatform(req: Request): boolean {
 
 export function createUsageBillingRouter(): Router {
   const api = Router();
+  api.use(rejectUntrustedTenantClaim);
   try {
     ensureUsageWalletSchema(getDb());
     seedDemoUsageWallet(getDb());

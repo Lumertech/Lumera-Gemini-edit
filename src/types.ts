@@ -26,6 +26,8 @@ export interface AppUser {
   roleHome?: 'admin' | 'app' | 'portal' | 'login';
   homeView?: string;
   practiceType?: 'individual' | 'polyclinic';
+  /** Tenant slug from the session. Routing uses this, not a client-supplied id. */
+  workspaceSlug?: string;
   isDemoWorkspace?: boolean;
   gstin?: string;
   upiId?: string;

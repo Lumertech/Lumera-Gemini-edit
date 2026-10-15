@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { apiFetch, setStoredToken } from "../api/http";
+import { apiFetch, purgeLegacyAuthToken } from "../api/http";
 import { AppUser, UserRole } from "../types";
 import { type Surface } from "../nav/surfaces";
 import { needsOnboarding } from "../lib/sessionWorkspace";
@@ -126,12 +126,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     let cancelled = false;
-    apiFetch<{ user: AppUser | null; token?: string }>("/api/auth/me")
+    purgeLegacyAuthToken();
+    apiFetch<{ user: AppUser | null }>("/api/auth/me")
       .then((d) => {
         if (cancelled) return;
-        if (d.token) {
-          setStoredToken(d.token);
-        }
+        purgeLegacyAuthToken();
         if (d?.user) {
           setUser(d.user);
         } else {
@@ -162,9 +161,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       method: "POST",
       body: JSON.stringify({ email, password, skipOtp }),
     });
-    if (d.token) {
-      setStoredToken(d.token);
-    }
+    purgeLegacyAuthToken();
     if (d.user && !d.requiresOtp) {
       setUser(d.user);
     }
@@ -176,9 +173,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       method: "POST",
       body: JSON.stringify({}),
     });
-    if (d.token) {
-      setStoredToken(d.token);
-    }
+    purgeLegacyAuthToken();
     if (d.user && !d.requiresOtp) {
       setUser(d.user);
     }
@@ -201,9 +196,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         skipOtp,
       }),
     });
-    if (d.token) {
-      setStoredToken(d.token);
-    }
+    purgeLegacyAuthToken();
     if (d.user && !d.requiresOtp) {
       setUser(d.user);
     }
@@ -218,9 +211,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         body: JSON.stringify(data),
       }
     );
-    if (res.token) {
-      setStoredToken(res.token);
-    }
+    purgeLegacyAuthToken();
     if (res.user) {
       setUser(res.user);
     }
@@ -239,9 +230,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       method: "POST",
       body: JSON.stringify({ verificationId, otp, updatedPhone }),
     });
-    if (res.token) {
-      setStoredToken(res.token);
-    }
+    purgeLegacyAuthToken();
     if (res.user) {
       setUser(res.user);
     }
@@ -293,7 +282,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch {
       /* still clear local credentials if the network call fails */
     }
-    setStoredToken(null);
+    purgeLegacyAuthToken();
     setUser(null);
     clearTenantScope();
   }, []);
@@ -303,10 +292,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const refreshSession = useCallback(async (): Promise<AppUser | null> => {
-    const d = await apiFetch<{ user: AppUser | null; token?: string }>("/api/auth/me");
-    if (d.token) {
-      setStoredToken(d.token);
-    }
+    const d = await apiFetch<{ user: AppUser | null }>("/api/me");
+    purgeLegacyAuthToken();
     if (d?.user) {
       setUser(d.user);
       return d.user;

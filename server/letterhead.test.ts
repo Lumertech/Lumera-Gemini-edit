@@ -209,13 +209,13 @@ describe("Tenant letterhead API", () => {
     });
     assert.equal(getRes.status, 200, String(getRes.json.error || ""));
     const letterhead = getRes.json.letterhead as { gstin: string; upiId: string; clinicName: string };
-    assert.equal(letterhead.gstin, DEMO_LETTERHEAD.gstin);
-    assert.equal(letterhead.upiId, DEMO_LETTERHEAD.upiId);
-    assert.match(letterhead.clinicName, /Lumera/i);
+    assert.equal(letterhead.clinicName, "Malhotra Individual Practice");
+    assert.notEqual(letterhead.gstin, DEMO_LETTERHEAD.gstin);
 
     const demoRow = getDb()
-      .prepare("SELECT gstin, upi_id FROM tenants WHERE id = ?")
-      .get(DEMO_TENANT_ID) as { gstin: string; upi_id: string };
+      .prepare("SELECT name, gstin, upi_id FROM tenants WHERE id = ?")
+      .get(DEMO_TENANT_ID) as { name: string; gstin: string; upi_id: string };
+    assert.equal(demoRow.name, "Lumera Apex PolyClinic");
     assert.equal(demoRow.gstin, DEMO_LETTERHEAD.gstin);
     assert.equal(demoRow.upi_id, DEMO_LETTERHEAD.upiId);
   });
