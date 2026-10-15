@@ -19,6 +19,8 @@ import {
 import { appPublicUrl, isProduction, sandboxSimulatorsEnabled } from "./runtime.ts";
 import { reportCaughtError } from "./error-tracker.ts";
 import { invoiceNumberToPersist } from "../src/lib/billingCollect.ts";
+import { upsertScopedConversation } from "./whatsapp-scope.ts";
+import { WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
 
 function tenantIdOf(req: Request): string {
   return String(req.user?.tenantId || "").trim();
@@ -191,6 +193,7 @@ function recordReceiptEvent(opts: {
   details: string;
   payload: Record<string, unknown>;
   conversationContent?: string;
+  tenantId?: string;
 }) {
   try {
     const db = getDb();
@@ -201,42 +204,36 @@ function recordReceiptEvent(opts: {
       hour12: true,
     });
     const cleanPhone = opts.phone.trim();
-    const convId = `conv-rcpt-${cleanPhone.replace(/\D/g, "").slice(-8) || "pt"}`;
+    const preferredId = `conv-rcpt-${cleanPhone.replace(/\D/g, "").slice(-8) || "pt"}`;
     const userName = opts.name.trim() || "Patient";
-
-    let conv = db
-      .prepare("SELECT * FROM whatsapp_conversations WHERE id = ? OR patient_phone = ?")
-      .get(convId, cleanPhone) as Record<string, unknown> | undefined;
-
-    if (!conv) {
-      db.prepare(
-        `INSERT INTO whatsapp_conversations (
-          id, patient_phone, patient_name, handover_mode, assigned_staff, tags,
-          preferred_language, unread_count, last_message, last_message_time, updated_at
-        ) VALUES (?, ?, ?, 'bot', 'Lumera Billing', '["Billing", "Receipt"]', 'en', 0, ?, ?, ?)`
-      ).run(convId, cleanPhone, userName, opts.details, timeDisplay, now);
-    } else {
-      db.prepare(
-        `UPDATE whatsapp_conversations
-         SET last_message = ?, last_message_time = ?, updated_at = ?
-         WHERE id = ?`
-      ).run(opts.details, timeDisplay, now, String(conv.id));
-    }
+    const tenantId = String(opts.tenantId || "").trim() || WHATSAPP_QUARANTINE_TENANT_ID;
+    const convId = upsertScopedConversation({
+      preferredId,
+      tenantId,
+      patientPhone: cleanPhone,
+      patientName: userName,
+      assignedStaff: "Lumera Billing",
+      tags: '["Billing", "Receipt"]',
+      preferredLanguage: "en",
+      lastMessage: opts.details,
+      lastMessageTime: timeDisplay,
+      now,
+    });
 
     if (opts.conversationContent) {
       const msgId = `msg-rcpt-${crypto.randomUUID().slice(0, 8)}`;
       db.prepare(
         `INSERT INTO whatsapp_messages (
           id, conversation_id, patient_phone, sender, staff_name, content,
-          translated_content, detected_language, time_display, buttons, media, status, created_at
-        ) VALUES (?, ?, ?, 'agent', 'Lumera Billing', ?, null, 'en', ?, null, null, ?, ?)`
-      ).run(msgId, convId, cleanPhone, opts.conversationContent, timeDisplay, opts.status, now);
+          translated_content, detected_language, time_display, buttons, media, status, created_at, tenant_id
+        ) VALUES (?, ?, ?, 'agent', 'Lumera Billing', ?, null, 'en', ?, null, null, ?, ?, ?)`
+      ).run(msgId, convId, cleanPhone, opts.conversationContent, timeDisplay, opts.status, now, tenantId);
     }
 
     db.prepare(
       `INSERT INTO whatsapp_outbound_events (
-        id, event_type, patient_phone, patient_name, status, details, action_payload, sent_at
-      ) VALUES (?, 'invoice_receipt', ?, ?, ?, ?, ?, ?)`
+        id, event_type, patient_phone, patient_name, status, details, action_payload, sent_at, tenant_id
+      ) VALUES (?, 'invoice_receipt', ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       `evt-rcpt-${crypto.randomUUID().slice(0, 8)}`,
       cleanPhone,
@@ -244,7 +241,8 @@ function recordReceiptEvent(opts: {
       opts.status,
       opts.details,
       JSON.stringify(opts.payload),
-      now
+      now,
+      tenantId
     );
   } catch (err) {
     console.error("Failed to record invoice receipt WhatsApp event:", err);
@@ -282,6 +280,7 @@ async function dispatchInvoiceReceipt(
     recordReceiptEvent({
       phone: invoice.patientPhone,
       name: invoice.patientName,
+      tenantId: invoice.tenantId,
       status: "failed",
       details:
         sent.channel === "graph"
@@ -301,6 +300,7 @@ async function dispatchInvoiceReceipt(
   recordReceiptEvent({
     phone: invoice.patientPhone,
     name: invoice.patientName,
+    tenantId: invoice.tenantId,
     status: sandbox ? "sandbox_recorded" : "sent",
     details: sandbox
       ? `SANDBOX / DEV-ONLY receipt recorded locally for ${invoice.invoiceNumber} (not Graph)`
@@ -351,13 +351,15 @@ function insertInvoice(tenantId: string, body: Record<string, unknown>, actor?: 
 
   const snapshot = billingSnapshot(tenantId, body);
   const patientId = String(body.patientId || body.patient_id || "").trim();
+  let patientUhid = String(body.patientUhid || body.patient_uhid || body.uhid || "");
   if (patientId) {
     const patient = getDb()
-      .prepare("SELECT id FROM patients WHERE id = ? AND tenant_id = ?")
-      .get(patientId, tenantId);
+      .prepare("SELECT id, uhid FROM patients WHERE id = ? AND tenant_id = ?")
+      .get(patientId, tenantId) as { id: string; uhid?: string } | undefined;
     if (!patient) {
       throw Object.assign(new Error("Patient not found"), { status: 404 });
     }
+    patientUhid = String(patient.uhid || "");
   }
 
   const appointmentId = String(body.appointmentId || body.appointment_id || "").trim();
@@ -391,7 +393,7 @@ function insertInvoice(tenantId: string, body: Record<string, unknown>, actor?: 
       patientId,
       String(body.patientName || body.patient_name || ""),
       String(body.patientPhone || body.patient_phone || ""),
-      String(body.patientUhid || body.patient_uhid || body.uhid || ""),
+      patientUhid,
       date,
       jsonText(items, "[]"),
       subtotal,

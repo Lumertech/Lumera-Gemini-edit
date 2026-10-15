@@ -2,12 +2,16 @@ import { type SqlDatabase } from "./sql-engine.ts";
 import { DEMO_TENANT_ID } from "./db.ts";
 import { ensureDemoTenantLetterhead } from "./db-migrate.ts";
 import { DEMO_PASSWORD, DOCTOR_SEED, hashPasswordSync } from "./db-seed-maps.ts";
+import { WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
 
 export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
   const now = new Date().toISOString();
 
-  // Seed default tenant if tenants table is empty
-  const tenantCount = database.prepare("SELECT COUNT(*) AS c FROM tenants").get() as { c: number };
+  // Seed the demo clinic when no real tenant exists yet.
+  // The WhatsApp quarantine row is inserted during migrate() and must not hide this seed.
+  const tenantCount = database
+    .prepare("SELECT COUNT(*) AS c FROM tenants WHERE id != ?")
+    .get(WHATSAPP_QUARANTINE_TENANT_ID) as { c: number };
   if (tenantCount.c === 0) {
     const trialEnds = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
     database.prepare(`
@@ -586,8 +590,8 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
   const convCount = database.prepare("SELECT COUNT(*) AS c FROM whatsapp_conversations").get() as { c: number };
   if (convCount.c === 0) {
     const insertConv = database.prepare(`
-      INSERT INTO whatsapp_conversations (id, patient_phone, patient_name, patient_id, uhid, handover_mode, assigned_staff, tags, preferred_language, unread_count, last_message, last_message_time, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO whatsapp_conversations (id, patient_phone, patient_name, patient_id, uhid, handover_mode, assigned_staff, tags, preferred_language, unread_count, last_message, last_message_time, updated_at, tenant_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     insertConv.run(
@@ -603,7 +607,8 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
       0,
       "Namaste Rajiv Saxena! Welcome to Lumera Health Desk.",
       "10:15 AM",
-      now
+      now,
+      DEMO_TENANT_ID
     );
 
     insertConv.run(
@@ -619,7 +624,8 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
       2,
       "नमस्ते डॉक्टर, मेरी शुगर रिपोर्ट 248 आई है, क्या मुझे इंसुलिन शुरू करना होगा?",
       "09:40 AM",
-      now
+      now,
+      DEMO_TENANT_ID
     );
 
     insertConv.run(
@@ -635,7 +641,8 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
       0,
       "Can I get the UPI receipt for my OPD consultation fee?",
       "Yesterday",
-      now
+      now,
+      DEMO_TENANT_ID
     );
 
     insertConv.run(
@@ -651,12 +658,13 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
       1,
       "What time is Dr. Siddharth available for shoulder rehab session?",
       "Yesterday",
-      now
+      now,
+      DEMO_TENANT_ID
     );
 
     const insertMsg = database.prepare(`
-      INSERT INTO whatsapp_messages (id, conversation_id, patient_phone, sender, staff_name, content, translated_content, detected_language, time_display, buttons, media, audio_url, voice_transcript, status, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO whatsapp_messages (id, conversation_id, patient_phone, sender, staff_name, content, translated_content, detected_language, time_display, buttons, media, audio_url, voice_transcript, status, created_at, tenant_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     insertMsg.run(
@@ -674,7 +682,8 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
       null,
       null,
       "read",
-      now
+      now,
+      DEMO_TENANT_ID
     );
 
     insertMsg.run(
@@ -692,7 +701,8 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
       null,
       null,
       "delivered",
-      now
+      now,
+      DEMO_TENANT_ID
     );
 
     insertMsg.run(
@@ -710,15 +720,16 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
       null,
       null,
       "read",
-      now
+      now,
+      DEMO_TENANT_ID
     );
   }
 
   const eventCount = database.prepare("SELECT COUNT(*) AS c FROM whatsapp_outbound_events").get() as { c: number };
   if (eventCount.c === 0) {
     const insertEvent = database.prepare(`
-      INSERT INTO whatsapp_outbound_events (id, event_type, patient_phone, patient_name, status, details, action_payload, sent_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO whatsapp_outbound_events (id, event_type, patient_phone, patient_name, status, details, action_payload, sent_at, tenant_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     insertEvent.run(
@@ -729,7 +740,8 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
       "delivered",
       "Pre-visit reminder for Dr. Siddharth Varma at 09:00 AM. Token #01.",
       JSON.stringify({ token: 1, doctor: "Dr. Siddharth Varma (PT)", time: "09:00 AM", buttons: ["Confirm Arrival", "Reschedule"] }),
-      now
+      now,
+      DEMO_TENANT_ID
     );
 
     insertEvent.run(
@@ -740,7 +752,8 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
       "read",
       "Digital prescription RX-2026-0106 & diagnostic receipt dispatched with direct PDF link.",
       JSON.stringify({ rxNumber: "RX-2026-0106", pdfUrl: "/api/emr/prescription/rx-101/pdf", amount: 700 }),
-      now
+      now,
+      DEMO_TENANT_ID
     );
 
     insertEvent.run(
@@ -751,7 +764,8 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
       "delivered",
       "Live OPD queue alert: You are next in line (Token #02). Please proceed to Rehab Suite 105.",
       JSON.stringify({ token: 2, queuePosition: 1, room: "Rehab Suite 105" }),
-      now
+      now,
+      DEMO_TENANT_ID
     );
   }
 
@@ -859,8 +873,8 @@ function ensureClipAReminderFixture(database: SqlDatabase, now: string) {
   );
   if (!conversation) {
     database.prepare(`
-      INSERT INTO whatsapp_conversations (id, patient_phone, patient_name, patient_id, uhid, handover_mode, assigned_staff, tags, preferred_language, unread_count, last_message, last_message_time, updated_at)
-      VALUES (?, ?, ?, ?, ?, 'bot', 'Unassigned', ?, 'en', 0, ?, '', ?)
+      INSERT INTO whatsapp_conversations (id, patient_phone, patient_name, patient_id, uhid, handover_mode, assigned_staff, tags, preferred_language, unread_count, last_message, last_message_time, updated_at, tenant_id)
+      VALUES (?, ?, ?, ?, ?, 'bot', 'Unassigned', ?, 'en', 0, ?, '', ?, ?)
     `).run(
       CLIP_A_CONV_ID,
       CLIP_A_PHONE,
@@ -869,7 +883,8 @@ function ensureClipAReminderFixture(database: SqlDatabase, now: string) {
       CLIP_A_UHID,
       JSON.stringify(["Appointment"]),
       "Clip A reminder recipient is ready for a 24h trigger.",
-      now
+      now,
+      DEMO_TENANT_ID
     );
   }
   const convId = conversation ? String(conversation.id) : CLIP_A_CONV_ID;

@@ -1,6 +1,12 @@
 import { type SqlDatabase } from "./sql-engine.ts";
 import { ensurePlatformTenantSchema } from "./platform-tenants.ts";
 import { BOOTSTRAP_DDL } from "./db-bootstrap-ddl.ts";
+import {
+  addWhatsAppTenantColumns,
+  enforceWhatsAppTenantNotNull,
+  migrateWhatsAppConversationKey,
+} from "./migrate-patients-phone.ts";
+import { backfillWhatsAppTenantIds } from "./whatsapp-tenant-backfill.ts";
 
 const DEMO_LETTERHEAD_SEED = {
   name: "Lumera Healthcare & Polyclinic Institute",
@@ -358,6 +364,10 @@ export function migrate(database: SqlDatabase) {
   try {
     database.exec("ALTER TABLE otp_verifications ADD COLUMN failed_attempts INTEGER NOT NULL DEFAULT 0");
   } catch {}
+  addWhatsAppTenantColumns(database);
+  backfillWhatsAppTenantIds(database);
+  migrateWhatsAppConversationKey(database);
+  enforceWhatsAppTenantNotNull(database);
 }
 
 /**

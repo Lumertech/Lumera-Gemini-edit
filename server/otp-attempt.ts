@@ -1,4 +1,5 @@
 import type { Request, Response } from "express";
+import { toE164Phone } from "./clinical.ts";
 import { getDb } from "./db.ts";
 import type { SqlDatabase } from "./sql-engine.ts";
 import { consumeSendOtpAttempt, otpSubjectKey, requestClientIp } from "./otp-rate-limit.ts";
@@ -45,16 +46,34 @@ export function reserveOtpSend(
   return { limited: false, pending: null };
 }
 
+/** Digit spellings that toE164Phone maps back to the same number. */
+function e164DigitForms(e164: string): string[] {
+  const digits = e164.replace(/\D/g, "");
+  const forms = new Set<string>([digits, `00${digits}`]);
+  if (digits.startsWith("91") && digits.length === 12) {
+    const national = digits.slice(2);
+    forms.add(national);
+    forms.add(`0${national}`);
+  }
+  return [...forms];
+}
+
 function findPendingOtp(phone: string, purpose: string, email: string): PendingOtp | null {
-  const row = getDb()
+  const phoneKey = toE164Phone(phone);
+  if (!phoneKey) return null;
+  const forms = e164DigitForms(phoneKey);
+  const stripped = `replace(replace(replace(replace(replace(phone, '+', ''), ' ', ''), '-', ''), '(', ''), ')', '')`;
+  const rows = getDb()
     .prepare(
-      `SELECT id, otp, expires_at FROM otp_verifications
-       WHERE phone = ? AND purpose = ? AND lower(email) = ? AND verified_at IS NULL AND expires_at > ?
+      `SELECT id, otp, expires_at, phone FROM otp_verifications
+       WHERE purpose = ? AND lower(email) = ? AND verified_at IS NULL AND expires_at > ?
          AND COALESCE(failed_attempts, 0) < ?
-       ORDER BY created_at DESC LIMIT 1`
+         AND TRIM(COALESCE(otp, '')) != ''
+         AND ${stripped} IN (${forms.map(() => "?").join(", ")})
+       ORDER BY created_at DESC`
     )
-    .get(phone, purpose, email, new Date().toISOString(), VERIFY_OTP_MAX_FAILURES) as PendingOtp | undefined;
-  return row || null;
+    .all(purpose, email, new Date().toISOString(), VERIFY_OTP_MAX_FAILURES, ...forms) as Array<PendingOtp & { phone?: string }>;
+  return rows.find((row) => toE164Phone(String(row.phone || "")) === phoneKey) || null;
 }
 
 export function rejectWrongOtp(

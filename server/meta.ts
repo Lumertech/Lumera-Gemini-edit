@@ -14,7 +14,15 @@ import {
 } from "./meta-security.ts";
 import { handleMetaDataDeletionPost, handleMetaDeauthorizePost } from "./meta-signed-request.ts";
 import { normalizePhoneDigits, phonesMatch } from "./whatsapp-calendar-booking.ts";
+import { tenantIdFromReceivingPhoneNumberId } from "./whatsapp-tenant-resolve.ts";
+import { WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
 import type { SqlDatabase } from "./sql-engine.ts";
+
+/** read and failed are terminal. delivered can still become read. */
+function isPendingOutboundStatus(status: string): boolean {
+  const value = status.trim().toLowerCase();
+  return value !== "read" && value !== "failed";
+}
 
 function graphWamidFromPayload(raw: unknown): string {
   if (raw == null || raw === "") return "";
@@ -32,26 +40,30 @@ function graphWamidFromPayload(raw: unknown): string {
  * Apply a Meta Cloud API message-status webhook to the matching outbound event.
  * Graph stores the wamid in action_payload.messageId (row id is evt-*), and
  * status.recipient_id is digits-only while patient_phone is often E.164 (+91…).
- * Match wamid first; phone is a secondary fallback using phonesMatch.
+ * Match wamid first. Phone is a fallback for the newest in-flight row of that
+ * clinic and patient, not every outbound event to the handset.
  */
 export function applyWhatsAppOutboundStatus(
   db: SqlDatabase,
-  opts: { messageId?: string; recipientId?: string; status?: string; sentAt: string }
+  opts: { messageId?: string; recipientId?: string; status?: string; sentAt: string; tenantId?: string }
 ): number {
   const messageId = String(opts.messageId || "").trim();
   const recipientId = String(opts.recipientId || "").trim();
   const status = String(opts.status || "").trim();
-  if (!status) return 0;
+  const tenantId = String(opts.tenantId || "").trim();
+  if (!status || !tenantId) return 0;
 
   const matchedIds = new Set<string>();
+  const tenantSql = "TRIM(COALESCE(tenant_id, '')) = ?";
 
   if (messageId) {
     const candidates = db
       .prepare(
         `SELECT id, action_payload FROM whatsapp_outbound_events
-         WHERE id = ? OR (action_payload IS NOT NULL AND action_payload LIKE '%' || ? || '%')`
+         WHERE ${tenantSql}
+           AND (id = ? OR (action_payload IS NOT NULL AND action_payload LIKE '%' || ? || '%'))`
       )
-      .all(messageId, messageId) as Array<{ id: string; action_payload?: string | null }>;
+      .all(tenantId, messageId, messageId) as Array<{ id: string; action_payload?: string | null }>;
     for (const row of candidates) {
       if (row.id === messageId || graphWamidFromPayload(row.action_payload) === messageId) {
         matchedIds.add(row.id);
@@ -67,24 +79,37 @@ export function applyWhatsAppOutboundStatus(
       "replace(replace(replace(replace(patient_phone, '+', ''), ' ', ''), '-', ''), '(', '')";
     const candidates = db
       .prepare(
-        `SELECT id, patient_phone FROM whatsapp_outbound_events
-         WHERE patient_phone = ?
-            OR patient_phone = ?
-            OR ${phoneDigitsExpr} = ?
-            OR (? != '' AND ${phoneDigitsExpr} LIKE '%' || ? || '%')`
+        `SELECT id, patient_phone, status, sent_at FROM whatsapp_outbound_events
+         WHERE ${tenantSql}
+           AND (
+             patient_phone = ?
+             OR patient_phone = ?
+             OR ${phoneDigitsExpr} = ?
+             OR (? != '' AND ${phoneDigitsExpr} LIKE '%' || ? || '%')
+           )
+         ORDER BY sent_at DESC`
       )
-      .all(recipientId, plusPrefixed, digits, last10, last10) as Array<{ id: string; patient_phone: string }>;
+      .all(tenantId, recipientId, plusPrefixed, digits, last10, last10) as Array<{
+        id: string;
+        patient_phone: string;
+        status?: string;
+      }>;
     for (const row of candidates) {
-      if (phonesMatch(row.patient_phone, recipientId)) matchedIds.add(row.id);
+      if (!phonesMatch(row.patient_phone, recipientId)) continue;
+      if (!isPendingOutboundStatus(String(row.status || ""))) continue;
+      matchedIds.add(row.id);
+      break;
     }
   }
 
   if (matchedIds.size === 0) return 0;
 
   let changes = 0;
-  const stmt = db.prepare("UPDATE whatsapp_outbound_events SET status = ?, sent_at = ? WHERE id = ?");
+  const stmt = db.prepare(
+    `UPDATE whatsapp_outbound_events SET status = ?, sent_at = ? WHERE id = ? AND ${tenantSql}`
+  );
   for (const id of matchedIds) {
-    changes += Number(stmt.run(status, opts.sentAt, id).changes || 0);
+    changes += Number(stmt.run(status, opts.sentAt, id, tenantId).changes || 0);
   }
   return changes;
 }
@@ -93,6 +118,85 @@ export function applyWhatsAppOutboundStatus(
  * Facebook App Dashboard validates these callback URLs with GET and treats 404 as invalid.
  * Body is a health check only. POST (signed_request) is unchanged and is the real callback.
  */
+/**
+ * Receiving line → clinic. Doctor-owned lines resolve to that doctor's one clinic
+ * and are refused when affiliation is ambiguous. A tenant-owned registry row is next.
+ * tenants.phone_number_id is used only when exactly one tenant owns it.
+ * Unknown lines return "".
+ */
+export function inboundTenantIdFromPhoneNumberId(phoneNumberId?: string): string {
+  const resolved = tenantIdFromReceivingPhoneNumberId(phoneNumberId);
+  if (!resolved || resolved === WHATSAPP_QUARANTINE_TENANT_ID) return "";
+  return resolved;
+}
+
+/**
+ * Stamp the clinic from the receiving phone_number_id.
+ * The conversation key is (tenant_id, patient_phone). An unknown line writes nothing.
+ */
+export function recordInboundWhatsAppMessage(
+  db: SqlDatabase,
+  opts: {
+    fromPhone: string;
+    textBody: string;
+    tenantId: string;
+    phoneNumberId: string;
+    wabaId: string;
+    now: string;
+  }
+) {
+  const fromPhone = String(opts.fromPhone || "").trim();
+  const tenantId = String(opts.tenantId || "").trim();
+  if (!fromPhone || !tenantId || tenantId === WHATSAPP_QUARANTINE_TENANT_ID) return;
+  const textBody = String(opts.textBody || "[Media/Attachment]");
+  const timeDisplay = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const existing = db
+    .prepare(
+      `SELECT id FROM whatsapp_conversations
+       WHERE patient_phone = ? AND TRIM(COALESCE(tenant_id, '')) = ?`
+    )
+    .get(fromPhone, tenantId) as { id?: string } | undefined;
+
+  let convId = String(existing?.id || "");
+  if (!convId) {
+    convId = `conv-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    db.prepare(
+      `INSERT INTO whatsapp_conversations (
+         id, patient_phone, patient_name, handover_mode, assigned_staff, tags, preferred_language,
+         unread_count, last_message, last_message_time, updated_at, tenant_id, phone_number_id, waba_id, last_inbound_at
+       ) VALUES (?, ?, ?, 'bot', 'AI Triage Desk', '["New Inquiry"]', 'en', 1, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      convId,
+      fromPhone,
+      `Patient (+${fromPhone})`,
+      textBody,
+      opts.now,
+      opts.now,
+      tenantId,
+      opts.phoneNumberId,
+      opts.wabaId,
+      opts.now
+    );
+  } else {
+    db.prepare(
+      `UPDATE whatsapp_conversations
+       SET last_message = ?, last_message_time = ?, unread_count = unread_count + 1, updated_at = ?,
+           last_inbound_at = ?,
+           phone_number_id = CASE WHEN TRIM(COALESCE(phone_number_id, '')) = '' THEN ? ELSE phone_number_id END,
+           waba_id = CASE WHEN TRIM(COALESCE(waba_id, '')) = '' THEN ? ELSE waba_id END
+       WHERE id = ? AND TRIM(COALESCE(tenant_id, '')) = ?`
+    ).run(textBody, opts.now, opts.now, opts.now, opts.phoneNumberId, opts.wabaId, convId, tenantId);
+  }
+
+  const msgId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  db.prepare(
+    `INSERT INTO whatsapp_messages (
+       id, conversation_id, patient_phone, sender, staff_name, content, translated_content,
+       detected_language, time_display, buttons, media, status, created_at, tenant_id
+     ) VALUES (?, ?, ?, 'patient', '', ?, ?, 'en', ?, '[]', '[]', 'received', ?, ?)`
+  ).run(msgId, convId, fromPhone, textBody, textBody, timeDisplay, opts.now, tenantId);
+}
+
 export function handleMetaCallbackGetProbe(_req: Request, res: Response) {
   res.status(200).json({ ok: true, status: "ok" });
 }
@@ -174,8 +278,33 @@ export function createMetaRouter(): Router {
           if (entry.changes && Array.isArray(entry.changes)) {
             for (const change of entry.changes) {
               const val = change.value;
-              
-              // Handle message statuses (delivered, read, failed)
+              const phoneNumberId = String(val?.metadata?.phone_number_id || "").trim();
+              const inboundTenantId = inboundTenantIdFromPhoneNumberId(phoneNumberId);
+              if (!inboundTenantId) {
+                console.warn(
+                  "[Meta Webhook] Unknown phone_number_id; acknowledging without writing.",
+                  phoneNumberId || "(missing)"
+                );
+                if (val?.statuses && Array.isArray(val.statuses)) {
+                  for (const st of val.statuses) {
+                    try {
+                      applyWhatsAppOutboundStatus(db, {
+                        messageId: st.id,
+                        recipientId: st.recipient_id,
+                        status: st.status,
+                        sentAt: now,
+                        tenantId: WHATSAPP_QUARANTINE_TENANT_ID,
+                      });
+                    } catch (err) {
+                      reportCaughtError(err, "meta.webhook.outbound-status.unassigned");
+                    }
+                  }
+                }
+                continue;
+              }
+              const wabaId = String(entry?.id || "").trim();
+
+              // Handle message statuses (delivered, read, failed) inside this clinic only.
               if (val?.statuses && Array.isArray(val.statuses)) {
                 for (const st of val.statuses) {
                   const messageId = st.id;
@@ -188,6 +317,7 @@ export function createMetaRouter(): Router {
                       recipientId,
                       status,
                       sentAt: now,
+                      tenantId: inboundTenantId,
                     });
                   } catch (err) {
                     reportCaughtError(err, "meta.webhook.outbound-status");
@@ -195,36 +325,17 @@ export function createMetaRouter(): Router {
                 }
               }
 
-              // Handle inbound user message
+              // Handle inbound user message. Tenant comes only from the receiving phone_number_id.
               if (val?.messages && Array.isArray(val.messages)) {
                 for (const msg of val.messages) {
-                  const fromPhone = msg.from;
-                  const textBody = msg.text?.body || msg.interactive?.button_reply?.title || "[Media/Attachment]";
-                  
-                  // Upsert conversation
-                  const existingConv = db.prepare("SELECT * FROM whatsapp_conversations WHERE patient_phone = ?").get(fromPhone) as any;
-                  let convId = existingConv?.id;
-                  
-                  if (!convId) {
-                    convId = `conv-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-                    db.prepare(`
-                      INSERT INTO whatsapp_conversations (id, patient_phone, patient_name, handover_mode, assigned_staff, tags, preferred_language, unread_count, last_message, last_message_time, updated_at)
-                      VALUES (?, ?, ?, 'bot', 'AI Triage Desk', '["New Inquiry"]', 'en', 1, ?, ?, ?)
-                    `).run(convId, fromPhone, `Patient (+${fromPhone})`, textBody, now, now);
-                  } else {
-                    db.prepare(`
-                      UPDATE whatsapp_conversations 
-                      SET last_message = ?, last_message_time = ?, unread_count = unread_count + 1, updated_at = ?
-                      WHERE id = ?
-                    `).run(textBody, now, now, convId);
-                  }
-
-                  // Store message
-                  const msgId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-                  db.prepare(`
-                    INSERT INTO whatsapp_messages (id, conversation_id, patient_phone, sender, staff_name, content, translated_content, detected_language, time_display, buttons, media, status, created_at)
-                    VALUES (?, ?, ?, 'patient', '', ?, ?, 'en', ?, '[]', '[]', 'received', ?)
-                  `).run(msgId, convId, fromPhone, textBody, textBody, new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }), now);
+                  recordInboundWhatsAppMessage(db, {
+                    fromPhone: String(msg.from || "").trim(),
+                    textBody: msg.text?.body || msg.interactive?.button_reply?.title || "[Media/Attachment]",
+                    tenantId: inboundTenantId,
+                    phoneNumberId,
+                    wabaId,
+                    now,
+                  });
                 }
               }
             }
@@ -523,8 +634,8 @@ export function createMetaRouter(): Router {
       const eventId = sent.messageId || `sandbox-test-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 
       db.prepare(`
-        INSERT INTO whatsapp_outbound_events (id, event_type, patient_phone, patient_name, status, details, action_payload, sent_at)
-        VALUES (?, 'test_notification', ?, 'Verified Test Recipient', ?, ?, ?, ?)
+        INSERT INTO whatsapp_outbound_events (id, event_type, patient_phone, patient_name, status, details, action_payload, sent_at, tenant_id)
+        VALUES (?, 'test_notification', ?, 'Verified Test Recipient', ?, ?, ?, ?, ?)
       `).run(
         eventId,
         recipientPhone,
@@ -532,7 +643,8 @@ export function createMetaRouter(): Router {
           ? "WhatsApp Cloud API test message accepted"
           : "SANDBOX / DEV-ONLY: test message recorded locally (not dispatched via Graph)",
         JSON.stringify({ text: content, sandbox: sent.channel === "sandbox", channel: sent.channel, tenantId }),
-        now
+        now,
+        tenantId || WHATSAPP_QUARANTINE_TENANT_ID
       );
 
       return res.json({

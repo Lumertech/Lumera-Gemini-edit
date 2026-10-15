@@ -161,6 +161,47 @@ function seedIndividualChart(database: SqlDatabase, now: string) {
       ]),
       now
     );
+
+  seedIndividualWhatsAppInbox(database, now);
+}
+
+function seedIndividualWhatsAppInbox(database: SqlDatabase, now: string) {
+  const tenantId = INDIVIDUAL_DEMO_TENANT_ID;
+  try {
+    database
+      .prepare(
+        `INSERT INTO whatsapp_conversations (
+           id, patient_phone, patient_name, patient_id, uhid, handover_mode, assigned_staff, tags,
+           preferred_language, unread_count, last_message, last_message_time, updated_at, tenant_id
+         )
+         SELECT ?, '+91 98111 01061', 'Rajiv Saxena', 'ind-pat-rajiv', 'LUM-IND-0106', 'bot', 'Unassigned', '[]',
+                'en', 0, 'Namaste from Malhotra Individual Practice.', '10:00 AM', ?, ?
+         WHERE NOT EXISTS (SELECT 1 FROM whatsapp_conversations WHERE id = 'ind-conv-rajiv')`
+      )
+      .run("ind-conv-rajiv", now, tenantId);
+    database
+      .prepare(
+        `INSERT INTO whatsapp_messages (
+           id, conversation_id, patient_phone, sender, staff_name, content, time_display, status, created_at, tenant_id
+         )
+         SELECT ?, 'ind-conv-rajiv', '+91 98111 01061', 'bot', 'Clinic Desk',
+                'Namaste from Malhotra Individual Practice.', '10:00 AM', 'delivered', ?, ?
+         WHERE NOT EXISTS (SELECT 1 FROM whatsapp_messages WHERE id = 'ind-msg-rajiv')`
+      )
+      .run("ind-msg-rajiv", now, tenantId);
+    database
+      .prepare(
+        `INSERT INTO whatsapp_outbound_events (
+           id, event_type, patient_phone, patient_name, status, details, action_payload, sent_at, tenant_id
+         )
+         SELECT ?, 'appointment_reminder', '+91 98111 01061', 'Rajiv Saxena', 'delivered',
+                'Individual practice reminder for Rajiv Saxena.', '{}', ?, ?
+         WHERE NOT EXISTS (SELECT 1 FROM whatsapp_outbound_events WHERE id = 'ind-evt-rajiv')`
+      )
+      .run("ind-evt-rajiv", now, tenantId);
+  } catch {
+    /* tenant_id columns are added in migrate() before this seed */
+  }
 }
 
 /**

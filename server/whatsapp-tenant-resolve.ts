@@ -29,6 +29,15 @@ function tenantExists(tenantId: string): boolean {
   }
 }
 
+/** A duplicated tenants.phone_number_id is not a clinic. Only a single owner resolves. */
+function uniqueTenantIdByPhoneNumberId(phoneNumberId: string): string {
+  const rows = getDb()
+    .prepare("SELECT id FROM tenants WHERE phone_number_id = ?")
+    .all(phoneNumberId) as { id?: string }[];
+  const ids = [...new Set(rows.map((row) => String(row.id || "").trim()).filter(Boolean))];
+  return ids.length === 1 ? ids[0] : "";
+}
+
 export type WhatsAppClinicChoice = { tenantId: string; tenantName: string; doctorId: string };
 
 export type WhatsAppTenantResolution =
@@ -126,10 +135,8 @@ export function resolveWhatsAppTenant(opts: {
       if (owned?.owner_type === "tenant" && owned.owner_id) {
         return { status: "resolved", tenantId: owned.owner_id };
       }
-      const row = getDb()
-        .prepare("SELECT id FROM tenants WHERE phone_number_id = ?")
-        .get(phoneNumberId) as { id?: string } | undefined;
-      if (row?.id) return { status: "resolved", tenantId: String(row.id) };
+      const tenantId = uniqueTenantIdByPhoneNumberId(phoneNumberId);
+      if (tenantId) return { status: "resolved", tenantId };
     } catch {
       /* ignore */
     }
@@ -160,6 +167,26 @@ export function resolveWhatsAppTenant(opts: {
 
   if (!isProduction() && tenantExists(DEMO_TENANT_ID)) return { status: "resolved", tenantId: DEMO_TENANT_ID };
   return { status: "unresolved" };
+}
+
+/**
+ * Inbound webhook tenant. Only the receiving phone_number_id (WABA line → tenant).
+ * No patient-phone guess and no demo-tenant fallback. Empty string stays unassigned.
+ */
+export function tenantIdFromReceivingPhoneNumberId(phoneNumberId?: string): string {
+  const id = String(phoneNumberId || "").trim();
+  if (!id) return "";
+  const doctorOwned = resolveDoctorOwnedNumber({ phoneNumberId: id });
+  if (doctorOwned) return doctorOwned.status === "resolved" ? doctorOwned.tenantId : "";
+  try {
+    const owned = getWhatsAppNumberByPhoneNumberId(id);
+    if (owned?.owner_type === "tenant" && owned.owner_id) return String(owned.owner_id);
+    const tenantId = uniqueTenantIdByPhoneNumberId(id);
+    if (tenantId) return tenantId;
+  } catch {
+    /* schema not ready */
+  }
+  return "";
 }
 
 export function resolveWhatsAppTenantId(opts: {

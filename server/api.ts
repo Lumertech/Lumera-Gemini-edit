@@ -54,7 +54,8 @@ import {
 } from "./auth.ts";
 import { rejectUntrustedTenantClaim } from "./tenant-guard.ts";
 import { publicBranch, publicTenant } from "./client-serializers.ts";
-import { clinicTenantId } from "./whatsapp-scope.ts";
+import { clinicTenantId, upsertScopedConversation } from "./whatsapp-scope.ts";
+import { WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
 import {
   createAdminTenant,
   ensureTenantSubscription,
@@ -75,7 +76,9 @@ import { rejectWrongOtp, reserveOtpSend, sendOtpLimited } from "./otp-attempt.ts
 import { parseSpecialtyPackInput, resolveSpecialtyPack } from "./specialty-packs.ts";
 import { appPublicUrl, demoLoginEnabled, isProduction } from "./runtime.ts";
 import { DEMO_PASSWORD } from "../src/lib/demoAccounts.ts";
-import { dispatchWhatsAppCloudMessage, isCloudDispatchFailure } from "./graph-whatsapp.ts";
+import { dispatchWhatsAppCloudMessage, isCloudDispatchFailure, resolveGraphCredentials, resolveUsageTenantId } from "./graph-whatsapp.ts";
+import { toE164Phone } from "./clinical.ts";
+import { inboundTenantIdFromPhoneNumberId } from "./meta.ts";
 import {
   FacebookOAuthError,
   facebookLoginDialogUrl,
@@ -240,6 +243,44 @@ function assemblePublicSite() {
   };
 }
 
+/**
+ * A Security/OTP thread belongs to a clinic only when one user handset matches the
+ * full E.164 number. A last-10 suffix shared by +1 and +91 stays in quarantine.
+ */
+export function uniqueOtpClinicId(phone: string): string {
+  const e164 = toE164Phone(phone);
+  if (!e164) return "";
+  const last10 = e164.replace(/\D/g, "").slice(-10);
+  if (last10.length < 10) return "";
+  const rows = getDb()
+    .prepare(
+      `SELECT tenant_id, phone FROM users
+       WHERE replace(replace(replace(replace(phone, ' ', ''), '-', ''), '+', ''), '(', '') LIKE ?`
+    )
+    .all(`%${last10}`) as { tenant_id?: string; phone?: string }[];
+  const tenants = new Set(
+    rows
+      .filter((row) => toE164Phone(String(row.phone || "")) === e164)
+      .map((row) => String(row.tenant_id || "").trim())
+      .filter(Boolean)
+  );
+  return tenants.size === 1 ? [...tenants][0] : "";
+}
+
+/**
+ * Graph status webhooks name the sending line, not the recipient's clinic.
+ * A resolved line uses that clinic. An unresolved line stays in quarantine so the
+ * webhook can still record delivered/read/failed without attaching another clinic.
+ * Sandbox sends have no line, so the unique recipient clinic keeps the audit row.
+ */
+export function otpEventTenantId(phone: string): string {
+  const conversationTenantId = uniqueOtpClinicId(phone);
+  const usageTenant = resolveUsageTenantId(undefined, phone, getDb());
+  const creds = resolveGraphCredentials(getDb(), usageTenant);
+  if (!creds?.phoneNumberId) return conversationTenantId || WHATSAPP_QUARANTINE_TENANT_ID;
+  return inboundTenantIdFromPhoneNumberId(creds.phoneNumberId) || WHATSAPP_QUARANTINE_TENANT_ID;
+}
+
 function recordWhatsAppOtpEvent(opts: {
   phone: string;
   name: string;
@@ -255,39 +296,37 @@ function recordWhatsAppOtpEvent(opts: {
     const now = new Date().toISOString();
     const timeDisplay = new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
     const cleanPhone = opts.phone.trim() || "+91 98234 55667";
-    const convId = `conv-otp-${cleanPhone.replace(/\D/g, "").slice(-8) || "user"}`;
+    const preferredId = `conv-otp-${cleanPhone.replace(/\D/g, "").slice(-8) || "user"}`;
     const userName = opts.name.trim() || "Healthcare Clinician";
+    const conversationTenantId = uniqueOtpClinicId(cleanPhone) || WHATSAPP_QUARANTINE_TENANT_ID;
+    const eventTenantId = otpEventTenantId(cleanPhone);
 
-    let conv = db
-      .prepare("SELECT * FROM whatsapp_conversations WHERE id = ? OR patient_phone = ?")
-      .get(convId, cleanPhone) as Record<string, unknown> | undefined;
-
-    if (!conv) {
-      db.prepare(`
-        INSERT INTO whatsapp_conversations (id, patient_phone, patient_name, handover_mode, assigned_staff, tags, preferred_language, unread_count, last_message, last_message_time, updated_at)
-        VALUES (?, ?, ?, 'bot', 'Lumera Security Engine', '["Security", "OTP"]', 'en', 0, ?, ?, ?)
-      `).run(convId, cleanPhone, userName, opts.details, timeDisplay, now);
-    } else {
-      db.prepare(`
-        UPDATE whatsapp_conversations
-        SET last_message = ?, last_message_time = ?, updated_at = ?
-        WHERE id = ?
-      `).run(opts.details, timeDisplay, now, String(conv.id));
-    }
+    const convId = upsertScopedConversation({
+      preferredId,
+      tenantId: conversationTenantId,
+      patientPhone: cleanPhone,
+      patientName: userName,
+      assignedStaff: "Lumera Security Engine",
+      tags: '["Security", "OTP"]',
+      preferredLanguage: "en",
+      lastMessage: opts.details,
+      lastMessageTime: timeDisplay,
+      now,
+    });
 
     if (opts.conversationContent) {
       const msgId = `msg-otp-${crypto.randomUUID().slice(0, 8)}`;
       db.prepare(`
-        INSERT INTO whatsapp_messages (id, conversation_id, patient_phone, sender, staff_name, content, translated_content, detected_language, time_display, buttons, media, status, created_at)
-        VALUES (?, ?, ?, 'agent', 'Lumera Security Bot', ?, null, 'en', ?, null, null, ?, ?)
-      `).run(msgId, convId, cleanPhone, opts.conversationContent, timeDisplay, opts.status, now);
+        INSERT INTO whatsapp_messages (id, conversation_id, patient_phone, sender, staff_name, content, translated_content, detected_language, time_display, buttons, media, status, created_at, tenant_id)
+        VALUES (?, ?, ?, 'agent', 'Lumera Security Bot', ?, null, 'en', ?, null, null, ?, ?, ?)
+      `).run(msgId, convId, cleanPhone, opts.conversationContent, timeDisplay, opts.status, now, conversationTenantId);
     }
 
     const eventId = `evt-otp-${crypto.randomUUID().slice(0, 8)}`;
     db.prepare(`
-      INSERT INTO whatsapp_outbound_events (id, event_type, patient_phone, patient_name, status, details, action_payload, sent_at)
-      VALUES (?, 'otp_verification', ?, ?, ?, ?, ?, ?)
-    `).run(eventId, cleanPhone, userName, opts.status, opts.details, JSON.stringify(opts.payload), now);
+      INSERT INTO whatsapp_outbound_events (id, event_type, patient_phone, patient_name, status, details, action_payload, sent_at, tenant_id)
+      VALUES (?, 'otp_verification', ?, ?, ?, ?, ?, ?, ?)
+    `).run(eventId, cleanPhone, userName, opts.status, opts.details, JSON.stringify(opts.payload), now, eventTenantId);
   } catch (err) {
     console.error("Failed to record WhatsApp OTP dispatch in database:", err);
   }
@@ -810,6 +849,21 @@ export function createApiRouter(): Router {
 
     if (!phone) {
       return res.status(400).json({ error: "WhatsApp Business phone number is required" });
+    }
+
+    const slot = reserveOtpSend(req, phone, purpose, { userId: req.user?.id, email }, true);
+    if (slot.limited === true) return sendOtpLimited(res, slot.retryAfterSec);
+    if (slot.pending) {
+      return res.json({
+        ok: true,
+        verificationId: slot.pending.id,
+        reused: true,
+        phone,
+        ...otpEchoPayload(slot.pending.otp),
+        expiresAt: slot.pending.expires_at,
+        status: "pending",
+        message: "Pending verification reused.",
+      });
     }
 
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
