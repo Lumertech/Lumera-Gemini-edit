@@ -18,9 +18,17 @@ export function canonicalColumnKey(key: string): string {
     .toLowerCase();
 }
 
+/**
+ * Keys that match the token rule but are clinic display settings, not credentials.
+ * `tokenPrefix` is the queue token label edited in onboarding (`FrontDeskRules`).
+ */
+const SAFE_CLIENT_KEYS = new Set(["token_prefix"]);
+
 /** True for Meta/WABA tokens, encrypted tokens, PINs, webhook secrets, API keys, password hashes. */
 export function isClientSecretKey(key: string): boolean {
-  return SECRET_KEY_RE.test(canonicalColumnKey(key));
+  const canonical = canonicalColumnKey(key);
+  if (SAFE_CLIENT_KEYS.has(canonical)) return false;
+  return SECRET_KEY_RE.test(canonical);
 }
 
 function camelOf(snake: string): string {
@@ -53,8 +61,7 @@ function parseJsonContainer(value: string): Record<string, unknown> | unknown[] 
 /**
  * Drop secret-named keys at every level, including keys nested inside a
  * JSON-string column. The string is parsed, filtered, and re-serialized.
- * A queue label such as `tokenPrefix` matches the token-key rule and is omitted
- * from the client copy; the stored column is not rewritten.
+ * `tokenPrefix` is on the safe-key list and is kept. The stored column is not rewritten.
  */
 export function omitClientSecretKeys<T>(value: T): T {
   if (typeof value === "string") {
