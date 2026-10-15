@@ -1,3 +1,4 @@
+import { apiFetchResponse } from "../api/http";
 import type {
   MedicineItem,
   Patient,
@@ -840,7 +841,7 @@ export async function extractClinicalTokens(params: {
   const localSoap = localSoapFromBundle(bundle, patient, doctor, module, transcript, recordingSeconds);
 
   try {
-    const res = await fetch("/api/gemini/generate-soap", {
+    const res = await apiFetchResponse("/api/gemini/generate-soap", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

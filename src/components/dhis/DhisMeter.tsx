@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { apiFetchResponse } from '../../api/http';
 import { 
   Award, 
   TrendingUp, 
@@ -65,7 +66,7 @@ export const DhisMeter: React.FC<{ compact?: boolean; onSimulateSuccess?: () => 
   const fetchOverview = async () => {
     try {
       setLoading(true);
-      const res = await fetch('/api/abdm/dhis/overview');
+      const res = await apiFetchResponse('/api/abdm/dhis/overview');
       if (res.ok) {
         const json = await res.json();
         setData(json);
@@ -84,7 +85,7 @@ export const DhisMeter: React.FC<{ compact?: boolean; onSimulateSuccess?: () => 
   const handleSimulate = async (type: 'OP_CONSULT' | 'PRESCRIPTION' | 'DIAGNOSTIC_REPORT' | 'DISCHARGE_SUMMARY') => {
     try {
       setSimulating(true);
-      const res = await fetch('/api/abdm/dhis/simulate-transaction', {
+      const res = await apiFetchResponse('/api/abdm/dhis/simulate-transaction', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type }),

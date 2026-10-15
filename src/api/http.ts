@@ -13,14 +13,33 @@ const CSRF_REFRESHED = "CSRF_REFRESHED";
 type ApiErrorBody = { error?: string; code?: string; csrfToken?: string };
 
 /**
- * Secret from the last API response (`csrfToken` or `X-CSRF-Token`).
+ * Secret from the newest API response (`csrfToken` or `X-CSRF-Token`).
  * Firebase Hosting never forwards `lumera_csrf`, so a value read from that
  * cookie does not match anything the server can see. The response token does.
+ * Login rotates the secret (#134). A response that started earlier — typically
+ * `/api/auth/me` still in flight — must not overwrite that rotated secret.
  */
 let csrfFromServer = "";
+let csrfAppliedSeq = 0;
+let csrfSeq = 0;
 
 export function clearRememberedCsrfToken(): void {
   csrfFromServer = "";
+  csrfAppliedSeq = 0;
+  csrfSeq = 0;
+}
+
+function takeCsrfSeq(): number {
+  csrfSeq += 1;
+  return csrfSeq;
+}
+
+/** `seq` is the request's start order. An older in-flight response cannot replace a newer secret. */
+function rememberCsrfToken(token: string, seq: number): void {
+  const next = token.trim();
+  if (!next || seq < csrfAppliedSeq) return;
+  csrfFromServer = next;
+  csrfAppliedSeq = seq;
 }
 
 function csrfTokenFromRefresh(res: Response, data: ApiErrorBody): string {
@@ -29,9 +48,20 @@ function csrfTokenFromRefresh(res: Response, data: ApiErrorBody): string {
   return String(res.headers.get("X-CSRF-Token") || "").trim();
 }
 
-function rememberCsrf(res: Response, data: ApiErrorBody): void {
-  const token = csrfTokenFromRefresh(res, data);
-  if (token) csrfFromServer = token;
+function rememberCsrf(res: Response, data: ApiErrorBody, seq: number): void {
+  rememberCsrfToken(csrfTokenFromRefresh(res, data), seq);
+}
+
+function csrfBody(res: Response): Promise<ApiErrorBody> {
+  const type = (res.headers.get("content-type") || "").toLowerCase();
+  const json = type.includes("json");
+  const csrfError = res.status === 403 && !type.startsWith("image/") && !type.includes("pdf") && !type.includes("octet-stream");
+  if (!json && !csrfError) return Promise.resolve({});
+  return res
+    .clone()
+    .json()
+    .then((parsed) => (parsed && typeof parsed === "object" ? (parsed as ApiErrorBody) : {}))
+    .catch(() => ({}));
 }
 
 /** Drop the session JWT if a response still includes it. The browser does not use it. */
@@ -109,23 +139,29 @@ export function purgeLegacyAuthToken() {
   }
 }
 
-export async function apiFetch<T = unknown>(path: string, init: RequestInit = {}): Promise<T> {
+/**
+ * Same cookie and CSRF rules as `apiFetch`, but returns the raw response.
+ * Use this for blobs and callers that already branch on `res.ok`. FormData
+ * uploads must come through here so they send the login-rotated secret.
+ */
+export async function apiFetchResponse(path: string, init: RequestInit = {}): Promise<Response> {
   const split = splitRequestBody(init.body);
   try {
-    return await apiFetchOnce<T>(path, init, split, false);
+    return await apiFetchResponseOnce(path, init, split, false);
   } finally {
     split.cancelUnused();
   }
 }
 
-async function apiFetchOnce<T>(
+async function apiFetchResponseOnce(
   path: string,
   init: RequestInit,
   split: ReturnType<typeof splitRequestBody>,
   retried: boolean
-): Promise<T> {
+): Promise<Response> {
   const headers = new Headers(init.headers);
-  if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
+  const outbound = retried ? split.retry() : split.send;
+  if (outbound && !(outbound instanceof FormData) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
 
@@ -136,23 +172,32 @@ async function apiFetchOnce<T>(
     if (token) headers.set("X-CSRF-Token", token);
   }
 
+  // Sequence is taken before the await so a request that started earlier cannot
+  // adopt its secret after this one has already completed.
+  const seq = takeCsrfSeq();
   const res = await fetch(path, {
     ...init,
-    body: retried ? split.retry() : split.send,
+    body: outbound,
     credentials: "include",
     headers,
   });
+  const peeked = await csrfBody(res);
+  rememberCsrf(res, peeked, seq);
+  const refreshed = res.status === 403 && peeked.code === CSRF_REFRESHED;
+  const nextToken = refreshed ? csrfTokenFromRefresh(res, peeked) : "";
+  if (refreshed && nextToken && !retried) {
+    const retryHeaders = new Headers(init.headers);
+    retryHeaders.set("X-CSRF-Token", nextToken);
+    return apiFetchResponseOnce(path, { ...init, headers: retryHeaders }, split, true);
+  }
+  return res;
+}
+
+export async function apiFetch<T = unknown>(path: string, init: RequestInit = {}): Promise<T> {
+  const res = await apiFetchResponse(path, init);
   const parsed = await res.json().catch(() => ({}));
   const data = withoutSessionCredential((parsed && typeof parsed === "object" ? parsed : {}) as ApiErrorBody);
-  rememberCsrf(res, data);
   if (!res.ok) {
-    const refreshed = res.status === 403 && data.code === CSRF_REFRESHED;
-    const nextToken = refreshed ? csrfTokenFromRefresh(res, data) : "";
-    if (refreshed && nextToken && !retried) {
-      const retryHeaders = new Headers(init.headers);
-      retryHeaders.set("X-CSRF-Token", nextToken);
-      return apiFetchOnce<T>(path, { ...init, headers: retryHeaders }, split, true);
-    }
     throw new Error(data.error || `Request failed (${res.status})`);
   }
   return data as T;

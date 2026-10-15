@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { apiFetch, purgeLegacyAuthToken } from "../api/http";
+import { apiFetch, apiFetchResponse, purgeLegacyAuthToken } from "../api/http";
 import { AppUser, UserRole } from "../types";
 import { type Surface } from "../nav/surfaces";
 import { needsOnboarding } from "../lib/sessionWorkspace";
@@ -144,7 +144,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
-    fetch("/api/auth/oauth-config")
+    apiFetchResponse("/api/auth/oauth-config")
       .then((r) => (r.ok ? r.json() : null))
       .then((d: { demoLoginEnabled?: boolean } | null) => {
         if (!cancelled && d) setDemoLoginEnabled(Boolean(d.demoLoginEnabled));

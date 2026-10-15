@@ -16,6 +16,7 @@ import {
   Building,
 } from "lucide-react";
 import { Link } from "react-router-dom";
+import { apiFetchResponse } from "../api/http";
 import { PRODUCT_NAME } from "../brand";
 import { BrandMark } from "../components/BrandMark";
 import { useNav } from "../nav/NavigationContext";
@@ -45,7 +46,7 @@ export const PolicyPage: React.FC<{ slug: string }> = ({ slug: initialSlug }) =>
       : "privacy";
 
   const fetchPolicy = (s: string) => {
-    fetch(`/api/public/policies/${s}`)
+    apiFetchResponse(`/api/public/policies/${s}`)
       .then((r) => (r.ok ? r.json() : Promise.reject()))
       .then((d) => {
         setTitle(d.title);
@@ -77,7 +78,7 @@ export const PolicyPage: React.FC<{ slug: string }> = ({ slug: initialSlug }) =>
     if (!checkCode.trim()) return;
     setChecking(true);
     try {
-      const res = await fetch(`/api/meta/data-deletion-status?code=${encodeURIComponent(checkCode.trim())}`);
+      const res = await apiFetchResponse(`/api/meta/data-deletion-status?code=${encodeURIComponent(checkCode.trim())}`);
       const data = await res.json();
       setDeletionStatus({
         ...data,

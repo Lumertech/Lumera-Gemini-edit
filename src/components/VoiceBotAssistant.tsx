@@ -15,6 +15,7 @@ import {
   ShieldCheck,
   Video
 } from 'lucide-react';
+import { apiFetchResponse } from '../api/http';
 import { Patient, Doctor } from '../types';
 
 interface VoiceBotAssistantProps {
@@ -125,7 +126,7 @@ export const VoiceBotAssistant: React.FC<VoiceBotAssistantProps> = ({
     setIsProcessing(true);
 
     try {
-      const response = await fetch('/api/gemini/voice-bot', {
+      const response = await apiFetchResponse('/api/gemini/voice-bot', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

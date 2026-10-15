@@ -17,6 +17,7 @@ import {
   ArrowLeft,
   Zap,
 } from "lucide-react";
+import { apiFetchResponse } from "../api/http";
 import { destinationAfterAuth, useAuth } from "../auth/AuthContext";
 import {
   emptyPublicLoginFields,
@@ -261,7 +262,7 @@ export const LoginPage: React.FC = () => {
   }, [user, busy, showOtpView, loginNext, go]);
 
   useEffect(() => {
-    fetch("/api/auth/oauth-config")
+    apiFetchResponse("/api/auth/oauth-config")
       .then((r) => r.json())
       .then((cfg) => setOauthConfig(cfg))
       .catch(() =>

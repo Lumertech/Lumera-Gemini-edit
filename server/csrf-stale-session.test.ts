@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { after, before, beforeEach, describe, it } from "node:test";
 import express from "express";
 import jwt from "jsonwebtoken";
@@ -1408,5 +1411,144 @@ describe("stale anonymous __session CSRF refresh", () => {
       if (previousSession === undefined) delete (globalThis as { sessionStorage?: Storage }).sessionStorage;
       else Object.defineProperty(globalThis, "sessionStorage", { value: previousSession, configurable: true });
     }
+  });
+
+  function pdfUpload(title: string): FormData {
+    const form = new FormData();
+    const bytes = Buffer.from("%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF");
+    form.set("file", new File([new Uint8Array(bytes)], "cbc.pdf", { type: "application/pdf" }));
+    form.set("title", title);
+    form.set("docType", "lab_report");
+    form.set("documentDate", "2026-09-01");
+    return form;
+  }
+
+  it("login then immediate patient-document upload sends the rotated CSRF and needs no reload", async () => {
+    resetAuthRateLimitStore();
+    clearRememberedCsrfToken();
+    const docsDir = fs.mkdtempSync(path.join(os.tmpdir(), "lumera-csrf-upload-"));
+    const previousDocs = process.env.PATIENT_DOCS_DIR;
+    process.env.PATIENT_DOCS_DIR = docsDir;
+    const jar = createHostingJar({});
+    const sent: Array<{ path: string; method: string; csrf: string }> = [];
+    let releaseLateMe: () => void = () => {};
+    const lateGate = new Promise<void>((resolve) => {
+      releaseLateMe = resolve;
+    });
+    let markLateReady: () => void = () => {};
+    const lateReady = new Promise<void>((resolve) => {
+      markLateReady = resolve;
+    });
+    let meResponses = 0;
+    globalThis.fetch = async (input, init) => {
+      const headers = new Headers(init?.headers);
+      const cookie = jar.forwarded();
+      if (cookie) headers.set("cookie", cookie);
+      else headers.delete("cookie");
+      if (!headers.has("Sec-Fetch-Site")) headers.set("Sec-Fetch-Site", "same-origin");
+      const res = await previousFetch(input, { ...init, headers });
+      jar.apply(typeof res.headers.getSetCookie === "function" ? res.headers.getSetCookie() : []);
+      const raw = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const pathname = new URL(raw).pathname;
+      sent.push({
+        path: pathname,
+        method: String(init?.method || "GET").toUpperCase(),
+        csrf: headers.get("x-csrf-token") || "",
+      });
+      if (pathname === "/api/auth/me") {
+        meResponses += 1;
+        if (meResponses === 2) {
+          markLateReady();
+          await lateGate;
+        }
+      }
+      return res;
+    };
+    setDocumentCookie("lumera_csrf=stale-document-csrf");
+    try {
+      const boot = await apiFetch<{ csrfToken?: string; user?: { email?: string } | null }>(
+        `http://127.0.0.1:${server.port}/api/auth/me`
+      );
+      assert.equal(boot.user ?? null, null);
+      assert.ok(boot.csrfToken);
+      assert.notEqual(boot.csrfToken, "stale-document-csrf");
+
+      // This /me already has the anonymous secret. It must not replace the login secret
+      // when its response is applied after login — that was the reload-to-upload failure.
+      const lateMe = apiFetch<{ csrfToken?: string }>(`http://127.0.0.1:${server.port}/api/auth/me`);
+      await lateReady;
+
+      const loggedIn = await apiFetch<{ csrfToken?: string; token?: string; user?: { email?: string } }>(
+        `http://127.0.0.1:${server.port}/api/auth/login`,
+        {
+          method: "POST",
+          body: JSON.stringify({ email: "doctor@lumera.me", password: "Lumera@2026" }),
+        }
+      );
+      assert.equal(loggedIn.user?.email, "doctor@lumera.me");
+      assert.equal(loggedIn.token, undefined);
+      assert.ok(loggedIn.csrfToken);
+      assert.notEqual(loggedIn.csrfToken, boot.csrfToken);
+
+      releaseLateMe();
+      const late = await lateMe;
+      assert.equal(late.csrfToken, boot.csrfToken);
+
+      const saved = await apiFetch<{ document?: { id?: string; title?: string } }>(
+        `http://127.0.0.1:${server.port}/api/patients/ind-pat-rajiv/documents`,
+        { method: "POST", body: pdfUpload("CBC right after login") }
+      );
+      assert.equal(saved.document?.title, "CBC right after login");
+      assert.ok(saved.document?.id);
+
+      const upload = sent.filter((entry) => entry.method === "POST" && entry.path.endsWith("/documents"));
+      assert.equal(upload.length, 1);
+      assert.equal(upload[0].csrf, loggedIn.csrfToken);
+      assert.notEqual(upload[0].csrf, boot.csrfToken);
+      assert.notEqual(upload[0].csrf, "stale-document-csrf");
+
+      const rejected = await previousFetch(`http://127.0.0.1:${server.port}/api/patients/ind-pat-rajiv/documents`, {
+        method: "POST",
+        headers: {
+          cookie: jar.forwarded(),
+          "x-csrf-token": String(boot.csrfToken),
+          "Sec-Fetch-Site": "same-origin",
+        },
+        body: pdfUpload("must not refresh an authenticated session"),
+      });
+      const rejectedJson = (await rejected.json()) as { code?: string; error?: string };
+      assert.equal(rejected.status, 403);
+      assert.equal(rejectedJson.code, undefined);
+      assert.equal(rejectedJson.error, "CSRF token missing or invalid");
+      assert.equal(setCookieLines(rejected).length, 0);
+    } finally {
+      releaseLateMe();
+      globalThis.fetch = previousFetch;
+      setDocumentCookie(null);
+      clearRememberedCsrfToken();
+      if (previousDocs === undefined) delete process.env.PATIENT_DOCS_DIR;
+      else process.env.PATIENT_DOCS_DIR = previousDocs;
+      fs.rmSync(docsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("src calls /api only through apiFetch or apiFetchResponse", () => {
+    const root = path.resolve("src");
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walk(full);
+          continue;
+        }
+        if (!/\.(ts|tsx)$/.test(entry.name)) continue;
+        if (full.endsWith(`${path.sep}api${path.sep}http.ts`)) continue;
+        const text = fs.readFileSync(full, "utf8");
+        if (/\bfetch\s*\(/.test(text) || text.includes("XMLHttpRequest")) offenders.push(path.relative(root, full));
+      }
+    };
+    walk(root);
+    assert.deepEqual(offenders, []);
   });
 });
