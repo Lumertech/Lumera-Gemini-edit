@@ -223,7 +223,7 @@ export const BOOTSTRAP_DDL = `
 
     CREATE TABLE IF NOT EXISTS whatsapp_conversations (
       id TEXT PRIMARY KEY,
-      patient_phone TEXT NOT NULL UNIQUE,
+      patient_phone TEXT NOT NULL,
       patient_name TEXT NOT NULL,
       patient_id TEXT,
       uhid TEXT,
@@ -237,8 +237,10 @@ export const BOOTSTRAP_DDL = `
       updated_at TEXT NOT NULL,
       tenant_id TEXT NOT NULL DEFAULT 'tenant-wa-unassigned',
       phone_number_id TEXT,
-      waba_id TEXT
+      waba_id TEXT,
+      last_inbound_at TEXT
     );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_wa_conv_tenant_phone ON whatsapp_conversations(tenant_id, patient_phone);
 
     CREATE TABLE IF NOT EXISTS whatsapp_messages (
       id TEXT PRIMARY KEY,
@@ -267,7 +269,8 @@ export const BOOTSTRAP_DDL = `
       status TEXT NOT NULL DEFAULT 'delivered',
       details TEXT NOT NULL,
       action_payload TEXT,
-      sent_at TEXT NOT NULL
+      sent_at TEXT NOT NULL,
+      tenant_id TEXT NOT NULL DEFAULT 'tenant-wa-unassigned'
     );
 
     CREATE TABLE IF NOT EXISTS tenants (

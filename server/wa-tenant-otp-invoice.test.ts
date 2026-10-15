@@ -332,10 +332,18 @@ describe("WhatsApp tenant scope, send validation, OTP limit, invoice UHID", () =
       });
       assert.equal(res.status, 200);
       const row = getDb()
-        .prepare("SELECT tenant_id, phone_number_id FROM whatsapp_conversations WHERE patient_phone = ?")
-        .get(fromPhone) as { tenant_id: string; phone_number_id: string };
+        .prepare("SELECT id, tenant_id, phone_number_id, last_inbound_at FROM whatsapp_conversations WHERE patient_phone = ? AND tenant_id = ?")
+        .get(fromPhone, clinic.tenantId) as { id: string; tenant_id: string; phone_number_id: string; last_inbound_at: string };
       assert.equal(row.tenant_id, clinic.tenantId);
       assert.equal(row.phone_number_id, phoneNumberId);
+      assert.ok(String(row.last_inbound_at || "").trim());
+      const otherClinic = createClinic("waHookB");
+      const otherToken = await login(otherClinic.email);
+      const otherList = await jsonRequest(server.port, "GET", "/api/whatsapp/conversations", undefined, {
+        Authorization: `Bearer ${otherToken}`,
+      });
+      const otherIds = ((otherList.json.conversations as Array<{ id: string }>) || []).map((item) => item.id);
+      assert.equal(otherIds.includes(row.id), false);
       const message = getDb()
         .prepare("SELECT tenant_id FROM whatsapp_messages WHERE patient_phone = ?")
         .get(fromPhone) as { tenant_id: string };
@@ -367,23 +375,13 @@ describe("WhatsApp tenant scope, send validation, OTP limit, invoice UHID", () =
       });
       assert.equal(unknownRes.status, 200);
       const orphan = getDb()
-        .prepare("SELECT tenant_id FROM whatsapp_conversations WHERE patient_phone = ?")
-        .get(unknownFrom) as { tenant_id: string };
-      assert.equal(String(orphan.tenant_id || "").trim(), WHATSAPP_QUARANTINE_TENANT_ID);
-      assert.notEqual(orphan.tenant_id, META_REVIEW_TENANT_ID);
-      const token = await login(clinic.email);
-      const hidden = await jsonRequest(server.port, "GET", "/api/whatsapp/conversations", undefined, {
-        Authorization: `Bearer ${token}`,
-      });
-      const hiddenIds = ((hidden.json.conversations as Array<{ id: string }>) || []).map((row) => row.id);
-      const orphanId = String(
-        (getDb().prepare("SELECT id FROM whatsapp_conversations WHERE patient_phone = ?").get(unknownFrom) as { id: string }).id
-      );
-      assert.equal(hiddenIds.includes(orphanId), false);
-      const orphanRead = await jsonRequest(server.port, "GET", `/api/whatsapp/conversations/${orphanId}`, undefined, {
-        Authorization: `Bearer ${token}`,
-      });
-      assert.equal(orphanRead.status, 404);
+        .prepare("SELECT id FROM whatsapp_conversations WHERE patient_phone = ?")
+        .get(unknownFrom) as { id: string } | undefined;
+      assert.equal(orphan, undefined);
+      const orphanMessage = getDb()
+        .prepare("SELECT id FROM whatsapp_messages WHERE patient_phone = ?")
+        .get(unknownFrom) as { id: string } | undefined;
+      assert.equal(orphanMessage, undefined);
     } finally {
       if (prevSecret === undefined) delete process.env.META_APP_SECRET;
       else process.env.META_APP_SECRET = prevSecret;

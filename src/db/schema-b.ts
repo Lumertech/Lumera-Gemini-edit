@@ -24,7 +24,7 @@ export const whatsappConversations = pgTable(
   "whatsapp_conversations",
   {
     id: text("id").primaryKey(),
-    patientPhone: text("patient_phone").notNull().unique(),
+    patientPhone: text("patient_phone").notNull(),
     patientName: text("patient_name").notNull(),
     patientId: text("patient_id"),
     uhid: text("uhid"),
@@ -39,8 +39,12 @@ export const whatsappConversations = pgTable(
     tenantId: text("tenant_id").notNull().default("tenant-wa-unassigned"),
     phoneNumberId: text("phone_number_id"),
     wabaId: text("waba_id"),
+    lastInboundAt: text("last_inbound_at"),
   },
-  (t) => [index("idx_wa_conv_tenant").on(t.tenantId)]
+  (t) => [
+    index("idx_wa_conv_tenant").on(t.tenantId),
+    uniqueIndex("idx_wa_conv_tenant_phone").on(t.tenantId, t.patientPhone),
+  ]
 );
 
 export const whatsappMessages = pgTable(
@@ -66,16 +70,21 @@ export const whatsappMessages = pgTable(
   (t) => [index("idx_wa_msg_tenant").on(t.tenantId)]
 );
 
-export const whatsappOutboundEvents = pgTable("whatsapp_outbound_events", {
-  id: text("id").primaryKey(),
-  eventType: text("event_type").notNull(),
-  patientPhone: text("patient_phone").notNull(),
-  patientName: text("patient_name").notNull(),
-  status: text("status").notNull().default("delivered"),
-  details: text("details").notNull(),
-  actionPayload: text("action_payload"),
-  sentAt: text("sent_at").notNull(),
-});
+export const whatsappOutboundEvents = pgTable(
+  "whatsapp_outbound_events",
+  {
+    id: text("id").primaryKey(),
+    eventType: text("event_type").notNull(),
+    patientPhone: text("patient_phone").notNull(),
+    patientName: text("patient_name").notNull(),
+    status: text("status").notNull().default("delivered"),
+    details: text("details").notNull(),
+    actionPayload: text("action_payload"),
+    sentAt: text("sent_at").notNull(),
+    tenantId: text("tenant_id").notNull().default("tenant-wa-unassigned"),
+  },
+  (t) => [index("idx_wa_evt_tenant").on(t.tenantId)]
+);
 
 export const tenants = pgTable("tenants", {
   id: text("id").primaryKey(),

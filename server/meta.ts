@@ -15,6 +15,7 @@ import {
 import { handleMetaDataDeletionPost, handleMetaDeauthorizePost } from "./meta-signed-request.ts";
 import { normalizePhoneDigits, phonesMatch } from "./whatsapp-calendar-booking.ts";
 import { tenantIdFromReceivingPhoneNumberId } from "./whatsapp-tenant-resolve.ts";
+import { getWhatsAppNumberByPhoneNumberId } from "./whatsapp-numbers.ts";
 import { WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
 import type { SqlDatabase } from "./sql-engine.ts";
 
@@ -38,22 +39,25 @@ function graphWamidFromPayload(raw: unknown): string {
  */
 export function applyWhatsAppOutboundStatus(
   db: SqlDatabase,
-  opts: { messageId?: string; recipientId?: string; status?: string; sentAt: string }
+  opts: { messageId?: string; recipientId?: string; status?: string; sentAt: string; tenantId?: string }
 ): number {
   const messageId = String(opts.messageId || "").trim();
   const recipientId = String(opts.recipientId || "").trim();
   const status = String(opts.status || "").trim();
-  if (!status) return 0;
+  const tenantId = String(opts.tenantId || "").trim();
+  if (!status || !tenantId) return 0;
 
   const matchedIds = new Set<string>();
+  const tenantSql = "TRIM(COALESCE(tenant_id, '')) = ?";
 
   if (messageId) {
     const candidates = db
       .prepare(
         `SELECT id, action_payload FROM whatsapp_outbound_events
-         WHERE id = ? OR (action_payload IS NOT NULL AND action_payload LIKE '%' || ? || '%')`
+         WHERE ${tenantSql}
+           AND (id = ? OR (action_payload IS NOT NULL AND action_payload LIKE '%' || ? || '%'))`
       )
-      .all(messageId, messageId) as Array<{ id: string; action_payload?: string | null }>;
+      .all(tenantId, messageId, messageId) as Array<{ id: string; action_payload?: string | null }>;
     for (const row of candidates) {
       if (row.id === messageId || graphWamidFromPayload(row.action_payload) === messageId) {
         matchedIds.add(row.id);
@@ -70,12 +74,15 @@ export function applyWhatsAppOutboundStatus(
     const candidates = db
       .prepare(
         `SELECT id, patient_phone FROM whatsapp_outbound_events
-         WHERE patient_phone = ?
-            OR patient_phone = ?
-            OR ${phoneDigitsExpr} = ?
-            OR (? != '' AND ${phoneDigitsExpr} LIKE '%' || ? || '%')`
+         WHERE ${tenantSql}
+           AND (
+             patient_phone = ?
+             OR patient_phone = ?
+             OR ${phoneDigitsExpr} = ?
+             OR (? != '' AND ${phoneDigitsExpr} LIKE '%' || ? || '%')
+           )`
       )
-      .all(recipientId, plusPrefixed, digits, last10, last10) as Array<{ id: string; patient_phone: string }>;
+      .all(tenantId, recipientId, plusPrefixed, digits, last10, last10) as Array<{ id: string; patient_phone: string }>;
     for (const row of candidates) {
       if (phonesMatch(row.patient_phone, recipientId)) matchedIds.add(row.id);
     }
@@ -84,9 +91,11 @@ export function applyWhatsAppOutboundStatus(
   if (matchedIds.size === 0) return 0;
 
   let changes = 0;
-  const stmt = db.prepare("UPDATE whatsapp_outbound_events SET status = ?, sent_at = ? WHERE id = ?");
+  const stmt = db.prepare(
+    `UPDATE whatsapp_outbound_events SET status = ?, sent_at = ? WHERE id = ? AND ${tenantSql}`
+  );
   for (const id of matchedIds) {
-    changes += Number(stmt.run(status, opts.sentAt, id).changes || 0);
+    changes += Number(stmt.run(status, opts.sentAt, id, tenantId).changes || 0);
   }
   return changes;
 }
@@ -96,9 +105,36 @@ export function applyWhatsAppOutboundStatus(
  * Body is a health check only. POST (signed_request) is unchanged and is the real callback.
  */
 /**
- * Stamp the clinic from the receiving phone_number_id. A line that does not map
- * is stored on the quarantine tenant, never NULL. Never write into a conversation
- * that already belongs to another clinic.
+ * Receiving line → clinic. Registry owner first, then tenants.phone_number_id,
+ * then a doctor-owned number's single clinic. Unknown lines return "".
+ */
+export function inboundTenantIdFromPhoneNumberId(phoneNumberId?: string): string {
+  const id = String(phoneNumberId || "").trim();
+  if (!id) return "";
+  try {
+    const owned = getWhatsAppNumberByPhoneNumberId(id);
+    if (owned?.owner_type === "tenant" && String(owned.owner_id || "").trim()) {
+      return String(owned.owner_id).trim();
+    }
+  } catch {
+    /* whatsapp_numbers is created with the WABA schema */
+  }
+  try {
+    const row = getDb()
+      .prepare("SELECT id FROM tenants WHERE phone_number_id = ?")
+      .get(id) as { id?: string } | undefined;
+    if (row?.id) return String(row.id).trim();
+  } catch {
+    /* tenants.phone_number_id is added in migrate() */
+  }
+  const resolved = tenantIdFromReceivingPhoneNumberId(id);
+  if (!resolved || resolved === WHATSAPP_QUARANTINE_TENANT_ID) return "";
+  return resolved;
+}
+
+/**
+ * Stamp the clinic from the receiving phone_number_id.
+ * The conversation key is (tenant_id, patient_phone). An unknown line writes nothing.
  */
 export function recordInboundWhatsAppMessage(
   db: SqlDatabase,
@@ -112,16 +148,16 @@ export function recordInboundWhatsAppMessage(
   }
 ) {
   const fromPhone = String(opts.fromPhone || "").trim();
-  if (!fromPhone) return;
-  const tenantId = String(opts.tenantId || "").trim() || WHATSAPP_QUARANTINE_TENANT_ID;
+  const tenantId = String(opts.tenantId || "").trim();
+  if (!fromPhone || !tenantId || tenantId === WHATSAPP_QUARANTINE_TENANT_ID) return;
   const textBody = String(opts.textBody || "[Media/Attachment]");
   const timeDisplay = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   const existing = db
-    .prepare("SELECT id, tenant_id FROM whatsapp_conversations WHERE patient_phone = ?")
-    .get(fromPhone) as { id?: string; tenant_id?: string } | undefined;
-  const existingTenant = String(existing?.tenant_id || "").trim();
-  const existingIsQuarantine = !existingTenant || existingTenant === WHATSAPP_QUARANTINE_TENANT_ID;
-  if (existing?.id && !existingIsQuarantine && existingTenant !== tenantId) return;
+    .prepare(
+      `SELECT id FROM whatsapp_conversations
+       WHERE patient_phone = ? AND TRIM(COALESCE(tenant_id, '')) = ?`
+    )
+    .get(fromPhone, tenantId) as { id?: string } | undefined;
 
   let convId = String(existing?.id || "");
   if (!convId) {
@@ -129,8 +165,8 @@ export function recordInboundWhatsAppMessage(
     db.prepare(
       `INSERT INTO whatsapp_conversations (
          id, patient_phone, patient_name, handover_mode, assigned_staff, tags, preferred_language,
-         unread_count, last_message, last_message_time, updated_at, tenant_id, phone_number_id, waba_id
-       ) VALUES (?, ?, ?, 'bot', 'AI Triage Desk', '["New Inquiry"]', 'en', 1, ?, ?, ?, ?, ?, ?)`
+         unread_count, last_message, last_message_time, updated_at, tenant_id, phone_number_id, waba_id, last_inbound_at
+       ) VALUES (?, ?, ?, 'bot', 'AI Triage Desk', '["New Inquiry"]', 'en', 1, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       convId,
       fromPhone,
@@ -140,31 +176,18 @@ export function recordInboundWhatsAppMessage(
       opts.now,
       tenantId,
       opts.phoneNumberId,
-      opts.wabaId
+      opts.wabaId,
+      opts.now
     );
   } else {
     db.prepare(
       `UPDATE whatsapp_conversations
        SET last_message = ?, last_message_time = ?, unread_count = unread_count + 1, updated_at = ?,
-           tenant_id = CASE
-             WHEN TRIM(COALESCE(tenant_id, '')) = '' OR tenant_id = ? THEN ?
-             ELSE tenant_id
-           END,
+           last_inbound_at = ?,
            phone_number_id = CASE WHEN TRIM(COALESCE(phone_number_id, '')) = '' THEN ? ELSE phone_number_id END,
            waba_id = CASE WHEN TRIM(COALESCE(waba_id, '')) = '' THEN ? ELSE waba_id END
-       WHERE id = ? AND (tenant_id IS NULL OR TRIM(tenant_id) = '' OR tenant_id = ? OR tenant_id = ?)`
-    ).run(
-      textBody,
-      opts.now,
-      opts.now,
-      WHATSAPP_QUARANTINE_TENANT_ID,
-      tenantId,
-      opts.phoneNumberId,
-      opts.wabaId,
-      convId,
-      WHATSAPP_QUARANTINE_TENANT_ID,
-      tenantId
-    );
+       WHERE id = ? AND TRIM(COALESCE(tenant_id, '')) = ?`
+    ).run(textBody, opts.now, opts.now, opts.now, opts.phoneNumberId, opts.wabaId, convId, tenantId);
   }
 
   const msgId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
@@ -257,8 +280,18 @@ export function createMetaRouter(): Router {
           if (entry.changes && Array.isArray(entry.changes)) {
             for (const change of entry.changes) {
               const val = change.value;
-              
-              // Handle message statuses (delivered, read, failed)
+              const phoneNumberId = String(val?.metadata?.phone_number_id || "").trim();
+              const inboundTenantId = inboundTenantIdFromPhoneNumberId(phoneNumberId);
+              if (!inboundTenantId) {
+                console.warn(
+                  "[Meta Webhook] Unknown phone_number_id; acknowledging without writing.",
+                  phoneNumberId || "(missing)"
+                );
+                continue;
+              }
+              const wabaId = String(entry?.id || "").trim();
+
+              // Handle message statuses (delivered, read, failed) inside this clinic only.
               if (val?.statuses && Array.isArray(val.statuses)) {
                 for (const st of val.statuses) {
                   const messageId = st.id;
@@ -271,6 +304,7 @@ export function createMetaRouter(): Router {
                       recipientId,
                       status,
                       sentAt: now,
+                      tenantId: inboundTenantId,
                     });
                   } catch (err) {
                     reportCaughtError(err, "meta.webhook.outbound-status");
@@ -280,9 +314,6 @@ export function createMetaRouter(): Router {
 
               // Handle inbound user message. Tenant comes only from the receiving phone_number_id.
               if (val?.messages && Array.isArray(val.messages)) {
-                const phoneNumberId = String(val?.metadata?.phone_number_id || "").trim();
-                const wabaId = String(entry?.id || "").trim();
-                const inboundTenantId = tenantIdFromReceivingPhoneNumberId(phoneNumberId);
                 for (const msg of val.messages) {
                   recordInboundWhatsAppMessage(db, {
                     fromPhone: String(msg.from || "").trim(),

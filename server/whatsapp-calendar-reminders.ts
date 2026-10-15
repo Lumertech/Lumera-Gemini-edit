@@ -136,19 +136,12 @@ function recordOutboundEvent(opts: {
       )
       .get(opts.phone, tenantId) as { id: string; tenant_id?: string } | undefined;
     if (!conv) {
-      const taken = db
-        .prepare("SELECT id, tenant_id FROM whatsapp_conversations WHERE patient_phone = ?")
-        .get(opts.phone) as { id: string; tenant_id?: string } | undefined;
-      if (taken && String(taken.tenant_id || "").trim() && String(taken.tenant_id).trim() !== tenantId) {
-        conv = undefined;
-      } else if (!taken) {
-        const convId = `conv-${crypto.randomUUID().slice(0, 8)}`;
-        db.prepare(
-          `INSERT INTO whatsapp_conversations (id, patient_phone, patient_name, handover_mode, assigned_staff, tags, preferred_language, unread_count, last_message, last_message_time, updated_at, tenant_id)
-           VALUES (?, ?, ?, 'bot', 'Unassigned', '["Appointment"]', 'en', 0, ?, ?, ?, ?)`
-        ).run(convId, opts.phone, opts.name, opts.conversationContent.slice(0, 80), timeDisplay, now, tenantId);
-        conv = { id: convId, tenant_id: tenantId };
-      }
+      const convId = `conv-${crypto.randomUUID().slice(0, 8)}`;
+      db.prepare(
+        `INSERT INTO whatsapp_conversations (id, patient_phone, patient_name, handover_mode, assigned_staff, tags, preferred_language, unread_count, last_message, last_message_time, updated_at, tenant_id)
+         VALUES (?, ?, ?, 'bot', 'Unassigned', '["Appointment"]', 'en', 0, ?, ?, ?, ?)`
+      ).run(convId, opts.phone, opts.name, opts.conversationContent.slice(0, 80), timeDisplay, now, tenantId);
+      conv = { id: convId, tenant_id: tenantId };
     } else if (tenantId && !String(conv.tenant_id || "").trim()) {
       db.prepare(
         "UPDATE whatsapp_conversations SET tenant_id = ? WHERE id = ? AND (tenant_id IS NULL OR TRIM(tenant_id) = '')"

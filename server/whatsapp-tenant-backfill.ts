@@ -190,6 +190,55 @@ export function backfillWhatsAppTenantIds(database: SqlDatabase): void {
   }
 
   backfillMessages(database, convTenant);
+  backfillOutboundEvents(database);
+}
+
+function backfillOutboundEvents(database: SqlDatabase) {
+  let events: Array<{ id?: string; patient_phone?: string; tenant_id?: string }> = [];
+  try {
+    events = database
+      .prepare("SELECT id, patient_phone, tenant_id FROM whatsapp_outbound_events")
+      .all() as typeof events;
+  } catch {
+    return;
+  }
+  const phoneTenants = new Map<string, Set<string>>();
+  const remember = (phone: unknown, tenantId: unknown) => {
+    const tenant = String(tenantId || "").trim();
+    if (!tenant || tenant === WHATSAPP_QUARANTINE_TENANT_ID) return;
+    const key = last10(phone);
+    if (!key) return;
+    const set = phoneTenants.get(key) || new Set<string>();
+    set.add(tenant);
+    phoneTenants.set(key, set);
+  };
+  try {
+    const conversations = database
+      .prepare("SELECT patient_phone, tenant_id FROM whatsapp_conversations")
+      .all() as Array<{ patient_phone?: string; tenant_id?: string }>;
+    for (const row of conversations) remember(row.patient_phone, row.tenant_id);
+  } catch {
+    /* conversations may not exist on a partial bootstrap */
+  }
+  try {
+    const patients = database.prepare("SELECT phone, tenant_id FROM patients").all() as Array<{
+      phone?: string;
+      tenant_id?: string;
+    }>;
+    for (const row of patients) remember(row.phone, row.tenant_id);
+  } catch {
+    /* patients.phone is optional on older catalogs */
+  }
+  const assign = database.prepare(
+    `UPDATE whatsapp_outbound_events SET tenant_id = ?
+     WHERE id = ? AND (tenant_id IS NULL OR TRIM(tenant_id) = '' OR tenant_id = ?)`
+  );
+  for (const row of events) {
+    if (!blank(row.tenant_id)) continue;
+    const matches = phoneTenants.get(last10(row.patient_phone));
+    const tenantId = matches && matches.size === 1 ? [...matches][0] : WHATSAPP_QUARANTINE_TENANT_ID;
+    assign.run(tenantId, row.id, WHATSAPP_QUARANTINE_TENANT_ID);
+  }
 }
 
 function backfillMessages(database: SqlDatabase, convTenant: Map<string, string>) {

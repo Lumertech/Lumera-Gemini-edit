@@ -393,22 +393,26 @@ describe("WhatsApp Cloud API outbound status matching", () => {
     }
   }
 
+  const statusTenantId = "tenant-status-match";
+
   function insertOutbound(opts: {
     id: string;
     phone: string;
     status?: string;
     payload: Record<string, unknown>;
+    tenantId?: string;
   }) {
     const db = getDb();
     db.prepare(
-      `INSERT INTO whatsapp_outbound_events (id, event_type, patient_phone, patient_name, status, details, action_payload, sent_at)
-       VALUES (?, 'otp_verification', ?, 'Status Match Patient', ?, 'Graph accepted', ?, ?)`
+      `INSERT INTO whatsapp_outbound_events (id, event_type, patient_phone, patient_name, status, details, action_payload, sent_at, tenant_id)
+       VALUES (?, 'otp_verification', ?, 'Status Match Patient', ?, 'Graph accepted', ?, ?, ?)`
     ).run(
       opts.id,
       opts.phone,
       opts.status || "sent",
       JSON.stringify(opts.payload),
-      new Date().toISOString()
+      new Date().toISOString(),
+      opts.tenantId || statusTenantId
     );
   }
 
@@ -441,6 +445,7 @@ describe("WhatsApp Cloud API outbound status matching", () => {
         recipientId: "919999973271",
         status: "delivered",
         sentAt: new Date().toISOString(),
+        tenantId: statusTenantId,
       });
       assert.equal(updated, 1);
       assert.equal(readStatus(eventId), "delivered");
@@ -471,6 +476,7 @@ describe("WhatsApp Cloud API outbound status matching", () => {
         recipientId: "919999973271",
         status: "read",
         sentAt: new Date().toISOString(),
+        tenantId: statusTenantId,
       });
       assert.equal(readStatus(hitId), "read");
       assert.equal(readStatus(missId), "sent");
@@ -493,6 +499,7 @@ describe("WhatsApp Cloud API outbound status matching", () => {
         recipientId: "91888877766",
         status: "failed",
         sentAt: new Date().toISOString(),
+        tenantId: statusTenantId,
       });
       assert.equal(updated, 1);
       assert.equal(readStatus(wamid), "failed");
@@ -515,6 +522,7 @@ describe("WhatsApp Cloud API outbound status matching", () => {
         recipientId: "919111122233",
         status: "delivered",
         sentAt: new Date().toISOString(),
+        tenantId: statusTenantId,
       });
       assert.equal(updated, 1);
       assert.equal(readStatus(eventId), "delivered");
@@ -523,8 +531,27 @@ describe("WhatsApp Cloud API outbound status matching", () => {
     }
   });
 
+  function ensureStatusLine(): string {
+    const db = getDb();
+    const phoneNumberId = "1555000111222";
+    const now = new Date().toISOString();
+    const existing = db.prepare("SELECT id FROM tenants WHERE id = ?").get(statusTenantId) as { id?: string } | undefined;
+    if (!existing?.id) {
+      db.prepare(
+        `INSERT INTO tenants (
+           id, name, specialty, country, timezone, phone, trial_ends_at,
+           ai_scribe_minutes_limit, ai_scribe_minutes_used, active_status, hfr_id, phone_number_id, created_at, updated_at
+         ) VALUES (?, 'Status Match Clinic', 'General Medicine', 'India', 'UTC', '+910000000099', ?, 0, 0, 1, '', ?, ?, ?)`
+      ).run(statusTenantId, now, phoneNumberId, now, now);
+    } else {
+      db.prepare("UPDATE tenants SET phone_number_id = ? WHERE id = ?").run(phoneNumberId, statusTenantId);
+    }
+    return phoneNumberId;
+  }
+
   it("POST /api/meta/webhook applies a statuses UPDATE onto the Graph send row", async () => {
     ensureDb();
+    const phoneNumberId = ensureStatusLine();
     const eventId = `evt-status-${crypto.randomUUID().slice(0, 8)}`;
     const wamid = `wamid.HTTP_${crypto.randomUUID().slice(0, 8)}`;
     insertOutbound({
@@ -548,6 +575,7 @@ describe("WhatsApp Cloud API outbound status matching", () => {
             changes: [
               {
                 value: {
+                  metadata: { phone_number_id: phoneNumberId },
                   statuses: [
                     {
                       id: wamid,
@@ -572,6 +600,93 @@ describe("WhatsApp Cloud API outbound status matching", () => {
       process.env.META_WEBHOOK_ALLOW_UNSIGNED = prevFlag;
       await server.close();
       cleanup([eventId]);
+    }
+  });
+
+  it("status updates cannot touch another tenant, and an unknown number writes nothing", async () => {
+    ensureDb();
+    const phoneNumberId = ensureStatusLine();
+    const ownId = `evt-status-${crypto.randomUUID().slice(0, 8)}`;
+    const otherId = `evt-status-${crypto.randomUUID().slice(0, 8)}`;
+    const wamid = `wamid.TENANT_${crypto.randomUUID().slice(0, 8)}`;
+    const otherTenantId = "tenant-status-other";
+    insertOutbound({
+      id: ownId,
+      phone: "+919000011111",
+      payload: { channel: "graph", messageId: wamid },
+      tenantId: statusTenantId,
+    });
+    insertOutbound({
+      id: otherId,
+      phone: "+919000011111",
+      payload: { channel: "graph", messageId: wamid },
+      tenantId: otherTenantId,
+    });
+
+    const prevSecret = process.env.META_APP_SECRET;
+    const prevFlag = process.env.META_WEBHOOK_ALLOW_UNSIGNED;
+    process.env.META_APP_SECRET = "unit-status-secret";
+    process.env.META_WEBHOOK_ALLOW_UNSIGNED = "false";
+    const server = await startTestServer((app) => {
+      app.use("/api/meta", createMetaRouter());
+    });
+    const unknownFrom = `1777${String(Date.now()).slice(-8)}`;
+    try {
+      const payload = {
+        object: "whatsapp_business_account",
+        entry: [
+          {
+            changes: [
+              {
+                value: {
+                  metadata: { phone_number_id: phoneNumberId },
+                  statuses: [{ id: wamid, status: "read", recipient_id: "919000011111" }],
+                },
+              },
+            ],
+          },
+        ],
+      };
+      const raw = JSON.stringify(payload);
+      const res = await jsonRequest(server.port, "POST", "/api/meta/webhook", payload, {
+        "X-Hub-Signature-256": hmacSha256("unit-status-secret", raw),
+      });
+      assert.equal(res.status, 200);
+      assert.equal(readStatus(ownId), "read");
+      assert.equal(readStatus(otherId), "sent");
+
+      const unknown = {
+        object: "whatsapp_business_account",
+        entry: [
+          {
+            changes: [
+              {
+                value: {
+                  metadata: { phone_number_id: "000000009999" },
+                  statuses: [{ id: wamid, status: "failed", recipient_id: "919000011111" }],
+                  messages: [{ from: unknownFrom, text: { body: "should not persist" } }],
+                },
+              },
+            ],
+          },
+        ],
+      };
+      const unknownRaw = JSON.stringify(unknown);
+      const unknownRes = await jsonRequest(server.port, "POST", "/api/meta/webhook", unknown, {
+        "X-Hub-Signature-256": hmacSha256("unit-status-secret", unknownRaw),
+      });
+      assert.equal(unknownRes.status, 200);
+      assert.equal(readStatus(ownId), "read");
+      assert.equal(readStatus(otherId), "sent");
+      const stored = getDb()
+        .prepare("SELECT id FROM whatsapp_conversations WHERE patient_phone = ?")
+        .get(unknownFrom) as { id?: string } | undefined;
+      assert.equal(stored, undefined);
+    } finally {
+      process.env.META_APP_SECRET = prevSecret;
+      process.env.META_WEBHOOK_ALLOW_UNSIGNED = prevFlag;
+      await server.close();
+      cleanup([ownId, otherId]);
     }
   });
 });

@@ -345,11 +345,6 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
       const timeDisplay = getDisplayTime();
       const msgId = `msg-${crypto.randomUUID().slice(0, 8)}`;
 
-      const ownedByOtherClinic = (row: Record<string, unknown> | undefined) => {
-        if (!row) return false;
-        return String(row.tenant_id || "").trim() !== sessionTenantId;
-      };
-
       let conv: Record<string, unknown> | undefined;
       if (conversationId) {
         conv = db
@@ -365,11 +360,11 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
         }
       }
       if (!conv && patientPhone) {
-        const byPhone = db.prepare("SELECT * FROM whatsapp_conversations WHERE patient_phone = ?").get(patientPhone) as
-          | Record<string, unknown>
-          | undefined;
-        if (ownedByOtherClinic(byPhone)) return res.status(404).json({ error: "Conversation not found" });
-        conv = byPhone;
+        conv = db
+          .prepare(
+            "SELECT * FROM whatsapp_conversations WHERE patient_phone = ? AND TRIM(COALESCE(tenant_id, '')) = ?"
+          )
+          .get(patientPhone, sessionTenantId) as Record<string, unknown> | undefined;
       }
       if (!conv) {
         const newId = conversationId || `conv-${crypto.randomUUID().slice(0, 8)}`;
@@ -820,16 +815,11 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
         : undefined;
       let convId = conv?.id || "";
       if (!convId && sessionTenantId) {
-        const taken = db
-          .prepare("SELECT id, tenant_id FROM whatsapp_conversations WHERE patient_phone = ?")
-          .get(patientPhone) as { id: string; tenant_id?: string } | undefined;
-        if (!taken) {
-          convId = `conv-${crypto.randomUUID().slice(0, 8)}`;
-          db.prepare(
-            `INSERT INTO whatsapp_conversations (id, patient_phone, patient_name, handover_mode, assigned_staff, tags, preferred_language, unread_count, last_message, last_message_time, updated_at, tenant_id)
-             VALUES (?, ?, ?, 'bot', 'Unassigned', '["General"]', 'en', 0, ?, ?, ?, ?)`
-          ).run(convId, patientPhone, patientName, messageContent.slice(0, 80), timeDisplay, now, sessionTenantId);
-        }
+        convId = `conv-${crypto.randomUUID().slice(0, 8)}`;
+        db.prepare(
+          `INSERT INTO whatsapp_conversations (id, patient_phone, patient_name, handover_mode, assigned_staff, tags, preferred_language, unread_count, last_message, last_message_time, updated_at, tenant_id)
+           VALUES (?, ?, ?, 'bot', 'Unassigned', '["General"]', 'en', 0, ?, ?, ?, ?)`
+        ).run(convId, patientPhone, patientName, messageContent.slice(0, 80), timeDisplay, now, sessionTenantId);
       }
 
       if (convId) {
