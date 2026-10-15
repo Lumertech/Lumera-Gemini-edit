@@ -477,12 +477,19 @@ describe("Auth / tenant isolation / CORS / CSRF / rate limit", () => {
       assert.match(await foreign.text(), /Origin not allowed/);
       assert.equal(foreign.headers.get("access-control-allow-origin"), null);
 
+      const packed = packHostSession("header.payload.sig", "csrf-secret");
+      const forwarded = cookiesForwardedByFirebaseHosting(
+        `lumera_sid=header.payload.sig; lumera_csrf=csrf-secret; __session=${encodeURIComponent(packed)}`
+      );
+      assert.match(forwarded, /^__session=/);
+      assert.doesNotMatch(forwarded, /lumera_sid/);
+      assert.doesNotMatch(forwarded, /lumera_csrf/);
       const cookiePost = await fetch(`${base}/api/ping`, {
         method: "POST",
         headers: {
           "Sec-Fetch-Site": "same-origin",
           "Content-Type": "application/json",
-          Cookie: "lumera_sid=abc.def",
+          Cookie: forwarded,
         },
         body: "{}",
       });
