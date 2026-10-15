@@ -20,6 +20,8 @@ import { isBackendPath, isHtmlDocumentPath } from "./spa-fallback.ts";
 
 export const CSRF_COOKIE = "lumera_csrf";
 export const CSRF_HEADER = "x-csrf-token";
+/** Anonymous CSRF failure: client may retry the same mutation once with this secret. */
+export const CSRF_REFRESHED_CODE = "CSRF_REFRESHED";
 export const SESSION_COOKIE = "lumera_sid";
 /**
  * Firebase Hosting rewrites www.mylumera.in to Cloud Run and strips every
@@ -355,12 +357,36 @@ export function corsAllowlistMiddleware(env: NodeJS.ProcessEnv = process.env) {
   };
 }
 
+function csrfReject(res: Response) {
+  res.setHeader("Cache-Control", "private, no-store");
+  return res.status(403).json({ error: "CSRF token missing or invalid" });
+}
+
+/**
+ * Cookie CSRF stays on, including login. A stale anonymous `__session` (no
+ * valid user in `__session` or `lumera_sid`) is replaced with a fresh secret
+ * so the browser can retry once. A credential that still authenticates is
+ * rejected with no new cookie and no token — reissue there would bypass CSRF.
+ */
 export function csrfProtectionMiddleware() {
   return (req: Request, res: Response, next: NextFunction) => {
-    if (csrfShouldReject(req)) {
-      return res.status(403).json({ error: "CSRF token missing or invalid" });
-    }
-    next();
+    if (!csrfShouldReject(req)) return next();
+    void (async () => {
+      try {
+        const { sessionCookieIsAuthenticated, issueAnonymousCsrfCookie } = await import("./auth.ts");
+        if (sessionCookieIsAuthenticated(req)) return csrfReject(res);
+        const token = issueAnonymousCsrfCookie(res);
+        res.setHeader("Cache-Control", "private, no-store");
+        res.setHeader("X-CSRF-Token", token);
+        return res.status(403).json({
+          error: "CSRF token missing or invalid",
+          code: CSRF_REFRESHED_CODE,
+          csrfToken: token,
+        });
+      } catch {
+        if (!res.headersSent) return csrfReject(res);
+      }
+    })();
   };
 }
 
