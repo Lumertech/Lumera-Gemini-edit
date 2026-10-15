@@ -11,15 +11,17 @@ import {
   allowSkipOtp,
   attachUser,
   getJwtSecret,
+  isSandboxPasswordSessionEmail,
   isSeededDemoPasswordSessionEmail,
   requireAuth,
+  SANDBOX_PASSWORD_SESSION_EMAILS,
   signJwtToken,
   verifyJwtToken,
 } from "./auth.ts";
 import { createApiRouter } from "./api.ts";
 import { getDb, initDatabase } from "./db.ts";
 import { hashPassword } from "./password.ts";
-import { DEMO_LOGIN_MATRIX } from "../src/lib/demoAccounts.ts";
+import { DEMO_ACCOUNTS, DEMO_LOGIN_MATRIX } from "../src/lib/demoAccounts.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -108,6 +110,109 @@ describe("Wave 1A PHI / auth lock", () => {
     for (const acct of DEMO_LOGIN_MATRIX) {
       assert.equal(isSeededDemoPasswordSessionEmail(acct.email), true, acct.email);
       assert.equal(allowPasswordLoginWithoutOtp(acct), true, acct.email);
+    }
+  });
+
+  it("grants a password session only to the server-only Sunrise video emails", () => {
+    assert.deepEqual(
+      [...SANDBOX_PASSWORD_SESSION_EMAILS],
+      ["ananya.sunrise@lumera.me", "reception.sunrise@lumera.me"]
+    );
+
+    const demoSrc = fs.readFileSync(path.join(__dirname, "../src/lib/demoAccounts.ts"), "utf8");
+    assert.equal(demoSrc.includes("ananya.sunrise"), false);
+    assert.equal(demoSrc.includes("reception.sunrise"), false);
+
+    for (const email of ["ananya.sunrise@lumera.me", "reception.sunrise@lumera.me"] as const) {
+      const role = email.startsWith("reception.") ? "receptionist" : "doctor";
+      assert.equal(allowPasswordLoginWithoutOtp({ role, email }), true, email);
+      assert.equal(
+        allowPasswordLoginWithoutOtp({ role, email: `  ${email.toUpperCase()}  ` }),
+        true,
+        `${email} trimmed case-insensitive`
+      );
+      assert.equal(isSandboxPasswordSessionEmail(email), true, email);
+      assert.equal(isSeededDemoPasswordSessionEmail(email), false, email);
+      assert.equal(DEMO_LOGIN_MATRIX.some((acct) => acct.email === email), false, email);
+      assert.equal(DEMO_ACCOUNTS.some((acct) => acct.email === email), false, email);
+    }
+
+    assert.equal(
+      allowPasswordLoginWithoutOtp({ role: "doctor", email: "not-seeded@lumera.me" }),
+      false
+    );
+    assert.equal(
+      allowPasswordLoginWithoutOtp({ role: "doctor", email: "ananya.sunrise@lumera.me.evil.com" }),
+      false
+    );
+    assert.equal(
+      allowPasswordLoginWithoutOtp({ role: "receptionist", email: "ananya.sunrise@evil.com" }),
+      false
+    );
+    assert.equal(isSandboxPasswordSessionEmail("ananya.sunrise@lumera.me.evil.com"), false);
+    assert.equal(isSandboxPasswordSessionEmail("ananya.sunrise@evil.com"), false);
+
+    for (const acct of DEMO_LOGIN_MATRIX) {
+      assert.equal(isSeededDemoPasswordSessionEmail(acct.email), true, acct.email);
+      assert.equal(allowPasswordLoginWithoutOtp(acct), true, acct.email);
+    }
+  });
+
+  it("production Sunrise video emails mint a password session without OTP", async () => {
+    const now = new Date().toISOString();
+    const rows = [
+      {
+        id: "user-sunrise-ananya",
+        email: "ananya.sunrise@lumera.me",
+        name: "Sunrise Video Doctor",
+        role: "doctor",
+      },
+      {
+        id: "user-sunrise-reception",
+        email: "reception.sunrise@lumera.me",
+        name: "Sunrise Video Reception",
+        role: "receptionist",
+      },
+    ] as const;
+    for (const row of rows) {
+      getDb().prepare("DELETE FROM users WHERE email = ?").run(row.email);
+      getDb()
+        .prepare(
+          `INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, onboarding_completed, practice_type, last_login, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, 'active', ?, 1, 'individual', ?, ?)`
+        )
+        .run(
+          row.id,
+          "tenant-543feff7",
+          row.email,
+          hashPassword("Lumera@2026"),
+          row.name,
+          row.role,
+          "+91 90000 00000",
+          now,
+          now
+        );
+    }
+
+    const prev = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+    try {
+      for (const row of rows) {
+        const login = await jsonRequest(port, "POST", "/api/auth/login", {
+          email: row.email,
+          password: "Lumera@2026",
+        });
+        assert.equal(login.status, 200, `${row.email}: ${String(login.json.error || "sunrise prod login")}`);
+        assert.equal(login.json.requiresOtp, false, row.email);
+        assert.ok(login.json.token, row.email);
+        assert.equal(login.json.verificationId, undefined, row.email);
+        assert.equal(login.json.demoOtp, undefined, row.email);
+        assert.equal((login.json.user as { email?: string; role?: string } | undefined)?.email, row.email);
+        assert.equal((login.json.user as { role?: string } | undefined)?.role, row.role);
+      }
+    } finally {
+      if (prev === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = prev;
     }
   });
 
