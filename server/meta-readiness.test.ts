@@ -312,7 +312,8 @@ describe("Facebook OAuth session mint (JWT parity)", () => {
       assert.equal(meBearer.status, 200);
       const meBearerJson = meBearer.json as { user?: { email?: string }; token?: string };
       assert.equal(meBearerJson.user?.email, "doctor@lumera.me");
-      assert.equal(meBearerJson.token, token);
+      assert.equal(meBearerJson.token, undefined);
+      assert.equal(JSON.stringify(meBearer.json).includes(token), false);
 
       const meCookie = await jsonRequest(server.port, "GET", "/api/auth/me", undefined, {
         Cookie: `lumera_sid=${encodeURIComponent(token)}`,
@@ -320,7 +321,8 @@ describe("Facebook OAuth session mint (JWT parity)", () => {
       assert.equal(meCookie.status, 200);
       const meCookieJson = meCookie.json as { user?: { email?: string }; token?: string };
       assert.equal(meCookieJson.user?.email, "doctor@lumera.me");
-      assert.equal(meCookieJson.token, token);
+      assert.equal(meCookieJson.token, undefined);
+      assert.equal(JSON.stringify(meCookie.json).includes(token), false);
     } finally {
       await server.close();
       if (prevJwt === undefined) delete process.env.JWT_SECRET;

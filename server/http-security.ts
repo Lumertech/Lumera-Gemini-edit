@@ -128,6 +128,34 @@ function requestPathname(req: Request): string {
   return String(req.path || req.originalUrl || "").split("?")[0] || "/";
 }
 
+function csrfRequestPath(req: Request): string {
+  const raw = String(req.originalUrl || req.path || "").split("?")[0] || "/";
+  return raw.length > 1 && raw.endsWith("/") ? raw.slice(0, -1) : raw;
+}
+
+/**
+ * Pre-auth mutations keep #133 header-match across duplicate `__session`
+ * cookies, including when a leftover authenticated cookie is also present.
+ * Authenticated actions bind CSRF to the cookie that actually authenticated.
+ */
+const LOOSE_DUPLICATE_CSRF_PATHS = new Set([
+  "/api/auth/login",
+  "/api/auth/demo-login",
+  "/api/auth/oauth",
+  "/api/auth/whatsapp/send-otp",
+  "/api/auth/whatsapp/verify-otp",
+  "/api/auth/forgot-password",
+  "/api/auth/reset-password",
+  "/api/auth/register-practice",
+  "/api/auth/register-clinic",
+]);
+
+function keepsLooseDuplicateCsrf(req: Request): boolean {
+  const path = csrfRequestPath(req);
+  if (LOOSE_DUPLICATE_CSRF_PATHS.has(path)) return true;
+  return LOOSE_DUPLICATE_CSRF_PATHS.has(`/api${path.startsWith("/") ? path : `/${path}`}`);
+}
+
 /**
  * Safe document navigations (GET/HEAD to any SPA/HTML path — /login, /app,
  * /w/{clinic}/… deep links, admin shells, etc.) omit Origin or send the
@@ -516,25 +544,56 @@ export function csrfRefreshAllowed(req: Request, env: NodeJS.ProcessEnv = proces
  */
 export function csrfProtectionMiddleware(env: NodeJS.ProcessEnv = process.env) {
   return (req: Request, res: Response, next: NextFunction) => {
-    if (!csrfShouldReject(req)) return next();
-    if (!csrfRefreshAllowed(req, env)) return csrfReject(res);
+    // Login and the other pre-auth posts still accept the __session whose
+    // secret matches the header (#133), even if another cookie authenticates.
+    if (
+      keepsLooseDuplicateCsrf(req) ||
+      hasBearerOrSessionHeader(req) ||
+      !isMutating(req.method) ||
+      isSecurityExemptPath(req.path) ||
+      isSecurityExemptPath(req.originalUrl || "")
+    ) {
+      if (!csrfShouldReject(req)) return next();
+      if (!csrfRefreshAllowed(req, env)) return csrfReject(res);
+      return refreshAnonymousCsrf(req, res, env);
+    }
     void (async () => {
       try {
-        const { sessionCookieIsAuthenticated, issueAnonymousCsrfCookie } = await import("./auth.ts");
-        if (sessionCookieIsAuthenticated(req)) return csrfReject(res);
-        const token = issueAnonymousCsrfCookie(res, env);
-        res.setHeader("Cache-Control", "private, no-store");
-        res.setHeader("X-CSRF-Token", token);
-        return res.status(403).json({
-          error: "CSRF token missing or invalid",
-          code: CSRF_REFRESHED_CODE,
-          csrfToken: token,
-        });
+        const { authenticatedCookieCsrf } = await import("./auth.ts");
+        const bound = authenticatedCookieCsrf(req);
+        if (bound != null) {
+          // Authenticated duplicate: only that cookie's secret is valid.
+          // No Set-Cookie and no CSRF_REFRESHED — a real session is not reissued.
+          if (!bound || csrfHeaderValue(req) !== bound) return csrfReject(res);
+          return next();
+        }
+        if (!csrfShouldReject(req)) return next();
+        if (!csrfRefreshAllowed(req, env)) return csrfReject(res);
+        return refreshAnonymousCsrf(req, res, env);
       } catch {
         if (!res.headersSent) return csrfReject(res);
       }
     })();
   };
+}
+
+function refreshAnonymousCsrf(req: Request, res: Response, env: NodeJS.ProcessEnv) {
+  void (async () => {
+    try {
+      const { sessionCookieIsAuthenticated, issueAnonymousCsrfCookie } = await import("./auth.ts");
+      if (sessionCookieIsAuthenticated(req)) return csrfReject(res);
+      const token = issueAnonymousCsrfCookie(res, env);
+      res.setHeader("Cache-Control", "private, no-store");
+      res.setHeader("X-CSRF-Token", token);
+      return res.status(403).json({
+        error: "CSRF token missing or invalid",
+        code: CSRF_REFRESHED_CODE,
+        csrfToken: token,
+      });
+    } catch {
+      if (!res.headersSent) return csrfReject(res);
+    }
+  })();
 }
 
 export function authRateLimitKey(req: Request): string | null {

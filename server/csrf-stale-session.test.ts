@@ -1122,4 +1122,280 @@ describe("stale anonymous __session CSRF refresh", () => {
       else Object.defineProperty(globalThis, "sessionStorage", { value: previousSession, configurable: true });
     }
   });
+
+  function setCookieLines(res: Response): string[] {
+    return typeof res.headers.getSetCookie === "function" ? res.headers.getSetCookie() : [];
+  }
+
+  function issuedSession(lines: string[]): string {
+    const line = lines.find((entry) => /^__session=[^;]/.test(entry) && !/max-age=0/i.test(entry));
+    assert.ok(line, "response must set a host __session");
+    return decodeURIComponent(line.split(";")[0].slice("__session=".length));
+  }
+
+  it("GET /api/me and /api/auth/me do not return the session credential", async () => {
+    resetAuthRateLimitStore();
+    const login = await previousFetch(`http://127.0.0.1:${server.port}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Sec-Fetch-Site": "same-origin" },
+      body: JSON.stringify({ email: "doctor@lumera.me", password: "Lumera@2026" }),
+    });
+    const loginJson = (await login.json()) as { token?: string; error?: string; csrfToken?: string };
+    assert.equal(login.status, 200, loginJson.error || "login");
+    const packed = issuedSession(setCookieLines(login));
+    const session = unpackHostSession(packed);
+    assert.equal(typeof loginJson.token, "string");
+    assert.ok(loginJson.token);
+    assert.equal(session.credential, loginJson.token);
+    assert.equal(loginJson.csrfToken, session.csrf);
+    assert.equal(login.headers.get("x-csrf-token"), session.csrf);
+
+    for (const path of ["/api/me", "/api/auth/me"]) {
+      const me = await previousFetch(`http://127.0.0.1:${server.port}${path}`, {
+        headers: {
+          cookie: `__session=${encodeURIComponent(packed)}`,
+          "Sec-Fetch-Site": "same-origin",
+          "x-csrf-token": "not-the-session-secret",
+        },
+      });
+      const body = await me.text();
+      const json = JSON.parse(body) as { user?: { email?: string } | null; token?: unknown; csrfToken?: string };
+      assert.equal(me.status, 200, body);
+      assert.equal(json.user?.email, "doctor@lumera.me");
+      assert.equal(json.token, undefined);
+      assert.equal(body.includes(session.credential), false);
+      assert.equal(json.csrfToken, session.csrf);
+      assert.equal(me.headers.get("x-csrf-token"), session.csrf);
+    }
+
+    const bearer = await previousFetch(`http://127.0.0.1:${server.port}/api/me`, {
+      headers: { Authorization: `Bearer ${loginJson.token}`, "Sec-Fetch-Site": "same-origin" },
+    });
+    const bearerBody = await bearer.text();
+    const bearerJson = JSON.parse(bearerBody) as { user?: { email?: string } | null; token?: unknown };
+    assert.equal(bearer.status, 200, bearerBody);
+    assert.equal(bearerJson.user?.email, "doctor@lumera.me");
+    assert.equal(bearerJson.token, undefined);
+    assert.equal(bearerBody.includes(loginJson.token), false);
+  });
+
+  it("rejects the CSRF secret from before a successful login", async () => {
+    resetAuthRateLimitStore();
+    const boot = await previousFetch(`http://127.0.0.1:${server.port}/api/auth/me`, {
+      headers: { "Sec-Fetch-Site": "same-origin" },
+    });
+    const bootJson = (await boot.json()) as { csrfToken?: string };
+    const oldCsrf = String(bootJson.csrfToken || "");
+    assert.ok(oldCsrf);
+    const bootSession = issuedSession(setCookieLines(boot));
+    assert.equal(unpackHostSession(bootSession).csrf, oldCsrf);
+
+    const login = await previousFetch(`http://127.0.0.1:${server.port}/api/auth/login`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Sec-Fetch-Site": "same-origin",
+        cookie: `__session=${encodeURIComponent(bootSession)}`,
+        "x-csrf-token": oldCsrf,
+      },
+      body: JSON.stringify({ email: "doctor@lumera.me", password: "Lumera@2026" }),
+    });
+    const loginJson = (await login.json()) as { csrfToken?: string; error?: string; user?: { email?: string } };
+    assert.equal(login.status, 200, loginJson.error || "login");
+    assert.equal(loginJson.user?.email, "doctor@lumera.me");
+    const newCsrf = String(loginJson.csrfToken || "");
+    assert.ok(newCsrf);
+    assert.notEqual(newCsrf, oldCsrf);
+    assert.equal(login.headers.get("x-csrf-token"), newCsrf);
+    const lines = setCookieLines(login);
+    const issued = issuedSession(lines);
+    assert.equal(unpackHostSession(issued).csrf, newCsrf);
+    const value = lines.find((entry) => entry.startsWith("__session=") && !/max-age=0/i.test(entry));
+    assert.match(value || "", /HttpOnly/i);
+    assert.match(value || "", /Secure/i);
+    assert.match(value || "", /SameSite=Lax/i);
+    for (const line of lines) {
+      if (/samesite=none/i.test(line)) {
+        assert.match(line, /max-age=0/i);
+        assert.match(line, /partitioned/i);
+      }
+    }
+
+    const stale = await previousFetch(`http://127.0.0.1:${server.port}/api/auth/logout`, {
+      method: "POST",
+      headers: {
+        cookie: `__session=${encodeURIComponent(issued)}`,
+        "x-csrf-token": oldCsrf,
+        "Sec-Fetch-Site": "same-origin",
+      },
+    });
+    const staleJson = (await stale.json()) as { code?: string };
+    assert.equal(stale.status, 403);
+    assert.equal(staleJson.code, undefined);
+    assert.equal(setCookieLines(stale).length, 0);
+
+    const crossSite = await previousFetch(`http://127.0.0.1:${server.port}/api/auth/logout`, {
+      method: "POST",
+      headers: {
+        cookie: `__session=${encodeURIComponent(issued)}`,
+        "x-csrf-token": oldCsrf,
+        "Sec-Fetch-Site": "cross-site",
+        Origin: "https://evil.example",
+      },
+    });
+    assert.equal(crossSite.status, 403);
+    assert.equal(setCookieLines(crossSite).length, 0);
+
+    const fresh = await previousFetch(`http://127.0.0.1:${server.port}/api/auth/logout`, {
+      method: "POST",
+      headers: {
+        cookie: `__session=${encodeURIComponent(issued)}`,
+        "x-csrf-token": newCsrf,
+        "Sec-Fetch-Site": "same-origin",
+      },
+    });
+    assert.equal(fresh.status, 200);
+  });
+
+  it("duplicate __session cookies use the CSRF secret of the cookie that authenticated", async () => {
+    resetAuthRateLimitStore();
+    const login = await previousFetch(`http://127.0.0.1:${server.port}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Sec-Fetch-Site": "same-origin" },
+      body: JSON.stringify({ email: "doctor@lumera.me", password: "Lumera@2026" }),
+    });
+    const loginJson = (await login.json()) as { error?: string };
+    assert.equal(login.status, 200, loginJson.error || "login");
+    const issued = issuedSession(setCookieLines(login));
+    const real = unpackHostSession(issued);
+    const decoy = packHostSession("anon.decoy-not-a-session", "decoy-csrf-secret");
+    assert.notEqual(real.csrf, "decoy-csrf-secret");
+    const orders = [
+      `__session=${encodeURIComponent(decoy)}; __session=${encodeURIComponent(issued)}`,
+      `__session=${encodeURIComponent(issued)}; __session=${encodeURIComponent(decoy)}`,
+    ];
+    for (const cookie of orders) {
+      for (const path of ["/api/me", "/api/auth/me"]) {
+        const me = await previousFetch(`http://127.0.0.1:${server.port}${path}`, {
+          headers: {
+            cookie,
+            "x-csrf-token": "decoy-csrf-secret",
+            "Sec-Fetch-Site": "same-origin",
+          },
+        });
+        const body = await me.text();
+        const json = JSON.parse(body) as { user?: { email?: string } | null; token?: unknown; csrfToken?: string };
+        assert.equal(me.status, 200, body);
+        assert.equal(json.user?.email, "doctor@lumera.me");
+        assert.equal(json.csrfToken, real.csrf);
+        assert.equal(me.headers.get("x-csrf-token"), real.csrf);
+        assert.equal(json.token, undefined);
+        assert.equal(body.includes(real.credential), false);
+      }
+    }
+
+    const rejected = await previousFetch(`http://127.0.0.1:${server.port}/api/auth/logout`, {
+      method: "POST",
+      headers: {
+        cookie: orders[0],
+        "x-csrf-token": "decoy-csrf-secret",
+        "Sec-Fetch-Site": "same-origin",
+      },
+    });
+    const rejectedJson = (await rejected.json()) as { code?: string; error?: string };
+    assert.equal(rejected.status, 403);
+    assert.equal(rejectedJson.code, undefined);
+    assert.equal(rejectedJson.error, "CSRF token missing or invalid");
+    assert.equal(setCookieLines(rejected).length, 0);
+
+    const allowed = await previousFetch(`http://127.0.0.1:${server.port}/api/auth/logout`, {
+      method: "POST",
+      headers: {
+        cookie: orders[1],
+        "x-csrf-token": real.csrf,
+        "Sec-Fetch-Site": "same-origin",
+      },
+    });
+    assert.equal(allowed.status, 200);
+  });
+
+  it("apiFetch adopts the rotated login CSRF and drops a /me session token", async () => {
+    resetAuthRateLimitStore();
+    clearRememberedCsrfToken();
+    const credential = "header.payload.sig";
+    const sent: Array<{ authorization: string; session: string; csrf: string }> = [];
+    let calls = 0;
+    globalThis.fetch = async (input, init) => {
+      calls += 1;
+      const headers = new Headers(init?.headers);
+      sent.push({
+        authorization: headers.get("authorization") || "",
+        session: headers.get("x-session-token") || "",
+        csrf: headers.get("x-csrf-token") || "",
+      });
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.endsWith("/api/auth/me")) {
+        return new Response(JSON.stringify({ user: { email: "doctor@lumera.me" }, token: credential, csrfToken: "csrf-from-me" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json", "X-CSRF-Token": "csrf-from-me" },
+        });
+      }
+      if (url.endsWith("/api/auth/login")) {
+        return new Response(JSON.stringify({ user: { email: "doctor@lumera.me" }, token: credential, csrfToken: "csrf-after-login" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json", "X-CSRF-Token": "csrf-after-login" },
+        });
+      }
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    };
+    const storage = new Map<string, string>([["lumera_session_token", credential]]);
+    const memoryStorage = {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        storage.set(key, value);
+      },
+      removeItem: (key: string) => {
+        storage.delete(key);
+      },
+    };
+    const previousLocal = globalThis.localStorage;
+    const previousSession = globalThis.sessionStorage;
+    Object.defineProperty(globalThis, "localStorage", { value: memoryStorage, configurable: true });
+    Object.defineProperty(globalThis, "sessionStorage", { value: memoryStorage, configurable: true });
+    setDocumentCookie("lumera_csrf=stale-document-csrf");
+    try {
+      const me = await apiFetch<{ token?: string; csrfToken?: string; user?: { email?: string } }>(
+        `http://127.0.0.1/api/auth/me`
+      );
+      assert.equal(me.user?.email, "doctor@lumera.me");
+      assert.equal(me.token, undefined);
+      assert.equal(me.csrfToken, "csrf-from-me");
+      const loggedIn = await apiFetch<{ csrfToken?: string }>(`http://127.0.0.1/api/auth/login`, {
+        method: "POST",
+        body: JSON.stringify({ email: "doctor@lumera.me", password: "Lumera@2026" }),
+      });
+      assert.equal(loggedIn.csrfToken, "csrf-after-login");
+      await apiFetch(`http://127.0.0.1/api/auth/logout`, { method: "POST" });
+      assert.equal(calls, 3);
+      assert.equal(sent[1].csrf, "csrf-from-me");
+      assert.equal(sent[2].csrf, "csrf-after-login");
+      assert.notEqual(sent[2].csrf, "stale-document-csrf");
+      for (const entry of sent) {
+        assert.equal(entry.authorization, "");
+        assert.equal(entry.session, "");
+        assert.notEqual(entry.csrf, credential);
+      }
+    } finally {
+      globalThis.fetch = previousFetch;
+      setDocumentCookie(null);
+      clearRememberedCsrfToken();
+      if (previousLocal === undefined) delete (globalThis as { localStorage?: Storage }).localStorage;
+      else Object.defineProperty(globalThis, "localStorage", { value: previousLocal, configurable: true });
+      if (previousSession === undefined) delete (globalThis as { sessionStorage?: Storage }).sessionStorage;
+      else Object.defineProperty(globalThis, "sessionStorage", { value: previousSession, configurable: true });
+    }
+  });
 });

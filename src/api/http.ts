@@ -1,6 +1,8 @@
 /**
- * Session lives in the httpOnly `lumera_sid` cookie. Never copy it into
- * localStorage or sessionStorage (security blocker 002).
+ * Session lives in the httpOnly `__session` / `lumera_sid` cookie.
+ * Never copy it into localStorage or sessionStorage, and never replay a
+ * `token` from GET /api/me or GET /api/auth/me as Authorization or
+ * X-Session-Token. Native clients that need a bearer take it from login.
  */
 const LEGACY_TOKEN_KEY = "lumera_session_token";
 /** Must match server `CSRF_REFRESHED_CODE`. One automatic retry, then surface the error. */
@@ -28,6 +30,24 @@ function csrfTokenFromRefresh(res: Response, data: ApiErrorBody): string {
 function rememberCsrf(res: Response, data: ApiErrorBody): void {
   const token = csrfTokenFromRefresh(res, data);
   if (token) csrfFromServer = token;
+}
+
+/** /me must not hand the HttpOnly session credential to page scripts. */
+function isSessionProbe(path: string): boolean {
+  let pathname = path.split("?")[0];
+  try {
+    if (path.startsWith("http://") || path.startsWith("https://")) pathname = new URL(path).pathname;
+  } catch {
+    /* relative path */
+  }
+  return pathname === "/api/me" || pathname === "/api/auth/me";
+}
+
+function withoutSessionCredential<T>(path: string, data: T): T {
+  if (!isSessionProbe(path) || !data || typeof data !== "object" || !("token" in data)) return data;
+  const rest = { ...(data as Record<string, unknown>) };
+  delete rest.token;
+  return rest as T;
 }
 
 /**
@@ -131,7 +151,7 @@ async function apiFetchOnce<T>(
     headers,
   });
   const parsed = await res.json().catch(() => ({}));
-  const data = (parsed && typeof parsed === "object" ? parsed : {}) as ApiErrorBody;
+  const data = withoutSessionCredential(path, (parsed && typeof parsed === "object" ? parsed : {}) as ApiErrorBody);
   rememberCsrf(res, data);
   if (!res.ok) {
     const refreshed = res.status === 403 && data.code === CSRF_REFRESHED;

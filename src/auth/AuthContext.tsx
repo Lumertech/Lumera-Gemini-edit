@@ -127,6 +127,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     let cancelled = false;
     purgeLegacyAuthToken();
+    // Cookie session only. /api/auth/me does not return a bearer token.
     apiFetch<{ user: AppUser | null }>("/api/auth/me")
       .then((d) => {
         if (cancelled) return;
@@ -292,6 +293,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const refreshSession = useCallback(async (): Promise<AppUser | null> => {
+    // Cookie session only. Do not read a token from /api/me.
     const d = await apiFetch<{ user: AppUser | null }>("/api/me");
     purgeLegacyAuthToken();
     if (d?.user) {
