@@ -175,6 +175,7 @@ describe("Wave 1A PHI / auth lock", () => {
       },
     ] as const;
     for (const row of rows) {
+      getDb().prepare("DELETE FROM users WHERE email = ?").run(row.email);
       getDb()
         .prepare(
           `INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, onboarding_completed, practice_type, last_login, created_at)
