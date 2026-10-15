@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
+import express from "express";
 import jwt from "jsonwebtoken";
 import { apiFetch } from "../src/api/http.ts";
 import { createApiRouter } from "./api.ts";
@@ -9,6 +10,7 @@ import {
   CSRF_REFRESHED_CODE,
   attachHttpSecurity,
   cookiesForwardedByFirebaseHosting,
+  csrfProtectionMiddleware,
   packHostSession,
   resetAuthRateLimitStore,
   unpackHostSession,
@@ -116,6 +118,7 @@ describe("stale anonymous __session CSRF refresh", () => {
         `http://127.0.0.1:${server.port}/api/auth/login`,
         {
           method: "POST",
+          headers: { "Sec-Fetch-Site": "same-origin" },
           body: JSON.stringify({ email: "doctor@lumera.me", password: "Lumera@2026" }),
         }
       );
@@ -153,6 +156,56 @@ describe("stale anonymous __session CSRF refresh", () => {
     } finally {
       globalThis.fetch = previousFetch;
       setDocumentCookie(null);
+    }
+  });
+
+  it("a cross-site request does not refresh CSRF or clear the session cookie", async () => {
+    const stale = `__session=${encodeURIComponent(packHostSession("pre-126-stale-credential", "pre-126-csrf-secret"))}`;
+    const env = { NODE_ENV: "production", ALLOWED_ORIGINS: "https://www.mylumera.in" } as NodeJS.ProcessEnv;
+    const app = express();
+    app.use(express.json());
+    app.use(csrfProtectionMiddleware(env));
+    app.post("/api/auth/login", (_req, res) => res.json({ ok: true }));
+    const srv = app.listen(0, "127.0.0.1");
+    await new Promise<void>((resolve) => srv.once("listening", () => resolve()));
+    const addr = srv.address();
+    if (!addr || typeof addr === "string") throw new Error("no port");
+    const port = addr.port;
+
+    async function post(headers: Record<string, string>) {
+      const res = await previousFetch(`http://127.0.0.1:${port}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", cookie: stale, ...headers },
+        body: "{}",
+      });
+      const json = (await res.json()) as { error?: string; code?: string; csrfToken?: string };
+      const cookies = typeof res.headers.getSetCookie === "function" ? res.headers.getSetCookie() : [];
+      return { status: res.status, json, cookies, csrfHeader: res.headers.get("x-csrf-token") };
+    }
+
+    try {
+      const crossSite = await post({ "Sec-Fetch-Site": "cross-site" });
+      assert.equal(crossSite.status, 403);
+      assert.equal(crossSite.json.error, "CSRF token missing or invalid");
+      assert.equal(crossSite.json.code, undefined);
+      assert.equal(crossSite.json.csrfToken, undefined);
+      assert.equal(crossSite.csrfHeader, null);
+      assert.equal(crossSite.cookies.length, 0);
+
+      const foreign = await post({ Origin: "https://evil.example" });
+      assert.equal(foreign.status, 403);
+      assert.equal(foreign.json.error, "CSRF token missing or invalid");
+      assert.equal(foreign.json.code, undefined);
+      assert.equal(foreign.json.csrfToken, undefined);
+      assert.equal(foreign.csrfHeader, null);
+      assert.equal(foreign.cookies.length, 0);
+
+      const both = await post({ "Sec-Fetch-Site": "cross-site", Origin: "https://evil.example" });
+      assert.equal(both.status, 403);
+      assert.equal(both.json.code, undefined);
+      assert.equal(both.cookies.length, 0);
+    } finally {
+      await new Promise<void>((resolve, reject) => srv.close((err) => (err ? reject(err) : resolve())));
     }
   });
 

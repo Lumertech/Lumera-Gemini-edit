@@ -363,14 +363,27 @@ function csrfReject(res: Response) {
 }
 
 /**
+ * Anonymous reissue clears the browser's session cookie. Only a same-origin
+ * request, or an Origin already on the CORS allowlist, may trigger that.
+ * A cross-site form POST (Sec-Fetch-Site: cross-site, or a foreign Origin)
+ * stays a plain 403 so it cannot log the user out.
+ */
+export function csrfRefreshAllowed(req: Request, env: NodeJS.ProcessEnv = process.env): boolean {
+  if (headerOne(req, "sec-fetch-site") === "same-origin") return true;
+  return originAllowed(headerOne(req, "origin"), env);
+}
+
+/**
  * Cookie CSRF stays on, including login. A stale anonymous `__session` (no
  * valid user in `__session` or `lumera_sid`) is replaced with a fresh secret
- * so the browser can retry once. A credential that still authenticates is
- * rejected with no new cookie and no token — reissue there would bypass CSRF.
+ * so the browser can retry once, but only when `csrfRefreshAllowed` is true.
+ * A credential that still authenticates is rejected with no new cookie and
+ * no token — reissue there would bypass CSRF.
  */
-export function csrfProtectionMiddleware() {
+export function csrfProtectionMiddleware(env: NodeJS.ProcessEnv = process.env) {
   return (req: Request, res: Response, next: NextFunction) => {
     if (!csrfShouldReject(req)) return next();
+    if (!csrfRefreshAllowed(req, env)) return csrfReject(res);
     void (async () => {
       try {
         const { sessionCookieIsAuthenticated, issueAnonymousCsrfCookie } = await import("./auth.ts");
@@ -455,7 +468,7 @@ export function attachHttpSecurity(app: Express, env: NodeJS.ProcessEnv = proces
   app.use(canonicalHostRedirectMiddleware(env));
   app.use(corsAllowlistMiddleware(env));
   app.use(htmlDocumentSecurityMiddleware(env));
-  app.use(csrfProtectionMiddleware());
+  app.use(csrfProtectionMiddleware(env));
   app.use(createAuthRateLimiter());
 }
 
