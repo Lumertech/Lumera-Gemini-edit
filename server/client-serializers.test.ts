@@ -76,7 +76,7 @@ describe("client row serializers", () => {
     for (const key of SECRET_KEYS) {
       assert.equal(isClientSecretKey(key), true, key);
     }
-    for (const key of ["id", "name", "waba_id", "phone_number_id", "meta_waba_name", "practice_settings", "upi_id", "active_status", "slug", "secretary"]) {
+    for (const key of ["id", "name", "waba_id", "phone_number_id", "meta_waba_name", "practice_settings", "upi_id", "active_status", "slug", "secretary", "tokenPrefix", "token_prefix"]) {
       assert.equal(isClientSecretKey(key), false, key);
     }
   });
@@ -114,7 +114,7 @@ describe("client row serializers", () => {
     assert.equal(published.gstin, "27CANARY0000Z1Z5");
     const settings = JSON.parse(String(published.practice_settings)) as { walkInEnabled?: boolean; tokenPrefix?: string };
     assert.equal(settings.walkInEnabled, true);
-    assert.equal(settings.tokenPrefix, undefined);
+    assert.equal(settings.tokenPrefix, "OPD");
     for (const key of Object.keys(published)) {
       assert.equal(PUBLIC_TENANT_KEYS.includes(key as (typeof PUBLIC_TENANT_KEYS)[number]), true, key);
       assert.equal(isClientSecretKey(key), false, key);
@@ -133,6 +133,7 @@ describe("client row serializers", () => {
       practice_settings: JSON.stringify({
         walkInEnabled: true,
         sharedQueue: true,
+        tokenPrefix: "CC",
         departments: ["General Medicine"],
         slotDurationMinutes: 15,
         meta_access_token: TOKEN,
@@ -154,17 +155,23 @@ describe("client row serializers", () => {
     const settings = JSON.parse(String(published.practice_settings)) as {
       walkInEnabled?: boolean;
       sharedQueue?: boolean;
+      tokenPrefix?: string;
       departments?: string[];
       slotDurationMinutes?: number;
       meta_access_token?: string;
+      metaTokenExpiresAt?: string;
       webhook_secret?: string;
-      nested?: { label?: string; apiKey?: string; registration_pin?: string; again?: string };
+      nested?: { label?: string; apiKey?: string; registration_pin?: string; encrypted_token?: string; waba_access_token?: string; again?: string };
     };
     assert.equal(settings.walkInEnabled, true);
     assert.equal(settings.sharedQueue, true);
+    assert.equal(settings.tokenPrefix, "CC");
+    assert.equal(settings.meta_access_token, undefined);
+    assert.equal(settings.metaTokenExpiresAt, undefined);
+    assert.equal(settings.nested?.encrypted_token, undefined);
+    assert.equal(settings.nested?.waba_access_token, undefined);
     assert.deepEqual(settings.departments, ["General Medicine"]);
     assert.equal(settings.slotDurationMinutes, 15);
-    assert.equal(settings.meta_access_token, undefined);
     assert.equal(settings.webhook_secret, undefined);
     assert.equal(settings.nested?.label, "kept");
     assert.equal(settings.nested?.apiKey, undefined);
@@ -287,6 +294,7 @@ describe("tenant, user, and branch HTTP responses omit secrets", () => {
         JSON.stringify({
           walkInEnabled: true,
           sharedQueue: false,
+          tokenPrefix: "OPD",
           meta_access_token: TOKEN,
           webhook_secret: WEBHOOK,
           nested: { api_key: API_KEY, registration_pin: PIN, label: "front-desk" },
@@ -321,11 +329,13 @@ describe("tenant, user, and branch HTTP responses omit secrets", () => {
       assert.equal(tenant.meta_waba_name, "Canary WABA");
       const settings = JSON.parse(String(tenant.practice_settings)) as {
         walkInEnabled?: boolean;
+        tokenPrefix?: string;
         meta_access_token?: string;
         webhook_secret?: string;
         nested?: { api_key?: string; registration_pin?: string; label?: string };
       };
       assert.equal(settings.walkInEnabled, true);
+      assert.equal(settings.tokenPrefix, "OPD");
       assert.equal(settings.meta_access_token, undefined);
       assert.equal(settings.webhook_secret, undefined);
       assert.equal(settings.nested?.label, "front-desk");
