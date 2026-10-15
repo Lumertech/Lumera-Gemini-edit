@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Navbar, NavView } from './components/Navbar';
 import { Sidebar, ROLE_VISIBLE_VIEWS } from './components/Sidebar';
 import { ShieldCheck, UserPlus } from 'lucide-react';
@@ -57,6 +57,20 @@ import {
   workflowForUser,
 } from './lib/specialtyWorkflow';
 import { SpecialtyPackBoard } from './components/specialty-packs/SpecialtyPackBoard';
+import {
+  alignSessionToPatient,
+  canAutosaveDraft,
+  completeDraftFetch,
+  draftForStorage,
+  failDraftFetch,
+  mapSoapToRxDraft,
+  openPatientDraft,
+  readDemoDraft,
+  sessionDemoDraftTenant,
+  writeDemoDraft,
+  writerKey,
+  type PatientDraftSession,
+} from './lib/rxDraft';
 
 export default function ClinicianApp() {
   const { user } = useAuth();
@@ -84,7 +98,13 @@ export default function ClinicianApp() {
     isDemo ? MOCK_APPOINTMENTS : []
   );
   const [prescriptions, setPrescriptions] = useState<Prescription[]>([]);
-  const [activeSoapData, setActiveSoapData] = useState<SoapNote | null>(null);
+  const [draftState, setDraftState] = useState<PatientDraftSession>({
+    patientId: '',
+    phase: 'loading',
+    draft: null,
+    version: 0,
+  });
+  const saveImmediateRef = useRef(false);
   const [selectedSpecialty, setSelectedSpecialty] = useState<PolyclinicSpecialty | 'All'>('All');
   const [isHexaOpen, setIsHexaOpen] = useState(false);
   const [letterhead, setLetterhead] = useState<TenantLetterhead | null>(null);
@@ -92,78 +112,87 @@ export default function ClinicianApp() {
   const [autoSaveStatus, setAutoSaveStatus] = useState<'saved' | 'saving' | 'unsaved'>('saved');
   const [currentDraftRx, setCurrentDraftRx] = useState<Prescription | null>(null);
 
+  const draftSession = alignSessionToPatient(draftState, currentPatient.id || '');
+  const sessionTenantId = sessionDemoDraftTenant(user?.tenantId);
+
   useEffect(() => {
-    if (!currentPatient.id || isDemo) return;
+    const patientId = currentPatient.id;
+    if (!patientId) {
+      setDraftState({ patientId: '', phase: 'ready', draft: null, version: 0 });
+      return;
+    }
     let cancelled = false;
+    setDraftState((prev) => openPatientDraft(patientId, prev.version));
+    setCurrentDraftRx(null);
     void (async () => {
       try {
-        const res = await apiFetch<{ draft: Prescription | null }>(`/api/prescriptions/draft/${currentPatient.id}`);
-        if (cancelled) return;
-        if (res.draft) {
-          const soapFromDraft = {
-            id: 'soap-draft-' + currentPatient.id,
-            patientId: currentPatient.id,
-            uhid: currentPatient.uhid,
-            doctorId: currentDoctor.id,
-            date: new Date().toISOString().split('T')[0],
-            subjective: { chiefComplaints: res.draft.chiefComplaints || [], historyOfPresentIllness: '' },
-            objective: { vitals: { bp: '', pulse: '', temp: '', spo2: '' }, physicalExamination: '', clinicalFindings: [] },
-            assessment: { primaryDiagnosis: res.draft.diagnosis || '', icd10Code: res.draft.icd10Code || '', differentialDiagnoses: [], riskLevel: 'Low' },
-            plan: {
-              medicines: res.draft.medicines || [],
-              labTests: res.draft.labTests || [],
-              lifestyleAdvice: res.draft.advice || [],
-              redFlags: [],
-              followUpDays: 7,
-              followUpDate: '',
-            },
-            physiotherapyAssessment: res.draft.physiotherapyAssessment,
-            performedTherapies: res.draft.performedTherapies,
-            prescribedExercises: res.draft.prescribedExercises,
-            cardiologyAssessment: res.draft.cardiologyAssessment,
-            dermatologyAssessment: res.draft.dermatologyAssessment,
-            pediatricAssessment: res.draft.pediatricAssessment,
-            orthopedicAssessment: res.draft.orthopedicAssessment,
-            ophthalmologyAssessment: res.draft.ophthalmologyAssessment,
-            dentalAssessment: res.draft.dentalAssessment,
-            gynecologyAssessment: res.draft.gynecologyAssessment,
-          } as unknown as SoapNote;
-          setActiveSoapData(soapFromDraft);
+        let raw: unknown = null;
+        if (isDemo) {
+          raw = sessionTenantId ? readDemoDraft(sessionStorage, sessionTenantId, patientId) : null;
         } else {
-          setActiveSoapData(null);
+          const res = await apiFetch<{ draft: unknown }>(`/api/prescriptions/draft/${patientId}`);
+          raw = res.draft ?? null;
         }
+        if (cancelled) return;
+        setDraftState((prev) => completeDraftFetch(alignSessionToPatient(prev, patientId), patientId, raw));
       } catch (err) {
         console.error('Failed to load patient draft', err);
+        if (cancelled) return;
+        setDraftState((prev) => failDraftFetch(alignSessionToPatient(prev, patientId), patientId));
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [currentPatient.id, isDemo]);
+  }, [currentPatient.id, isDemo, sessionTenantId]);
 
   useEffect(() => {
-    if (!currentDraftRx || !currentPatient.id || isDemo) return;
-    setAutoSaveStatus('unsaved');
-    const timer = setTimeout(async () => {
+    if (!canAutosaveDraft(draftSession)) return;
+    if (!currentDraftRx || !currentPatient.id) return;
+    if (currentDraftRx.patientId !== currentPatient.id) return;
+    const immediate = saveImmediateRef.current;
+    saveImmediateRef.current = false;
+    const patientId = currentPatient.id;
+    const doctorId = currentDoctor.id;
+    const body = draftForStorage({
+      patientId,
+      doctorId,
+      ...currentDraftRx,
+    });
+
+    const persist = async () => {
       try {
         setAutoSaveStatus('saving');
+        if (isDemo) {
+          if (!sessionTenantId) {
+            setAutoSaveStatus('unsaved');
+            return;
+          }
+          writeDemoDraft(sessionStorage, sessionTenantId, patientId, body);
+          setAutoSaveStatus('saved');
+          return;
+        }
         await apiFetch('/api/prescriptions/draft', {
           method: 'POST',
-          body: JSON.stringify({
-            patientId: currentPatient.id,
-            doctorId: currentDoctor.id,
-            ...currentDraftRx,
-          }),
+          body: JSON.stringify(body),
         });
         setAutoSaveStatus('saved');
       } catch (err) {
         console.error('Failed to auto-save draft', err);
         setAutoSaveStatus('unsaved');
       }
-    }, 1200);
+    };
 
+    if (immediate) {
+      void persist();
+      return;
+    }
+    setAutoSaveStatus('unsaved');
+    const timer = setTimeout(() => {
+      void persist();
+    }, 1200);
     return () => clearTimeout(timer);
-  }, [currentDraftRx, currentPatient.id]);
+  }, [currentDraftRx, currentPatient.id, draftSession.phase, isDemo, sessionTenantId, currentDoctor.id]);
 
   const clinicSettings = useMemo(
     () => clinicSettingsFromSession(user, currentDoctor, letterhead),
@@ -300,9 +329,81 @@ export default function ClinicianApp() {
     setCurrentPatient(patient);
   };
 
+  const handleAutoSaveDraft = (rx: Prescription, options?: { immediate?: boolean }) => {
+    if (rx.patientId !== currentPatient.id) return;
+    if (options?.immediate) saveImmediateRef.current = true;
+    setCurrentDraftRx(rx);
+  };
+
   const handleTransferToRx = (soap: SoapNote) => {
-    setActiveSoapData(soap);
+    const mapped = mapSoapToRxDraft(soap, {
+      source: 'ambient-studio',
+      generatedAt: new Date().toISOString(),
+      transcriptSummary: soap.transcriptSummary,
+      ambientRecordingDurationSec: soap.ambientRecordingDurationSec,
+    });
+    setDraftState((prev) => ({
+      patientId: currentPatient.id,
+      phase: 'ready',
+      draft: mapped,
+      version: prev.version + 1,
+    }));
     setCurrentView('rx');
+    saveImmediateRef.current = true;
+    setCurrentDraftRx({
+      id: 'rx-draft-' + currentPatient.id,
+      rxNumber: '',
+      patientId: currentPatient.id,
+      patientName: currentPatient.name,
+      patientAge: currentPatient.age,
+      patientGender: currentPatient.gender,
+      patientPhone: currentPatient.phone,
+      patientUhid: currentPatient.uhid,
+      doctorId: currentDoctor.id,
+      doctorName: currentDoctor.name,
+      doctorSpecialty: mapped.specialtyType || currentDoctor.specialty,
+      doctorRegNumber: currentDoctor.regNumber,
+      date: soap.date,
+      chiefComplaints: mapped.chiefComplaints,
+      diagnosis: mapped.diagnosis,
+      icd10Code: mapped.icd10Code,
+      medicines: mapped.medicines,
+      labTests: mapped.labTests,
+      advice: mapped.advice,
+      followUpDate: mapped.followUpDate,
+      followUpDays: mapped.followUpDays,
+      clinicName: clinicSettings.name,
+      clinicAddress: clinicSettings.address,
+      clinicPhone: clinicSettings.phone,
+      vitals: mapped.vitals,
+      historyOfPresentIllness: mapped.historyOfPresentIllness,
+      pastMedicalHistory: mapped.pastMedicalHistory,
+      reviewOfSystems: mapped.reviewOfSystems,
+      physicalExamination: mapped.physicalExamination,
+      clinicalFindings: mapped.clinicalFindings,
+      differentialDiagnoses: mapped.differentialDiagnoses,
+      riskLevel: mapped.riskLevel,
+      redFlags: mapped.redFlags,
+      performedTherapies: mapped.performedTherapies,
+      prescribedExercises: mapped.prescribedExercises,
+      physiotherapyAssessment: mapped.physiotherapyAssessment,
+      cardiologyAssessment: mapped.cardiologyAssessment,
+      dermatologyAssessment: mapped.dermatologyAssessment,
+      pediatricAssessment: mapped.pediatricAssessment,
+      orthopedicAssessment: mapped.orthopedicAssessment,
+      ophthalmologyAssessment: mapped.ophthalmologyAssessment,
+      dentalAssessment: mapped.dentalAssessment,
+      gynecologyAssessment: mapped.gynecologyAssessment,
+      specialtyType: mapped.specialtyType,
+      aiSource: mapped.aiSource,
+      aiGeneratedAt: mapped.aiGeneratedAt,
+      transcriptHash: mapped.transcriptHash,
+      transcriptSummary: mapped.transcriptSummary,
+      ambientRecordingDurationSec: mapped.ambientRecordingDurationSec,
+      pendingAiFields: mapped.pendingAiFields,
+      aiAcknowledged: false,
+      whatsappSentStatus: 'unsent',
+    });
   };
 
   const persistAppointmentPatch = async (id: string, body: Partial<Appointment>) => {
@@ -688,26 +789,36 @@ export default function ClinicianApp() {
               <div className="bg-white border-b border-slate-200 px-4 py-1.5 flex items-center justify-between text-xs text-slate-500 shadow-xs z-10 shrink-0">
                 <span className="font-medium flex items-center gap-1.5">
                   <span className={`inline-block w-2 h-2 rounded-full ${autoSaveStatus === 'saved' ? 'bg-emerald-500' : autoSaveStatus === 'saving' ? 'bg-amber-500 animate-pulse' : 'bg-slate-400'}`}></span>
-                  {autoSaveStatus === 'saved' && 'Draft securely auto-saved to database'}
-                  {autoSaveStatus === 'saving' && 'Saving draft to database...'}
+                  {autoSaveStatus === 'saved' && (isDemo ? 'Draft saved in this browser session' : 'Draft securely auto-saved to database')}
+                  {autoSaveStatus === 'saving' && 'Saving draft...'}
                   {autoSaveStatus === 'unsaved' && 'Unsaved changes (auto-saving soon...)'}
                 </span>
                 <span className="text-slate-400">SOAP Notes & Prescription Auto-Sync Active</span>
               </div>
-              <div className="flex-1 overflow-y-auto flex flex-col">
-                <PrescriptionWriter
-                  currentPatient={currentPatient}
-                  currentDoctor={currentDoctor}
-                  initialSoapData={activeSoapData}
-                  onSavePrescription={handleSavePrescription}
-                  clinicSettings={clinicSettings}
-                  isSpecialtyLocked={isSpecialtyLocked}
-                  lockedSpecialty={lockedSpecialty}
-                  onProceedToBilling={() => setCurrentView('billing')}
-                  appointments={appointments}
-                  onBookFollowUp={async (input) => persistAppointmentCreate(input)}
-                  onAutoSave={(rx) => setCurrentDraftRx(rx)}
-                />
+              <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden flex flex-col">
+                {draftSession.phase === 'loading' && (
+                  <p className="p-4 text-sm text-slate-500">Loading saved prescription draft…</p>
+                )}
+                {draftSession.phase === 'error' && (
+                  <p className="p-4 text-sm text-rose-700">Couldn't load the saved draft. Autosave is paused so an empty form cannot overwrite it.</p>
+                )}
+                {draftSession.phase === 'ready' && writerKey(draftSession) && (
+                  <PrescriptionWriter
+                    key={writerKey(draftSession) || currentPatient.id}
+                    currentPatient={currentPatient}
+                    currentDoctor={currentDoctor}
+                    initialDraft={draftSession.draft}
+                    initialSoapData={null}
+                    onSavePrescription={handleSavePrescription}
+                    clinicSettings={clinicSettings}
+                    isSpecialtyLocked={isSpecialtyLocked}
+                    lockedSpecialty={lockedSpecialty}
+                    onProceedToBilling={() => setCurrentView('billing')}
+                    appointments={appointments}
+                    onBookFollowUp={async (input) => persistAppointmentCreate(input)}
+                    onAutoSave={handleAutoSaveDraft}
+                  />
+                )}
               </div>
             </div>
           )}

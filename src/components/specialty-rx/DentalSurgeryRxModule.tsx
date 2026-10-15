@@ -117,15 +117,15 @@ export const DentalSurgeryRxModule: React.FC<DentalSurgeryRxModuleProps> = ({
       </div>
 
       {/* 32-Tooth Interactive Odontogram Arch */}
-      <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3 shadow-xs">
-        <div className="flex items-center justify-between text-xs text-slate-500 font-semibold px-2">
+      <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3 shadow-xs min-w-0">
+        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500 font-semibold px-2 min-w-0">
           <span>Maxillary (Upper Arch)</span>
           <span className="text-[11px] text-slate-400">Click tooth number to view or edit status</span>
           <span>Maxillary (Upper Arch)</span>
         </div>
 
         {/* Upper Arch Buttons */}
-        <div className="grid grid-cols-16 gap-1 sm:gap-1.5 overflow-x-auto pb-1">
+        <div className="grid grid-cols-8 md:grid-cols-16 gap-1 w-full min-w-0">
           {UPPER_TEETH.map((tooth) => {
             const status = assessment.teethStatus[tooth]?.condition || 'Healthy';
             const colors = CONDITION_COLORS[status] || CONDITION_COLORS.Healthy;
@@ -153,7 +153,7 @@ export const DentalSurgeryRxModule: React.FC<DentalSurgeryRxModuleProps> = ({
         <div className="h-px bg-slate-100 my-1"></div>
 
         {/* Lower Arch Buttons */}
-        <div className="grid grid-cols-16 gap-1 sm:gap-1.5 overflow-x-auto pb-1">
+        <div className="grid grid-cols-8 md:grid-cols-16 gap-1 w-full min-w-0">
           {LOWER_TEETH.map((tooth) => {
             const status = assessment.teethStatus[tooth]?.condition || 'Healthy';
             const colors = CONDITION_COLORS[status] || CONDITION_COLORS.Healthy;

@@ -12,6 +12,16 @@ export const RX_FLASH_MATCHERS: RegExp[] = [
   /fitzpatrick|lesion/i,
   /weight bearing/i,
   /affected joint/i,
+  /history of present illness/i,
+  /past medical history/i,
+  /review of systems/i,
+  /\bvitals\b/i,
+  /physical examination/i,
+  /clinical findings/i,
+  /differential/i,
+  /risk level/i,
+  /red flags/i,
+  /performed therapies/i,
 ];
 
 const FLASH_CLASSES = [

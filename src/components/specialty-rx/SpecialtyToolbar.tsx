@@ -122,7 +122,7 @@ export const SpecialtyToolbar: React.FC<SpecialtyToolbarProps> = ({
     <div className="bg-white rounded-xl border border-slate-200 p-3.5 shadow-2xs mb-4">
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
         {/* Specialty Selector Pills / Locked Badge */}
-        <div className="flex items-center gap-2 overflow-x-auto pb-1 lg:pb-0 scrollbar-none">
+        <div className="flex flex-wrap items-center gap-2 min-w-0">
           <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider whitespace-nowrap mr-1 flex items-center gap-1">
             <Zap className="w-3.5 h-3.5 text-amber-500" />
             Specialty Workflow:
@@ -175,8 +175,8 @@ export const SpecialtyToolbar: React.FC<SpecialtyToolbarProps> = ({
         </div>
 
         {/* Quick Clinical Protocol / Presets */}
-        <div className="flex items-center gap-2 overflow-x-auto scrollbar-none">
-          <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider whitespace-nowrap flex items-center gap-1">
+        <div className="flex flex-wrap items-center gap-2 min-w-0">
+          <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
             <BookmarkPlus className="w-3.5 h-3.5 text-teal-600" />
             Quick Presets:
           </span>

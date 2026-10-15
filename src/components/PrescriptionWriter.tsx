@@ -81,11 +81,22 @@ import { clonePresetExercises, presetHepToastMessage } from '../lib/rxPresetHep'
 import { followUpBookingRef } from '../lib/followUpSlots';
 import { resolveRxModule } from '../lib/specialtyWorkflow';
 import { PatientRecordModal } from './PatientRecordModal';
+import {
+  aiFieldClass,
+  aiReviewAllowsDispatch,
+  applySoapDraft,
+  buildInitialFormSeed,
+  markAiFieldEdited,
+  shouldConfirmAiReplace,
+  type RxClinicalFields,
+} from '../lib/rxDraft';
 
 interface PrescriptionWriterProps {
   currentPatient: Patient;
   currentDoctor: Doctor;
   initialSoapData: SoapNote | null;
+  /** Restored draft for this patient. Null means the fetch resolved with no saved draft. */
+  initialDraft?: unknown | null;
   onSavePrescription: (prescription: Prescription) => void;
   clinicSettings: ClinicSettings;
   isSpecialtyLocked?: boolean;
@@ -93,13 +104,14 @@ interface PrescriptionWriterProps {
   onProceedToBilling?: () => void;
   appointments?: Appointment[];
   onBookFollowUp?: (input: Partial<Appointment>) => Promise<Appointment | void>;
-  onAutoSave?: (prescription: Prescription) => void;
+  onAutoSave?: (prescription: Prescription, options?: { immediate?: boolean }) => void;
 }
 
 export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
   currentPatient,
   currentDoctor,
   initialSoapData,
+  initialDraft = null,
   onSavePrescription,
   clinicSettings,
   isSpecialtyLocked,
@@ -113,8 +125,14 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
   const getInitialSpecialty = (doctorSpec: string): PolyclinicSpecialty =>
     resolveRxModule(lockedSpecialty || doctorSpec);
 
+  const formSeed = buildInitialFormSeed({
+    draft: initialDraft ?? null,
+    soap: initialDraft ? null : initialSoapData,
+    patient: currentPatient,
+  });
+
   const [activeSpecialty, setActiveSpecialty] = useState<PolyclinicSpecialty>(
-    getInitialSpecialty(lockedSpecialty || currentDoctor.specialty)
+    formSeed.specialtyType || getInitialSpecialty(lockedSpecialty || currentDoctor.specialty)
   );
 
   const [isAmbientScribeOpen, setIsAmbientScribeOpen] = useState(true);
@@ -125,91 +143,46 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
   const [followUpReservation, setFollowUpReservation] = useState<ReservedFollowUp | null>(null);
   const [isPatientRecordModalOpen, setIsPatientRecordModalOpen] = useState(false);
 
-  // Dynamic patient intake: when active patient changes or is called from queue, update context
-  useEffect(() => {
-    if (initialSoapData) return;
-    if (currentPatient.chronicConditions && currentPatient.chronicConditions.length > 0) {
-      setChiefComplaints(currentPatient.chronicConditions.map((c) => `Evaluation & review of ${c}`));
-      setDiagnosis(`Clinical Evaluation: ${currentPatient.chronicConditions[0]}`);
-    } else {
-      setChiefComplaints([]);
-      setDiagnosis('');
-      setIcd10('');
-    }
-  }, [currentPatient.id]);
-
-  const handleApplySoapToRx = (soap: SoapNote) => {
-    if (soap.specialty) {
-      setActiveSpecialty(soap.specialty);
-    }
-    if (soap.subjective?.chiefComplaints?.length) {
-      setChiefComplaints(soap.subjective.chiefComplaints);
-    }
-    if (soap.assessment?.primaryDiagnosis) {
-      setDiagnosis(soap.assessment.primaryDiagnosis);
-    }
-    if (soap.assessment?.icd10Code) {
-      setIcd10(soap.assessment.icd10Code);
-    }
-    if (soap.plan?.medicines?.length) {
-      setMedicines(soap.plan.medicines);
-    }
-    if (soap.plan?.labTests?.length) {
-      setLabTests(soap.plan.labTests);
-    }
-    if (soap.plan?.lifestyleAdvice?.length) {
-      setAdviceList(soap.plan.lifestyleAdvice);
-    }
-    if (soap.physiotherapyAssessment) {
-      setPhysioAssessment(soap.physiotherapyAssessment);
-    }
-    if (soap.prescribedExercises?.length) {
-      setPrescribedExercises(clonePresetExercises(soap.prescribedExercises));
-      setPhysioSubTab('exercises');
-      setHepRevision((n) => n + 1);
-    }
-    if (soap.plan?.followUpDays) {
-      setFollowUpDays(soap.plan.followUpDays);
-    }
-    if (soap.cardiologyAssessment) setCardiologyAssessment(soap.cardiologyAssessment);
-    if (soap.dermatologyAssessment) setDermatologyAssessment(soap.dermatologyAssessment);
-    if (soap.pediatricAssessment) setPediatricAssessment(soap.pediatricAssessment);
-    if (soap.orthopedicAssessment) setOrthopedicAssessment(soap.orthopedicAssessment);
-    if (soap.ophthalmologyAssessment) setOphthalmologyAssessment(soap.ophthalmologyAssessment);
-    if (soap.dentalAssessment) setDentalAssessment(soap.dentalAssessment);
-    if (soap.gynecologyAssessment) setGynecologyAssessment(soap.gynecologyAssessment);
-  };
-
   const [rxNumber] = useState(`RX-${new Date().getFullYear()}-${Math.floor(100000 + Math.random() * 900000)}`);
   
   // Standard clinical fields
-  const [chiefComplaints, setChiefComplaints] = useState<string[]>(
-    initialSoapData?.subjective?.chiefComplaints || []
-  );
+  const [chiefComplaints, setChiefComplaints] = useState<string[]>(formSeed.chiefComplaints);
   const [newComplaint, setNewComplaint] = useState('');
   
-  const [diagnosis, setDiagnosis] = useState(
-    initialSoapData?.assessment?.primaryDiagnosis || ''
-  );
-  const [icd10, setIcd10] = useState(
-    initialSoapData?.assessment?.icd10Code || ''
-  );
+  const [diagnosis, setDiagnosis] = useState(formSeed.diagnosis);
+  const [icd10, setIcd10] = useState(formSeed.icd10Code);
 
-  const [medicines, setMedicines] = useState<MedicineItem[]>(
-    initialSoapData?.plan?.medicines || []
-  );
+  const [medicines, setMedicines] = useState<MedicineItem[]>(formSeed.medicines);
 
-  const [labTests, setLabTests] = useState<LabTestItem[]>(
-    initialSoapData?.plan?.labTests || []
-  );
+  const [labTests, setLabTests] = useState<LabTestItem[]>(formSeed.labTests);
 
-  const [adviceList, setAdviceList] = useState<string[]>(
-    initialSoapData?.plan?.lifestyleAdvice || []
-  );
+  const [adviceList, setAdviceList] = useState<string[]>(formSeed.advice);
   const [newAdvice, setNewAdvice] = useState('');
-  const [followUpDays, setFollowUpDays] = useState(
-    initialSoapData?.plan?.followUpDays || 7
+  const [followUpDays, setFollowUpDays] = useState<number>(
+    formSeed.followUpDays ?? 7
   );
+  const [historyOfPresentIllness, setHistoryOfPresentIllness] = useState(formSeed.historyOfPresentIllness);
+  const [pastMedicalHistory, setPastMedicalHistory] = useState(formSeed.pastMedicalHistory);
+  const [reviewOfSystems, setReviewOfSystems] = useState(formSeed.reviewOfSystems);
+  const [physicalExamination, setPhysicalExamination] = useState(formSeed.physicalExamination);
+  const [clinicalFindings, setClinicalFindings] = useState<string[]>(formSeed.clinicalFindings);
+  const [newFinding, setNewFinding] = useState('');
+  const [differentialDiagnoses, setDifferentialDiagnoses] = useState<string[]>(formSeed.differentialDiagnoses);
+  const [newDifferential, setNewDifferential] = useState('');
+  const [riskLevel, setRiskLevel] = useState<RxClinicalFields['riskLevel']>(formSeed.riskLevel);
+  const [redFlags, setRedFlags] = useState<string[]>(formSeed.redFlags);
+  const [newRedFlag, setNewRedFlag] = useState('');
+  const [vitals, setVitals] = useState(formSeed.vitals);
+  const [aiSource, setAiSource] = useState(formSeed.aiSource || '');
+  const [aiGeneratedAt, setAiGeneratedAt] = useState(formSeed.aiGeneratedAt || '');
+  const [transcriptHashValue, setTranscriptHashValue] = useState(formSeed.transcriptHash || '');
+  const [transcriptSummary, setTranscriptSummary] = useState(formSeed.transcriptSummary || '');
+  const [ambientRecordingDurationSec, setAmbientRecordingDurationSec] = useState<number | undefined>(
+    formSeed.ambientRecordingDurationSec
+  );
+  const [reviewedBy, setReviewedBy] = useState(formSeed.reviewedBy || '');
+  const [aiAcknowledged, setAiAcknowledged] = useState(Boolean(formSeed.aiAcknowledged));
+  const [pendingAiFields, setPendingAiFields] = useState<string[]>(formSeed.pendingAiFields);
 
   const [selectedTherapyPackage, setSelectedTherapyPackage] = useState(
     (diagnosis.toLowerCase().includes('lumbar') || diagnosis.toLowerCase().includes('disc') || diagnosis.toLowerCase().includes('sciatica') || diagnosis.toLowerCase().includes('back'))
@@ -230,7 +203,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
 
   // Physiotherapy Specific States
   const [physioAssessment, setPhysioAssessment] = useState<PhysiotherapyAssessment>(
-    initialSoapData?.physiotherapyAssessment || {
+    formSeed.physiotherapyAssessment || {
       vasPainScore: 0,
       painType: 'Aching',
       painAggravatingFactors: '',
@@ -244,15 +217,16 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
   );
 
   const [performedProcedures, setPerformedProcedures] = useState<PhysiotherapyProcedure[]>(
-    initialSoapData?.performedTherapies || []
+    formSeed.performedTherapies
   );
 
   const [prescribedExercises, setPrescribedExercises] = useState<PrescribedExercise[]>(
-    initialSoapData?.prescribedExercises || []
+    formSeed.prescribedExercises
   );
 
   // Other specialty states
-  const [cardiologyAssessment, setCardiologyAssessment] = useState<CardiologyAssessment>({
+  const [cardiologyAssessment, setCardiologyAssessment] = useState<CardiologyAssessment>(
+    formSeed.cardiologyAssessment || {
     nyhaFunctionalClass: 'Class II',
     targetBloodPressure: '< 130/80 mmHg',
     targetRestingHeartRate: '60 - 70 bpm',
@@ -262,27 +236,31 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     echoFindings: 'LVEF 55%, Grade I Diastolic Dysfunction'
   });
 
-  const [dermatologyAssessment, setDermatologyAssessment] = useState<DermatologyAssessment>({
+  const [dermatologyAssessment, setDermatologyAssessment] = useState<DermatologyAssessment>(
+    formSeed.dermatologyAssessment || {
     fitzpatrickSkinType: 'Type IV',
     distribution: 'Facial malar region & forehead with inflammatory papules',
     sunProtectionAdvice: 'Broad spectrum SPF 50+ Gel 20 mins before sun exposure, reapply every 3 hrs'
   });
 
-  const [pediatricAssessment, setPediatricAssessment] = useState<PediatricAssessment>({
+  const [pediatricAssessment, setPediatricAssessment] = useState<PediatricAssessment>(
+    formSeed.pediatricAssessment || {
     childWeightKg: currentPatient.age <= 12 ? 16 : 45,
     calculatedDosageBasis: 'Paracetamol Syrup: 15 mg/kg per dose',
     developmentalMilestones: 'Age Appropriate',
     immunizationsDue: ['MMR Booster', 'Influenza Annual']
   });
 
-  const [orthopedicAssessment, setOrthopedicAssessment] = useState<OrthopedicAssessment>({
+  const [orthopedicAssessment, setOrthopedicAssessment] = useState<OrthopedicAssessment>(
+    formSeed.orthopedicAssessment || {
     affectedJointLimb: 'Right Knee Joint',
     weightBearingStatus: 'Full Weight Bearing (FWB)',
     splintOrBraceApplied: 'Hinged Knee Brace',
     xrayFindingsSummary: 'Medial compartment joint space narrowing, subchondral sclerosis'
   });
 
-  const [ophthalmologyAssessment, setOphthalmologyAssessment] = useState<OphthalmologyAssessment>({
+  const [ophthalmologyAssessment, setOphthalmologyAssessment] = useState<OphthalmologyAssessment>(
+    formSeed.ophthalmologyAssessment || {
     refractionOD: { sphere: '-1.75', cyl: '-0.75', axis: '90°', add: '+0.00' },
     refractionOS: { sphere: '-2.25', cyl: '-1.00', axis: '85°', add: '+0.00' },
     visualAcuityOD: '6/18 -> 6/6',
@@ -298,7 +276,8 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     }
   });
 
-  const [dentalAssessment, setDentalAssessment] = useState<DentalAssessment>({
+  const [dentalAssessment, setDentalAssessment] = useState<DentalAssessment>(
+    formSeed.dentalAssessment || {
     teethStatus: {
       36: { condition: 'Root Canal', notes: 'Deep occlusal decay, tender on vertical percussion' },
       46: { condition: 'Caries', notes: 'Enamel-dentinal pit fissure decay' },
@@ -313,7 +292,8 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     ]
   });
 
-  const [gynecologyAssessment, setGynecologyAssessment] = useState<GynecologyAssessment>({
+  const [gynecologyAssessment, setGynecologyAssessment] = useState<GynecologyAssessment>(
+    formSeed.gynecologyAssessment || {
     lmpDate: '2026-03-17',
     calculatedEdd: '2026-12-22',
     gestationalAgeWeeks: 24,
@@ -389,30 +369,6 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
   const [showFinalizeModal, setShowFinalizeModal] = useState(false);
   const [isSendingWhatsAppDirect, setIsSendingWhatsAppDirect] = useState(false);
   const [whatsAppDirectSuccess, setWhatsAppDirectSuccess] = useState(false);
-
-  // Auto-sync with initial SOAP data if changed
-  useEffect(() => {
-    if (initialSoapData) {
-      if (initialSoapData.assessment?.primaryDiagnosis) setDiagnosis(initialSoapData.assessment.primaryDiagnosis);
-      if (initialSoapData.assessment?.icd10Code) setIcd10(initialSoapData.assessment.icd10Code);
-      if (initialSoapData.subjective?.chiefComplaints) setChiefComplaints(initialSoapData.subjective.chiefComplaints);
-      if (initialSoapData.plan?.medicines) setMedicines(initialSoapData.plan.medicines);
-      if (initialSoapData.plan?.labTests) setLabTests(initialSoapData.plan.labTests);
-      if (initialSoapData.plan?.lifestyleAdvice) setAdviceList(initialSoapData.plan.lifestyleAdvice);
-      if (initialSoapData.plan?.followUpDays) setFollowUpDays(initialSoapData.plan.followUpDays);
-      if (initialSoapData.physiotherapyAssessment) setPhysioAssessment(initialSoapData.physiotherapyAssessment);
-      if (initialSoapData.performedTherapies) setPerformedProcedures(initialSoapData.performedTherapies);
-      if (initialSoapData.prescribedExercises) setPrescribedExercises(initialSoapData.prescribedExercises);
-      if (initialSoapData.cardiologyAssessment) setCardiologyAssessment(initialSoapData.cardiologyAssessment);
-      if (initialSoapData.dermatologyAssessment) setDermatologyAssessment(initialSoapData.dermatologyAssessment);
-      if (initialSoapData.pediatricAssessment) setPediatricAssessment(initialSoapData.pediatricAssessment);
-      if (initialSoapData.orthopedicAssessment) setOrthopedicAssessment(initialSoapData.orthopedicAssessment);
-      if (initialSoapData.ophthalmologyAssessment) setOphthalmologyAssessment(initialSoapData.ophthalmologyAssessment);
-      if (initialSoapData.dentalAssessment) setDentalAssessment(initialSoapData.dentalAssessment);
-      if (initialSoapData.gynecologyAssessment) setGynecologyAssessment(initialSoapData.gynecologyAssessment);
-      if (initialSoapData.specialty) setActiveSpecialty(initialSoapData.specialty);
-    }
-  }, [initialSoapData]);
 
   // When active doctor changes, adapt specialty
   useEffect(() => {
@@ -507,6 +463,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
       instructions: customInstructions,
     };
 
+    touchAiField('medicines');
     setMedicines([...medicines, newMed]);
     setSelectedDrug(null);
     setDrugSearchQuery('');
@@ -514,11 +471,13 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
   };
 
   const handleRemoveMedicine = (id: string) => {
+    touchAiField('medicines');
     setMedicines(medicines.filter((m) => m.id !== id));
   };
 
   const handleAddComplaint = () => {
     if (newComplaint.trim()) {
+      touchAiField('chiefComplaints');
       setChiefComplaints([...chiefComplaints, newComplaint.trim()]);
       setNewComplaint('');
     }
@@ -526,6 +485,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
 
   const handleAddAdvice = () => {
     if (newAdvice.trim()) {
+      touchAiField('advice');
       setAdviceList([...adviceList, newAdvice.trim()]);
       setNewAdvice('');
     }
@@ -540,6 +500,10 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
   };
 
   const handleOpenWhatsAppModal = async () => {
+    if (aiReviewOpen) {
+      window.alert(reviewGateMessage);
+      return;
+    }
     if (isSafetyGateBlocking) {
       window.alert(safetyGateMessage || 'Run the AI Safety Audit before sending this prescription.');
       return;
@@ -576,6 +540,24 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     }
   };
 
+  const [followUpDate, setFollowUpDate] = useState(formSeed.followUpDate);
+  const [savedModuleKeys, setSavedModuleKeys] = useState<string[]>(() => {
+    const keys: string[] = [];
+    if (formSeed.physiotherapyAssessment) keys.push('physiotherapyAssessment');
+    if (formSeed.cardiologyAssessment) keys.push('cardiologyAssessment');
+    if (formSeed.dermatologyAssessment) keys.push('dermatologyAssessment');
+    if (formSeed.pediatricAssessment) keys.push('pediatricAssessment');
+    if (formSeed.orthopedicAssessment) keys.push('orthopedicAssessment');
+    if (formSeed.ophthalmologyAssessment) keys.push('ophthalmologyAssessment');
+    if (formSeed.dentalAssessment) keys.push('dentalAssessment');
+    if (formSeed.gynecologyAssessment) keys.push('gynecologyAssessment');
+    return keys;
+  });
+  const skipInitialAutosave = React.useRef(true);
+
+  const keepModule = (key: string, active: boolean) =>
+    savedModuleKeys.includes(key) || (active && !aiSource);
+
   const buildCurrentRx = (statusOverride?: 'unsent' | 'delivered'): Prescription => ({
     id: 'rx-' + Date.now(),
     rxNumber: rxNumber,
@@ -590,13 +572,23 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     doctorSpecialty: activeSpecialty,
     doctorRegNumber: currentDoctor.regNumber,
     date: new Date().toISOString().split('T')[0],
+    vitals,
     chiefComplaints: chiefComplaints,
+    historyOfPresentIllness,
+    pastMedicalHistory,
+    reviewOfSystems,
+    physicalExamination,
+    clinicalFindings,
     diagnosis: diagnosis,
     icd10Code: icd10,
+    differentialDiagnoses,
+    riskLevel,
     medicines: medicines,
     labTests: labTests,
     advice: adviceList,
-    followUpDate: followUpReservation?.date || new Date(Date.now() + followUpDays * 86400000).toISOString().split('T')[0],
+    redFlags,
+    followUpDays,
+    followUpDate: followUpReservation?.date || followUpDate || new Date(Date.now() + followUpDays * 86400000).toISOString().split('T')[0],
     followUpTimeSlot: followUpReservation?.timeSlot,
     followUpAppointmentId: followUpReservation?.appointmentId,
     followUpBookingRef: followUpReservation?.bookingRef,
@@ -605,21 +597,33 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     clinicPhone: clinicSettings.phone,
     qrVerificationUrl: `https://lumera.health/rx/${rxNumber}`,
     whatsappSentStatus: statusOverride || (whatsAppDirectSuccess || whatsappSentSuccess ? 'delivered' : 'unsent'),
-    // Specialty Data Attachments
-    physiotherapyAssessment: activeSpecialty === 'Physiotherapy & Rehabilitation' ? physioAssessment : undefined,
-    performedTherapies: activeSpecialty === 'Physiotherapy & Rehabilitation' ? performedProcedures : undefined,
-    prescribedExercises: activeSpecialty === 'Physiotherapy & Rehabilitation' ? prescribedExercises : undefined,
-    cardiologyAssessment: activeSpecialty === 'Cardiology' ? cardiologyAssessment : undefined,
-    dermatologyAssessment: activeSpecialty === 'Dermatology' ? dermatologyAssessment : undefined,
-    pediatricAssessment: activeSpecialty === 'Pediatrics' ? pediatricAssessment : undefined,
-    orthopedicAssessment: activeSpecialty === 'Orthopedics' ? orthopedicAssessment : undefined,
-    ophthalmologyAssessment: activeSpecialty === 'Ophthalmology' ? ophthalmologyAssessment : undefined,
-    dentalAssessment: activeSpecialty === 'Dental Surgery' ? dentalAssessment : undefined,
-    gynecologyAssessment: activeSpecialty === 'Gynecology' ? gynecologyAssessment : undefined,
+    specialtyType: activeSpecialty,
+    physiotherapyAssessment: keepModule('physiotherapyAssessment', activeSpecialty === 'Physiotherapy & Rehabilitation') ? physioAssessment : undefined,
+    performedTherapies: performedProcedures,
+    prescribedExercises: prescribedExercises,
+    cardiologyAssessment: keepModule('cardiologyAssessment', activeSpecialty === 'Cardiology') ? cardiologyAssessment : undefined,
+    dermatologyAssessment: keepModule('dermatologyAssessment', activeSpecialty === 'Dermatology') ? dermatologyAssessment : undefined,
+    pediatricAssessment: keepModule('pediatricAssessment', activeSpecialty === 'Pediatrics') ? pediatricAssessment : undefined,
+    orthopedicAssessment: keepModule('orthopedicAssessment', activeSpecialty === 'Orthopedics') ? orthopedicAssessment : undefined,
+    ophthalmologyAssessment: keepModule('ophthalmologyAssessment', activeSpecialty === 'Ophthalmology') ? ophthalmologyAssessment : undefined,
+    dentalAssessment: keepModule('dentalAssessment', activeSpecialty === 'Dental Surgery') ? dentalAssessment : undefined,
+    gynecologyAssessment: keepModule('gynecologyAssessment', activeSpecialty === 'Gynecology') ? gynecologyAssessment : undefined,
+    aiSource: aiSource || undefined,
+    aiGeneratedAt: aiGeneratedAt || undefined,
+    transcriptHash: transcriptHashValue || undefined,
+    transcriptSummary: transcriptSummary || undefined,
+    ambientRecordingDurationSec,
+    reviewedBy: reviewedBy || undefined,
+    aiAcknowledged,
+    pendingAiFields,
   });
 
   useEffect(() => {
     if (!currentPatient.id) return;
+    if (skipInitialAutosave.current) {
+      skipInitialAutosave.current = false;
+      return;
+    }
     onAutoSave?.(buildCurrentRx());
   }, [
     chiefComplaints,
@@ -629,6 +633,17 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     labTests,
     adviceList,
     followUpDays,
+    followUpDate,
+    followUpReservation,
+    historyOfPresentIllness,
+    pastMedicalHistory,
+    reviewOfSystems,
+    physicalExamination,
+    clinicalFindings,
+    differentialDiagnoses,
+    riskLevel,
+    redFlags,
+    vitals,
     physioAssessment,
     performedProcedures,
     prescribedExercises,
@@ -640,22 +655,204 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     dentalAssessment,
     gynecologyAssessment,
     activeSpecialty,
+    aiSource,
+    aiGeneratedAt,
+    transcriptHashValue,
+    pendingAiFields,
+    aiAcknowledged,
+    reviewedBy,
+    savedModuleKeys,
   ]);
 
+  const touchAiField = (field: string) => {
+    setPendingAiFields((prev) => markAiFieldEdited(prev, field));
+  };
+
+  const aiReviewOpen = !aiReviewAllowsDispatch({
+    aiSource,
+    aiGeneratedAt,
+    aiAcknowledged,
+    pendingAiFields,
+  });
+  const reviewGateMessage = 'AI draft - review required. Acknowledge the draft or edit each highlighted field before signing or sending.';
+
+  const stampReviewed = (rx: Prescription): Prescription => {
+    if (!(aiSource || aiGeneratedAt)) return rx;
+    if (rx.reviewedBy) return rx;
+    return { ...rx, reviewedBy: currentDoctor.id };
+  };
+
+  const handleApplySoapToRx = (soap: SoapNote, meta: { transcript: string; source: string }): boolean => {
+    if (shouldConfirmAiReplace({ aiSource, aiGeneratedAt })) {
+      const confirmed = window.confirm(
+        'Replace the current AI draft with this transcript? Earlier AI-filled fields will be replaced.'
+      );
+      if (!confirmed) return false;
+    }
+    void (async () => {
+      let mapped: RxClinicalFields;
+      try {
+        mapped = await applySoapDraft(soap, {
+          transcript: meta.transcript,
+          source: meta.source,
+          generatedAt: new Date().toISOString(),
+        });
+      } catch (err) {
+        console.error('Failed to hash consult transcript', err);
+        mapped = await applySoapDraft(soap, {
+          transcript: '',
+          source: meta.source,
+          generatedAt: new Date().toISOString(),
+        });
+      }
+      if (mapped.specialtyType) setActiveSpecialty(mapped.specialtyType);
+      setChiefComplaints(mapped.chiefComplaints);
+      setHistoryOfPresentIllness(mapped.historyOfPresentIllness);
+      setPastMedicalHistory(mapped.pastMedicalHistory);
+      setReviewOfSystems(mapped.reviewOfSystems);
+      setVitals(mapped.vitals);
+      setPhysicalExamination(mapped.physicalExamination);
+      setClinicalFindings(mapped.clinicalFindings);
+      setDiagnosis(mapped.diagnosis);
+      setIcd10(mapped.icd10Code);
+      setDifferentialDiagnoses(mapped.differentialDiagnoses);
+      setRiskLevel(mapped.riskLevel);
+      setMedicines(mapped.medicines);
+      setLabTests(mapped.labTests);
+      setAdviceList(mapped.advice);
+      setRedFlags(mapped.redFlags);
+      setFollowUpDays(mapped.followUpDays ?? 7);
+      setFollowUpDate(mapped.followUpDate);
+      setFollowUpReservation(null);
+      setPhysioAssessment(mapped.physiotherapyAssessment || {
+        vasPainScore: 0,
+        painType: 'Aching',
+        painAggravatingFactors: '',
+        painRelievingFactors: '',
+        jointRomFindings: [],
+        muscleStrengthMmt: [],
+        gaitAndPosture: '',
+        specialOrthopedicTests: [],
+        functionalGoals: [],
+      });
+      setPerformedProcedures(mapped.performedTherapies);
+      if (mapped.prescribedExercises.length) {
+        setPrescribedExercises(clonePresetExercises(mapped.prescribedExercises));
+        setPhysioSubTab('exercises');
+        setHepRevision((n) => n + 1);
+      } else {
+        setPrescribedExercises([]);
+      }
+      setCardiologyAssessment(mapped.cardiologyAssessment || {
+        nyhaFunctionalClass: 'Class II',
+        targetBloodPressure: '< 130/80 mmHg',
+        targetRestingHeartRate: '60 - 70 bpm',
+        dailySodiumLimitGrams: 2,
+      });
+      setDermatologyAssessment(mapped.dermatologyAssessment || {
+        fitzpatrickSkinType: 'Type IV',
+        lesionType: [],
+        distribution: '',
+        sunProtectionAdvice: '',
+      });
+      setPediatricAssessment(mapped.pediatricAssessment || {
+        developmentalMilestones: 'Age Appropriate',
+      });
+      setOrthopedicAssessment(mapped.orthopedicAssessment || {
+        affectedJointLimb: '',
+        weightBearingStatus: 'Full Weight Bearing (FWB)',
+      });
+      setOphthalmologyAssessment(mapped.ophthalmologyAssessment || ophthalmologyAssessment);
+      setDentalAssessment(mapped.dentalAssessment || dentalAssessment);
+      setGynecologyAssessment(mapped.gynecologyAssessment || gynecologyAssessment);
+      const keys: string[] = [];
+      if (mapped.physiotherapyAssessment) keys.push('physiotherapyAssessment');
+      if (mapped.cardiologyAssessment) keys.push('cardiologyAssessment');
+      if (mapped.dermatologyAssessment) keys.push('dermatologyAssessment');
+      if (mapped.pediatricAssessment) keys.push('pediatricAssessment');
+      if (mapped.orthopedicAssessment) keys.push('orthopedicAssessment');
+      if (mapped.ophthalmologyAssessment) keys.push('ophthalmologyAssessment');
+      if (mapped.dentalAssessment) keys.push('dentalAssessment');
+      if (mapped.gynecologyAssessment) keys.push('gynecologyAssessment');
+      setSavedModuleKeys(keys);
+      setAiSource(mapped.aiSource || '');
+      setAiGeneratedAt(mapped.aiGeneratedAt || '');
+      setTranscriptHashValue(mapped.transcriptHash || '');
+      setTranscriptSummary(mapped.transcriptSummary || '');
+      setAmbientRecordingDurationSec(mapped.ambientRecordingDurationSec);
+      setReviewedBy('');
+      setAiAcknowledged(false);
+      setPendingAiFields(mapped.pendingAiFields);
+      onAutoSave?.(
+        {
+          ...buildCurrentRx(),
+          chiefComplaints: mapped.chiefComplaints,
+          historyOfPresentIllness: mapped.historyOfPresentIllness,
+          pastMedicalHistory: mapped.pastMedicalHistory,
+          reviewOfSystems: mapped.reviewOfSystems,
+          vitals: mapped.vitals,
+          physicalExamination: mapped.physicalExamination,
+          clinicalFindings: mapped.clinicalFindings,
+          diagnosis: mapped.diagnosis,
+          icd10Code: mapped.icd10Code,
+          differentialDiagnoses: mapped.differentialDiagnoses,
+          riskLevel: mapped.riskLevel,
+          medicines: mapped.medicines,
+          labTests: mapped.labTests,
+          advice: mapped.advice,
+          redFlags: mapped.redFlags,
+          followUpDays: mapped.followUpDays,
+          followUpDate: mapped.followUpDate,
+          specialtyType: mapped.specialtyType || activeSpecialty,
+          doctorSpecialty: mapped.specialtyType || activeSpecialty,
+          physiotherapyAssessment: mapped.physiotherapyAssessment,
+          performedTherapies: mapped.performedTherapies,
+          prescribedExercises: mapped.prescribedExercises,
+          cardiologyAssessment: mapped.cardiologyAssessment,
+          dermatologyAssessment: mapped.dermatologyAssessment,
+          pediatricAssessment: mapped.pediatricAssessment,
+          orthopedicAssessment: mapped.orthopedicAssessment,
+          ophthalmologyAssessment: mapped.ophthalmologyAssessment,
+          dentalAssessment: mapped.dentalAssessment,
+          gynecologyAssessment: mapped.gynecologyAssessment,
+          aiSource: mapped.aiSource,
+          aiGeneratedAt: mapped.aiGeneratedAt,
+          transcriptHash: mapped.transcriptHash,
+          transcriptSummary: mapped.transcriptSummary,
+          ambientRecordingDurationSec: mapped.ambientRecordingDurationSec,
+          reviewedBy: undefined,
+          aiAcknowledged: false,
+          pendingAiFields: mapped.pendingAiFields,
+        },
+        { immediate: true }
+      );
+    })();
+    return true;
+  };
+
   const handleFinalizeAndSignRx = () => {
+    if (aiReviewOpen) {
+      window.alert(reviewGateMessage);
+      return;
+    }
     // Defense in depth: block here too, not just via the disabled button, in
     // case this is ever called from another code path.
     if (isSafetyGateBlocking) {
       window.alert(safetyGateMessage || 'Run the AI Safety Audit before signing this prescription.');
       return;
     }
-    const rx = buildCurrentRx();
+    const rx = stampReviewed(buildCurrentRx());
+    if (rx.reviewedBy) setReviewedBy(rx.reviewedBy);
     onSavePrescription(rx);
     setIsFinalized(true);
     setShowFinalizeModal(true);
   };
 
   const handleDirectWhatsAppDispatch = async () => {
+    if (aiReviewOpen) {
+      window.alert(reviewGateMessage);
+      return;
+    }
     if (isSafetyGateBlocking) {
       window.alert(safetyGateMessage || 'Run the AI Safety Audit before sending this prescription.');
       return;
@@ -681,13 +878,15 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
       });
       setWhatsAppDirectSuccess(true);
       setWhatsappSentSuccess(true);
-      const updatedRx = buildCurrentRx('delivered');
+      const updatedRx = stampReviewed(buildCurrentRx('delivered'));
+      if (updatedRx.reviewedBy) setReviewedBy(updatedRx.reviewedBy);
       onSavePrescription(updatedRx);
     } catch (err) {
       console.error('WhatsApp dispatch failed, falling back:', err);
       setWhatsAppDirectSuccess(true);
       setWhatsappSentSuccess(true);
-      const updatedRx = buildCurrentRx('delivered');
+      const updatedRx = stampReviewed(buildCurrentRx('delivered'));
+      if (updatedRx.reviewedBy) setReviewedBy(updatedRx.reviewedBy);
       onSavePrescription(updatedRx);
     } finally {
       setIsSendingWhatsAppDirect(false);
@@ -708,13 +907,42 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     : [];
 
   return (
-    <div className="space-y-4 max-w-6xl mx-auto pb-16">
+    <div className="space-y-4 w-full max-w-6xl min-w-0 mx-auto pb-16 overflow-x-hidden">
       {hepToast && (
         <div
           role="status"
           className="no-print fixed top-4 right-4 z-50 px-4 py-2.5 rounded-lg bg-teal-700 text-white text-xs font-bold shadow-lg"
         >
           {hepToast}
+        </div>
+      )}
+
+      {(aiSource || aiGeneratedAt) && !aiAcknowledged && (
+        <div
+          role="status"
+          data-testid="ai-review-banner"
+          className="no-print w-full min-w-0 rounded-xl border border-violet-300 bg-violet-50 px-4 py-3 text-sm text-violet-950 flex flex-col sm:flex-row sm:items-center gap-3"
+        >
+          <div className="flex items-start gap-2 min-w-0">
+            <Sparkles className="w-4 h-4 text-violet-700 shrink-0 mt-0.5" />
+            <div className="min-w-0">
+              <p className="font-bold">AI draft - review required</p>
+              <p className="text-xs text-violet-800 mt-0.5">
+                Highlighted fields came from the ambient scribe. Edit each one or acknowledge the draft before you sign or send it. Nothing is signed automatically.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setAiAcknowledged(true);
+              setPendingAiFields([]);
+              setReviewedBy(currentDoctor.id);
+            }}
+            className="shrink-0 px-3 py-1.5 rounded-lg bg-violet-700 hover:bg-violet-800 text-white text-xs font-bold"
+          >
+            Acknowledge review
+          </button>
         </div>
       )}
 
@@ -777,12 +1005,13 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
           {/* Finalize & Sign Primary Action */}
           <button
             onClick={handleFinalizeAndSignRx}
-            className={`px-4 py-1.5 rounded-lg text-xs font-bold flex items-center space-x-1.5 transition-all shadow-sm cursor-pointer ${
+            disabled={aiReviewOpen || isSafetyGateBlocking}
+            className={`px-4 py-1.5 rounded-lg text-xs font-bold flex items-center space-x-1.5 transition-all shadow-sm cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
               isFinalized
                 ? 'bg-emerald-700 text-white shadow-emerald-200'
                 : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-200'
             }`}
-            title="Finalize & Digitally Sign Rx (NHA sandbox QR — local stub)"
+            title={aiReviewOpen ? reviewGateMessage : 'Finalize & Digitally Sign Rx (NHA sandbox QR — local stub)'}
           >
             <CheckCircle2 className="w-3.5 h-3.5" />
             <span>{isFinalized ? '✓ Finalized & Signed' : 'Finalize & Sign Rx'}</span>
@@ -835,8 +1064,8 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
           {/* WhatsApp dispatch button */}
           <button
             onClick={handleOpenWhatsAppModal}
-            disabled={isSafetyGateBlocking}
-            title={isSafetyGateBlocking ? safetyGateMessage : undefined}
+            disabled={isSafetyGateBlocking || aiReviewOpen}
+            title={aiReviewOpen ? reviewGateMessage : isSafetyGateBlocking ? safetyGateMessage : undefined}
             className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center space-x-1.5 shadow-xs transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <Send className="w-3.5 h-3.5" />
@@ -1009,7 +1238,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
       )}
 
       {/* MAIN PRESCRIPTION LETTERHEAD & CLINICAL FORM */}
-      <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs space-y-5 print:border-none print:shadow-none print:p-0">
+      <div className="bg-white rounded-xl border border-slate-200 p-4 sm:p-6 shadow-xs space-y-5 print:border-none print:shadow-none print:p-0 min-w-0">
         {/* Letterhead Header */}
         <div className="border-b-2 border-slate-900 pb-4">
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -1022,7 +1251,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
                   </span>
                 ) : null}
               </div>
-              <p className="text-xs text-slate-500 mt-0.5">{clinicSettings.address}{clinicSettings.city ? `, ${clinicSettings.city}` : ""} | Tel: {clinicSettings.phone}</p>
+              <p className="text-xs text-slate-500 mt-0.5 break-words">{clinicSettings.address}{clinicSettings.city ? `, ${clinicSettings.city}` : ""} | Tel: {clinicSettings.phone}</p>
               <p className="text-[11px] text-slate-400">Web: {clinicSettings.website} | Email: {clinicSettings.email}</p>
               {(clinicSettings.gstin || clinicSettings.upiId) && (
                 <p className="text-[11px] text-slate-500 font-mono mt-0.5">
@@ -1097,7 +1326,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
         {/* Clinical Summary & Diagnosis Inputs */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {/* Chief Complaints */}
-          <div className="space-y-1.5">
+          <div className={`space-y-1.5 min-w-0 ${aiFieldClass(pendingAiFields, 'chiefComplaints')}`}>
             <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
               Chief Complaints & Symptom Duration:
             </label>
@@ -1106,7 +1335,10 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
                 <div key={idx} className="flex items-center justify-between text-xs bg-slate-50 px-2.5 py-1 rounded border border-slate-200">
                   <span className="text-slate-800 font-medium">• {comp}</span>
                   <button
-                    onClick={() => setChiefComplaints(chiefComplaints.filter((_, i) => i !== idx))}
+                    onClick={() => {
+                      touchAiField('chiefComplaints');
+                      setChiefComplaints(chiefComplaints.filter((_, i) => i !== idx));
+                    }}
                     className="text-slate-400 hover:text-red-600 no-print"
                   >
                     ×
@@ -1133,7 +1365,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
           </div>
 
           {/* Primary Diagnosis & ICD-10 */}
-          <div className="space-y-2">
+          <div className={`space-y-2 min-w-0 ${aiFieldClass(pendingAiFields, 'diagnosis')}`}>
             <div>
               <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
                 Clinical Diagnosis:
@@ -1141,21 +1373,298 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
               <input
                 type="text"
                 value={diagnosis}
-                onChange={(e) => setDiagnosis(e.target.value)}
-                className="w-full text-xs font-bold text-slate-900 border border-slate-200 rounded px-2.5 py-1.5 focus:ring-1 focus:ring-blue-600 focus:outline-none bg-white"
+                onChange={(e) => {
+                  touchAiField('diagnosis');
+                  setDiagnosis(e.target.value);
+                }}
+                className="w-full min-w-0 text-xs font-bold text-slate-900 border border-slate-200 rounded px-2.5 py-1.5 focus:ring-1 focus:ring-blue-600 focus:outline-none bg-white"
               />
             </div>
-            <div className="flex items-center gap-2">
+            <div className={`flex flex-wrap items-center gap-2 ${aiFieldClass(pendingAiFields, 'icd10Code')}`}>
               <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">ICD-10 Code:</label>
               <input
                 type="text"
                 value={icd10}
-                onChange={(e) => setIcd10(e.target.value)}
-                className="w-28 text-xs font-mono font-bold text-blue-700 border border-slate-200 rounded px-2 py-1 focus:ring-1 focus:ring-blue-600 focus:outline-none bg-white"
+                onChange={(e) => {
+                  touchAiField('icd10Code');
+                  setIcd10(e.target.value);
+                }}
+                className="w-28 max-w-full text-xs font-mono font-bold text-blue-700 border border-slate-200 rounded px-2 py-1 focus:ring-1 focus:ring-blue-600 focus:outline-none bg-white"
               />
             </div>
           </div>
         </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 min-w-0">
+          <label className={`block space-y-1 min-w-0 ${aiFieldClass(pendingAiFields, 'historyOfPresentIllness')}`}>
+            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">History of Present Illness</span>
+            <textarea
+              value={historyOfPresentIllness}
+              onChange={(e) => {
+                touchAiField('historyOfPresentIllness');
+                setHistoryOfPresentIllness(e.target.value);
+              }}
+              rows={3}
+              className="w-full min-w-0 text-xs border border-slate-200 rounded px-2.5 py-1.5 focus:ring-1 focus:ring-blue-600 focus:outline-none"
+            />
+          </label>
+          <label className={`block space-y-1 min-w-0 ${aiFieldClass(pendingAiFields, 'pastMedicalHistory')}`}>
+            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Past Medical History</span>
+            <textarea
+              value={pastMedicalHistory}
+              onChange={(e) => {
+                touchAiField('pastMedicalHistory');
+                setPastMedicalHistory(e.target.value);
+              }}
+              rows={3}
+              className="w-full min-w-0 text-xs border border-slate-200 rounded px-2.5 py-1.5 focus:ring-1 focus:ring-blue-600 focus:outline-none"
+            />
+          </label>
+          <label className={`block space-y-1 min-w-0 ${aiFieldClass(pendingAiFields, 'reviewOfSystems')}`}>
+            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Review of Systems</span>
+            <textarea
+              value={reviewOfSystems}
+              onChange={(e) => {
+                touchAiField('reviewOfSystems');
+                setReviewOfSystems(e.target.value);
+              }}
+              rows={3}
+              className="w-full min-w-0 text-xs border border-slate-200 rounded px-2.5 py-1.5 focus:ring-1 focus:ring-blue-600 focus:outline-none"
+            />
+          </label>
+          <label className={`block space-y-1 min-w-0 ${aiFieldClass(pendingAiFields, 'physicalExamination')}`}>
+            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Physical Examination / Clinical Findings</span>
+            <textarea
+              value={physicalExamination}
+              onChange={(e) => {
+                touchAiField('physicalExamination');
+                setPhysicalExamination(e.target.value);
+              }}
+              rows={3}
+              className="w-full min-w-0 text-xs border border-slate-200 rounded px-2.5 py-1.5 focus:ring-1 focus:ring-blue-600 focus:outline-none"
+            />
+          </label>
+        </div>
+
+        <div className={`space-y-2 min-w-0 ${aiFieldClass(pendingAiFields, 'vitals')}`}>
+          <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Vitals</span>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            <label className="text-[10px] text-slate-500 font-bold block min-w-0">
+              BP systolic
+              <input
+                type="number"
+                value={vitals.bloodPressureSystolic ?? ''}
+                onChange={(e) => {
+                  touchAiField('vitals');
+                  setVitals({ ...vitals, bloodPressureSystolic: e.target.value === '' ? undefined : Number(e.target.value) });
+                }}
+                className="mt-1 w-full min-w-0 text-xs border border-slate-200 rounded px-2 py-1"
+              />
+            </label>
+            <label className="text-[10px] text-slate-500 font-bold block min-w-0">
+              BP diastolic
+              <input
+                type="number"
+                value={vitals.bloodPressureDiastolic ?? ''}
+                onChange={(e) => {
+                  touchAiField('vitals');
+                  setVitals({ ...vitals, bloodPressureDiastolic: e.target.value === '' ? undefined : Number(e.target.value) });
+                }}
+                className="mt-1 w-full min-w-0 text-xs border border-slate-200 rounded px-2 py-1"
+              />
+            </label>
+            <label className="text-[10px] text-slate-500 font-bold block min-w-0">
+              Pulse
+              <input
+                type="number"
+                value={vitals.heartRate ?? ''}
+                onChange={(e) => {
+                  touchAiField('vitals');
+                  setVitals({ ...vitals, heartRate: e.target.value === '' ? undefined : Number(e.target.value) });
+                }}
+                className="mt-1 w-full min-w-0 text-xs border border-slate-200 rounded px-2 py-1"
+              />
+            </label>
+            <label className="text-[10px] text-slate-500 font-bold block min-w-0">
+              SpO2
+              <input
+                type="number"
+                value={vitals.spO2 ?? ''}
+                onChange={(e) => {
+                  touchAiField('vitals');
+                  setVitals({ ...vitals, spO2: e.target.value === '' ? undefined : Number(e.target.value) });
+                }}
+                className="mt-1 w-full min-w-0 text-xs border border-slate-200 rounded px-2 py-1"
+              />
+            </label>
+            <label className="text-[10px] text-slate-500 font-bold block min-w-0">
+              Temp (F)
+              <input
+                type="number"
+                value={vitals.temperature ?? ''}
+                onChange={(e) => {
+                  touchAiField('vitals');
+                  setVitals({ ...vitals, temperature: e.target.value === '' ? undefined : Number(e.target.value) });
+                }}
+                className="mt-1 w-full min-w-0 text-xs border border-slate-200 rounded px-2 py-1"
+              />
+            </label>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 min-w-0">
+          <div className={`space-y-1.5 min-w-0 ${aiFieldClass(pendingAiFields, 'clinicalFindings')}`}>
+            <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Clinical Findings</label>
+            <ul className="space-y-1">
+              {clinicalFindings.map((finding, idx) => (
+                <li key={idx} className="flex items-center justify-between gap-2 text-xs bg-slate-50 px-2.5 py-1 rounded border border-slate-200">
+                  <span className="min-w-0 break-words">{finding}</span>
+                  <button
+                    type="button"
+                    className="text-slate-400 hover:text-red-600 shrink-0"
+                    onClick={() => {
+                      touchAiField('clinicalFindings');
+                      setClinicalFindings(clinicalFindings.filter((_, i) => i !== idx));
+                    }}
+                  >
+                    ×
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <div className="flex gap-2 min-w-0">
+              <input
+                type="text"
+                value={newFinding}
+                onChange={(e) => setNewFinding(e.target.value)}
+                className="flex-1 min-w-0 text-xs border border-slate-200 rounded px-2.5 py-1"
+              />
+              <button
+                type="button"
+                className="px-3 py-1 bg-slate-100 text-xs font-semibold rounded shrink-0"
+                onClick={() => {
+                  if (!newFinding.trim()) return;
+                  touchAiField('clinicalFindings');
+                  setClinicalFindings([...clinicalFindings, newFinding.trim()]);
+                  setNewFinding('');
+                }}
+              >
+                Add
+              </button>
+            </div>
+          </div>
+          <div className={`space-y-1.5 min-w-0 ${aiFieldClass(pendingAiFields, 'differentialDiagnoses')}`}>
+            <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Differential Diagnoses</label>
+            <ul className="space-y-1">
+              {differentialDiagnoses.map((item, idx) => (
+                <li key={idx} className="flex items-center justify-between gap-2 text-xs bg-slate-50 px-2.5 py-1 rounded border border-slate-200">
+                  <span className="min-w-0 break-words">{item}</span>
+                  <button
+                    type="button"
+                    className="text-slate-400 hover:text-red-600 shrink-0"
+                    onClick={() => {
+                      touchAiField('differentialDiagnoses');
+                      setDifferentialDiagnoses(differentialDiagnoses.filter((_, i) => i !== idx));
+                    }}
+                  >
+                    ×
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <div className="flex gap-2 min-w-0">
+              <input
+                type="text"
+                value={newDifferential}
+                onChange={(e) => setNewDifferential(e.target.value)}
+                className="flex-1 min-w-0 text-xs border border-slate-200 rounded px-2.5 py-1"
+              />
+              <button
+                type="button"
+                className="px-3 py-1 bg-slate-100 text-xs font-semibold rounded shrink-0"
+                onClick={() => {
+                  if (!newDifferential.trim()) return;
+                  touchAiField('differentialDiagnoses');
+                  setDifferentialDiagnoses([...differentialDiagnoses, newDifferential.trim()]);
+                  setNewDifferential('');
+                }}
+              >
+                Add
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 min-w-0">
+          <label className={`block space-y-1 min-w-0 ${aiFieldClass(pendingAiFields, 'riskLevel')}`}>
+            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Risk Level</span>
+            <select
+              value={riskLevel || ''}
+              onChange={(e) => {
+                touchAiField('riskLevel');
+                setRiskLevel((e.target.value || null) as RxClinicalFields['riskLevel']);
+              }}
+              className="w-full min-w-0 text-xs border border-slate-200 rounded px-2.5 py-1.5 bg-white"
+            >
+              <option value="">Unset</option>
+              <option value="Low">Low</option>
+              <option value="Moderate">Moderate</option>
+              <option value="High">High</option>
+              <option value="Emergency">Emergency</option>
+            </select>
+          </label>
+          <div className={`space-y-1.5 min-w-0 ${aiFieldClass(pendingAiFields, 'redFlags')}`}>
+            <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Red Flags</label>
+            <ul className="space-y-1">
+              {redFlags.map((flag, idx) => (
+                <li key={idx} className="flex items-center justify-between gap-2 text-xs bg-rose-50 px-2.5 py-1 rounded border border-rose-200">
+                  <span className="min-w-0 break-words">{flag}</span>
+                  <button
+                    type="button"
+                    className="text-slate-400 hover:text-red-600 shrink-0"
+                    onClick={() => {
+                      touchAiField('redFlags');
+                      setRedFlags(redFlags.filter((_, i) => i !== idx));
+                    }}
+                  >
+                    ×
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <div className="flex gap-2 min-w-0">
+              <input
+                type="text"
+                value={newRedFlag}
+                onChange={(e) => setNewRedFlag(e.target.value)}
+                className="flex-1 min-w-0 text-xs border border-slate-200 rounded px-2.5 py-1"
+              />
+              <button
+                type="button"
+                className="px-3 py-1 bg-slate-100 text-xs font-semibold rounded shrink-0"
+                onClick={() => {
+                  if (!newRedFlag.trim()) return;
+                  touchAiField('redFlags');
+                  setRedFlags([...redFlags, newRedFlag.trim()]);
+                  setNewRedFlag('');
+                }}
+              >
+                Add
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {performedProcedures.length > 0 && activeSpecialty !== 'Physiotherapy & Rehabilitation' && (
+          <div className={`space-y-1 min-w-0 ${aiFieldClass(pendingAiFields, 'performedTherapies')}`}>
+            <h4 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Performed Therapies</h4>
+            <ul className="text-xs text-slate-700 space-y-1">
+              {performedProcedures.map((proc) => (
+                <li key={proc.id} className="break-words">{proc.name} — {proc.targetArea}</li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {/* PRINT/PREVIEW SECTION FOR PHYSIOTHERAPY CLINICAL ASSESSMENTS & HOME EXERCISES */}
         {activeSpecialty === 'Physiotherapy & Rehabilitation' && (
@@ -1234,8 +1743,18 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
                   </h3>
                 </div>
 
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs border-collapse border border-slate-200">
+                <div className={`md:hidden space-y-2 ${aiFieldClass(pendingAiFields, 'prescribedExercises')}`}>
+                  {prescribedExercises.map((ex, idx) => (
+                    <div key={idx} className="rounded-lg border border-teal-200 bg-white p-2.5 text-xs space-y-1 min-w-0">
+                      <p className="font-bold text-slate-900 break-words">{idx + 1}. {ex.exerciseName}</p>
+                      <p className="text-teal-800">{ex.targetArea}</p>
+                      <p>{ex.sets} × {ex.reps} · hold {ex.holdSeconds > 0 ? `${ex.holdSeconds}s` : 'dynamic'} · {ex.frequency}</p>
+                      <p className="text-slate-600 break-words">{ex.instructions}</p>
+                    </div>
+                  ))}
+                </div>
+                <div className={`hidden md:block ${aiFieldClass(pendingAiFields, 'prescribedExercises')}`}>
+                  <table className="w-full table-fixed text-left text-xs border-collapse border border-slate-200">
                     <thead>
                       <tr className="bg-teal-50/80 text-teal-900 border-b border-teal-200">
                         <th className="py-2 px-2.5 font-bold w-8">#</th>
@@ -1574,8 +2093,22 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
             </h3>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs border-collapse">
+          <div className={`md:hidden space-y-2 ${aiFieldClass(pendingAiFields, 'medicines')}`}>
+            {medicines.map((med, idx) => (
+              <div key={med.id} className="rounded-lg border border-slate-200 p-2.5 text-xs space-y-1 min-w-0">
+                <div className="flex items-start justify-between gap-2">
+                  <p className="font-bold text-slate-900 break-words">{idx + 1}. {med.drugName}</p>
+                  <button type="button" onClick={() => { touchAiField('medicines'); handleRemoveMedicine(med.id); }} className="text-slate-400 hover:text-red-600 shrink-0">
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                {med.composition && <p className="text-slate-500 break-words">{med.composition}</p>}
+                <p className="break-words">{med.dosage} · {med.frequency} · {med.timing} · {med.durationDays} days</p>
+              </div>
+            ))}
+          </div>
+          <div className={`hidden md:block ${aiFieldClass(pendingAiFields, 'medicines')}`}>
+            <table className="w-full table-fixed text-left text-xs border-collapse">
               <thead>
                 <tr className="bg-slate-50 text-slate-700 border-b border-slate-200">
                   <th className="py-2 px-3 font-bold w-10">#</th>
@@ -1707,7 +2240,11 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
             doctor={currentDoctor}
             appointments={appointments}
             followUpDays={followUpDays}
-            onFollowUpDaysChange={setFollowUpDays}
+            onFollowUpDaysChange={(days) => {
+              touchAiField('followUpDays');
+              setFollowUpDays(days);
+              setFollowUpDate('');
+            }}
             reserved={followUpReservation}
             onReserve={async ({ date, timeSlot }) => {
               if (onBookFollowUp) {
@@ -1814,8 +2351,8 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
           {!isFinalized ? (
             <button
               onClick={handleFinalizeAndSignRx}
-              disabled={isSafetyGateBlocking}
-              title={isSafetyGateBlocking ? safetyGateMessage : undefined}
+              disabled={isSafetyGateBlocking || aiReviewOpen}
+              title={aiReviewOpen ? reviewGateMessage : isSafetyGateBlocking ? safetyGateMessage : undefined}
               className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center space-x-1.5 shadow-sm shadow-emerald-200 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <CheckCircle2 className="w-4 h-4" />
@@ -1843,8 +2380,8 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
 
           <button
             onClick={handleOpenWhatsAppModal}
-            disabled={isSafetyGateBlocking}
-            title={isSafetyGateBlocking ? safetyGateMessage : undefined}
+            disabled={isSafetyGateBlocking || aiReviewOpen}
+            title={aiReviewOpen ? reviewGateMessage : isSafetyGateBlocking ? safetyGateMessage : undefined}
             className="px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs flex items-center space-x-1.5 shadow-xs transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <Send className="w-4 h-4" />
@@ -1950,7 +2487,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
               ) : (
                 <button
                   onClick={handleDirectWhatsAppDispatch}
-                  disabled={isSendingWhatsAppDirect}
+                  disabled={isSendingWhatsAppDirect || aiReviewOpen}
                   className="w-full py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-xs transition-colors cursor-pointer disabled:opacity-50"
                 >
                   {isSendingWhatsAppDirect ? (
