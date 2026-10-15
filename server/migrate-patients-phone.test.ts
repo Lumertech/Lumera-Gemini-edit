@@ -7,6 +7,7 @@ import { afterEach, describe, it } from "node:test";
 import { isSqlitePragma, toPostgresSql } from "./sql-dialect.ts";
 import type { SqlDatabase } from "./sql-engine.ts";
 import {
+  addWhatsAppTenantColumns,
   applyTenantPhoneSecurityMigrations,
   migratePatientsPhoneUnique,
 } from "./migrate-patients-phone.ts";
@@ -238,5 +239,38 @@ describe("tenant phone security migrations (Postgres vs sqlite)", () => {
       db.close();
       fs.rmSync(file, { force: true });
     }
+  });
+});
+
+describe("last_inbound_at alter error handling", () => {
+  function databaseThatThrows(err: unknown): SqlDatabase {
+    return {
+      exec(sql: string) {
+        if (/last_inbound_at/i.test(sql)) throw err;
+      },
+      prepare() {
+        throw new Error("prepare is not used by addWhatsAppTenantColumns");
+      },
+    };
+  }
+
+  it("ignores a sqlite duplicate column error", () => {
+    assert.doesNotThrow(() =>
+      addWhatsAppTenantColumns(databaseThatThrows(new Error("duplicate column name: last_inbound_at")))
+    );
+  });
+
+  it("ignores postgres SQLSTATE 42701", () => {
+    const err = new Error('column "last_inbound_at" of relation "whatsapp_conversations" already exists') as Error & {
+      code?: string;
+    };
+    err.code = "42701";
+    assert.doesNotThrow(() => addWhatsAppTenantColumns(databaseThatThrows(err)));
+  });
+
+  it("rethrows other alter failures", () => {
+    const err = new Error("permission denied for table whatsapp_conversations") as Error & { code?: string };
+    err.code = "42501";
+    assert.throws(() => addWhatsAppTenantColumns(databaseThatThrows(err)), /permission denied/);
   });
 });

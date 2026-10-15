@@ -133,19 +133,12 @@ export function resolveGraphCredentials(
   return envCreds;
 }
 
-function tableHasColumn(db: DatabaseSync, table: string, column: string): boolean {
-  try {
-    const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name?: string }>;
-    return cols.some((col) => col.name === column);
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Last patient inbound within 24h opens the customer-service window.
  * The clock is whatsapp_conversations.last_inbound_at for the caller's tenant only.
  * Unassigned and other-tenant rows never open the window.
+ * tenant_id and last_inbound_at are created by drizzle 0001 and 0003. Do not
+ * probe them with PRAGMA: Postgres rejects that and the failure closed the window.
  */
 export function isWithinCustomerServiceWindow(
   db: DatabaseSync | null | undefined,
@@ -160,8 +153,6 @@ export function isWithinCustomerServiceWindow(
   if (digits.length < 10) return false;
   const like = `%${digits.slice(-10)}`;
   try {
-    if (!tableHasColumn(db, "whatsapp_conversations", "tenant_id")) return false;
-    if (!tableHasColumn(db, "whatsapp_conversations", "last_inbound_at")) return false;
     const row = db
       .prepare(
         `SELECT last_inbound_at FROM whatsapp_conversations
