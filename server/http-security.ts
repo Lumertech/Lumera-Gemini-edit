@@ -21,6 +21,7 @@ export const SESSION_COOKIE = "lumera_sid";
 
 export const AUTH_RATE_LIMITED_PATHS = [
   "/api/auth/login",
+  "/api/auth/demo-login",
   "/api/auth/whatsapp/send-otp",
   "/api/auth/whatsapp/verify-otp",
   "/api/auth/forgot-password",

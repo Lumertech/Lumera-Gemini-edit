@@ -133,6 +133,8 @@ const WhatsAppPhoneRow: React.FC<{
 export const LoginPage: React.FC = () => {
   const {
     login,
+    demoLogin,
+    demoLoginEnabled,
     oauthLogin,
     verifyWhatsAppOtp,
     sendWhatsAppOtp,
@@ -425,15 +427,13 @@ export const LoginPage: React.FC = () => {
     }
   };
 
-  // Quick 1-Click Demo Clinician Access
+  // Explicit one-click demo. Server holds the seeded credentials; shown only when DEMO_LOGIN_ENABLED is set.
   const handleQuickDemoClinician = async () => {
-    setEmail("doctor@lumera.me");
-    setPassword("Lumera@2026");
     setBusy(true);
     setError("");
 
     try {
-      const res = await login("doctor@lumera.me", "Lumera@2026", true);
+      const res = await demoLogin();
       if (res.user) {
         goAfterAuth(go, destinationAfterAuth(res.user, loginNext), loginNextPath);
       }
@@ -1229,15 +1229,18 @@ export const LoginPage: React.FC = () => {
                       </option>
                     ))}
                   </select>
-                  <button
-                    type="button"
-                    onClick={handleQuickDemoClinician}
-                    disabled={busy}
-                    className="w-full py-2 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 text-slate-300 hover:text-white text-xs font-medium transition-colors flex items-center justify-center gap-1.5"
-                  >
-                    <Zap className="w-3.5 h-3.5 text-amber-400" />
-                    <span>Quick Demo Clinician Access (Dr. Vikram Malhotra)</span>
-                  </button>
+                  {demoLoginEnabled ? (
+                    <button
+                      type="button"
+                      onClick={handleQuickDemoClinician}
+                      disabled={busy}
+                      data-testid="quick-demo-login"
+                      className="w-full py-2 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 text-slate-300 hover:text-white text-xs font-medium transition-colors flex items-center justify-center gap-1.5"
+                    >
+                      <Zap className="w-3.5 h-3.5 text-amber-400" />
+                      <span>Quick Demo — Try the demo</span>
+                    </button>
+                  ) : null}
                 </div>
               </div>
             ) : (

@@ -65,7 +65,8 @@ import {
 } from "./platform-tenants.ts";
 import { generateTemporaryPassword, hashPassword, passwordRuleError, verifyPassword } from "./password.ts";
 import { parseSpecialtyPackInput, resolveSpecialtyPack } from "./specialty-packs.ts";
-import { appPublicUrl, isProduction } from "./runtime.ts";
+import { appPublicUrl, demoLoginEnabled, isProduction } from "./runtime.ts";
+import { DEMO_PASSWORD } from "../src/lib/demoAccounts.ts";
 import { dispatchWhatsAppCloudMessage, isCloudDispatchFailure } from "./graph-whatsapp.ts";
 import {
   FacebookOAuthError,
@@ -451,6 +452,31 @@ export function createApiRouter(): Router {
           ? "Security code dispatched via WhatsApp Cloud API."
           : "SANDBOX / DEV-ONLY: security code recorded locally (not sent via Graph).",
     });
+  });
+
+  /**
+   * Explicit one-click demo. Credentials stay on the server. Disabled unless
+   * DEMO_LOGIN_ENABLED is set. Client email/password are ignored.
+   */
+  api.post("/auth/demo-login", (_req: Request, res: Response) => {
+    if (!demoLoginEnabled()) {
+      return res.status(404).json({ error: "Demo login is disabled" });
+    }
+    const email = "doctor@lumera.me";
+    const user = getDb().prepare("SELECT * FROM users WHERE email = ?").get(email) as unknown as DbUser | undefined;
+    if (!user || !verifyPassword(DEMO_PASSWORD, user.password_hash)) {
+      return res.status(503).json({ error: "Demo account is not available" });
+    }
+    if (user.status === "disabled") {
+      return res.status(403).json({ error: "This account has been disabled" });
+    }
+    if (rejectClinicTenantBlocked(user, res)) return;
+    const jwtToken = issueLumeraSession(res, user);
+    getDb()
+      .prepare("UPDATE users SET last_login = ?, whatsapp_verified = 1 WHERE id = ?")
+      .run(new Date().toISOString(), user.id);
+    writeAudit(getDb(), user.id, user.name, "Login", `${user.email} signed in (explicit demo login)`);
+    return res.json({ user: publicUser(user), token: jwtToken, requiresOtp: false });
   });
 
   api.get("/auth/oauth-config", (_req: Request, res: Response) => {
