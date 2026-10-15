@@ -57,8 +57,8 @@ export function htmlContentSecurityPolicy(env: NodeJS.ProcessEnv = process.env):
 /** Default policy: FRAME_ANCESTORS unset → frame-ancestors 'none'. */
 export const HTML_CONTENT_SECURITY_POLICY = htmlContentSecurityPolicy({} as NodeJS.ProcessEnv);
 
-/** Ambient scribe needs same-origin microphone. Clipboard and payment stay at browser defaults. */
-export const HTML_PERMISSIONS_POLICY = "camera=(), geolocation=(), microphone=(self), payment=()";
+/** Same-origin camera for patient document photos. Ambient scribe needs same-origin microphone. */
+export const HTML_PERMISSIONS_POLICY = "camera=(self), geolocation=(), microphone=(self), payment=()";
 
 function isProductionFromEnv(env: NodeJS.ProcessEnv): boolean {
   return String(env.NODE_ENV || "") === "production";

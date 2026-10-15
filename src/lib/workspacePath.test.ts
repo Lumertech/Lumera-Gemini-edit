@@ -57,6 +57,18 @@ describe("workspace URL slug", () => {
     );
     assert.equal(reconcileWorkspacePath("/w/malhotra-individual-practice/rx", "malhotra-individual-practice", "doctor"), null);
     assert.equal(reconcileWorkspacePath("/app/queue", "iyer-city-polyclinic", "CLINIC_ADMIN"), "/w/iyer-city-polyclinic/queue");
+    assert.equal(
+      reconcileWorkspacePath("/app/patients/Pat-KeepCase", "iyer-city-polyclinic", "doctor"),
+      "/w/iyer-city-polyclinic/patients/Pat-KeepCase"
+    );
+    assert.equal(
+      reconcileWorkspacePath("/w/other-clinic/patients/pat-42", "iyer-city-polyclinic", "doctor"),
+      "/w/iyer-city-polyclinic/patients/pat-42"
+    );
+    assert.equal(
+      reconcileWorkspacePath("/w/iyer-city-polyclinic/patients/pat-42", "iyer-city-polyclinic", "doctor"),
+      null
+    );
     assert.equal(reconcileWorkspacePath("/w/iyer-city-polyclinic/branches", "iyer-city-polyclinic", "super_admin"), "/admin");
     assert.equal(reconcileWorkspacePath("/admin/tenants", "lumera-apex-polyclinic", "super_admin"), null);
   });

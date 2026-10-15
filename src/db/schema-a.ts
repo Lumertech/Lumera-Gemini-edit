@@ -317,6 +317,41 @@ export const prescriptionDrafts = pgTable("prescription_drafts", {
   updatedAt: text("updated_at").notNull(),
 });
 
+/** Private patient files. Bytes live outside public /uploads; this row never stores a public URL. */
+export const patientDocuments = pgTable(
+  "patient_documents",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull().default(""),
+    patientId: text("patient_id").notNull(),
+    title: text("title").notNull(),
+    docType: text("doc_type").notNull(),
+    documentDate: text("document_date").notNull(),
+    uploadedById: text("uploaded_by_id").notNull().default(""),
+    uploadedByName: text("uploaded_by_name").notNull().default(""),
+    uploadedByRole: text("uploaded_by_role").notNull().default(""),
+    originalFilename: text("original_filename").notNull().default(""),
+    mimeType: text("mime_type").notNull(),
+    sizeBytes: integer("size_bytes").notNull().default(0),
+    storageKey: text("storage_key").notNull(),
+    storageBackend: text("storage_backend").notNull().default("local"),
+    createdAt: text("created_at").notNull(),
+    deletedAt: text("deleted_at"),
+  },
+  (t) => [index("idx_patient_documents_tenant_patient").on(t.tenantId, t.patientId)]
+);
+
+/** Single-use preview grants. The raw token is never stored, only its hash. */
+export const patientDocumentTickets = pgTable("patient_document_tickets", {
+  tokenHash: text("token_hash").primaryKey(),
+  userId: text("user_id").notNull(),
+  tenantId: text("tenant_id").notNull(),
+  patientId: text("patient_id").notNull(),
+  documentId: text("document_id").notNull(),
+  expiresAt: text("expires_at").notNull(),
+  usedAt: text("used_at"),
+});
+
 export const labReports = pgTable(
   "lab_reports",
   {

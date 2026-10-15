@@ -40,7 +40,8 @@ export type NavView =
   | 'therapy-session'
   | 'consult-practice'
   | 'physio-session'
-  | 'dental-chart';
+  | 'dental-chart'
+  | 'patients';
 
 interface NavbarProps {
   currentView: NavView;
@@ -103,15 +104,16 @@ export const Navbar: React.FC<NavbarProps> = ({
     'consult-practice': 'Consultant workspace',
     'physio-session': 'Physio session board',
     'dental-chart': 'Dental chair & odontogram',
+    patients: 'Patients',
   };
 
   return (
     <header
       data-testid="app-topbar"
-      className="h-14 bg-slate-900 border-b border-slate-800 text-white flex items-center justify-between px-4 sm:px-6 shrink-0 select-none z-30 shadow-sm"
+      className="h-14 bg-slate-900 border-b border-slate-800 text-white flex items-center justify-between gap-2 px-3 sm:px-6 shrink-0 select-none z-50 shadow-sm min-w-0 overflow-hidden"
     >
       {/* Left: Sidebar Toggle + Brand Logo + View Breadcrumb */}
-      <div className="flex items-center space-x-3 sm:space-x-4">
+      <div className="flex items-center space-x-2 sm:space-x-4 min-w-0">
         {onToggleSidebar && (
           <button
             onClick={onToggleSidebar}
@@ -154,7 +156,7 @@ export const Navbar: React.FC<NavbarProps> = ({
       </div>
 
       {/* Right: Quick Actions & Doctor Profile */}
-      <div className="flex items-center space-x-2 sm:space-x-3">
+      <div className="flex items-center space-x-1.5 sm:space-x-3 min-w-0 shrink">
         {/* Doctor Profile (Locked during Doctor sessions to prevent accidental specialty switching) */}
         {userRole === 'doctor' || isSpecialtyLocked ? (
           <div 
@@ -174,10 +176,10 @@ export const Navbar: React.FC<NavbarProps> = ({
               )}
             </div>
             <div className="flex items-center space-x-1.5">
-              <span className="text-slate-200 text-xs font-semibold max-w-[130px] sm:max-w-[180px] truncate">
+              <span className="text-slate-200 text-xs font-semibold max-w-[4.75rem] sm:max-w-[180px] truncate">
                 {currentDoctor.name} ({currentDoctor.specialty})
               </span>
-              <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-700/80 text-amber-300 font-mono font-bold uppercase flex items-center gap-0.5">
+              <span className="hidden sm:flex text-[9px] px-1.5 py-0.5 rounded bg-slate-700/80 text-amber-300 font-mono font-bold uppercase items-center gap-0.5">
                 <Lock className="w-2.5 h-2.5 text-amber-400" /> Locked
               </span>
             </div>
@@ -203,7 +205,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 const doc = allDoctors.find((d) => d.id === e.target.value);
                 if (doc) onSelectDoctor(doc);
               }}
-              className="bg-transparent text-slate-200 text-xs font-medium focus:outline-none cursor-pointer max-w-[130px] sm:max-w-[180px] truncate"
+              className="bg-transparent text-slate-200 text-xs font-medium focus:outline-none cursor-pointer max-w-[4.75rem] sm:max-w-[180px] truncate"
             >
               {allDoctors.map((d) => (
                 <option key={d.id} value={d.id} className="bg-slate-900 text-white">
@@ -227,7 +229,7 @@ export const Navbar: React.FC<NavbarProps> = ({
         {/* Pulse AI Clinical Copilot button */}
         <button
           onClick={toggleCopilot}
-          className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-purple-600 via-indigo-600 to-blue-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-semibold transition-all shadow-sm shadow-purple-500/30"
+          className="hidden sm:flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-purple-600 via-indigo-600 to-blue-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-semibold transition-all shadow-sm shadow-purple-500/30"
           title="Open Pulse AI Clinical Decision Support"
         >
           <Sparkles className="w-3.5 h-3.5 text-purple-200 animate-pulse" />

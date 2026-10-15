@@ -43,6 +43,7 @@ export const APP_VIEWS = [
   "consult-practice",
   "physio-session",
   "dental-chart",
+  "patients",
 ] as const;
 
 export type AppView = (typeof APP_VIEWS)[number];
@@ -67,6 +68,8 @@ export interface NavLocation {
   adminTab: AdminTab;
   appView: AppView;
   workspaceSlug: string;
+  /** Set for `/patients/:id` inside the clinic workspace. Empty on every other view. */
+  recordId: string;
   loginMode: LoginMode;
   loginNext: Surface;
   loginNextPath: string;
@@ -78,6 +81,7 @@ export const DEFAULT_NAV: NavLocation = {
   adminTab: DEFAULT_ADMIN_TAB,
   appView: DEFAULT_APP_VIEW,
   workspaceSlug: "",
+  recordId: "",
   loginMode: "signin",
   loginNext: "app",
   loginNextPath: "",
@@ -140,16 +144,46 @@ export function canonicalizeAdminTab(raw?: string | null): AdminTab {
   return ADMIN_TAB_SET.has(key) ? (key as AdminTab) : DEFAULT_ADMIN_TAB;
 }
 
+function decodePathSegment(raw: string): string {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
+/** Patient id on `/w/:slug/patients/:id` and `/app/patients/:id`. Case is preserved. */
+export function recordIdFromPath(pathname: string): string {
+  const parts = (pathname.split("?")[0] || "/")
+    .replace(/\/+$/, "")
+    .split("/")
+    .filter(Boolean);
+  const head = (parts[0] || "").toLowerCase();
+  if (head === "w" && (parts[2] || "").toLowerCase() === "patients" && parts[3]) {
+    return decodePathSegment(parts[3]);
+  }
+  if (head === "app" && (parts[1] || "").toLowerCase() === "patients" && parts[2]) {
+    return decodePathSegment(parts[2]);
+  }
+  return "";
+}
+
 /** Distinct path for each clinician tab so a click always updates `window.location`. */
-export function appViewToPath(view?: string | null, workspaceSlug?: string | null): string {
+export function appViewToPath(
+  view?: string | null,
+  workspaceSlug?: string | null,
+  recordId?: string | null
+): string {
   const tab = canonicalizeAppView(view);
   const ws = String(workspaceSlug || "")
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9-]+/g, "-")
     .replace(/^-+|-+$/g, "");
-  if (ws) return `/w/${ws}/${tab}`;
-  return `/app/${tab}`;
+  const base = ws ? `/w/${ws}/${tab}` : `/app/${tab}`;
+  const id = String(recordId || "").trim();
+  if (tab === "patients" && id) return `${base}/${encodeURIComponent(id)}`;
+  return base;
 }
 
 /** Distinct path for each admin section. */
@@ -249,13 +283,19 @@ export function pathToNav(pathname = "/", search = ""): NavLocation {
   if (p === "/w" || p.startsWith("/w/")) {
     const rest = p === "/w" ? "" : p.slice(3);
     const [workspaceSlug, viewSeg] = rest.split("/").filter(Boolean);
+    const appView = viewSeg ? canonicalizeAppView(viewSeg) : DEFAULT_APP_VIEW;
     return nav("app", {
       workspaceSlug: workspaceSlug || "",
-      appView: viewSeg ? canonicalizeAppView(viewSeg) : DEFAULT_APP_VIEW,
+      appView,
+      recordId: appView === "patients" ? recordIdFromPath(pathname) : "",
     });
   }
   if (p === "/app" || p.startsWith("/app/")) {
-    return nav("app", { appView: canonicalizeAppView(firstSegmentAfter("/app", p)) });
+    const appView = canonicalizeAppView(firstSegmentAfter("/app", p));
+    return nav("app", {
+      appView,
+      recordId: appView === "patients" ? recordIdFromPath(pathname) : "",
+    });
   }
   if (p === "/dashboard" || p === "/studio" || p === "/clinic") {
     return nav("app", { appView: DEFAULT_APP_VIEW });
@@ -273,6 +313,7 @@ export interface SurfacePathOpts {
   adminTab?: AdminTab | string;
   appView?: AppView | string;
   workspaceSlug?: string;
+  recordId?: string;
 }
 
 export function surfaceToPath(surface: Surface, opts?: SurfacePathOpts): string {
@@ -287,7 +328,7 @@ export function surfaceToPath(surface: Surface, opts?: SurfacePathOpts): string 
   }
   if (surface === "app") {
     const ws = opts?.workspaceSlug;
-    if (opts?.appView) return appViewToPath(opts.appView, ws);
+    if (opts?.appView) return appViewToPath(opts.appView, ws, opts.recordId);
     if (ws) return `/w/${ws}`;
     return "/app";
   }
@@ -310,6 +351,7 @@ export function destinationNavAfterAuth(dest: Surface, loginNextPath?: string): 
   appView?: AppView;
   adminTab?: AdminTab;
   workspaceSlug?: string;
+  recordId?: string;
 } {
   const nextPath = safeNextPath(loginNextPath);
   if (!nextPath) return { surface: dest };
@@ -320,6 +362,7 @@ export function destinationNavAfterAuth(dest: Surface, loginNextPath?: string): 
     appView: loc.appView,
     adminTab: loc.adminTab,
     workspaceSlug: loc.workspaceSlug,
+    recordId: loc.recordId,
   };
 }
 
