@@ -3,12 +3,15 @@
  * Meta / Razorpay webhooks and /healthz are exempt so signature-verified
  * callbacks are not blocked by browser Origin / CSRF / login throttles.
  *
- * Production is fail-closed for unknown Origins and for missing / literal
- * `null` Origin on mutating / API requests. Top-level document GETs
- * (SPA / HTML) often omit Origin, or send Origin: null after cross-origin
- * redirects / privacy contexts, and must not be blocked. Canonical host is
- * www; apex is allowed as a same-site companion and redirected to www on
- * safe navigations.
+ * Production is fail-closed for unknown Origins and for the literal `null`
+ * Origin on API requests. Top-level document GETs (SPA / HTML) often omit
+ * Origin, or send Origin: null after cross-origin redirects / privacy
+ * contexts, and must not be blocked. Browsers also omit Origin on
+ * same-origin calls. A missing Origin is allowed only when Sec-Fetch-Site
+ * is exactly `same-origin` (any method) or exactly `none` on GET/HEAD.
+ * Missing, `same-site`, `cross-site`, and any other value are rejected.
+ * Referer is not a substitute. Canonical host is www; apex is allowed as a
+ * same-site companion and redirected to www on safe navigations.
  */
 import { type Express, type NextFunction, type Request, type Response } from "express";
 import { applyHtmlDocumentSecurityHeaders } from "./html-security-headers.ts";
@@ -143,10 +146,46 @@ export function isMissingOrNullOrigin(origin: string | undefined): boolean {
   return origin.trim().toLowerCase() === "null";
 }
 
+function headerOne(req: Request, name: string): string {
+  const raw = req.headers[name];
+  if (typeof raw === "string") return raw.trim();
+  if (Array.isArray(raw) && typeof raw[0] === "string") return raw[0].trim();
+  return "";
+}
+
+function isApiRequestPath(pathname: string): boolean {
+  const p = (pathname.split("?")[0] || "/").toLowerCase();
+  return p === "/api" || p.startsWith("/api/");
+}
+
+/** Opaque `null` Origin (privacy / sandboxed). Not the same as a header the browser omitted. */
+function isLiteralNullOrigin(origin: string): boolean {
+  return origin.trim().toLowerCase() === "null";
+}
+
 /**
- * Production is fail-closed for unknown Origin. Missing / literal `null`
- * Origin is rejected on mutating / API requests, but allowed for top-level
- * SPA/HTML GET/HEAD. Non-prod allows missing/null Origin (curl, tests).
+ * Missing Origin on /api. Sec-Fetch-Site must be exactly `same-origin`
+ * (any method) or exactly `none` on GET/HEAD. Missing, `same-site`,
+ * `cross-site`, and every other value are rejected. Referer is ignored.
+ * A present Origin is never accepted here. Literal Origin: null is not
+ * an absent Origin.
+ */
+function allowsAbsentOriginApiRequest(req: Request): boolean {
+  if (!isApiRequestPath(requestPathname(req))) return false;
+  const site = headerOne(req, "sec-fetch-site");
+  if (site === "same-origin") return true;
+  if (site !== "none") return false;
+  const method = String(req.method || "GET").toUpperCase();
+  return method === "GET" || method === "HEAD";
+}
+
+/**
+ * Production is fail-closed for unknown Origin. Literal `null` Origin is
+ * rejected on API requests, but allowed for top-level SPA/HTML GET/HEAD.
+ * An omitted Origin on /api is allowed only for exact `Sec-Fetch-Site:
+ * same-origin`, or exact `none` on GET/HEAD. Non-prod allows missing/null
+ * Origin (curl, tests). Cookie CSRF on state-changing methods is unchanged
+ * and runs after this check.
  */
 export function corsShouldReject(req: Request, env: NodeJS.ProcessEnv = process.env): boolean {
   if (isSecurityExemptPath(req.path) || isSecurityExemptPath(req.originalUrl || "")) return false;
@@ -154,6 +193,8 @@ export function corsShouldReject(req: Request, env: NodeJS.ProcessEnv = process.
   if (!isMissingOrNullOrigin(origin)) return !originAllowed(origin, env);
   if (!isProductionFromEnv(env)) return false;
   if (isSafeDocumentGetWithoutOrigin(req)) return false;
+  if (isLiteralNullOrigin(origin)) return true;
+  if (allowsAbsentOriginApiRequest(req)) return false;
   return true;
 }
 
@@ -292,6 +333,8 @@ export function csrfShouldReject(req: Request): boolean {
 export function corsAllowlistMiddleware(env: NodeJS.ProcessEnv = process.env) {
   return (req: Request, res: Response, next: NextFunction) => {
     const origin = typeof req.headers.origin === "string" ? req.headers.origin : "";
+    // No Origin (and any disallowed Origin) must not receive ACAO or
+    // Allow-Credentials. Only an allowlisted Origin is echoed.
     if (origin && originAllowed(origin, env)) {
       res.setHeader("Access-Control-Allow-Origin", origin);
       res.setHeader("Vary", "Origin");

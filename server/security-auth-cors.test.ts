@@ -366,6 +366,141 @@ describe("Auth / tenant isolation / CORS / CSRF / rate limit", () => {
     assert.equal(corsShouldReject(fakeReq(undefined, "/api/billing/razorpay/webhook"), prod), false);
   });
 
+  it("production allows a missing Origin only for exact same-origin or GET/HEAD none", () => {
+    const prod = { NODE_ENV: "production", ALLOWED_ORIGINS: "https://www.mylumera.in" } as NodeJS.ProcessEnv;
+    const fakeReq = (
+      headers: Record<string, string>,
+      p = "/api/patients",
+      method = "GET"
+    ) => ({ headers, path: p, originalUrl: p, method }) as unknown as express.Request;
+
+    assert.equal(corsShouldReject(fakeReq({ "sec-fetch-site": "same-origin" }, "/api/auth/me"), prod), false);
+    assert.equal(
+      corsShouldReject(fakeReq({ "sec-fetch-site": "same-origin" }, "/api/patients", "POST"), prod),
+      false
+    );
+    assert.equal(
+      corsShouldReject(fakeReq({ "sec-fetch-site": "same-origin" }, "/api/tenant/letterhead", "HEAD"), prod),
+      false
+    );
+    assert.equal(corsShouldReject(fakeReq({ "sec-fetch-site": "none" }, "/api/appointments"), prod), false);
+    assert.equal(corsShouldReject(fakeReq({ "sec-fetch-site": "none" }, "/api/appointments", "HEAD"), prod), false);
+    assert.equal(corsShouldReject(fakeReq({ "sec-fetch-site": "none" }, "/api/wallet/status", "POST"), prod), true);
+    assert.equal(corsShouldReject(fakeReq({ "sec-fetch-site": "none" }, "/api/patients", "PUT"), prod), true);
+    assert.equal(corsShouldReject(fakeReq({ "sec-fetch-site": "cross-site" }, "/api/patients"), prod), true);
+    assert.equal(
+      corsShouldReject(
+        fakeReq({ "sec-fetch-site": "cross-site", referer: "https://www.mylumera.in/app" }, "/api/doctors"),
+        prod
+      ),
+      true
+    );
+    assert.equal(
+      corsShouldReject(
+        fakeReq({ "sec-fetch-site": "same-site", referer: "https://mylumera.in/login" }, "/api/patients"),
+        prod
+      ),
+      true
+    );
+    assert.equal(corsShouldReject(fakeReq({ "sec-fetch-site": "Same-Origin" }, "/api/patients"), prod), true);
+    assert.equal(
+      corsShouldReject(fakeReq({ referer: "https://www.mylumera.in/app" }, "/api/doctors"), prod),
+      true
+    );
+    assert.equal(corsShouldReject(fakeReq({}, "/api/patients"), prod), true);
+    assert.equal(corsShouldReject(fakeReq({ origin: "https://evil.example" }, "/api/patients"), prod), true);
+    assert.equal(
+      corsShouldReject(
+        fakeReq({ origin: "https://evil.example", "sec-fetch-site": "same-origin" }, "/api/patients"),
+        prod
+      ),
+      true
+    );
+    // Literal Origin: null on API stays fail-closed, including when fetch metadata says same-origin.
+    assert.equal(
+      corsShouldReject(fakeReq({ origin: "null", "sec-fetch-site": "same-origin" }, "/api/patients"), prod),
+      true
+    );
+    // SPA document GET/HEAD with Origin: null is unchanged.
+    assert.equal(corsShouldReject(fakeReq({ origin: "null" }, "/app"), prod), false);
+    assert.equal(corsShouldReject(fakeReq({ origin: "null" }, "/login", "HEAD"), prod), false);
+    assert.equal(
+      corsShouldReject(fakeReq({ "sec-fetch-site": "cross-site" }, "/api/auth/login", "POST"), prod),
+      true
+    );
+  });
+
+  it("production HTTP gate: same-origin no-Origin GET is 200, and CSRF still blocks cookie writes", async () => {
+    const prod = { NODE_ENV: "production", ALLOWED_ORIGINS: "https://www.mylumera.in" } as NodeJS.ProcessEnv;
+    const app = express();
+    app.use(express.json());
+    app.use(corsAllowlistMiddleware(prod));
+    app.use(csrfProtectionMiddleware());
+    app.get("/api/ping", (_req, res) => res.json({ ok: true }));
+    app.post("/api/ping", (_req, res) => res.json({ ok: true }));
+    const srv = app.listen(0, "127.0.0.1");
+    await new Promise<void>((resolve) => srv.once("listening", () => resolve()));
+    const addr = srv.address();
+    if (!addr || typeof addr === "string") throw new Error("no port");
+    const base = `http://127.0.0.1:${addr.port}`;
+    try {
+      const sameOriginGet = await fetch(`${base}/api/ping`, {
+        headers: { "Sec-Fetch-Site": "same-origin" },
+      });
+      assert.equal(sameOriginGet.status, 200);
+      assert.equal(sameOriginGet.headers.get("access-control-allow-origin"), null);
+      assert.equal(sameOriginGet.headers.get("access-control-allow-credentials"), null);
+      assert.equal(await sameOriginGet.json().then((b) => (b as { ok?: boolean }).ok), true);
+
+      const crossSite = await fetch(`${base}/api/ping`, {
+        headers: { "Sec-Fetch-Site": "cross-site" },
+      });
+      assert.equal(crossSite.status, 403);
+      assert.match(await crossSite.text(), /Origin not allowed/);
+
+      const noFetchSite = await fetch(`${base}/api/ping`);
+      assert.equal(noFetchSite.status, 403);
+      assert.match(await noFetchSite.text(), /Origin not allowed/);
+
+      const nonePost = await fetch(`${base}/api/ping`, {
+        method: "POST",
+        headers: { "Sec-Fetch-Site": "none", "Content-Type": "application/json" },
+        body: "{}",
+      });
+      assert.equal(nonePost.status, 403);
+      assert.match(await nonePost.text(), /Origin not allowed/);
+
+      const foreign = await fetch(`${base}/api/ping`, {
+        headers: { Origin: "https://evil.example" },
+      });
+      assert.equal(foreign.status, 403);
+      assert.match(await foreign.text(), /Origin not allowed/);
+      assert.equal(foreign.headers.get("access-control-allow-origin"), null);
+
+      const packed = packHostSession("header.payload.sig", "csrf-secret");
+      const forwarded = cookiesForwardedByFirebaseHosting(
+        `lumera_sid=header.payload.sig; lumera_csrf=csrf-secret; __session=${encodeURIComponent(packed)}`
+      );
+      assert.match(forwarded, /^__session=/);
+      assert.doesNotMatch(forwarded, /lumera_sid/);
+      assert.doesNotMatch(forwarded, /lumera_csrf/);
+      const cookiePost = await fetch(`${base}/api/ping`, {
+        method: "POST",
+        headers: {
+          "Sec-Fetch-Site": "same-origin",
+          "Content-Type": "application/json",
+          Cookie: forwarded,
+        },
+        body: "{}",
+      });
+      assert.equal(cookiePost.status, 403);
+      assert.match(await cookiePost.text(), /CSRF token missing or invalid/);
+      assert.equal(cookiePost.headers.get("access-control-allow-origin"), null);
+    } finally {
+      await new Promise<void>((resolve, reject) => srv.close((err) => (err ? reject(err) : resolve())));
+    }
+  });
+
   it("APP_URL-only production allowlist expands www↔apex companions", () => {
     const prod = { NODE_ENV: "production", APP_URL: "https://www.mylumera.in" } as NodeJS.ProcessEnv;
     assert.equal(originAllowed("https://www.mylumera.in", prod), true);

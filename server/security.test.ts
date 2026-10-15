@@ -19,7 +19,7 @@ import {
   verifyJwtToken,
 } from "./auth.ts";
 import { createApiRouter } from "./api.ts";
-import { getDb, initDatabase } from "./db.ts";
+import { DEMO_TENANT_ID, getDb, initDatabase, isDemoWorkspaceUser } from "./db.ts";
 import { hashPassword } from "./password.ts";
 import { DEMO_ACCOUNTS, DEMO_LOGIN_MATRIX } from "../src/lib/demoAccounts.ts";
 import { INDIVIDUAL_DEMO_TENANT_ID } from "./demo-workspace-tenants.ts";
@@ -215,6 +215,36 @@ describe("Wave 1A PHI / auth lock", () => {
       if (prev === undefined) delete process.env.NODE_ENV;
       else process.env.NODE_ENV = prev;
     }
+  });
+
+  it("mock workspace is the demo login matrix, not every @lumera.me mailbox", () => {
+    const dbSrc = fs.readFileSync(path.join(__dirname, "db.ts"), "utf8");
+    assert.equal(/from\s+["']\.\/auth(?:\.ts)?["']/.test(dbSrc), false);
+
+    for (const acct of DEMO_LOGIN_MATRIX) {
+      assert.equal(
+        isDemoWorkspaceUser({ email: acct.email, id: acct.id, tenant_id: "tenant-other" }),
+        true,
+        acct.email
+      );
+    }
+    for (const email of SANDBOX_PASSWORD_SESSION_EMAILS) {
+      assert.equal(
+        isDemoWorkspaceUser({ email, id: "user-sunrise", tenant_id: "tenant-543feff7" }),
+        false,
+        email
+      );
+      assert.equal(
+        isDemoWorkspaceUser({ email, id: "user-sunrise", tenant_id: DEMO_TENANT_ID }),
+        false,
+        `${email} stays a real tenant even on the demo tenant id`
+      );
+    }
+    assert.equal(
+      isDemoWorkspaceUser({ email: "not-seeded@lumera.me", id: "user-real", tenant_id: "tenant-543feff7" }),
+      false
+    );
+    assert.equal(isDemoWorkspaceUser({ email: "doctor@lumera.me", id: "user-doctor" }), true);
   });
 
   it("does not echo OTP codes in production", () => {

@@ -21,11 +21,6 @@ import { WelcomeSetupDashboard } from './components/WelcomeSetupDashboard';
 import { ClinicProfileSettings } from './components/ClinicProfileSettings';
 import { PharmacyDiagnosticsHub } from './components/PharmacyDiagnosticsHub';
 import {
-  MOCK_DOCTORS,
-  MOCK_PATIENTS,
-  MOCK_APPOINTMENTS,
-} from './data/clinicalData';
-import {
   Patient,
   Doctor,
   Appointment,
@@ -52,7 +47,6 @@ import { postOnboardingHomeView } from './lib/practiceOnboarding';
 import {
   allowedViewsForWorkflow,
   clinicianHomeView,
-  specialtyMatchesDoctor,
   clinicianRxSpecialty,
   workflowForUser,
 } from './lib/specialtyWorkflow';
@@ -84,19 +78,14 @@ export default function ClinicianApp() {
     const targetPath = appViewToPath(view, sessionWorkspace);
     go('app', { appView: canonicalizeAppView(view), workspaceSlug: sessionWorkspace });
   };
-  const [currentDoctor, setCurrentDoctor] = useState<Doctor>(() =>
-    isDemo ? MOCK_DOCTORS[0] : sessionDoctor
-  );
-  const [currentPatient, setCurrentPatient] = useState<Patient>(() =>
-    isDemo ? MOCK_PATIENTS[0] : UNASSIGNED_PATIENT
-  );
+  const [currentDoctor, setCurrentDoctor] = useState<Doctor>(() => sessionDoctor);
+  const [currentPatient, setCurrentPatient] = useState<Patient>(() => UNASSIGNED_PATIENT);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
-  const [patients, setPatients] = useState<Patient[]>(() => (isDemo ? MOCK_PATIENTS : []));
-  const [doctors, setDoctors] = useState<Doctor[]>(() => (isDemo ? MOCK_DOCTORS : [sessionDoctor]));
-  const [appointments, setAppointments] = useState<Appointment[]>(() =>
-    isDemo ? MOCK_APPOINTMENTS : []
-  );
+  const [patients, setPatients] = useState<Patient[]>([]);
+  const [doctors, setDoctors] = useState<Doctor[]>(() => [sessionDoctor]);
+  const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [workspaceError, setWorkspaceError] = useState("");
   const [prescriptions, setPrescriptions] = useState<Prescription[]>([]);
   const [draftState, setDraftState] = useState<PatientDraftSession>({
     patientId: '',
@@ -221,15 +210,6 @@ export default function ClinicianApp() {
 
   useEffect(() => {
     if (!user) return;
-    if (isDemo) {
-      const rxModule = clinicianRxSpecialty(user);
-      const match =
-        MOCK_DOCTORS.find((d) => d.email && user.email && d.email.toLowerCase() === user.email.toLowerCase()) ||
-        MOCK_DOCTORS.find((d) => d.specialty === rxModule) ||
-        MOCK_DOCTORS.find((d) => specialtyMatchesDoctor(rxModule, d.specialty));
-      setCurrentDoctor(match || MOCK_DOCTORS[0]);
-      return;
-    }
     setCurrentDoctor((prev) => resolveSessionDoctor(user, [prev, ...doctors]));
   }, [user?.id, user?.email, user?.specialty, isDemo]);
 
@@ -246,6 +226,7 @@ export default function ClinicianApp() {
           apiFetch<{ letterhead: TenantLetterhead }>('/api/tenant/letterhead').catch(() => ({ letterhead: null })),
         ]);
         if (cancelled) return;
+        setWorkspaceError("");
 
         if (letterheadRes.letterhead) {
           setLetterhead(letterheadRes.letterhead);
@@ -253,24 +234,15 @@ export default function ClinicianApp() {
             const sig = letterheadRes.letterhead.signatureUrl;
             setCurrentDoctor((prev) => (prev.signatureUrl ? prev : { ...prev, signatureUrl: sig }));
           }
+        } else {
+          setLetterhead(null);
         }
 
         const nextDoctors = doctorRes.doctors || [];
         if (nextDoctors.length) {
           setDoctors(nextDoctors);
-          setCurrentDoctor((prev) => {
-            if (isDemo) {
-              return (
-                nextDoctors.find((d) => d.id === prev.id) ||
-                nextDoctors.find((d) => d.userId === user?.id) ||
-                nextDoctors.find((d) => d.email && user?.email && d.email.toLowerCase() === user.email.toLowerCase()) ||
-                nextDoctors.find((d) => specialtyMatchesDoctor(clinicianRxSpecialty(user), d.specialty)) ||
-                nextDoctors[0]
-              );
-            }
-            return resolveSessionDoctor(user, nextDoctors);
-          });
-        } else if (!isDemo) {
+          setCurrentDoctor(() => resolveSessionDoctor(user, nextDoctors));
+        } else {
           const fallback = doctorFromUser(user);
           setDoctors([fallback]);
           setCurrentDoctor(fallback);
@@ -280,18 +252,12 @@ export default function ClinicianApp() {
         const nextAppointments = appointmentRes.appointments || [];
         const nextPrescriptions = prescriptionRes.prescriptions || [];
 
-        if (!isDemo) {
-          setPatients(nextPatients);
-          setCurrentPatient((prev) => nextPatients.find((p) => p.id === prev.id) || UNASSIGNED_PATIENT);
-          setAppointments(nextAppointments);
-          setPrescriptions(nextPrescriptions);
-        } else {
-          if (nextPatients.length) setPatients(nextPatients);
-          if (nextAppointments.length) setAppointments(nextAppointments);
-          setPrescriptions(nextPrescriptions);
-        }
-      } catch {
-        if (cancelled || isDemo) return;
+        setPatients(nextPatients);
+        setCurrentPatient((prev) => nextPatients.find((p) => p.id === prev.id) || UNASSIGNED_PATIENT);
+        setAppointments(nextAppointments);
+        setPrescriptions(nextPrescriptions);
+      } catch (err) {
+        if (cancelled) return;
         const fallback = doctorFromUser(user);
         setDoctors([fallback]);
         setCurrentDoctor(fallback);
@@ -299,6 +265,13 @@ export default function ClinicianApp() {
         setCurrentPatient(UNASSIGNED_PATIENT);
         setAppointments([]);
         setPrescriptions([]);
+        setLetterhead(null);
+        const detail = err instanceof Error ? err.message.trim() : "";
+        setWorkspaceError(
+          detail
+            ? `Could not load clinic data. ${detail}`
+            : "Could not load clinic data from the server."
+        );
       }
     };
 
@@ -635,6 +608,15 @@ export default function ClinicianApp() {
         />
 
         <main className="flex-1 min-w-0 w-full h-full overflow-y-auto overflow-x-hidden bg-slate-100/70 p-4 sm:p-6 lg:p-8 flex flex-col">
+          {workspaceError && (
+            <div
+              role="alert"
+              className="mb-3 px-3 py-2 rounded-lg bg-rose-50 border border-rose-200 text-sm text-rose-900"
+              data-testid="workspace-load-error"
+            >
+              {workspaceError}
+            </div>
+          )}
           {isDemo && (
             <div className="mb-3 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-900" data-testid="demo-sandbox-banner">
               {pack.sandboxNotice}
