@@ -1,4 +1,5 @@
 import { Router, type Request, type Response } from "express";
+import type { DatabaseSync } from "node:sqlite";
 import { getDb, mapAppointment } from "./db.ts";
 import {
   clinicLine,
@@ -12,17 +13,20 @@ import {
   dispatchAppointmentReminder,
   dispatchWhatsAppBookConfirmation,
   findActiveAppointment,
+  findDoctor,
   getWhatsAppQueue,
   httpErrorStatus,
   patchWhatsAppAppointment,
   resolveWhatsAppTenantId,
   runAppointmentReminders,
 } from "./whatsapp-calendar.ts";
+import { cloudDispatchHttpStatus, isCloudDispatchFailure } from "./graph-whatsapp.ts";
+import { dispatchPatientCloudText } from "./whatsapp-patient-dispatch.ts";
 import { isProduction } from "./runtime.ts";
 import { reportCaughtError } from "./error-tracker.ts";
 import { CLINICIAN_ROLES, requireAuth, requireRole } from "./auth.ts";
 import { rejectUntrustedTenantClaim } from "./tenant-guard.ts";
-import { authenticatedLabReportPath, authorizeLabReport, sendLabReportDenied } from "./lab-report-access.ts";
+import { authenticatedLabReportPath, authorizeLabReport, labOwnerTenantId, sendLabReportDenied } from "./lab-report-access.ts";
 import { WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
 import {
   clinicTenantId,
@@ -37,6 +41,79 @@ import {
 /** Patient names, notes, WhatsApp text, and Rx/lab fields before HTML interpolation. */
 function h(value: unknown): string {
   return escapeHtml(value);
+}
+
+/** Tenant display name plus that clinic's doctor. Never a platform brand fallback. */
+export function resolveClinicFacingNames(
+  db: DatabaseSync,
+  tenantId: string,
+  preferredDoctor?: string
+): { clinicName: string; doctorName: string } {
+  let clinicName = "";
+  const id = String(tenantId || "").trim();
+  if (id) {
+    try {
+      const row = db.prepare("SELECT name FROM tenants WHERE id = ?").get(id) as { name?: string } | undefined;
+      clinicName = String(row?.name || "").trim();
+    } catch {
+      clinicName = "";
+    }
+  }
+  const preferred = String(preferredDoctor || "").trim();
+  let doctorName = preferred && !/^doctor$/i.test(preferred) ? preferred : "";
+  if (!doctorName && id) {
+    try {
+      const doc = findDoctor({ tenantId: id });
+      doctorName = String(doc?.name || "").trim();
+    } catch {
+      doctorName = "";
+    }
+  }
+  return {
+    clinicName: clinicName || "your clinic",
+    doctorName: doctorName || "your doctor",
+  };
+}
+
+export function clinicOutboundCopy(opts: {
+  clinicName: string;
+  doctorName: string;
+  patientName?: string;
+  patientText?: string;
+  docOptions?: string;
+  roster?: string;
+}): {
+  handoverRestored: string;
+  healthNotice: string;
+  consultationSubtitle: string;
+  booking: string;
+  roster: string;
+  assistantPrompt: string;
+  assistantFallback: string;
+  rxDispatcher: string;
+  pdfVerify: string;
+  labQa: string;
+} {
+  const clinic = String(opts.clinicName || "").trim() || "your clinic";
+  const doctor = String(opts.doctorName || "").trim() || "your doctor";
+  const patientName = String(opts.patientName || "Patient").trim() || "Patient";
+  const patientText = String(opts.patientText || "");
+  return {
+    handoverRestored: `🤖 Automated AI Assistant Restored: ${clinic} assistant is now handling routine patient inquiries.`,
+    healthNotice: `Important health notification from ${clinic}.`,
+    consultationSubtitle: `Signed by ${doctor} • ${clinic}`,
+    booking: `📅 *${clinic} Doctor Appointment Booking*\n\nHere are the active consultants available for OPD booking today:\n\n${opts.docOptions || ""}\n\nPlease select your preferred specialist or tap a quick booking slot below:`,
+    roster: `⏰ *${clinic} OPD Roster & Timings*:\n\n${opts.roster || ""}\n\nEmergency care & triage desk operates 24/7.`,
+    assistantPrompt: `You are the WhatsApp medical assistant for ${clinic}. The consulting clinician is ${doctor}.
+The patient is asking: "${patientText}".
+Patient Name: ${patientName}.
+Respond in friendly WhatsApp tone with emojis, medical accuracy, and clear next steps. Keep response within 80-120 words.
+Suggest relevant quick actions (booking appointment, checking timings, viewing lab report, or talking to staff).`,
+    assistantFallback: `Thank you for reaching out to ${clinic}. How may we assist you further?`,
+    rxDispatcher: doctor,
+    pdfVerify: `Digitally signed & verified by ${clinic}`,
+    labQa: `${clinic} diagnostic quality assurance`,
+  };
 }
 
 let defaultGenAIClient: GoogleGenAI | null = null;
@@ -213,9 +290,11 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
 
       // Insert an internal audit / system notification message in chat
       const sysMsgId = `sys-${crypto.randomUUID().slice(0, 8)}`;
+      const facing = resolveClinicFacingNames(db, String(req.user?.tenantId || ""));
+      const copy = clinicOutboundCopy(facing);
       const sysText = mode === "human"
         ? `🔒 Staff Takeover Activated: ${staffName || "Clinic Staff"} has taken control of this conversation. Automated AI bot replies paused.`
-        : `🤖 Automated AI Assistant Restored: Lumera Bot is now handling routine patient inquiries.`;
+        : copy.handoverRestored;
 
       db.prepare(`
         INSERT INTO whatsapp_messages (id, conversation_id, patient_phone, sender, staff_name, content, time_display, status, created_at, tenant_id)
@@ -340,6 +419,28 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
       }
       if (!sessionTenantId) {
         return res.status(400).json({ error: "No tenant associated with this account." });
+      }
+
+      if (sender === "agent") {
+        const staffTenantId = resolveWhatsAppTenantId({
+          tenantId: bodyTenantId,
+          sessionTenantId,
+          phoneNumberId,
+          wabaId,
+          patientPhone,
+        });
+        const sent = await dispatchPatientCloudText({
+          tenantId: staffTenantId || undefined,
+          to: patientPhone,
+          textBody: String(content || "").trim() || "[media]",
+          isManual: true,
+        });
+        if (isCloudDispatchFailure(sent)) {
+          return res.status(cloudDispatchHttpStatus(sent.error, sent.status)).json({
+            error: sent.error,
+            channel: sent.channel,
+          });
+        }
       }
 
       const db = getDb();
@@ -776,6 +877,15 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
       const now = new Date().toISOString();
       const timeDisplay = getDisplayTime();
       const eventId = `evt-${crypto.randomUUID().slice(0, 8)}`;
+      const outboundTenantId =
+        resolveWhatsAppTenantId({
+          tenantId: bodyTenantId || customPayload.tenantId,
+          sessionTenantId: String(req.user?.tenantId || "").trim(),
+          phoneNumberId,
+          wabaId,
+          patientPhone,
+        }) || "";
+      const outboundCopy = clinicOutboundCopy(resolveClinicFacingNames(db, outboundTenantId));
 
       let details = "";
       let messageContent = "";
@@ -784,14 +894,14 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
 
       if (eventType === "post_consultation_dispatch") {
         details = `Post-consultation digital packet dispatched: Prescription & Diagnostic invoice.`;
-        messageContent = `📋 *Consultation Summary & Prescription Signed*\n\nNamaste ${patientName},\nDr. Siddharth Varma has signed your clinical prescription (*RX-2026-0106*).\n\nYour digital consultation receipt (#INV-9921 for ₹700) has been generated. You can preview or download your verified medical documents below.`;
+        messageContent = `📋 *Consultation Summary & Prescription Signed*\n\nNamaste ${patientName},\n${outboundCopy.rxDispatcher} has signed your clinical prescription (*RX-2026-0106*).\n\nYour digital consultation receipt (#INV-9921 for ₹700) has been generated. You can preview or download your verified medical documents below.`;
         buttons = ["📄 View Prescription Slip", "📥 Download PDF", "💊 Order Medicine Home Delivery"];
         media = {
           type: "pdf",
           title: "Prescription_RX-2026-0106_Rajiv_Saxena.pdf",
           url: "/api/emr/prescription/rx-101/pdf",
           size: "245 KB",
-          subtitle: "Signed by Dr. Siddharth Varma (PT) • Lumera Rehab",
+          subtitle: outboundCopy.consultationSubtitle,
         };
       } else if (eventType === "queue_token_update") {
         details = `Live OPD Queue Alert dispatched: Patient is next in line.`;
@@ -799,7 +909,7 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
         buttons = ["✅ I am at OPD Room", "🚶 Need 5 Mins", "📞 Reception Call"];
       } else {
         details = `Custom broadcast sent to ${patientName}.`;
-        messageContent = customPayload.message || "Important health notification from Lumera Polyclinic.";
+        messageContent = customPayload.message || outboundCopy.healthNotice;
       }
 
       const sessionTenantId = clinicTenantId(req);
@@ -972,7 +1082,8 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
       // If audioBase64 provided, pass to Gemini
       if (audioBase64 && ai) {
         try {
-          const prompt = `You are Lumera Clinical Audio AI. Transcribe this patient voice note accurately.
+          const voiceFacing = resolveClinicFacingNames(getDb(), String(req.user?.tenantId || ""));
+          const prompt = `You are the clinical audio assistant for ${voiceFacing.clinicName}. The consulting clinician is ${voiceFacing.doctorName}. Transcribe this patient voice note accurately.
 Detect the spoken language (e.g. Hindi, Marathi, Kannada, English, Tamil).
 Extract the clinical chief complaints, duration, severity, and intent (e.g. appointment booking, prescription inquiry, lab report question).
 
@@ -1076,10 +1187,9 @@ Output strictly in JSON:
         language = "en",
       } = req.body;
       const tenantId = String((req as Request).user?.tenantId || "");
-      const clinicName =
-        String(req.body?.clinicName || "").trim() ||
-        (tenantId ? getTenantLetterhead(tenantId).clinicName : "") ||
-        "Lumera Healthcare Polyclinic";
+      const rxFacing = resolveClinicFacingNames(getDb(), tenantId, String(req.body?.doctorName || doctorName || ""));
+      const rxCopy = clinicOutboundCopy(rxFacing);
+      const clinicName = String(req.body?.clinicName || "").trim() || rxFacing.clinicName;
 
       const db = getDb();
       const now = new Date().toISOString();
@@ -1119,7 +1229,7 @@ Output strictly in JSON:
         tenantId,
         patientPhone: cleanPhone,
         patientName,
-        assignedStaff: "Lumera Rx Dispatcher",
+        assignedStaff: rxCopy.rxDispatcher,
         tags: '["Prescription", "Digital EMR"]',
         preferredLanguage: language || "en",
         lastMessage: `Digital Rx: ${rxNumber}`,
@@ -1321,7 +1431,7 @@ Output strictly in JSON:
     <div class="footer">
       <div class="qr-box">
         <div><strong>Rx No:</strong> ${h(rx.rx_number)}</div>
-        <div style="color: #64748b; font-size: 10px; margin-top: 4px;">Digitally signed & verified on Lumera Health Cloud</div>
+        <div style="color: #64748b; font-size: 10px; margin-top: 4px;">${h(clinicOutboundCopy({ clinicName: String(rx.clinic_name || stamped.name || letterhead.clinicName || "Clinic"), doctorName: String(rx.doctor_name || "") }).pdfVerify)}</div>
       </div>
       <div style="text-align: right;">
         ${signatureBlock}
@@ -1408,7 +1518,7 @@ Output strictly in JSON:
     <div class="meta-grid">
       <div><strong>Patient Name</strong> ${h(lab.patient_name)}</div>
       <div><strong>UHID</strong> ${h(lab.patient_uhid)}</div>
-      <div><strong>Referring Doctor</strong> Dr. Siddharth Varma (PT)</div>
+        <div><strong>Referring Doctor</strong> ${h(resolveClinicFacingNames(getDb(), labOwnerTenantId(lab)).doctorName)}</div>
       <div><strong>Report Status</strong> Verified & Released</div>
     </div>
 
@@ -1435,7 +1545,7 @@ Output strictly in JSON:
     <div class="footer">
       <div>
         <div>Verified by: <strong>Dr. Ananya Ray, MD (Pathology)</strong></div>
-        <div style="color: #64748b; font-size: 11px;">Lumera Diagnostic Quality Assurance Cell</div>
+        <div style="color: #64748b; font-size: 11px;">${h(clinicOutboundCopy(resolveClinicFacingNames(getDb(), labOwnerTenantId(lab))).labQa)}</div>
       </div>
       <div style="text-align: right;">
         <div style="font-family: cursive; font-size: 22px; color: #0f766e;">Dr. A. Ray</div>
@@ -1590,8 +1700,12 @@ async function processBotActionOrQuery(
     const doctors = db.prepare("SELECT * FROM doctors WHERE active = 1 LIMIT 4").all() as Record<string, unknown>[];
     const docOptions = doctors.map((d) => `• *${d.name}* (${d.specialty}) - OPD Room ${d.opd_room}, Fee ₹${d.consultation_fee}`).join("\n");
 
+    const bookingCopy = clinicOutboundCopy({
+      ...resolveClinicFacingNames(db, tenantId),
+      docOptions,
+    });
     return {
-      content: `📅 *Lumera Doctor Appointment Booking*\n\nHere are the active consultants available for OPD booking today:\n\n${docOptions}\n\nPlease select your preferred specialist or tap a quick booking slot below:`,
+      content: bookingCopy.booking,
       buttons: ["Book Dr. Siddharth (Physio)", "Book Dr. Vikram (Medicine)", "Book Dr. Ananya (Pediatrics)", "View Full OPD Roster"],
     };
   }
@@ -1601,8 +1715,12 @@ async function processBotActionOrQuery(
     const doctors = db.prepare("SELECT * FROM doctors WHERE active = 1 LIMIT 5").all() as Record<string, unknown>[];
     const roster = doctors.map((d) => `👨‍⚕️ *${d.name}* (${d.specialty})\n  🕒 ${d.opd_timing} | 🚪 ${d.opd_room}`).join("\n\n");
 
+    const rosterCopy = clinicOutboundCopy({
+      ...resolveClinicFacingNames(db, tenantId),
+      roster,
+    });
     return {
-      content: `⏰ *Lumera Polyclinic OPD Roster & Timings*:\n\n${roster}\n\nEmergency care & triage desk operates 24/7.`,
+      content: rosterCopy.roster,
       buttons: ["📅 Book Appointment", "🎫 Check Live Queue", "📍 Clinic Location"],
     };
   }
@@ -1656,11 +1774,12 @@ async function processBotActionOrQuery(
   const ai = getGenAI();
   if (ai) {
     try {
-      const prompt = `You are Lumera Health Desk, an empathetic, clinically sound WhatsApp Medical Assistant for Lumera Polyclinic & Rehabilitation Center.
-The patient is asking: "${text}".
-Patient Name: ${patientName}.
-Respond in friendly WhatsApp tone with emojis, medical accuracy, and clear next steps. Keep response within 80-120 words.
-Suggest relevant quick actions (booking appointment, checking timings, viewing lab report, or talking to staff).`;
+      const assistantCopy = clinicOutboundCopy({
+        ...resolveClinicFacingNames(db, tenantId),
+        patientName,
+        patientText: text,
+      });
+      const prompt = assistantCopy.assistantPrompt;
 
       const res = await ai.models.generateContent({
         model: "gemini-2.5-flash",
@@ -1668,7 +1787,7 @@ Suggest relevant quick actions (booking appointment, checking timings, viewing l
       });
 
       return {
-        content: res.text || "Thank you for reaching out to Lumera Polyclinic. How may we assist you further?",
+        content: res.text || assistantCopy.assistantFallback,
         buttons: ["📅 Book Doctor Appointment", "💊 Refill Prescription", "🔬 View Lab Reports", "👤 Speak with Receptionist"],
       };
     } catch (err) {

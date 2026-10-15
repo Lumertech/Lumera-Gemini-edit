@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { getDb } from "./db.ts";
 import { isProduction, sandboxSimulatorsEnabled } from "./runtime.ts";
-import { decryptWaSecret, isEncryptedWaSecret, sealWaSecret, warnWaTokenKeyOnce, waTokenKeyBytes } from "./wa-token-crypto.ts";
+import { decryptWaSecret, isEncryptedWaSecret, sealWaSecret, waTokenKeyBytes } from "./wa-token-crypto.ts";
 
 /**
  * Two-tier WABA ownership.
@@ -363,8 +363,9 @@ export function storeToken(
 
 /**
  * Encrypt existing plaintext secret rows when WA_TOKEN_KEY is set.
- * Production without the key fails only after a token row exists; otherwise warn.
- * Always nulls tenants.meta_access_token so the plaintext copy is not kept.
+ * An unset key logs an error and skips encryption so boot can continue.
+ * Clinic sends stay unavailable until the key is set. A malformed key still
+ * fails production boot. Always nulls tenants.meta_access_token.
  */
 export function migrateWhatsAppSecretEncryption(database: DatabaseSync): void {
   ensureWhatsAppOwnershipSchema(database);
@@ -376,25 +377,18 @@ export function migrateWhatsAppSecretEncryption(database: DatabaseSync): void {
   } catch {
     rows = [];
   }
-  const nonempty = rows.filter(
-    (row) => String(row.meta_access_token || "").trim() || String(row.registration_pin || "").trim()
-  );
   let key: Buffer | null = null;
   try {
     key = waTokenKeyBytes();
   } catch (err) {
+    const message = err instanceof Error ? err.message : "WA_TOKEN_KEY is invalid.";
+    console.error(message);
     if (isProduction()) throw err;
-    warnWaTokenKeyOnce(err instanceof Error ? err.message : "WA_TOKEN_KEY is invalid.");
     key = null;
   }
   if (!key) {
-    if (isProduction() && nonempty.length > 0) {
-      throw new Error("WA_TOKEN_KEY is required in production once WhatsApp number tokens are stored.");
-    }
-    warnWaTokenKeyOnce(
-      nonempty.length === 0
-        ? "WA_TOKEN_KEY is unset. No WhatsApp token rows yet; set WA_TOKEN_KEY before a clinic connects a number."
-        : "WA_TOKEN_KEY is unset. WhatsApp tokens are not encrypted in this process."
+    console.error(
+      "WA_TOKEN_KEY is unset. Skipping WhatsApp token encryption. Clinic WhatsApp sends are unavailable until WA_TOKEN_KEY is set."
     );
   } else {
     const now = new Date().toISOString();

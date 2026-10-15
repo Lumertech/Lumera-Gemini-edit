@@ -9,7 +9,7 @@ import { bootWhatsAppOwnershipSchema, createWhatsAppNumbersRouter, practitionerL
 import { getDb, initDatabase } from "./db.ts";
 import { hashPassword } from "./password.ts";
 import { completeEmbeddedSignup, exchangeEmbeddedSignupCode, subscribeAppToCustomerWaba } from "./embedded-signup.ts";
-import { clinicActor, getTenantWabaNumber } from "./whatsapp-numbers.ts";
+import { clinicActor, getTenantWabaNumber, getWhatsAppRegistrationPin } from "./whatsapp-numbers.ts";
 import { buildMetaReadinessOverview } from "./meta-security.ts";
 import { decideDataDeletionSignedRequest, signMetaSignedRequest } from "./meta-signed-request.ts";
 import { wabaOnboardingCapsOverview } from "./waba-onboarding-caps.ts";
@@ -273,6 +273,41 @@ describe("Embedded Signup v4 handshake", () => {
       .prepare("SELECT registration_pin FROM whatsapp_number_secrets WHERE id = ?")
       .get(row!.meta_token_ref) as { registration_pin: string };
     assert.equal(storedPin.registration_pin, pins[1]);
+  });
+
+  it("reuses the stored 2FA PIN on reconnect and generates a new PIN only when none is stored", async () => {
+    const clinic = seedClinic("pin-reuse");
+    const calls: Array<{ url: string; method: string; body?: string }> = [];
+    const wabaId = `10229${Date.now().toString().slice(-8)}${Math.floor(100 + Math.random() * 900)}`;
+    const phoneId = `10654${Date.now().toString().slice(-8)}${Math.floor(100 + Math.random() * 900)}`;
+    const fetchImpl = mockGraphFetch(calls, { wabaId, phoneId }) as typeof fetch;
+    const input = {
+      code: "AQB-embedded-signup-code",
+      wabaId,
+      phoneNumberId: phoneId,
+      actor: clinicActor(clinic.tenantId),
+      ownerType: "tenant" as const,
+      ownerId: clinic.tenantId,
+      fetchImpl,
+    };
+    await completeEmbeddedSignup(input);
+    await completeEmbeddedSignup(input);
+    const registers = calls.filter((c) => c.method === "POST" && c.url.includes(`/${phoneId}/register`));
+    assert.equal(registers.length, 2);
+    const pins = registers.map((call) => String((JSON.parse(String(call.body || "{}")) as { pin?: string }).pin || ""));
+    assert.match(pins[0], /^\d{6}$/);
+    assert.equal(pins[1], pins[0]);
+    const row = getTenantWabaNumber(clinic.tenantId);
+    assert.equal(getWhatsAppRegistrationPin(row!.meta_token_ref), pins[0]);
+
+    getDb().prepare("UPDATE whatsapp_number_secrets SET registration_pin = '' WHERE id = ?").run(row!.meta_token_ref);
+    await completeEmbeddedSignup(input);
+    const after = calls.filter((c) => c.method === "POST" && c.url.includes(`/${phoneId}/register`));
+    assert.equal(after.length, 3);
+    const fresh = String((JSON.parse(String(after[2].body || "{}")) as { pin?: string }).pin || "");
+    assert.match(fresh, /^\d{6}$/);
+    assert.notEqual(fresh, pins[0]);
+    assert.equal(getWhatsAppRegistrationPin(row!.meta_token_ref), fresh);
   });
 
   it("rejects a phone_number_id that is not granted on the WABA", async () => {

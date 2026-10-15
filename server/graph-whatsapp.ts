@@ -3,6 +3,7 @@ import { graphApiVersion, isProduction, readSecret } from "./runtime.ts";
 import { isUsableGraphToken, isUsablePhoneNumberId } from "./meta-security.ts";
 import { recordWhatsAppUsageAndDebit } from "./usage-billing.ts";
 import { getTenantWabaNumber, getWhatsAppNumberSecret } from "./whatsapp-numbers-store.ts";
+import { waTokenKeyBytes } from "./wa-token-crypto.ts";
 
 /**
  * Shared Meta WhatsApp Cloud API send module (Wave 1B OTP + Wave 2 utilities).
@@ -37,12 +38,15 @@ export const READ_ONLY_WHATSAPP_SEND_ERROR =
 export const WHATSAPP_WINDOW_CLOSED_ERROR =
   "Manual WhatsApp replies are limited to 24 hours after the patient's last inbound message.";
 export const CLINIC_DOCTOR_NAME_REQUIRED = "clinic_name and doctor_name are required.";
+export const WA_TOKEN_KEY_UNSET_ERROR =
+  "WA_TOKEN_KEY is unset. Clinic WhatsApp sends are unavailable until it is set.";
 
 const CUSTOMER_SERVICE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 export function cloudDispatchHttpStatus(error: string, status?: number): number {
   if (status === 403 || status === 402 || status === 503 || status === 400) return status;
   if (error === CLINIC_WHATSAPP_NOT_CONNECTED || /Clinic WhatsApp not connected/i.test(error)) return 503;
+  if (error === WA_TOKEN_KEY_UNSET_ERROR || /WA_TOKEN_KEY is unset/i.test(error)) return 503;
   if (error === READ_ONLY_WHATSAPP_SEND_ERROR || error === WHATSAPP_WINDOW_CLOSED_ERROR) return 403;
   if (/not permitted|24 hours after the patient/i.test(error)) return 403;
   if (String(error || "").includes("Top up now")) return 402;
@@ -138,7 +142,11 @@ function tableHasColumn(db: DatabaseSync, table: string, column: string): boolea
   }
 }
 
-/** Last patient inbound within 24h opens the customer-service window. */
+/**
+ * Last patient inbound within 24h opens the customer-service window.
+ * The clock is whatsapp_conversations.last_inbound_at for the caller's tenant only.
+ * NULL-tenant and other-tenant rows never open the window.
+ */
 export function isWithinCustomerServiceWindow(
   db: DatabaseSync | null | undefined,
   tenantId: string,
@@ -146,39 +154,49 @@ export function isWithinCustomerServiceWindow(
   nowMs = Date.now()
 ): boolean {
   if (!db) return false;
+  const tenant = String(tenantId || "").trim();
+  if (!tenant) return false;
   const digits = toWhatsAppRecipient(to);
   if (digits.length < 10) return false;
   const like = `%${digits.slice(-10)}`;
   try {
-    const scoped = tableHasColumn(db, "whatsapp_messages", "tenant_id");
-    const row = (
-      scoped
-        ? db
-            .prepare(
-              `SELECT created_at FROM whatsapp_messages
-               WHERE sender = 'patient'
-                 AND (tenant_id = ? OR tenant_id IS NULL OR TRIM(tenant_id) = '')
-                 AND replace(replace(replace(replace(patient_phone, ' ', ''), '-', ''), '+', ''), '(', '') LIKE ?
-               ORDER BY created_at DESC
-               LIMIT 1`
-            )
-            .get(tenantId, like)
-        : db
-            .prepare(
-              `SELECT created_at FROM whatsapp_messages
-               WHERE sender = 'patient'
-                 AND replace(replace(replace(replace(patient_phone, ' ', ''), '-', ''), '+', ''), '(', '') LIKE ?
-               ORDER BY created_at DESC
-               LIMIT 1`
-            )
-            .get(like)
-    ) as { created_at?: string } | undefined;
-    const ts = Date.parse(String(row?.created_at || ""));
+    if (!tableHasColumn(db, "whatsapp_conversations", "tenant_id")) return false;
+    if (!tableHasColumn(db, "whatsapp_conversations", "last_inbound_at")) return false;
+    const row = db
+      .prepare(
+        `SELECT last_inbound_at FROM whatsapp_conversations
+         WHERE tenant_id = ?
+           AND last_inbound_at IS NOT NULL
+           AND TRIM(last_inbound_at) != ''
+           AND replace(replace(replace(replace(patient_phone, ' ', ''), '-', ''), '+', ''), '(', '') LIKE ?
+         ORDER BY last_inbound_at DESC
+         LIMIT 1`
+      )
+      .get(tenant, like) as { last_inbound_at?: string } | undefined;
+    const ts = Date.parse(String(row?.last_inbound_at || ""));
     if (!Number.isFinite(ts)) return false;
     const age = nowMs - ts;
     return age >= 0 && age <= CUSTOMER_SERVICE_WINDOW_MS;
   } catch {
     return false;
+  }
+}
+
+function tenantHasConnectedWhatsAppNumber(db: DatabaseSync, tenantId: string): boolean {
+  try {
+    const row = getTenantWabaNumber(tenantId, db);
+    return Boolean(row && row.status === "connected" && String(row.phone_number_id || "").trim());
+  } catch {
+    return false;
+  }
+}
+
+/** Real clinic numbers cannot send until WA_TOKEN_KEY can seal and read the token. */
+function clinicTokenKeyMissing(): boolean {
+  try {
+    return waTokenKeyBytes() == null;
+  } catch {
+    return true;
   }
 }
 
@@ -638,6 +656,18 @@ export async function dispatchWhatsAppCloudMessage(opts: {
     if (policy.ok === false) {
       return { ok: false, error: policy.error, channel: "none", status: policy.status };
     }
+  }
+
+  if (
+    isProduction() &&
+    !platformSend &&
+    tenantId &&
+    opts.db &&
+    !isSandboxOrDemoTenant(opts.db, tenantId) &&
+    tenantHasConnectedWhatsAppNumber(opts.db, tenantId) &&
+    clinicTokenKeyMissing()
+  ) {
+    return { ok: false, channel: "none", error: WA_TOKEN_KEY_UNSET_ERROR, status: 503 };
   }
 
   const creds = resolveGraphCredentials(opts.db, platformSend ? undefined : tenantId || undefined, {

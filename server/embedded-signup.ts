@@ -21,7 +21,14 @@
 
 import crypto from "node:crypto";
 import { envFlag, graphApiVersion, isProduction, isUnsetOrPlaceholder, readSecret, sandboxSimulatorsEnabled } from "./runtime.ts";
-import { upsertWhatsAppNumber, publicWhatsAppNumber, type WabaActor, type WhatsAppOwnerType } from "./whatsapp-numbers.ts";
+import {
+  getWhatsAppNumberByPhoneNumberId,
+  getWhatsAppRegistrationPin,
+  publicWhatsAppNumber,
+  upsertWhatsAppNumber,
+  type WabaActor,
+  type WhatsAppOwnerType,
+} from "./whatsapp-numbers.ts";
 
 export const EMBEDDED_SIGNUP_SCOPES = [
   "whatsapp_business_management",
@@ -364,6 +371,14 @@ function tokenExpiryIso(debug: DebugTokenPayload): string | undefined {
   return new Date(soonest * 1000).toISOString();
 }
 
+/** Reconnect keeps the PIN already stored for this phone. A new PIN is only minted when none exists. */
+function storedRegistrationPin(phoneNumberId: string): string {
+  const row = getWhatsAppNumberByPhoneNumberId(phoneNumberId);
+  if (!row?.meta_token_ref) return "";
+  const pin = String(getWhatsAppRegistrationPin(row.meta_token_ref) || "").trim();
+  return /^\d{6}$/.test(pin) ? pin : "";
+}
+
 export async function completeEmbeddedSignup(opts: {
   code: string;
   wabaId: string;
@@ -400,7 +415,7 @@ export async function completeEmbeddedSignup(opts: {
     fetchImpl,
   });
 
-  const registrationPin = generateWhatsAppRegistrationPin();
+  const registrationPin = storedRegistrationPin(opts.phoneNumberId) || generateWhatsAppRegistrationPin();
   await registerWhatsAppCloudPhone({
     accessToken: exchanged.accessToken,
     phoneNumberId: opts.phoneNumberId,
@@ -432,6 +447,6 @@ export async function completeEmbeddedSignup(opts: {
     registrationPinStored: true,
     sandbox: !isProduction(),
     notice:
-      "Embedded Signup v4 handshake completed. The phone number was registered with a generated PIN stored encrypted. Reconnect runs /register again. Contact ravee@lumer.me.",
+      "Embedded Signup v4 handshake completed. The phone number was registered with the stored 6-digit PIN. Reconnect reuses that PIN and generates a new one only when none is stored. Contact ravee@lumer.me.",
   };
 }

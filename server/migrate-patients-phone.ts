@@ -30,7 +30,7 @@ export function addWhatsAppTenantColumns(database: SqlDatabase) {
     database.exec("CREATE INDEX IF NOT EXISTS idx_wa_msg_tenant ON whatsapp_messages(tenant_id)");
   } catch {}
   try {
-    database.exec("ALTER TABLE whatsapp_conversations ADD COLUMN last_inbound_at TEXT");
+    database.exec("ALTER TABLE whatsapp_conversations ADD COLUMN IF NOT EXISTS last_inbound_at TEXT");
   } catch {}
   try {
     database.exec("CREATE INDEX IF NOT EXISTS idx_wa_evt_tenant ON whatsapp_outbound_events(tenant_id)");

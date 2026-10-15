@@ -129,15 +129,8 @@ export function createUsageBillingRouter(): Router {
     const tenantId = requestTenantId(req, patientPhone);
     const body = req.body || {};
     if (!body.content && !body.media && !body.buttons) return next();
-    if (sender === "agent" && patientPhone) {
-      const outboundText = String(body.content || "").trim() || "[media]";
-      const sent = await dispatchPatientCloudText({
-        tenantId: tenantId || undefined,
-        to: patientPhone,
-        textBody: outboundText,
-        isManual: true,
-      });
-      if (isCloudDispatchFailure(sent)) return walletBlockedJson(res, sent);
+    if (sender === "agent") {
+      // The staff-reply route in whatsapp.ts dispatches this send with isManual: true.
       return next();
     }
     if (sender === "user" && patientPhone) {

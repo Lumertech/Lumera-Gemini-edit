@@ -212,7 +212,7 @@ function recordReceiptEvent(opts: {
       tenantId,
       patientPhone: cleanPhone,
       patientName: userName,
-      assignedStaff: "Lumera Billing",
+      assignedStaff: "Billing",
       tags: '["Billing", "Receipt"]',
       preferredLanguage: "en",
       lastMessage: opts.details,
@@ -226,7 +226,7 @@ function recordReceiptEvent(opts: {
         `INSERT INTO whatsapp_messages (
           id, conversation_id, patient_phone, sender, staff_name, content,
           translated_content, detected_language, time_display, buttons, media, status, created_at, tenant_id
-        ) VALUES (?, ?, ?, 'agent', 'Lumera Billing', ?, null, 'en', ?, null, null, ?, ?, ?)`
+        ) VALUES (?, ?, ?, 'agent', 'Billing', ?, null, 'en', ?, null, null, ?, ?, ?)`
       ).run(msgId, convId, cleanPhone, opts.conversationContent, timeDisplay, opts.status, now, tenantId);
     }
 
