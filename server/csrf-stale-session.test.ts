@@ -9,10 +9,14 @@ import { getDb, initDatabase } from "./db.ts";
 import {
   CSRF_REFRESHED_CODE,
   attachHttpSecurity,
+  cookieDomainsToExpire,
   cookiesForwardedByFirebaseHosting,
   csrfProtectionMiddleware,
+  csrfShouldReject,
   packHostSession,
   resetAuthRateLimitStore,
+  selectHostSession,
+  sessionCookieExpiryLines,
   unpackHostSession,
 } from "./http-security.ts";
 import { startTestServer, type TestHttpServer } from "./test-http.ts";
@@ -334,6 +338,423 @@ describe("stale anonymous __session CSRF refresh", () => {
     } finally {
       globalThis.fetch = previousFetch;
       setDocumentCookie(null);
+    }
+  });
+
+  it("picks the __session whose csrf matches the header, not only the last cookie", () => {
+    const older = packHostSession("anon.older", "older-csrf");
+    const newer = packHostSession("anon.newer", "newer-csrf");
+    const header = `__session=${encodeURIComponent(older)}; __session=${encodeURIComponent(newer)}`;
+    assert.equal(selectHostSession(header, "older-csrf"), older);
+    assert.equal(selectHostSession(header, "newer-csrf"), newer);
+    assert.equal(selectHostSession(header, "neither"), newer);
+    const matchesOlder = {
+      method: "POST",
+      path: "/api/auth/login",
+      originalUrl: "/api/auth/login",
+      headers: { cookie: header, "x-csrf-token": "older-csrf" },
+    } as unknown as express.Request;
+    assert.equal(csrfShouldReject(matchesOlder), false);
+    const matchesNeither = {
+      method: "POST",
+      path: "/api/auth/login",
+      originalUrl: "/api/auth/login",
+      headers: { cookie: header, "x-csrf-token": "nope" },
+    } as unknown as express.Request;
+    assert.equal(csrfShouldReject(matchesNeither), true);
+  });
+
+  it("expiry lines cover Domain and Path variants of the allowlisted host only", () => {
+    const env = { NODE_ENV: "production", ALLOWED_ORIGINS: "https://www.mylumera.in" } as NodeJS.ProcessEnv;
+    assert.deepEqual(cookieDomainsToExpire("www.mylumera.in"), [
+      "www.mylumera.in",
+      ".www.mylumera.in",
+      "mylumera.in",
+      ".mylumera.in",
+    ]);
+    assert.deepEqual(cookieDomainsToExpire("localhost"), []);
+    assert.deepEqual(cookieDomainsToExpire("127.0.0.1"), []);
+    const lines = sessionCookieExpiryLines(env);
+    assert.ok(lines.some((line) => line.startsWith("__session=") && /domain=\.mylumera\.in/i.test(line) && /max-age=0/i.test(line)));
+    assert.ok(lines.some((line) => line.startsWith("__session=") && /domain=mylumera\.in/i.test(line) && !/domain=\.mylumera\.in/i.test(line)));
+    assert.ok(lines.some((line) => line.startsWith("lumera_csrf=") && /path=\/api(?:;|$)/i.test(line) && /max-age=0/i.test(line)));
+    assert.equal(lines.some((line) => /domain=\.in(?:;|$)/i.test(line)), false);
+    assert.equal(lines.some((line) => /domain=evil/i.test(line)), false);
+    assert.equal(sessionCookieExpiryLines({ NODE_ENV: "test" } as NodeJS.ProcessEnv).length, 0);
+  });
+
+  it("a Chrome jar with a Domain cookie and a stale lumera_csrf can still log in", async () => {
+    resetAuthRateLimitStore();
+    const previousOrigins = process.env.ALLOWED_ORIGINS;
+    const previousAppUrl = process.env.APP_URL;
+    process.env.ALLOWED_ORIGINS = "https://www.mylumera.in";
+    process.env.APP_URL = "https://www.mylumera.in";
+
+    type JarCookie = {
+      name: string;
+      value: string;
+      domain: string | null;
+      path: string;
+      httpOnly: boolean;
+      created: number;
+    };
+    const host = "www.mylumera.in";
+    const loginPath = "/api/auth/login";
+    let clock = 3;
+    const jar: JarCookie[] = [];
+    const matches = (cookie: JarCookie) => {
+      if (cookie.path !== "/" && !loginPath.startsWith(cookie.path)) return false;
+      if (!cookie.domain) return true;
+      const domain = cookie.domain.replace(/^\./, "");
+      return host === domain || host.endsWith(`.${domain}`);
+    };
+    const ordered = (includeHttpOnly: boolean) =>
+      jar
+        .filter((cookie) => matches(cookie) && (includeHttpOnly || !cookie.httpOnly))
+        .sort((a, b) => b.path.length - a.path.length || a.created - b.created);
+    const cookieHeader = () => ordered(true).map((cookie) => `${cookie.name}=${encodeURIComponent(cookie.value)}`).join("; ");
+    const documentCookie = () => ordered(false).map((cookie) => `${cookie.name}=${encodeURIComponent(cookie.value)}`).join("; ");
+    const apply = (setCookies: string[]) => {
+      for (const line of setCookies) {
+        const [pair, ...attrs] = line.split(";").map((part) => part.trim());
+        const eq = pair.indexOf("=");
+        if (eq <= 0) continue;
+        const name = pair.slice(0, eq);
+        const rawValue = pair.slice(eq + 1);
+        const attrMap = new Map<string, string>();
+        for (const attr of attrs) {
+          const idx = attr.indexOf("=");
+          if (idx === -1) attrMap.set(attr.toLowerCase(), "");
+          else attrMap.set(attr.slice(0, idx).toLowerCase(), attr.slice(idx + 1));
+        }
+        const domain = attrMap.has("domain") ? (attrMap.get("domain") || "").toLowerCase() : null;
+        const path = attrMap.get("path") || "/";
+        const httpOnly = attrMap.has("httponly");
+        const same = (cookie: JarCookie) =>
+          cookie.name === name &&
+          cookie.path === path &&
+          ((domain == null && cookie.domain == null) ||
+            (domain != null && (cookie.domain || "").replace(/^\./, "") === domain.replace(/^\./, "")));
+        for (let i = jar.length - 1; i >= 0; i--) if (same(jar[i])) jar.splice(i, 1);
+        if (attrMap.get("max-age") === "0" || rawValue.length === 0) continue;
+        clock += 1;
+        let value = rawValue;
+        try {
+          value = decodeURIComponent(rawValue);
+        } catch {
+          /* keep raw */
+        }
+        jar.push({ name, value, domain, path, httpOnly, created: clock });
+      }
+    };
+    const remember = (cookie: JarCookie) => jar.push(cookie);
+
+    const storage = new Map<string, string>();
+    const memoryStorage = {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        storage.set(key, value);
+      },
+      removeItem: (key: string) => {
+        storage.delete(key);
+      },
+    };
+    const previousLocal = globalThis.localStorage;
+    const previousSession = globalThis.sessionStorage;
+    Object.defineProperty(globalThis, "localStorage", { value: memoryStorage, configurable: true });
+    Object.defineProperty(globalThis, "sessionStorage", { value: memoryStorage, configurable: true });
+
+    try {
+      const primed = await previousFetch(`http://127.0.0.1:${server.port}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Sec-Fetch-Site": "same-origin" },
+        body: JSON.stringify({ email: "doctor@lumera.me", password: "Lumera@2026" }),
+      });
+      const primedCookies = typeof primed.headers.getSetCookie === "function" ? primed.headers.getSetCookie() : [];
+      const primedJson = (await primed.json()) as { error?: string };
+      assert.equal(primed.status, 200, primedJson.error || "prime login");
+      const primedSession = primedCookies.find((line) => /^__session=[^;]/.test(line) && !/max-age=0/i.test(line));
+      assert.ok(primedSession);
+      const primedValue = decodeURIComponent(primedSession.split(";")[0].slice("__session=".length));
+      const primedCsrf = unpackHostSession(primedValue).csrf;
+      assert.ok(primedCsrf);
+
+      const staleSecret = "domain-cookie-csrf";
+      assert.notEqual(staleSecret, primedCsrf);
+      remember({
+        name: "__session",
+        value: packHostSession("anon.domain-stale", staleSecret),
+        domain: ".mylumera.in",
+        path: "/",
+        httpOnly: true,
+        created: 1,
+      });
+      remember({
+        name: "lumera_csrf",
+        value: staleSecret,
+        domain: ".mylumera.in",
+        path: "/",
+        httpOnly: false,
+        created: 1,
+      });
+      remember({
+        name: "__session",
+        value: packHostSession("anon.path-stale", "path-csrf"),
+        domain: null,
+        path: "/api",
+        httpOnly: true,
+        created: 2,
+      });
+      remember({
+        name: "__session",
+        value: primedValue,
+        domain: null,
+        path: "/",
+        httpOnly: true,
+        created: 3,
+      });
+      remember({
+        name: "lumera_csrf",
+        value: "host-only-newer-csrf",
+        domain: null,
+        path: "/",
+        httpOnly: false,
+        created: 3,
+      });
+      storage.set("lumera_session_token", "storage-token-must-not-be-sent");
+      storage.set("lumera_csrf", "storage-csrf-must-not-be-sent");
+
+      const seen: Array<{ cookie: string; csrf: string; body: string; setCookie: string[] }> = [];
+      globalThis.fetch = async (input, init) => {
+        const headers = new Headers(init?.headers);
+        const cookie = cookieHeader();
+        if (cookie) headers.set("cookie", cookie);
+        const bodyText = typeof init?.body === "string" ? init.body : "";
+        const res = await previousFetch(input, { ...init, headers, body: init?.body });
+        const setCookie = typeof res.headers.getSetCookie === "function" ? res.headers.getSetCookie() : [];
+        apply(setCookie);
+        seen.push({ cookie, csrf: headers.get("x-csrf-token") || "", body: bodyText, setCookie });
+        return res;
+      };
+      setDocumentCookie(documentCookie());
+
+      const loggedIn = await apiFetch<{ user?: { email?: string } }>(`http://127.0.0.1:${server.port}/api/auth/login`, {
+        method: "POST",
+        headers: { "Sec-Fetch-Site": "same-origin" },
+        body: JSON.stringify({ email: "doctor@lumera.me", password: "Lumera@2026" }),
+      });
+      assert.equal(loggedIn.user?.email, "doctor@lumera.me");
+      assert.equal(seen.length, 1, "matching duplicate must pass CSRF without a refresh retry");
+      assert.equal(seen[0].csrf, staleSecret);
+      assert.notEqual(seen[0].csrf, "storage-csrf-must-not-be-sent");
+      assert.match(seen[0].body, /doctor@lumera\.me/);
+      assert.match(seen[0].cookie, /__session=.*__session=/);
+      const clears = seen[0].setCookie.filter((line) => /max-age=0/i.test(line));
+      assert.ok(clears.some((line) => /domain=\.mylumera\.in/i.test(line) && line.startsWith("__session=")));
+      assert.ok(clears.some((line) => /domain=mylumera\.in/i.test(line) && line.startsWith("lumera_csrf=")));
+      assert.ok(clears.some((line) => /path=\/api(?:;|$)/i.test(line) && line.startsWith("__session=")));
+      assert.equal(
+        jar.some((cookie) => cookie.name === "__session" && cookie.domain === ".mylumera.in"),
+        false
+      );
+      assert.equal(
+        jar.some((cookie) => cookie.name === "__session" && cookie.path === "/api"),
+        false
+      );
+
+      const me = await previousFetch(`http://127.0.0.1:${server.port}/api/auth/me`, {
+        headers: { cookie: cookiesForwardedByFirebaseHosting(cookieHeader()) },
+      });
+      const meJson = (await me.json()) as { user?: { email?: string } | null };
+      assert.equal(me.status, 200);
+      assert.equal(meJson.user?.email, "doctor@lumera.me");
+    } finally {
+      globalThis.fetch = previousFetch;
+      setDocumentCookie(null);
+      if (previousOrigins === undefined) delete process.env.ALLOWED_ORIGINS;
+      else process.env.ALLOWED_ORIGINS = previousOrigins;
+      if (previousAppUrl === undefined) delete process.env.APP_URL;
+      else process.env.APP_URL = previousAppUrl;
+      if (previousLocal === undefined) delete (globalThis as { localStorage?: Storage }).localStorage;
+      else Object.defineProperty(globalThis, "localStorage", { value: previousLocal, configurable: true });
+      if (previousSession === undefined) delete (globalThis as { sessionStorage?: Storage }).sessionStorage;
+      else Object.defineProperty(globalThis, "sessionStorage", { value: previousSession, configurable: true });
+    }
+  });
+
+  it("refresh deletes a Domain cookie the host-only clear cannot, then the retry logs in", async () => {
+    resetAuthRateLimitStore();
+    const previousOrigins = process.env.ALLOWED_ORIGINS;
+    process.env.ALLOWED_ORIGINS = "https://www.mylumera.in";
+    const host = "www.mylumera.in";
+    type JarCookie = { name: string; value: string; domain: string | null; path: string; httpOnly: boolean; created: number };
+    let clock = 1;
+    const jar: JarCookie[] = [
+      {
+        name: "__session",
+        value: packHostSession("anon.legacy", "legacy-secret"),
+        domain: ".mylumera.in",
+        path: "/",
+        httpOnly: true,
+        created: 1,
+      },
+      {
+        name: "lumera_csrf",
+        value: "readable-stale-not-the-secret",
+        domain: ".mylumera.in",
+        path: "/",
+        httpOnly: false,
+        created: 1,
+      },
+    ];
+    const apply = (setCookies: string[]) => {
+      for (const line of setCookies) {
+        const [pair, ...attrs] = line.split(";").map((part) => part.trim());
+        const eq = pair.indexOf("=");
+        if (eq <= 0) continue;
+        const name = pair.slice(0, eq);
+        const rawValue = pair.slice(eq + 1);
+        const attrMap = new Map<string, string>();
+        for (const attr of attrs) {
+          const idx = attr.indexOf("=");
+          if (idx === -1) attrMap.set(attr.toLowerCase(), "");
+          else attrMap.set(attr.slice(0, idx).toLowerCase(), attr.slice(idx + 1));
+        }
+        const domain = attrMap.has("domain") ? (attrMap.get("domain") || "").toLowerCase() : null;
+        const path = attrMap.get("path") || "/";
+        const same = (cookie: JarCookie) =>
+          cookie.name === name &&
+          cookie.path === path &&
+          ((domain == null && cookie.domain == null) ||
+            (domain != null && (cookie.domain || "").replace(/^\./, "") === domain.replace(/^\./, "")));
+        for (let i = jar.length - 1; i >= 0; i--) if (same(jar[i])) jar.splice(i, 1);
+        if (attrMap.get("max-age") === "0" || rawValue.length === 0) continue;
+        clock += 1;
+        let value = rawValue;
+        try {
+          value = decodeURIComponent(rawValue);
+        } catch {
+          /* keep */
+        }
+        jar.push({ name, value, domain, path, httpOnly: attrMap.has("httponly"), created: clock });
+      }
+    };
+    const headerFor = (target: string) =>
+      jar
+        .filter((cookie) => {
+          if (cookie.path !== "/" && !target.startsWith(cookie.path)) return false;
+          if (!cookie.domain) return true;
+          const domain = cookie.domain.replace(/^\./, "");
+          return host === domain || host.endsWith(`.${domain}`);
+        })
+        .sort((a, b) => b.path.length - a.path.length || a.created - b.created)
+        .map((cookie) => `${cookie.name}=${encodeURIComponent(cookie.value)}`)
+        .join("; ");
+
+    const bodies: string[] = [];
+    globalThis.fetch = async (input, init) => {
+      const headers = new Headers(init?.headers);
+      const target = String(input);
+      headers.set("cookie", headerFor(new URL(target).pathname));
+      if (typeof init?.body === "string") bodies.push(init.body);
+      const res = await previousFetch(input, { ...init, headers });
+      const setCookie = typeof res.headers.getSetCookie === "function" ? res.headers.getSetCookie() : [];
+      apply(setCookie);
+      return res;
+    };
+    setDocumentCookie("lumera_csrf=readable-stale-not-the-secret");
+    try {
+      const loggedIn = await apiFetch<{ user?: { email?: string } }>(`http://127.0.0.1:${server.port}/api/auth/login`, {
+        method: "POST",
+        headers: { "Sec-Fetch-Site": "same-origin" },
+        body: JSON.stringify({ email: "doctor@lumera.me", password: "Lumera@2026" }),
+      });
+      assert.equal(loggedIn.user?.email, "doctor@lumera.me");
+      assert.equal(bodies.length, 2);
+      assert.equal(bodies[0], bodies[1]);
+      assert.equal(
+        jar.some((cookie) => cookie.domain === ".mylumera.in"),
+        false,
+        "Domain=.mylumera.in cookies must be expired on refresh"
+      );
+      assert.ok(jar.some((cookie) => cookie.name === "__session" && cookie.domain == null && cookie.value.includes("~")));
+    } finally {
+      globalThis.fetch = previousFetch;
+      setDocumentCookie(null);
+      if (previousOrigins === undefined) delete process.env.ALLOWED_ORIGINS;
+      else process.env.ALLOWED_ORIGINS = previousOrigins;
+    }
+  });
+
+  it("apiFetch retries a stream body instead of throwing, and ignores storage", async () => {
+    const bodies: string[] = [];
+    const tokens: string[] = [];
+    let calls = 0;
+    globalThis.fetch = async (_input, init) => {
+      calls += 1;
+      const headers = new Headers(init?.headers);
+      tokens.push(headers.get("x-csrf-token") || "");
+      if (init?.body instanceof ReadableStream) {
+        bodies.push(await new Response(init.body).text());
+      } else {
+        bodies.push(typeof init?.body === "string" ? init.body : "");
+      }
+      if (calls === 1) {
+        return new Response(
+          JSON.stringify({ error: "CSRF token missing or invalid", code: CSRF_REFRESHED_CODE, csrfToken: "from-refresh" }),
+          { status: 403, headers: { "Content-Type": "application/json", "X-CSRF-Token": "from-refresh" } }
+        );
+      }
+      return new Response(JSON.stringify({ user: { email: "doctor@lumera.me" } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    };
+    const payload = JSON.stringify({ email: "doctor@lumera.me", password: "Lumera@2026" });
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(payload));
+        controller.close();
+      },
+    });
+    const storage = new Map<string, string>([
+      ["lumera_session_token", "from-local-storage"],
+      ["lumera_csrf", "from-session-storage"],
+    ]);
+    const memoryStorage = {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        storage.set(key, value);
+      },
+      removeItem: (key: string) => {
+        storage.delete(key);
+      },
+    };
+    const previousLocal = globalThis.localStorage;
+    const previousSession = globalThis.sessionStorage;
+    Object.defineProperty(globalThis, "localStorage", { value: memoryStorage, configurable: true });
+    Object.defineProperty(globalThis, "sessionStorage", { value: memoryStorage, configurable: true });
+    setDocumentCookie("lumera_csrf=stale-from-cookie; lumera_csrf=second-cookie-not-used-on-retry");
+    try {
+      const loggedIn = await apiFetch<{ user?: { email?: string } }>("http://127.0.0.1/api/auth/login", {
+        method: "POST",
+        body: stream,
+      });
+      assert.equal(loggedIn.user?.email, "doctor@lumera.me");
+      assert.equal(calls, 2);
+      assert.equal(tokens[0], "stale-from-cookie");
+      assert.notEqual(tokens[0], "from-local-storage");
+      assert.notEqual(tokens[0], "from-session-storage");
+      assert.equal(tokens[1], "from-refresh");
+      assert.equal(bodies[0], payload);
+      assert.equal(bodies[1], payload);
+    } finally {
+      globalThis.fetch = previousFetch;
+      setDocumentCookie(null);
+      if (previousLocal === undefined) delete (globalThis as { localStorage?: Storage }).localStorage;
+      else Object.defineProperty(globalThis, "localStorage", { value: previousLocal, configurable: true });
+      if (previousSession === undefined) delete (globalThis as { sessionStorage?: Storage }).sessionStorage;
+      else Object.defineProperty(globalThis, "sessionStorage", { value: previousSession, configurable: true });
     }
   });
 });

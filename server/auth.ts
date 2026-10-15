@@ -5,10 +5,14 @@ import { isDemoAccountEmail } from "../src/lib/demoAccounts.ts";
 import { getDb, publicUser, type DbUser, type UserRole } from "./db.ts";
 import {
   CSRF_COOKIE,
+  CSRF_HEADER,
   HOST_SESSION_COOKIE,
   csrfCookieValue,
   csrfSetCookieHeader,
+  listCookieValues,
   packHostSession,
+  selectHostSession,
+  sessionCookieExpiryLines,
   unpackHostSession,
 } from "./http-security.ts";
 import { clinicTenantAccessError } from "./platform-tenants.ts";
@@ -145,7 +149,9 @@ export function setSessionCookie(res: Response, sessionId: string) {
   // direct Cloud Run and for the browser script that sets X-CSRF-Token.
   const host = `${HOST_SESSION_COOKIE}=${encodeURIComponent(packHostSession(sessionId, csrf))}; ${SESSION_COOKIE_ATTRS}; Max-Age=${maxAge}`;
   res.setHeader("Cache-Control", "private, no-store");
-  res.setHeader("Set-Cookie", [sid, host, csrfSetCookieHeader(csrf)]);
+  // Value cookies first so a reader that keeps the first pair still sees them.
+  // Variant clears follow and do not share the host-only Path=/ slot.
+  res.setHeader("Set-Cookie", [sid, host, csrfSetCookieHeader(csrf), ...sessionCookieExpiryLines()]);
 }
 
 export function clearSessionCookie(res: Response) {
@@ -154,6 +160,7 @@ export function clearSessionCookie(res: Response) {
     `${HOST_SESSION_COOKIE}=; ${SESSION_COOKIE_ATTRS}; Max-Age=0`,
     `${COOKIE}=; ${SESSION_COOKIE_ATTRS}; Max-Age=0`,
     `${CSRF_COOKIE}=; ${CLEAR_CSRF_ATTRS}; Max-Age=0`,
+    ...sessionCookieExpiryLines(),
   ]);
 }
 
@@ -163,35 +170,51 @@ export function clearSessionCookie(res: Response) {
  * so the next request stays logged out until a real login. Cookie flags match
  * the authenticated session cookie.
  */
-export function issueAnonymousCsrfCookie(res: Response): string {
+export function issueAnonymousCsrfCookie(res: Response, env: NodeJS.ProcessEnv = process.env): string {
   const maxAge = SESSION_DAYS * 24 * 60 * 60;
   const csrf = csrfCookieValue();
   const credential = `anon.${crypto.randomUUID()}`;
   const host = `${HOST_SESSION_COOKIE}=${encodeURIComponent(packHostSession(credential, csrf))}; ${SESSION_COOKIE_ATTRS}; Max-Age=${maxAge}`;
   res.setHeader("Cache-Control", "private, no-store");
+  // Clears first, including Domain/Path variants, then the new host-only cookie.
   res.setHeader("Set-Cookie", [
     `${HOST_SESSION_COOKIE}=; ${SESSION_COOKIE_ATTRS}; Max-Age=0`,
     `${COOKIE}=; ${SESSION_COOKIE_ATTRS}; Max-Age=0`,
     `${CSRF_COOKIE}=; ${CLEAR_CSRF_ATTRS}; Max-Age=0`,
+    ...sessionCookieExpiryLines(env),
     host,
     csrfSetCookieHeader(csrf),
   ]);
   return csrf;
 }
 
+function cookieHeaderOf(req: Request): string {
+  const raw = req.headers.cookie;
+  return typeof raw === "string" ? raw : "";
+}
+
+function presentedCsrfHeader(req: Request): string {
+  const raw = req.headers[CSRF_HEADER] ?? req.headers["X-CSRF-Token"];
+  if (typeof raw === "string") return raw.trim();
+  if (Array.isArray(raw) && typeof raw[0] === "string") return raw[0].trim();
+  return "";
+}
+
 /**
- * True when the cookie the app would honor belongs to a real user.
- * A stale `__session` must not hide a still-valid `lumera_sid`: either one
- * blocks anonymous CSRF reissue.
+ * True when any presented `__session` or `lumera_sid` belongs to a real user.
+ * A stale duplicate must not hide a still-valid cookie: either one blocks
+ * anonymous CSRF reissue.
  */
 export function sessionCookieIsAuthenticated(req: Request): boolean {
-  if (loadUserFromSession(req)) return true;
-  const cookies = parseCookies(req.headers.cookie);
-  const sid = String(cookies[COOKIE] || "").trim();
-  if (!sid) return false;
-  const hostCredential = unpackHostSession(cookies[HOST_SESSION_COOKIE] || "").credential.trim();
-  if (sid === hostCredential) return false;
-  return Boolean(loadUserFromSession({ headers: { cookie: `${COOKIE}=${encodeURIComponent(sid)}` } } as Request));
+  const header = cookieHeaderOf(req);
+  for (const raw of listCookieValues(header, HOST_SESSION_COOKIE)) {
+    const credential = unpackHostSession(raw).credential.trim();
+    if (credential && userFromCredential(credential)) return true;
+  }
+  for (const sid of listCookieValues(header, COOKIE)) {
+    if (sid && userFromCredential(sid)) return true;
+  }
+  return false;
 }
 
 export function createSession(userId: string): string {
@@ -289,8 +312,8 @@ export function getSessionId(req: Request): string | null {
   if (typeof xToken === "string" && xToken.trim()) {
     return xToken.trim();
   }
-  const cookies = parseCookies(req.headers.cookie);
-  const host = cookies[HOST_SESSION_COOKIE];
+  const cookies = parseCookies(cookieHeaderOf(req));
+  const host = selectHostSession(cookieHeaderOf(req), presentedCsrfHeader(req));
   if (host) {
     const credential = unpackHostSession(host).credential.trim();
     if (credential) return credential;
@@ -298,8 +321,7 @@ export function getSessionId(req: Request): string | null {
   return cookies[COOKIE] || null;
 }
 
-export function loadUserFromSession(req: Request): AuthUser | null {
-  const sid = getSessionId(req);
+function userFromCredential(sid: string): AuthUser | null {
   if (!sid) return null;
   if (isCredentialRevoked(sid)) return null;
 
@@ -323,6 +345,12 @@ export function loadUserFromSession(req: Request): AuthUser | null {
   if (!row) return null;
   if (row.status === "disabled") return null;
   return publicUser(row);
+}
+
+export function loadUserFromSession(req: Request): AuthUser | null {
+  const sid = getSessionId(req);
+  if (!sid) return null;
+  return userFromCredential(sid);
 }
 
 function isDashboardWhatsAppPath(req: Request): boolean {
