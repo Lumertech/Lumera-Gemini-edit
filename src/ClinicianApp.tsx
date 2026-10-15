@@ -31,6 +31,7 @@ import {
   TenantLetterhead,
 } from './types';
 import { apiFetch } from './api/http';
+import { appointmentIdForBillContext, appointmentsForClinicDay, clinicCalendarDate } from './lib/clinicDay';
 import { useAuth } from './auth/AuthContext';
 import { useNav } from './nav/NavigationContext';
 import { canonicalizeAppView, appViewToPath } from './nav/surfaces';
@@ -88,6 +89,9 @@ export default function ClinicianApp() {
   const [patients, setPatients] = useState<Patient[]>([]);
   const [doctors, setDoctors] = useState<Doctor[]>(() => [sessionDoctor]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [queueDate, setQueueDate] = useState(() => clinicCalendarDate());
+  const [queueAppointments, setQueueAppointments] = useState<Appointment[]>([]);
+  const [pinnedBillAppointmentId, setPinnedBillAppointmentId] = useState('');
   const [workspaceError, setWorkspaceError] = useState("");
   const [prescriptions, setPrescriptions] = useState<Prescription[]>([]);
   const [draftState, setDraftState] = useState<PatientDraftSession>({
@@ -284,6 +288,24 @@ export default function ClinicianApp() {
     };
   }, [user?.id, user?.tenantId, isDemo]);
 
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    apiFetch<{ appointments: Appointment[] }>(`/api/appointments?date=${encodeURIComponent(queueDate)}`)
+      .then((res) => {
+        if (!cancelled) setQueueAppointments(Array.isArray(res.appointments) ? res.appointments : []);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          console.error('Failed to load the clinic-day queue', err);
+          setQueueAppointments([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id, user?.tenantId, queueDate, isDemo]);
+
   // SAFETY: the sidebar's patient switcher is intentionally always visible
   // (a receptionist may need to jump between patients quickly), but it must
   // never silently pull a doctor out from under an in-progress note or
@@ -302,6 +324,7 @@ export default function ClinicianApp() {
       );
       if (!confirmed) return;
     }
+    setPinnedBillAppointmentId('');
     setCurrentPatient(patient);
   };
 
@@ -398,12 +421,30 @@ export default function ClinicianApp() {
       body: JSON.stringify(patch),
     });
     setAppointments((prev) => prev.map((a) => (a.id === id ? appointment : a)));
+    setQueueAppointments((prev) => {
+      const rest = prev.filter((a) => a.id !== appointment.id);
+      return appointment.date === queueDate ? [...rest, appointment].sort((a, b) => a.tokenNumber - b.tokenNumber) : rest;
+    });
     return appointment;
   };
 
-  const billingAppointment =
-    appointments.find((a) => a.patientId === currentPatient.id && !a.isPaid) ||
-    appointments.find((a) => a.patientId === currentPatient.id);
+  const billPool = useMemo(() => {
+    const byId = new Map<string, Appointment>();
+    for (const row of [...appointments, ...queueAppointments]) byId.set(row.id, row);
+    return [...byId.values()];
+  }, [appointments, queueAppointments]);
+  const billingAppointmentId = appointmentIdForBillContext(billPool, {
+    selectedAppointmentId: pinnedBillAppointmentId,
+    patientId: currentPatient.id,
+    day: clinicCalendarDate(),
+  });
+  const billingAppointment = billPool.find((a) => a.id === billingAppointmentId);
+
+  useEffect(() => {
+    if (!pinnedBillAppointmentId) return;
+    const pinned = billPool.find((row) => row.id === pinnedBillAppointmentId);
+    if (pinned && pinned.patientId !== currentPatient.id) setPinnedBillAppointmentId('');
+  }, [billPool, currentPatient.id, pinnedBillAppointmentId]);
 
   const persistAppointmentCreate = async (input: Partial<Appointment>) => {
     const { appointment } = await apiFetch<{ appointment: Appointment }>('/api/appointments', {
@@ -411,13 +452,16 @@ export default function ClinicianApp() {
       body: JSON.stringify({
         patientId: input.patientId,
         doctorId: input.doctorId,
-        date: input.date || new Date().toISOString().slice(0, 10),
+        date: input.date || clinicCalendarDate(),
         timeSlot: input.timeSlot || '',
         ...(input.type ? { type: input.type } : {}),
         ...(input.source ? { source: input.source } : {}),
       }),
     });
     setAppointments((prev) => [appointment, ...prev.filter((a) => a.id !== appointment.id && a.id !== input.id)]);
+    if (appointment.date === queueDate) {
+      setQueueAppointments((prev) => [appointment, ...prev.filter((a) => a.id !== appointment.id)].sort((a, b) => a.tokenNumber - b.tokenNumber));
+    }
     return appointment;
   };
 
@@ -473,6 +517,13 @@ export default function ClinicianApp() {
           : a
       )
     );
+    setQueueAppointments((prev) =>
+      prev.map((a) =>
+        a.patientId === newRx.patientId && a.status === 'In Consultation'
+          ? { ...a, status: 'Completed' }
+          : a
+      )
+    );
     void (async () => {
       try {
         const { prescription } = await apiFetch<{ prescription: Prescription }>('/api/prescriptions', {
@@ -496,6 +547,9 @@ export default function ClinicianApp() {
     setAppointments((prev) =>
       prev.map((a) => (a.id === id ? { ...a, status: status } : a))
     );
+    setQueueAppointments((prev) =>
+      prev.map((a) => (a.id === id ? { ...a, status: status } : a))
+    );
     void persistAppointmentPatch(id, { status }).catch((err) => {
       console.error('Failed to persist appointment status', err);
     });
@@ -503,6 +557,9 @@ export default function ClinicianApp() {
 
   const handleUpdateVitals = (id: string, vitals: Vitals) => {
     setAppointments((prev) =>
+      prev.map((a) => (a.id === id ? { ...a, vitals: vitals } : a))
+    );
+    setQueueAppointments((prev) =>
       prev.map((a) => (a.id === id ? { ...a, vitals: vitals } : a))
     );
     void persistAppointmentPatch(id, { vitals }).catch((err) => {
@@ -523,6 +580,7 @@ export default function ClinicianApp() {
   const handleOpenBillForAppointment = (apt: Appointment) => {
     const p = patients.find((pat) => pat.id === apt.patientId) || currentPatient;
     setCurrentPatient(p);
+    setPinnedBillAppointmentId(apt.id);
     setCurrentView('billing');
   };
 
@@ -773,7 +831,7 @@ export default function ClinicianApp() {
                   await persistAppointmentCreate({
                     patientId: pat.id,
                     doctorId: doc.id,
-                    date: new Date().toISOString().split('T')[0],
+                    date: clinicCalendarDate(),
                     timeSlot: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
                     type: (type as Appointment['type']) || 'New Consultation',
                     source: 'Walk-in',
@@ -854,7 +912,14 @@ export default function ClinicianApp() {
                     clinicSettings={clinicSettings}
                     isSpecialtyLocked={isSpecialtyLocked}
                     lockedSpecialty={lockedSpecialty}
-                    onProceedToBilling={() => setCurrentView('billing')}
+                    onProceedToBilling={() => {
+                      const id = appointmentIdForBillContext(billPool, {
+                        patientId: currentPatient.id,
+                        day: clinicCalendarDate(),
+                      });
+                      setPinnedBillAppointmentId(id);
+                      setCurrentView('billing');
+                    }}
                     appointments={appointments}
                     onBookFollowUp={async (input) => persistAppointmentCreate(input)}
                     onAutoSave={handleAutoSaveDraft}
@@ -866,7 +931,9 @@ export default function ClinicianApp() {
 
           {(currentView === 'queue' || currentView === 'opd-queue') && (
             <QueueBoard
-              appointments={appointments}
+              appointments={queueAppointments}
+              queueDate={queueDate}
+              onQueueDateChange={setQueueDate}
               doctors={doctors}
               patients={patients}
               onUpdateStatus={handleUpdateAppointmentStatus}
@@ -879,7 +946,7 @@ export default function ClinicianApp() {
 
           {currentView === 'kiosk' && (
             <WaitingRoomKiosk
-              appointments={appointments}
+              appointments={appointmentsForClinicDay(appointments, clinicCalendarDate())}
               doctors={doctors}
               patients={patients}
               onCheckInPatient={async (name, phone, specialty) => {
@@ -904,7 +971,7 @@ export default function ClinicianApp() {
                   await persistAppointmentCreate({
                     patientId: newPat.id,
                     doctorId: doc.id,
-                    date: new Date().toISOString().split('T')[0],
+                    date: clinicCalendarDate(),
                     timeSlot: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
                     type: 'New Consultation',
                     source: 'Walk-in',
@@ -977,12 +1044,16 @@ export default function ClinicianApp() {
               currentDoctor={currentDoctor}
               clinicSettings={clinicSettings}
               activePrescription={prescriptions.find((p) => p.patientId === currentPatient.id) || null}
-              appointmentId={billingAppointment?.id}
+              appointmentId={billingAppointmentId || undefined}
               appointmentIsPaid={Boolean(billingAppointment?.isPaid)}
               onPaymentSuccess={(_invoiceNumber, _amount) => {
-                void apiFetch<{ appointments: Appointment[] }>('/api/appointments')
-                  .then((res) => {
-                    if (Array.isArray(res.appointments)) setAppointments(res.appointments);
+                void Promise.all([
+                  apiFetch<{ appointments: Appointment[] }>('/api/appointments'),
+                  apiFetch<{ appointments: Appointment[] }>(`/api/appointments?date=${encodeURIComponent(queueDate)}`),
+                ])
+                  .then(([history, day]) => {
+                    if (Array.isArray(history.appointments)) setAppointments(history.appointments);
+                    if (Array.isArray(day.appointments)) setQueueAppointments(day.appointments);
                   })
                   .catch((err) => {
                     console.error('Failed to refresh appointments after payment', err);

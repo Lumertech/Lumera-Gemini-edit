@@ -4,6 +4,7 @@ import { after, before, describe, it } from "node:test";
 import { createApiRouter } from "./api.ts";
 import { DEMO_TENANT_ID, getDb, initDatabase } from "./db.ts";
 import { hashPassword } from "./password.ts";
+import { clinicCalendarDate, shiftIsoDate } from "../src/lib/clinicDay.ts";
 
 
 function createClinicUser(label: string) {
@@ -344,5 +345,94 @@ describe("Wave 1A persist OPD loop", () => {
       .prepare("SELECT COUNT(*) AS c FROM patients WHERE tenant_id = ?")
       .get(DEMO_TENANT_ID) as { c: number };
     assert.ok(demoTenantRows.c >= 5);
+  });
+
+  it("lists only the selected clinic day for the caller's tenant and keeps history on the unfiltered list", async () => {
+    const anon = await jsonRequest(port, "GET", "/api/appointments?date=2026-10-15");
+    assert.equal(anon.status, 401);
+
+    const clinicA = createClinicUser("dayA");
+    const clinicB = createClinicUser("dayB");
+    const tokenA = await login(clinicA.email);
+    const tokenB = await login(clinicB.email);
+    const authA = { Authorization: `Bearer ${tokenA}` };
+    const authB = { Authorization: `Bearer ${tokenB}` };
+    const today = clinicCalendarDate(new Date(), "IST (UTC+5:30)");
+    const earlier = shiftIsoDate(today, -40);
+
+    const patientA = await jsonRequest(
+      port,
+      "POST",
+      "/api/patients",
+      { name: "Day Filter Patient", phone: `+91 98113 ${clinicA.tenantId.slice(-4)}`, age: 40, gender: "Female" },
+      authA
+    );
+    assert.equal(patientA.status, 201, String(patientA.json.error || ""));
+    const patA = patientA.json.patient as { id: string };
+
+    const patientB = await jsonRequest(
+      port,
+      "POST",
+      "/api/patients",
+      { name: "Other Clinic Patient", phone: `+91 98114 ${clinicB.tenantId.slice(-4)}`, age: 33, gender: "Male" },
+      authB
+    );
+    assert.equal(patientB.status, 201, String(patientB.json.error || ""));
+    const patB = patientB.json.patient as { id: string };
+
+    const todayApt = await jsonRequest(
+      port,
+      "POST",
+      "/api/appointments",
+      { patientId: patA.id, date: today, timeSlot: "10:00 AM", specialty: "General Medicine" },
+      authA
+    );
+    assert.equal(todayApt.status, 201, String(todayApt.json.error || ""));
+    const todayId = (todayApt.json.appointment as { id: string; date: string }).id;
+    assert.equal((todayApt.json.appointment as { date: string }).date, today);
+
+    const oldApt = await jsonRequest(
+      port,
+      "POST",
+      "/api/appointments",
+      { patientId: patA.id, date: earlier, timeSlot: "11:00 AM", specialty: "General Medicine" },
+      authA
+    );
+    assert.equal(oldApt.status, 201, String(oldApt.json.error || ""));
+    const oldId = (oldApt.json.appointment as { id: string }).id;
+
+    const otherToday = await jsonRequest(
+      port,
+      "POST",
+      "/api/appointments",
+      { patientId: patB.id, date: today, timeSlot: "10:30 AM", specialty: "General Medicine" },
+      authB
+    );
+    assert.equal(otherToday.status, 201, String(otherToday.json.error || ""));
+    const otherId = (otherToday.json.appointment as { id: string }).id;
+
+    const filtered = await jsonRequest(port, "GET", `/api/appointments?date=${today}`, undefined, authA);
+    assert.equal(filtered.status, 200);
+    assert.equal(filtered.json.date, today);
+    const filteredIds = ((filtered.json.appointments as Array<{ id: string }>) || []).map((row) => row.id);
+    assert.ok(filteredIds.includes(todayId));
+    assert.equal(filteredIds.includes(oldId), false);
+    assert.equal(filteredIds.includes(otherId), false);
+
+    const byTodayAlias = await jsonRequest(port, "GET", "/api/appointments?date=today", undefined, authA);
+    assert.equal(byTodayAlias.status, 200);
+    assert.equal(byTodayAlias.json.date, today);
+    const aliasIds = ((byTodayAlias.json.appointments as Array<{ id: string }>) || []).map((row) => row.id);
+    assert.ok(aliasIds.includes(todayId));
+    assert.equal(aliasIds.includes(oldId), false);
+
+    const history = await jsonRequest(port, "GET", "/api/appointments", undefined, authA);
+    const historyIds = ((history.json.appointments as Array<{ id: string }>) || []).map((row) => row.id);
+    assert.ok(historyIds.includes(todayId));
+    assert.ok(historyIds.includes(oldId));
+    assert.equal(historyIds.includes(otherId), false);
+
+    const badDate = await jsonRequest(port, "GET", "/api/appointments?date=yesterday", undefined, authA);
+    assert.equal(badDate.status, 400);
   });
 });

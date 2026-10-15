@@ -14,6 +14,7 @@ import { requireAuth } from "./auth.ts";
 import { reportCaughtError } from "./error-tracker.ts";
 import { resolveAbdmMode, type AbdmMode } from "./abdm-mode.ts";
 import { registerPatientDocumentRoutes } from "./patient-documents.ts";
+import { clinicCalendarDate, parseAppointmentListDate } from "../src/lib/clinicDay.ts";
 
 function tenantIdOf(req: Request): string {
   return String(req.user?.tenantId || "").trim();
@@ -66,6 +67,28 @@ function shortId(prefix: string): string {
 function yearToken(prefix: string): string {
   const year = new Date().getFullYear();
   return `${prefix}-${year}-${crypto.randomUUID().replace(/-/g, "").slice(0, 6).toUpperCase()}`;
+}
+
+function tenantTimezone(tenantId: string): string {
+  const row = getDb().prepare("SELECT timezone FROM tenants WHERE id = ?").get(tenantId) as
+    | { timezone?: string }
+    | undefined;
+  return String(row?.timezone || "IST (UTC+5:30)");
+}
+
+function clinicDayForTenant(tenantId: string, now = new Date()): string {
+  return clinicCalendarDate(now, tenantTimezone(tenantId));
+}
+
+export function listTenantAppointments(tenantId: string, date?: string | null): Record<string, unknown>[] {
+  if (date) {
+    return getDb()
+      .prepare("SELECT * FROM appointments WHERE tenant_id = ? AND date = ? ORDER BY token_number ASC")
+      .all(tenantId, date) as Record<string, unknown>[];
+  }
+  return getDb()
+    .prepare("SELECT * FROM appointments WHERE tenant_id = ? ORDER BY token_number ASC")
+    .all(tenantId) as Record<string, unknown>[];
 }
 
 export function nextTokenNumber(tenantId: string, date: string): number {
@@ -691,7 +714,8 @@ export function insertAppointment(tenantId: string, body: Record<string, unknown
     throw Object.assign(new Error("Patient not found"), { status: 404 });
   }
   const mappedPatient = mapPatient(patient);
-  const date = String(body.date || new Date().toISOString().slice(0, 10));
+  const requestedDate = String(body.date || "").trim();
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(requestedDate) ? requestedDate : clinicDayForTenant(tenantId);
   const tokenNumber =
     body.tokenNumber !== undefined && body.tokenNumber !== null
       ? Number(body.tokenNumber)
@@ -896,6 +920,7 @@ function insertPrescription(tenantId: string, body: Record<string, unknown>) {
  * PATCH /patients/:id/abha    → same as link-abha for an existing id
  *
  * GET  /appointments          → { appointments: Appointment[] } (tokenNumber, status, vitals)
+ *   ?date=YYYY-MM-DD | today  tenant-scoped clinic day. Omit date for full history.
  * POST /appointments          → { appointment }  body { patientId, doctorId, date, timeSlot, type?, source? }
  *   server fills names/uhid/phone, next tokenNumber, default status Waiting
  * PATCH /appointments/:id     → { appointment }  body { status?, tokenNumber?, vitals?, isPaid? }
@@ -1088,11 +1113,15 @@ export function createClinicalRouter(): Router {
     try {
       const tenantId = tenantIdOf(req);
       if (!tenantId) return res.json({ appointments: [] });
-      const rows = getDb()
-        .prepare("SELECT * FROM appointments WHERE tenant_id = ? ORDER BY token_number ASC")
-        .all(tenantId) as Record<string, unknown>[];
-      res.json({ appointments: rows.map(mapAppointment) });
+      const parsed = parseAppointmentListDate(req.query.date);
+      const date = parsed.kind === "all" ? null : parsed.kind === "today" ? clinicDayForTenant(tenantId) : parsed.date;
+      const rows = listTenantAppointments(tenantId, date);
+      res.json(date ? { appointments: rows.map(mapAppointment), date } : { appointments: rows.map(mapAppointment) });
     } catch (err) {
+      const status = errorStatus(err);
+      if (status >= 400 && status < 500) {
+        return res.status(status).json({ error: err instanceof Error ? err.message : "Invalid date" });
+      }
       reportCaughtError(err, "clinical.listAppointments");
       res.status(500).json({ error: "Failed to fetch appointments" });
     }

@@ -18,6 +18,7 @@ import {
 } from "./razorpay.ts";
 import { appPublicUrl, isProduction, sandboxSimulatorsEnabled } from "./runtime.ts";
 import { reportCaughtError } from "./error-tracker.ts";
+import { invoiceNumberToPersist } from "../src/lib/billingCollect.ts";
 
 function tenantIdOf(req: Request): string {
   return String(req.user?.tenantId || "").trim();
@@ -77,7 +78,7 @@ function getTenantInvoice(tenantId: string, id: string) {
 }
 
 function uniqueInvoiceNumber(tenantId: string, requested?: string): string {
-  const candidate = String(requested || "").trim() || yearToken("INV");
+  const candidate = invoiceNumberToPersist(requested) || yearToken("INV");
   const taken = getDb()
     .prepare("SELECT id FROM invoices WHERE tenant_id = ? AND invoice_number = ?")
     .get(tenantId, candidate);
@@ -464,17 +465,20 @@ export function createBillingRouter(): Router {
       const tenantId = tenantIdOf(req);
       if (!tenantId) return res.json({ invoices: [] });
       const date = String(req.query.date || "").trim();
-      const rows = (
-        date
-          ? getDb()
-              .prepare(
-                "SELECT * FROM invoices WHERE tenant_id = ? AND date = ? ORDER BY created_at DESC"
-              )
-              .all(tenantId, date)
-          : getDb()
-              .prepare("SELECT * FROM invoices WHERE tenant_id = ? ORDER BY created_at DESC")
-              .all(tenantId)
-      ) as Record<string, unknown>[];
+      const appointmentId = String(req.query.appointmentId || req.query.appointment_id || "").trim();
+      const clauses = ["tenant_id = ?"];
+      const params: string[] = [tenantId];
+      if (date) {
+        clauses.push("date = ?");
+        params.push(date);
+      }
+      if (appointmentId) {
+        clauses.push("appointment_id = ?");
+        params.push(appointmentId);
+      }
+      const rows = getDb()
+        .prepare(`SELECT * FROM invoices WHERE ${clauses.join(" AND ")} ORDER BY created_at DESC`)
+        .all(...params) as Record<string, unknown>[];
       res.json({ invoices: rows.map(mapInvoice) });
     } catch (err) {
       reportCaughtError(err, "billing.listInvoices");

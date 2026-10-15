@@ -620,5 +620,109 @@ describe("Wave 2 Razorpay UPI collect", () => {
     assert.equal(/createLetterheadReadRouter/.test(api), false);
     assert.equal(/createLetterheadReadRouter/.test(letterhead), false);
     assert.match(letterhead, /export function updateTenantLetterhead/);
+    assert.doesNotMatch(billing, /DELETE FROM invoices/i);
+    assert.match(billing, /invoiceNumberToPersist/);
+  });
+
+  it("keeps numbered invoices and returns the saved total for that appointment only", async () => {
+    const clinic = createClinicUser("savedbill");
+    const other = createClinicUser("savedbillB");
+    const token = await login(clinic.email);
+    const otherToken = await login(other.email);
+    const auth = { Authorization: `Bearer ${token}` };
+    const authB = { Authorization: `Bearer ${otherToken}` };
+    const { patient, appointment } = await seedVisit(auth, clinic.tenantId.slice(-4));
+
+    const secondApt = await jsonRequest(
+      port,
+      "POST",
+      "/api/appointments",
+      { patientId: patient.id, date: "2026-01-15", timeSlot: "09:00 AM", specialty: "General Medicine" },
+      auth
+    );
+    assert.equal(secondApt.status, 201, String(secondApt.json.error || ""));
+    const olderAppointmentId = (secondApt.json.appointment as { id: string }).id;
+
+    const numbered = await jsonRequest(
+      port,
+      "POST",
+      "/api/invoices",
+      {
+        invoiceNumber: "INV-2026-KEEPME",
+        appointmentId: appointment.id,
+        patientId: patient.id,
+        patientName: patient.name,
+        patientPhone: patient.phone,
+        items: [
+          { id: "consult", description: "OPD consult", category: "Consultation", quantity: 1, unitPrice: 750, total: 750 },
+        ],
+        subtotal: 750,
+        discountAmount: 0,
+        taxAmount: 0,
+      },
+      auth
+    );
+    assert.equal(numbered.status, 201, String(numbered.json.error || ""));
+    const saved = numbered.json.invoice as {
+      id: string;
+      invoiceNumber: string;
+      appointmentId: string;
+      totalAmount: number;
+      items: Array<{ description: string; total: number; unitPrice: number }>;
+    };
+    assert.equal(saved.invoiceNumber, "INV-2026-KEEPME");
+    assert.equal(saved.appointmentId, appointment.id);
+    assert.equal(saved.totalAmount, 750);
+    assert.equal(saved.items[0].unitPrice, 750);
+    assert.equal(saved.items[0].total, 750);
+
+    const draftPlaceholder = await jsonRequest(
+      port,
+      "POST",
+      "/api/invoices",
+      {
+        invoiceNumber: "Draft (not saved)",
+        appointmentId: olderAppointmentId,
+        patientId: patient.id,
+        patientName: patient.name,
+        patientPhone: patient.phone,
+        items: [{ id: "old", description: "Earlier consult", quantity: 1, unitPrice: 2000, total: 2000 }],
+      },
+      auth
+    );
+    assert.equal(draftPlaceholder.status, 201, String(draftPlaceholder.json.error || ""));
+    const allocated = draftPlaceholder.json.invoice as { id: string; invoiceNumber: string; totalAmount: number };
+    assert.match(allocated.invoiceNumber, /^INV-\d{4}-[A-Z0-9]+$/);
+    assert.notEqual(allocated.invoiceNumber, "Draft (not saved)");
+    assert.equal(allocated.totalAmount, 2000);
+
+    const forToday = await jsonRequest(
+      port,
+      "GET",
+      `/api/invoices?appointmentId=${encodeURIComponent(appointment.id)}`,
+      undefined,
+      auth
+    );
+    assert.equal(forToday.status, 200);
+    const todayRows = forToday.json.invoices as Array<{ id: string; invoiceNumber: string; totalAmount: number }>;
+    assert.deepEqual(todayRows.map((row) => row.id), [saved.id]);
+    assert.equal(todayRows[0].totalAmount, 750);
+    assert.equal(todayRows[0].invoiceNumber, "INV-2026-KEEPME");
+
+    const all = await jsonRequest(port, "GET", "/api/invoices", undefined, auth);
+    const numbers = ((all.json.invoices as Array<{ invoiceNumber: string; id: string }>) || []).map((row) => row.invoiceNumber);
+    assert.ok(numbers.includes("INV-2026-KEEPME"));
+    assert.ok(numbers.includes(allocated.invoiceNumber));
+    assert.equal(numbers.includes("Draft (not saved)"), false);
+
+    const stolen = await jsonRequest(
+      port,
+      "GET",
+      `/api/invoices?appointmentId=${encodeURIComponent(appointment.id)}`,
+      undefined,
+      authB
+    );
+    assert.equal(stolen.status, 200);
+    assert.deepEqual(stolen.json.invoices, []);
   });
 });

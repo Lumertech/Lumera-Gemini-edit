@@ -7,11 +7,16 @@ import {
   canMarkPaidLocally,
   deskCollectAllowed,
   displayBillingIds,
+  displayInvoiceNumber,
+  DRAFT_INVOICE_LABEL,
+  invoiceNumberToPersist,
   isInvoicePaid,
   paymentModeFromInvoice,
   paymentStatusLabel,
   pickInvoiceForContext,
   receiptHonestyFromResponse,
+  savedInvoiceView,
+  shouldRecomputeDraftLines,
   shouldShowSandboxPay,
 } from "./billingCollect";
 
@@ -42,12 +47,88 @@ describe("billing collect UX helpers", () => {
 
   it("picks the latest appointment invoice so Paid/Unpaid hydrates after reload", () => {
     const invoices = [
-      { id: "inv-new", invoiceNumber: "INV-2", appointmentId: "a1", patientId: "p1", paymentStatus: "Paid" },
-      { id: "inv-old", invoiceNumber: "INV-1", appointmentId: "a1", patientId: "p1", paymentStatus: "Unpaid" },
+      { id: "inv-new", invoiceNumber: "INV-2", appointmentId: "a1", patientId: "p1", paymentStatus: "Paid", createdAt: "2026-10-15T10:00:00.000Z" },
+      { id: "inv-old", invoiceNumber: "INV-1", appointmentId: "a1", patientId: "p1", paymentStatus: "Unpaid", createdAt: "2026-10-01T10:00:00.000Z" },
     ];
     const picked = pickInvoiceForContext(invoices, { appointmentId: "a1", patientId: "p1" });
     assert.equal(picked?.id, "inv-new");
     assert.equal(isInvoicePaid(picked), true);
+    const reversed = [...invoices].reverse();
+    assert.equal(pickInvoiceForContext(reversed, { appointmentId: "a1" })?.id, "inv-new");
+  });
+
+  it("matches an invoice by appointment id only, so an older bill does not open on today's visit", () => {
+    const invoices = [
+      {
+        id: "older-paid",
+        invoiceNumber: "INV-2026-0007",
+        appointmentId: "apt-last-month",
+        patientId: "p1",
+        paymentStatus: "Paid",
+        totalAmount: 2000,
+        createdAt: "2026-09-01T08:00:00.000Z",
+      },
+      {
+        id: "today-paid",
+        invoiceNumber: "INV-2026-0108",
+        appointmentId: "apt-today",
+        patientId: "p1",
+        paymentStatus: "Paid",
+        totalAmount: 750,
+        createdAt: "2026-10-15T08:00:00.000Z",
+      },
+    ];
+    const today = pickInvoiceForContext(invoices, { appointmentId: "apt-today", patientId: "p1" });
+    assert.equal(today?.id, "today-paid");
+    assert.equal(today?.totalAmount, 750);
+    assert.equal(pickInvoiceForContext(invoices, { patientId: "p1" }), null);
+    assert.equal(pickInvoiceForContext(invoices, { appointmentId: "apt-missing", patientId: "p1" }), null);
+  });
+
+  it("renders a saved invoice from its stored lines and total, not a consult fee plus Rx estimates", () => {
+    const view = savedInvoiceView({
+      items: [
+        {
+          id: "line-consult",
+          description: "OPD consult",
+          category: "Consultation",
+          quantity: 1,
+          unitPrice: 750,
+          total: 750,
+        },
+      ],
+      subtotal: 750,
+      discountAmount: 0,
+      totalAmount: 750,
+    });
+    assert.equal(view.totalAmount, 750);
+    assert.equal(view.items.length, 1);
+    assert.equal(view.items[0].description, "OPD consult");
+    assert.equal(view.items[0].unitPrice, 750);
+    const mismatched = savedInvoiceView({
+      items: [
+        { id: "fee", description: "Estimated consult", category: "Consultation", quantity: 1, unitPrice: 600, total: 600 },
+        { id: "rx", description: "Estimated medicine", category: "Pharmacy", quantity: 1, unitPrice: 140, total: 140 },
+      ],
+      subtotal: 740,
+      discountAmount: 0,
+      totalAmount: 750,
+    });
+    assert.equal(mismatched.totalAmount, 750);
+    assert.equal(mismatched.items[0].total, 600);
+    assert.equal(shouldRecomputeDraftLines({ id: "inv-1" }), false);
+    assert.equal(shouldRecomputeDraftLines(null), true);
+    assert.equal(shouldRecomputeDraftLines({ id: "" }), true);
+  });
+
+  it("shows Draft (not saved) until the server allocates a GST invoice number", () => {
+    assert.equal(DRAFT_INVOICE_LABEL, "Draft (not saved)");
+    assert.equal(displayInvoiceNumber(""), "Draft (not saved)");
+    assert.equal(displayInvoiceNumber("Draft (not saved)"), "Draft (not saved)");
+    assert.equal(displayInvoiceNumber("INV-2026-0108"), "INV-2026-0108");
+    assert.equal(invoiceNumberToPersist("Draft (not saved)"), "");
+    assert.equal(invoiceNumberToPersist("INV-2026-####"), "");
+    assert.equal(invoiceNumberToPersist("INV-2026-0108"), "INV-2026-0108");
   });
 
   it("shows sandbox-pay only when simulators are enabled, invoice exists, and unpaid", () => {
@@ -133,5 +214,13 @@ describe("BillingManager Wave 2 source gates", () => {
     assert.match(billingUi, /receiptHonestyFromResponse/);
     assert.match(billingUi, /graphDelivered/);
     assert.doesNotMatch(billingUi, /mark-paid-local|markPaidLocal|locallyPaid/);
+    assert.match(billingUi, /savedInvoiceView/);
+    assert.match(billingUi, /shouldRecomputeDraftLines/);
+    assert.match(billingUi, /Draft \(not saved\)|DRAFT_INVOICE_LABEL/);
+    assert.match(billingUi, /linesLocked/);
+    assert.match(billingUi, /appointmentId=\$\{encodeURIComponent\(appointmentId\)\}/);
+    assert.doesNotMatch(billingUi, /INV-2026-\$\{Math\.floor/);
+    assert.doesNotMatch(billingUi, /pickInvoiceForContext\([\s\S]{0,180}patientId/);
+    assert.doesNotMatch(billingUi, /Lumera/);
   });
 });

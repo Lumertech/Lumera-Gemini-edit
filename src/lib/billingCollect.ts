@@ -32,6 +32,30 @@ export type DayEndReport = {
   invoices: PersistedInvoice[];
 };
 
+export const DRAFT_INVOICE_LABEL = "Draft (not saved)";
+
+const GST_INVOICE_NUMBER = /^INV-\d{4}-[A-Z0-9]+$/i;
+
+const SAVED_LINE_CATEGORIES = new Set(["Consultation", "Pharmacy", "Lab", "Procedure", "Nursing", "Package"]);
+
+export type SavedBillLine = {
+  id: string;
+  description: string;
+  category: "Consultation" | "Pharmacy" | "Lab" | "Procedure" | "Nursing" | "Package";
+  hsnSacCode?: string;
+  quantity: number;
+  unitPrice: number;
+  gstPercent: number;
+  total: number;
+};
+
+export type SavedInvoiceView = {
+  items: SavedBillLine[];
+  subtotal: number;
+  discountAmount: number;
+  totalAmount: number;
+};
+
 export type PersistedInvoice = {
   id: string;
   invoiceNumber: string;
@@ -42,8 +66,11 @@ export type PersistedInvoice = {
   payLink?: string;
   gstin?: string;
   upiId?: string;
+  subtotal?: number;
+  discountAmount?: number;
   totalAmount?: number;
-  items?: unknown[];
+  items?: unknown;
+  createdAt?: string;
   receiptWhatsAppChannel?: string;
   receiptWhatsAppStatus?: string;
   receiptWhatsAppMessageId?: string;
@@ -105,20 +132,108 @@ export function paymentModeFromInvoice(mode?: string): BillingPaymentMode {
   return "UPI";
 }
 
+function invoiceRecency(invoice: PersistedInvoice): number {
+  const stamp = Date.parse(String(invoice.createdAt || ""));
+  return Number.isFinite(stamp) ? stamp : 0;
+}
+
+/**
+ * Match a bill to one appointment. Patient id is ignored so an older paid
+ * invoice for the same person cannot attach to today's visit.
+ * When several invoices share that appointment, the newest createdAt wins.
+ * Callers that omit createdAt keep the first match (list is newest-first).
+ */
 export function pickInvoiceForContext(
   invoices: PersistedInvoice[],
   opts: { appointmentId?: string; patientId?: string }
 ): PersistedInvoice | null {
-  const list = Array.isArray(invoices) ? invoices : [];
-  if (opts.appointmentId) {
-    const forAppt = list.filter((inv) => inv.appointmentId === opts.appointmentId);
-    if (forAppt.length) return forAppt[0];
+  const appointmentId = String(opts.appointmentId || "").trim();
+  if (!appointmentId) return null;
+  const matches = (Array.isArray(invoices) ? invoices : []).filter(
+    (inv) => String(inv.appointmentId || "") === appointmentId
+  );
+  if (!matches.length) return null;
+  return [...matches].sort((a, b) => invoiceRecency(b) - invoiceRecency(a))[0];
+}
+
+export function displayInvoiceNumber(invoiceNumber?: string | null): string {
+  const raw = String(invoiceNumber || "").trim();
+  if (!raw || raw === DRAFT_INVOICE_LABEL) return DRAFT_INVOICE_LABEL;
+  return raw;
+}
+
+/** Empty string means the server must allocate the GST number. Never persist a draft placeholder. */
+export function invoiceNumberToPersist(displayed?: string | null): string {
+  const raw = String(displayed || "").trim();
+  if (!raw || raw === DRAFT_INVOICE_LABEL) return "";
+  return GST_INVOICE_NUMBER.test(raw) ? raw : "";
+}
+
+export function shouldRecomputeDraftLines(invoice: { id?: string } | null | undefined): boolean {
+  return !String(invoice?.id || "").trim();
+}
+
+function readSavedItems(items: unknown): unknown[] {
+  if (Array.isArray(items)) return items;
+  if (typeof items === "string") {
+    try {
+      const parsed = JSON.parse(items) as unknown;
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
   }
-  if (opts.patientId) {
-    const forPatient = list.filter((inv) => inv.patientId === opts.patientId);
-    if (forPatient.length) return forPatient[0];
-  }
-  return null;
+  return [];
+}
+
+function finiteAmount(value: unknown, fallback: number): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function normalizeSavedLine(raw: unknown, index: number): SavedBillLine {
+  const row = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const quantity = finiteAmount(row.quantity ?? 1, 1) || 1;
+  const unitPrice = finiteAmount(row.unitPrice ?? row.unit_price, 0);
+  const total = row.total != null || row.line_total != null
+    ? finiteAmount(row.total ?? row.line_total, unitPrice * quantity)
+    : unitPrice * quantity;
+  const categoryRaw = String(row.category || "Procedure");
+  const category = SAVED_LINE_CATEGORIES.has(categoryRaw)
+    ? (categoryRaw as SavedBillLine["category"])
+    : "Procedure";
+  const hsn = String(row.hsnSacCode || row.hsn_sac_code || "").trim();
+  return {
+    id: String(row.id || `saved-line-${index + 1}`),
+    description: String(row.description || "Saved line"),
+    category,
+    ...(hsn ? { hsnSacCode: hsn } : {}),
+    quantity,
+    unitPrice,
+    gstPercent: finiteAmount(row.gstPercent ?? row.gst_percent, 0),
+    total,
+  };
+}
+
+/**
+ * Render a saved invoice as stored. Line totals and the invoice total are not
+ * rebuilt from the doctor's consult fee or estimated prescription prices.
+ */
+export function savedInvoiceView(invoice: {
+  items?: unknown;
+  subtotal?: number;
+  discountAmount?: number;
+  totalAmount?: number;
+}): SavedInvoiceView {
+  const items = readSavedItems(invoice.items).map(normalizeSavedLine);
+  const lineSum = items.reduce((sum, item) => sum + finiteAmount(item.total, 0), 0);
+  const subtotal = finiteAmount(invoice.subtotal, lineSum);
+  const discountAmount = finiteAmount(invoice.discountAmount, 0);
+  const hasAuthoritativeTotal = invoice.totalAmount != null && Number.isFinite(Number(invoice.totalAmount));
+  const totalAmount = hasAuthoritativeTotal
+    ? Number(invoice.totalAmount)
+    : Math.max(0, subtotal - discountAmount);
+  return { items, subtotal, discountAmount, totalAmount };
 }
 
 export function displayBillingIds(
