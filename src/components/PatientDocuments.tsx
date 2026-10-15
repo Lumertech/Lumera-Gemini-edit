@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Camera, Download, Eye, FileText, Trash2, Upload, X } from "lucide-react";
-import { apiFetch } from "../api/http";
+import { apiFetch, apiFetchResponse } from "../api/http";
 
 const MAX_BYTES = 10 * 1024 * 1024;
 
@@ -87,7 +87,7 @@ function clientFileError(file: File): string {
 }
 
 async function fetchAuthorizedBlob(path: string): Promise<Blob> {
-  const res = await fetch(path, { credentials: "include" });
+  const res = await apiFetchResponse(path);
   if (!res.ok) {
     const data = (await res.json().catch(() => ({}))) as { error?: string };
     throw new Error(data.error || `Request failed (${res.status})`);

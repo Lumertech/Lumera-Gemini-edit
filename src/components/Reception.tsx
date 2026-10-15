@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { apiFetchResponse } from '../api/http';
 import { 
   QrCode, 
   ShieldCheck, 
@@ -132,7 +133,7 @@ export const Reception: React.FC<ReceptionProps> = ({
     setOtpError(null);
     setIsGeneratingOtp(true);
     try {
-      const res = await fetch('/api/abdm/v3/registration/aadhaar/generateOtp', {
+      const res = await apiFetchResponse('/api/abdm/v3/registration/aadhaar/generateOtp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ aadhaar: clean }),
@@ -166,7 +167,7 @@ export const Reception: React.FC<ReceptionProps> = ({
     setOtpError(null);
     setIsVerifyingOtp(true);
     try {
-      const res = await fetch('/api/abdm/v3/registration/aadhaar/verifyOTP', {
+      const res = await apiFetchResponse('/api/abdm/v3/registration/aadhaar/verifyOTP', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

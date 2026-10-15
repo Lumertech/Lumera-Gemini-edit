@@ -10,6 +10,7 @@ import {
   csrfCookieValue,
   csrfRefreshAllowed,
   csrfSetCookieHeader,
+  acceptedHeaderCredential,
   listCookieValues,
   packHostSession,
   partitionedCookieExpiryLines,
@@ -70,11 +71,16 @@ export function issueLumeraSession(res: Response, user: DbUser): string {
     role: user.role,
     name: user.name,
   });
+  // New credential and a new CSRF secret. The previous secret must not keep
+  // working with this cookie. Callers put `res.locals.csrfToken` in the JSON
+  // body; the header is set here so the page can adopt it on the same response.
   setSessionCookie(res, jwtToken);
   // Row is in the shared SQL database (Postgres in production). There is no
   // process-local session map: each instance verifies this JWT with JWT_SECRET
-  // and loads the user from that database. Bearer clients still receive the
-  // JWT from the login JSON; the web app never reads it.
+  // and loads the user from that database. Login JSON includes this JWT only
+  // when `clientMayUseSessionToken` is true (no `Sec-Fetch-Site`, and either
+  // native `X-Client` or no `Origin`). The web app never reads it, and /me
+  // does not echo it.
   createSession(user.id);
   return jwtToken;
 }
@@ -142,7 +148,7 @@ function parseCookies(header?: string): Record<string, string> {
 const SESSION_COOKIE_ATTRS = "HttpOnly; Path=/; SameSite=Lax; Secure";
 const CLEAR_CSRF_ATTRS = "Path=/; SameSite=Lax; Secure";
 
-export function setSessionCookie(res: Response, sessionId: string) {
+export function setSessionCookie(res: Response, sessionId: string): string {
   const maxAge = SESSION_DAYS * 24 * 60 * 60;
   const csrf = csrfCookieValue();
   const sid = `${COOKIE}=${encodeURIComponent(sessionId)}; ${SESSION_COOKIE_ATTRS}; Max-Age=${maxAge}`;
@@ -152,6 +158,8 @@ export function setSessionCookie(res: Response, sessionId: string) {
   // direct Cloud Run and for the browser script that sets X-CSRF-Token.
   const host = `${HOST_SESSION_COOKIE}=${encodeURIComponent(packHostSession(sessionId, csrf))}; ${SESSION_COOKIE_ATTRS}; Max-Age=${maxAge}`;
   res.setHeader("Cache-Control", "private, no-store");
+  res.setHeader("X-CSRF-Token", csrf);
+  res.locals.csrfToken = csrf;
   // Value cookies first so a reader that keeps the first pair still sees them.
   // Variant clears follow and do not share the host-only Path=/ slot.
   res.setHeader("Set-Cookie", [
@@ -161,6 +169,7 @@ export function setSessionCookie(res: Response, sessionId: string) {
     ...sessionCookieExpiryLines(),
     ...partitionedCookieExpiryLines(),
   ]);
+  return csrf;
 }
 
 export function clearSessionCookie(res: Response) {
@@ -192,7 +201,9 @@ export function ensureBrowserCsrf(req: Request, res: Response, env: NodeJS.Proce
   const header = cookieHeaderOf(req);
   appendSetCookies(res, partitionedCookieExpiryLines());
   if (sessionCookieIsAuthenticated(req)) {
-    const csrf = unpackHostSession(selectHostSession(header, presentedCsrfHeader(req))).csrf;
+    // The secret of the cookie that authenticated, not a duplicate whose
+    // CSRF happened to match the header or happened to be last.
+    const csrf = authenticatedCookieCsrf(req) || "";
     if (csrf) res.setHeader("X-CSRF-Token", csrf);
     return csrf;
   }
@@ -342,20 +353,59 @@ export function endPresentedSession(token: string | null): void {
   revokePresentedCredential(raw);
 }
 
+/**
+ * Last `__session` whose credential is a real user. Header match does not
+ * promote a non-authenticating duplicate ahead of this cookie.
+ */
+function authenticatingHostSession(cookieHeader: string): string {
+  let chosen = "";
+  for (const raw of listCookieValues(cookieHeader, HOST_SESSION_COOKIE)) {
+    const credential = unpackHostSession(raw).credential.trim();
+    if (credential && userFromCredential(credential)) chosen = raw;
+  }
+  return chosen;
+}
+
+/**
+ * CSRF secret bound to the cookie that authenticated.
+ * Null when no cookie authenticated (anonymous header-match rules apply).
+ * Empty string when a cookie authenticated but it carried no secret.
+ */
+export function authenticatedCookieCsrf(req: Request): string | null {
+  const header = cookieHeaderOf(req);
+  const host = authenticatingHostSession(header);
+  if (host) return unpackHostSession(host).csrf;
+  const sid = parseCookies(header)[COOKIE];
+  if (!sid || !userFromCredential(sid)) return null;
+  const paired = listCookieValues(header, HOST_SESSION_COOKIE).filter(
+    (raw) => unpackHostSession(raw).credential.trim() === sid.trim()
+  );
+  if (paired.length) return unpackHostSession(paired[paired.length - 1]).csrf;
+  const readable = listCookieValues(header, CSRF_COOKIE);
+  const presented = presentedCsrfHeader(req);
+  if (presented && readable.includes(presented)) return presented;
+  return readable.length ? readable[readable.length - 1] : "";
+}
+
 export function getSessionId(req: Request): string | null {
-  const auth = req.headers.authorization;
-  if (auth && typeof auth === "string" && auth.toLowerCase().startsWith("bearer ")) {
-    const token = auth.slice(7).trim();
-    if (token) return token;
-  }
-  const xToken = req.headers["x-session-token"];
-  if (typeof xToken === "string" && xToken.trim()) {
-    return xToken.trim();
-  }
-  const cookies = parseCookies(cookieHeaderOf(req));
-  const host = selectHostSession(cookieHeaderOf(req), presentedCsrfHeader(req));
+  // Header credential only when `clientMayUseSessionToken` is true.
+  // Any `Sec-Fetch-Site` is a browser: `X-Client` cannot bring Bearer back.
+  // This repo has no Android or iOS tree; those apps send Bearer or
+  // X-Session-Token, with `X-Client` when they also send Origin and no
+  // Sec-Fetch-Site.
+  const headerCredential = acceptedHeaderCredential(req);
+  if (headerCredential) return headerCredential;
+  const header = cookieHeaderOf(req);
+  const host = authenticatingHostSession(header);
   if (host) {
     const credential = unpackHostSession(host).credential.trim();
+    if (credential) return credential;
+  }
+  const cookies = parseCookies(header);
+  if (cookies[COOKIE] && userFromCredential(cookies[COOKIE])) return cookies[COOKIE];
+  const anon = selectHostSession(header, presentedCsrfHeader(req));
+  if (anon) {
+    const credential = unpackHostSession(anon).credential.trim();
     if (credential) return credential;
   }
   return cookies[COOKIE] || null;

@@ -33,6 +33,7 @@ import {
   SlidersHorizontal,
   Stethoscope
 } from 'lucide-react';
+import { apiFetchResponse } from '../api/http';
 import { Patient, Doctor } from '../types';
 import { InertText } from '../lib/inertText';
 import { DocumentPreviewModal, DocumentPreviewData } from './whatsapp/DocumentPreviewModal';
@@ -134,7 +135,7 @@ export const WhatsAppAssistant: React.FC<WhatsAppAssistantProps> = ({
   // 1. Fetch conversations list
   const loadConversations = async () => {
     try {
-      const res = await fetch('/api/whatsapp/conversations');
+      const res = await apiFetchResponse('/api/whatsapp/conversations');
       if (res.ok) {
         const data = await res.json();
         setConversations(normalizeWhatsAppConversations(data.conversations));
@@ -148,7 +149,7 @@ export const WhatsAppAssistant: React.FC<WhatsAppAssistantProps> = ({
   const loadMessages = async (convId: string) => {
     try {
       setLoadingMessages(true);
-      const res = await fetch(
+      const res = await apiFetchResponse(
         `/api/whatsapp/messages?conversationId=${encodeURIComponent(convId)}`
       );
       if (res.ok) {
@@ -213,7 +214,7 @@ export const WhatsAppAssistant: React.FC<WhatsAppAssistantProps> = ({
     }
 
     try {
-      const res = await fetch('/api/whatsapp/messages', {
+      const res = await apiFetchResponse('/api/whatsapp/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -289,7 +290,7 @@ export const WhatsAppAssistant: React.FC<WhatsAppAssistantProps> = ({
     if (!activeConversation) return;
     const newMode = isHumanHandover ? 'bot' : 'human';
     try {
-      const res = await fetch(`/api/whatsapp/conversations/${activeConvId}/handover`, {
+      const res = await apiFetchResponse(`/api/whatsapp/conversations/${activeConvId}/handover`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -310,7 +311,7 @@ export const WhatsAppAssistant: React.FC<WhatsAppAssistantProps> = ({
   // Assign staff to conversation
   const handleAssignStaff = async (staffName: string) => {
     try {
-      const res = await fetch(`/api/whatsapp/conversations/${activeConvId}/staff`, {
+      const res = await apiFetchResponse(`/api/whatsapp/conversations/${activeConvId}/staff`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ staffName }),
@@ -330,7 +331,7 @@ export const WhatsAppAssistant: React.FC<WhatsAppAssistantProps> = ({
     // If it's a PDF preview request
     if (q.includes('preview prescription') || q.includes('view prescription')) {
       try {
-        const res = await fetch('/api/whatsapp/emr-action', {
+        const res = await apiFetchResponse('/api/whatsapp/emr-action', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -385,7 +386,7 @@ export const WhatsAppAssistant: React.FC<WhatsAppAssistantProps> = ({
 
     if (q.includes('preview lab') || q.includes('view lab report') || q.includes('lab sheet')) {
       try {
-        const res = await fetch('/api/whatsapp/emr-action', {
+        const res = await apiFetchResponse('/api/whatsapp/emr-action', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -428,7 +429,7 @@ export const WhatsAppAssistant: React.FC<WhatsAppAssistantProps> = ({
 
     if (q.includes('download pdf')) {
       try {
-        const res = await fetch('/api/whatsapp/emr-action', {
+        const res = await apiFetchResponse('/api/whatsapp/emr-action', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -458,7 +459,7 @@ export const WhatsAppAssistant: React.FC<WhatsAppAssistantProps> = ({
     setVoiceResult(null);
 
     try {
-      const res = await fetch('/api/whatsapp/voice-note', {
+      const res = await apiFetchResponse('/api/whatsapp/voice-note', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

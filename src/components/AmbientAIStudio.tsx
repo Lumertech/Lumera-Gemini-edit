@@ -20,7 +20,7 @@ import {
   ShieldCheck
 } from 'lucide-react';
 import { SoapNote, Patient, Doctor, isAbhaLinked } from '../types';
-import { apiFetch } from '../api/http';
+import { apiFetch, apiFetchResponse } from '../api/http';
 
 interface AmbientAIStudioProps {
   currentPatient: Patient;
@@ -201,7 +201,7 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
     setIsGenerating(true);
 
     try {
-      const response = await fetch('/api/gemini/generate-soap', {
+      const response = await apiFetchResponse('/api/gemini/generate-soap', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

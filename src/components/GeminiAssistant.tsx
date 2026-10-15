@@ -13,6 +13,7 @@ import {
   Zap,
   Info
 } from 'lucide-react';
+import { apiFetchResponse } from '../api/http';
 import { Patient, Doctor } from '../types';
 
 export interface GeminiAssistantProps {
@@ -76,7 +77,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
     setIsLoading(true);
 
     try {
-      const response = await fetch('/api/gemini/copilot', {
+      const response = await apiFetchResponse('/api/gemini/copilot', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

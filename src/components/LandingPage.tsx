@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { apiFetchResponse } from "../api/http";
 import {
   Sparkles,
   Phone,
@@ -229,7 +230,7 @@ export const LandingPage: React.FC = () => {
   const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch("/api/public/site")
+    apiFetchResponse("/api/public/site")
       .then((r) => r.json())
       .then((d) =>
         setSite({

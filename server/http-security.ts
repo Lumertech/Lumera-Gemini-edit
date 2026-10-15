@@ -12,6 +12,10 @@
  * Missing, `same-site`, `cross-site`, and any other value are rejected.
  * Referer is not a substitute. Canonical host is www; apex is allowed as a
  * same-site companion and redirected to www on safe navigations.
+ *
+ * The session JWT is not a browser credential. `clientMayUseSessionToken`
+ * documents when login JSON may include `token` and when
+ * `Authorization: Bearer` / `X-Session-Token` are accepted.
  */
 import { type Express, type NextFunction, type Request, type Response } from "express";
 import { applyHtmlDocumentSecurityHeaders } from "./html-security-headers.ts";
@@ -126,6 +130,34 @@ export function originAllowed(origin: string | undefined, env: NodeJS.ProcessEnv
 
 function requestPathname(req: Request): string {
   return String(req.path || req.originalUrl || "").split("?")[0] || "/";
+}
+
+function csrfRequestPath(req: Request): string {
+  const raw = String(req.originalUrl || req.path || "").split("?")[0] || "/";
+  return raw.length > 1 && raw.endsWith("/") ? raw.slice(0, -1) : raw;
+}
+
+/**
+ * Pre-auth mutations keep #133 header-match across duplicate `__session`
+ * cookies, including when a leftover authenticated cookie is also present.
+ * Authenticated actions bind CSRF to the cookie that actually authenticated.
+ */
+const LOOSE_DUPLICATE_CSRF_PATHS = new Set([
+  "/api/auth/login",
+  "/api/auth/demo-login",
+  "/api/auth/oauth",
+  "/api/auth/whatsapp/send-otp",
+  "/api/auth/whatsapp/verify-otp",
+  "/api/auth/forgot-password",
+  "/api/auth/reset-password",
+  "/api/auth/register-practice",
+  "/api/auth/register-clinic",
+]);
+
+function keepsLooseDuplicateCsrf(req: Request): boolean {
+  const path = csrfRequestPath(req);
+  if (LOOSE_DUPLICATE_CSRF_PATHS.has(path)) return true;
+  return LOOSE_DUPLICATE_CSRF_PATHS.has(`/api${path.startsWith("/") ? path : `/${path}`}`);
 }
 
 /**
@@ -415,13 +447,89 @@ function isMutating(method: string): boolean {
   return !["GET", "HEAD", "OPTIONS"].includes(String(method || "GET").toUpperCase());
 }
 
-function hasBearerOrSessionHeader(req: Request): boolean {
+/**
+ * Session JWT in login JSON, and as `Authorization: Bearer` or `X-Session-Token`.
+ *
+ * A browser request is one that carries `Sec-Fetch-Site` or `Origin`. Browsers
+ * send `Sec-Fetch-Site` on every request; page scripts cannot omit or rewrite
+ * it. They send `Origin` on CORS requests and on mutating requests. Literal
+ * `Origin: null` counts as present here. CORS still treats that literal as
+ * missing and fail-closes it on `/api` in production — this check does not
+ * change that.
+ *
+ * Those browser requests do not receive `token` and their Bearer /
+ * `X-Session-Token` headers are ignored, so a page script cannot capture the
+ * credential at login and replay it. Cookie sessions and cookie CSRF stay in
+ * force. A browser-presented bearer does not skip CSRF.
+ *
+ * Any `Sec-Fetch-Site` value, including `same-origin`, `same-site`,
+ * `cross-site`, and `none`, is a browser request. Page scripts can set
+ * `X-Client` but cannot set or remove `Sec-Fetch-*`, so `X-Client` does not
+ * override that header. Those requests never receive `token` and their
+ * Bearer / `X-Session-Token` headers are ignored.
+ *
+ * The credential is returned and the header is accepted only when
+ * `Sec-Fetch-Site` is absent and either:
+ * - `X-Client` is `mobile`, `ios`, `android`, or `native` (case-insensitive,
+ *   comma-separated values allowed), even if `Origin` is also present.
+ *   Android, iOS, and other native clients use that mark when their HTTP
+ *   stack sends Origin and does not send Fetch Metadata; or
+ * - `Origin` is also absent. curl, this repo's server tests, and
+ *   URLSession / OkHttp calls that do not set those headers take this path.
+ *
+ * This repository has no Android or iOS source. Those clients authenticate
+ * with the login JSON `token` as Bearer or `X-Session-Token`. Production CORS
+ * is unchanged: an `/api` call with neither an allowlisted Origin nor
+ * `Sec-Fetch-Site: same-origin` (or `none` on GET/HEAD) is still rejected.
+ * `X-Client` does not bypass CORS. A native client that sends Origin to pass
+ * that gate must also send `X-Client`, and must not send `Sec-Fetch-Site`.
+ *
+ * An accepted native bearer still skips cookie CSRF, because those clients
+ * do not hold the cookie pair.
+ */
+const NATIVE_CLIENT_MARKS = new Set(["mobile", "ios", "android", "native"]);
+
+export function explicitNativeClient(req: Request): boolean {
+  const raw = req.headers["x-client"];
+  const chunks = (Array.isArray(raw) ? raw : raw == null ? [] : [raw]).flatMap((value) =>
+    String(value)
+      .split(",")
+      .map((part) => part.trim().toLowerCase())
+      .filter(Boolean)
+  );
+  return chunks.some((part) => NATIVE_CLIENT_MARKS.has(part));
+}
+
+/**
+ * True when login JSON may include `token` and header credentials may authenticate.
+ * `Sec-Fetch-Site` wins over `X-Client`: a browser always sends Fetch Metadata.
+ */
+export function clientMayUseSessionToken(req: Request): boolean {
+  if (headerOne(req, "sec-fetch-site")) return false;
+  if (explicitNativeClient(req)) return true;
+  return !headerOne(req, "origin");
+}
+
+/** Bearer or `X-Session-Token` when this request is allowed to present one. */
+export function acceptedHeaderCredential(req: Request): string | null {
+  if (!clientMayUseSessionToken(req)) return null;
   const auth = req.headers.authorization;
-  if (auth && typeof auth === "string" && auth.toLowerCase().startsWith("bearer ")) {
-    return Boolean(auth.slice(7).trim());
+  const authValue = Array.isArray(auth) ? auth[0] : auth;
+  if (typeof authValue === "string" && authValue.toLowerCase().startsWith("bearer ")) {
+    const token = authValue.slice(7).trim();
+    if (token) return token;
   }
   const xToken = req.headers["x-session-token"];
-  return typeof xToken === "string" && Boolean(xToken.trim());
+  const xValues = Array.isArray(xToken) ? xToken : xToken == null ? [] : [xToken];
+  for (const value of xValues) {
+    const token = String(value || "").trim();
+    if (token) return token;
+  }
+  return null;
+}
+
+function hasBearerOrSessionHeader(req: Request): boolean {
+  return Boolean(acceptedHeaderCredential(req));
 }
 
 function csrfHeaderValue(req: Request): string {
@@ -448,6 +556,9 @@ function hasSessionCookie(cookieHeader: string | undefined): boolean {
  * On Firebase Hosting the non-HttpOnly `lumera_csrf` cookie is not forwarded;
  * the secret travels inside `__session`, and the browser still reads `lumera_csrf`
  * to set the header.
+ * An accepted native bearer skips this check. A bearer on a browser request
+ * (any `Sec-Fetch-Site`, or `Origin` without `X-Client: mobile|ios|android|native`)
+ * does not: the header is ignored and the cookie still needs its CSRF secret.
  */
 export function csrfShouldReject(req: Request): boolean {
   if (isSecurityExemptPath(req.path) || isSecurityExemptPath(req.originalUrl || "")) return false;
@@ -475,7 +586,10 @@ export function corsAllowlistMiddleware(env: NodeJS.ProcessEnv = process.env) {
       res.setHeader("Access-Control-Allow-Origin", origin);
       res.setHeader("Vary", "Origin");
       res.setHeader("Access-Control-Allow-Credentials", "true");
-      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-CSRF-Token, X-Session-Token");
+      res.setHeader(
+        "Access-Control-Allow-Headers",
+        "Content-Type, Authorization, X-CSRF-Token, X-Session-Token, X-Client"
+      );
       res.setHeader("Access-Control-Allow-Methods", "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS");
     }
     if (req.method === "OPTIONS") {
@@ -516,25 +630,56 @@ export function csrfRefreshAllowed(req: Request, env: NodeJS.ProcessEnv = proces
  */
 export function csrfProtectionMiddleware(env: NodeJS.ProcessEnv = process.env) {
   return (req: Request, res: Response, next: NextFunction) => {
-    if (!csrfShouldReject(req)) return next();
-    if (!csrfRefreshAllowed(req, env)) return csrfReject(res);
+    // Login and the other pre-auth posts still accept the __session whose
+    // secret matches the header (#133), even if another cookie authenticates.
+    if (
+      keepsLooseDuplicateCsrf(req) ||
+      hasBearerOrSessionHeader(req) ||
+      !isMutating(req.method) ||
+      isSecurityExemptPath(req.path) ||
+      isSecurityExemptPath(req.originalUrl || "")
+    ) {
+      if (!csrfShouldReject(req)) return next();
+      if (!csrfRefreshAllowed(req, env)) return csrfReject(res);
+      return refreshAnonymousCsrf(req, res, env);
+    }
     void (async () => {
       try {
-        const { sessionCookieIsAuthenticated, issueAnonymousCsrfCookie } = await import("./auth.ts");
-        if (sessionCookieIsAuthenticated(req)) return csrfReject(res);
-        const token = issueAnonymousCsrfCookie(res, env);
-        res.setHeader("Cache-Control", "private, no-store");
-        res.setHeader("X-CSRF-Token", token);
-        return res.status(403).json({
-          error: "CSRF token missing or invalid",
-          code: CSRF_REFRESHED_CODE,
-          csrfToken: token,
-        });
+        const { authenticatedCookieCsrf } = await import("./auth.ts");
+        const bound = authenticatedCookieCsrf(req);
+        if (bound != null) {
+          // Authenticated duplicate: only that cookie's secret is valid.
+          // No Set-Cookie and no CSRF_REFRESHED — a real session is not reissued.
+          if (!bound || csrfHeaderValue(req) !== bound) return csrfReject(res);
+          return next();
+        }
+        if (!csrfShouldReject(req)) return next();
+        if (!csrfRefreshAllowed(req, env)) return csrfReject(res);
+        return refreshAnonymousCsrf(req, res, env);
       } catch {
         if (!res.headersSent) return csrfReject(res);
       }
     })();
   };
+}
+
+function refreshAnonymousCsrf(req: Request, res: Response, env: NodeJS.ProcessEnv) {
+  void (async () => {
+    try {
+      const { sessionCookieIsAuthenticated, issueAnonymousCsrfCookie } = await import("./auth.ts");
+      if (sessionCookieIsAuthenticated(req)) return csrfReject(res);
+      const token = issueAnonymousCsrfCookie(res, env);
+      res.setHeader("Cache-Control", "private, no-store");
+      res.setHeader("X-CSRF-Token", token);
+      return res.status(403).json({
+        error: "CSRF token missing or invalid",
+        code: CSRF_REFRESHED_CODE,
+        csrfToken: token,
+      });
+    } catch {
+      if (!res.headersSent) return csrfReject(res);
+    }
+  })();
 }
 
 export function authRateLimitKey(req: Request): string | null {

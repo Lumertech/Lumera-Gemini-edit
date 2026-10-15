@@ -7,6 +7,7 @@ import express from "express";
 import { createApiRouter } from "./api.ts";
 import { attachUser } from "./auth.ts";
 import { initDatabase } from "./db.ts";
+import { unpackHostSession } from "./http-security.ts";
 import {
   exchangeFacebookAuthorizationCode,
   facebookLoginDialogUrl,
@@ -414,13 +415,26 @@ describe("Facebook OAuth HTTP routes", () => {
       const state = dialog.searchParams.get("state") || "";
       const res = await fetch(
         `http://127.0.0.1:${addr.port}/api/auth/facebook/callback?code=unit-code&state=${encodeURIComponent(state)}`,
-        { redirect: "manual" }
+        {
+          redirect: "manual",
+          headers: { "Sec-Fetch-Site": "cross-site", Origin: "https://www.facebook.com" },
+        }
       );
       assert.equal(res.status, 302);
       const location = res.headers.get("location") || "";
       assert.match(location, /oauth=facebook/);
       assert.match(location, /status=ok/);
+      assert.doesNotMatch(location, /[?&]token=/);
       assert.match(res.headers.get("set-cookie") || "", /lumera_sid=/);
+      const lines = typeof res.headers.getSetCookie === "function" ? res.headers.getSetCookie() : [];
+      const sessionLine = lines.find((line) => line.startsWith("__session=") && !/max-age=0/i.test(line));
+      assert.ok(sessionLine, "callback must set __session");
+      const packed = decodeURIComponent(sessionLine.split(";")[0].slice("__session=".length));
+      const credential = unpackHostSession(packed).credential;
+      assert.ok(credential);
+      assert.equal(location.includes(credential), false);
+      const body = await res.text();
+      assert.equal(body.includes(credential), false);
     } finally {
       globalThis.fetch = origFetch;
       await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));

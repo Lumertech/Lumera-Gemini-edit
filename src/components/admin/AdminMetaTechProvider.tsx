@@ -17,7 +17,7 @@ import {
   Sparkles,
   Info,
 } from "lucide-react";
-import { apiFetch } from "../../api/http";
+import { apiFetch, apiFetchResponse } from "../../api/http";
 import { useNav } from "../../nav/NavigationContext";
 import { MetaWhatsAppTemplate } from "../../types";
 
@@ -117,7 +117,7 @@ export const AdminMetaTechProvider: React.FC = () => {
       const [ovRes, wabasRes, tplRes] = await Promise.all([
         apiFetch<MetaOverview>("/api/meta/overview"),
         apiFetch<{ wabas?: WabaItem[] }>("/api/meta/wabas"),
-        fetch("/api/meta/templates").then((r) => r.json()),
+        apiFetchResponse("/api/meta/templates").then((r) => r.json()),
       ]);
       setOverview(ovRes);
       setWabas(wabasRes.wabas || []);
@@ -150,7 +150,7 @@ export const AdminMetaTechProvider: React.FC = () => {
   // Embedded Signup Simulation
   const handleSimulateEmbeddedSignup = async (tenantId: string, clinicName: string) => {
     try {
-      const res = await fetch("/api/meta/simulate-embedded-signup", {
+      const res = await apiFetchResponse("/api/meta/simulate-embedded-signup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ tenantId, clinicName }),
@@ -173,7 +173,7 @@ export const AdminMetaTechProvider: React.FC = () => {
   const handleTestDataDeletion = async () => {
     setDeletionSimStatus("Pinging /api/meta/data-deletion callback...");
     try {
-      const res = await fetch("/api/meta/data-deletion", {
+      const res = await apiFetchResponse("/api/meta/data-deletion", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ user_id: "meta_user_test_compliance_992" }),
@@ -189,7 +189,7 @@ export const AdminMetaTechProvider: React.FC = () => {
   const handleSendTest = async () => {
     setTestLog({ status: "sending" });
     try {
-      const res = await fetch("/api/meta/send-test", {
+      const res = await apiFetchResponse("/api/meta/send-test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -229,7 +229,7 @@ export const AdminMetaTechProvider: React.FC = () => {
         components.push({ type: "BUTTONS", buttons });
       }
 
-      const res = await fetch("/api/meta/templates", {
+      const res = await apiFetchResponse("/api/meta/templates", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -254,7 +254,7 @@ export const AdminMetaTechProvider: React.FC = () => {
   const handleDeleteTemplate = async (id: string) => {
     if (!confirm("Are you sure you want to delete this template?")) return;
     try {
-      await fetch(`/api/meta/templates/${id}`, { method: "DELETE" });
+      await apiFetchResponse(`/api/meta/templates/${id}`, { method: "DELETE" });
       loadData();
     } catch {
       alert("Failed to delete template");
@@ -1009,7 +1009,7 @@ export const AdminMetaTechProvider: React.FC = () => {
                 type="button"
                 onClick={async () => {
                   try {
-                    const res = await fetch("/api/meta/waba-connect", {
+                    const res = await apiFetchResponse("/api/meta/waba-connect", {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
                       body: JSON.stringify({

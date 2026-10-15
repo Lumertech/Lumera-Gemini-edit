@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { apiFetch, purgeLegacyAuthToken } from "../api/http";
+import { apiFetch, apiFetchResponse, purgeLegacyAuthToken } from "../api/http";
 import { AppUser, UserRole } from "../types";
 import { type Surface } from "../nav/surfaces";
 import { needsOnboarding } from "../lib/sessionWorkspace";
@@ -127,6 +127,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     let cancelled = false;
     purgeLegacyAuthToken();
+    // Cookie session only. /api/auth/me does not return a bearer token.
     apiFetch<{ user: AppUser | null }>("/api/auth/me")
       .then((d) => {
         if (cancelled) return;
@@ -143,7 +144,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
-    fetch("/api/auth/oauth-config")
+    apiFetchResponse("/api/auth/oauth-config")
       .then((r) => (r.ok ? r.json() : null))
       .then((d: { demoLoginEnabled?: boolean } | null) => {
         if (!cancelled && d) setDemoLoginEnabled(Boolean(d.demoLoginEnabled));
@@ -292,6 +293,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const refreshSession = useCallback(async (): Promise<AppUser | null> => {
+    // Cookie session only. Do not read a token from /api/me.
     const d = await apiFetch<{ user: AppUser | null }>("/api/me");
     purgeLegacyAuthToken();
     if (d?.user) {

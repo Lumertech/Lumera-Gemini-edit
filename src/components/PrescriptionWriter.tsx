@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { apiFetchResponse } from '../api/http';
 import { 
   FileText, 
   Plus, 
@@ -419,7 +420,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
   const handleCheckSafety = async () => {
     setIsCheckingSafety(true);
     try {
-      const response = await fetch('/api/gemini/safety-check', {
+      const response = await apiFetchResponse('/api/gemini/safety-check', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -517,7 +518,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
   const translateRxForWhatsApp = async (lang: string) => {
     setIsTranslating(true);
     try {
-      const response = await fetch('/api/gemini/translate-rx', {
+      const response = await apiFetchResponse('/api/gemini/translate-rx', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -860,7 +861,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     }
     setIsSendingWhatsAppDirect(true);
     try {
-      const response = await fetch('/api/whatsapp/send-rx', {
+      const response = await apiFetchResponse('/api/whatsapp/send-rx', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

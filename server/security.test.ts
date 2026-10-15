@@ -362,7 +362,8 @@ describe("Wave 1A PHI / auth lock", () => {
     });
     assert.equal(me.status, 200);
     assert.equal((me.json.user as { email?: string } | null)?.email, "doctor@lumera.me");
-    assert.equal(me.json.token, token);
+    assert.equal(me.json.token, undefined);
+    assert.equal(JSON.stringify(me.json).includes(token), false);
   });
 
   it("admin@lumera.me / Lumera@2026 logs in without an OTP step", async () => {

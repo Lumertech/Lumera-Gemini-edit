@@ -19,6 +19,7 @@ import {
   Link as LinkIcon,
   RefreshCw,
 } from 'lucide-react';
+import { apiFetchResponse } from '../api/http';
 import type { Doctor, PolyclinicSpecialty } from '../types';
 
 export const ALL_SPECIALTIES: PolyclinicSpecialty[] = [
@@ -135,7 +136,7 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
     data.append('file', file);
 
     try {
-      const res = await fetch(`/api/doctors/${doctor.id}/avatar`, {
+      const res = await apiFetchResponse(`/api/doctors/${doctor.id}/avatar`, {
         method: 'POST',
         body: data,
         credentials: 'include',
@@ -146,7 +147,7 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
         setFormData((prev) => ({ ...prev, avatarUrl: json.avatarUrl }));
       } else {
         // Fallback to general media endpoint
-        const mediaRes = await fetch('/api/media', {
+        const mediaRes = await apiFetchResponse('/api/media', {
           method: 'POST',
           body: data,
           credentials: 'include',
@@ -176,7 +177,7 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
     setErrorMessage('');
 
     try {
-      const res = await fetch(`/api/doctors/${doctor.id}`, {
+      const res = await apiFetchResponse(`/api/doctors/${doctor.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
