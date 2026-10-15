@@ -15,6 +15,7 @@ import {
   sendAppointmentReminder,
 } from "./graph-whatsapp.ts";
 import { clinicOutboundCopy, resolveClinicFacingNames } from "./whatsapp.ts";
+import { WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
 import {
   ensureWhatsAppOwnershipSchema,
   getWhatsAppNumberSecret,
@@ -45,6 +46,8 @@ function insertTenant(id: string, name: string) {
 
 function stampLastInbound(tenantId: string | null, phone: string, ageMs: number) {
   const at = new Date(Date.now() - ageMs).toISOString();
+  // tenant_id is NOT NULL. Unresolved rows live on the quarantine clinic and must not open another clinic's window.
+  const storedTenant = String(tenantId || "").trim() || WHATSAPP_QUARANTINE_TENANT_ID;
   getDb()
     .prepare(
       `INSERT INTO whatsapp_conversations (
@@ -52,7 +55,7 @@ function stampLastInbound(tenantId: string | null, phone: string, ageMs: number)
          unread_count, last_message, last_message_time, updated_at, tenant_id, last_inbound_at
        ) VALUES (?, ?, 'Patient', 'human', 'Staff', '[]', 'en', 0, 'hello', '1:00 PM', ?, ?, ?)`
     )
-    .run(`conv-${crypto.randomUUID()}`, phone, at, tenantId, at);
+    .run(`conv-${crypto.randomUUID()}`, phone, at, storedTenant, at);
 }
 
 function connectTenantNumber(tenantId: string, phoneNumberId = uniquePhoneNumberId(), token = TENANT_TOKEN) {

@@ -406,9 +406,9 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
       const buttons = body.buttons ?? null;
       const media = body.media ?? null;
       const targetLanguage = body.targetLanguage;
-      const bodyTenantId = body.tenantId;
-      const phoneNumberId = body.phoneNumberId;
-      const wabaId = body.wabaId;
+      const bodyTenantId = typeof body.tenantId === "string" ? body.tenantId : undefined;
+      const phoneNumberId = typeof body.phoneNumberId === "string" ? body.phoneNumberId : undefined;
+      const wabaId = typeof body.wabaId === "string" ? body.wabaId : undefined;
       const sessionTenantId = clinicTenantId(req);
 
       if (!patientPhone) {
