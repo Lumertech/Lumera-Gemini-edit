@@ -1,7 +1,7 @@
 import { type SqlDatabase } from "./sql-engine.ts";
 import { ensurePlatformTenantSchema } from "./platform-tenants.ts";
 import { BOOTSTRAP_DDL } from "./db-bootstrap-ddl.ts";
-import { addWhatsAppTenantColumns } from "./migrate-patients-phone.ts";
+import { addWhatsAppTenantColumns, enforceWhatsAppTenantNotNull } from "./migrate-patients-phone.ts";
 import { backfillWhatsAppTenantIds } from "./whatsapp-tenant-backfill.ts";
 
 const DEMO_LETTERHEAD_SEED = {
@@ -362,6 +362,7 @@ export function migrate(database: SqlDatabase) {
   } catch {}
   addWhatsAppTenantColumns(database);
   backfillWhatsAppTenantIds(database);
+  enforceWhatsAppTenantNotNull(database);
 }
 
 /**

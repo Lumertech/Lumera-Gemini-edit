@@ -14,6 +14,7 @@
  * inbox route: req.params.id is the document id, not a conversation id.
  */
 import { Router, type NextFunction, type Request, type RequestHandler, type Response } from "express";
+import { rejectUntrustedTenantClaim } from "./tenant-guard.ts";
 import {
   clinicTenantId,
   getTenantConversation,
@@ -107,9 +108,7 @@ export function protectWhatsAppDashboard(inner: Router): Router {
   const outer = Router();
 
   outer.use((req: Request, res: Response, next: NextFunction) => {
-    const path = String(req.path || "").split("?")[0];
-    if (!isDashboardPath(path)) return next();
-    runChain(requireClinicWhatsApp, req, res, next);
+    runChain([...requireClinicWhatsApp, rejectUntrustedTenantClaim], req, res, next);
   });
 
   outer.get("/conversations", (req: Request, res: Response) => {

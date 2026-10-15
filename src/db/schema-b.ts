@@ -36,7 +36,7 @@ export const whatsappConversations = pgTable(
     lastMessage: text("last_message").notNull().default(""),
     lastMessageTime: text("last_message_time").notNull().default(""),
     updatedAt: text("updated_at").notNull(),
-    tenantId: text("tenant_id"),
+    tenantId: text("tenant_id").notNull().default("tenant-wa-unassigned"),
     phoneNumberId: text("phone_number_id"),
     wabaId: text("waba_id"),
   },
@@ -61,7 +61,7 @@ export const whatsappMessages = pgTable(
     voiceTranscript: text("voice_transcript"),
     status: text("status").notNull().default("delivered"),
     createdAt: text("created_at").notNull(),
-    tenantId: text("tenant_id"),
+    tenantId: text("tenant_id").notNull().default("tenant-wa-unassigned"),
   },
   (t) => [index("idx_wa_msg_tenant").on(t.tenantId)]
 );

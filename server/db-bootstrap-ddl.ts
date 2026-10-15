@@ -235,7 +235,7 @@ export const BOOTSTRAP_DDL = `
       last_message TEXT NOT NULL DEFAULT '',
       last_message_time TEXT NOT NULL DEFAULT '',
       updated_at TEXT NOT NULL,
-      tenant_id TEXT,
+      tenant_id TEXT NOT NULL DEFAULT 'tenant-wa-unassigned',
       phone_number_id TEXT,
       waba_id TEXT
     );
@@ -256,7 +256,7 @@ export const BOOTSTRAP_DDL = `
       voice_transcript TEXT,
       status TEXT NOT NULL DEFAULT 'delivered',
       created_at TEXT NOT NULL,
-      tenant_id TEXT
+      tenant_id TEXT NOT NULL DEFAULT 'tenant-wa-unassigned'
     );
 
     CREATE TABLE IF NOT EXISTS whatsapp_outbound_events (

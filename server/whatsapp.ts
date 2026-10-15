@@ -28,6 +28,7 @@ import {
   getTenantConversation,
   listTenantConversations,
   listTenantOutboundEvents,
+  requireClinicWhatsApp,
   serializeOutboundEvent,
 } from "./whatsapp-scope.ts";
 
@@ -91,8 +92,7 @@ function respondWhatsAppMessages(res: Response, tenantId: string, convId?: strin
     rows = db
       .prepare(
         `SELECT * FROM whatsapp_messages
-         WHERE conversation_id = ?
-           AND (TRIM(COALESCE(tenant_id, '')) = '' OR TRIM(COALESCE(tenant_id, '')) = ?)
+         WHERE conversation_id = ? AND TRIM(COALESCE(tenant_id, '')) = ?
          ORDER BY created_at ASC`
       )
       .all(convId, tenantId) as Record<string, unknown>[];
@@ -117,7 +117,7 @@ function respondWhatsAppMessages(res: Response, tenantId: string, convId?: strin
 export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null): Router {
   const getGenAI = customGetGenAI || getDefaultGenAI;
   const router = Router();
-  router.use(rejectUntrustedTenantClaim);
+  router.use(...requireClinicWhatsApp, rejectUntrustedTenantClaim);
 
   // Helper to format timestamps
   function getDisplayTime(): string {
@@ -318,7 +318,7 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
       const body = (req.body || {}) as Record<string, unknown>;
       const conversationId = String(body.conversationId || body.conversation_id || "").trim();
       const patientPhone = String(body.patientPhone || body.patient_phone || "").trim();
-      const patientName = String(body.patientName || body.patient_name || "").trim() || "Patient";
+      const patientName = String(body.patientName || body.patient_name || "").trim();
       const sender = String(body.sender || "user");
       const staffName = body.staffName ? String(body.staffName) : null;
       const content = String(body.content || "");
@@ -330,7 +330,7 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
       const wabaId = body.wabaId;
       const sessionTenantId = clinicTenantId(req);
 
-      if (!patientPhone || !patientName) {
+      if (!patientPhone) {
         return res.status(400).json({ error: "patientPhone is required" });
       }
       if (!content && !media && !buttons) {
@@ -352,11 +352,17 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
 
       let conv: Record<string, unknown> | undefined;
       if (conversationId) {
-        const byId = db.prepare("SELECT * FROM whatsapp_conversations WHERE id = ?").get(conversationId) as
-          | Record<string, unknown>
-          | undefined;
-        if (ownedByOtherClinic(byId)) return res.status(404).json({ error: "Conversation not found" });
-        conv = byId;
+        conv = db
+          .prepare("SELECT * FROM whatsapp_conversations WHERE id = ? AND TRIM(COALESCE(tenant_id, '')) = ?")
+          .get(conversationId, sessionTenantId) as Record<string, unknown> | undefined;
+        if (!conv) {
+          const foreign = db
+            .prepare(
+              "SELECT id FROM whatsapp_conversations WHERE id = ? AND TRIM(COALESCE(tenant_id, '')) != ?"
+            )
+            .get(conversationId, sessionTenantId) as { id?: string } | undefined;
+          if (foreign?.id) return res.status(404).json({ error: "Conversation not found" });
+        }
       }
       if (!conv && patientPhone) {
         const byPhone = db.prepare("SELECT * FROM whatsapp_conversations WHERE patient_phone = ?").get(patientPhone) as
@@ -426,9 +432,9 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
 
       db.prepare(`
         UPDATE whatsapp_conversations
-        SET last_message = ?, last_message_time = ?, unread_count = ?, updated_at = ?, tenant_id = COALESCE(NULLIF(TRIM(tenant_id), ''), ?)
-        WHERE id = ? AND (tenant_id IS NULL OR TRIM(tenant_id) = '' OR tenant_id = ?)
-      `).run(content.slice(0, 80), timeDisplay, newUnread, now, sessionTenantId, String(conv.id), sessionTenantId);
+        SET last_message = ?, last_message_time = ?, unread_count = ?, updated_at = ?
+        WHERE id = ? AND TRIM(COALESCE(tenant_id, '')) = ?
+      `).run(content.slice(0, 80), timeDisplay, newUnread, now, String(conv.id), sessionTenantId);
 
       const responsePayload: {
         sentMessage: Record<string, unknown>;

@@ -10,9 +10,9 @@ import { getDb, initDatabase } from "./db.ts";
 import { hashPassword } from "./password.ts";
 import { installWhatsAppRouterPatch, protectWhatsAppDashboard } from "./whatsapp-dashboard-guard.ts";
 import { createWhatsAppRouter } from "./whatsapp.ts";
-import { backfillWhatsAppTenantIds } from "./whatsapp-tenant-backfill.ts";
+import { backfillWhatsAppTenantIds, WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
 import { META_REVIEW_TENANT_ID } from "./tenant-slug.ts";
-import { SEND_OTP_MAX_PER_PHONE, resetSendOtpRateLimits } from "./otp-rate-limit.ts";
+import { consumeSendOtpAttempt, SEND_OTP_MAX_PER_PHONE, resetSendOtpRateLimits } from "./otp-rate-limit.ts";
 import { startTestServer, type TestHttpServer } from "./test-http.ts";
 
 async function jsonRequest(
@@ -163,7 +163,8 @@ describe("WhatsApp tenant backfill", () => {
       assert.equal(tenantOf("conv-line"), "tenant-b");
       assert.equal(tenantOf("conv-patient"), "tenant-b");
       assert.equal(tenantOf("conv-phone"), "tenant-c");
-      assert.equal(tenantOf("conv-orphan"), "");
+      assert.equal(tenantOf("conv-orphan"), WHATSAPP_QUARANTINE_TENANT_ID);
+      assert.notEqual(tenantOf("conv-orphan"), "");
       assert.equal(tenantOf("conv-meta-kept"), META_REVIEW_TENANT_ID);
       assert.equal(
         String((db.prepare("SELECT tenant_id FROM whatsapp_messages WHERE id = ?").get("msg-patient") as { tenant_id: string }).tenant_id),
@@ -171,7 +172,7 @@ describe("WhatsApp tenant backfill", () => {
       );
       assert.equal(
         String((db.prepare("SELECT tenant_id FROM whatsapp_messages WHERE id = ?").get("msg-orphan") as { tenant_id: string }).tenant_id || ""),
-        ""
+        WHATSAPP_QUARANTINE_TENANT_ID
       );
     } finally {
       db.close();
@@ -249,6 +250,15 @@ describe("WhatsApp tenant scope, send validation, OTP limit, invoice UHID", () =
     assert.equal(listB.status, 200);
     const idsB = ((listB.json.conversations as Array<{ id: string }>) || []).map((row) => row.id);
     assert.equal(idsB.includes(convId), false);
+
+    const forgedList = await jsonRequest(
+      server.port,
+      "GET",
+      `/api/whatsapp/conversations?tenantId=${encodeURIComponent(a.tenantId)}`,
+      undefined,
+      authB
+    );
+    assert.ok(forgedList.status === 403 || forgedList.status === 404);
 
     const readB = await jsonRequest(server.port, "GET", `/api/whatsapp/conversations/${convId}`, undefined, authB);
     assert.equal(readB.status, 404);
@@ -359,8 +369,21 @@ describe("WhatsApp tenant scope, send validation, OTP limit, invoice UHID", () =
       const orphan = getDb()
         .prepare("SELECT tenant_id FROM whatsapp_conversations WHERE patient_phone = ?")
         .get(unknownFrom) as { tenant_id: string };
-      assert.equal(String(orphan.tenant_id || "").trim(), "");
+      assert.equal(String(orphan.tenant_id || "").trim(), WHATSAPP_QUARANTINE_TENANT_ID);
       assert.notEqual(orphan.tenant_id, META_REVIEW_TENANT_ID);
+      const token = await login(clinic.email);
+      const hidden = await jsonRequest(server.port, "GET", "/api/whatsapp/conversations", undefined, {
+        Authorization: `Bearer ${token}`,
+      });
+      const hiddenIds = ((hidden.json.conversations as Array<{ id: string }>) || []).map((row) => row.id);
+      const orphanId = String(
+        (getDb().prepare("SELECT id FROM whatsapp_conversations WHERE patient_phone = ?").get(unknownFrom) as { id: string }).id
+      );
+      assert.equal(hiddenIds.includes(orphanId), false);
+      const orphanRead = await jsonRequest(server.port, "GET", `/api/whatsapp/conversations/${orphanId}`, undefined, {
+        Authorization: `Bearer ${token}`,
+      });
+      assert.equal(orphanRead.status, 404);
     } finally {
       if (prevSecret === undefined) delete process.env.META_APP_SECRET;
       else process.env.META_APP_SECRET = prevSecret;
@@ -398,18 +421,26 @@ describe("WhatsApp tenant scope, send validation, OTP limit, invoice UHID", () =
       .prepare("SELECT COUNT(*) AS c FROM whatsapp_conversations WHERE patient_name = 'Rajiv Saxena' AND tenant_id = ?")
       .get(clinic.tenantId) as { c: number };
     assert.equal(created.c, 0);
+    const fallbackName = getDb()
+      .prepare("SELECT COUNT(*) AS c FROM whatsapp_conversations WHERE patient_name = 'Patient' AND tenant_id = ?")
+      .get(clinic.tenantId) as { c: number };
+    assert.equal(fallbackName.c, 0);
   });
 
   it("send-otp returns 429 after 3 requests for the same phone", async () => {
     resetSendOtpRateLimits();
     const phone = `+91 93${String(Date.now()).slice(-8)}`;
     const statuses: number[] = [];
+    const verificationIds: string[] = [];
     for (let i = 0; i < SEND_OTP_MAX_PER_PHONE + 1; i += 1) {
       const res = await jsonRequest(server.port, "POST", "/api/auth/whatsapp/send-otp", { phone, purpose: "login" });
       statuses.push(res.status);
+      if (res.status === 200) verificationIds.push(String(res.json.verificationId || ""));
     }
     assert.deepEqual(statuses.slice(0, SEND_OTP_MAX_PER_PHONE).includes(429), false);
     assert.equal(statuses[SEND_OTP_MAX_PER_PHONE], 429);
+    assert.ok(verificationIds.length >= 2);
+    assert.equal(new Set(verificationIds).size, 1);
     const otherPhone = await jsonRequest(server.port, "POST", "/api/auth/whatsapp/send-otp", {
       phone: `+91 94${String(Date.now()).slice(-8)}`,
       purpose: "login",
@@ -452,6 +483,20 @@ describe("WhatsApp tenant scope, send validation, OTP limit, invoice UHID", () =
     assert.equal(invoice.patientUhid, patient.uhid);
     const row = getDb().prepare("SELECT patient_uhid FROM invoices WHERE id = ?").get(invoice.id) as { patient_uhid: string };
     assert.equal(row.patient_uhid, patient.uhid);
+  });
+});
+
+describe("OTP subject buckets", () => {
+  it("returns 429 on the 4th attempt for the same user across phones and IPs", () => {
+    resetSendOtpRateLimits();
+    const now = Date.now();
+    for (let i = 0; i < SEND_OTP_MAX_PER_PHONE; i += 1) {
+      const attempt = consumeSendOtpAttempt(`+1555000000${i}`, `10.0.0.${i}`, "user:same", now + i);
+      assert.equal(attempt.ok, true);
+    }
+    const blocked = consumeSendOtpAttempt("+15550000009", "10.0.0.9", "user:same", now + 10);
+    assert.equal(blocked.ok, false);
+    resetSendOtpRateLimits();
   });
 });
 

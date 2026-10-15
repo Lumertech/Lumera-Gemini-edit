@@ -1,14 +1,49 @@
 import type { SqlDatabase } from "./sql-engine.ts";
 
+/** Rows that cannot be mapped to a clinic. Not a clinic session, and never NULL. */
+export const WHATSAPP_QUARANTINE_TENANT_ID = "tenant-wa-unassigned";
+
 /**
  * Fill empty WhatsApp tenant_id values only.
  * Order: receiving phone_number_id / WABA → tenant mapping, then the patient.
- * Rows that still cannot be resolved stay blank and are not visible to any clinic.
- * Never rewrites a row that already has a tenant_id, and never updates tenant records.
+ * Rows that still cannot be resolved are stamped with the quarantine tenant.
+ * Never rewrites a row that already belongs to a clinic, and never updates tenant records
+ * other than inserting the quarantine tenant when it is missing.
  */
 
 function blank(value: unknown): boolean {
-  return String(value ?? "").trim() === "";
+  const id = String(value ?? "").trim();
+  return id === "" || id === WHATSAPP_QUARANTINE_TENANT_ID;
+}
+
+function ensureQuarantineTenant(database: SqlDatabase) {
+  try {
+    const existing = database.prepare("SELECT id FROM tenants WHERE id = ?").get(WHATSAPP_QUARANTINE_TENANT_ID) as
+      | { id?: string }
+      | undefined;
+    if (existing?.id) return;
+  } catch {
+    return;
+  }
+  const now = new Date().toISOString();
+  try {
+    database
+      .prepare(
+        `INSERT INTO tenants (
+           id, name, specialty, country, timezone, phone, trial_ends_at,
+           ai_scribe_minutes_limit, ai_scribe_minutes_used, active_status, hfr_id, created_at, updated_at
+         ) VALUES (?, 'Unassigned WhatsApp', 'General Medicine', 'India', 'UTC', '', ?, 0, 0, 0, '', ?, ?)`
+      )
+      .run(WHATSAPP_QUARANTINE_TENANT_ID, now, now, now);
+  } catch {
+    try {
+      database
+        .prepare("INSERT INTO tenants (id, name) VALUES (?, 'Unassigned WhatsApp')")
+        .run(WHATSAPP_QUARANTINE_TENANT_ID);
+    } catch {
+      /* conversation rows still store the quarantine id when the tenants shape differs */
+    }
+  }
 }
 
 function last10(phone: unknown): string {
@@ -103,6 +138,7 @@ function buildLineMaps(database: SqlDatabase): { phoneNumber: Map<string, string
 }
 
 export function backfillWhatsAppTenantIds(database: SqlDatabase): void {
+  ensureQuarantineTenant(database);
   const conversations = loadConversations(database);
   if (!conversations.length) {
     backfillMessages(database, new Map());
@@ -133,12 +169,13 @@ export function backfillWhatsAppTenantIds(database: SqlDatabase): void {
   const lines = buildLineMaps(database);
   const convTenant = new Map<string, string>();
   const assign = database.prepare(
-    "UPDATE whatsapp_conversations SET tenant_id = ? WHERE id = ? AND (tenant_id IS NULL OR TRIM(tenant_id) = '')"
+    `UPDATE whatsapp_conversations SET tenant_id = ?
+     WHERE id = ? AND (tenant_id IS NULL OR TRIM(tenant_id) = '' OR tenant_id = ?)`
   );
 
   for (const row of conversations) {
     const existing = String(row.tenant_id || "").trim();
-    if (existing) {
+    if (existing && existing !== WHATSAPP_QUARANTINE_TENANT_ID) {
       convTenant.set(String(row.id), existing);
       continue;
     }
@@ -147,9 +184,8 @@ export function backfillWhatsAppTenantIds(database: SqlDatabase): void {
     const fromPatient = tenantByPatientId.get(String(row.patient_id || "").trim()) || "";
     const phoneTenants = tenantsByPhone.get(last10(row.patient_phone));
     const fromPhone = phoneTenants && phoneTenants.size === 1 ? [...phoneTenants][0] : "";
-    const resolved = fromLine || fromWaba || fromPatient || fromPhone || "";
-    if (!resolved) continue;
-    assign.run(resolved, row.id);
+    const resolved = fromLine || fromWaba || fromPatient || fromPhone || WHATSAPP_QUARANTINE_TENANT_ID;
+    if (existing !== resolved) assign.run(resolved, row.id, WHATSAPP_QUARANTINE_TENANT_ID);
     convTenant.set(String(row.id), resolved);
   }
 
@@ -179,12 +215,12 @@ function backfillMessages(database: SqlDatabase, convTenant: Map<string, string>
     }
   }
   const assign = database.prepare(
-    "UPDATE whatsapp_messages SET tenant_id = ? WHERE id = ? AND (tenant_id IS NULL OR TRIM(tenant_id) = '')"
+    `UPDATE whatsapp_messages SET tenant_id = ?
+     WHERE id = ? AND (tenant_id IS NULL OR TRIM(tenant_id) = '' OR tenant_id = ?)`
   );
   for (const row of messages) {
     if (!blank(row.tenant_id)) continue;
-    const tenantId = convTenant.get(String(row.conversation_id || "")) || "";
-    if (!tenantId) continue;
-    assign.run(tenantId, row.id);
+    const tenantId = convTenant.get(String(row.conversation_id || "")) || WHATSAPP_QUARANTINE_TENANT_ID;
+    assign.run(tenantId, row.id, WHATSAPP_QUARANTINE_TENANT_ID);
   }
 }

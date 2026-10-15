@@ -76,7 +76,7 @@ import { parseSpecialtyPackInput, resolveSpecialtyPack } from "./specialty-packs
 import { appPublicUrl, demoLoginEnabled, isProduction } from "./runtime.ts";
 import { DEMO_PASSWORD } from "../src/lib/demoAccounts.ts";
 import { dispatchWhatsAppCloudMessage, isCloudDispatchFailure } from "./graph-whatsapp.ts";
-import { consumeSendOtpAttempt, requestClientIp } from "./otp-rate-limit.ts";
+import { consumeSendOtpAttempt, otpSubjectKey, requestClientIp } from "./otp-rate-limit.ts";
 import {
   FacebookOAuthError,
   facebookLoginDialogUrl,
@@ -813,9 +813,37 @@ export function createApiRouter(): Router {
       return res.status(400).json({ error: "WhatsApp Business phone number is required" });
     }
 
-    const otpLimit = consumeSendOtpAttempt(phone, requestClientIp(req));
+    const otpLimit = consumeSendOtpAttempt(
+      phone,
+      requestClientIp(req),
+      otpSubjectKey({ userId: req.user?.id, email, phone })
+    );
     if (otpLimit.ok === false) {
       res.setHeader("Retry-After", String(otpLimit.retryAfterSec));
+      return res.status(429).json({ error: "Too many OTP requests. Try again later." });
+    }
+
+    const pending = getDb()
+      .prepare(
+        `SELECT id, otp, expires_at FROM otp_verifications
+         WHERE phone = ? AND purpose = ? AND verified_at IS NULL AND expires_at > ?
+         ORDER BY created_at DESC LIMIT 1`
+      )
+      .get(phone, purpose, new Date().toISOString()) as { id: string; otp: string; expires_at: string } | undefined;
+    if (pending) {
+      return res.json({
+        ok: true,
+        verificationId: pending.id,
+        reused: true,
+        phone,
+        ...otpEchoPayload(pending.otp),
+        expiresAt: pending.expires_at,
+        status: "pending",
+        message: "Pending verification reused.",
+      });
+    }
+    if (otpLimit.withinCooldown) {
+      res.setHeader("Retry-After", String(otpLimit.retryAfterSec || 1));
       return res.status(429).json({ error: "Too many OTP requests. Try again later." });
     }
 

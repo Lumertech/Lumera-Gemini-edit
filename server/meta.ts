@@ -15,6 +15,7 @@ import {
 import { handleMetaDataDeletionPost, handleMetaDeauthorizePost } from "./meta-signed-request.ts";
 import { normalizePhoneDigits, phonesMatch } from "./whatsapp-calendar-booking.ts";
 import { tenantIdFromReceivingPhoneNumberId } from "./whatsapp-tenant-resolve.ts";
+import { WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
 import type { SqlDatabase } from "./sql-engine.ts";
 
 function graphWamidFromPayload(raw: unknown): string {
@@ -96,7 +97,8 @@ export function applyWhatsAppOutboundStatus(
  */
 /**
  * Stamp the clinic from the receiving phone_number_id. A line that does not map
- * stays unassigned. Never write into a conversation that already belongs to another clinic.
+ * is stored on the quarantine tenant, never NULL. Never write into a conversation
+ * that already belongs to another clinic.
  */
 export function recordInboundWhatsAppMessage(
   db: SqlDatabase,
@@ -111,15 +113,15 @@ export function recordInboundWhatsAppMessage(
 ) {
   const fromPhone = String(opts.fromPhone || "").trim();
   if (!fromPhone) return;
-  const tenantId = String(opts.tenantId || "").trim();
+  const tenantId = String(opts.tenantId || "").trim() || WHATSAPP_QUARANTINE_TENANT_ID;
   const textBody = String(opts.textBody || "[Media/Attachment]");
   const timeDisplay = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   const existing = db
     .prepare("SELECT id, tenant_id FROM whatsapp_conversations WHERE patient_phone = ?")
     .get(fromPhone) as { id?: string; tenant_id?: string } | undefined;
   const existingTenant = String(existing?.tenant_id || "").trim();
-  if (existing?.id && existingTenant && existingTenant !== tenantId) return;
-  if (existing?.id && existingTenant && !tenantId) return;
+  const existingIsQuarantine = !existingTenant || existingTenant === WHATSAPP_QUARANTINE_TENANT_ID;
+  if (existing?.id && !existingIsQuarantine && existingTenant !== tenantId) return;
 
   let convId = String(existing?.id || "");
   if (!convId) {
@@ -144,11 +146,25 @@ export function recordInboundWhatsAppMessage(
     db.prepare(
       `UPDATE whatsapp_conversations
        SET last_message = ?, last_message_time = ?, unread_count = unread_count + 1, updated_at = ?,
-           tenant_id = CASE WHEN TRIM(COALESCE(tenant_id, '')) = '' THEN ? ELSE tenant_id END,
+           tenant_id = CASE
+             WHEN TRIM(COALESCE(tenant_id, '')) = '' OR tenant_id = ? THEN ?
+             ELSE tenant_id
+           END,
            phone_number_id = CASE WHEN TRIM(COALESCE(phone_number_id, '')) = '' THEN ? ELSE phone_number_id END,
            waba_id = CASE WHEN TRIM(COALESCE(waba_id, '')) = '' THEN ? ELSE waba_id END
-       WHERE id = ? AND (tenant_id IS NULL OR TRIM(tenant_id) = '' OR tenant_id = ?)`
-    ).run(textBody, opts.now, opts.now, tenantId, opts.phoneNumberId, opts.wabaId, convId, tenantId);
+       WHERE id = ? AND (tenant_id IS NULL OR TRIM(tenant_id) = '' OR tenant_id = ? OR tenant_id = ?)`
+    ).run(
+      textBody,
+      opts.now,
+      opts.now,
+      WHATSAPP_QUARANTINE_TENANT_ID,
+      tenantId,
+      opts.phoneNumberId,
+      opts.wabaId,
+      convId,
+      WHATSAPP_QUARANTINE_TENANT_ID,
+      tenantId
+    );
   }
 
   const msgId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;

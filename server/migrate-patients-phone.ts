@@ -1,6 +1,6 @@
 import type { SqlDatabase } from "./sql-engine.ts";
 import { resolveSqlEngineKind, type SqlEngineKind } from "./sql-open.ts";
-import { backfillWhatsAppTenantIds } from "./whatsapp-tenant-backfill.ts";
+import { backfillWhatsAppTenantIds, WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
 
 function sqlIdent(name: string): string {
   return `"${String(name).replace(/"/g, "\"\"")}"`;
@@ -224,12 +224,35 @@ function rebuildPatientsTableWithoutPhoneUnique(database: SqlDatabase) {
   } catch {}
 }
 
+/** Postgres columns are NOT NULL after the quarantine backfill. Fresh sqlite CREATE already is. */
+export function enforceWhatsAppTenantNotNull(
+  database: SqlDatabase,
+  engine: SqlEngineKind = resolveSqlEngineKind()
+) {
+  if (engine !== "postgres") return;
+  const fallback = WHATSAPP_QUARANTINE_TENANT_ID.replace(/'/g, "");
+  const statements = [
+    `ALTER TABLE whatsapp_conversations ALTER COLUMN tenant_id SET DEFAULT '${fallback}'`,
+    `ALTER TABLE whatsapp_conversations ALTER COLUMN tenant_id SET NOT NULL`,
+    `ALTER TABLE whatsapp_messages ALTER COLUMN tenant_id SET DEFAULT '${fallback}'`,
+    `ALTER TABLE whatsapp_messages ALTER COLUMN tenant_id SET NOT NULL`,
+  ];
+  for (const statement of statements) {
+    try {
+      database.exec(statement);
+    } catch {
+      /* table or column is created later on a partial bootstrap */
+    }
+  }
+}
+
 export function applyTenantPhoneSecurityMigrations(
   database: SqlDatabase,
   engine: SqlEngineKind = resolveSqlEngineKind()
 ) {
   addWhatsAppTenantColumns(database);
   migratePatientsPhoneUnique(database, engine);
-  // Unresolved WhatsApp rows stay unassigned. Do not dump them onto the Meta App Review tenant.
+  // Unresolved WhatsApp rows go to the quarantine tenant. Do not dump them onto the Meta App Review tenant.
   backfillWhatsAppTenantIds(database);
+  enforceWhatsAppTenantNotNull(database, engine);
 }

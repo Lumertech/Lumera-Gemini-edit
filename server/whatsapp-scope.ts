@@ -9,7 +9,7 @@ export function clinicTenantId(req: { user?: { tenantId?: string } }): string {
   return String(req.user?.tenantId || "").trim();
 }
 
-/** Assigned rows only. Blank tenant_id is unassigned and visible to no clinic. */
+/** Assigned rows only. The quarantine tenant is not a clinic session, so those rows match nobody. */
 const CONV_TENANT_SQL = `TRIM(COALESCE(c.tenant_id, '')) = ?`;
 
 export function getTenantConversation(tenantId: string, id: string) {
