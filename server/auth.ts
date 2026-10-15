@@ -157,6 +157,43 @@ export function clearSessionCookie(res: Response) {
   ]);
 }
 
+/**
+ * Replace a dead `__session` with a new anonymous cookie that carries a fresh
+ * CSRF secret. The credential is not a JWT and is not inserted into `sessions`,
+ * so the next request stays logged out until a real login. Cookie flags match
+ * the authenticated session cookie.
+ */
+export function issueAnonymousCsrfCookie(res: Response): string {
+  const maxAge = SESSION_DAYS * 24 * 60 * 60;
+  const csrf = csrfCookieValue();
+  const credential = `anon.${crypto.randomUUID()}`;
+  const host = `${HOST_SESSION_COOKIE}=${encodeURIComponent(packHostSession(credential, csrf))}; ${SESSION_COOKIE_ATTRS}; Max-Age=${maxAge}`;
+  res.setHeader("Cache-Control", "private, no-store");
+  res.setHeader("Set-Cookie", [
+    `${HOST_SESSION_COOKIE}=; ${SESSION_COOKIE_ATTRS}; Max-Age=0`,
+    `${COOKIE}=; ${SESSION_COOKIE_ATTRS}; Max-Age=0`,
+    `${CSRF_COOKIE}=; ${CLEAR_CSRF_ATTRS}; Max-Age=0`,
+    host,
+    csrfSetCookieHeader(csrf),
+  ]);
+  return csrf;
+}
+
+/**
+ * True when the cookie the app would honor belongs to a real user.
+ * A stale `__session` must not hide a still-valid `lumera_sid`: either one
+ * blocks anonymous CSRF reissue.
+ */
+export function sessionCookieIsAuthenticated(req: Request): boolean {
+  if (loadUserFromSession(req)) return true;
+  const cookies = parseCookies(req.headers.cookie);
+  const sid = String(cookies[COOKIE] || "").trim();
+  if (!sid) return false;
+  const hostCredential = unpackHostSession(cookies[HOST_SESSION_COOKIE] || "").credential.trim();
+  if (sid === hostCredential) return false;
+  return Boolean(loadUserFromSession({ headers: { cookie: `${COOKIE}=${encodeURIComponent(sid)}` } } as Request));
+}
+
 export function createSession(userId: string): string {
   const id = crypto.randomUUID();
   const now = new Date();
