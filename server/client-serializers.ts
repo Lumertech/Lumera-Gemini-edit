@@ -18,9 +18,17 @@ export function canonicalColumnKey(key: string): string {
     .toLowerCase();
 }
 
+/**
+ * Keys that match the token rule but are clinic display settings, not credentials.
+ * `tokenPrefix` is the queue token label edited in onboarding (`FrontDeskRules`).
+ */
+const SAFE_CLIENT_KEYS = new Set(["token_prefix"]);
+
 /** True for Meta/WABA tokens, encrypted tokens, PINs, webhook secrets, API keys, password hashes. */
 export function isClientSecretKey(key: string): boolean {
-  return SECRET_KEY_RE.test(canonicalColumnKey(key));
+  const canonical = canonicalColumnKey(key);
+  if (SAFE_CLIENT_KEYS.has(canonical)) return false;
+  return SECRET_KEY_RE.test(canonical);
 }
 
 function camelOf(snake: string): string {
@@ -34,8 +42,33 @@ function readColumn(row: Record<string, unknown>, snake: string): unknown {
   return undefined;
 }
 
-/** Drop secret-named keys at every level. Values under safe keys are kept. */
+/**
+ * JSON object/array stored in a TEXT column (`practice_settings` and any other
+ * JSON-string field on a client payload). Non-JSON strings are left alone.
+ */
+function parseJsonContainer(value: string): Record<string, unknown> | unknown[] | undefined {
+  const trimmed = value.trim();
+  if (!trimmed || (trimmed[0] !== "{" && trimmed[0] !== "[")) return undefined;
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (!parsed || typeof parsed !== "object") return undefined;
+    return parsed as Record<string, unknown> | unknown[];
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Drop secret-named keys at every level, including keys nested inside a
+ * JSON-string column. The string is parsed, filtered, and re-serialized.
+ * `tokenPrefix` is on the safe-key list and is kept. The stored column is not rewritten.
+ */
 export function omitClientSecretKeys<T>(value: T): T {
+  if (typeof value === "string") {
+    const parsed = parseJsonContainer(value);
+    if (parsed === undefined) return value;
+    return JSON.stringify(omitClientSecretKeys(parsed)) as T;
+  }
   if (Array.isArray(value)) {
     return value.map((item) => omitClientSecretKeys(item)) as T;
   }
