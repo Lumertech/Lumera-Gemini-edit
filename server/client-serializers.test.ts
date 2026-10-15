@@ -112,7 +112,9 @@ describe("client row serializers", () => {
     assert.equal(published.phone_number_id, "phone_public_id");
     assert.equal(published.meta_waba_name, "Canary WABA");
     assert.equal(published.gstin, "27CANARY0000Z1Z5");
-    assert.match(String(published.practice_settings), /tokenPrefix/);
+    const settings = JSON.parse(String(published.practice_settings)) as { walkInEnabled?: boolean; tokenPrefix?: string };
+    assert.equal(settings.walkInEnabled, true);
+    assert.equal(settings.tokenPrefix, undefined);
     for (const key of Object.keys(published)) {
       assert.equal(PUBLIC_TENANT_KEYS.includes(key as (typeof PUBLIC_TENANT_KEYS)[number]), true, key);
       assert.equal(isClientSecretKey(key), false, key);
@@ -122,6 +124,56 @@ describe("client row serializers", () => {
     assert.equal(JSON.stringify(published).includes("should-not-ride-along"), false);
     assert.equal(publicTenant(null), null);
     assert.equal(publicTenant(undefined), null);
+  });
+
+  it("strips secret keys nested inside a practice_settings JSON string", () => {
+    const published = publicTenant({
+      id: "tenant-json",
+      name: "Json Clinic",
+      practice_settings: JSON.stringify({
+        walkInEnabled: true,
+        sharedQueue: true,
+        departments: ["General Medicine"],
+        slotDurationMinutes: 15,
+        meta_access_token: TOKEN,
+        metaTokenExpiresAt: EXPIRES,
+        webhook_secret: WEBHOOK,
+        nested: {
+          label: "kept",
+          apiKey: API_KEY,
+          registration_pin: PIN,
+          encrypted_token: ENCRYPTED,
+          waba_access_token: WABA_TOKEN,
+          again: JSON.stringify({ password_hash: "nested-hash-canary", room: "OPD-2" }),
+        },
+      }),
+      address: "not-json",
+    });
+    assert.ok(published);
+    assert.equal(published.address, "not-json");
+    const settings = JSON.parse(String(published.practice_settings)) as {
+      walkInEnabled?: boolean;
+      sharedQueue?: boolean;
+      departments?: string[];
+      slotDurationMinutes?: number;
+      meta_access_token?: string;
+      webhook_secret?: string;
+      nested?: { label?: string; apiKey?: string; registration_pin?: string; again?: string };
+    };
+    assert.equal(settings.walkInEnabled, true);
+    assert.equal(settings.sharedQueue, true);
+    assert.deepEqual(settings.departments, ["General Medicine"]);
+    assert.equal(settings.slotDurationMinutes, 15);
+    assert.equal(settings.meta_access_token, undefined);
+    assert.equal(settings.webhook_secret, undefined);
+    assert.equal(settings.nested?.label, "kept");
+    assert.equal(settings.nested?.apiKey, undefined);
+    assert.equal(settings.nested?.registration_pin, undefined);
+    const inner = JSON.parse(String(settings.nested?.again)) as { password_hash?: string; room?: string };
+    assert.equal(inner.room, "OPD-2");
+    assert.equal(inner.password_hash, undefined);
+    assertNoSecrets(published, "practice_settings");
+    assert.equal(JSON.stringify(published).includes("nested-hash-canary"), false);
   });
 
   it("reads camelCase tenant input but still emits the allowlisted snake_case shape", () => {
@@ -230,6 +282,18 @@ describe("tenant, user, and branch HTTP responses omit secrets", () => {
       )
       .run(tenantId, `Canary Clinic ${suffix}`, now, "waba_canary_public", "phone_canary_public", TOKEN, EXPIRES, now, now);
     getDb()
+      .prepare("UPDATE tenants SET practice_settings = ? WHERE id = ?")
+      .run(
+        JSON.stringify({
+          walkInEnabled: true,
+          sharedQueue: false,
+          meta_access_token: TOKEN,
+          webhook_secret: WEBHOOK,
+          nested: { api_key: API_KEY, registration_pin: PIN, label: "front-desk" },
+        }),
+        tenantId
+      );
+    getDb()
       .prepare(
         `INSERT INTO users (
            id, tenant_id, email, password_hash, name, role, status, phone, clinic_name,
@@ -255,6 +319,18 @@ describe("tenant, user, and branch HTTP responses omit secrets", () => {
       assert.equal(tenant.waba_id, "waba_canary_public");
       assert.equal(tenant.phone_number_id, "phone_canary_public");
       assert.equal(tenant.meta_waba_name, "Canary WABA");
+      const settings = JSON.parse(String(tenant.practice_settings)) as {
+        walkInEnabled?: boolean;
+        meta_access_token?: string;
+        webhook_secret?: string;
+        nested?: { api_key?: string; registration_pin?: string; label?: string };
+      };
+      assert.equal(settings.walkInEnabled, true);
+      assert.equal(settings.meta_access_token, undefined);
+      assert.equal(settings.webhook_secret, undefined);
+      assert.equal(settings.nested?.label, "front-desk");
+      assert.equal(settings.nested?.api_key, undefined);
+      assert.equal(settings.nested?.registration_pin, undefined);
       assert.equal(user.email, clinic.email);
       assert.equal(JSON.stringify(me.json).includes(clinic.passwordHash), false, path);
       assert.equal(JSON.stringify(me.json).includes(token), false, path);
