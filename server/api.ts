@@ -76,7 +76,7 @@ import { rejectWrongOtp, reserveOtpSend, sendOtpLimited } from "./otp-attempt.ts
 import { parseSpecialtyPackInput, resolveSpecialtyPack } from "./specialty-packs.ts";
 import { appPublicUrl, demoLoginEnabled, isProduction } from "./runtime.ts";
 import { DEMO_PASSWORD } from "../src/lib/demoAccounts.ts";
-import { dispatchWhatsAppCloudMessage, isCloudDispatchFailure, resolveGraphCredentials, resolveUsageTenantId } from "./graph-whatsapp.ts";
+import { dispatchWhatsAppCloudMessage, isCloudDispatchFailure, resolveGraphCredentials } from "./graph-whatsapp.ts";
 import { toE164Phone } from "./clinical.ts";
 import { inboundTenantIdFromPhoneNumberId } from "./meta.ts";
 import {
@@ -275,8 +275,8 @@ export function uniqueOtpClinicId(phone: string): string {
  */
 export function otpEventTenantId(phone: string): string {
   const conversationTenantId = uniqueOtpClinicId(phone);
-  const usageTenant = resolveUsageTenantId(undefined, phone, getDb());
-  const creds = resolveGraphCredentials(getDb(), usageTenant);
+  // Login OTP leaves from the platform line. Clinic WABA rows must not steal that phone_number_id.
+  const creds = resolveGraphCredentials(getDb(), undefined, { platformSend: true });
   if (!creds?.phoneNumberId) return conversationTenantId || WHATSAPP_QUARANTINE_TENANT_ID;
   return inboundTenantIdFromPhoneNumberId(creds.phoneNumberId) || WHATSAPP_QUARANTINE_TENANT_ID;
 }
@@ -344,6 +344,7 @@ async function dispatchWhatsAppOtpMessage(phone: string, name: string, otp: stri
     otp,
     purpose,
     db: getDb(),
+    platformSend: true,
   });
 
   if (sent.ok && sent.channel === "graph") {

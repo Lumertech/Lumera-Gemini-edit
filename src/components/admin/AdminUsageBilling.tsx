@@ -65,7 +65,6 @@ export const AdminUsageBilling: React.FC = () => {
   const [defaultMarkup, setDefaultMarkup] = useState(20);
   const [adjustAmount, setAdjustAmount] = useState("");
   const [adjustNote, setAdjustNote] = useState("");
-  const [globalWhatsapp, setGlobalWhatsapp] = useState("20");
   const [globalScribe, setGlobalScribe] = useState("20");
 
   const loadMargin = () => {
@@ -84,9 +83,7 @@ export const AdminUsageBilling: React.FC = () => {
       .then((d) => {
         setDefaultMarkup(d.defaultMarkupPercent);
         setMarkupRows(d.rows || []);
-        const gWa = d.rows.find((r) => r.scope === "global" && r.resource === "whatsapp_message");
         const gAi = d.rows.find((r) => r.scope === "global" && r.resource === "ai_scribe_minutes");
-        if (gWa) setGlobalWhatsapp(String(gWa.markupPercent));
         if (gAi) setGlobalScribe(String(gAi.markupPercent));
       })
       .catch((e) => setError(e instanceof Error ? e.message : "Could not load markup"));
@@ -125,7 +122,7 @@ export const AdminUsageBilling: React.FC = () => {
     if (scope?.id && !tenantId) setTenantId(scope.id);
   }, [scope?.id]);
 
-  const saveGlobal = async (resource: "whatsapp_message" | "ai_scribe_minutes", value: string) => {
+  const saveGlobal = async (resource: "ai_scribe_minutes", value: string) => {
     setError("");
     try {
       await apiFetch("/api/admin/usage-markup", {
@@ -165,9 +162,9 @@ export const AdminUsageBilling: React.FC = () => {
           <Wallet className="w-5 h-5 text-purple-700" /> Usage wallet billing
         </h1>
         <p className="text-xs text-slate-500 mt-1">
-          Platform-to-tenant usage (WhatsApp + AI Scribe). Separate from clinic-to-patient invoices and monthly SaaS
-          subscriptions. Default markup is a <strong>20% placeholder</strong> — not a contractual rate. Lumera is not a
-          certified Meta Tech Provider. Contact ravee@lumer.me.
+          Platform-to-tenant usage (AI Scribe). WhatsApp is the clinic's own Meta number and is not marked up. Separate
+          from clinic-to-patient invoices and monthly SaaS subscriptions. Default markup is a <strong>20% placeholder</strong>{" "}
+          — not a contractual rate. Lumera is not a certified Meta Tech Provider. Contact ravee@lumer.me.
         </p>
       </div>
 
@@ -239,21 +236,6 @@ export const AdminUsageBilling: React.FC = () => {
         </p>
         <div className="flex flex-wrap gap-3">
           <label className="text-xs">
-            WhatsApp %
-            <input
-              className="ml-2 border rounded px-2 py-1 w-20"
-              value={globalWhatsapp}
-              onChange={(e) => setGlobalWhatsapp(e.target.value)}
-            />
-            <button
-              type="button"
-              className="ml-2 text-purple-700 font-semibold"
-              onClick={() => saveGlobal("whatsapp_message", globalWhatsapp)}
-            >
-              Save
-            </button>
-          </label>
-          <label className="text-xs">
             AI Scribe %
             <input
               className="ml-2 border rounded px-2 py-1 w-20"
@@ -270,7 +252,9 @@ export const AdminUsageBilling: React.FC = () => {
           </label>
         </div>
         <ul className="text-xs text-slate-600 space-y-1">
-          {markupRows.map((r) => (
+          {markupRows
+            .filter((r) => r.resource !== "whatsapp_message")
+            .map((r) => (
             <li key={r.id}>
               {r.scope}/{r.tenantId || "global"} · {r.resource} · {r.markupPercent}%
             </li>
@@ -304,8 +288,7 @@ export const AdminUsageBilling: React.FC = () => {
             </p>
             {markup && (
               <p className="text-xs text-slate-500">
-                Markup in effect: WhatsApp {markup.whatsapp_message}% ({markup.source.whatsapp_message}) · AI Scribe{" "}
-                {markup.ai_scribe_minutes}% ({markup.source.ai_scribe_minutes})
+                Markup in effect: AI Scribe {markup.ai_scribe_minutes}% ({markup.source.ai_scribe_minutes})
               </p>
             )}
           </div>

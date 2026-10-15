@@ -7,6 +7,30 @@
  * Lumera is not a certified Meta Tech Provider. Contact ravee@lumer.me.
  */
 
+const FACEBOOK_HOST_LABEL = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)$/;
+
+/**
+ * Embedded Signup postMessage origins are exact Facebook hosts:
+ * https://www.facebook.com or https://*.facebook.com.
+ * Suffix checks (endsWith "facebook.com") accept hosts like evilfacebook.com.
+ */
+export function isFacebookEmbeddedSignupOrigin(origin: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(origin);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "https:") return false;
+  if (parsed.username || parsed.password) return false;
+  if (parsed.port && parsed.port !== "443") return false;
+  const host = parsed.hostname.toLowerCase();
+  if (!host.endsWith(".facebook.com")) return false;
+  const labels = host.split(".");
+  if (labels.length < 3) return false;
+  return labels.every((label) => FACEBOOK_HOST_LABEL.test(label));
+}
+
 export const EMBEDDED_SIGNUP_SCOPES = [
   "whatsapp_business_management",
   "business_management",
@@ -169,7 +193,7 @@ export function launchEmbeddedSignupV4(config: EmbeddedSignupConfig): Promise<Em
     };
 
     const onMessage = (event: MessageEvent) => {
-      if (!String(event.origin || "").endsWith("facebook.com")) return;
+      if (!isFacebookEmbeddedSignupOrigin(String(event.origin || ""))) return;
       const data = parseMessageData(event.data);
       if (!data || !isEmbeddedSignupFinish(data)) {
         const eventName = String(data?.event || "");

@@ -19,6 +19,7 @@
  * (same SQLite TEXT pattern as tenants.meta_access_token). Not Secret Manager.
  */
 
+import crypto from "node:crypto";
 import { envFlag, graphApiVersion, isProduction, isUnsetOrPlaceholder, readSecret, sandboxSimulatorsEnabled } from "./runtime.ts";
 import { upsertWhatsAppNumber, publicWhatsAppNumber, type WabaActor, type WhatsAppOwnerType } from "./whatsapp-numbers.ts";
 
@@ -97,11 +98,17 @@ async function graphCall(opts: {
   url: string;
   method?: string;
   headers?: Record<string, string>;
+  body?: unknown;
   fetchImpl: FetchImpl;
 }): Promise<{ ok: boolean; status: number; data: any; text: string }> {
+  const headers = { ...(opts.headers || {}) };
+  if (opts.body !== undefined && !headers["Content-Type"] && !headers["content-type"]) {
+    headers["Content-Type"] = "application/json";
+  }
   const res = await opts.fetchImpl(opts.url, {
     method: opts.method || "GET",
-    headers: opts.headers,
+    headers,
+    body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
   });
   const text = await res.text();
   let data: any = text;
@@ -291,6 +298,42 @@ export async function confirmWabaAndPhoneGrants(opts: {
   return { wabaName: String(waba.data?.name || "").trim() };
 }
 
+export function generateWhatsAppRegistrationPin(): string {
+  return String(crypto.randomInt(0, 1_000_000)).padStart(6, "0");
+}
+
+/** Cloud API phone registration. Called after subscribed_apps and again on reconnect. */
+export async function registerWhatsAppCloudPhone(opts: {
+  accessToken: string;
+  phoneNumberId: string;
+  pin: string;
+  fetchImpl?: FetchImpl;
+}): Promise<void> {
+  const phoneNumberId = String(opts.phoneNumberId || "").trim();
+  const pin = String(opts.pin || "").trim();
+  if (!phoneNumberId) {
+    throw new EmbeddedSignupError("phone_number_id is required to register the WhatsApp number.", 400, "PHONE_REQUIRED");
+  }
+  if (!/^\d{6}$/.test(pin)) {
+    throw new EmbeddedSignupError("WhatsApp registration PIN must be 6 digits.", 400, "PIN_INVALID");
+  }
+  const version = graphApiVersion();
+  const result = await graphCall({
+    url: `https://graph.facebook.com/${version}/${encodeURIComponent(phoneNumberId)}/register`,
+    method: "POST",
+    headers: { Authorization: `Bearer ${opts.accessToken}` },
+    body: { messaging_product: "whatsapp", pin },
+    fetchImpl: resolveFetchImpl(opts.fetchImpl),
+  });
+  if (!result.ok || result.data?.success === false || (result.data && typeof result.data === "object" && result.data.error)) {
+    throw new EmbeddedSignupError(
+      graphErrorMessage(result.data, result.status) || "Failed to register the WhatsApp phone number.",
+      502,
+      "REGISTER_FAILED"
+    );
+  }
+}
+
 export async function subscribeAppToCustomerWaba(opts: {
   accessToken: string;
   wabaId: string;
@@ -357,6 +400,14 @@ export async function completeEmbeddedSignup(opts: {
     fetchImpl,
   });
 
+  const registrationPin = generateWhatsAppRegistrationPin();
+  await registerWhatsAppCloudPhone({
+    accessToken: exchanged.accessToken,
+    phoneNumberId: opts.phoneNumberId,
+    pin: registrationPin,
+    fetchImpl,
+  });
+
   const row = upsertWhatsAppNumber(opts.actor, {
     ownerType: opts.ownerType,
     ownerId: opts.ownerId,
@@ -365,6 +416,7 @@ export async function completeEmbeddedSignup(opts: {
     metaWabaName: grants.wabaName || opts.displayName || "",
     metaAccessToken: exchanged.accessToken,
     metaTokenExpiresAt: tokenExpiryIso(debug),
+    registrationPin,
     status: "connected",
     connectedVia: "embedded_signup",
   });
@@ -375,10 +427,11 @@ export async function completeEmbeddedSignup(opts: {
       table: "whatsapp_number_secrets",
       column: "meta_access_token",
       tokenRef: row.meta_token_ref,
-      note: "Business token stored as SQLite TEXT on whatsapp_number_secrets, referenced by whatsapp_numbers.meta_token_ref. Same pattern as tenants.meta_access_token. Not Secret Manager.",
+      note: "Business token stored on whatsapp_number_secrets (AES-256-GCM when WA_TOKEN_KEY is set). tenants.meta_access_token is left null. Not Secret Manager.",
     },
+    registrationPinStored: true,
     sandbox: !isProduction(),
     notice:
-      "Embedded Signup v4 handshake completed. Lumera is not a certified Meta Tech Provider. Phone-number /register (two-step PIN) is not done here — see remaining App Review steps. Contact ravee@lumer.me.",
+      "Embedded Signup v4 handshake completed. The phone number was registered with a generated PIN stored encrypted. Reconnect runs /register again. Contact ravee@lumer.me.",
   };
 }

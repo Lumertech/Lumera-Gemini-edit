@@ -3,7 +3,7 @@ import { isPlatformAdminRole, requireAuth } from "./auth.ts";
 import { findDataDeletionRequest, getDb } from "./db.ts";
 import { appPublicUrl, isProduction, sandboxSimulatorsEnabled } from "./runtime.ts";
 import { reportCaughtError } from "./error-tracker.ts";
-import { dispatchWhatsAppCloudMessage, isCloudDispatchFailure, resolveGraphCredentials } from "./graph-whatsapp.ts";
+import { cloudDispatchHttpStatus, dispatchWhatsAppCloudMessage, isCloudDispatchFailure, resolveGraphCredentials } from "./graph-whatsapp.ts";
 import { facebookOAuthConfigured } from "./facebook-oauth.ts";
 import {
   buildMetaReadinessOverview,
@@ -493,7 +493,7 @@ export function createMetaRouter(): Router {
         UPDATE tenants
         SET waba_id = ?,
             phone_number_id = ?,
-            meta_access_token = ?,
+            meta_access_token = NULL,
             meta_token_expires_at = ?,
             meta_waba_name = ?,
             meta_quality_rating = ?,
@@ -503,7 +503,6 @@ export function createMetaRouter(): Router {
       `).run(
         wabaId,
         phoneNumberId,
-        token || (sandboxSimulatorsEnabled() ? "EAAJ...SANDBOX_DEV_ONLY_not_a_live_token" : ""),
         sandboxSimulatorsEnabled() ? "SANDBOX / DEV-ONLY — not a Graph-validated system user token" : "unknown",
         metaWabaName || "Clinic WABA",
         sandboxSimulatorsEnabled() ? "UNKNOWN" : "UNKNOWN",
@@ -545,7 +544,7 @@ export function createMetaRouter(): Router {
         UPDATE tenants
         SET waba_id = '',
             phone_number_id = '',
-            meta_access_token = '',
+            meta_access_token = NULL,
             meta_onboarding_status = 'disconnected',
             updated_at = ?
         WHERE id = ?
@@ -572,7 +571,7 @@ export function createMetaRouter(): Router {
         UPDATE tenants
         SET waba_id = ?,
             phone_number_id = ?,
-            meta_access_token = 'EAAJ...SANDBOX_DEV_ONLY_embedded_signup_not_live',
+            meta_access_token = NULL,
             meta_token_expires_at = 'SANDBOX / DEV-ONLY — not a Graph token',
             meta_waba_name = ?,
             meta_quality_rating = 'UNKNOWN',
@@ -623,10 +622,10 @@ export function createMetaRouter(): Router {
         inCustomerServiceWindow: true,
       });
       if (isCloudDispatchFailure(sent)) {
-        const walletBlocked = /Top up now/i.test(sent.error);
-        return res.status(walletBlocked ? 402 : 502).json({
+        const status = cloudDispatchHttpStatus(sent.error, sent.status);
+        return res.status(status).json({
           error: sent.error,
-          code: walletBlocked ? "WALLET_INSUFFICIENT" : undefined,
+          code: status === 402 ? "WALLET_INSUFFICIENT" : undefined,
           channel: sent.channel,
         });
       }

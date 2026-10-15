@@ -1,10 +1,8 @@
 import { getDb } from "./db.ts";
-import { dispatchWhatsAppCloudMessage } from "./graph-whatsapp.ts";
-import { isProduction } from "./runtime.ts";
+import { cloudDispatchHttpStatus, dispatchWhatsAppCloudMessage } from "./graph-whatsapp.ts";
 
-export function walletDispatchStatus(error: string): number {
-  if (String(error || "").includes("Top up now")) return 402;
-  return isProduction() ? 503 : 502;
+export function walletDispatchStatus(error: string, status?: number): number {
+  return cloudDispatchHttpStatus(error, status);
 }
 
 /** Patient WhatsApp text sends (staff replies, bot replies, Rx, custom outbound). */
@@ -13,9 +11,11 @@ export async function dispatchPatientCloudText(opts: {
   to: string;
   textBody: string;
   previewUrl?: boolean;
+  /** True only for a staff-typed reply. Bot, Rx, and outbound triggers are automated. */
+  isManual?: boolean;
 }): Promise<
   | { ok: true; channel: "graph" | "sandbox"; messageId?: string }
-  | { ok: false; error: string; channel: "none" | "graph" }
+  | { ok: false; error: string; channel: "none" | "graph"; status?: number }
 > {
   return dispatchWhatsAppCloudMessage({
     to: opts.to,
@@ -24,6 +24,6 @@ export async function dispatchPatientCloudText(opts: {
     previewUrl: opts.previewUrl,
     db: getDb(),
     tenantId: opts.tenantId,
-    inCustomerServiceWindow: true,
+    isManual: opts.isManual,
   });
 }

@@ -135,6 +135,7 @@ export function createUsageBillingRouter(): Router {
         tenantId: tenantId || undefined,
         to: patientPhone,
         textBody: outboundText,
+        isManual: true,
       });
       if (isCloudDispatchFailure(sent)) return walletBlockedJson(res, sent);
       return next();
@@ -167,7 +168,7 @@ export function createUsageBillingRouter(): Router {
     const clinicName =
       String(body.clinicName || "").trim() ||
       (tenantId ? getTenantLetterhead(tenantId).clinicName : "") ||
-      "Lumera Healthcare Polyclinic";
+      "your clinic";
     const patientName = String(body.patientName || "Patient");
     const uhid = String(body.uhid || "LUM-2026-0001");
     const rxNumber = String(body.rxNumber || "RX-2026-0001");
@@ -207,7 +208,7 @@ export function createUsageBillingRouter(): Router {
     const customPayload = (body.customPayload || {}) as { message?: string; tenantId?: string };
     const tenantId = requestTenantId(req, patientPhone) || String(customPayload.tenantId || "").trim();
     const patientName = String(body.patientName || "Patient");
-    let messageContent = customPayload.message || "Important health notification from Lumera Polyclinic.";
+    let messageContent = customPayload.message || "Important health notification from your clinic.";
     if (eventType === "post_consultation_dispatch") {
       messageContent = `📋 *Consultation Summary & Prescription Signed*\n\nNamaste ${patientName},\nYour digital consultation documents have been generated.`;
     } else if (eventType === "queue_token_update") {

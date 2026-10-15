@@ -24,6 +24,7 @@ import {
   runAppointmentReminders,
   tenantUtcOffsetMinutes,
 } from "./whatsapp-calendar.ts";
+import { platformAdminActor, upsertWhatsAppNumber } from "./whatsapp-numbers.ts";
 
 async function jsonRequest(
   port: number,
@@ -396,11 +397,29 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
         timeSlot: "10:30 AM",
       });
 
-      const fetchImpl: typeof fetch = async () =>
-        new Response(JSON.stringify({ messages: [{ id: "wamid.GRAPH_REMINDER_TEST" }] }), {
+      const phoneNumberId = `9${String(Date.now()).slice(-14)}`;
+      const tenantToken = "EAATenantReminderTokenWithoutEllipsis0123456789abcd";
+      upsertWhatsAppNumber(platformAdminActor(), {
+        ownerType: "tenant",
+        ownerId: clinic.tenantId,
+        wabaId: `2048${String(Date.now()).slice(-10)}`,
+        phoneNumberId,
+        metaAccessToken: tenantToken,
+        metaWabaName: `Clinic ${clinic.tenantId}`,
+        status: "connected",
+      });
+
+      const fetchImpl: typeof fetch = async (input, init) => {
+        const url = String(input);
+        assert.match(url, new RegExp(`/${phoneNumberId}/messages`));
+        assert.equal(url.includes(String(process.env.META_PHONE_NUMBER_ID)), false);
+        const auth = String((init?.headers as Record<string, string> | undefined)?.Authorization || "");
+        assert.match(auth, new RegExp(`Bearer ${tenantToken}`));
+        return new Response(JSON.stringify({ messages: [{ id: "wamid.GRAPH_REMINDER_TEST" }] }), {
           status: 200,
           headers: { "Content-Type": "application/json" },
         });
+      };
 
       const result = await dispatchAppointmentReminder({
         tenantId: clinic.tenantId,
@@ -459,7 +478,7 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
       assert.equal(result.ok, false);
       if (!result.ok) {
         assert.equal(result.channel, "none");
-        assert.match(result.error, /not configured|not delivered/i);
+        assert.match(result.error, /not configured|not delivered|Clinic WhatsApp not connected/i);
       }
       const http = await jsonRequest(port, "POST", "/api/whatsapp/reminders/run", {
         tenantId: clinic.tenantId,
@@ -772,10 +791,27 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
     process.env.META_PHONE_NUMBER_ID = "123456789012345";
     delete process.env.WHATSAPP_ACCESS_TOKEN;
     delete process.env.WHATSAPP_PHONE_NUMBER_ID;
-    process.env.META_REMINDER_TEMPLATE_NAME = "lumera_appointment_reminder";
+    process.env.META_REMINDER_TEMPLATE_NAME = "env_only_reminder_must_not_win";
     process.env.META_UTILITY_TEMPLATE_LANGUAGE = "en_US";
     try {
       const clinic = createClinicUser("tplParam");
+      const phoneNumberId = `8${String(Date.now()).slice(-14)}`;
+      upsertWhatsAppNumber(platformAdminActor(), {
+        ownerType: "tenant",
+        ownerId: clinic.tenantId,
+        wabaId: `2048${phoneNumberId.slice(0, 10)}`,
+        phoneNumberId,
+        metaAccessToken: "EAATenantTemplateTokenWithoutEllipsis0123456789abcd",
+        metaWabaName: "Template Clinic",
+        status: "connected",
+      });
+      const now = new Date().toISOString();
+      getDb()
+        .prepare(
+          `INSERT INTO meta_templates (id, tenant_id, waba_id, name, category, language, status, components, created_at, updated_at)
+           VALUES (?, ?, '204800000000000', 'lumera_appointment_reminder', 'UTILITY', 'en_US', 'APPROVED', '[]', ?, ?)`
+        )
+        .run(`tpl-${clinic.tenantId}`, clinic.tenantId, now, now);
       const booked = bookWhatsAppAppointment({
         tenantId: clinic.tenantId,
         patientPhone: uniquePhone(),

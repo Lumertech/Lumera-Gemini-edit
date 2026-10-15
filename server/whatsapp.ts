@@ -894,14 +894,25 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
         appointmentId: req.body?.appointmentId,
         now: req.body?.now ? new Date(req.body.now) : undefined,
       });
-      const missingCreds = result.failed.some((item) => !item.result.ok && item.result.channel === "none");
-      if (missingCreds && isProduction()) {
-        return res.status(503).json({
-          ok: false,
-          error:
-            "WhatsApp Cloud API is not configured. Set META_ACCESS_TOKEN and META_PHONE_NUMBER_ID (or a real tenant phone_number_id + token). Reminder was not delivered.",
-          channel: "none",
+      const policyDenied = result.failed.find((item) => item.result.ok === false && item.result.status === 403);
+      if (policyDenied && policyDenied.result.ok === false) {
+        return res.status(403).json({
           ...result,
+          ok: false,
+          error: policyDenied.result.error,
+          channel: policyDenied.result.channel,
+        });
+      }
+      const missingCreds = result.failed.find((item) => item.result.ok === false && item.result.channel === "none");
+      if (missingCreds && missingCreds.result.ok === false && isProduction()) {
+        const clinicNotConnected = /Clinic WhatsApp not connected/i.test(missingCreds.result.error);
+        return res.status(503).json({
+          ...result,
+          ok: false,
+          error: clinicNotConnected
+            ? missingCreds.result.error
+            : "WhatsApp Cloud API is not configured. Set META_ACCESS_TOKEN and META_PHONE_NUMBER_ID (or a real tenant phone_number_id + token). Reminder was not delivered.",
+          channel: "none",
         });
       }
       res.json({

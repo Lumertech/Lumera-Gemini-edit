@@ -8,7 +8,7 @@ export type { UsageResource } from "./usage-rates.ts";
 export const DEFAULT_MARKUP_PERCENT = 20;
 
 export const WALLET_INSUFFICIENT_ERROR =
-  "Usage wallet balance is insufficient. Top up now to continue WhatsApp reminders, receipts, non-essential replies, and AI Scribe.";
+  "Usage wallet balance is insufficient. Top up now to continue AI Scribe.";
 
 export const USAGE_RESOURCES = ["ai_scribe_minutes", "whatsapp_message"] as const;
 export const WALLET_TX_TYPES = ["topup", "usage_debit", "adjustment", "refund"] as const;
@@ -272,8 +272,8 @@ export function publicWalletStatus(tenantId: string, database?: DatabaseSync) {
       state === "ok"
         ? null
         : state === "low"
-          ? "Usage wallet is running low. Top up now to avoid losing WhatsApp reminders, receipts, and AI Scribe."
-          : "Usage wallet is empty. OTP and booking confirmations still send; other WhatsApp traffic and AI Scribe are blocked until you top up.",
+          ? "Usage wallet is running low. Top up now to keep AI Scribe available."
+          : "Usage wallet is empty. Top up now to continue AI Scribe. WhatsApp messages are sent from the clinic's own number and are not billed here.",
   };
 }
 

@@ -75,7 +75,7 @@ function clinicNameForTenant(tenantId: string): string {
   const row = getDb().prepare("SELECT name, timezone FROM tenants WHERE id = ?").get(tenantId) as
     | { name?: string; timezone?: string }
     | undefined;
-  return String(row?.name || "Lumera Clinic");
+  return String(row?.name || "").trim();
 }
 
 function timezoneForTenant(tenantId: string): string {
@@ -166,7 +166,7 @@ function recordOutboundEvent(opts: {
 
 export type ReminderDispatchResult =
   | { ok: true; channel: "graph" | "sandbox"; messageId?: string; eventId: string }
-  | { ok: false; error: string; channel: "none" | "graph"; eventId?: string };
+  | { ok: false; error: string; channel: "none" | "graph"; eventId?: string; status?: number };
 
 function recordCloudDispatch(opts: {
   eventType: string;
@@ -198,7 +198,7 @@ function recordCloudDispatch(opts: {
       payload: { ...opts.payload, channel: opts.sent.channel, error: opts.sent.error, sandbox: false },
       tenantId: String(opts.payload.tenantId || ""),
     });
-    return { ok: false, error: opts.sent.error, channel: opts.sent.channel, eventId };
+    return { ok: false, error: opts.sent.error, channel: opts.sent.channel, eventId, status: opts.sent.status };
   }
 
   const eventId = recordOutboundEvent({
@@ -221,9 +221,18 @@ export async function dispatchAppointmentReminder(opts: {
   fetchImpl?: typeof fetch;
 }): Promise<ReminderDispatchResult> {
   const clinicName = clinicNameForTenant(opts.tenantId);
+  const doctorName = String(opts.appointment.doctorName || "").trim();
+  if (!clinicName || !doctorName) {
+    return {
+      ok: false,
+      channel: "none",
+      status: 400,
+      error: "clinic_name and doctor_name are required.",
+    };
+  }
   const text = buildReminderMessage({
     patientName: opts.appointment.patientName,
-    doctorName: opts.appointment.doctorName,
+    doctorName,
     date: opts.appointment.date,
     timeSlot: opts.appointment.timeSlot,
     tokenNumber: opts.appointment.tokenNumber,
@@ -233,7 +242,8 @@ export async function dispatchAppointmentReminder(opts: {
   const sent = await sendAppointmentReminder({
     to: opts.appointment.patientPhone,
     patientName: opts.appointment.patientName,
-    doctorName: opts.appointment.doctorName,
+    doctorName,
+    clinicName,
     specialty: opts.appointment.specialty,
     date: opts.appointment.date,
     timeSlot: opts.appointment.timeSlot,
@@ -265,10 +275,21 @@ export async function dispatchWhatsAppBookConfirmation(opts: {
   appointment: ReturnType<typeof mapAppointment>;
   fetchImpl?: typeof fetch;
 }): Promise<ReminderDispatchResult> {
+  const clinicName = clinicNameForTenant(opts.tenantId);
+  const doctorName = String(opts.appointment.doctorName || "").trim();
+  if (!clinicName || !doctorName) {
+    return {
+      ok: false,
+      channel: "none",
+      status: 400,
+      error: "clinic_name and doctor_name are required.",
+    };
+  }
   const sent = await sendBookConfirmation({
     to: opts.appointment.patientPhone,
     patientName: opts.appointment.patientName,
-    doctorName: opts.appointment.doctorName,
+    doctorName,
+    clinicName,
     specialty: opts.appointment.specialty,
     date: opts.appointment.date,
     timeSlot: opts.appointment.timeSlot,
