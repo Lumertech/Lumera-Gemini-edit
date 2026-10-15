@@ -352,13 +352,17 @@ describe("LUM-TIP-009 / LUM-TIP-010 / branches authz", () => {
     const clinicRows = clinicList.json.branches as Array<{ id: string; tenant_id?: string }>;
     assert.ok(clinicRows.some((b) => b.id === "b-1"));
     assert.ok(clinicRows.every((b) => !b.tenant_id || b.tenant_id === POLYCLINIC_DEMO_TENANT_ID));
-    const created = await jsonRequest(
+    const forged = await jsonRequest(
       port,
       "POST",
       "/api/branches",
       { name: "Clinic Owned Branch", tenantId: "tenant-attacker" },
       auth(clinic)
     );
+    assert.equal(forged.status, 403);
+    assert.equal(forged.json.error, "Forbidden");
+    assert.equal(forged.json.branch, undefined);
+    const created = await jsonRequest(port, "POST", "/api/branches", { name: "Clinic Owned Branch" }, auth(clinic));
     assert.equal(created.status, 201, String(created.json.error || "create branch"));
     const branch = created.json.branch as { id: string; tenant_id: string; name: string };
     createdBranchIds.push(branch.id);
