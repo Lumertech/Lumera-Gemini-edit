@@ -24,7 +24,10 @@ import { decryptWaSecret, WA_SECRET_PREFIX } from "./wa-token-crypto.ts";
 const ENV_TOKEN = "EAAPlatformEnvTokenWithoutEllipsis0123456789abcdef";
 const ENV_PHONE = "1111222233334444";
 const TENANT_TOKEN = "EAAClinicTenantTokenWithoutEllipsis0123456789abcd";
-const TENANT_PHONE = "5555666677778888";
+
+function uniquePhoneNumberId(): string {
+  return `7${Date.now()}${Math.floor(Math.random() * 1000)}`.replace(/\D/g, "").slice(0, 15);
+}
 
 function insertTenant(id: string, name: string) {
   const now = new Date().toISOString();
@@ -36,7 +39,7 @@ function insertTenant(id: string, name: string) {
     .run(id, name, now, now, now);
 }
 
-function connectTenantNumber(tenantId: string, phoneNumberId = TENANT_PHONE, token = TENANT_TOKEN) {
+function connectTenantNumber(tenantId: string, phoneNumberId = uniquePhoneNumberId(), token = TENANT_TOKEN) {
   upsertWhatsAppNumber(platformAdminActor(), {
     ownerType: "tenant",
     ownerId: tenantId,
@@ -80,8 +83,9 @@ describe("Meta Tech Provider audit", () => {
     process.env.META_ACCESS_TOKEN = ENV_TOKEN;
     process.env.META_PHONE_NUMBER_ID = ENV_PHONE;
     const tenantId = `tenant-audit-creds-${crypto.randomUUID().slice(0, 8)}`;
+    const phoneNumberId = uniquePhoneNumberId();
     insertTenant(tenantId, "Sunrise Ortho");
-    connectTenantNumber(tenantId);
+    connectTenantNumber(tenantId, phoneNumberId);
     const seen: Array<{ url: string; auth: string }> = [];
     const sent = await dispatchWhatsAppCloudMessage({
       to: "+919812340001",
@@ -99,7 +103,7 @@ describe("Meta Tech Provider audit", () => {
     });
     assert.equal(sent.ok, true);
     if (sent.ok) assert.equal(sent.channel, "graph");
-    assert.match(seen[0].url, new RegExp(`/${TENANT_PHONE}/messages`));
+    assert.match(seen[0].url, new RegExp(`/${phoneNumberId}/messages`));
     assert.equal(seen[0].url.includes(ENV_PHONE), false);
     assert.match(seen[0].auth, new RegExp(`Bearer ${TENANT_TOKEN}`));
     assert.equal(seen[0].auth.includes(ENV_TOKEN), false);
