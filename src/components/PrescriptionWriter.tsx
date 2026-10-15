@@ -65,6 +65,7 @@ import {
   PHYSIO_PROCEDURES_CATALOG,
   MOCK_THERAPY_PACKAGES
 } from '../data/clinicalData';
+import { InertText } from '../lib/inertText';
 import { SpecialtyToolbar } from './specialty-rx/SpecialtyToolbar';
 import { PhysiotherapyRxModule } from './specialty-rx/PhysiotherapyRxModule';
 import { CardiologyRxModule } from './specialty-rx/CardiologyRxModule';
@@ -1805,7 +1806,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
                   {Object.entries(dentalAssessment.teethStatus || {}).map(([toothNo, val]: [string, any]) => (
                     <li key={toothNo} className="flex justify-between border-b border-amber-100 pb-0.5">
                       <span className="font-bold text-slate-900">Tooth #{toothNo}:</span>
-                      <span className="text-amber-900 font-semibold">{val.condition} — {val.notes}</span>
+                      <span className="text-amber-900 font-semibold"><InertText value={val.condition} /> — <InertText value={val.notes} /></span>
                     </li>
                   ))}
                 </ul>

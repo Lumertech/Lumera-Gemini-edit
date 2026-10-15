@@ -31,11 +31,11 @@ function usersCount(database: SqlDatabase, tenantId: string): number {
   return (database.prepare("SELECT COUNT(*) AS c FROM users WHERE tenant_id = ?").get(tenantId) as { c: number }).c;
 }
 
-/** Support-only. Individual has no Branches; polyclinic count is global until branches are tenant-scoped. */
-function branchesCount(database: SqlDatabase, type: TenantType): number {
+/** Support-only. Individual has no Branches. Polyclinic count is that tenant's rows. */
+function branchesCount(database: SqlDatabase, tenantId: string, type: TenantType): number {
   if (type !== "polyclinic") return 0;
   try {
-    return (database.prepare("SELECT COUNT(*) AS c FROM branches").get() as { c: number }).c;
+    return (database.prepare("SELECT COUNT(*) AS c FROM branches WHERE tenant_id = ?").get(tenantId) as { c: number }).c;
   } catch {
     return 0;
   }
@@ -96,7 +96,7 @@ function mapPublicTenant(database: SqlDatabase, row: TenantRow, opts?: { detail?
     deletedAt: row.deleted_at || null,
   };
   tenant.usersCount = usersCount(database, row.id);
-  tenant.branchesCount = branchesCount(database, type);
+  tenant.branchesCount = branchesCount(database, row.id, type);
   if (opts?.detail) {
     tenant.subscription = subscription;
   }

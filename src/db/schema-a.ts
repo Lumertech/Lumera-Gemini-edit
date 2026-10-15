@@ -159,15 +159,20 @@ export const staff = pgTable(
   ]
 );
 
-export const branches = pgTable("branches", {
-  id: text("id").primaryKey(),
-  name: text("name").notNull(),
-  address: text("address").notNull().default(""),
-  phone: text("phone").notNull().default(""),
-  opdHours: text("opd_hours").notNull().default(""),
-  activeDoctors: integer("active_doctors").notNull().default(0),
-  status: text("status").notNull().default("Operating"),
-});
+export const branches = pgTable(
+  "branches",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull().default(""),
+    name: text("name").notNull(),
+    address: text("address").notNull().default(""),
+    phone: text("phone").notNull().default(""),
+    opdHours: text("opd_hours").notNull().default(""),
+    activeDoctors: integer("active_doctors").notNull().default(0),
+    status: text("status").notNull().default("Operating"),
+  },
+  (t) => [index("idx_branches_tenant").on(t.tenantId)]
+);
 
 export const auditLogs = pgTable("audit_logs", {
   id: text("id").primaryKey(),
@@ -312,16 +317,21 @@ export const prescriptionDrafts = pgTable("prescription_drafts", {
   updatedAt: text("updated_at").notNull(),
 });
 
-export const labReports = pgTable("lab_reports", {
-  id: text("id").primaryKey(),
-  patientId: text("patient_id").notNull(),
-  patientUhid: text("patient_uhid").notNull(),
-  patientName: text("patient_name").notNull(),
-  date: text("date").notNull(),
-  labName: text("lab_name").notNull(),
-  category: text("category").notNull(),
-  doctorInterpretation: text("doctor_interpretation"),
-  results: text("results").notNull().default("[]"),
-  pdfUrl: text("pdf_url"),
-  createdAt: text("created_at").notNull(),
-});
+export const labReports = pgTable(
+  "lab_reports",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull().default(""),
+    patientId: text("patient_id").notNull(),
+    patientUhid: text("patient_uhid").notNull(),
+    patientName: text("patient_name").notNull(),
+    date: text("date").notNull(),
+    labName: text("lab_name").notNull(),
+    category: text("category").notNull(),
+    doctorInterpretation: text("doctor_interpretation"),
+    results: text("results").notNull().default("[]"),
+    pdfUrl: text("pdf_url"),
+    createdAt: text("created_at").notNull(),
+  },
+  (t) => [index("idx_lab_reports_tenant").on(t.tenantId)]
+);

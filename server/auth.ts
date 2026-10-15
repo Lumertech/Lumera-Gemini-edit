@@ -265,8 +265,8 @@ export function loadUserFromSession(req: Request): AuthUser | null {
 function isDashboardWhatsAppPath(req: Request): boolean {
   const raw = String(req.originalUrl || req.path || "").split("?")[0];
   const p = raw.startsWith("/api/whatsapp") ? raw.slice("/api".length) : raw.startsWith("/whatsapp") ? raw : `/whatsapp${raw.startsWith("/") ? raw : `/${raw}`}`;
-  // Document ids are not inbox routes. Prescription PDF auth is on the handler
-  // (session + clinician role + tenant). Lab-report HTML is a separate follow-up.
+  // Document ids are not inbox routes. Prescription and lab-report PDF auth
+  // is on the handler (session + clinician role + tenant ownership).
   if (p.startsWith("/whatsapp/prescription/") || p.startsWith("/whatsapp/lab-report/")) return false;
   const protectedPrefixes = [
     "/whatsapp/conversations",

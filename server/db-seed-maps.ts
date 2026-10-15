@@ -12,7 +12,7 @@ import {
 } from "./specialty-packs.ts";
 import { PRODUCT_NAME } from "../src/brand.ts";
 import { DEMO_TENANT_ID, getDb, type DbUser, isDemoWorkspaceUser, normalizePracticeType } from "./db.ts";
-import { ensureDemoTenantLetterhead } from "./db-migrate.ts";
+import { backfillLabReportAndBranchTenants, ensureDemoTenantLetterhead } from "./db-migrate.ts";
 
 export function assignDemoTenantToUnscopedClinicalRows(database: SqlDatabase) {
   try {
@@ -20,6 +20,7 @@ export function assignDemoTenantToUnscopedClinicalRows(database: SqlDatabase) {
     database.exec(`UPDATE appointments SET tenant_id = '${DEMO_TENANT_ID}' WHERE tenant_id IS NULL OR tenant_id = ''`);
     database.exec(`UPDATE prescriptions SET tenant_id = '${DEMO_TENANT_ID}' WHERE tenant_id IS NULL OR tenant_id = ''`);
   } catch {}
+  backfillLabReportAndBranchTenants(database);
 }
 
 export const DEMO_PASSWORD = "Lumera@2026";
@@ -235,12 +236,12 @@ export function seedIfEmpty(database: SqlDatabase) {
 
   // Seeded branches belong to the polyclinic demo — CLINIC_ADMIN owns CRUD, not Super Admin (#70).
   const insertBranch = database.prepare(`
-    INSERT INTO branches (id, name, address, phone, opd_hours, active_doctors, status)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO branches (id, tenant_id, name, address, phone, opd_hours, active_doctors, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
-  insertBranch.run("b-1", "Lumera Central Polyclinic & Diagnostics", "Indiranagar 100ft Road, Bengaluru", "+91 80 4123 4567", "08:00 AM - 09:00 PM", 8, "Operating");
-  insertBranch.run("b-2", "Lumera Specialty Care & Rehab Center", "Bandra West, Mumbai", "+91 22 2640 1234", "09:00 AM - 08:00 PM", 5, "Operating");
-  insertBranch.run("b-3", "Lumera Day Surgery & Eye Clinic", "Koramangala 4th Block, Bengaluru", "+91 80 4987 6543", "08:30 AM - 07:00 PM", 4, "Operating");
+  insertBranch.run("b-1", DEMO_TENANT_ID, "Lumera Central Polyclinic & Diagnostics", "Indiranagar 100ft Road, Bengaluru", "+91 80 4123 4567", "08:00 AM - 09:00 PM", 8, "Operating");
+  insertBranch.run("b-2", DEMO_TENANT_ID, "Lumera Specialty Care & Rehab Center", "Bandra West, Mumbai", "+91 22 2640 1234", "09:00 AM - 08:00 PM", 5, "Operating");
+  insertBranch.run("b-3", DEMO_TENANT_ID, "Lumera Day Surgery & Eye Clinic", "Koramangala 4th Block, Bengaluru", "+91 80 4987 6543", "08:30 AM - 07:00 PM", 4, "Operating");
 
   seedCms(database, now);
   writeAudit(database, "user-admin", "System Admin", "Seed", "Initial SQLite database seeded with demo users, CMS, and clinic roster");

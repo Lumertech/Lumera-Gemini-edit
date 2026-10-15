@@ -312,4 +312,54 @@ export function migrate(database: SqlDatabase) {
       )`
     );
   } catch {}
+
+  backfillLabReportAndBranchTenants(database);
+}
+
+/**
+ * Forward-only tenant columns for lab reports and branches.
+ * Existing rows keep their data: lab ownership follows the patient, and
+ * historical unscoped branch rows stay on the demo polyclinic tenant.
+ */
+export function backfillLabReportAndBranchTenants(database: SqlDatabase) {
+  try {
+    database.exec("ALTER TABLE lab_reports ADD COLUMN tenant_id TEXT NOT NULL DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE branches ADD COLUMN tenant_id TEXT NOT NULL DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("CREATE INDEX IF NOT EXISTS idx_lab_reports_tenant ON lab_reports(tenant_id)");
+  } catch {}
+  try {
+    database.exec("CREATE INDEX IF NOT EXISTS idx_branches_tenant ON branches(tenant_id)");
+  } catch {}
+  try {
+    database.exec(`
+      UPDATE lab_reports
+      SET tenant_id = (
+        SELECT p.tenant_id FROM patients p
+        WHERE p.id = lab_reports.patient_id
+          AND p.tenant_id IS NOT NULL
+          AND TRIM(p.tenant_id) != ''
+      )
+      WHERE (tenant_id IS NULL OR TRIM(tenant_id) = '')
+        AND EXISTS (
+          SELECT 1 FROM patients p
+          WHERE p.id = lab_reports.patient_id
+            AND p.tenant_id IS NOT NULL
+            AND TRIM(p.tenant_id) != ''
+        )
+    `);
+  } catch {}
+  try {
+    database.exec(
+      `UPDATE lab_reports SET tenant_id = '${DEMO_TENANT_ID}' WHERE tenant_id IS NULL OR TRIM(tenant_id) = ''`
+    );
+  } catch {}
+  try {
+    database.exec(
+      `UPDATE branches SET tenant_id = '${DEMO_TENANT_ID}' WHERE tenant_id IS NULL OR TRIM(tenant_id) = ''`
+    );
+  } catch {}
 }

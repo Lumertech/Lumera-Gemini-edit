@@ -22,7 +22,13 @@ import { isProduction } from "./runtime.ts";
 import { reportCaughtError } from "./error-tracker.ts";
 import { CLINICIAN_ROLES, requireAuth, requireRole } from "./auth.ts";
 import { rejectUntrustedTenantClaim } from "./tenant-guard.ts";
+import { authenticatedLabReportPath, authorizeLabReport, sendLabReportDenied } from "./lab-report-access.ts";
 import { serializeOutboundEvent } from "./whatsapp-scope.ts";
+
+/** Patient names, notes, WhatsApp text, and Rx/lab fields before HTML interpolation. */
+function h(value: unknown): string {
+  return escapeHtml(value);
+}
 
 let defaultGenAIClient: GoogleGenAI | null = null;
 function getDefaultGenAI(): GoogleGenAI | null {
@@ -504,11 +510,13 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
       }
 
       if (action === "get_lab_reports") {
-        const labs = db.prepare(`
-          SELECT * FROM lab_reports
-          WHERE patient_phone = ? OR patient_id = ?
-          ORDER BY created_at DESC
-        `).all(patientPhone, patientId) as Record<string, unknown>[];
+        const labs = patientId
+          ? (db.prepare(`
+              SELECT * FROM lab_reports
+              WHERE tenant_id = ? AND patient_id = ?
+              ORDER BY created_at DESC
+            `).all(tenantId, patientId) as Record<string, unknown>[])
+          : [];
 
         return res.json({
           found: labs.length > 0,
@@ -521,7 +529,7 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
             category: l.category,
             doctorInterpretation: l.doctor_interpretation,
             results: JSON.parse((l.results as string) || "[]"),
-            pdfUrl: `/api/emr/lab-report/${l.id}/pdf`,
+            pdfUrl: authenticatedLabReportPath(String(l.id)),
           })),
         });
       }
@@ -1114,23 +1122,23 @@ Output strictly in JSON:
 
       const medsHtml = medicines.map((m: any, idx: number) => `
         <tr style="border-bottom: 1px solid #e2e8f0;">
-          <td style="padding: 10px 8px; font-weight: 600; color: #1e293b;">${idx + 1}. ${m.drugName}</td>
-          <td style="padding: 10px 8px; color: #475569;">${m.composition || '-'}</td>
-          <td style="padding: 10px 8px; color: #0f172a; font-weight: 500;">${m.dosage} (${m.form})</td>
-          <td style="padding: 10px 8px; font-weight: 700; color: #0369a1;">${m.frequency}</td>
-          <td style="padding: 10px 8px; color: #475569;">${m.timing} (${m.durationDays} days)</td>
-          <td style="padding: 10px 8px; color: #64748b; font-size: 13px;">${m.instructions || '-'}</td>
+          <td style="padding: 10px 8px; font-weight: 600; color: #1e293b;">${idx + 1}. ${h(m.drugName)}</td>
+          <td style="padding: 10px 8px; color: #475569;">${h(m.composition || "-")}</td>
+          <td style="padding: 10px 8px; color: #0f172a; font-weight: 500;">${h(m.dosage)} (${h(m.form)})</td>
+          <td style="padding: 10px 8px; font-weight: 700; color: #0369a1;">${h(m.frequency)}</td>
+          <td style="padding: 10px 8px; color: #475569;">${h(m.timing)} (${h(m.durationDays)} days)</td>
+          <td style="padding: 10px 8px; color: #64748b; font-size: 13px;">${h(m.instructions || "-")}</td>
         </tr>
       `).join("");
 
-      const testsHtml = labTests.map((t: any) => `<li style="margin-bottom: 4px; color: #334155;"><strong>${t.testName}</strong> (${t.urgency || 'Routine'})</li>`).join("");
-      const adviceHtml = advice.map((a: string) => `<li style="margin-bottom: 4px; color: #334155;">${a}</li>`).join("");
+      const testsHtml = labTests.map((t: any) => `<li style="margin-bottom: 4px; color: #334155;"><strong>${h(t.testName)}</strong> (${h(t.urgency || "Routine")})</li>`).join("");
+      const adviceHtml = advice.map((a: string) => `<li style="margin-bottom: 4px; color: #334155;">${h(a)}</li>`).join("");
 
       const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Clinical Prescription - ${rx.rx_number}</title>
+  <title>Clinical Prescription - ${h(rx.rx_number)}</title>
   <style>
     @media print {
       body { margin: 0; padding: 12mm; }
@@ -1164,22 +1172,22 @@ Output strictly in JSON:
         <div class="clinic-sub">${subLine}${gstinLine ? `<br>${gstinLine}` : ""}</div>
       </div>
       <div style="text-align: right;">
-        <div style="font-size: 16px; font-weight: 700; color: #0f172a;">${rx.doctor_name}</div>
-        <div style="font-size: 13px; color: #475569;">${rx.doctor_specialty}</div>
-        <div style="font-size: 12px; color: #64748b;">Reg No: ${rx.doctor_reg_number}</div>
+        <div style="font-size: 16px; font-weight: 700; color: #0f172a;">${h(rx.doctor_name)}</div>
+        <div style="font-size: 13px; color: #475569;">${h(rx.doctor_specialty)}</div>
+        <div style="font-size: 12px; color: #64748b;">Reg No: ${h(rx.doctor_reg_number)}</div>
       </div>
     </div>
 
     <div class="meta-grid">
-      <div><strong>Patient Name</strong> ${rx.patient_name}</div>
-      <div><strong>UHID / ID</strong> ${rx.patient_uhid}</div>
-      <div><strong>Phone</strong> ${rx.patient_phone}</div>
-      <div><strong>Date of Rx</strong> ${rx.date}</div>
+      <div><strong>Patient Name</strong> ${h(rx.patient_name)}</div>
+      <div><strong>UHID / ID</strong> ${h(rx.patient_uhid)}</div>
+      <div><strong>Phone</strong> ${h(rx.patient_phone)}</div>
+      <div><strong>Date of Rx</strong> ${h(rx.date)}</div>
     </div>
 
     <div style="margin-bottom: 20px;">
       <div style="font-size: 13px; color: #64748b; text-transform: uppercase; font-weight: 600;">Provisional Clinical Diagnosis</div>
-      <div style="font-size: 17px; font-weight: 700; color: #0f172a; margin-top: 4px;">${rx.diagnosis} ${rx.icd10_code ? `(ICD-10: ${rx.icd10_code})` : ''}</div>
+      <div style="font-size: 17px; font-weight: 700; color: #0f172a; margin-top: 4px;">${h(rx.diagnosis)} ${rx.icd10_code ? `(ICD-10: ${h(rx.icd10_code)})` : ''}</div>
     </div>
 
     <div class="rx-symbol">℞</div>
@@ -1211,18 +1219,18 @@ Output strictly in JSON:
 
     ${rx.diet_instructions ? `
       <div class="section-title">Dietary Guidance</div>
-      <p style="font-size: 14px; color: #334155; margin-top: 4px;">${rx.diet_instructions}</p>
+      <p style="font-size: 14px; color: #334155; margin-top: 4px;">${h(rx.diet_instructions)}</p>
     ` : ''}
 
     ${rx.follow_up_date ? `
       <div style="background: #f0fdf4; border: 1px solid #bbf7d0; padding: 12px; border-radius: 6px; margin-top: 20px; font-size: 14px; color: #166534;">
-        🗓️ <strong>Review / Follow-up Visit Advised on:</strong> ${rx.follow_up_date}
+        🗓️ <strong>Review / Follow-up Visit Advised on:</strong> ${h(rx.follow_up_date)}
       </div>
     ` : ''}
 
     <div class="footer">
       <div class="qr-box">
-        <div><strong>Rx No:</strong> ${rx.rx_number}</div>
+        <div><strong>Rx No:</strong> ${h(rx.rx_number)}</div>
         <div style="color: #64748b; font-size: 10px; margin-top: 4px;">Digitally signed & verified on Lumera Health Cloud</div>
       </div>
       <div style="text-align: right;">
@@ -1246,30 +1254,21 @@ Output strictly in JSON:
 
   router.get("/lab-report/:id/pdf", requireAuth, requireRole(...CLINICIAN_ROLES), (req: Request, res: Response) => {
     try {
-      const db = getDb();
-      const tenantId = String(req.user?.tenantId || "").trim();
-      const lab = tenantId
-        ? (db
-            .prepare(
-              `SELECT l.* FROM lab_reports l
-               INNER JOIN patients p ON p.id = l.patient_id
-               WHERE l.id = ? AND p.tenant_id = ?`
-            )
-            .get(req.params.id, tenantId) as Record<string, unknown> | undefined)
-        : undefined;
-      if (!lab) return res.status(404).send("Lab report not found");
+      const access = authorizeLabReport(req, String(req.params.id || ""));
+      if (!access.ok) return sendLabReportDenied(res, access);
+      const lab = access.lab;
 
       const results = JSON.parse((lab.results as string) || "[]");
       const rowsHtml = results.map((r: any) => {
         const isAbnormal = r.status && r.status !== "Normal";
         const badgeColor = isAbnormal ? "background: #fef2f2; color: #b91c1c; font-weight: 700;" : "background: #f0fdf4; color: #15803d;";
         return `
-          <tr style="border-bottom: 1px solid #e2e8f0; ${isAbnormal ? 'background: #fffbfb;' : ''}">
-            <td style="padding: 12px 10px; font-weight: 600; color: #1e293b;">${r.param}</td>
-            <td style="padding: 12px 10px; font-size: 15px; font-weight: 700; color: ${isAbnormal ? '#b91c1c' : '#0f172a'};">${r.value} ${r.unit}</td>
-            <td style="padding: 12px 10px; color: #64748b; font-size: 13px;">${r.normalRange} ${r.unit}</td>
-            <td style="padding: 12px 10px;"><span style="padding: 3px 8px; border-radius: 4px; font-size: 12px; ${badgeColor}">${r.status}</span></td>
-            <td style="padding: 12px 10px; font-size: 12px; color: #64748b;">${r.trendDelta || '-'}</td>
+          <tr style="border-bottom: 1px solid #e2e8f0; ${isAbnormal ? "background: #fffbfb;" : ""}">
+            <td style="padding: 12px 10px; font-weight: 600; color: #1e293b;">${h(r.param)}</td>
+            <td style="padding: 12px 10px; font-size: 15px; font-weight: 700; color: ${isAbnormal ? "#b91c1c" : "#0f172a"};">${h(r.value)} ${h(r.unit)}</td>
+            <td style="padding: 12px 10px; color: #64748b; font-size: 13px;">${h(r.normalRange)} ${h(r.unit)}</td>
+            <td style="padding: 12px 10px;"><span style="padding: 3px 8px; border-radius: 4px; font-size: 12px; ${badgeColor}">${h(r.status)}</span></td>
+            <td style="padding: 12px 10px; font-size: 12px; color: #64748b;">${h(r.trendDelta || "-")}</td>
           </tr>
         `;
       }).join("");
@@ -1278,7 +1277,7 @@ Output strictly in JSON:
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Diagnostic Laboratory Report - ${lab.id}</title>
+  <title>Diagnostic Laboratory Report - ${h(lab.id)}</title>
   <style>
     @media print {
       body { margin: 0; padding: 12mm; }
@@ -1306,19 +1305,19 @@ Output strictly in JSON:
   <div class="sheet">
     <div class="header">
       <div>
-        <div class="lab-brand">${lab.lab_name}</div>
+        <div class="lab-brand">${h(lab.lab_name)}</div>
         <div class="lab-sub">Automated Clinical Pathology, Biochemistry & Imaging Services<br>NABL & ICMR Accredited Diagnostic Center • Indiranagar Center</div>
       </div>
       <div style="text-align: right;">
-        <div style="font-size: 14px; font-weight: 700; color: #0f172a;">Sample ID: ${lab.id}</div>
-        <div style="font-size: 12px; color: #64748b;">Category: ${lab.category}</div>
-        <div style="font-size: 12px; color: #64748b;">Date Collected: ${lab.date}</div>
+        <div style="font-size: 14px; font-weight: 700; color: #0f172a;">Sample ID: ${h(lab.id)}</div>
+        <div style="font-size: 12px; color: #64748b;">Category: ${h(lab.category)}</div>
+        <div style="font-size: 12px; color: #64748b;">Date Collected: ${h(lab.date)}</div>
       </div>
     </div>
 
     <div class="meta-grid">
-      <div><strong>Patient Name</strong> ${lab.patient_name}</div>
-      <div><strong>UHID</strong> ${lab.patient_uhid}</div>
+      <div><strong>Patient Name</strong> ${h(lab.patient_name)}</div>
+      <div><strong>UHID</strong> ${h(lab.patient_uhid)}</div>
       <div><strong>Referring Doctor</strong> Dr. Siddharth Varma (PT)</div>
       <div><strong>Report Status</strong> Verified & Released</div>
     </div>
@@ -1340,7 +1339,7 @@ Output strictly in JSON:
 
     <div class="interpretation-box">
       <div style="font-weight: 700; text-transform: uppercase; font-size: 12px; margin-bottom: 4px;">Consultant Pathologist & Clinical Interpretation</div>
-      <div>${lab.doctor_interpretation}</div>
+      <div>${h(lab.doctor_interpretation)}</div>
     </div>
 
     <div class="footer">
@@ -1422,11 +1421,14 @@ async function processBotActionOrQuery(
 
   // 2. Lab Reports Request
   if (q.includes("lab") || q.includes("report") || q.includes("test") || q.includes("blood") || q.includes("जांच") || q.includes("रिपोर्ट")) {
-    const lab = db.prepare(`
-      SELECT * FROM lab_reports
-      WHERE patient_phone = ? OR patient_name = ?
-      ORDER BY created_at DESC LIMIT 1
-    `).get(phone, patientName) as Record<string, unknown> | undefined;
+    const labTenant = String(tenantId || "").trim();
+    const lab = labTenant
+      ? (db.prepare(`
+          SELECT * FROM lab_reports
+          WHERE tenant_id = ? AND patient_name = ?
+          ORDER BY created_at DESC LIMIT 1
+        `).get(labTenant, patientName) as Record<string, unknown> | undefined)
+      : undefined;
 
     if (lab) {
       const results = JSON.parse((lab.results as string) || "[]");
@@ -1441,7 +1443,7 @@ async function processBotActionOrQuery(
         media: {
           type: "pdf",
           title: `Lab_Report_${lab.id}.pdf`,
-          url: `/api/emr/lab-report/${lab.id}/pdf`,
+          url: authenticatedLabReportPath(String(lab.id)),
           size: "185 KB",
           previewData: lab,
         },

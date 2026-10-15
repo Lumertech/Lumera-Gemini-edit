@@ -1,4 +1,5 @@
 import React from 'react';
+import { InertText } from '../../lib/inertText';
 import { X, Printer, Download, FileText, CheckCircle2, AlertTriangle, ShieldCheck } from 'lucide-react';
 
 export interface DocumentPreviewData {
@@ -31,7 +32,7 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({ docu
             </div>
             <div>
               <div className="flex items-center space-x-2">
-                <h3 className="font-bold text-sm text-white">{document.title}</h3>
+                <h3 className="font-bold text-sm text-white"><InertText value={document.title} /></h3>
                 <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
                   <ShieldCheck className="w-3 h-3" /> EMR Verified
                 </span>
@@ -70,7 +71,7 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({ docu
               </p>
             </div>
             <div className="text-right">
-              <div className="font-bold text-sm text-slate-900">{rawData.doctorName || 'Dr. Siddharth Varma (PT)'}</div>
+              <div className="font-bold text-sm text-slate-900"><InertText value={rawData.doctorName || 'Dr. Siddharth Varma (PT)'} /></div>
               <div className="text-xs text-blue-700 font-medium">{rawData.doctorSpecialty || 'Physiotherapy & Rehabilitation'}</div>
               <div className="text-[11px] text-slate-500 font-mono">Reg: {rawData.doctorRegNumber || 'KMC-88129'}</div>
             </div>
@@ -80,7 +81,7 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({ docu
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-50 p-3.5 rounded-xl border border-slate-200 text-xs">
             <div>
               <span className="text-slate-400 block font-medium">PATIENT NAME</span>
-              <span className="font-bold text-slate-900">{rawData.patientName || 'Rajiv Saxena'}</span>
+              <span className="font-bold text-slate-900"><InertText value={rawData.patientName || 'Rajiv Saxena'} /></span>
             </div>
             <div>
               <span className="text-slate-400 block font-medium">UHID / MRN</span>
@@ -102,7 +103,7 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({ docu
               <div className="bg-blue-50/60 p-3 rounded-lg border border-blue-100">
                 <span className="text-xs font-bold text-blue-900 uppercase tracking-wider block">Provisional Diagnosis</span>
                 <span className="text-sm font-semibold text-slate-900 mt-0.5 block">
-                  {rawData.diagnosis || 'Acute Lumbar Radiculopathy & L4-L5 Disc Herniation (ICD-10: M54.16)'}
+                  <InertText value={rawData.diagnosis || 'Acute Lumbar Radiculopathy & L4-L5 Disc Herniation (ICD-10: M54.16)'} />
                 </span>
               </div>
 
@@ -125,11 +126,11 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({ docu
                         rawData.medicines.map((m: any, idx: number) => (
                           <tr key={idx} className="hover:bg-slate-50">
                             <td className="p-2.5 text-slate-400 font-mono">{idx + 1}</td>
-                            <td className="p-2.5 font-bold text-slate-900">{m.drugName}</td>
-                            <td className="p-2.5 text-slate-700">{m.dosage}</td>
-                            <td className="p-2.5 font-semibold text-blue-700">{m.frequency}</td>
-                            <td className="p-2.5 text-slate-700">{m.timing} ({m.durationDays}d)</td>
-                            <td className="p-2.5 text-slate-500 italic">{m.instructions || '-'}</td>
+                            <td className="p-2.5 font-bold text-slate-900"><InertText value={m.drugName} /></td>
+                            <td className="p-2.5 text-slate-700"><InertText value={m.dosage} /></td>
+                            <td className="p-2.5 font-semibold text-blue-700"><InertText value={m.frequency} /></td>
+                            <td className="p-2.5 text-slate-700"><InertText value={m.timing} /> (<InertText value={m.durationDays} />d)</td>
+                            <td className="p-2.5 text-slate-500 italic"><InertText value={m.instructions || '-'} /></td>
                           </tr>
                         ))
                       ) : (
@@ -151,7 +152,7 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({ docu
                   </span>
                   <ul className="list-disc pl-5 text-xs text-slate-600 space-y-1">
                     {rawData.advice.map((a: string, i: number) => (
-                      <li key={i}>{a}</li>
+                      <li key={i}><InertText value={a} /></li>
                     ))}
                   </ul>
                 </div>
@@ -159,7 +160,7 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({ docu
 
               {rawData.dietInstructions && (
                 <div className="bg-amber-50/70 p-3 rounded-lg border border-amber-200 text-xs text-amber-900">
-                  <span className="font-bold">Dietary Guidance:</span> {rawData.dietInstructions}
+                  <span className="font-bold">Dietary Guidance:</span> <InertText value={rawData.dietInstructions} />
                 </div>
               )}
             </div>
@@ -171,11 +172,11 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({ docu
               <div className="bg-emerald-50/60 p-3 rounded-lg border border-emerald-100 flex items-center justify-between">
                 <div>
                   <span className="text-xs font-bold text-emerald-900 uppercase tracking-wider block">Panel Category</span>
-                  <span className="text-sm font-semibold text-slate-900">{rawData.category || 'Biochemistry & Inflammatory Markers'}</span>
+                  <span className="text-sm font-semibold text-slate-900"><InertText value={rawData.category || 'Biochemistry & Inflammatory Markers'} /></span>
                 </div>
                 <div className="text-right">
                   <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Laboratory Facility</span>
-                  <span className="text-xs font-medium text-slate-700">{rawData.labName || 'Lumera Diagnostic Central Lab'}</span>
+                  <span className="text-xs font-medium text-slate-700"><InertText value={rawData.labName || 'Lumera Diagnostic Central Lab'} /></span>
                 </div>
               </div>
 
@@ -196,21 +197,21 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({ docu
                         const isAbnormal = r.status && r.status !== 'Normal';
                         return (
                           <tr key={idx} className={isAbnormal ? 'bg-rose-50/50' : 'hover:bg-slate-50'}>
-                            <td className="p-2.5 font-bold text-slate-900">{r.param}</td>
+                            <td className="p-2.5 font-bold text-slate-900"><InertText value={r.param} /></td>
                             <td className={`p-2.5 font-extrabold ${isAbnormal ? 'text-rose-700 font-mono text-sm' : 'text-slate-800'}`}>
-                              {r.value} {r.unit}
+                              <InertText value={r.value} /> <InertText value={r.unit} />
                             </td>
-                            <td className="p-2.5 text-slate-500">{r.normalRange} {r.unit}</td>
+                            <td className="p-2.5 text-slate-500"><InertText value={r.normalRange} /> <InertText value={r.unit} /></td>
                             <td className="p-2.5">
                               <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                                 isAbnormal
                                   ? 'bg-rose-100 text-rose-800 border border-rose-200'
                                   : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
                               }`}>
-                                {r.status}
+                                <InertText value={r.status} />
                               </span>
                             </td>
-                            <td className="p-2.5 text-slate-500 text-[11px]">{r.trendDelta || '-'}</td>
+                            <td className="p-2.5 text-slate-500 text-[11px]"><InertText value={r.trendDelta || '-'} /></td>
                           </tr>
                         );
                       })
@@ -231,7 +232,7 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({ docu
                     <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
                     Pathologist & Consultant Clinical Interpretation:
                   </div>
-                  <p className="leading-relaxed">{rawData.doctorInterpretation}</p>
+                  <p className="leading-relaxed"><InertText value={rawData.doctorInterpretation} /></p>
                 </div>
               )}
             </div>
