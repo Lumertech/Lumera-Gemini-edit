@@ -10,6 +10,7 @@ import {
   csrfCookieValue,
   csrfRefreshAllowed,
   csrfSetCookieHeader,
+  acceptedHeaderCredential,
   listCookieValues,
   packHostSession,
   partitionedCookieExpiryLines,
@@ -76,8 +77,10 @@ export function issueLumeraSession(res: Response, user: DbUser): string {
   setSessionCookie(res, jwtToken);
   // Row is in the shared SQL database (Postgres in production). There is no
   // process-local session map: each instance verifies this JWT with JWT_SECRET
-  // and loads the user from that database. Bearer clients still receive the
-  // JWT from the login JSON; the web app never reads it, and /me does not echo it.
+  // and loads the user from that database. Login JSON includes this JWT only
+  // when `clientMayUseSessionToken` is true (native `X-Client`, or no
+  // `Sec-Fetch-Site` and no `Origin`). The web app never reads it, and /me
+  // does not echo it.
   createSession(user.id);
   return jwtToken;
 }
@@ -385,17 +388,11 @@ export function authenticatedCookieCsrf(req: Request): string | null {
 }
 
 export function getSessionId(req: Request): string | null {
-  // Native and mobile clients present the JWT from the login JSON.
-  // /api/me does not return that credential, and the web app does not send these headers.
-  const auth = req.headers.authorization;
-  if (auth && typeof auth === "string" && auth.toLowerCase().startsWith("bearer ")) {
-    const token = auth.slice(7).trim();
-    if (token) return token;
-  }
-  const xToken = req.headers["x-session-token"];
-  if (typeof xToken === "string" && xToken.trim()) {
-    return xToken.trim();
-  }
+  // Header credential only for native clients. See `clientMayUseSessionToken`.
+  // This repo has no Android or iOS tree; those apps send Bearer or
+  // X-Session-Token, with `X-Client` when they also send Origin or Sec-Fetch-Site.
+  const headerCredential = acceptedHeaderCredential(req);
+  if (headerCredential) return headerCredential;
   const header = cookieHeaderOf(req);
   const host = authenticatingHostSession(header);
   if (host) {

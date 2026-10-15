@@ -1,4 +1,5 @@
 import { Router, type Request, type Response } from "express";
+import { clientMayUseSessionToken } from "./http-security.ts";
 import multer from "multer";
 import fs from "node:fs";
 import path from "node:path";
@@ -388,6 +389,22 @@ function withIssuedCsrf<T extends Record<string, unknown>>(res: Response, body: 
   return { ...body, csrfToken };
 }
 
+/**
+ * Session JSON for login, OTP verify, demo-login, OAuth, registration, and
+ * onboarding. `token` is the session JWT. Browser requests omit it; native
+ * clients receive it. See `clientMayUseSessionToken`.
+ */
+function withSessionCredential<T extends Record<string, unknown>>(
+  req: Request,
+  res: Response,
+  body: T,
+  credential: string
+): T & { csrfToken?: string; token?: string } {
+  const issued = withIssuedCsrf(res, body);
+  if (!clientMayUseSessionToken(req)) return issued;
+  return { ...issued, token: credential };
+}
+
 export function createApiRouter(): Router {
   const api = Router();
   api.use(rejectUntrustedTenantClaim);
@@ -414,7 +431,7 @@ export function createApiRouter(): Router {
         .prepare("UPDATE users SET last_login = ?, whatsapp_verified = 1 WHERE id = ?")
         .run(new Date().toISOString(), user.id);
       writeAudit(getDb(), user.id, user.name, "Login", `${user.email} signed in (${reason})`);
-      return res.json(withIssuedCsrf(res, { user: publicUser(user), token: jwtToken, requiresOtp: false }));
+      return res.json(withSessionCredential(req, res, { user: publicUser(user), requiresOtp: false }, jwtToken));
     };
 
     // MUST: admin / seeded @lumera.me demo matrix / server-only Sunrise video emails
@@ -490,7 +507,7 @@ export function createApiRouter(): Router {
    * Explicit one-click demo. Credentials stay on the server. Disabled unless
    * DEMO_LOGIN_ENABLED is set. Client email/password are ignored.
    */
-  api.post("/auth/demo-login", (_req: Request, res: Response) => {
+  api.post("/auth/demo-login", (req: Request, res: Response) => {
     if (!demoLoginEnabled()) {
       return res.status(404).json({ error: "Demo login is disabled" });
     }
@@ -508,7 +525,7 @@ export function createApiRouter(): Router {
       .prepare("UPDATE users SET last_login = ?, whatsapp_verified = 1 WHERE id = ?")
       .run(new Date().toISOString(), user.id);
     writeAudit(getDb(), user.id, user.name, "Login", `${user.email} signed in (explicit demo login)`);
-    return res.json(withIssuedCsrf(res, { user: publicUser(user), token: jwtToken, requiresOtp: false }));
+    return res.json(withSessionCredential(req, res, { user: publicUser(user), requiresOtp: false }, jwtToken));
   });
 
   api.get("/auth/oauth-config", (_req: Request, res: Response) => {
@@ -582,6 +599,8 @@ export function createApiRouter(): Router {
         .prepare("UPDATE users SET last_login = ?, whatsapp_verified = 1, avatar_url = COALESCE(NULLIF(?, ''), avatar_url) WHERE id = ?")
         .run(new Date().toISOString(), identity.avatarUrl, user.id);
       writeAudit(getDb(), user.id, user.name, "OAuth Sign In", `${user.email} signed in via google (Google-verified)`);
+      // Browser navigation. The session is only the HttpOnly cookie. The redirect
+      // must not carry the JWT. Native clients use POST /auth/oauth for `token`.
       return res.redirect(`${appUrl}/login?oauth=google&status=ok`);
     } catch (err) {
       const message = err instanceof GoogleOAuthError || err instanceof FacebookOAuthError ? err.message : "google_oauth_failed";
@@ -636,6 +655,8 @@ export function createApiRouter(): Router {
         }
       }
       writeAudit(getDb(), user.id, user.name, "OAuth Sign In", `${user.email} signed in via facebook (Graph-verified)`);
+      // Browser navigation. The session is only the HttpOnly cookie. The redirect
+      // must not carry the JWT. Native clients use POST /auth/oauth for `token`.
       return res.redirect(`${appUrl}/login?oauth=facebook&status=ok`);
     } catch (err) {
       const message = err instanceof FacebookOAuthError ? err.message : "facebook_oauth_failed";
@@ -718,13 +739,12 @@ export function createApiRouter(): Router {
         "OAuth Sign In",
         `${user.email} signed in via ${identity.provider}${identity.sandbox ? " (SANDBOX / DEV-ONLY client email)" : " (provider-verified)"}`
       );
-      return res.json(withIssuedCsrf(res, {
+      return res.json(withSessionCredential(req, res, {
         user: publicUser(user),
-        token: jwtToken,
         requiresOtp: false,
         sandbox: Boolean(identity.sandbox),
         notice: identity.sandbox ? "SANDBOX / DEV-ONLY: session issued from client-supplied email. Disabled in production." : undefined,
-      }));
+      }, jwtToken));
     }
 
     const phone = user.phone || "+91 98234 55667";
@@ -906,12 +926,11 @@ export function createApiRouter(): Router {
       const jwtToken = issueLumeraSession(res, updatedUser);
       writeAudit(getDb(), user.id, user.name, "WhatsApp Verified", `WhatsApp phone ${activePhone} verified for ${user.email}`);
 
-      return res.json(withIssuedCsrf(res, {
+      return res.json(withSessionCredential(req, res, {
         ok: true,
         user: publicUser(updatedUser),
-        token: jwtToken,
         message: "WhatsApp Business verification confirmed. Welcome back!",
-      }));
+      }, jwtToken));
     }
 
     if (record.purpose === "register") {
@@ -1053,14 +1072,13 @@ export function createApiRouter(): Router {
 
       writeAudit(getDb(), updatedUser.id, updatedUser.name, "Practice Registered", `Registered and activated tenant: ${practiceName} (HFR: ${hfrId || "Active"})`);
 
-      return res.json(withIssuedCsrf(res, {
+      return res.json(withSessionCredential(req, res, {
         ok: true,
         user: publicUser(updatedUser),
-        token: jwtToken,
         tenantId,
         role: updatedUser.role,
         message: `Welcome to Lumera! ${practiceName} has been activated with 500 AI Scribe minutes and 100 monthly DHIS transactions.`,
-      }));
+      }, jwtToken));
     }
 
     if (record.purpose === "password_reset") {
@@ -1422,13 +1440,12 @@ export function createApiRouter(): Router {
       `Completed ${practiceType || "practice"} setup for specialty: ${specialty || "General Medicine"}`
     );
 
-    return res.json(withIssuedCsrf(res, {
+    return res.json(withSessionCredential(req, res, {
       ok: true,
       user: publicUser(updatedUserRow),
-      token: jwtToken,
       homeView: practiceType === "polyclinic" ? "welcome" : "queue",
       message: "Clinical profile verified & practice suite activated successfully.",
-    }));
+    }, jwtToken));
   });
 
   // Password Recovery / Forgot Password

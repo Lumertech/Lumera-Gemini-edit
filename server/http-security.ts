@@ -12,6 +12,10 @@
  * Missing, `same-site`, `cross-site`, and any other value are rejected.
  * Referer is not a substitute. Canonical host is www; apex is allowed as a
  * same-site companion and redirected to www on safe navigations.
+ *
+ * The session JWT is not a browser credential. `clientMayUseSessionToken`
+ * documents when login JSON may include `token` and when
+ * `Authorization: Bearer` / `X-Session-Token` are accepted.
  */
 import { type Express, type NextFunction, type Request, type Response } from "express";
 import { applyHtmlDocumentSecurityHeaders } from "./html-security-headers.ts";
@@ -443,13 +447,84 @@ function isMutating(method: string): boolean {
   return !["GET", "HEAD", "OPTIONS"].includes(String(method || "GET").toUpperCase());
 }
 
-function hasBearerOrSessionHeader(req: Request): boolean {
+/**
+ * Session JWT in login JSON, and as `Authorization: Bearer` or `X-Session-Token`.
+ *
+ * A browser request is one that carries `Sec-Fetch-Site` or `Origin`. Browsers
+ * send `Sec-Fetch-Site` on every request; page scripts cannot omit or rewrite
+ * it. They send `Origin` on CORS requests and on mutating requests. Literal
+ * `Origin: null` counts as present here. CORS still treats that literal as
+ * missing and fail-closes it on `/api` in production — this check does not
+ * change that.
+ *
+ * Those browser requests do not receive `token` and their Bearer /
+ * `X-Session-Token` headers are ignored, so a page script cannot capture the
+ * credential at login and replay it. Cookie sessions and cookie CSRF stay in
+ * force. A browser-presented bearer does not skip CSRF.
+ *
+ * The credential is returned and the header is accepted only when either:
+ * - `X-Client` is `mobile`, `ios`, `android`, or `native` (case-insensitive,
+ *   comma-separated values allowed), even if `Sec-Fetch-Site` or `Origin` is
+ *   also present. That mark is how Android, iOS, and other native clients
+ *   identify themselves when their HTTP stack or WebView sends Origin or
+ *   Fetch Metadata; or
+ * - neither `Sec-Fetch-Site` nor `Origin` is present. curl, this repo's
+ *   server tests, and URLSession / OkHttp calls that do not set those headers
+ *   take this path.
+ *
+ * This repository has no Android or iOS source. Those clients authenticate
+ * with the login JSON `token` as Bearer or `X-Session-Token`. Production CORS
+ * is unchanged: an `/api` call with neither an allowlisted Origin nor
+ * `Sec-Fetch-Site: same-origin` (or `none` on GET/HEAD) is still rejected.
+ * `X-Client` does not bypass CORS. A native client that sends Origin to pass
+ * that gate must also send `X-Client`.
+ *
+ * An accepted native bearer still skips cookie CSRF, because those clients
+ * do not hold the cookie pair.
+ */
+const NATIVE_CLIENT_MARKS = new Set(["mobile", "ios", "android", "native"]);
+
+export function explicitNativeClient(req: Request): boolean {
+  const raw = req.headers["x-client"];
+  const chunks = (Array.isArray(raw) ? raw : raw == null ? [] : [raw]).flatMap((value) =>
+    String(value)
+      .split(",")
+      .map((part) => part.trim().toLowerCase())
+      .filter(Boolean)
+  );
+  return chunks.some((part) => NATIVE_CLIENT_MARKS.has(part));
+}
+
+export function browserMetadataPresent(req: Request): boolean {
+  return Boolean(headerOne(req, "sec-fetch-site") || headerOne(req, "origin"));
+}
+
+/** True when login JSON may include `token` and header credentials may authenticate. */
+export function clientMayUseSessionToken(req: Request): boolean {
+  if (explicitNativeClient(req)) return true;
+  return !browserMetadataPresent(req);
+}
+
+/** Bearer or `X-Session-Token` when this request is allowed to present one. */
+export function acceptedHeaderCredential(req: Request): string | null {
+  if (!clientMayUseSessionToken(req)) return null;
   const auth = req.headers.authorization;
-  if (auth && typeof auth === "string" && auth.toLowerCase().startsWith("bearer ")) {
-    return Boolean(auth.slice(7).trim());
+  const authValue = Array.isArray(auth) ? auth[0] : auth;
+  if (typeof authValue === "string" && authValue.toLowerCase().startsWith("bearer ")) {
+    const token = authValue.slice(7).trim();
+    if (token) return token;
   }
   const xToken = req.headers["x-session-token"];
-  return typeof xToken === "string" && Boolean(xToken.trim());
+  const xValues = Array.isArray(xToken) ? xToken : xToken == null ? [] : [xToken];
+  for (const value of xValues) {
+    const token = String(value || "").trim();
+    if (token) return token;
+  }
+  return null;
+}
+
+function hasBearerOrSessionHeader(req: Request): boolean {
+  return Boolean(acceptedHeaderCredential(req));
 }
 
 function csrfHeaderValue(req: Request): string {
@@ -476,6 +551,9 @@ function hasSessionCookie(cookieHeader: string | undefined): boolean {
  * On Firebase Hosting the non-HttpOnly `lumera_csrf` cookie is not forwarded;
  * the secret travels inside `__session`, and the browser still reads `lumera_csrf`
  * to set the header.
+ * An accepted native bearer skips this check. A bearer on a browser request
+ * (`Sec-Fetch-Site` or `Origin`, without `X-Client: mobile|ios|android|native`)
+ * does not: the header is ignored and the cookie still needs its CSRF secret.
  */
 export function csrfShouldReject(req: Request): boolean {
   if (isSecurityExemptPath(req.path) || isSecurityExemptPath(req.originalUrl || "")) return false;
@@ -503,7 +581,10 @@ export function corsAllowlistMiddleware(env: NodeJS.ProcessEnv = process.env) {
       res.setHeader("Access-Control-Allow-Origin", origin);
       res.setHeader("Vary", "Origin");
       res.setHeader("Access-Control-Allow-Credentials", "true");
-      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-CSRF-Token, X-Session-Token");
+      res.setHeader(
+        "Access-Control-Allow-Headers",
+        "Content-Type, Authorization, X-CSRF-Token, X-Session-Token, X-Client"
+      );
       res.setHeader("Access-Control-Allow-Methods", "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS");
     }
     if (req.method === "OPTIONS") {

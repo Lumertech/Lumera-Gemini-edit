@@ -1144,9 +1144,9 @@ describe("stale anonymous __session CSRF refresh", () => {
     assert.equal(login.status, 200, loginJson.error || "login");
     const packed = issuedSession(setCookieLines(login));
     const session = unpackHostSession(packed);
-    assert.equal(typeof loginJson.token, "string");
-    assert.ok(loginJson.token);
-    assert.equal(session.credential, loginJson.token);
+    // Browser login (Sec-Fetch-Site) keeps the credential in the cookie only.
+    assert.equal(loginJson.token, undefined);
+    assert.equal(JSON.stringify(loginJson).includes(session.credential), false);
     assert.equal(loginJson.csrfToken, session.csrf);
     assert.equal(login.headers.get("x-csrf-token"), session.csrf);
 
@@ -1168,15 +1168,25 @@ describe("stale anonymous __session CSRF refresh", () => {
       assert.equal(me.headers.get("x-csrf-token"), session.csrf);
     }
 
-    const bearer = await previousFetch(`http://127.0.0.1:${server.port}/api/me`, {
-      headers: { Authorization: `Bearer ${loginJson.token}`, "Sec-Fetch-Site": "same-origin" },
+    const browserBearer = await previousFetch(`http://127.0.0.1:${server.port}/api/me`, {
+      headers: { Authorization: `Bearer ${session.credential}`, "Sec-Fetch-Site": "same-origin" },
     });
-    const bearerBody = await bearer.text();
+    const browserBearerBody = await browserBearer.text();
+    const browserBearerJson = JSON.parse(browserBearerBody) as { user?: { email?: string } | null; token?: unknown };
+    assert.equal(browserBearer.status, 200, browserBearerBody);
+    assert.equal(browserBearerJson.user, null);
+    assert.equal(browserBearerJson.token, undefined);
+    assert.equal(browserBearerBody.includes(session.credential), false);
+
+    const nativeBearer = await previousFetch(`http://127.0.0.1:${server.port}/api/me`, {
+      headers: { Authorization: `Bearer ${session.credential}` },
+    });
+    const bearerBody = await nativeBearer.text();
     const bearerJson = JSON.parse(bearerBody) as { user?: { email?: string } | null; token?: unknown };
-    assert.equal(bearer.status, 200, bearerBody);
+    assert.equal(nativeBearer.status, 200, bearerBody);
     assert.equal(bearerJson.user?.email, "doctor@lumera.me");
     assert.equal(bearerJson.token, undefined);
-    assert.equal(bearerBody.includes(loginJson.token), false);
+    assert.equal(bearerBody.includes(session.credential), false);
   });
 
   it("rejects the CSRF secret from before a successful login", async () => {
@@ -1378,6 +1388,7 @@ describe("stale anonymous __session CSRF refresh", () => {
         body: JSON.stringify({ email: "doctor@lumera.me", password: "Lumera@2026" }),
       });
       assert.equal(loggedIn.csrfToken, "csrf-after-login");
+      assert.equal((loggedIn as { token?: string }).token, undefined);
       await apiFetch(`http://127.0.0.1/api/auth/logout`, { method: "POST" });
       assert.equal(calls, 3);
       assert.equal(sent[1].csrf, "csrf-from-me");
