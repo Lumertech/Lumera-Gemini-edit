@@ -313,6 +313,34 @@ export function migrate(database: SqlDatabase) {
     );
   } catch {}
 
+  try {
+    database.exec(
+      `CREATE TABLE IF NOT EXISTS patient_documents (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL DEFAULT '',
+        patient_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        doc_type TEXT NOT NULL,
+        document_date TEXT NOT NULL,
+        uploaded_by_id TEXT NOT NULL DEFAULT '',
+        uploaded_by_name TEXT NOT NULL DEFAULT '',
+        uploaded_by_role TEXT NOT NULL DEFAULT '',
+        original_filename TEXT NOT NULL DEFAULT '',
+        mime_type TEXT NOT NULL,
+        size_bytes INTEGER NOT NULL DEFAULT 0,
+        storage_key TEXT NOT NULL,
+        storage_backend TEXT NOT NULL DEFAULT 'local',
+        created_at TEXT NOT NULL,
+        deleted_at TEXT
+      )`
+    );
+  } catch {}
+  try {
+    database.exec(
+      "CREATE INDEX IF NOT EXISTS idx_patient_documents_tenant_patient ON patient_documents(tenant_id, patient_id)"
+    );
+  } catch {}
+
   backfillLabReportAndBranchTenants(database);
   try {
     database.exec("ALTER TABLE otp_verifications ADD COLUMN failed_attempts INTEGER NOT NULL DEFAULT 0");

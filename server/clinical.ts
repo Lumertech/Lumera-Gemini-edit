@@ -13,6 +13,7 @@ import { clinicLine, getTenantLetterhead } from "./letterhead.ts";
 import { requireAuth } from "./auth.ts";
 import { reportCaughtError } from "./error-tracker.ts";
 import { resolveAbdmMode, type AbdmMode } from "./abdm-mode.ts";
+import { registerPatientDocumentRoutes } from "./patient-documents.ts";
 
 function tenantIdOf(req: Request): string {
   return String(req.user?.tenantId || "").trim();
@@ -884,6 +885,7 @@ function insertPrescription(tenantId: string, body: Record<string, unknown>) {
  * GET  /patients              → { patients: Patient[] }
  *   ?q= name | phone | UHID | ABHA number | ABHA address, tenant-scoped
  * GET  /patients/:id/chart    → { patient, visits, prescriptions } same tenant only
+ * GET/POST /patients/:id/documents → private files, same tenant only
  * POST /patients              → { patient }  practice-simple; phone-idempotent per tenant
  *   Does not invent ABDM consent or ABHA KYC.
  * POST /patients/link-abha    → { patient, abdmMode }  frozen #35 field names
@@ -1307,6 +1309,8 @@ export function createClinicalRouter(): Router {
         : "PM-JAY eligibility simulation did not match. Standard self-pay applies."
     });
   });
+
+  registerPatientDocumentRoutes(api);
 
   return api;
 }

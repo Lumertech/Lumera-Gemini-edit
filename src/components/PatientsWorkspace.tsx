@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { ArrowLeft, Phone, Search, UserPlus } from "lucide-react";
 import { apiFetch } from "../api/http";
+import { PatientDocuments } from "./PatientDocuments";
 import { formatInr } from "../lib/money";
 import { isAbhaLinked, type Appointment, type Patient, type Prescription, type Vitals } from "../types";
 
@@ -454,6 +455,8 @@ const PatientDetail: React.FC<{
               </ul>
             )}
           </section>
+
+          <PatientDocuments patientId={patient.id} />
         </>
       )}
     </div>
