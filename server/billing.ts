@@ -351,13 +351,15 @@ function insertInvoice(tenantId: string, body: Record<string, unknown>, actor?: 
 
   const snapshot = billingSnapshot(tenantId, body);
   const patientId = String(body.patientId || body.patient_id || "").trim();
+  let patientUhid = String(body.patientUhid || body.patient_uhid || body.uhid || "");
   if (patientId) {
     const patient = getDb()
-      .prepare("SELECT id FROM patients WHERE id = ? AND tenant_id = ?")
-      .get(patientId, tenantId);
+      .prepare("SELECT id, uhid FROM patients WHERE id = ? AND tenant_id = ?")
+      .get(patientId, tenantId) as { id: string; uhid?: string } | undefined;
     if (!patient) {
       throw Object.assign(new Error("Patient not found"), { status: 404 });
     }
+    patientUhid = String(patient.uhid || "");
   }
 
   const appointmentId = String(body.appointmentId || body.appointment_id || "").trim();
@@ -391,7 +393,7 @@ function insertInvoice(tenantId: string, body: Record<string, unknown>, actor?: 
       patientId,
       String(body.patientName || body.patient_name || ""),
       String(body.patientPhone || body.patient_phone || ""),
-      String(body.patientUhid || body.patient_uhid || body.uhid || ""),
+      patientUhid,
       date,
       jsonText(items, "[]"),
       subtotal,

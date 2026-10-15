@@ -20,39 +20,51 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 
-export const whatsappConversations = pgTable("whatsapp_conversations", {
-  id: text("id").primaryKey(),
-  patientPhone: text("patient_phone").notNull().unique(),
-  patientName: text("patient_name").notNull(),
-  patientId: text("patient_id"),
-  uhid: text("uhid"),
-  handoverMode: text("handover_mode").notNull().default("bot"),
-  assignedStaff: text("assigned_staff").notNull().default("Unassigned"),
-  tags: text("tags").notNull().default("[]"),
-  preferredLanguage: text("preferred_language").notNull().default("en"),
-  unreadCount: integer("unread_count").notNull().default(0),
-  lastMessage: text("last_message").notNull().default(""),
-  lastMessageTime: text("last_message_time").notNull().default(""),
-  updatedAt: text("updated_at").notNull(),
-});
+export const whatsappConversations = pgTable(
+  "whatsapp_conversations",
+  {
+    id: text("id").primaryKey(),
+    patientPhone: text("patient_phone").notNull().unique(),
+    patientName: text("patient_name").notNull(),
+    patientId: text("patient_id"),
+    uhid: text("uhid"),
+    handoverMode: text("handover_mode").notNull().default("bot"),
+    assignedStaff: text("assigned_staff").notNull().default("Unassigned"),
+    tags: text("tags").notNull().default("[]"),
+    preferredLanguage: text("preferred_language").notNull().default("en"),
+    unreadCount: integer("unread_count").notNull().default(0),
+    lastMessage: text("last_message").notNull().default(""),
+    lastMessageTime: text("last_message_time").notNull().default(""),
+    updatedAt: text("updated_at").notNull(),
+    tenantId: text("tenant_id"),
+    phoneNumberId: text("phone_number_id"),
+    wabaId: text("waba_id"),
+  },
+  (t) => [index("idx_wa_conv_tenant").on(t.tenantId)]
+);
 
-export const whatsappMessages = pgTable("whatsapp_messages", {
-  id: text("id").primaryKey(),
-  conversationId: text("conversation_id").notNull(),
-  patientPhone: text("patient_phone").notNull(),
-  sender: text("sender").notNull(),
-  staffName: text("staff_name"),
-  content: text("content").notNull(),
-  translatedContent: text("translated_content"),
-  detectedLanguage: text("detected_language"),
-  timeDisplay: text("time_display").notNull(),
-  buttons: text("buttons"),
-  media: text("media"),
-  audioUrl: text("audio_url"),
-  voiceTranscript: text("voice_transcript"),
-  status: text("status").notNull().default("delivered"),
-  createdAt: text("created_at").notNull(),
-});
+export const whatsappMessages = pgTable(
+  "whatsapp_messages",
+  {
+    id: text("id").primaryKey(),
+    conversationId: text("conversation_id").notNull(),
+    patientPhone: text("patient_phone").notNull(),
+    sender: text("sender").notNull(),
+    staffName: text("staff_name"),
+    content: text("content").notNull(),
+    translatedContent: text("translated_content"),
+    detectedLanguage: text("detected_language"),
+    timeDisplay: text("time_display").notNull(),
+    buttons: text("buttons"),
+    media: text("media"),
+    audioUrl: text("audio_url"),
+    voiceTranscript: text("voice_transcript"),
+    status: text("status").notNull().default("delivered"),
+    createdAt: text("created_at").notNull(),
+    tenantId: text("tenant_id"),
+  },
+  (t) => [index("idx_wa_msg_tenant").on(t.tenantId)]
+);
 
 export const whatsappOutboundEvents = pgTable("whatsapp_outbound_events", {
   id: text("id").primaryKey(),

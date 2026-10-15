@@ -1,5 +1,6 @@
 import type { SqlDatabase } from "./sql-engine.ts";
 import { resolveSqlEngineKind, type SqlEngineKind } from "./sql-open.ts";
+import { backfillWhatsAppTenantIds } from "./whatsapp-tenant-backfill.ts";
 
 function sqlIdent(name: string): string {
   return `"${String(name).replace(/"/g, "\"\"")}"`;
@@ -11,6 +12,12 @@ export function addWhatsAppTenantColumns(database: SqlDatabase) {
     database.exec("ALTER TABLE whatsapp_conversations ADD COLUMN tenant_id TEXT DEFAULT ''");
   } catch {}
   try {
+    database.exec("ALTER TABLE whatsapp_conversations ADD COLUMN phone_number_id TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE whatsapp_conversations ADD COLUMN waba_id TEXT DEFAULT ''");
+  } catch {}
+  try {
     database.exec("ALTER TABLE whatsapp_messages ADD COLUMN tenant_id TEXT DEFAULT ''");
   } catch {}
   try {
@@ -18,6 +25,9 @@ export function addWhatsAppTenantColumns(database: SqlDatabase) {
   } catch {}
   try {
     database.exec("CREATE INDEX IF NOT EXISTS idx_wa_conv_tenant ON whatsapp_conversations(tenant_id)");
+  } catch {}
+  try {
+    database.exec("CREATE INDEX IF NOT EXISTS idx_wa_msg_tenant ON whatsapp_messages(tenant_id)");
   } catch {}
 }
 
@@ -220,18 +230,6 @@ export function applyTenantPhoneSecurityMigrations(
 ) {
   addWhatsAppTenantColumns(database);
   migratePatientsPhoneUnique(database, engine);
-  const demoTenantId = "tenant-lumera-main";
-  try {
-    database.exec(
-      `UPDATE whatsapp_conversations SET tenant_id = '${demoTenantId}' WHERE tenant_id IS NULL OR tenant_id = ''`
-    );
-    database.exec(
-      `UPDATE whatsapp_messages SET tenant_id = '${demoTenantId}' WHERE tenant_id IS NULL OR tenant_id = ''`
-    );
-    database.exec(
-      `UPDATE whatsapp_outbound_events SET tenant_id = '${demoTenantId}' WHERE tenant_id IS NULL OR tenant_id = ''`
-    );
-  } catch {
-    /* columns missing until ALTER above */
-  }
+  // Unresolved WhatsApp rows stay unassigned. Do not dump them onto the Meta App Review tenant.
+  backfillWhatsAppTenantIds(database);
 }

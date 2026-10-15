@@ -23,7 +23,13 @@ import { reportCaughtError } from "./error-tracker.ts";
 import { CLINICIAN_ROLES, requireAuth, requireRole } from "./auth.ts";
 import { rejectUntrustedTenantClaim } from "./tenant-guard.ts";
 import { authenticatedLabReportPath, authorizeLabReport, sendLabReportDenied } from "./lab-report-access.ts";
-import { serializeOutboundEvent } from "./whatsapp-scope.ts";
+import {
+  clinicTenantId,
+  getTenantConversation,
+  listTenantConversations,
+  listTenantOutboundEvents,
+  serializeOutboundEvent,
+} from "./whatsapp-scope.ts";
 
 /** Patient names, notes, WhatsApp text, and Rx/lab fields before HTML interpolation. */
 function h(value: unknown): string {
@@ -65,26 +71,42 @@ function serializeWhatsAppMessage(m: Record<string, unknown>) {
   };
 }
 
-function respondWhatsAppMessages(res: Response, convId?: string, phone?: string) {
+function requireSessionTenant(req: Request, res: Response): string | null {
+  const tenantId = clinicTenantId(req);
+  if (!tenantId) {
+    res.status(400).json({ error: "No tenant associated with this account." });
+    return null;
+  }
+  return tenantId;
+}
+
+function respondWhatsAppMessages(res: Response, tenantId: string, convId?: string, phone?: string) {
   const db = getDb();
   let rows: Record<string, unknown>[] = [];
   if (convId) {
+    if (!getTenantConversation(tenantId, convId)) {
+      res.status(404).json({ error: "Conversation not found" });
+      return;
+    }
     rows = db
       .prepare(
         `SELECT * FROM whatsapp_messages
          WHERE conversation_id = ?
+           AND (TRIM(COALESCE(tenant_id, '')) = '' OR TRIM(COALESCE(tenant_id, '')) = ?)
          ORDER BY created_at ASC`
       )
-      .all(convId) as Record<string, unknown>[];
-    db.prepare("UPDATE whatsapp_conversations SET unread_count = 0 WHERE id = ?").run(convId);
+      .all(convId, tenantId) as Record<string, unknown>[];
+    db.prepare(
+      "UPDATE whatsapp_conversations SET unread_count = 0 WHERE id = ? AND TRIM(COALESCE(tenant_id, '')) = ?"
+    ).run(convId, tenantId);
   } else if (phone) {
     rows = db
       .prepare(
         `SELECT * FROM whatsapp_messages
-         WHERE patient_phone = ?
+         WHERE patient_phone = ? AND TRIM(COALESCE(tenant_id, '')) = ?
          ORDER BY created_at ASC`
       )
-      .all(phone) as Record<string, unknown>[];
+      .all(phone, tenantId) as Record<string, unknown>[];
   } else {
     res.status(400).json({ error: "Either conversationId or phone is required" });
     return;
@@ -107,13 +129,11 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
   // ----------------------------------------------------
 
   // List all conversations
-  router.get("/conversations", (_req: Request, res: Response) => {
+  router.get("/conversations", (req: Request, res: Response) => {
     try {
-      const db = getDb();
-      const rows = db.prepare(`
-        SELECT * FROM whatsapp_conversations
-        ORDER BY updated_at DESC
-      `).all() as Record<string, unknown>[];
+      const tenantId = clinicTenantId(req);
+      if (!tenantId) return res.json({ conversations: [] });
+      const rows = listTenantConversations(tenantId);
 
       const conversations = rows.map((c) => ({
         id: c.id,
@@ -141,8 +161,9 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
   // Get single conversation
   router.get("/conversations/:id", (req: Request, res: Response) => {
     try {
-      const db = getDb();
-      const c = db.prepare("SELECT * FROM whatsapp_conversations WHERE id = ?").get(req.params.id) as Record<string, unknown> | undefined;
+      const tenantId = requireSessionTenant(req, res);
+      if (!tenantId) return;
+      const c = getTenantConversation(tenantId, String(req.params.id || ""));
       if (!c) return res.status(404).json({ error: "Conversation not found" });
 
       res.json({
@@ -176,15 +197,17 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
       }
 
       const db = getDb();
-      const conv = db.prepare("SELECT * FROM whatsapp_conversations WHERE id = ?").get(req.params.id) as Record<string, unknown> | undefined;
+      const tenantId = requireSessionTenant(req, res);
+      if (!tenantId) return;
+      const conv = getTenantConversation(tenantId, String(req.params.id || ""));
       if (!conv) return res.status(404).json({ error: "Conversation not found" });
 
       const now = new Date().toISOString();
       db.prepare(`
         UPDATE whatsapp_conversations
         SET handover_mode = ?, updated_at = ?
-        WHERE id = ?
-      `).run(mode, now, req.params.id);
+        WHERE id = ? AND TRIM(COALESCE(tenant_id, '')) = ?
+      `).run(mode, now, req.params.id, tenantId);
 
       // Insert an internal audit / system notification message in chat
       const sysMsgId = `sys-${crypto.randomUUID().slice(0, 8)}`;
@@ -193,9 +216,9 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
         : `🤖 Automated AI Assistant Restored: Lumera Bot is now handling routine patient inquiries.`;
 
       db.prepare(`
-        INSERT INTO whatsapp_messages (id, conversation_id, patient_phone, sender, staff_name, content, time_display, status, created_at)
-        VALUES (?, ?, ?, 'system', ?, ?, ?, 'delivered', ?)
-      `).run(sysMsgId, req.params.id, String(conv.patient_phone), staffName || "System", sysText, getDisplayTime(), now);
+        INSERT INTO whatsapp_messages (id, conversation_id, patient_phone, sender, staff_name, content, time_display, status, created_at, tenant_id)
+        VALUES (?, ?, ?, 'system', ?, ?, ?, 'delivered', ?, ?)
+      `).run(sysMsgId, req.params.id, String(conv.patient_phone), staffName || "System", sysText, getDisplayTime(), now, tenantId);
 
       res.json({
         ok: true,
@@ -212,13 +235,18 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
   router.post("/conversations/:id/assign", (req: Request, res: Response) => {
     try {
       const { staffName } = req.body;
+      const tenantId = requireSessionTenant(req, res);
+      if (!tenantId) return;
+      if (!getTenantConversation(tenantId, String(req.params.id || ""))) {
+        return res.status(404).json({ error: "Conversation not found" });
+      }
       const db = getDb();
       const now = new Date().toISOString();
       db.prepare(`
         UPDATE whatsapp_conversations
         SET assigned_staff = ?, updated_at = ?
-        WHERE id = ?
-      `).run(staffName || "Unassigned", now, req.params.id);
+        WHERE id = ? AND TRIM(COALESCE(tenant_id, '')) = ?
+      `).run(staffName || "Unassigned", now, req.params.id, tenantId);
 
       res.json({ ok: true, assignedStaff: staffName });
     } catch (err: unknown) {
@@ -232,13 +260,18 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
       const { tags } = req.body;
       if (!Array.isArray(tags)) return res.status(400).json({ error: "Tags must be an array" });
 
+      const tenantId = requireSessionTenant(req, res);
+      if (!tenantId) return;
+      if (!getTenantConversation(tenantId, String(req.params.id || ""))) {
+        return res.status(404).json({ error: "Conversation not found" });
+      }
       const db = getDb();
       const now = new Date().toISOString();
       db.prepare(`
         UPDATE whatsapp_conversations
         SET tags = ?, updated_at = ?
-        WHERE id = ?
-      `).run(JSON.stringify(tags), now, req.params.id);
+        WHERE id = ? AND TRIM(COALESCE(tenant_id, '')) = ?
+      `).run(JSON.stringify(tags), now, req.params.id, tenantId);
 
       res.json({ ok: true, tags });
     } catch (err: unknown) {
@@ -253,8 +286,11 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
   // Get messages for conversation
   router.get("/messages", (req: Request, res: Response) => {
     try {
+      const tenantId = requireSessionTenant(req, res);
+      if (!tenantId) return;
       respondWhatsAppMessages(
         res,
+        tenantId,
         String(req.query.conversationId || "").trim() || undefined,
         String(req.query.phone || "").trim() || undefined
       );
@@ -267,7 +303,9 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
   // Alias used by the suite client: GET /api/whatsapp/messages/:conversationId
   router.get("/messages/:conversationId", (req: Request, res: Response) => {
     try {
-      respondWhatsAppMessages(res, String(req.params.conversationId || "").trim());
+      const tenantId = requireSessionTenant(req, res);
+      if (!tenantId) return;
+      respondWhatsAppMessages(res, tenantId, String(req.params.conversationId || "").trim());
     } catch (err: unknown) {
       console.error("Error fetching whatsapp messages:", err);
       res.status(500).json({ error: "Failed to fetch messages" });
@@ -277,24 +315,29 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
   // Send Message (Patient, Staff, or Bot)
   router.post("/send", async (req: Request, res: Response) => {
     try {
-      const {
-        conversationId = "conv-rajiv",
-        patientPhone = "+91 98234 55667",
-        patientName = "Rajiv Saxena",
-        sender = "user", // 'user' | 'agent'
-        staffName,
-        content = "",
-        buttons = null,
-        media = null,
-        targetLanguage, // for staff auto-translation
-        tenantId: bodyTenantId,
-        phoneNumberId,
-        wabaId,
-      } = req.body;
-      const sessionTenantId = String(req.user?.tenantId || "").trim();
+      const body = (req.body || {}) as Record<string, unknown>;
+      const conversationId = String(body.conversationId || body.conversation_id || "").trim();
+      const patientPhone = String(body.patientPhone || body.patient_phone || "").trim();
+      const patientName = String(body.patientName || body.patient_name || "").trim() || "Patient";
+      const sender = String(body.sender || "user");
+      const staffName = body.staffName ? String(body.staffName) : null;
+      const content = String(body.content || "");
+      const buttons = body.buttons ?? null;
+      const media = body.media ?? null;
+      const targetLanguage = body.targetLanguage;
+      const bodyTenantId = body.tenantId;
+      const phoneNumberId = body.phoneNumberId;
+      const wabaId = body.wabaId;
+      const sessionTenantId = clinicTenantId(req);
 
+      if (!patientPhone || !patientName) {
+        return res.status(400).json({ error: "patientPhone is required" });
+      }
       if (!content && !media && !buttons) {
         return res.status(400).json({ error: "Message content or media required" });
+      }
+      if (!sessionTenantId) {
+        return res.status(400).json({ error: "No tenant associated with this account." });
       }
 
       const db = getDb();
@@ -302,14 +345,33 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
       const timeDisplay = getDisplayTime();
       const msgId = `msg-${crypto.randomUUID().slice(0, 8)}`;
 
-      // Check or create conversation
-      let conv = db.prepare("SELECT * FROM whatsapp_conversations WHERE id = ? OR patient_phone = ?").get(conversationId, patientPhone) as Record<string, unknown> | undefined;
+      const ownedByOtherClinic = (row: Record<string, unknown> | undefined) => {
+        if (!row) return false;
+        return String(row.tenant_id || "").trim() !== sessionTenantId;
+      };
+
+      let conv: Record<string, unknown> | undefined;
+      if (conversationId) {
+        const byId = db.prepare("SELECT * FROM whatsapp_conversations WHERE id = ?").get(conversationId) as
+          | Record<string, unknown>
+          | undefined;
+        if (ownedByOtherClinic(byId)) return res.status(404).json({ error: "Conversation not found" });
+        conv = byId;
+      }
+      if (!conv && patientPhone) {
+        const byPhone = db.prepare("SELECT * FROM whatsapp_conversations WHERE patient_phone = ?").get(patientPhone) as
+          | Record<string, unknown>
+          | undefined;
+        if (ownedByOtherClinic(byPhone)) return res.status(404).json({ error: "Conversation not found" });
+        conv = byPhone;
+      }
       if (!conv) {
+        const newId = conversationId || `conv-${crypto.randomUUID().slice(0, 8)}`;
         db.prepare(`
-          INSERT INTO whatsapp_conversations (id, patient_phone, patient_name, handover_mode, assigned_staff, tags, preferred_language, unread_count, last_message, last_message_time, updated_at)
-          VALUES (?, ?, ?, 'bot', 'Unassigned', '["General"]', 'en', 0, ?, ?, ?)
-        `).run(conversationId, patientPhone, patientName, content.slice(0, 80), timeDisplay, now);
-        conv = db.prepare("SELECT * FROM whatsapp_conversations WHERE id = ?").get(conversationId) as Record<string, unknown>;
+          INSERT INTO whatsapp_conversations (id, patient_phone, patient_name, handover_mode, assigned_staff, tags, preferred_language, unread_count, last_message, last_message_time, updated_at, tenant_id)
+          VALUES (?, ?, ?, 'bot', 'Unassigned', '["General"]', 'en', 0, ?, ?, ?, ?)
+        `).run(newId, patientPhone, patientName, content.slice(0, 80), timeDisplay, now, sessionTenantId);
+        conv = db.prepare("SELECT * FROM whatsapp_conversations WHERE id = ?").get(newId) as Record<string, unknown>;
       }
 
       let translatedContent: string | null = null;
@@ -318,7 +380,7 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
       // If sent by staff and translation requested
       if (sender === "agent" && targetLanguage && targetLanguage !== "en") {
         try {
-          translatedContent = await translateWithGeminiOrFallback(content, targetLanguage, getGenAI());
+          translatedContent = await translateWithGeminiOrFallback(content, String(targetLanguage), getGenAI());
         } catch (err) {
           reportCaughtError(err, "whatsapp.translate.outbound");
           translatedContent = null;
@@ -340,21 +402,22 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
 
       // Insert sent message
       db.prepare(`
-        INSERT INTO whatsapp_messages (id, conversation_id, patient_phone, sender, staff_name, content, translated_content, detected_language, time_display, buttons, media, status, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'delivered', ?)
+        INSERT INTO whatsapp_messages (id, conversation_id, patient_phone, sender, staff_name, content, translated_content, detected_language, time_display, buttons, media, status, created_at, tenant_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'delivered', ?, ?)
       `).run(
         msgId,
         String(conv.id),
         patientPhone,
         sender,
-        staffName || null,
+        staffName,
         content,
         translatedContent,
         detectedLanguage,
         timeDisplay,
         buttons ? JSON.stringify(buttons) : null,
         media ? JSON.stringify(media) : null,
-        now
+        now,
+        sessionTenantId
       );
 
       // Update conversation last message
@@ -363,9 +426,9 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
 
       db.prepare(`
         UPDATE whatsapp_conversations
-        SET last_message = ?, last_message_time = ?, unread_count = ?, updated_at = ?
-        WHERE id = ?
-      `).run(content.slice(0, 80), timeDisplay, newUnread, now, String(conv.id));
+        SET last_message = ?, last_message_time = ?, unread_count = ?, updated_at = ?, tenant_id = COALESCE(NULLIF(TRIM(tenant_id), ''), ?)
+        WHERE id = ? AND (tenant_id IS NULL OR TRIM(tenant_id) = '' OR tenant_id = ?)
+      `).run(content.slice(0, 80), timeDisplay, newUnread, now, sessionTenantId, String(conv.id), sessionTenantId);
 
       const responsePayload: {
         sentMessage: Record<string, unknown>;
@@ -393,10 +456,10 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
       // ----------------------------------------------------
       if (sender === "user" && !isStaffTakeover) {
         const botReply = await processBotActionOrQuery(content, patientPhone, patientName, conv, db, getGenAI, {
-          tenantId: bodyTenantId,
+          tenantId: bodyTenantId ? String(bodyTenantId) : undefined,
           sessionTenantId,
-          phoneNumberId,
-          wabaId,
+          phoneNumberId: phoneNumberId ? String(phoneNumberId) : undefined,
+          wabaId: wabaId ? String(wabaId) : undefined,
         });
         if (botReply) {
           const botMsgId = `bot-${crypto.randomUUID().slice(0, 8)}`;
@@ -404,8 +467,8 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
           const botNow = new Date().toISOString();
 
           db.prepare(`
-            INSERT INTO whatsapp_messages (id, conversation_id, patient_phone, sender, staff_name, content, time_display, buttons, media, status, created_at)
-            VALUES (?, ?, ?, 'bot', NULL, ?, ?, ?, ?, 'delivered', ?)
+            INSERT INTO whatsapp_messages (id, conversation_id, patient_phone, sender, staff_name, content, time_display, buttons, media, status, created_at, tenant_id)
+            VALUES (?, ?, ?, 'bot', NULL, ?, ?, ?, ?, 'delivered', ?, ?)
           `).run(
             botMsgId,
             String(conv.id),
@@ -414,14 +477,15 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
             botTime,
             botReply.buttons ? JSON.stringify(botReply.buttons) : null,
             botReply.media ? JSON.stringify(botReply.media) : null,
-            botNow
+            botNow,
+            sessionTenantId
           );
 
           db.prepare(`
             UPDATE whatsapp_conversations
             SET last_message = ?, last_message_time = ?, updated_at = ?
-            WHERE id = ?
-          `).run(botReply.content.slice(0, 80), botTime, botNow, String(conv.id));
+            WHERE id = ? AND (tenant_id IS NULL OR TRIM(tenant_id) = '' OR tenant_id = ?)
+          `).run(botReply.content.slice(0, 80), botTime, botNow, String(conv.id), sessionTenantId);
 
           responsePayload.botReply = {
             id: botMsgId,
@@ -735,18 +799,38 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
         messageContent = customPayload.message || "Important health notification from Lumera Polyclinic.";
       }
 
+      const sessionTenantId = clinicTenantId(req);
       db.prepare(`
-        INSERT INTO whatsapp_outbound_events (id, event_type, patient_phone, patient_name, status, details, action_payload, sent_at)
-        VALUES (?, ?, ?, ?, 'delivered', ?, ?, ?)
-      `).run(eventId, eventType, patientPhone, patientName, details, JSON.stringify(customPayload), now);
+        INSERT INTO whatsapp_outbound_events (id, event_type, patient_phone, patient_name, status, details, action_payload, sent_at, tenant_id)
+        VALUES (?, ?, ?, ?, 'delivered', ?, ?, ?, ?)
+      `).run(eventId, eventType, patientPhone, patientName, details, JSON.stringify(customPayload), now, sessionTenantId);
 
-      let conv = db.prepare("SELECT id FROM whatsapp_conversations WHERE patient_phone = ?").get(patientPhone) as { id: string } | undefined;
-      const convId = conv ? conv.id : "conv-rajiv";
+      let conv = sessionTenantId
+        ? (db
+            .prepare(
+              "SELECT id, tenant_id FROM whatsapp_conversations WHERE patient_phone = ? AND TRIM(COALESCE(tenant_id, '')) = ?"
+            )
+            .get(patientPhone, sessionTenantId) as { id: string; tenant_id?: string } | undefined)
+        : undefined;
+      let convId = conv?.id || "";
+      if (!convId && sessionTenantId) {
+        const taken = db
+          .prepare("SELECT id, tenant_id FROM whatsapp_conversations WHERE patient_phone = ?")
+          .get(patientPhone) as { id: string; tenant_id?: string } | undefined;
+        if (!taken) {
+          convId = `conv-${crypto.randomUUID().slice(0, 8)}`;
+          db.prepare(
+            `INSERT INTO whatsapp_conversations (id, patient_phone, patient_name, handover_mode, assigned_staff, tags, preferred_language, unread_count, last_message, last_message_time, updated_at, tenant_id)
+             VALUES (?, ?, ?, 'bot', 'Unassigned', '["General"]', 'en', 0, ?, ?, ?, ?)`
+          ).run(convId, patientPhone, patientName, messageContent.slice(0, 80), timeDisplay, now, sessionTenantId);
+        }
+      }
 
+      if (convId) {
       const msgId = `msg-out-${crypto.randomUUID().slice(0, 8)}`;
       db.prepare(`
-        INSERT INTO whatsapp_messages (id, conversation_id, patient_phone, sender, staff_name, content, time_display, buttons, media, status, created_at)
-        VALUES (?, ?, ?, 'bot', 'Automated Trigger Engine', ?, ?, ?, ?, 'delivered', ?)
+        INSERT INTO whatsapp_messages (id, conversation_id, patient_phone, sender, staff_name, content, time_display, buttons, media, status, created_at, tenant_id)
+        VALUES (?, ?, ?, 'bot', 'Automated Trigger Engine', ?, ?, ?, ?, 'delivered', ?, ?)
       `).run(
         msgId,
         convId,
@@ -755,14 +839,16 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
         timeDisplay,
         buttons ? JSON.stringify(buttons) : null,
         media ? JSON.stringify(media) : null,
-        now
+        now,
+        sessionTenantId
       );
 
       db.prepare(`
         UPDATE whatsapp_conversations
         SET last_message = ?, last_message_time = ?, updated_at = ?
-        WHERE id = ?
-      `).run(messageContent.slice(0, 80), timeDisplay, now, convId);
+        WHERE id = ? AND TRIM(COALESCE(tenant_id, '')) = ?
+      `).run(messageContent.slice(0, 80), timeDisplay, now, convId, sessionTenantId);
+      }
 
       res.status(201).json({
         ok: true,
@@ -782,15 +868,11 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
   router.post("/outbound/trigger", handleOutboundTrigger);
   router.post("/outbound-trigger", handleOutboundTrigger);
 
-  const handleOutboundEvents = (_req: Request, res: Response) => {
+  const handleOutboundEvents = (req: Request, res: Response) => {
     try {
-      const db = getDb();
-      const events = (
-        db.prepare(`
-        SELECT * FROM whatsapp_outbound_events
-        ORDER BY sent_at DESC LIMIT 50
-      `).all() as Record<string, unknown>[]
-      ).map(serializeOutboundEvent);
+      const tenantId = clinicTenantId(req);
+      if (!tenantId) return res.json({ events: [] });
+      const events = listTenantOutboundEvents(tenantId);
 
       res.json({ events });
     } catch (err: unknown) {

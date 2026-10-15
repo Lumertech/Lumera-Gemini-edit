@@ -14,6 +14,7 @@ import {
 } from "./meta-security.ts";
 import { handleMetaDataDeletionPost, handleMetaDeauthorizePost } from "./meta-signed-request.ts";
 import { normalizePhoneDigits, phonesMatch } from "./whatsapp-calendar-booking.ts";
+import { tenantIdFromReceivingPhoneNumberId } from "./whatsapp-tenant-resolve.ts";
 import type { SqlDatabase } from "./sql-engine.ts";
 
 function graphWamidFromPayload(raw: unknown): string {
@@ -93,6 +94,72 @@ export function applyWhatsAppOutboundStatus(
  * Facebook App Dashboard validates these callback URLs with GET and treats 404 as invalid.
  * Body is a health check only. POST (signed_request) is unchanged and is the real callback.
  */
+/**
+ * Stamp the clinic from the receiving phone_number_id. A line that does not map
+ * stays unassigned. Never write into a conversation that already belongs to another clinic.
+ */
+export function recordInboundWhatsAppMessage(
+  db: SqlDatabase,
+  opts: {
+    fromPhone: string;
+    textBody: string;
+    tenantId: string;
+    phoneNumberId: string;
+    wabaId: string;
+    now: string;
+  }
+) {
+  const fromPhone = String(opts.fromPhone || "").trim();
+  if (!fromPhone) return;
+  const tenantId = String(opts.tenantId || "").trim();
+  const textBody = String(opts.textBody || "[Media/Attachment]");
+  const timeDisplay = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const existing = db
+    .prepare("SELECT id, tenant_id FROM whatsapp_conversations WHERE patient_phone = ?")
+    .get(fromPhone) as { id?: string; tenant_id?: string } | undefined;
+  const existingTenant = String(existing?.tenant_id || "").trim();
+  if (existing?.id && existingTenant && existingTenant !== tenantId) return;
+  if (existing?.id && existingTenant && !tenantId) return;
+
+  let convId = String(existing?.id || "");
+  if (!convId) {
+    convId = `conv-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    db.prepare(
+      `INSERT INTO whatsapp_conversations (
+         id, patient_phone, patient_name, handover_mode, assigned_staff, tags, preferred_language,
+         unread_count, last_message, last_message_time, updated_at, tenant_id, phone_number_id, waba_id
+       ) VALUES (?, ?, ?, 'bot', 'AI Triage Desk', '["New Inquiry"]', 'en', 1, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      convId,
+      fromPhone,
+      `Patient (+${fromPhone})`,
+      textBody,
+      opts.now,
+      opts.now,
+      tenantId,
+      opts.phoneNumberId,
+      opts.wabaId
+    );
+  } else {
+    db.prepare(
+      `UPDATE whatsapp_conversations
+       SET last_message = ?, last_message_time = ?, unread_count = unread_count + 1, updated_at = ?,
+           tenant_id = CASE WHEN TRIM(COALESCE(tenant_id, '')) = '' THEN ? ELSE tenant_id END,
+           phone_number_id = CASE WHEN TRIM(COALESCE(phone_number_id, '')) = '' THEN ? ELSE phone_number_id END,
+           waba_id = CASE WHEN TRIM(COALESCE(waba_id, '')) = '' THEN ? ELSE waba_id END
+       WHERE id = ? AND (tenant_id IS NULL OR TRIM(tenant_id) = '' OR tenant_id = ?)`
+    ).run(textBody, opts.now, opts.now, tenantId, opts.phoneNumberId, opts.wabaId, convId, tenantId);
+  }
+
+  const msgId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  db.prepare(
+    `INSERT INTO whatsapp_messages (
+       id, conversation_id, patient_phone, sender, staff_name, content, translated_content,
+       detected_language, time_display, buttons, media, status, created_at, tenant_id
+     ) VALUES (?, ?, ?, 'patient', '', ?, ?, 'en', ?, '[]', '[]', 'received', ?, ?)`
+  ).run(msgId, convId, fromPhone, textBody, textBody, timeDisplay, opts.now, tenantId);
+}
+
 export function handleMetaCallbackGetProbe(_req: Request, res: Response) {
   res.status(200).json({ ok: true, status: "ok" });
 }
@@ -195,36 +262,20 @@ export function createMetaRouter(): Router {
                 }
               }
 
-              // Handle inbound user message
+              // Handle inbound user message. Tenant comes only from the receiving phone_number_id.
               if (val?.messages && Array.isArray(val.messages)) {
+                const phoneNumberId = String(val?.metadata?.phone_number_id || "").trim();
+                const wabaId = String(entry?.id || "").trim();
+                const inboundTenantId = tenantIdFromReceivingPhoneNumberId(phoneNumberId);
                 for (const msg of val.messages) {
-                  const fromPhone = msg.from;
-                  const textBody = msg.text?.body || msg.interactive?.button_reply?.title || "[Media/Attachment]";
-                  
-                  // Upsert conversation
-                  const existingConv = db.prepare("SELECT * FROM whatsapp_conversations WHERE patient_phone = ?").get(fromPhone) as any;
-                  let convId = existingConv?.id;
-                  
-                  if (!convId) {
-                    convId = `conv-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-                    db.prepare(`
-                      INSERT INTO whatsapp_conversations (id, patient_phone, patient_name, handover_mode, assigned_staff, tags, preferred_language, unread_count, last_message, last_message_time, updated_at)
-                      VALUES (?, ?, ?, 'bot', 'AI Triage Desk', '["New Inquiry"]', 'en', 1, ?, ?, ?)
-                    `).run(convId, fromPhone, `Patient (+${fromPhone})`, textBody, now, now);
-                  } else {
-                    db.prepare(`
-                      UPDATE whatsapp_conversations 
-                      SET last_message = ?, last_message_time = ?, unread_count = unread_count + 1, updated_at = ?
-                      WHERE id = ?
-                    `).run(textBody, now, now, convId);
-                  }
-
-                  // Store message
-                  const msgId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-                  db.prepare(`
-                    INSERT INTO whatsapp_messages (id, conversation_id, patient_phone, sender, staff_name, content, translated_content, detected_language, time_display, buttons, media, status, created_at)
-                    VALUES (?, ?, ?, 'patient', '', ?, ?, 'en', ?, '[]', '[]', 'received', ?)
-                  `).run(msgId, convId, fromPhone, textBody, textBody, new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }), now);
+                  recordInboundWhatsAppMessage(db, {
+                    fromPhone: String(msg.from || "").trim(),
+                    textBody: msg.text?.body || msg.interactive?.button_reply?.title || "[Media/Attachment]",
+                    tenantId: inboundTenantId,
+                    phoneNumberId,
+                    wabaId,
+                    now,
+                  });
                 }
               }
             }

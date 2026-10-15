@@ -162,6 +162,28 @@ export function resolveWhatsAppTenant(opts: {
   return { status: "unresolved" };
 }
 
+/**
+ * Inbound webhook tenant. Only the receiving phone_number_id (WABA line → tenant).
+ * No patient-phone guess and no demo-tenant fallback. Empty string stays unassigned.
+ */
+export function tenantIdFromReceivingPhoneNumberId(phoneNumberId?: string): string {
+  const id = String(phoneNumberId || "").trim();
+  if (!id) return "";
+  const doctorOwned = resolveDoctorOwnedNumber({ phoneNumberId: id });
+  if (doctorOwned) return doctorOwned.status === "resolved" ? doctorOwned.tenantId : "";
+  try {
+    const owned = getWhatsAppNumberByPhoneNumberId(id);
+    if (owned?.owner_type === "tenant" && owned.owner_id) return String(owned.owner_id);
+    const row = getDb()
+      .prepare("SELECT id FROM tenants WHERE phone_number_id = ?")
+      .get(id) as { id?: string } | undefined;
+    if (row?.id) return String(row.id);
+  } catch {
+    /* schema not ready */
+  }
+  return "";
+}
+
 export function resolveWhatsAppTenantId(opts: {
   tenantId?: string;
   sessionTenantId?: string;

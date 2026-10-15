@@ -9,30 +9,23 @@ export function clinicTenantId(req: { user?: { tenantId?: string } }): string {
   return String(req.user?.tenantId || "").trim();
 }
 
-const CONV_TENANT_SQL = `(
-  COALESCE(c.tenant_id, '') = ?
-  OR EXISTS (
-    SELECT 1 FROM patients p
-    WHERE p.tenant_id = ?
-      AND (
-        (c.patient_id IS NOT NULL AND TRIM(CAST(c.patient_id AS TEXT)) != '' AND p.id = c.patient_id)
-        OR p.phone = c.patient_phone
-      )
-  )
-)`;
+/** Assigned rows only. Blank tenant_id is unassigned and visible to no clinic. */
+const CONV_TENANT_SQL = `TRIM(COALESCE(c.tenant_id, '')) = ?`;
 
 export function getTenantConversation(tenantId: string, id: string) {
+  if (!tenantId || !id) return undefined;
   return getDb()
     .prepare(`SELECT c.* FROM whatsapp_conversations c WHERE c.id = ? AND ${CONV_TENANT_SQL}`)
-    .get(id, tenantId, tenantId) as Record<string, unknown> | undefined;
+    .get(id, tenantId) as Record<string, unknown> | undefined;
 }
 
 export function listTenantConversations(tenantId: string) {
+  if (!tenantId) return [];
   return getDb()
     .prepare(
       `SELECT c.* FROM whatsapp_conversations c WHERE ${CONV_TENANT_SQL} ORDER BY c.updated_at DESC`
     )
-    .all(tenantId, tenantId) as Record<string, unknown>[];
+    .all(tenantId) as Record<string, unknown>[];
 }
 
 /** Last-10 digits so "+91 99999 73271" and "+919999973271" compare equal in SQL. */

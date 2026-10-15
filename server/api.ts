@@ -76,6 +76,7 @@ import { parseSpecialtyPackInput, resolveSpecialtyPack } from "./specialty-packs
 import { appPublicUrl, demoLoginEnabled, isProduction } from "./runtime.ts";
 import { DEMO_PASSWORD } from "../src/lib/demoAccounts.ts";
 import { dispatchWhatsAppCloudMessage, isCloudDispatchFailure } from "./graph-whatsapp.ts";
+import { consumeSendOtpAttempt, requestClientIp } from "./otp-rate-limit.ts";
 import {
   FacebookOAuthError,
   facebookLoginDialogUrl,
@@ -810,6 +811,12 @@ export function createApiRouter(): Router {
 
     if (!phone) {
       return res.status(400).json({ error: "WhatsApp Business phone number is required" });
+    }
+
+    const otpLimit = consumeSendOtpAttempt(phone, requestClientIp(req));
+    if (otpLimit.ok === false) {
+      res.setHeader("Retry-After", String(otpLimit.retryAfterSec));
+      return res.status(429).json({ error: "Too many OTP requests. Try again later." });
     }
 
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
