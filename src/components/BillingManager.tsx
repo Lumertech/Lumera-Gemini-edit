@@ -30,6 +30,7 @@ import {
   ReceiptHonesty,
   canMarkPaidLocally,
   displayBillingIds,
+  deskCollectionsView,
   displayInvoiceNumber,
   DRAFT_INVOICE_LABEL,
   formatRupees,
@@ -42,8 +43,8 @@ import {
   savedInvoiceView,
   shouldRecomputeDraftLines,
   shouldShowSandboxPay,
-  todayIsoDate,
 } from '../lib/billingCollect';
+import { clinicCalendarDate } from '../lib/clinicDay';
 import { useAuth } from '../auth/AuthContext';
 import { workflowForUser } from '../lib/specialtyWorkflow';
 
@@ -169,6 +170,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
   const [copiedPayLink, setCopiedPayLink] = useState(false);
   const [billingSettings, setBillingSettings] = useState<BillingSettings | null>(null);
   const [dayEnd, setDayEnd] = useState<DayEndReport | null>(null);
+  const [composeBill, setComposeBill] = useState(false);
   const [serverBill, setServerBill] = useState<{ subtotal: number; discountAmount: number; totalAmount: number } | null>(null);
 
   const [items, setItems] = useState<BillItem[]>([]);
@@ -195,7 +197,8 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
   });
 
   const loadDayEnd = async () => {
-    const report = await apiFetch<DayEndReport>(`/api/billing/day-end?date=${todayIsoDate()}`);
+    const day = clinicCalendarDate(new Date(), user?.timezone);
+    const report = await apiFetch<DayEndReport>(`/api/billing/day-end?date=${day}`);
     setDayEnd(report);
   };
 
@@ -255,6 +258,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
     let cancelled = false;
     wasPaidRef.current = false;
     savedInvoiceIdRef.current = '';
+    setComposeBill(false);
     setPersistedInvoice(null);
     setServerBill(null);
     setInvoiceNumber(DRAFT_INVOICE_LABEL);
@@ -295,6 +299,8 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
   const subtotal = serverBill ? serverBill.subtotal : draftSubtotal;
   const totalAmount = serverBill ? serverBill.totalAmount : Math.max(0, draftSubtotal - discountAmount);
   const linesLocked = Boolean(serverBill && persistedInvoice?.id);
+  const showInvoicePreview = linesLocked || composeBill;
+  const dayEndView = deskCollectionsView(dayEnd, { hasSavedInvoice: showInvoicePreview });
   const shownInvoiceNumber = displayInvoiceNumber(linesLocked ? invoiceNumber : DRAFT_INVOICE_LABEL);
 
   const ensureInvoice = async (): Promise<PersistedInvoice> => {
@@ -514,29 +520,62 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
       >
         {pack.billingLabel} · {pack.billingLens} · {pack.formularyLens === "who-eml" ? "WHO-EML / pharmacy" : pack.formularyLens === "rehab-exercises" ? "exercises & packages" : pack.formularyLens === "dental-materials" ? "chair procedures" : pack.formularyLens === "salon-menu" ? "salon menu" : "no clinical formulary"}
       </div>
-      {dayEnd && (
-        <div className="no-print bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      {dayEndView && (
+        <div
+          className="no-print bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+          data-testid="day-end-summary"
+        >
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Day-end collections · {dayEnd.date}</p>
-            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
-              <span className="px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold">
-                Paid {dayEnd.paidCount} · {formatRupees(dayEnd.paidAmount)}
+            <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Day-end collections</p>
+            <p className="mt-1 text-lg font-semibold text-slate-900" data-testid="day-end-date">
+              {dayEndView.dateLabel}
+            </p>
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+              <span className="px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold" data-testid="day-end-paid">
+                Paid {dayEndView.paidCount}
               </span>
-              <span className="px-2.5 py-1 rounded-lg bg-amber-50 text-amber-800 border border-amber-200 font-semibold">
-                Due {dayEnd.dueCount} · {formatRupees(dayEnd.dueAmount)}
+              <span className="px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-900 border border-emerald-200 font-semibold" data-testid="day-end-collected">
+                Collected {formatRupees(dayEndView.totalCollected)}
+              </span>
+              <span className="px-3 py-1.5 rounded-lg bg-amber-50 text-amber-800 border border-amber-200 font-semibold" data-testid="day-end-due">
+                Due {dayEndView.dueCount} · {formatRupees(dayEndView.dueAmount)}
               </span>
             </div>
           </div>
-          <button
-            onClick={() => void loadDayEnd().catch(() => undefined)}
-            className="self-start sm:self-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            Refresh day-end
-          </button>
+          <div className="flex flex-col gap-2 self-start sm:self-auto">
+            <button
+              onClick={() => void loadDayEnd().catch(() => undefined)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              Refresh day-end
+            </button>
+            {!showInvoicePreview ? (
+              <button
+                type="button"
+                data-testid="start-bill"
+                onClick={() => setComposeBill(true)}
+                className="px-3 py-1.5 rounded-lg bg-slate-900 text-white text-xs font-semibold"
+              >
+                Create bill
+              </button>
+            ) : null}
+          </div>
         </div>
       )}
+      {!dayEndView && !showInvoicePreview ? (
+        <button
+          type="button"
+          data-testid="start-bill"
+          onClick={() => setComposeBill(true)}
+          className="no-print self-start px-3 py-1.5 rounded-lg bg-slate-900 text-white text-xs font-semibold"
+        >
+          Create bill
+        </button>
+      ) : null}
 
+      {showInvoicePreview ? (
+      <>
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm no-print">
         <div>
           <div className="flex items-center space-x-2">
@@ -1260,6 +1299,8 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
           </div>
         </div>
       )}
+      </>
+      ) : null}
     </div>
   );
 };

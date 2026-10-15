@@ -1,5 +1,7 @@
 /** Client helpers for Wave 2 clinician billing UX. Consume Platform invoice APIs as-is. */
 
+import { formatClinicDayLabel } from "./clinicDay";
+
 export type BillingPaymentMode = "UPI" | "Cash" | "Card" | "Insurance";
 
 export type BillingLetterhead = {
@@ -96,6 +98,24 @@ export type ReceiptHonesty = {
 
 export function todayIsoDate(now = new Date()): string {
   return now.toISOString().slice(0, 10);
+}
+
+/** Desk collections shows day-end totals. An unsaved bill is not rendered beside them. */
+export function deskCollectionsView(
+  report: Pick<DayEndReport, "date" | "paidCount" | "paidAmount" | "dueCount" | "dueAmount"> | null | undefined,
+  opts?: { hasSavedInvoice?: boolean }
+) {
+  const date = String(report?.date || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  return {
+    showInvoicePreview: Boolean(opts?.hasSavedInvoice),
+    date,
+    dateLabel: formatClinicDayLabel(date),
+    paidCount: Number(report?.paidCount) || 0,
+    totalCollected: Number(report?.paidAmount) || 0,
+    dueCount: Number(report?.dueCount) || 0,
+    dueAmount: Number(report?.dueAmount) || 0,
+  };
 }
 
 export function isInvoicePaid(invoice: { paymentStatus?: string } | null | undefined): boolean {

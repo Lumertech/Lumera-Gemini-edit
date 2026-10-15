@@ -7,6 +7,7 @@ import {
   canMarkPaidLocally,
   deskCollectAllowed,
   displayBillingIds,
+  deskCollectionsView,
   displayInvoiceNumber,
   DRAFT_INVOICE_LABEL,
   invoiceNumberToPersist,
@@ -194,6 +195,27 @@ describe("billing collect UX helpers", () => {
     assert.equal(ids.clinicName, "My Clinic");
   });
 
+  it("shows day-end totals without an unsaved invoice preview", () => {
+    const summary = deskCollectionsView(
+      { date: "2026-10-15", paidCount: 4, paidAmount: 3200, dueCount: 2, dueAmount: 750 },
+      { hasSavedInvoice: false }
+    );
+    assert.ok(summary);
+    assert.equal(summary.showInvoicePreview, false);
+    assert.equal(summary.paidCount, 4);
+    assert.equal(summary.totalCollected, 3200);
+    assert.equal(summary.dueCount, 2);
+    assert.equal(summary.dueAmount, 750);
+    assert.match(summary.dateLabel, /2026/);
+    assert.equal(summary.date, "2026-10-15");
+    const saved = deskCollectionsView(
+      { date: "2026-10-15", paidCount: 1, paidAmount: 750, dueCount: 0, dueAmount: 0 },
+      { hasSavedInvoice: true }
+    );
+    assert.equal(saved?.showInvoicePreview, true);
+    assert.equal(deskCollectionsView(null, { hasSavedInvoice: false }), null);
+  });
+
   it("maps Razorpay invoice modes back to UPI in the desk UI", () => {
     assert.equal(paymentModeFromInvoice("Razorpay"), "UPI");
     assert.equal(paymentModeFromInvoice("UPI / QR"), "UPI");
@@ -214,6 +236,17 @@ describe("BillingManager Wave 2 source gates", () => {
     assert.match(billingUi, /receiptHonestyFromResponse/);
     assert.match(billingUi, /graphDelivered/);
     assert.doesNotMatch(billingUi, /mark-paid-local|markPaidLocal|locallyPaid/);
+    assert.match(billingUi, /data-testid="day-end-summary"/);
+    assert.match(billingUi, /data-testid="day-end-date"/);
+    assert.match(billingUi, /data-testid="day-end-paid"/);
+    assert.match(billingUi, /data-testid="day-end-collected"/);
+    assert.match(billingUi, /data-testid="day-end-due"/);
+    assert.match(billingUi, /showInvoicePreview \?/);
+    assert.match(billingUi, /deskCollectionsView/);
+    assert.match(billingUi, /clinicCalendarDate/);
+    const previewAt = billingUi.indexOf("showInvoicePreview ?");
+    const invoiceNumberAt = billingUi.indexOf('data-testid="invoice-number"');
+    assert.ok(previewAt >= 0 && invoiceNumberAt > previewAt);
     assert.match(billingUi, /savedInvoiceView/);
     assert.match(billingUi, /shouldRecomputeDraftLines/);
     assert.match(billingUi, /Draft \(not saved\)|DRAFT_INVOICE_LABEL/);

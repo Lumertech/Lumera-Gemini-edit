@@ -12,8 +12,6 @@ import { getDb, initDatabase } from "./db.ts";
 import { hashPassword } from "./password.ts";
 import {
   applyWalletTransaction,
-  billedAmountFromRaw,
-  getMarkupPercent,
   listWalletTransactions,
   publicWalletStatus,
   recordAiScribeUsage,
@@ -161,7 +159,7 @@ describe("Gemini ambient-scribe usage meter", () => {
     await new Promise<void>((resolve, reject) => server!.close((err) => (err ? reject(err) : resolve())));
   });
 
-  it("over-quota / empty wallet blocks the Gemini call with 402 and does not record usage_debit", async () => {
+  it("empty wallet does not block Gemini and does not record usage_debit", async () => {
     const { tenantId, clinicEmail } = createClinic("empty", 0);
     assert.equal(publicWalletStatus(tenantId).balance, 0);
     const login = await jsonRequest(port, "POST", "/api/auth/login", {
@@ -185,12 +183,8 @@ describe("Gemini ambient-scribe usage meter", () => {
         return { ok: true };
       },
     });
-    assert.equal(result.ok, false);
-    if (!result.ok) {
-      assert.equal(result.status, 402);
-      assert.match(String(result.body.error), /Top up now/i);
-    }
-    assert.equal(generateWasCalled.value, false);
+    assert.equal(result.ok, true);
+    assert.equal(generateWasCalled.value, true);
     const soap = await jsonRequest(
       port,
       "POST",
@@ -198,16 +192,16 @@ describe("Gemini ambient-scribe usage meter", () => {
       { transcript: SOAP_TRANSCRIPT, durationMinutes: 2 },
       auth
     );
-    assert.equal(soap.status, 402);
-    assert.equal(soap.json.code, "WALLET_INSUFFICIENT");
-    assert.match(String(soap.json.error), /Top up now/i);
-    assert.equal("success" in soap.json, false);
-    assert.equal(generateCalls, beforeCalls);
-    assert.equal(usageCount(tenantId), beforeUsage);
+    assert.equal(soap.status, 200, String(soap.json.error || "soap"));
+    assert.equal(soap.json.success, true);
+    assert.equal(soap.json.code, undefined);
+    assert.ok(generateCalls > beforeCalls);
+    assert.ok(usageCount(tenantId) > beforeUsage);
     assert.equal(debitCount(tenantId), beforeDebits);
+    assert.equal(publicWalletStatus(tenantId).balance, 0);
   });
 
-  it("within quota records usage_events and usage_debit after a successful mocked Gemini response", async () => {
+  it("records usage_events after a successful mocked Gemini response and does not debit the wallet", async () => {
     const prev = process.env.GEMINI_SCRIBE_RAW_COST_INR;
     process.env.GEMINI_SCRIBE_RAW_COST_INR = "1";
     try {
@@ -242,13 +236,9 @@ describe("Gemini ambient-scribe usage meter", () => {
       assert.equal(Number(event.raw_cost), 1);
       const meta = JSON.parse(event.metadata || "{}") as { endpoint?: string };
       assert.equal(meta.endpoint, "generate-soap");
-      const markup = getMarkupPercent(tenantId, "ai_scribe_minutes");
-      const billed = billedAmountFromRaw(1, markup);
-      assert.ok(billed > 0);
-      assert.equal(round4(publicWalletStatus(tenantId).balance), round4(before - billed));
+      assert.equal(round4(publicWalletStatus(tenantId).balance), round4(before));
       const debit = listWalletTransactions(tenantId, 8).find((t) => t.type === "usage_debit");
-      assert.ok(debit);
-      assert.equal(round4(debit!.amount), round4(-billed));
+      assert.equal(debit, undefined);
     } finally {
       if (prev === undefined) delete process.env.GEMINI_SCRIBE_RAW_COST_INR;
       else process.env.GEMINI_SCRIBE_RAW_COST_INR = prev;

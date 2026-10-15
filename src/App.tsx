@@ -10,8 +10,6 @@ import { PolicyPage } from "./pages/PolicyPage";
 import { AdminShell } from "./components/admin/AdminShell";
 import ClinicianApp from "./ClinicianApp";
 import PatientPortalApp from "./PatientPortalApp";
-import { WalletStatusBanner } from "./components/WalletStatusBanner";
-import { WalletTopupPanel } from "./components/WalletTopupPanel";
 import { OnboardingWizard } from "./pages/OnboardingWizard";
 import { needsOnboarding } from "./lib/sessionWorkspace";
 
@@ -104,23 +102,7 @@ function SurfaceRoot() {
   }
   if (view === "app") {
     if (!user) return <LoginPage />;
-    return (
-      <>
-        <ClinicianApp />
-        <div className="pointer-events-none fixed inset-x-0 top-14 z-40 flex justify-center px-4">
-          <div className="pointer-events-auto w-full max-w-3xl">
-            <WalletStatusBanner />
-          </div>
-        </div>
-        {appView === "billing" ? (
-          <div className="pointer-events-none fixed bottom-10 right-4 z-40 w-[min(22rem,calc(100%-2rem))]">
-            <div className="pointer-events-auto max-h-[70vh] overflow-auto rounded-xl shadow-lg">
-              <WalletTopupPanel />
-            </div>
-          </div>
-        ) : null}
-      </>
-    );
+    return <ClinicianApp />;
   }
   if (view === "portal") {
     if (!user) return <LoginPage />;

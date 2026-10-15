@@ -17,7 +17,6 @@ import {
   DEFAULT_MARKUP_PERCENT,
   applyWalletTransaction,
   assertWalletAllowsAiScribe,
-  billedAmountFromRaw,
   estimateWhatsAppRawCostInr,
   getMarkupPercent,
   insertUsageEvent,
@@ -172,8 +171,9 @@ describe("Usage wallet billing", () => {
     await new Promise<void>((resolve, reject) => server!.close((err) => (err ? reject(err) : resolve())));
   });
 
-  it("WhatsApp send inserts usage_events with raw_cost and metadata, then debits billed_amount", async () => {
+  it("WhatsApp send inserts usage_events and does not debit the wallet", async () => {
     const before = publicWalletStatus(tenantId).balance;
+    const debitsBefore = listWalletTransactions(tenantId, 50).filter((t) => t.type === "usage_debit").length;
     const sent = await dispatchWhatsAppCloudMessage({
       to: "+919823455667",
       kind: "appointment_reminder",
@@ -203,13 +203,9 @@ describe("Usage wallet billing", () => {
       inCustomerServiceWindow: false,
     });
     assert.equal(event.raw_cost, estimate.rawCost);
-    const markup = getMarkupPercent(tenantId, "whatsapp_message");
-    const billed = billedAmountFromRaw(estimate.rawCost, markup);
-    const after = publicWalletStatus(tenantId).balance;
-    assert.equal(round4(after), round4(before - billed));
-    const debit = listWalletTransactions(tenantId, 5).find((t) => t.type === "usage_debit");
-    assert.ok(debit);
-    assert.equal(round4(debit!.amount), round4(-billed));
+    assert.equal(publicWalletStatus(tenantId).balance, before);
+    const debitsAfter = listWalletTransactions(tenantId, 50).filter((t) => t.type === "usage_debit").length;
+    assert.equal(debitsAfter, debitsBefore);
   });
 
   it("tenant override markup wins over global; missing config falls back to 20% placeholder", () => {
@@ -367,7 +363,7 @@ describe("Usage wallet billing", () => {
     assert.equal(invoiceRefs?.purpose, "");
   });
 
-  it("critical WhatsApp (OTP, booking confirmation) still sends at 0/negative and records usage_debit", async () => {
+  it("critical WhatsApp still sends at 0 balance and does not debit the wallet", async () => {
     const emptyTenant = `tenant-empty-${crypto.randomUUID().slice(0, 8)}`;
     const now = new Date().toISOString();
     getDb()
@@ -390,7 +386,7 @@ describe("Usage wallet billing", () => {
       inCustomerServiceWindow: false,
     });
     assert.equal(otp.ok, true);
-    assert.ok(publicWalletStatus(emptyTenant).balance < 0);
+    assert.equal(publicWalletStatus(emptyTenant).balance, 0);
 
     const confirm = await dispatchWhatsAppCloudMessage({
       to: "+919800011122",
@@ -402,10 +398,11 @@ describe("Usage wallet billing", () => {
     });
     assert.equal(confirm.ok, true);
     const debits = listWalletTransactions(emptyTenant, 10).filter((t) => t.type === "usage_debit");
-    assert.ok(debits.length >= 2);
+    assert.equal(debits.length, 0);
+    assert.equal(publicWalletStatus(emptyTenant).balance, 0);
   });
 
-  it("non-critical WhatsApp and AI Scribe are blocked when debit would take balance below 0", async () => {
+  it("a zero or negative balance does not block WhatsApp or AI Scribe and does not change the wallet", async () => {
     const emptyTenant = `tenant-block-${crypto.randomUUID().slice(0, 8)}`;
     const now = new Date().toISOString();
     getDb()
@@ -424,15 +421,34 @@ describe("Usage wallet billing", () => {
       tenantId: emptyTenant,
       inCustomerServiceWindow: false,
     });
-    assert.equal(reminder.ok, false);
-    assert.match(String("error" in reminder ? reminder.error : ""), /Top up now/i);
+    assert.equal(reminder.ok, true);
+    assert.equal(publicWalletStatus(emptyTenant).balance, 0);
+    const debits = listWalletTransactions(emptyTenant, 10).filter((t) => t.type === "usage_debit");
+    assert.equal(debits.length, 0);
 
     const gate = assertWalletAllowsAiScribe(emptyTenant);
-    assert.equal(gate.ok, false);
-    if (!gate.ok) {
-      assert.equal(gate.status, 402);
-      assert.match(gate.error, /Top up now/i);
-    }
+    assert.equal(gate.ok, true);
+    const negative = `tenant-neg-${crypto.randomUUID().slice(0, 8)}`;
+    getDb()
+      .prepare(
+        `INSERT INTO tenants (id, name, specialty, country, timezone, phone, trial_ends_at, ai_scribe_minutes_limit, ai_scribe_minutes_used, active_status, hfr_id, created_at, updated_at)
+         VALUES (?, 'N', 'GP', 'India', 'IST', '', ?, 500, 0, 1, '', ?, ?)`
+      )
+      .run(negative, now, now, now);
+    applyWalletTransaction(negative, "adjustment", -0.83, { note: "historical negative balance", createdBy: "test" });
+    assert.ok(publicWalletStatus(negative).balance < 0);
+    const beforeNeg = publicWalletStatus(negative).balance;
+    assert.equal(assertWalletAllowsAiScribe(negative).ok, true);
+    const stillSends = await dispatchWhatsAppCloudMessage({
+      to: "+919800011122",
+      kind: "appointment_reminder",
+      textBody: "reminder",
+      db: getDb(),
+      tenantId: negative,
+      inCustomerServiceWindow: false,
+    });
+    assert.equal(stillSends.ok, true);
+    assert.equal(publicWalletStatus(negative).balance, beforeNeg);
   });
 
   it("applyWalletTransaction is atomic (ledger + balance); adjustments require a note", () => {

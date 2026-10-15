@@ -249,9 +249,6 @@ export const QueueBoard: React.FC<QueueBoardProps> = ({
             <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-blue-50 text-blue-700 border border-blue-200">
               Live OPD Queue
             </span>
-            <span className="text-xs text-slate-500 font-medium">
-              {formatClinicDayLabel(activeQueueDate)}
-            </span>
             <label className="flex items-center gap-1.5 text-xs text-slate-600">
               <span className="font-medium">Clinic day</span>
               <input
@@ -264,6 +261,10 @@ export const QueueBoard: React.FC<QueueBoardProps> = ({
               />
             </label>
           </div>
+          <p className="mt-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">Queue date</p>
+          <p className="text-base font-semibold text-slate-900" data-testid="queue-date-label">
+            {formatClinicDayLabel(activeQueueDate)}
+          </p>
           <h1 className="text-lg font-bold tracking-tight text-slate-900 mt-1">
             Patient Flow & Live Token Board
           </h1>

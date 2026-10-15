@@ -73,6 +73,11 @@ describe("queue screen wires the clinic-day filter", () => {
   it("requests a tenant-scoped date and does not render the full history on the queue", () => {
     assert.match(queueUi, /appointmentsForClinicDay/);
     assert.match(queueUi, /aria-label="Queue day"/);
+    assert.match(queueUi, /data-testid="queue-date-label"/);
+    assert.match(queueUi, /Queue date/);
+    const sidebar = fs.readFileSync(path.join(__dirname, "../components/Sidebar.tsx"), "utf8");
+    assert.match(sidebar, /doctor: \[[^\]]*queue/);
+    assert.match(sidebar, /receptionist: \[[^\]]*queue/);
     assert.match(queueUi, /Earlier visits stay on the appointments calendar/);
     assert.match(appUi, /\/api\/appointments\?date=/);
     assert.match(appUi, /appointments=\{queueAppointments\}/);
