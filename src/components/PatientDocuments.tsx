@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Camera, Download, Eye, FileText, Trash2, Upload, X } from "lucide-react";
-import { apiFetch, getStoredToken } from "../api/http";
+import { apiFetch } from "../api/http";
 
 const MAX_BYTES = 10 * 1024 * 1024;
 
@@ -87,13 +87,7 @@ function clientFileError(file: File): string {
 }
 
 async function fetchAuthorizedBlob(path: string): Promise<Blob> {
-  const headers = new Headers();
-  const token = getStoredToken();
-  if (token) {
-    headers.set("Authorization", `Bearer ${token}`);
-    headers.set("x-session-token", token);
-  }
-  const res = await fetch(path, { credentials: "include", headers });
+  const res = await fetch(path, { credentials: "include" });
   if (!res.ok) {
     const data = (await res.json().catch(() => ({}))) as { error?: string };
     throw new Error(data.error || `Request failed (${res.status})`);

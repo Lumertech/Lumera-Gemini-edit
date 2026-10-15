@@ -341,6 +341,17 @@ export const patientDocuments = pgTable(
   (t) => [index("idx_patient_documents_tenant_patient").on(t.tenantId, t.patientId)]
 );
 
+/** Single-use preview grants. The raw token is never stored, only its hash. */
+export const patientDocumentTickets = pgTable("patient_document_tickets", {
+  tokenHash: text("token_hash").primaryKey(),
+  userId: text("user_id").notNull(),
+  tenantId: text("tenant_id").notNull(),
+  patientId: text("patient_id").notNull(),
+  documentId: text("document_id").notNull(),
+  expiresAt: text("expires_at").notNull(),
+  usedAt: text("used_at"),
+});
+
 export const labReports = pgTable(
   "lab_reports",
   {

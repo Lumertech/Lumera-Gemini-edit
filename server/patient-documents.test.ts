@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -12,6 +13,9 @@ import {
   detectPatientDocumentMime,
   PATIENT_DOC_MAX_BYTES,
   PATIENT_DOC_SIGNED_URL_TTL_MS,
+  PATIENT_DOCS_UNAVAILABLE_ERROR,
+  readStoredPatientDocument,
+  storePatientDocumentBytes,
 } from "./patient-documents.ts";
 import { jsonRequest, startTestServer } from "./test-http.ts";
 
@@ -328,6 +332,22 @@ describe("patient document API", () => {
     assert.equal(preview.status, 200);
     assert.equal(Buffer.from(await preview.arrayBuffer()).subarray(0, 5).toString(), "%PDF-");
 
+    const replay = await fetch(
+      `http://127.0.0.1:${port}/api/patients/${patientId}/documents/${pdfDoc.id}/file?purpose=preview&ticket=${ticket.json.ticket}`
+    );
+    assert.equal(replay.status, 401);
+    const rawTicket = String(ticket.json.ticket);
+    const tokenHash = crypto.createHash("sha256").update(rawTicket).digest("hex");
+    const storedTicket = getDb()
+      .prepare("SELECT token_hash, used_at FROM patient_document_tickets WHERE token_hash = ?")
+      .get(tokenHash) as { token_hash: string; used_at: string | null };
+    assert.equal(storedTicket.token_hash, tokenHash);
+    assert.equal(storedTicket.used_at != null && storedTicket.used_at.length > 0, true);
+    const rawStored = getDb()
+      .prepare("SELECT token_hash FROM patient_document_tickets WHERE token_hash = ?")
+      .get(rawTicket);
+    assert.equal(rawStored, undefined);
+
     const ticketOnOtherDoc = await fetch(
       `http://127.0.0.1:${port}/api/patients/${patientId}/documents/${imageDoc.id}/file?ticket=${ticket.json.ticket}`
     );
@@ -387,4 +407,99 @@ describe("patient document API", () => {
       .all("%Secret notes that must not store%") as unknown[];
     assert.equal(badAudit.length, 0);
   });
+
+  it("returns 503 in production when the document bucket is unset and does not write local files", async () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    const clinic = createClinicUser("docs-prod", "doctor");
+    const token = await login(clinic.email);
+    const created = await jsonRequest(
+      port,
+      "POST",
+      "/api/patients",
+      { name: "Prod Docs Patient", phone: "+91 98111 44455", age: 36, gender: "Male" },
+      { Authorization: `Bearer ${token}` }
+    );
+    assert.equal(created.status, 201, String(created.json.error || ""));
+    const patientId = String((created.json.patient as { id: string }).id);
+    const uploaded = await upload(token, patientId, pdfBytes(), {
+      filename: "already-stored.pdf",
+      mime: "application/pdf",
+      title: "Stored before production",
+      docType: "other",
+      documentDate: "2026-09-05",
+    });
+    assert.equal(uploaded.status, 201, String(uploaded.json.error || ""));
+    const docId = String((uploaded.json.document as { id: string }).id);
+    const filesBefore = listFiles(docsDir);
+    const rowsBefore = documentCount(patientId);
+
+    process.env.NODE_ENV = "production";
+    delete process.env.PATIENT_DOCS_GCS_BUCKET;
+    const emptyDir = fs.mkdtempSync(path.join(os.tmpdir(), "lumera-patient-docs-prod-"));
+    const savedDocsDir = process.env.PATIENT_DOCS_DIR;
+    try {
+      const form = new FormData();
+      form.set("file", new File([new Uint8Array(pdfBytes())], "blocked.pdf", { type: "application/pdf" }));
+      form.set("title", "Must not land on disk");
+      form.set("docType", "lab_report");
+      form.set("documentDate", "2026-09-06");
+      const denied = await fetch(`http://127.0.0.1:${port}/api/patients/${patientId}/documents`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Sec-Fetch-Site": "same-origin" },
+        body: form,
+      });
+      const deniedJson = (await denied.json()) as { error?: string };
+      assert.equal(denied.status, 503);
+      assert.equal(deniedJson.error, PATIENT_DOCS_UNAVAILABLE_ERROR);
+      assert.deepEqual(listFiles(docsDir), filesBefore);
+      assert.equal(documentCount(patientId), rowsBefore);
+
+      const read = await fetch(`http://127.0.0.1:${port}/api/patients/${patientId}/documents/${docId}/file`, {
+        headers: { Authorization: `Bearer ${token}`, "Sec-Fetch-Site": "same-origin" },
+      });
+      const readBody = await read.text();
+      assert.equal(read.status, 503);
+      assert.match(readBody, /PATIENT_DOCS_GCS_BUCKET/);
+      assert.equal(readBody.includes("%PDF"), false);
+
+      process.env.PATIENT_DOCS_DIR = emptyDir;
+      await assert.rejects(
+        () => storePatientDocumentBytes(clinic.tenantId, patientId, pdfBytes(), "application/pdf"),
+        (err: unknown) => {
+          assert.equal(err instanceof Error ? err.message : "", PATIENT_DOCS_UNAVAILABLE_ERROR);
+          assert.equal((err as { status?: number }).status, 503);
+          return true;
+        }
+      );
+      assert.deepEqual(listFiles(emptyDir), []);
+      await assert.rejects(
+        () => readStoredPatientDocument(clinic.tenantId, `${clinic.tenantId}/${patientId}/missingfile`, "local"),
+        (err: unknown) => err instanceof Error && err.message === PATIENT_DOCS_UNAVAILABLE_ERROR
+      );
+      assert.deepEqual(listFiles(emptyDir), []);
+    } finally {
+      process.env.PATIENT_DOCS_DIR = savedDocsDir;
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnv;
+      fs.rmSync(emptyDir, { recursive: true, force: true });
+    }
+  });
 });
+
+function listFiles(dir: string): string[] {
+  if (!fs.existsSync(dir)) return [];
+  const out: string[] = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...listFiles(full));
+    else out.push(full);
+  }
+  return out.sort();
+}
+
+function documentCount(patientId: string): number {
+  const row = getDb()
+    .prepare("SELECT COUNT(*) AS n FROM patient_documents WHERE patient_id = ?")
+    .get(patientId) as { n: number };
+  return Number(row.n);
+}

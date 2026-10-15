@@ -2,12 +2,14 @@
  * Private patient documents.
  *
  * Bytes are never written under ./uploads and never mounted with express.static.
- * The default store is a tenant-prefixed directory outside the public tree.
- * When PATIENT_DOCS_GCS_BUCKET is set, the same key is a private GCS object.
+ * The default store outside production is a tenant-prefixed directory outside the public tree.
+ * Production refuses upload and read unless PATIENT_DOCS_GCS_BUCKET is set, and does not write local files.
+ * When that bucket is set, the same key is a private GCS object.
  * GCS reads use a V4 signed URL that expires in five minutes; that URL is
- * fetched on the server and is not returned to the browser. Every HTTP read
- * and write loads the session (or a short-lived preview ticket minted from
- * that session) and requires the document's tenant_id to match.
+ * fetched on the server and is not returned to the browser. Preview tickets
+ * are single-use rows in the database, so any instance can redeem them once.
+ * Every HTTP read and write loads the session (or that ticket) and requires
+ * the document's tenant_id to match.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -21,6 +23,9 @@ import { reportCaughtError } from "./error-tracker.ts";
 export const PATIENT_DOC_MAX_BYTES = 10 * 1024 * 1024;
 export const PATIENT_DOC_SIGNED_URL_TTL_MS = 5 * 60 * 1000;
 const PREVIEW_TICKET_TTL_MS = 5 * 60 * 1000;
+
+export const PATIENT_DOCS_UNAVAILABLE_ERROR =
+  "Document storage is not configured. Set PATIENT_DOCS_GCS_BUCKET.";
 
 export const PATIENT_DOC_TYPES = [
   "lab_report",
@@ -55,15 +60,15 @@ type DocumentRow = {
   deleted_at: string | null;
 };
 
-type PreviewTicket = {
-  userId: string;
-  tenantId: string;
-  patientId: string;
-  documentId: string;
-  expiresAt: number;
+type PreviewTicketRow = {
+  token_hash: string;
+  user_id: string;
+  tenant_id: string;
+  patient_id: string;
+  document_id: string;
+  expires_at: string;
+  used_at: string | null;
 };
-
-const previewTickets = new Map<string, PreviewTicket>();
 
 function httpError(status: number, message: string): Error & { status: number } {
   return Object.assign(new Error(message), { status });
@@ -73,8 +78,17 @@ function errorStatus(err: unknown, fallback = 500): number {
   return typeof err === "object" && err && "status" in err ? Number((err as { status: number }).status) : fallback;
 }
 
-function gcsBucket(): string {
-  return String(process.env.PATIENT_DOCS_GCS_BUCKET || "").trim();
+function gcsBucket(env: NodeJS.ProcessEnv = process.env): string {
+  return String(env.PATIENT_DOCS_GCS_BUCKET || "").trim();
+}
+
+/** Production has no shared local disk. Without a bucket, document bytes are unavailable. */
+export function patientDocumentStorageUnavailable(env: NodeJS.ProcessEnv = process.env): boolean {
+  return String(env.NODE_ENV || "").trim() === "production" && !gcsBucket(env);
+}
+
+function assertDocumentStorageAvailable() {
+  if (patientDocumentStorageUnavailable()) throw httpError(503, PATIENT_DOCS_UNAVAILABLE_ERROR);
 }
 
 export function patientDocsRoot(): string {
@@ -307,6 +321,7 @@ export async function storePatientDocumentBytes(
   bytes: Buffer,
   mime: string
 ): Promise<{ storageKey: string; storageBackend: "local" | "gcs" }> {
+  assertDocumentStorageAvailable();
   const tenant = pathSegment(tenantId, "tenant");
   const patient = pathSegment(patientId, "patient");
   const storageKey = `${tenant}/${patient}/${crypto.randomUUID()}`;
@@ -326,6 +341,7 @@ export async function readStoredPatientDocument(
   storageKey: string,
   storageBackend: string
 ): Promise<Buffer> {
+  assertDocumentStorageAvailable();
   assertOwnedStorageKey(storageKey, tenantId);
   if (storageBackend === "gcs") {
     const bucket = gcsBucket();
@@ -339,6 +355,7 @@ export async function readStoredPatientDocument(
 }
 
 export async function removeStoredPatientDocument(tenantId: string, storageKey: string, storageBackend: string) {
+  assertDocumentStorageAvailable();
   assertOwnedStorageKey(storageKey, tenantId);
   if (storageBackend === "gcs") {
     const bucket = gcsBucket();
@@ -350,39 +367,50 @@ export async function removeStoredPatientDocument(tenantId: string, storageKey: 
   if (fs.existsSync(full)) fs.unlinkSync(full);
 }
 
-function sweepPreviewTickets() {
-  const now = Date.now();
-  for (const [id, ticket] of previewTickets) {
-    if (ticket.expiresAt <= now) previewTickets.delete(id);
-  }
+function ticketHash(token: string): string {
+  return crypto.createHash("sha256").update(token).digest("hex");
 }
 
 function mintPreviewTicket(req: Request, tenantId: string, patientId: string, documentId: string): string {
-  sweepPreviewTickets();
   const ticket = crypto.randomBytes(32).toString("hex");
-  previewTickets.set(ticket, {
-    userId: String(req.user?.id || ""),
-    tenantId,
-    patientId,
-    documentId,
-    expiresAt: Date.now() + PREVIEW_TICKET_TTL_MS,
-  });
+  const expiresAt = new Date(Date.now() + PREVIEW_TICKET_TTL_MS).toISOString();
+  getDb()
+    .prepare(
+      `INSERT INTO patient_document_tickets (
+        token_hash, user_id, tenant_id, patient_id, document_id, expires_at
+      ) VALUES (?, ?, ?, ?, ?, ?)`
+    )
+    .run(ticketHash(ticket), String(req.user?.id || ""), tenantId, patientId, documentId, expiresAt);
   return ticket;
 }
 
-function userFromPreviewTicket(req: Request): void {
-  if (req.user) return;
+/** Marks a matching unused ticket as used. Returns the row only for the request that won the update. */
+function consumePreviewTicket(req: Request): PreviewTicketRow | undefined {
   const ticketId = String(req.query.ticket || "").trim();
-  if (!ticketId) return;
-  const ticket = previewTickets.get(ticketId);
-  if (!ticket || ticket.expiresAt <= Date.now()) {
-    previewTickets.delete(ticketId);
-    return;
-  }
-  if (ticket.patientId !== req.params.id || ticket.documentId !== req.params.documentId) return;
-  const row = getDb().prepare("SELECT * FROM users WHERE id = ?").get(ticket.userId) as unknown as DbUser | undefined;
+  if (!ticketId) return undefined;
+  const hash = ticketHash(ticketId);
+  const now = new Date().toISOString();
+  const existing = getDb()
+    .prepare("SELECT * FROM patient_document_tickets WHERE token_hash = ?")
+    .get(hash) as PreviewTicketRow | undefined;
+  if (!existing) return undefined;
+  if (existing.patient_id !== req.params.id || existing.document_id !== req.params.documentId) return undefined;
+  const updated = getDb()
+    .prepare(
+      `UPDATE patient_document_tickets SET used_at = ?
+       WHERE token_hash = ? AND used_at IS NULL AND expires_at > ? AND patient_id = ? AND document_id = ?`
+    )
+    .run(now, hash, now, req.params.id, req.params.documentId);
+  if (Number(updated.changes) !== 1) return undefined;
+  return existing;
+}
+
+function userFromPreviewTicket(req: Request): void {
+  const ticket = consumePreviewTicket(req);
+  if (!ticket || req.user) return;
+  const row = getDb().prepare("SELECT * FROM users WHERE id = ?").get(ticket.user_id) as unknown as DbUser | undefined;
   if (!row || row.status === "disabled") return;
-  if (String(row.tenant_id || "") !== ticket.tenantId) return;
+  if (String(row.tenant_id || "") !== ticket.tenant_id) return;
   req.user = publicUser(row);
 }
 
@@ -394,8 +422,9 @@ const upload = multer({
 function sendKnownError(res: Response, err: unknown, fallback: string) {
   const status = errorStatus(err);
   const message = err instanceof Error ? err.message : fallback;
-  if (status >= 500) reportCaughtError(err, "patient-documents");
-  if (!res.headersSent) res.status(status || 500).json({ error: status >= 500 ? fallback : message });
+  if (status >= 500 && status !== 503) reportCaughtError(err, "patient-documents");
+  const error = status === 503 ? message : status >= 500 ? fallback : message;
+  if (!res.headersSent) res.status(status || 500).json({ error });
 }
 
 export function registerPatientDocumentRoutes(api: Router) {
@@ -422,6 +451,10 @@ export function registerPatientDocumentRoutes(api: Router) {
 
   api.post("/patients/:id/documents", requireAuth, (req, res) => {
     if (!isDocumentStaff(req, res)) return;
+    if (patientDocumentStorageUnavailable()) {
+      res.status(503).json({ error: PATIENT_DOCS_UNAVAILABLE_ERROR });
+      return;
+    }
     const tenantId = tenantIdOf(req, res);
     if (!tenantId) return;
     if (!patientInTenant(tenantId, req.params.id)) {
@@ -457,6 +490,10 @@ export function registerPatientDocumentRoutes(api: Router) {
   });
 
   api.get("/patients/:id/documents/:documentId/file", (req, res) => {
+    if (patientDocumentStorageUnavailable()) {
+      res.status(503).json({ error: PATIENT_DOCS_UNAVAILABLE_ERROR });
+      return;
+    }
     userFromPreviewTicket(req);
     requireAuth(req, res, () => {
       void handleFile(req, res);
@@ -529,6 +566,10 @@ async function handleUpload(req: Request, res: Response, tenantId: string) {
 
 async function handleFile(req: Request, res: Response) {
   try {
+    if (patientDocumentStorageUnavailable()) {
+      res.status(503).json({ error: PATIENT_DOCS_UNAVAILABLE_ERROR });
+      return;
+    }
     if (!isDocumentStaff(req, res)) return;
     const tenantId = tenantIdOf(req, res);
     if (!tenantId) return;
@@ -561,6 +602,10 @@ async function handleFile(req: Request, res: Response) {
 
 async function handleDelete(req: Request, res: Response) {
   try {
+    if (patientDocumentStorageUnavailable()) {
+      res.status(503).json({ error: PATIENT_DOCS_UNAVAILABLE_ERROR });
+      return;
+    }
     if (!isDocumentStaff(req, res)) return;
     const tenantId = tenantIdOf(req, res);
     if (!tenantId) return;

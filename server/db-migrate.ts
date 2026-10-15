@@ -340,6 +340,19 @@ export function migrate(database: SqlDatabase) {
       "CREATE INDEX IF NOT EXISTS idx_patient_documents_tenant_patient ON patient_documents(tenant_id, patient_id)"
     );
   } catch {}
+  try {
+    database.exec(
+      `CREATE TABLE IF NOT EXISTS patient_document_tickets (
+        token_hash TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        tenant_id TEXT NOT NULL,
+        patient_id TEXT NOT NULL,
+        document_id TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        used_at TEXT
+      )`
+    );
+  } catch {}
 
   backfillLabReportAndBranchTenants(database);
   try {
