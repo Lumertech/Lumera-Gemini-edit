@@ -70,6 +70,9 @@ interface AuthContextValue {
   user: AppUser | null;
   loading: boolean;
   login: (email: string, password: string, skipOtp?: boolean) => Promise<LoginResult>;
+  /** Explicit one-click demo. No-op on the server unless DEMO_LOGIN_ENABLED is set. */
+  demoLogin: () => Promise<LoginResult>;
+  demoLoginEnabled: boolean;
   oauthLogin: (
     provider: "google" | "facebook",
     profile: { email?: string; name?: string; avatarUrl?: string; code?: string; accessToken?: string; redirectUri?: string },
@@ -119,63 +122,59 @@ export function destinationAfterAuth(user: AppUser, requested?: Surface): Surfac
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<AppUser | null>(null);
   const [loading, setLoading] = useState(true);
+  const [demoLoginEnabled, setDemoLoginEnabled] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
     apiFetch<{ user: AppUser | null; token?: string }>("/api/auth/me")
-      .then(async (d) => {
+      .then((d) => {
+        if (cancelled) return;
         if (d.token) {
           setStoredToken(d.token);
         }
         if (d?.user) {
           setUser(d.user);
-          setLoading(false);
         } else {
-          try {
-            const loginRes = await apiFetch<LoginResult & { token?: string }>("/api/auth/login", {
-              method: "POST",
-              body: JSON.stringify({ email: "doctor@lumera.me", password: "Lumera@2026", skipOtp: true }),
-            });
-            if (loginRes.token) {
-              setStoredToken(loginRes.token);
-            }
-            if (loginRes.user) {
-              setUser(loginRes.user);
-            } else {
-              setUser(null);
-            }
-          } catch {
-            setUser(null);
-          } finally {
-            setLoading(false);
-          }
+          setUser(null);
         }
       })
-      .catch(async () => {
-        try {
-          const loginRes = await apiFetch<LoginResult & { token?: string }>("/api/auth/login", {
-            method: "POST",
-            body: JSON.stringify({ email: "doctor@lumera.me", password: "Lumera@2026", skipOtp: true }),
-          });
-          if (loginRes.token) {
-            setStoredToken(loginRes.token);
-          }
-          if (loginRes.user) {
-            setUser(loginRes.user);
-          } else {
-            setUser(null);
-          }
-        } catch {
-          setUser(null);
-        } finally {
-          setLoading(false);
-        }
+      .catch(() => {
+        if (!cancelled) setUser(null);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
       });
+    fetch("/api/auth/oauth-config")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { demoLoginEnabled?: boolean } | null) => {
+        if (!cancelled && d) setDemoLoginEnabled(Boolean(d.demoLoginEnabled));
+      })
+      .catch(() => {
+        /* one-click demo stays hidden when config cannot be read */
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const login = useCallback(async (email: string, password: string, skipOtp = false): Promise<LoginResult> => {
     const d = await apiFetch<LoginResult & { token?: string }>("/api/auth/login", {
       method: "POST",
       body: JSON.stringify({ email, password, skipOtp }),
+    });
+    if (d.token) {
+      setStoredToken(d.token);
+    }
+    if (d.user && !d.requiresOtp) {
+      setUser(d.user);
+    }
+    return d;
+  }, []);
+
+  const demoLogin = useCallback(async (): Promise<LoginResult> => {
+    const d = await apiFetch<LoginResult & { token?: string }>("/api/auth/demo-login", {
+      method: "POST",
+      body: JSON.stringify({}),
     });
     if (d.token) {
       setStoredToken(d.token);
@@ -321,6 +320,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       user,
       loading,
       login,
+      demoLogin,
+      demoLoginEnabled,
       oauthLogin,
       sendWhatsAppOtp,
       verifyWhatsAppOtp,
@@ -333,7 +334,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       refreshSession,
       homeSurface: homeSurfaceForRole(user?.role, user?.onboardingCompleted, user?.isDemoWorkspace),
     }),
-    [user, loading, login, oauthLogin, sendWhatsAppOtp, verifyWhatsAppOtp, registerClinic, completeOnboarding, requestPasswordReset, resetPassword, logout, setUserDirectly, refreshSession]
+    [user, loading, login, demoLogin, demoLoginEnabled, oauthLogin, sendWhatsAppOtp, verifyWhatsAppOtp, registerClinic, completeOnboarding, requestPasswordReset, resetPassword, logout, setUserDirectly, refreshSession]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

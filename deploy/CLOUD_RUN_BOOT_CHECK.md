@@ -27,4 +27,9 @@ founder confirms the instance (`docs/CLOUD_SQL_POSTGRES.md`).
 
 Then rebuild / redeploy tip **≥ this hotfix SHA**.
 
-No fake JWT defaults in production.
+No fake JWT defaults in production. `STRICT_PRODUCTION` / `REQUIRE_PRODUCTION_DB` are not gates: production always fail-fasts.
+
+## Optional embed / demo flags
+
+- `DEMO_LOGIN_ENABLED` — set to `true` only if the public "Try the demo" / Quick Demo button should mint a session for the seeded clinician. Off by default. The app does not auto-login on page load.
+- `FRAME_ANCESTORS` — space-separated CSP allowlist when the app must be embedded (for example `https://aistudio.google.com https://ai.studio`). Unset stays `frame-ancestors 'none'` plus `X-Frame-Options: DENY`. Do not set `*`.

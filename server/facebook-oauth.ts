@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import jwt from "jsonwebtoken";
 import { getJwtSecret } from "./auth.ts";
-import { appPublicUrl, graphApiVersion, isProduction, readSecret } from "./runtime.ts";
+import { appPublicUrl, demoLoginEnabled, graphApiVersion, isProduction, readSecret } from "./runtime.ts";
 import { googleClientId, googleOAuthConfigured, googleRedirectUri, verifyGoogleIdentity } from "./google-oauth.ts";
 
 /** Fail-closed: dedicated state secret if set, otherwise JWT_SECRET (no hardcoded fallback). */
@@ -336,6 +336,7 @@ export function oauthPublicConfig() {
     googleClientId: googleClientId() || null,
     googleRedirectUri: googleOAuthConfigured() ? googleRedirectUri() : null,
     sandboxClientOAuthAllowed: !isProduction(),
+    demoLoginEnabled: demoLoginEnabled(),
     notice: isProduction()
       ? "Production requires Google/Facebook Login server-side token exchange. Client-supplied emails are rejected. Missing GOOGLE_CLIENT_ID/SECRET or FACEBOOK_APP_ID/SECRET is a hard configuration error for that provider."
       : "SANDBOX / DEV-ONLY: Google/Facebook credentials are optional. Client-supplied OAuth email is accepted only when NODE_ENV is not production.",

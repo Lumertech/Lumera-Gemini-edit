@@ -21,6 +21,12 @@ import {
   isSpaHistoryFallbackPath,
   resolveClientDist,
 } from "./spa-fallback.ts";
+import {
+  applyHtmlDocumentSecurityHeaders,
+  frameAncestorsValue,
+  htmlContentSecurityPolicy,
+} from "./html-security-headers.ts";
+import type { Response } from "express";
 
 describe("production listen / env helpers", () => {
   it("uses PORT from the environment for Cloud Run", () => {
@@ -233,11 +239,11 @@ describe("production SPA history fallback", () => {
       assert.match(await home.text(), /Lumera SPA/);
       const csp = home.headers.get("content-security-policy") || "";
       assert.match(csp, /default-src 'self'/);
-      assert.match(csp, /frame-ancestors/);
+      assert.match(csp, /frame-ancestors 'none'/);
       assert.match(csp, /https:\/\/connect\.facebook\.net/);
       assert.doesNotMatch(csp, /script-src[^;]*'unsafe-inline'/);
       assert.equal(home.headers.get("x-content-type-options"), "nosniff");
-      assert.equal(home.headers.get("x-frame-options"), null);
+      assert.equal(home.headers.get("x-frame-options"), "DENY");
       assert.match(home.headers.get("permissions-policy") || "", /microphone=\(self\)/);
       assert.match(home.headers.get("referrer-policy") || "", /strict-origin-when-cross-origin/);
       for (const p of ["/app/rx", "/admin/users", "/signup", "/login"]) {
@@ -267,5 +273,56 @@ describe("production SPA history fallback", () => {
         server.close((err) => (err ? reject(err) : resolve()));
       });
     }
+  });
+});
+
+describe("FRAME_ANCESTORS allowlist", () => {
+  function capture(env: NodeJS.ProcessEnv) {
+    const headers = new Map<string, string | number>();
+    const res = {
+      setHeader(name: string, value: string | number) {
+        headers.set(name.toLowerCase(), value);
+      },
+    } as unknown as Response;
+    applyHtmlDocumentSecurityHeaders(res, env);
+    return headers;
+  }
+
+  it("defaults to frame-ancestors 'none' and X-Frame-Options DENY", () => {
+    assert.equal(frameAncestorsValue({} as NodeJS.ProcessEnv), "'none'");
+    assert.equal(frameAncestorsValue({ FRAME_ANCESTORS: "none" } as NodeJS.ProcessEnv), "'none'");
+    assert.match(htmlContentSecurityPolicy({} as NodeJS.ProcessEnv), /frame-ancestors 'none'/);
+    const headers = capture({} as NodeJS.ProcessEnv);
+    assert.match(String(headers.get("content-security-policy")), /frame-ancestors 'none'/);
+    assert.equal(headers.get("x-frame-options"), "DENY");
+  });
+
+  it("allowlists specific origins and drops a bare star", () => {
+    assert.equal(frameAncestorsValue({ FRAME_ANCESTORS: "*" } as NodeJS.ProcessEnv), "'none'");
+    assert.equal(
+      frameAncestorsValue({
+        FRAME_ANCESTORS: "https://aistudio.google.com https://ai.studio *",
+      } as NodeJS.ProcessEnv),
+      "https://aistudio.google.com https://ai.studio"
+    );
+    assert.equal(
+      frameAncestorsValue({
+        FRAME_ANCESTORS: "https://aistudio.google.com https://*.googleusercontent.com",
+      } as NodeJS.ProcessEnv),
+      "https://aistudio.google.com https://*.googleusercontent.com"
+    );
+
+    const headers = capture({
+      FRAME_ANCESTORS: "https://aistudio.google.com https://ai.studio",
+    } as NodeJS.ProcessEnv);
+    const csp = String(headers.get("content-security-policy"));
+    assert.match(csp, /frame-ancestors https:\/\/aistudio\.google\.com https:\/\/ai\.studio(?:;|$)/);
+    assert.doesNotMatch(csp, /frame-ancestors[^;]* \*(?:;|$)/);
+    assert.doesNotMatch(csp, /frame-ancestors \*/);
+    assert.equal(headers.has("x-frame-options"), false);
+
+    const open = capture({ FRAME_ANCESTORS: "*" } as NodeJS.ProcessEnv);
+    assert.match(String(open.get("content-security-policy")), /frame-ancestors 'none'/);
+    assert.equal(open.get("x-frame-options"), "DENY");
   });
 });

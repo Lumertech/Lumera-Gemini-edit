@@ -96,27 +96,29 @@ export function applyBundledServerNodeEnv(
 }
 
 /**
- * Production hosting requires JWT_SECRET and a durable Postgres URL when STRICT_PRODUCTION or REQUIRE_PRODUCTION_DB is true.
+ * One-click demo login (POST /api/auth/demo-login). Off unless explicitly set.
+ * Page load must never sign in by itself.
+ */
+export function demoLoginEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = String(env.DEMO_LOGIN_ENABLED || "").trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+}
+
+/**
+ * Production hosting requires JWT_SECRET and a durable Postgres URL.
  * Meta / Facebook / Razorpay secrets stay optional until the founder provisions them.
+ * There is no default JWT and no SQLite fallback: a missing or placeholder value throws
+ * before listen.
  */
 export function assertRequiredProductionEnv(env: NodeJS.ProcessEnv = process.env): void {
   if (env.NODE_ENV !== "production") return;
-  const strict = String(env.REQUIRE_PRODUCTION_DB || "").trim() === "true" || String(env.STRICT_PRODUCTION || "").trim() === "true";
   const jwt = String(env.JWT_SECRET || "").trim();
   if (!jwt || isUnsetOrPlaceholder(jwt)) {
-    if (strict) {
-      throw new Error(JWT_SECRET_REQUIRED_MESSAGE);
-    } else {
-      env.JWT_SECRET = "lumera-default-secret-key-default-382910";
-    }
+    throw new Error(JWT_SECRET_REQUIRED_MESSAGE);
   }
   const dbUrl = databaseUrlFromEnv(env);
   if (!dbUrl || isUnsetOrPlaceholder(dbUrl)) {
-    if (strict) {
-      throw new Error(DATABASE_URL_REQUIRED_MESSAGE);
-    } else {
-      console.warn("[Lumera] DATABASE_URL is unset. Falling back to local SQLite database (data/lumera.db).");
-    }
+    throw new Error(DATABASE_URL_REQUIRED_MESSAGE);
   }
   const appUrl = String(env.APP_URL || "").trim().replace(/\/$/, "");
   if (!appUrl) {

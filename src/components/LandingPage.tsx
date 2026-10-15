@@ -36,7 +36,8 @@ import {
 import { Link } from "react-router-dom";
 import { LEGAL_ENTITY_NAME, PRODUCT_NAME } from "../brand";
 import { BrandMark } from "./BrandMark";
-import { useNav } from "../nav/NavigationContext";
+import { destinationAfterAuth, useAuth } from "../auth/AuthContext";
+import { goAfterAuth, useNav } from "../nav/NavigationContext";
 import { surfaceToPath } from "../nav/surfaces";
 
 interface SitePayload {
@@ -212,7 +213,10 @@ const AMBIENT_DEMOS = [
 
 export const LandingPage: React.FC = () => {
   const [site, setSite] = useState<SitePayload>(FALLBACK);
-  const { go } = useNav();
+  const { demoLogin, demoLoginEnabled } = useAuth();
+  const { go, loginNext, loginNextPath } = useNav();
+  const [demoBusy, setDemoBusy] = useState(false);
+  const [demoError, setDemoError] = useState("");
 
   // Ambient Scribe Interactive Simulator State
   const [selectedAmbientIndex, setSelectedAmbientIndex] = useState(0);
@@ -264,6 +268,21 @@ export const LandingPage: React.FC = () => {
   const handleResetChat = () => {
     setChatStep(1);
     setSelectedSlot(null);
+  };
+
+  const handleTryDemo = async () => {
+    setDemoBusy(true);
+    setDemoError("");
+    try {
+      const res = await demoLogin();
+      if (res.user) {
+        goAfterAuth(go, destinationAfterAuth(res.user, loginNext), loginNextPath);
+      }
+    } catch (err) {
+      setDemoError(err instanceof Error ? err.message : "Demo sign in failed.");
+    } finally {
+      setDemoBusy(false);
+    }
   };
 
   return (
@@ -322,6 +341,20 @@ export const LandingPage: React.FC = () => {
             <span>Try for free</span>
             <ArrowRight className="w-4 h-4 text-blue-200" />
           </Link>
+
+          {demoLoginEnabled ? (
+            <button
+              type="button"
+              data-testid="landing-try-demo"
+              onClick={handleTryDemo}
+              disabled={demoBusy}
+              className="mt-4 inline-flex items-center gap-2 px-6 py-2.5 rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 text-sm font-semibold text-white transition-colors disabled:opacity-60"
+            >
+              <Play className="w-4 h-4 text-emerald-300" />
+              <span>{demoBusy ? "Starting demo…" : "Try the demo"}</span>
+            </button>
+          ) : null}
+          {demoError ? <p className="mt-2 text-xs text-rose-300">{demoError}</p> : null}
 
           <div className="mt-4 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-xs text-slate-400">
             <span className="flex items-center gap-1.5">
