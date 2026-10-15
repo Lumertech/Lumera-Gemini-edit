@@ -445,7 +445,7 @@ describe("patient document API", () => {
       form.set("documentDate", "2026-09-06");
       const denied = await fetch(`http://127.0.0.1:${port}/api/patients/${patientId}/documents`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Sec-Fetch-Site": "same-origin", "X-Client": "android" },
+        headers: { Authorization: `Bearer ${token}` },
         body: form,
       });
       const deniedJson = (await denied.json()) as { error?: string };
@@ -455,7 +455,7 @@ describe("patient document API", () => {
       assert.equal(documentCount(patientId), rowsBefore);
 
       const read = await fetch(`http://127.0.0.1:${port}/api/patients/${patientId}/documents/${docId}/file`, {
-        headers: { Authorization: `Bearer ${token}`, "Sec-Fetch-Site": "same-origin", "X-Client": "android" },
+        headers: { Authorization: `Bearer ${token}` },
       });
       const readBody = await read.text();
       assert.equal(read.status, 503);

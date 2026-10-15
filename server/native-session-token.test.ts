@@ -92,19 +92,25 @@ describe("session token for native clients only", () => {
     return unpackHostSession(issuedSession(setCookieLines(res))).credential;
   }
 
-  it("treats Sec-Fetch-Site or Origin as a browser unless X-Client marks native", () => {
+  it("treats any Sec-Fetch-Site as a browser even when X-Client marks native", () => {
     assert.equal(clientMayUseSessionToken(asReq({})), true);
     assert.equal(clientMayUseSessionToken(asReq({ "sec-fetch-site": "same-origin" })), false);
     assert.equal(clientMayUseSessionToken(asReq({ "sec-fetch-site": "none" })), false);
     assert.equal(clientMayUseSessionToken(asReq({ "sec-fetch-site": "cross-site" })), false);
+    assert.equal(clientMayUseSessionToken(asReq({ "sec-fetch-site": "same-site" })), false);
     assert.equal(clientMayUseSessionToken(asReq({ origin: "http://127.0.0.1:3000" })), false);
     assert.equal(clientMayUseSessionToken(asReq({ origin: "null" })), false);
-    for (const mark of ["mobile", "ios", "android", "native", "iOS", "Android"]) {
-      assert.equal(
-        clientMayUseSessionToken(asReq({ "sec-fetch-site": "same-origin", origin: "http://127.0.0.1:3000", "x-client": mark })),
-        true,
-        mark
-      );
+    for (const site of ["same-origin", "none", "cross-site", "same-site"]) {
+      for (const mark of ["mobile", "ios", "android", "native", "iOS", "Android"]) {
+        assert.equal(
+          clientMayUseSessionToken(asReq({ "sec-fetch-site": site, origin: "http://127.0.0.1:3000", "x-client": mark })),
+          false,
+          `${site} ${mark}`
+        );
+      }
+    }
+    for (const mark of ["mobile", "ios", "android", "native"]) {
+      assert.equal(clientMayUseSessionToken(asReq({ origin: "http://127.0.0.1:3000", "x-client": mark })), true, mark);
     }
     assert.equal(clientMayUseSessionToken(asReq({ "sec-fetch-site": "same-origin", "x-client": "web" })), false);
     assert.equal(clientMayUseSessionToken(asReq({ "sec-fetch-site": "same-origin", "x-client": "browser" })), false);
@@ -120,6 +126,10 @@ describe("session token for native clients only", () => {
     );
     assert.equal(
       csrfShouldReject(asReq({ cookie, authorization: "Bearer jwt", "sec-fetch-site": "same-origin", "x-client": "ios" })),
+      true
+    );
+    assert.equal(
+      csrfShouldReject(asReq({ authorization: "Bearer jwt", origin: "http://127.0.0.1:3000", "x-client": "ios" })),
       false
     );
     assert.equal(csrfShouldReject(asReq({ cookie, authorization: "Bearer jwt" })), false);
@@ -145,7 +155,8 @@ describe("session token for native clients only", () => {
 
     const mobile = await login({ "Sec-Fetch-Site": "same-origin", "X-Client": "mobile" });
     assert.equal(mobile.res.status, 200, String(mobile.json.error || "mobile login"));
-    assert.equal(mobile.json.token, credentialOf(mobile.res));
+    assert.equal(mobile.json.token, undefined);
+    assert.equal(JSON.stringify(mobile.json).includes(credentialOf(mobile.res)), false);
 
     const ios = await login({ Origin: "http://127.0.0.1:3000", "X-Client": "iOS" });
     assert.equal(ios.res.status, 200, String(ios.json.error || "ios login"));
@@ -157,7 +168,8 @@ describe("session token for native clients only", () => {
       "X-Client": "android",
     });
     assert.equal(android.res.status, 200, String(android.json.error || "android login"));
-    assert.equal(android.json.token, credentialOf(android.res));
+    assert.equal(android.json.token, undefined);
+    assert.equal(JSON.stringify(android.json).includes(credentialOf(android.res)), false);
 
     const web = await login({ "Sec-Fetch-Site": "same-origin", "X-Client": "web" });
     assert.equal(web.res.status, 200);
@@ -290,11 +302,20 @@ describe("session token for native clients only", () => {
     assert.equal(nativeJson.token, undefined);
     assert.equal(JSON.stringify(nativeJson).includes(token), false);
 
-    const ios = await fetch(`http://127.0.0.1:${port}/api/tenant/current`, {
+    const iosSpoof = await fetch(`http://127.0.0.1:${port}/api/tenant/current`, {
       headers: {
         "X-Session-Token": token,
         Origin: "http://127.0.0.1:3000",
         "Sec-Fetch-Site": "cross-site",
+        "X-Client": "ios",
+      },
+    });
+    assert.equal(iosSpoof.status, 401);
+
+    const ios = await fetch(`http://127.0.0.1:${port}/api/tenant/current`, {
+      headers: {
+        "X-Session-Token": token,
+        Origin: "http://127.0.0.1:3000",
         "X-Client": "ios",
       },
     });
@@ -331,13 +352,23 @@ describe("session token for native clients only", () => {
     });
     assert.equal(stillValid.status, 200);
 
-    const nativeLogout = await fetch(`http://127.0.0.1:${port}/api/auth/logout`, {
+    const browserMarkedLogout = await fetch(`http://127.0.0.1:${port}/api/auth/logout`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
         "Sec-Fetch-Site": "same-origin",
         "X-Client": "mobile",
       },
+    });
+    assert.equal(browserMarkedLogout.status, 200);
+    const bearerStillValid = await fetch(`http://127.0.0.1:${port}/api/tenant/current`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.equal(bearerStillValid.status, 200);
+
+    const nativeLogout = await fetch(`http://127.0.0.1:${port}/api/auth/logout`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "X-Client": "mobile" },
     });
     assert.equal(nativeLogout.status, 200);
     const revoked = await fetch(`http://127.0.0.1:${port}/api/tenant/current`, {
@@ -362,20 +393,26 @@ describe("session token for native clients only", () => {
 
       const android = await login({ "Sec-Fetch-Site": "same-origin", "X-Client": "android" });
       assert.equal(android.res.status, 200, String(android.json.error || "prod android login"));
-      const token = String(android.json.token || "");
-      assert.equal(token, credentialOf(android.res));
+      assert.equal(android.json.token, undefined);
+      assert.equal(JSON.stringify(android.json).includes(credentialOf(android.res)), false);
 
       const ios = await login({ Origin: "https://www.mylumera.in", "X-Client": "ios" });
       assert.equal(ios.res.status, 200, String(ios.json.error || "prod ios login"));
-      assert.equal(ios.json.token, credentialOf(ios.res));
+      const token = String(ios.json.token || "");
+      assert.equal(token, credentialOf(ios.res));
 
       const rejected = await fetch(`http://127.0.0.1:${port}/api/tenant/current`, {
         headers: { Authorization: `Bearer ${token}`, "Sec-Fetch-Site": "same-origin" },
       });
       assert.equal(rejected.status, 401);
 
-      const allowed = await fetch(`http://127.0.0.1:${port}/api/tenant/current`, {
+      const markedBrowser = await fetch(`http://127.0.0.1:${port}/api/tenant/current`, {
         headers: { Authorization: `Bearer ${token}`, "Sec-Fetch-Site": "same-origin", "X-Client": "android" },
+      });
+      assert.equal(markedBrowser.status, 401);
+
+      const allowed = await fetch(`http://127.0.0.1:${port}/api/tenant/current`, {
+        headers: { Authorization: `Bearer ${token}`, Origin: "https://www.mylumera.in", "X-Client": "android" },
       });
       assert.equal(allowed.status, 200);
 
@@ -389,6 +426,117 @@ describe("session token for native clients only", () => {
       if (prevOrigins === undefined) delete process.env.ALLOWED_ORIGINS;
       else process.env.ALLOWED_ORIGINS = prevOrigins;
     }
+  });
+
+  it("same-origin with X-Client mobile returns no token and does not authenticate Bearer", async () => {
+    const browser = { "Sec-Fetch-Site": "same-origin", "X-Client": "mobile" };
+
+    const loggedIn = await login(browser);
+    assert.equal(loggedIn.res.status, 200, String(loggedIn.json.error || "login"));
+    const packed = issuedSession(setCookieLines(loggedIn.res));
+    const session = unpackHostSession(packed);
+    assert.equal(loggedIn.json.token, undefined);
+    assert.equal(JSON.stringify(loggedIn.json).includes(session.credential), false);
+
+    const userRow = getDb().prepare("SELECT id, tenant_id FROM users WHERE email = ?").get("doctor@lumera.me") as {
+      id: string;
+      tenant_id: string;
+    };
+    const userBefore = getDb()
+      .prepare(
+        "SELECT onboarding_completed, practice_type, specialty, pack_id, name, clinic_name, role FROM users WHERE id = ?"
+      )
+      .get(userRow.id) as {
+      onboarding_completed: number | null;
+      practice_type: string | null;
+      specialty: string | null;
+      pack_id: string | null;
+      name: string | null;
+      clinic_name: string | null;
+      role: string | null;
+    };
+    const tenantBefore = userRow.tenant_id
+      ? (getDb()
+          .prepare("SELECT name, specialty, address, city, practice_settings FROM tenants WHERE id = ?")
+          .get(userRow.tenant_id) as {
+          name: string | null;
+          specialty: string | null;
+          address: string | null;
+          city: string | null;
+          practice_settings: string | null;
+        } | undefined)
+      : undefined;
+    try {
+      const onboard = await postJson(
+        "/api/auth/complete-onboarding",
+        {},
+        {
+          ...browser,
+          cookie: `__session=${encodeURIComponent(packed)}`,
+          "x-csrf-token": String(loggedIn.json.csrfToken || session.csrf),
+        }
+      );
+      assert.equal(onboard.res.status, 200, String(onboard.json.error || "onboarding"));
+      const onboarded = unpackHostSession(issuedSession(setCookieLines(onboard.res)));
+      assert.equal(onboard.json.token, undefined);
+      assert.equal(JSON.stringify(onboard.json).includes(onboarded.credential), false);
+    } finally {
+      getDb()
+        .prepare(
+          `UPDATE users
+           SET onboarding_completed = ?, practice_type = ?, specialty = ?, pack_id = ?, name = ?, clinic_name = ?, role = ?
+           WHERE id = ?`
+        )
+        .run(
+          userBefore.onboarding_completed,
+          userBefore.practice_type,
+          userBefore.specialty,
+          userBefore.pack_id,
+          userBefore.name,
+          userBefore.clinic_name,
+          userBefore.role,
+          userRow.id
+        );
+      if (tenantBefore && userRow.tenant_id) {
+        getDb()
+          .prepare(
+            `UPDATE tenants SET name = ?, specialty = ?, address = ?, city = ?, practice_settings = ? WHERE id = ?`
+          )
+          .run(
+            tenantBefore.name,
+            tenantBefore.specialty,
+            tenantBefore.address,
+            tenantBefore.city,
+            tenantBefore.practice_settings,
+            userRow.tenant_id
+          );
+      }
+    }
+
+    const oauth = await postJson(
+      "/api/auth/oauth",
+      { provider: "google", profile: { email: "doctor@lumera.me", name: "Doctor" }, skipOtp: true },
+      browser
+    );
+    assert.equal(oauth.res.status, 200, String(oauth.json.error || "oauth"));
+    assert.equal(oauth.json.token, undefined);
+    assert.equal(JSON.stringify(oauth.json).includes(credentialOf(oauth.res)), false);
+
+    const native = await login();
+    const token = String(native.json.token || "");
+    assert.ok(token);
+    const bearer = await fetch(`http://127.0.0.1:${port}/api/tenant/current`, {
+      headers: { Authorization: `Bearer ${token}`, "Sec-Fetch-Site": "same-origin", "X-Client": "mobile" },
+    });
+    assert.equal(bearer.status, 401);
+    const sessionHeader = await fetch(`http://127.0.0.1:${port}/api/tenant/current`, {
+      headers: { "X-Session-Token": token, "Sec-Fetch-Site": "same-origin", "X-Client": "mobile" },
+    });
+    assert.equal(sessionHeader.status, 401);
+    const stillNative = await fetch(`http://127.0.0.1:${port}/api/tenant/current`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.equal(stillNative.status, 200);
   });
 
   it("does not put the session JWT on a raw token field in the API router", () => {

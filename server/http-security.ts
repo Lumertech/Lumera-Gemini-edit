@@ -462,22 +462,27 @@ function isMutating(method: string): boolean {
  * credential at login and replay it. Cookie sessions and cookie CSRF stay in
  * force. A browser-presented bearer does not skip CSRF.
  *
- * The credential is returned and the header is accepted only when either:
+ * Any `Sec-Fetch-Site` value, including `same-origin`, `same-site`,
+ * `cross-site`, and `none`, is a browser request. Page scripts can set
+ * `X-Client` but cannot set or remove `Sec-Fetch-*`, so `X-Client` does not
+ * override that header. Those requests never receive `token` and their
+ * Bearer / `X-Session-Token` headers are ignored.
+ *
+ * The credential is returned and the header is accepted only when
+ * `Sec-Fetch-Site` is absent and either:
  * - `X-Client` is `mobile`, `ios`, `android`, or `native` (case-insensitive,
- *   comma-separated values allowed), even if `Sec-Fetch-Site` or `Origin` is
- *   also present. That mark is how Android, iOS, and other native clients
- *   identify themselves when their HTTP stack or WebView sends Origin or
- *   Fetch Metadata; or
- * - neither `Sec-Fetch-Site` nor `Origin` is present. curl, this repo's
- *   server tests, and URLSession / OkHttp calls that do not set those headers
- *   take this path.
+ *   comma-separated values allowed), even if `Origin` is also present.
+ *   Android, iOS, and other native clients use that mark when their HTTP
+ *   stack sends Origin and does not send Fetch Metadata; or
+ * - `Origin` is also absent. curl, this repo's server tests, and
+ *   URLSession / OkHttp calls that do not set those headers take this path.
  *
  * This repository has no Android or iOS source. Those clients authenticate
  * with the login JSON `token` as Bearer or `X-Session-Token`. Production CORS
  * is unchanged: an `/api` call with neither an allowlisted Origin nor
  * `Sec-Fetch-Site: same-origin` (or `none` on GET/HEAD) is still rejected.
  * `X-Client` does not bypass CORS. A native client that sends Origin to pass
- * that gate must also send `X-Client`.
+ * that gate must also send `X-Client`, and must not send `Sec-Fetch-Site`.
  *
  * An accepted native bearer still skips cookie CSRF, because those clients
  * do not hold the cookie pair.
@@ -495,14 +500,14 @@ export function explicitNativeClient(req: Request): boolean {
   return chunks.some((part) => NATIVE_CLIENT_MARKS.has(part));
 }
 
-export function browserMetadataPresent(req: Request): boolean {
-  return Boolean(headerOne(req, "sec-fetch-site") || headerOne(req, "origin"));
-}
-
-/** True when login JSON may include `token` and header credentials may authenticate. */
+/**
+ * True when login JSON may include `token` and header credentials may authenticate.
+ * `Sec-Fetch-Site` wins over `X-Client`: a browser always sends Fetch Metadata.
+ */
 export function clientMayUseSessionToken(req: Request): boolean {
+  if (headerOne(req, "sec-fetch-site")) return false;
   if (explicitNativeClient(req)) return true;
-  return !browserMetadataPresent(req);
+  return !headerOne(req, "origin");
 }
 
 /** Bearer or `X-Session-Token` when this request is allowed to present one. */
@@ -552,7 +557,7 @@ function hasSessionCookie(cookieHeader: string | undefined): boolean {
  * the secret travels inside `__session`, and the browser still reads `lumera_csrf`
  * to set the header.
  * An accepted native bearer skips this check. A bearer on a browser request
- * (`Sec-Fetch-Site` or `Origin`, without `X-Client: mobile|ios|android|native`)
+ * (any `Sec-Fetch-Site`, or `Origin` without `X-Client: mobile|ios|android|native`)
  * does not: the header is ignored and the cookie still needs its CSRF secret.
  */
 export function csrfShouldReject(req: Request): boolean {

@@ -78,8 +78,8 @@ export function issueLumeraSession(res: Response, user: DbUser): string {
   // Row is in the shared SQL database (Postgres in production). There is no
   // process-local session map: each instance verifies this JWT with JWT_SECRET
   // and loads the user from that database. Login JSON includes this JWT only
-  // when `clientMayUseSessionToken` is true (native `X-Client`, or no
-  // `Sec-Fetch-Site` and no `Origin`). The web app never reads it, and /me
+  // when `clientMayUseSessionToken` is true (no `Sec-Fetch-Site`, and either
+  // native `X-Client` or no `Origin`). The web app never reads it, and /me
   // does not echo it.
   createSession(user.id);
   return jwtToken;
@@ -388,9 +388,11 @@ export function authenticatedCookieCsrf(req: Request): string | null {
 }
 
 export function getSessionId(req: Request): string | null {
-  // Header credential only for native clients. See `clientMayUseSessionToken`.
+  // Header credential only when `clientMayUseSessionToken` is true.
+  // Any `Sec-Fetch-Site` is a browser: `X-Client` cannot bring Bearer back.
   // This repo has no Android or iOS tree; those apps send Bearer or
-  // X-Session-Token, with `X-Client` when they also send Origin or Sec-Fetch-Site.
+  // X-Session-Token, with `X-Client` when they also send Origin and no
+  // Sec-Fetch-Site.
   const headerCredential = acceptedHeaderCredential(req);
   if (headerCredential) return headerCredential;
   const header = cookieHeaderOf(req);
