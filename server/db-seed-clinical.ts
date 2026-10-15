@@ -2,12 +2,16 @@ import { type SqlDatabase } from "./sql-engine.ts";
 import { DEMO_TENANT_ID } from "./db.ts";
 import { ensureDemoTenantLetterhead } from "./db-migrate.ts";
 import { DEMO_PASSWORD, DOCTOR_SEED, hashPasswordSync } from "./db-seed-maps.ts";
+import { WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
 
 export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
   const now = new Date().toISOString();
 
-  // Seed default tenant if tenants table is empty
-  const tenantCount = database.prepare("SELECT COUNT(*) AS c FROM tenants").get() as { c: number };
+  // Seed the demo clinic when no real tenant exists yet.
+  // The WhatsApp quarantine row is inserted during migrate() and must not hide this seed.
+  const tenantCount = database
+    .prepare("SELECT COUNT(*) AS c FROM tenants WHERE id != ?")
+    .get(WHATSAPP_QUARANTINE_TENANT_ID) as { c: number };
   if (tenantCount.c === 0) {
     const trialEnds = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
     database.prepare(`
