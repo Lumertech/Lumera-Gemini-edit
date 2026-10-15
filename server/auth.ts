@@ -3,7 +3,14 @@ import type { NextFunction, Request, Response } from "express";
 import jwt from "jsonwebtoken";
 import { isDemoAccountEmail } from "../src/lib/demoAccounts.ts";
 import { getDb, publicUser, type DbUser, type UserRole } from "./db.ts";
-import { CSRF_COOKIE, csrfCookieValue, csrfSetCookieHeader } from "./http-security.ts";
+import {
+  CSRF_COOKIE,
+  HOST_SESSION_COOKIE,
+  csrfCookieValue,
+  csrfSetCookieHeader,
+  packHostSession,
+  unpackHostSession,
+} from "./http-security.ts";
 import { clinicTenantAccessError } from "./platform-tenants.ts";
 
 const COOKIE = "lumera_sid";
@@ -57,6 +64,10 @@ export function issueLumeraSession(res: Response, user: DbUser): string {
     name: user.name,
   });
   setSessionCookie(res, jwtToken);
+  // Row is in the shared SQL database (Postgres in production). There is no
+  // process-local session map: each instance verifies this JWT with JWT_SECRET
+  // and loads the user from that database. Bearer clients still receive the
+  // JWT from the login JSON; the web app never reads it.
   createSession(user.id);
   return jwtToken;
 }
@@ -126,12 +137,21 @@ const CLEAR_CSRF_ATTRS = "Path=/; SameSite=Lax; Secure";
 
 export function setSessionCookie(res: Response, sessionId: string) {
   const maxAge = SESSION_DAYS * 24 * 60 * 60;
+  const csrf = csrfCookieValue();
   const sid = `${COOKIE}=${encodeURIComponent(sessionId)}; ${SESSION_COOKIE_ATTRS}; Max-Age=${maxAge}`;
-  res.setHeader("Set-Cookie", [sid, csrfSetCookieHeader(csrfCookieValue())]);
+  // `__session` is the only cookie Firebase Hosting forwards to Cloud Run.
+  // It carries the same JWT as lumera_sid plus the CSRF secret, because
+  // lumera_csrf is stripped on the way in. lumera_sid / lumera_csrf stay for
+  // direct Cloud Run and for the browser script that sets X-CSRF-Token.
+  const host = `${HOST_SESSION_COOKIE}=${encodeURIComponent(packHostSession(sessionId, csrf))}; ${SESSION_COOKIE_ATTRS}; Max-Age=${maxAge}`;
+  res.setHeader("Cache-Control", "private, no-store");
+  res.setHeader("Set-Cookie", [sid, host, csrfSetCookieHeader(csrf)]);
 }
 
 export function clearSessionCookie(res: Response) {
+  res.setHeader("Cache-Control", "private, no-store");
   res.setHeader("Set-Cookie", [
+    `${HOST_SESSION_COOKIE}=; ${SESSION_COOKIE_ATTRS}; Max-Age=0`,
     `${COOKIE}=; ${SESSION_COOKIE_ATTRS}; Max-Age=0`,
     `${CSRF_COOKIE}=; ${CLEAR_CSRF_ATTRS}; Max-Age=0`,
   ]);
@@ -232,7 +252,13 @@ export function getSessionId(req: Request): string | null {
   if (typeof xToken === "string" && xToken.trim()) {
     return xToken.trim();
   }
-  return parseCookies(req.headers.cookie)[COOKIE] || null;
+  const cookies = parseCookies(req.headers.cookie);
+  const host = cookies[HOST_SESSION_COOKIE];
+  if (host) {
+    const credential = unpackHostSession(host).credential.trim();
+    if (credential) return credential;
+  }
+  return cookies[COOKIE] || null;
 }
 
 export function loadUserFromSession(req: Request): AuthUser | null {

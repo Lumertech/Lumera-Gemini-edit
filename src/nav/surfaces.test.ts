@@ -168,6 +168,24 @@ describe("public vs app surface routing (founder lock #48)", () => {
     assert.equal(app.boot, true);
     assert.equal(app.showAppChrome, false);
 
+    const apexQueue = "/w/lumera-apex-polyclinic/queue";
+    const apexBoot = decideChrome({ loading: true, authenticated: false, surface: "app", pathname: apexQueue });
+    assert.equal(pathToNav(apexQueue).appView, "queue");
+    assert.equal(pathToNav(apexQueue).workspaceSlug, "lumera-apex-polyclinic");
+    assert.equal(apexBoot.boot, true);
+    assert.equal(apexBoot.showAppChrome, false);
+    assert.equal(apexBoot.renderSurface, "app");
+    const apexRestored = decideChrome({
+      loading: false,
+      authenticated: true,
+      surface: "app",
+      pathname: apexQueue,
+      roleHome: "app",
+    });
+    assert.equal(apexRestored.boot, false);
+    assert.equal(apexRestored.showAppChrome, true);
+    assert.equal(apexRestored.renderSurface, "app");
+
     const policy = decideChrome({
       loading: true,
       authenticated: false,

@@ -147,7 +147,7 @@ function asError(err: unknown, fallbackMessage: string): Error {
 export function redactSensitiveLogText(text: string): string {
   return String(text || "")
     .replace(/Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi, "Bearer [redacted]")
-    .replace(/(lumera_sid|lumera_session_token|x-session-token)\s*[=:]\s*[^;\s,"']+/gi, "$1=[redacted]")
+    .replace(/(__session|lumera_sid|lumera_session_token|x-session-token)\s*[=:]\s*[^;\s,"']+/gi, "$1=[redacted]")
     .replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, "[redacted-jwt]");
 }
 

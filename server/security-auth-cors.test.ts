@@ -17,8 +17,10 @@ import {
   corsAllowlistMiddleware,
   corsShouldReject,
   createAuthRateLimiter,
+  cookiesForwardedByFirebaseHosting,
   csrfProtectionMiddleware,
   csrfShouldReject,
+  packHostSession,
   isMissingOrNullOrigin,
   originAllowed,
   parseAllowedOrigins,
@@ -502,6 +504,30 @@ describe("Auth / tenant isolation / CORS / CSRF / rate limit", () => {
       headers: { cookie: "lumera_sid=abc.def" },
     } as unknown as express.Request;
     assert.equal(csrfShouldReject(deauthorizeReq), false);
+
+    const packed = packHostSession("header.payload.sig", "token-1");
+    const hostingOnly = cookiesForwardedByFirebaseHosting(
+      `lumera_sid=header.payload.sig; lumera_csrf=token-1; __session=${encodeURIComponent(packed)}`
+    );
+    assert.match(hostingOnly, /^__session=/);
+    assert.doesNotMatch(hostingOnly, /lumera_sid/);
+    assert.doesNotMatch(hostingOnly, /lumera_csrf/);
+
+    const hostingReject = {
+      method: "POST",
+      path: "/api/patients",
+      originalUrl: "/api/patients",
+      headers: { cookie: hostingOnly },
+    } as unknown as express.Request;
+    assert.equal(csrfShouldReject(hostingReject), true);
+
+    const hostingOk = {
+      method: "POST",
+      path: "/api/auth/logout",
+      originalUrl: "/api/auth/logout",
+      headers: { cookie: hostingOnly, "x-csrf-token": "token-1" },
+    } as unknown as express.Request;
+    assert.equal(csrfShouldReject(hostingOk), false);
   });
 
   it("CSP is on SPA HTML and Origin: null document GETs stay open", async () => {

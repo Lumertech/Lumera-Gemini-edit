@@ -18,6 +18,14 @@ import { isBackendPath, isHtmlDocumentPath } from "./spa-fallback.ts";
 export const CSRF_COOKIE = "lumera_csrf";
 export const CSRF_HEADER = "x-csrf-token";
 export const SESSION_COOKIE = "lumera_sid";
+/**
+ * Firebase Hosting rewrites www.mylumera.in to Cloud Run and strips every
+ * inbound cookie except `__session` (it is also the CDN cache key).
+ * `lumera_sid` still reaches the browser, and direct Cloud Run, but not the app.
+ */
+export const HOST_SESSION_COOKIE = "__session";
+/** Splits the JWT from the CSRF secret inside `__session`. Neither side contains `~`. */
+const HOST_SESSION_SEP = "~";
 
 export const AUTH_RATE_LIMITED_PATHS = [
   "/api/auth/login",
@@ -203,6 +211,27 @@ export function canonicalHostRedirectMiddleware(env: NodeJS.ProcessEnv = process
   };
 }
 
+export function packHostSession(credential: string, csrf: string): string {
+  return `${credential}${HOST_SESSION_SEP}${csrf}`;
+}
+
+export function unpackHostSession(raw: string): { credential: string; csrf: string } {
+  const value = String(raw || "");
+  const idx = value.lastIndexOf(HOST_SESSION_SEP);
+  if (idx <= 0) return { credential: value, csrf: "" };
+  return { credential: value.slice(0, idx), csrf: value.slice(idx + 1) };
+}
+
+/**
+ * What Cloud Run actually receives for a browser cookie jar on www.mylumera.in.
+ * Tests use this so a green run cannot depend on `lumera_sid`, which Hosting drops.
+ */
+export function cookiesForwardedByFirebaseHosting(cookieHeader: string): string {
+  const session = parseCookieHeader(cookieHeader)[HOST_SESSION_COOKIE];
+  if (!session) return "";
+  return `${HOST_SESSION_COOKIE}=${encodeURIComponent(session)}`;
+}
+
 function parseCookieHeader(header?: string): Record<string, string> {
   const out: Record<string, string> = {};
   if (!header) return out;
@@ -233,14 +262,29 @@ function hasBearerOrSessionHeader(req: Request): boolean {
   return typeof xToken === "string" && Boolean(xToken.trim());
 }
 
-/** Cookie-only mutating requests must echo the non-HttpOnly CSRF cookie as X-CSRF-Token. */
+function expectedCsrf(cookies: Record<string, string>): string {
+  const embedded = unpackHostSession(cookies[HOST_SESSION_COOKIE] || "").csrf;
+  if (embedded) return embedded;
+  return cookies[CSRF_COOKIE] || "";
+}
+
+function hasSessionCookie(cookies: Record<string, string>): boolean {
+  return Boolean(cookies[HOST_SESSION_COOKIE] || cookies[SESSION_COOKIE]);
+}
+
+/**
+ * Cookie-only mutating requests must echo the CSRF secret as X-CSRF-Token.
+ * On Firebase Hosting the non-HttpOnly `lumera_csrf` cookie is not forwarded;
+ * the secret travels inside `__session`, and the browser still reads `lumera_csrf`
+ * to set the header.
+ */
 export function csrfShouldReject(req: Request): boolean {
   if (isSecurityExemptPath(req.path) || isSecurityExemptPath(req.originalUrl || "")) return false;
   if (!isMutating(req.method)) return false;
   if (hasBearerOrSessionHeader(req)) return false;
   const cookies = parseCookieHeader(req.headers.cookie);
-  if (!cookies[SESSION_COOKIE]) return false;
-  const cookieToken = cookies[CSRF_COOKIE] || "";
+  if (!hasSessionCookie(cookies)) return false;
+  const cookieToken = expectedCsrf(cookies);
   const headerToken = String(req.headers[CSRF_HEADER] || req.headers["X-CSRF-Token"] || "").trim();
   return !cookieToken || !headerToken || cookieToken !== headerToken;
 }
