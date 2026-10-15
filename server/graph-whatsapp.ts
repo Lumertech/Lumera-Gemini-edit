@@ -145,7 +145,7 @@ function tableHasColumn(db: DatabaseSync, table: string, column: string): boolea
 /**
  * Last patient inbound within 24h opens the customer-service window.
  * The clock is whatsapp_conversations.last_inbound_at for the caller's tenant only.
- * NULL-tenant and other-tenant rows never open the window.
+ * Unassigned and other-tenant rows never open the window.
  */
 export function isWithinCustomerServiceWindow(
   db: DatabaseSync | null | undefined,

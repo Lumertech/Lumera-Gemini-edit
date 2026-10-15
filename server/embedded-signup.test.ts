@@ -269,10 +269,8 @@ describe("Embedded Signup v4 handshake", () => {
     assert.equal(first.registrationPinStored, true);
     assert.equal(second.registrationPinStored, true);
     const row = getTenantWabaNumber(clinic.tenantId);
-    const storedPin = getDb()
-      .prepare("SELECT registration_pin FROM whatsapp_number_secrets WHERE id = ?")
-      .get(row!.meta_token_ref) as { registration_pin: string };
-    assert.equal(storedPin.registration_pin, pins[1]);
+    assert.equal(pins[1], pins[0]);
+    assert.equal(getWhatsAppRegistrationPin(row!.meta_token_ref), pins[0]);
   });
 
   it("reuses the stored 2FA PIN on reconnect and generates a new PIN only when none is stored", async () => {

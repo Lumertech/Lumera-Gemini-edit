@@ -1518,7 +1518,7 @@ Output strictly in JSON:
     <div class="meta-grid">
       <div><strong>Patient Name</strong> ${h(lab.patient_name)}</div>
       <div><strong>UHID</strong> ${h(lab.patient_uhid)}</div>
-        <div><strong>Referring Doctor</strong> ${h(resolveClinicFacingNames(getDb(), labOwnerTenantId(lab)).doctorName)}</div>
+      <div><strong>Referring Doctor</strong> ${h(resolveClinicFacingNames(getDb(), labOwnerTenantId(lab)).doctorName)}</div>
       <div><strong>Report Status</strong> Verified & Released</div>
     </div>
 
