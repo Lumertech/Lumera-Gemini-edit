@@ -266,30 +266,149 @@ export function unpackHostSession(raw: string): { credential: string; csrf: stri
 }
 
 /**
- * What Cloud Run actually receives for a browser cookie jar on www.mylumera.in.
- * Tests use this so a green run cannot depend on `lumera_sid`, which Hosting drops.
+ * Every value for `name`, in header order. Chrome sends the oldest cookie
+ * first and the newest last when paths are equal, so the last entry is the
+ * newest. Duplicates happen when an older build set the same name with a
+ * different Domain or Path; a host-only Path=/ clear does not remove those.
  */
-export function cookiesForwardedByFirebaseHosting(cookieHeader: string): string {
-  const session = parseCookieHeader(cookieHeader)[HOST_SESSION_COOKIE];
-  if (!session) return "";
-  return `${HOST_SESSION_COOKIE}=${encodeURIComponent(session)}`;
-}
-
-function parseCookieHeader(header?: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  if (!header) return out;
+export function listCookieValues(header: string | undefined, name: string): string[] {
+  const out: string[] = [];
+  if (!header || !name) return out;
   for (const part of header.split(";")) {
     const idx = part.indexOf("=");
-    if (idx === -1) continue;
+    if (idx <= 0) continue;
     const key = part.slice(0, idx).trim();
-    const val = part.slice(idx + 1).trim();
+    if (key !== name) continue;
+    const raw = part.slice(idx + 1).trim();
+    if (!raw) continue;
     try {
-      out[key] = decodeURIComponent(val);
+      out.push(decodeURIComponent(raw));
     } catch {
-      out[key] = val;
+      out.push(raw);
     }
   }
   return out;
+}
+
+/**
+ * `__session` whose embedded CSRF secret equals `csrfHeader`. When several
+ * match, the last one (newest, in Chrome's order) wins. When none match, the
+ * newest is still the one a single-cookie parser would have kept.
+ */
+export function selectHostSession(cookieHeader: string | undefined, csrfHeader: string): string {
+  const values = listCookieValues(cookieHeader, HOST_SESSION_COOKIE);
+  if (!values.length) return "";
+  const wanted = csrfHeader.trim();
+  if (wanted) {
+    const matches = values.filter((value) => unpackHostSession(value).csrf === wanted);
+    if (matches.length) return matches[matches.length - 1];
+  }
+  return values[values.length - 1];
+}
+
+/**
+ * What Cloud Run actually receives for a browser cookie jar on www.mylumera.in.
+ * Tests use this so a green run cannot depend on `lumera_sid`, which Hosting drops.
+ * Every `__session` is kept, in order, so a duplicate Domain cookie is visible.
+ */
+export function cookiesForwardedByFirebaseHosting(cookieHeader: string): string {
+  const sessions = listCookieValues(cookieHeader, HOST_SESSION_COOKIE);
+  if (!sessions.length) return "";
+  return sessions.map((value) => `${HOST_SESSION_COOKIE}=${encodeURIComponent(value)}`).join("; ");
+}
+
+/** Paths an older build may have stored. `/api/auth` defaults to directory `/api`. */
+const STALE_COOKIE_PATHS = ["/", "/api"] as const;
+
+const SESSION_COOKIE_NAMES: Array<{ name: string; httpOnly: boolean }> = [
+  { name: HOST_SESSION_COOKIE, httpOnly: true },
+  { name: SESSION_COOKIE, httpOnly: true },
+  { name: CSRF_COOKIE, httpOnly: false },
+];
+
+/**
+ * Older builds set SameSite=None; Partitioned copies. Chrome treats those as
+ * different cookies from the Lax ones, so a Lax Max-Age=0 does not delete them.
+ * These lines only expire. Nothing in the app sets a Partitioned value cookie.
+ */
+export function partitionedCookieExpiryLines(): string[] {
+  return SESSION_COOKIE_NAMES.map(({ name, httpOnly }) => {
+    const parts = [`${name}=`, "Path=/", "Max-Age=0", "Secure", "SameSite=None", "Partitioned"];
+    if (httpOnly) parts.push("HttpOnly");
+    return parts.join("; ");
+  });
+}
+
+function publicHostnames(env: NodeJS.ProcessEnv): string[] {
+  const hosts: string[] = [];
+  for (const origin of parseAllowedOrigins(env)) {
+    try {
+      const hostname = new URL(origin).hostname.toLowerCase();
+      if (!isExpandablePublicHost(hostname)) continue;
+      if (!hosts.includes(hostname)) hosts.push(hostname);
+    } catch {
+      /* ignore malformed */
+    }
+  }
+  return hosts;
+}
+
+/** Domain attributes to expire for an allowlisted public host. Never a public suffix. */
+export function cookieDomainsToExpire(hostname: string): string[] {
+  const host = hostname.trim().toLowerCase().replace(/\.$/, "").split(":")[0];
+  if (!isExpandablePublicHost(host)) return [];
+  const labels = host.split(".");
+  const domains: string[] = [];
+  const push = (domain: string) => {
+    if (!domains.includes(domain)) domains.push(domain);
+    const dotted = domain.startsWith(".") ? domain : `.${domain}`;
+    if (!domains.includes(dotted)) domains.push(dotted);
+  };
+  push(host);
+  for (let i = 1; i <= labels.length - 2; i++) push(labels.slice(i).join("."));
+  return domains;
+}
+
+function expireCookieLine(name: string, opts: { path: string; domain?: string; httpOnly: boolean }): string {
+  const parts = [`${name}=`, `Path=${opts.path}`, "Max-Age=0", "Secure", "SameSite=Lax"];
+  if (opts.httpOnly) parts.push("HttpOnly");
+  if (opts.domain) parts.push(`Domain=${opts.domain}`);
+  return parts.join("; ");
+}
+
+function allowlistedCookieDomains(env: NodeJS.ProcessEnv): string[] {
+  return [...new Set(publicHostnames(env).flatMap((host) => cookieDomainsToExpire(host)))];
+}
+
+/**
+ * Clears sent before the new anonymous cookie. Host-only, `.mylumera.in`, and
+ * `mylumera.in` (from the allowlist), on Path=/ and Path=/api, for `__session`
+ * and `lumera_csrf`. A browser applies these before the retry, so the user
+ * does not have to clear cookies by hand.
+ * Domains come only from the CORS allowlist / APP_URL, not from a request header.
+ */
+export function refreshSessionExpiryLines(env: NodeJS.ProcessEnv = process.env): string[] {
+  const domains = allowlistedCookieDomains(env);
+  const lines: string[] = [...partitionedCookieExpiryLines()];
+  for (const { name, httpOnly } of SESSION_COOKIE_NAMES) {
+    for (const path of STALE_COOKIE_PATHS) {
+      lines.push(expireCookieLine(name, { path, httpOnly }));
+      for (const domain of domains) {
+        lines.push(expireCookieLine(name, { path, httpOnly, domain }));
+      }
+    }
+  }
+  return lines;
+}
+
+/**
+ * Variant clears that are safe to append after a new host-only Path=/ cookie.
+ * Host-only Path=/ is omitted so it cannot delete the cookie just set.
+ * Empty when the allowlist has no public host (local tests).
+ */
+export function sessionCookieExpiryLines(env: NodeJS.ProcessEnv = process.env): string[] {
+  if (!allowlistedCookieDomains(env).length) return [];
+  return refreshSessionExpiryLines(env).filter((line) => /domain=/i.test(line) || /path=\/api(?:;|$)/i.test(line));
 }
 
 function isMutating(method: string): boolean {
@@ -305,14 +424,23 @@ function hasBearerOrSessionHeader(req: Request): boolean {
   return typeof xToken === "string" && Boolean(xToken.trim());
 }
 
-function expectedCsrf(cookies: Record<string, string>): string {
-  const embedded = unpackHostSession(cookies[HOST_SESSION_COOKIE] || "").csrf;
-  if (embedded) return embedded;
-  return cookies[CSRF_COOKIE] || "";
+function csrfHeaderValue(req: Request): string {
+  return String(req.headers[CSRF_HEADER] || req.headers["X-CSRF-Token"] || "").trim();
 }
 
-function hasSessionCookie(cookies: Record<string, string>): boolean {
-  return Boolean(cookies[HOST_SESSION_COOKIE] || cookies[SESSION_COOKIE]);
+function expectedCsrf(cookieHeader: string | undefined, csrfHeader: string): string {
+  const selected = selectHostSession(cookieHeader, csrfHeader);
+  if (selected) {
+    const embedded = unpackHostSession(selected).csrf;
+    if (embedded) return embedded;
+  }
+  const readable = listCookieValues(cookieHeader, CSRF_COOKIE);
+  if (csrfHeader && readable.includes(csrfHeader)) return csrfHeader;
+  return readable.length ? readable[readable.length - 1] : "";
+}
+
+function hasSessionCookie(cookieHeader: string | undefined): boolean {
+  return listCookieValues(cookieHeader, HOST_SESSION_COOKIE).length > 0 || listCookieValues(cookieHeader, SESSION_COOKIE).length > 0;
 }
 
 /**
@@ -325,10 +453,16 @@ export function csrfShouldReject(req: Request): boolean {
   if (isSecurityExemptPath(req.path) || isSecurityExemptPath(req.originalUrl || "")) return false;
   if (!isMutating(req.method)) return false;
   if (hasBearerOrSessionHeader(req)) return false;
-  const cookies = parseCookieHeader(req.headers.cookie);
-  if (!hasSessionCookie(cookies)) return false;
-  const cookieToken = expectedCsrf(cookies);
-  const headerToken = String(req.headers[CSRF_HEADER] || req.headers["X-CSRF-Token"] || "").trim();
+  const cookieHeader = typeof req.headers.cookie === "string" ? req.headers.cookie : "";
+  const headerToken = csrfHeaderValue(req);
+  const hostSessions = listCookieValues(cookieHeader, HOST_SESSION_COOKIE);
+  // Firebase Hosting forwards only __session. The page can still send
+  // X-CSRF-Token read from lumera_csrf, which never reaches Cloud Run.
+  // That anonymous same-origin request is refreshable. A cookieless request
+  // with no token (curl) is unchanged.
+  if (!hostSessions.length && headerToken && !hasSessionCookie(cookieHeader)) return true;
+  if (!hasSessionCookie(cookieHeader)) return false;
+  const cookieToken = expectedCsrf(cookieHeader, headerToken);
   return !cookieToken || !headerToken || cookieToken !== headerToken;
 }
 
@@ -388,7 +522,7 @@ export function csrfProtectionMiddleware(env: NodeJS.ProcessEnv = process.env) {
       try {
         const { sessionCookieIsAuthenticated, issueAnonymousCsrfCookie } = await import("./auth.ts");
         if (sessionCookieIsAuthenticated(req)) return csrfReject(res);
-        const token = issueAnonymousCsrfCookie(res);
+        const token = issueAnonymousCsrfCookie(res, env);
         res.setHeader("Cache-Control", "private, no-store");
         res.setHeader("X-CSRF-Token", token);
         return res.status(403).json({

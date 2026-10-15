@@ -105,7 +105,12 @@ describe("P0 #120 cookie session and tenant isolation", () => {
     assert.match(session.setCookie, /HttpOnly/i);
     assert.match(session.setCookie, /Secure/i);
     assert.match(session.setCookie, /SameSite=Lax/i);
-    assert.doesNotMatch(session.setCookie, /SameSite=None/i);
+    for (const line of session.setCookie.split(/\n/)) {
+      if (/samesite=none/i.test(line)) {
+        assert.match(line, /max-age=0/i);
+        assert.match(line, /partitioned/i);
+      }
+    }
 
     const me = await fetch(`http://127.0.0.1:${server.port}/api/me`, {
       headers: { cookie: `lumera_sid=${encodeURIComponent(session.sid)}` },
