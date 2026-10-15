@@ -1,3 +1,4 @@
+import { omitClientSecretKeys } from "./client-serializers.ts";
 import type { SqlDatabase } from "./sql-engine.ts";
 import { getDb, normalizePracticeType, writeAudit } from "./db.ts";
 import {
@@ -100,7 +101,8 @@ function mapPublicTenant(database: SqlDatabase, row: TenantRow, opts?: { detail?
   if (opts?.detail) {
     tenant.subscription = subscription;
   }
-  return tenant;
+  // Explicit fields above — never spread the tenant row (it holds Meta tokens).
+  return omitClientSecretKeys(tenant);
 }
 
 export function listPublicPlans() {

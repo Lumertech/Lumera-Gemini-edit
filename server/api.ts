@@ -53,6 +53,7 @@ import {
   requireRole,
 } from "./auth.ts";
 import { rejectUntrustedTenantClaim } from "./tenant-guard.ts";
+import { publicBranch, publicTenant } from "./client-serializers.ts";
 import { clinicTenantId } from "./whatsapp-scope.ts";
 import {
   createAdminTenant,
@@ -1571,7 +1572,10 @@ export function createApiRouter(): Router {
     if (rejectClinicTenantBlocked(req.user, res)) return;
     let tenant = null;
     if (req.user.tenantId) {
-      tenant = getDb().prepare("SELECT * FROM tenants WHERE id = ?").get(req.user.tenantId) as any;
+      const row = getDb().prepare("SELECT * FROM tenants WHERE id = ?").get(req.user.tenantId) as
+        | Record<string, unknown>
+        | undefined;
+      tenant = publicTenant(row);
     }
     // Session credential stays in the HttpOnly cookie. Echoing getSessionId here
     // let page scripts read it. Native clients keep the JWT from the login body.
@@ -1642,7 +1646,9 @@ export function createApiRouter(): Router {
     if (!tenantId) {
       return res.status(404).json({ error: "No tenant associated with this account." });
     }
-    const tenant = getDb().prepare("SELECT * FROM tenants WHERE id = ?").get(tenantId) as any;
+    const tenant = publicTenant(
+      getDb().prepare("SELECT * FROM tenants WHERE id = ?").get(tenantId) as Record<string, unknown> | undefined
+    );
     if (!tenant) {
       return res.status(404).json({ error: "Tenant record not found." });
     }
@@ -2360,9 +2366,12 @@ export function createApiRouter(): Router {
   api.get("/branches", requireAuth, (req, res) => {
     const tenantId = clinicTenantId(req);
     const rows = tenantId
-      ? getDb().prepare("SELECT * FROM branches WHERE tenant_id = ? ORDER BY name").all(tenantId)
+      ? (getDb().prepare("SELECT * FROM branches WHERE tenant_id = ? ORDER BY name").all(tenantId) as Record<
+          string,
+          unknown
+        >[])
       : [];
-    res.json({ branches: rows });
+    res.json({ branches: rows.map((row) => publicBranch(row)) });
   });
 
   api.post("/branches", requireAuth, requireRole(...ADMIN_ROLES, "CLINIC_ADMIN", "polyclinic_admin"), (req, res) => {
@@ -2387,7 +2396,13 @@ export function createApiRouter(): Router {
         tenantId
       );
     audit(req, "Branch created", b.name);
-    res.status(201).json({ branch: getDb().prepare("SELECT * FROM branches WHERE id = ? AND tenant_id = ?").get(id, tenantId) });
+    res.status(201).json({
+      branch: publicBranch(
+        getDb().prepare("SELECT * FROM branches WHERE id = ? AND tenant_id = ?").get(id, tenantId) as
+          | Record<string, unknown>
+          | undefined
+      ),
+    });
   });
 
   api.patch("/branches/:id", requireAuth, requireRole(...ADMIN_ROLES, "CLINIC_ADMIN", "polyclinic_admin"), (req, res) => {
@@ -2410,7 +2425,13 @@ export function createApiRouter(): Router {
       )
       .run(next.name, next.address, next.phone, next.opd_hours, Number(next.active_doctors), next.status, req.params.id, tenantId);
     audit(req, "Branch updated", String(next.name));
-    res.json({ branch: getDb().prepare("SELECT * FROM branches WHERE id = ? AND tenant_id = ?").get(req.params.id, tenantId) });
+    res.json({
+      branch: publicBranch(
+        getDb().prepare("SELECT * FROM branches WHERE id = ? AND tenant_id = ?").get(req.params.id, tenantId) as
+          | Record<string, unknown>
+          | undefined
+      ),
+    });
   });
 
   api.delete("/branches/:id", requireAuth, requireRole(...ADMIN_ROLES, "CLINIC_ADMIN", "polyclinic_admin"), (req, res) => {
