@@ -218,6 +218,9 @@ describe("Wave 1A PHI / auth lock", () => {
   });
 
   it("mock workspace is the demo login matrix, not every @lumera.me mailbox", () => {
+    const dbSrc = fs.readFileSync(path.join(__dirname, "db.ts"), "utf8");
+    assert.equal(/from\s+["']\.\/auth(?:\.ts)?["']/.test(dbSrc), false);
+
     for (const acct of DEMO_LOGIN_MATRIX) {
       assert.equal(
         isDemoWorkspaceUser({ email: acct.email, id: acct.id, tenant_id: "tenant-other" }),

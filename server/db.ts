@@ -1,5 +1,4 @@
 import { isDemoAccountEmail } from "../src/lib/demoAccounts.ts";
-import { isSandboxPasswordSessionEmail } from "./auth.ts";
 import { migrate } from "./db-migrate.ts";
 import {
   seedIfEmpty,
@@ -82,12 +81,25 @@ const DEMO_WORKSPACE_USER_IDS = new Set([
 ]);
 
 /**
+ * Sunrise video logins. Duplicated here so this module does not import auth.ts
+ * (session resolution). Keep in sync with SANDBOX_PASSWORD_SESSION_EMAILS.
+ */
+const SUNRISE_REAL_TENANT_EMAILS = new Set([
+  "ananya.sunrise@lumera.me",
+  "reception.sunrise@lumera.me",
+]);
+
+function isSunriseRealTenantEmail(email: string): boolean {
+  return email.endsWith("@lumera.me") && SUNRISE_REAL_TENANT_EMAILS.has(email);
+}
+
+/**
  * Mock-chart workspace is the seeded Quick Demo matrix (`DEMO_LOGIN_MATRIX`) only.
- * Sunrise video accounts (`SANDBOX_PASSWORD_SESSION_EMAILS`) are real tenants.
+ * Sunrise video accounts are real tenants.
  */
 export function isDemoWorkspaceUser(user: { id?: string; tenant_id?: string; email?: string }): boolean {
   const email = String(user.email || "").trim().toLowerCase();
-  if (isSandboxPasswordSessionEmail(email)) return false;
+  if (isSunriseRealTenantEmail(email)) return false;
   if (isDemoAccountEmail(email)) return true;
   if (user.tenant_id === DEMO_TENANT_ID) return true;
   const id = String(user.id || "");
