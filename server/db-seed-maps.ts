@@ -11,6 +11,7 @@ import {
   roleHomeForAccount,
 } from "./specialty-packs.ts";
 import { PRODUCT_NAME } from "../src/brand.ts";
+import { omitClientSecretKeys } from "./client-serializers.ts";
 import { DEMO_TENANT_ID, getDb, type DbUser, isDemoWorkspaceUser, normalizePracticeType } from "./db.ts";
 import { backfillLabReportAndBranchTenants, ensureDemoTenantLetterhead } from "./db-migrate.ts";
 
@@ -771,9 +772,10 @@ function workspaceSlugForTenant(tenantId: string): string {
   }
 }
 
+/** Allowlisted account fields. `password_hash` and any other secret column stay on the server. */
 export function publicUser(user: DbUser) {
   const billing = getTenantBillingProfile(user.tenant_id || "");
-  return {
+  return omitClientSecretKeys({
     id: user.id,
     tenantId: user.tenant_id || "",
     email: user.email,
@@ -796,6 +798,6 @@ export function publicUser(user: DbUser) {
     isDemoWorkspace: isDemoWorkspaceUser(user),
     gstin: billing.gstin,
     upiId: billing.upiId,
-  };
+  });
 }
 

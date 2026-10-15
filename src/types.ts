@@ -64,8 +64,7 @@ export interface Tenant {
   hfrId: string;
   wabaId?: string;
   phoneNumberId?: string;
-  metaAccessToken?: string;
-  metaTokenExpiresAt?: string;
+  /** WABA display name only. Access tokens and token expiry stay on the server. */
   metaWabaName?: string;
   metaQualityRating?: 'GREEN' | 'YELLOW' | 'RED' | 'UNKNOWN';
   metaOnboardingStatus?: 'connected' | 'pending' | 'disconnected';
