@@ -23,6 +23,7 @@ import { reportCaughtError } from "./error-tracker.ts";
 import { CLINICIAN_ROLES, requireAuth, requireRole } from "./auth.ts";
 import { rejectUntrustedTenantClaim } from "./tenant-guard.ts";
 import { authenticatedLabReportPath, authorizeLabReport, sendLabReportDenied } from "./lab-report-access.ts";
+import { WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
 import {
   clinicTenantId,
   getTenantConversation,
@@ -30,6 +31,7 @@ import {
   listTenantOutboundEvents,
   requireClinicWhatsApp,
   serializeOutboundEvent,
+  upsertScopedConversation,
 } from "./whatsapp-scope.ts";
 
 /** Patient names, notes, WhatsApp text, and Rx/lab fields before HTML interpolation. */
@@ -1072,7 +1074,7 @@ Output strictly in JSON:
       const now = new Date().toISOString();
       const timeDisplay = getDisplayTime();
       const cleanPhone = (patientPhone || "+91 98234 55667").trim();
-      const convId = `conv-${cleanPhone.replace(/\D/g, "").slice(-8) || "pt"}`;
+      const preferredId = `conv-${cleanPhone.replace(/\D/g, "").slice(-8) || "pt"}`;
 
       // Insert or update prescription record in DB
       try {
@@ -1101,20 +1103,18 @@ Output strictly in JSON:
         // Table fallback
       }
 
-      // Ensure WhatsApp conversation exists for patient
-      let conv = db.prepare("SELECT * FROM whatsapp_conversations WHERE id = ? OR patient_phone = ?").get(convId, cleanPhone) as Record<string, unknown> | undefined;
-      if (!conv) {
-        db.prepare(`
-          INSERT INTO whatsapp_conversations (id, patient_phone, patient_name, handover_mode, assigned_staff, tags, preferred_language, unread_count, last_message, last_message_time, updated_at)
-          VALUES (?, ?, ?, 'bot', 'Lumera Rx Dispatcher', '["Prescription", "Digital EMR"]', ?, 0, ?, ?, ?)
-        `).run(convId, cleanPhone, patientName, language, `Digital Rx: ${rxNumber}`, timeDisplay, now);
-      } else {
-        db.prepare(`
-          UPDATE whatsapp_conversations
-          SET last_message = ?, last_message_time = ?, updated_at = ?
-          WHERE id = ?
-        `).run(`Digital Rx: ${rxNumber}`, timeDisplay, now, String(conv.id));
-      }
+      const convId = upsertScopedConversation({
+        preferredId,
+        tenantId,
+        patientPhone: cleanPhone,
+        patientName,
+        assignedStaff: "Lumera Rx Dispatcher",
+        tags: '["Prescription", "Digital EMR"]',
+        preferredLanguage: language || "en",
+        lastMessage: `Digital Rx: ${rxNumber}`,
+        lastMessageTime: timeDisplay,
+        now,
+      });
 
       const pdfUrl = `/api/whatsapp/prescription/${rxNumber}/pdf`;
       const medsText = medicines.slice(0, 3).map((m: any, i: number) => `  ${i + 1}. *${m.drugName}* (${m.dosage} - ${m.frequency})`).join("\n");
@@ -1124,8 +1124,8 @@ Output strictly in JSON:
 
       const msgId = `msg-rx-${crypto.randomUUID().slice(0, 8)}`;
       db.prepare(`
-        INSERT INTO whatsapp_messages (id, conversation_id, patient_phone, sender, staff_name, content, translated_content, detected_language, time_display, buttons, media, status, created_at)
-        VALUES (?, ?, ?, 'agent', ?, ?, null, ?, ?, ?, ?, 'delivered', ?)
+        INSERT INTO whatsapp_messages (id, conversation_id, patient_phone, sender, staff_name, content, translated_content, detected_language, time_display, buttons, media, status, created_at, tenant_id)
+        VALUES (?, ?, ?, 'agent', ?, ?, null, ?, ?, ?, ?, 'delivered', ?, ?)
       `).run(
         msgId,
         convId,
@@ -1139,7 +1139,8 @@ Output strictly in JSON:
           { type: 'QUICK_REPLY', text: '📅 Book Follow-Up', payload: 'book_followup' }
         ]),
         JSON.stringify({ type: 'document', url: pdfUrl, title: `Prescription-${rxNumber}.pdf` }),
-        now
+        now,
+        tenantId || WHATSAPP_QUARANTINE_TENANT_ID
       );
 
       return res.json({

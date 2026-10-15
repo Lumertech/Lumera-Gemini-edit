@@ -1,6 +1,7 @@
 import type { RequestHandler } from "express";
 import { CLINICIAN_ROLES, requireAuth, requireRole } from "./auth.ts";
 import { getDb } from "./db.ts";
+import { WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
 
 /** Dashboard WhatsApp inbox — staff only. Meta webhooks stay on /api/meta. */
 export const requireClinicWhatsApp: RequestHandler[] = [requireAuth, requireRole(...CLINICIAN_ROLES)];
@@ -69,6 +70,68 @@ export function listTenantOutboundEvents(tenantId: string) {
     )
     .all(tenantId, tenantId) as Record<string, unknown>[];
   return rows.map(serializeOutboundEvent);
+}
+
+/**
+ * Update or insert one clinic's thread. A phone match never selects another tenant's row,
+ * and a preferred id owned by another clinic is not overwritten.
+ */
+export function upsertScopedConversation(opts: {
+  preferredId: string;
+  tenantId: string;
+  patientPhone: string;
+  patientName: string;
+  assignedStaff: string;
+  tags: string;
+  preferredLanguage: string;
+  lastMessage: string;
+  lastMessageTime: string;
+  now: string;
+}): string {
+  const tenantId = String(opts.tenantId || "").trim() || WHATSAPP_QUARANTINE_TENANT_ID;
+  const phone = String(opts.patientPhone || "").trim();
+  const db = getDb();
+  const byPhone = db
+    .prepare(
+      `SELECT id FROM whatsapp_conversations
+       WHERE patient_phone = ? AND TRIM(COALESCE(tenant_id, '')) = ?`
+    )
+    .get(phone, tenantId) as { id?: string } | undefined;
+  if (byPhone?.id) {
+    db.prepare(
+      `UPDATE whatsapp_conversations
+       SET last_message = ?, last_message_time = ?, updated_at = ?, patient_name = ?
+       WHERE id = ? AND TRIM(COALESCE(tenant_id, '')) = ?`
+    ).run(opts.lastMessage, opts.lastMessageTime, opts.now, opts.patientName, byPhone.id, tenantId);
+    return String(byPhone.id);
+  }
+
+  let id = String(opts.preferredId || "").trim() || `conv-${tenantId}-${Date.now()}`;
+  const taken = db.prepare("SELECT tenant_id FROM whatsapp_conversations WHERE id = ?").get(id) as
+    | { tenant_id?: string }
+    | undefined;
+  if (taken && String(taken.tenant_id || "").trim() !== tenantId) {
+    const suffix = tenantId.replace(/[^a-z0-9]/gi, "").slice(-8) || "tenant";
+    id = `${id}-${suffix}`;
+  }
+  db.prepare(
+    `INSERT INTO whatsapp_conversations (
+       id, patient_phone, patient_name, handover_mode, assigned_staff, tags, preferred_language,
+       unread_count, last_message, last_message_time, updated_at, tenant_id
+     ) VALUES (?, ?, ?, 'bot', ?, ?, ?, 0, ?, ?, ?, ?)`
+  ).run(
+    id,
+    phone,
+    opts.patientName,
+    opts.assignedStaff,
+    opts.tags,
+    opts.preferredLanguage,
+    opts.lastMessage,
+    opts.lastMessageTime,
+    opts.now,
+    tenantId
+  );
+  return id;
 }
 
 export function stampWhatsAppTenant(table: "whatsapp_conversations" | "whatsapp_messages" | "whatsapp_outbound_events", id: string, tenantId: string) {

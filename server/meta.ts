@@ -15,7 +15,6 @@ import {
 import { handleMetaDataDeletionPost, handleMetaDeauthorizePost } from "./meta-signed-request.ts";
 import { normalizePhoneDigits, phonesMatch } from "./whatsapp-calendar-booking.ts";
 import { tenantIdFromReceivingPhoneNumberId } from "./whatsapp-tenant-resolve.ts";
-import { getWhatsAppNumberByPhoneNumberId } from "./whatsapp-numbers.ts";
 import { WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
 import type { SqlDatabase } from "./sql-engine.ts";
 
@@ -105,29 +104,13 @@ export function applyWhatsAppOutboundStatus(
  * Body is a health check only. POST (signed_request) is unchanged and is the real callback.
  */
 /**
- * Receiving line → clinic. Registry owner first, then tenants.phone_number_id,
- * then a doctor-owned number's single clinic. Unknown lines return "".
+ * Receiving line → clinic. Doctor-owned lines resolve to that doctor's one clinic
+ * and are refused when affiliation is ambiguous. A tenant-owned registry row is next.
+ * tenants.phone_number_id is used only when exactly one tenant owns it.
+ * Unknown lines return "".
  */
 export function inboundTenantIdFromPhoneNumberId(phoneNumberId?: string): string {
-  const id = String(phoneNumberId || "").trim();
-  if (!id) return "";
-  try {
-    const owned = getWhatsAppNumberByPhoneNumberId(id);
-    if (owned?.owner_type === "tenant" && String(owned.owner_id || "").trim()) {
-      return String(owned.owner_id).trim();
-    }
-  } catch {
-    /* whatsapp_numbers is created with the WABA schema */
-  }
-  try {
-    const row = getDb()
-      .prepare("SELECT id FROM tenants WHERE phone_number_id = ?")
-      .get(id) as { id?: string } | undefined;
-    if (row?.id) return String(row.id).trim();
-  } catch {
-    /* tenants.phone_number_id is added in migrate() */
-  }
-  const resolved = tenantIdFromReceivingPhoneNumberId(id);
+  const resolved = tenantIdFromReceivingPhoneNumberId(phoneNumberId);
   if (!resolved || resolved === WHATSAPP_QUARANTINE_TENANT_ID) return "";
   return resolved;
 }
@@ -621,8 +604,8 @@ export function createMetaRouter(): Router {
       const eventId = sent.messageId || `sandbox-test-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 
       db.prepare(`
-        INSERT INTO whatsapp_outbound_events (id, event_type, patient_phone, patient_name, status, details, action_payload, sent_at)
-        VALUES (?, 'test_notification', ?, 'Verified Test Recipient', ?, ?, ?, ?)
+        INSERT INTO whatsapp_outbound_events (id, event_type, patient_phone, patient_name, status, details, action_payload, sent_at, tenant_id)
+        VALUES (?, 'test_notification', ?, 'Verified Test Recipient', ?, ?, ?, ?, ?)
       `).run(
         eventId,
         recipientPhone,
@@ -630,7 +613,8 @@ export function createMetaRouter(): Router {
           ? "WhatsApp Cloud API test message accepted"
           : "SANDBOX / DEV-ONLY: test message recorded locally (not dispatched via Graph)",
         JSON.stringify({ text: content, sandbox: sent.channel === "sandbox", channel: sent.channel, tenantId }),
-        now
+        now,
+        tenantId || WHATSAPP_QUARANTINE_TENANT_ID
       );
 
       return res.json({

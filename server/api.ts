@@ -54,7 +54,8 @@ import {
 } from "./auth.ts";
 import { rejectUntrustedTenantClaim } from "./tenant-guard.ts";
 import { publicBranch, publicTenant } from "./client-serializers.ts";
-import { clinicTenantId } from "./whatsapp-scope.ts";
+import { clinicTenantId, upsertScopedConversation } from "./whatsapp-scope.ts";
+import { WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
 import {
   createAdminTenant,
   ensureTenantSubscription,
@@ -75,8 +76,8 @@ import { rejectWrongOtp, reserveOtpSend, sendOtpLimited } from "./otp-attempt.ts
 import { parseSpecialtyPackInput, resolveSpecialtyPack } from "./specialty-packs.ts";
 import { appPublicUrl, demoLoginEnabled, isProduction } from "./runtime.ts";
 import { DEMO_PASSWORD } from "../src/lib/demoAccounts.ts";
-import { dispatchWhatsAppCloudMessage, isCloudDispatchFailure } from "./graph-whatsapp.ts";
-import { consumeSendOtpAttempt, otpSubjectKey, requestClientIp } from "./otp-rate-limit.ts";
+import { dispatchWhatsAppCloudMessage, isCloudDispatchFailure, resolveUsageTenantId } from "./graph-whatsapp.ts";
+import { consumeSendOtpAttempt, normalizeOtpPhone, otpSubjectKey, requestClientIp } from "./otp-rate-limit.ts";
 import {
   FacebookOAuthError,
   facebookLoginDialogUrl,
@@ -256,39 +257,36 @@ function recordWhatsAppOtpEvent(opts: {
     const now = new Date().toISOString();
     const timeDisplay = new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
     const cleanPhone = opts.phone.trim() || "+91 98234 55667";
-    const convId = `conv-otp-${cleanPhone.replace(/\D/g, "").slice(-8) || "user"}`;
+    const preferredId = `conv-otp-${cleanPhone.replace(/\D/g, "").slice(-8) || "user"}`;
     const userName = opts.name.trim() || "Healthcare Clinician";
+    const tenantId = resolveUsageTenantId(undefined, cleanPhone, db) || WHATSAPP_QUARANTINE_TENANT_ID;
 
-    let conv = db
-      .prepare("SELECT * FROM whatsapp_conversations WHERE id = ? OR patient_phone = ?")
-      .get(convId, cleanPhone) as Record<string, unknown> | undefined;
-
-    if (!conv) {
-      db.prepare(`
-        INSERT INTO whatsapp_conversations (id, patient_phone, patient_name, handover_mode, assigned_staff, tags, preferred_language, unread_count, last_message, last_message_time, updated_at)
-        VALUES (?, ?, ?, 'bot', 'Lumera Security Engine', '["Security", "OTP"]', 'en', 0, ?, ?, ?)
-      `).run(convId, cleanPhone, userName, opts.details, timeDisplay, now);
-    } else {
-      db.prepare(`
-        UPDATE whatsapp_conversations
-        SET last_message = ?, last_message_time = ?, updated_at = ?
-        WHERE id = ?
-      `).run(opts.details, timeDisplay, now, String(conv.id));
-    }
+    const convId = upsertScopedConversation({
+      preferredId,
+      tenantId,
+      patientPhone: cleanPhone,
+      patientName: userName,
+      assignedStaff: "Lumera Security Engine",
+      tags: '["Security", "OTP"]',
+      preferredLanguage: "en",
+      lastMessage: opts.details,
+      lastMessageTime: timeDisplay,
+      now,
+    });
 
     if (opts.conversationContent) {
       const msgId = `msg-otp-${crypto.randomUUID().slice(0, 8)}`;
       db.prepare(`
-        INSERT INTO whatsapp_messages (id, conversation_id, patient_phone, sender, staff_name, content, translated_content, detected_language, time_display, buttons, media, status, created_at)
-        VALUES (?, ?, ?, 'agent', 'Lumera Security Bot', ?, null, 'en', ?, null, null, ?, ?)
-      `).run(msgId, convId, cleanPhone, opts.conversationContent, timeDisplay, opts.status, now);
+        INSERT INTO whatsapp_messages (id, conversation_id, patient_phone, sender, staff_name, content, translated_content, detected_language, time_display, buttons, media, status, created_at, tenant_id)
+        VALUES (?, ?, ?, 'agent', 'Lumera Security Bot', ?, null, 'en', ?, null, null, ?, ?, ?)
+      `).run(msgId, convId, cleanPhone, opts.conversationContent, timeDisplay, opts.status, now, tenantId);
     }
 
     const eventId = `evt-otp-${crypto.randomUUID().slice(0, 8)}`;
     db.prepare(`
-      INSERT INTO whatsapp_outbound_events (id, event_type, patient_phone, patient_name, status, details, action_payload, sent_at)
-      VALUES (?, 'otp_verification', ?, ?, ?, ?, ?, ?)
-    `).run(eventId, cleanPhone, userName, opts.status, opts.details, JSON.stringify(opts.payload), now);
+      INSERT INTO whatsapp_outbound_events (id, event_type, patient_phone, patient_name, status, details, action_payload, sent_at, tenant_id)
+      VALUES (?, 'otp_verification', ?, ?, ?, ?, ?, ?, ?)
+    `).run(eventId, cleanPhone, userName, opts.status, opts.details, JSON.stringify(opts.payload), now, tenantId);
   } catch (err) {
     console.error("Failed to record WhatsApp OTP dispatch in database:", err);
   }
@@ -823,13 +821,15 @@ export function createApiRouter(): Router {
       return res.status(429).json({ error: "Too many OTP requests. Try again later." });
     }
 
-    const pending = getDb()
+    const phoneKey = normalizeOtpPhone(phone);
+    const pendingRows = getDb()
       .prepare(
-        `SELECT id, otp, expires_at FROM otp_verifications
-         WHERE phone = ? AND purpose = ? AND verified_at IS NULL AND expires_at > ?
-         ORDER BY created_at DESC LIMIT 1`
+        `SELECT id, otp, expires_at, phone FROM otp_verifications
+         WHERE purpose = ? AND verified_at IS NULL AND expires_at > ?
+         ORDER BY created_at DESC LIMIT 30`
       )
-      .get(phone, purpose, new Date().toISOString()) as { id: string; otp: string; expires_at: string } | undefined;
+      .all(purpose, new Date().toISOString()) as { id: string; otp: string; expires_at: string; phone: string }[];
+    const pending = pendingRows.find((row) => normalizeOtpPhone(row.phone) === phoneKey && phoneKey);
     if (pending) {
       return res.json({
         ok: true,

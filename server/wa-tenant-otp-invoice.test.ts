@@ -7,9 +7,11 @@ import { DatabaseSync } from "node:sqlite";
 import { after, before, describe, it } from "node:test";
 import { createApiRouter } from "./api.ts";
 import { getDb, initDatabase } from "./db.ts";
+import { applyWhatsAppOutboundStatus } from "./meta.ts";
 import { hashPassword } from "./password.ts";
 import { installWhatsAppRouterPatch, protectWhatsAppDashboard } from "./whatsapp-dashboard-guard.ts";
 import { createWhatsAppRouter } from "./whatsapp.ts";
+import { ensureWhatsAppOwnershipSchema } from "./whatsapp-numbers-store.ts";
 import { backfillWhatsAppTenantIds, WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
 import { META_REVIEW_TENANT_ID } from "./tenant-slug.ts";
 import { consumeSendOtpAttempt, SEND_OTP_MAX_PER_PHONE, resetSendOtpRateLimits } from "./otp-rate-limit.ts";
@@ -428,10 +430,11 @@ describe("WhatsApp tenant scope, send validation, OTP limit, invoice UHID", () =
   it("send-otp returns 429 after 3 requests for the same phone", async () => {
     resetSendOtpRateLimits();
     const phone = `+91 93${String(Date.now()).slice(-8)}`;
+    const client = { "X-Forwarded-For": "203.0.113.44" };
     const statuses: number[] = [];
     const verificationIds: string[] = [];
     for (let i = 0; i < SEND_OTP_MAX_PER_PHONE + 1; i += 1) {
-      const res = await jsonRequest(server.port, "POST", "/api/auth/whatsapp/send-otp", { phone, purpose: "login" });
+      const res = await jsonRequest(server.port, "POST", "/api/auth/whatsapp/send-otp", { phone, purpose: "login" }, client);
       statuses.push(res.status);
       if (res.status === 200) verificationIds.push(String(res.json.verificationId || ""));
     }
@@ -439,10 +442,16 @@ describe("WhatsApp tenant scope, send validation, OTP limit, invoice UHID", () =
     assert.equal(statuses[SEND_OTP_MAX_PER_PHONE], 429);
     assert.ok(verificationIds.length >= 2);
     assert.equal(new Set(verificationIds).size, 1);
-    const otherPhone = await jsonRequest(server.port, "POST", "/api/auth/whatsapp/send-otp", {
-      phone: `+91 94${String(Date.now()).slice(-8)}`,
-      purpose: "login",
-    });
+    const otherPhone = await jsonRequest(
+      server.port,
+      "POST",
+      "/api/auth/whatsapp/send-otp",
+      {
+        phone: `+91 94${String(Date.now()).slice(-8)}`,
+        purpose: "login",
+      },
+      client
+    );
     assert.equal(otherPhone.status, 429);
     resetSendOtpRateLimits();
   });
@@ -481,6 +490,233 @@ describe("WhatsApp tenant scope, send validation, OTP limit, invoice UHID", () =
     assert.equal(invoice.patientUhid, patient.uhid);
     const row = getDb().prepare("SELECT patient_uhid FROM invoices WHERE id = ?").get(invoice.id) as { patient_uhid: string };
     assert.equal(row.patient_uhid, patient.uhid);
+  });
+
+  it("send-otp reuses the pending verification when the phone format changes", async () => {
+    resetSendOtpRateLimits();
+    const digits = `93${String(Date.now()).slice(-8)}`;
+    const formatted = `+91 ${digits.slice(0, 5)} ${digits.slice(5)}`;
+    const first = await jsonRequest(server.port, "POST", "/api/auth/whatsapp/send-otp", {
+      phone: formatted,
+      purpose: "login",
+    });
+    assert.equal(first.status, 200, String(first.json.error || ""));
+    const second = await jsonRequest(server.port, "POST", "/api/auth/whatsapp/send-otp", {
+      phone: digits,
+      purpose: "login",
+    });
+    assert.equal(second.status, 200, String(second.json.error || ""));
+    assert.equal(second.json.reused, true);
+    assert.equal(String(second.json.verificationId || ""), String(first.json.verificationId || ""));
+    resetSendOtpRateLimits();
+  });
+
+  it("OTP, receipt, and Rx writes stay on the sending clinic and status can see that tenant", async () => {
+    resetSendOtpRateLimits();
+    const clinicA = createClinic("isoA");
+    const clinicB = createClinic("isoB");
+    const now = new Date().toISOString();
+    const db = getDb();
+    const sentinel = "clinic-b-must-stay";
+    const tailOf = (phone: string) => phone.replace(/\D/g, "").slice(-8);
+    const plant = (phone: string, id: string) => {
+      db.prepare(
+        `INSERT INTO whatsapp_conversations (id, patient_phone, patient_name, last_message, updated_at, tenant_id)
+         VALUES (?, ?, 'Clinic B Patient', ?, ?, ?)`
+      ).run(id, phone, sentinel, now, clinicB.tenantId);
+    };
+    const assertForeign = (id: string) => {
+      const foreign = db.prepare("SELECT tenant_id, last_message FROM whatsapp_conversations WHERE id = ?").get(id) as {
+        tenant_id: string;
+        last_message: string;
+      };
+      assert.equal(foreign.tenant_id, clinicB.tenantId);
+      assert.equal(foreign.last_message, sentinel);
+    };
+
+    const otpPhone = `+91 97${String(Date.now()).slice(-8)}`;
+    const otpId = `conv-otp-${tailOf(otpPhone)}`;
+    plant(otpPhone, otpId);
+    db.prepare("UPDATE users SET phone = ?, last_login = ? WHERE id = ?").run(otpPhone, now, clinicA.userId);
+    const otp = await jsonRequest(server.port, "POST", "/api/auth/whatsapp/send-otp", {
+      phone: otpPhone,
+      purpose: "login",
+      name: "Dr Iso",
+    });
+    assert.equal(otp.status, 200, String(otp.json.error || ""));
+    assertForeign(otpId);
+    const otpEvent = db
+      .prepare(
+        "SELECT id, tenant_id FROM whatsapp_outbound_events WHERE patient_phone = ? AND event_type = 'otp_verification' ORDER BY sent_at DESC LIMIT 1"
+      )
+      .get(otpPhone) as { id: string; tenant_id: string };
+    assert.equal(otpEvent.tenant_id, clinicA.tenantId);
+    const delivered = applyWhatsAppOutboundStatus(db, {
+      recipientId: otpPhone.replace(/\D/g, ""),
+      status: "delivered",
+      sentAt: now,
+      tenantId: clinicA.tenantId,
+    });
+    assert.equal(delivered, 1);
+    const blocked = applyWhatsAppOutboundStatus(db, {
+      recipientId: otpPhone.replace(/\D/g, ""),
+      status: "failed",
+      sentAt: now,
+      tenantId: clinicB.tenantId,
+    });
+    assert.equal(blocked, 0);
+    const afterStatus = db.prepare("SELECT status FROM whatsapp_outbound_events WHERE id = ?").get(otpEvent.id) as {
+      status: string;
+    };
+    assert.equal(afterStatus.status, "delivered");
+
+    const tokenA = await login(clinicA.email);
+    const authA = { Authorization: `Bearer ${tokenA}` };
+    const receiptPhone = `+91 96${String(Date.now()).slice(-8)}`;
+    const receiptId = `conv-rcpt-${tailOf(receiptPhone)}`;
+    plant(receiptPhone, receiptId);
+    const patientRes = await jsonRequest(
+      server.port,
+      "POST",
+      "/api/patients",
+      { name: "Receipt Patient", phone: receiptPhone, age: 40, gender: "Female" },
+      authA
+    );
+    assert.equal(patientRes.status, 201, String(patientRes.json.error || ""));
+    const patient = patientRes.json.patient as { id: string; name: string; phone: string };
+    const invoiceRes = await jsonRequest(
+      server.port,
+      "POST",
+      "/api/invoices",
+      {
+        patientId: patient.id,
+        patientName: patient.name,
+        patientPhone: patient.phone,
+        items: [{ description: "OPD consult", quantity: 1, unitPrice: 500, total: 500 }],
+      },
+      authA
+    );
+    assert.equal(invoiceRes.status, 201, String(invoiceRes.json.error || ""));
+    const invoiceId = String((invoiceRes.json.invoice as { id: string }).id);
+    const paid = await jsonRequest(server.port, "POST", `/api/invoices/${invoiceId}/sandbox-pay`, {}, authA);
+    assert.equal(paid.status, 200, String(paid.json.error || ""));
+    const receipt = await jsonRequest(server.port, "POST", `/api/invoices/${invoiceId}/receipt`, {}, authA);
+    assert.equal(receipt.status, 200, String(receipt.json.error || ""));
+    assertForeign(receiptId);
+    const receiptEvent = db
+      .prepare(
+        "SELECT tenant_id FROM whatsapp_outbound_events WHERE patient_phone = ? AND event_type = 'invoice_receipt' ORDER BY sent_at DESC LIMIT 1"
+      )
+      .get(receiptPhone) as { tenant_id: string };
+    assert.equal(receiptEvent.tenant_id, clinicA.tenantId);
+
+    const rxPhone = `+91 95${String(Date.now()).slice(-8)}`;
+    const rxId = `conv-${tailOf(rxPhone)}`;
+    plant(rxPhone, rxId);
+    const rx = await jsonRequest(
+      server.port,
+      "POST",
+      "/api/whatsapp/send-rx",
+      {
+        patientPhone: rxPhone,
+        patientName: "Rx Patient",
+        uhid: "UHID-ISO",
+        rxNumber: `RX-ISO-${tailOf(rxPhone)}`,
+        doctorName: "Dr Iso",
+        medicines: [],
+      },
+      authA
+    );
+    assert.equal(rx.status, 200, String(rx.json.error || ""));
+    assertForeign(rxId);
+    const rxMessage = db
+      .prepare("SELECT tenant_id FROM whatsapp_messages WHERE patient_phone = ? AND tenant_id = ? LIMIT 1")
+      .get(rxPhone, clinicA.tenantId) as { tenant_id: string } | undefined;
+    assert.equal(rxMessage?.tenant_id, clinicA.tenantId);
+    resetSendOtpRateLimits();
+  });
+
+  it("inbound on a doctor-owned line uses that doctor's clinic, and a duplicated phone_number_id writes nothing", async () => {
+    const doctorClinic = createClinic("docLine");
+    const otherClinic = createClinic("docOther");
+    const dupA = createClinic("dupA");
+    const dupB = createClinic("dupB");
+    const phoneNumberId = `8${String(Date.now()).slice(-11)}`;
+    const duplicateId = `7${String(Date.now()).slice(-11)}`;
+    const db = getDb();
+    ensureWhatsAppOwnershipSchema(db);
+    db.prepare("DELETE FROM whatsapp_numbers WHERE phone_number_id IN (?, ?)").run(phoneNumberId, duplicateId);
+    db.prepare("UPDATE tenants SET phone_number_id = ? WHERE id = ?").run(phoneNumberId, otherClinic.tenantId);
+    db.prepare("UPDATE tenants SET phone_number_id = ? WHERE id = ?").run(duplicateId, dupA.tenantId);
+    db.prepare("UPDATE tenants SET phone_number_id = ? WHERE id = ?").run(duplicateId, dupB.tenantId);
+
+    const practitionerId = `prac-${doctorClinic.userId}`;
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO doctors (id, user_id, name, specialty, practitioner_id)
+       VALUES (?, ?, 'Dr Owned Line', 'General Medicine', ?)`
+    ).run(`doctor-${doctorClinic.userId}`, doctorClinic.userId, practitionerId);
+    db.prepare(
+      `INSERT INTO whatsapp_numbers (
+         id, owner_type, owner_id, waba_id, phone_number_id, meta_waba_name, status, created_at, updated_at
+       ) VALUES (?, 'doctor', ?, ?, ?, 'Doctor Line', 'connected', ?, ?)`
+    ).run(`wan-${practitionerId}`, practitionerId, `waba-${phoneNumberId}`, phoneNumberId, now, now);
+
+    const secret = "wa-doctor-line-secret";
+    const prevSecret = process.env.META_APP_SECRET;
+    process.env.META_APP_SECRET = secret;
+    const fromDoctor = `1888${String(Date.now()).slice(-8)}`;
+    const fromDup = `1999${String(Date.now()).slice(-8)}`;
+    const postWebhook = async (lineId: string, from: string, text: string) => {
+      const payload = {
+        object: "whatsapp_business_account",
+        entry: [
+          {
+            id: `waba-${lineId}`,
+            changes: [
+              {
+                value: {
+                  metadata: { phone_number_id: lineId },
+                  messages: [{ from, text: { body: text } }],
+                },
+              },
+            ],
+          },
+        ],
+      };
+      const raw = JSON.stringify(payload);
+      const signature = crypto.createHmac("sha256", secret).update(raw).digest("hex");
+      const res = await fetch(`http://127.0.0.1:${server.port}/api/meta/webhook`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Hub-Signature-256": `sha256=${signature}` },
+        body: raw,
+      });
+      assert.equal(res.status, 200);
+    };
+    try {
+      await postWebhook(phoneNumberId, fromDoctor, "doctor line");
+      const row = db
+        .prepare("SELECT tenant_id FROM whatsapp_conversations WHERE patient_phone = ?")
+        .get(fromDoctor) as { tenant_id: string } | undefined;
+      assert.equal(row?.tenant_id, doctorClinic.tenantId);
+      const wrong = db
+        .prepare("SELECT id FROM whatsapp_conversations WHERE patient_phone = ? AND tenant_id = ?")
+        .get(fromDoctor, otherClinic.tenantId) as { id?: string } | undefined;
+      assert.equal(wrong, undefined);
+
+      await postWebhook(duplicateId, fromDup, "duplicate line");
+      const dupRow = db
+        .prepare("SELECT id FROM whatsapp_conversations WHERE patient_phone = ?")
+        .get(fromDup) as { id?: string } | undefined;
+      assert.equal(dupRow, undefined);
+      const dupMessage = db
+        .prepare("SELECT id FROM whatsapp_messages WHERE patient_phone = ?")
+        .get(fromDup) as { id?: string } | undefined;
+      assert.equal(dupMessage, undefined);
+    } finally {
+      if (prevSecret === undefined) delete process.env.META_APP_SECRET;
+      else process.env.META_APP_SECRET = prevSecret;
+    }
   });
 });
 

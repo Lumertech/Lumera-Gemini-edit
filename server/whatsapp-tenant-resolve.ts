@@ -29,6 +29,15 @@ function tenantExists(tenantId: string): boolean {
   }
 }
 
+/** A duplicated tenants.phone_number_id is not a clinic. Only a single owner resolves. */
+function uniqueTenantIdByPhoneNumberId(phoneNumberId: string): string {
+  const rows = getDb()
+    .prepare("SELECT id FROM tenants WHERE phone_number_id = ?")
+    .all(phoneNumberId) as { id?: string }[];
+  const ids = [...new Set(rows.map((row) => String(row.id || "").trim()).filter(Boolean))];
+  return ids.length === 1 ? ids[0] : "";
+}
+
 export type WhatsAppClinicChoice = { tenantId: string; tenantName: string; doctorId: string };
 
 export type WhatsAppTenantResolution =
@@ -126,10 +135,8 @@ export function resolveWhatsAppTenant(opts: {
       if (owned?.owner_type === "tenant" && owned.owner_id) {
         return { status: "resolved", tenantId: owned.owner_id };
       }
-      const row = getDb()
-        .prepare("SELECT id FROM tenants WHERE phone_number_id = ?")
-        .get(phoneNumberId) as { id?: string } | undefined;
-      if (row?.id) return { status: "resolved", tenantId: String(row.id) };
+      const tenantId = uniqueTenantIdByPhoneNumberId(phoneNumberId);
+      if (tenantId) return { status: "resolved", tenantId };
     } catch {
       /* ignore */
     }
@@ -174,10 +181,8 @@ export function tenantIdFromReceivingPhoneNumberId(phoneNumberId?: string): stri
   try {
     const owned = getWhatsAppNumberByPhoneNumberId(id);
     if (owned?.owner_type === "tenant" && owned.owner_id) return String(owned.owner_id);
-    const row = getDb()
-      .prepare("SELECT id FROM tenants WHERE phone_number_id = ?")
-      .get(id) as { id?: string } | undefined;
-    if (row?.id) return String(row.id);
+    const tenantId = uniqueTenantIdByPhoneNumberId(id);
+    if (tenantId) return tenantId;
   } catch {
     /* schema not ready */
   }
