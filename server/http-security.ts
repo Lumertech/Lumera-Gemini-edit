@@ -317,8 +317,14 @@ export function cookiesForwardedByFirebaseHosting(cookieHeader: string): string 
   return sessions.map((value) => `${HOST_SESSION_COOKIE}=${encodeURIComponent(value)}`).join("; ");
 }
 
-/** Paths an older build may have stored. Host-only Path=/ is cleared separately. */
-const STALE_COOKIE_PATHS = ["/", "/api", "/api/auth", "/login"] as const;
+/** Paths an older build may have stored. `/api/auth` defaults to directory `/api`. */
+const STALE_COOKIE_PATHS = ["/", "/api"] as const;
+
+const SESSION_COOKIE_NAMES: Array<{ name: string; httpOnly: boolean }> = [
+  { name: HOST_SESSION_COOKIE, httpOnly: true },
+  { name: SESSION_COOKIE, httpOnly: true },
+  { name: CSRF_COOKIE, httpOnly: false },
+];
 
 function publicHostnames(env: NodeJS.ProcessEnv): string[] {
   const hosts: string[] = [];
@@ -357,30 +363,39 @@ function expireCookieLine(name: string, opts: { path: string; domain?: string; h
   return parts.join("; ");
 }
 
+function allowlistedCookieDomains(env: NodeJS.ProcessEnv): string[] {
+  return [...new Set(publicHostnames(env).flatMap((host) => cookieDomainsToExpire(host)))];
+}
+
 /**
- * Max-Age=0 for Domain and Path variants of the session cookies. Host-only
- * Path=/ is not included; callers already emit that clear before the new cookie.
+ * Clears sent before the new anonymous cookie. Host-only, `.mylumera.in`, and
+ * `mylumera.in` (from the allowlist), on Path=/ and Path=/api, for `__session`
+ * and `lumera_csrf`. A browser applies these before the retry, so the user
+ * does not have to clear cookies by hand.
  * Domains come only from the CORS allowlist / APP_URL, not from a request header.
  */
-export function sessionCookieExpiryLines(env: NodeJS.ProcessEnv = process.env): string[] {
-  const domains = publicHostnames(env).flatMap((host) => cookieDomainsToExpire(host));
-  const uniqueDomains = [...new Set(domains)];
-  if (!uniqueDomains.length) return [];
-  const names: Array<{ name: string; httpOnly: boolean }> = [
-    { name: HOST_SESSION_COOKIE, httpOnly: true },
-    { name: SESSION_COOKIE, httpOnly: true },
-    { name: CSRF_COOKIE, httpOnly: false },
-  ];
+export function refreshSessionExpiryLines(env: NodeJS.ProcessEnv = process.env): string[] {
+  const domains = allowlistedCookieDomains(env);
   const lines: string[] = [];
-  for (const { name, httpOnly } of names) {
+  for (const { name, httpOnly } of SESSION_COOKIE_NAMES) {
     for (const path of STALE_COOKIE_PATHS) {
-      if (path !== "/") lines.push(expireCookieLine(name, { path, httpOnly }));
-      for (const domain of uniqueDomains) {
+      lines.push(expireCookieLine(name, { path, httpOnly }));
+      for (const domain of domains) {
         lines.push(expireCookieLine(name, { path, httpOnly, domain }));
       }
     }
   }
   return lines;
+}
+
+/**
+ * Variant clears that are safe to append after a new host-only Path=/ cookie.
+ * Host-only Path=/ is omitted so it cannot delete the cookie just set.
+ * Empty when the allowlist has no public host (local tests).
+ */
+export function sessionCookieExpiryLines(env: NodeJS.ProcessEnv = process.env): string[] {
+  if (!allowlistedCookieDomains(env).length) return [];
+  return refreshSessionExpiryLines(env).filter((line) => /domain=/i.test(line) || /path=\/api(?:;|$)/i.test(line));
 }
 
 function isMutating(method: string): boolean {

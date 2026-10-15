@@ -14,6 +14,7 @@ import {
   csrfProtectionMiddleware,
   csrfShouldReject,
   packHostSession,
+  refreshSessionExpiryLines,
   resetAuthRateLimitStore,
   selectHostSession,
   sessionCookieExpiryLines,
@@ -374,12 +375,29 @@ describe("stale anonymous __session CSRF refresh", () => {
     ]);
     assert.deepEqual(cookieDomainsToExpire("localhost"), []);
     assert.deepEqual(cookieDomainsToExpire("127.0.0.1"), []);
-    const lines = sessionCookieExpiryLines(env);
-    assert.ok(lines.some((line) => line.startsWith("__session=") && /domain=\.mylumera\.in/i.test(line) && /max-age=0/i.test(line)));
-    assert.ok(lines.some((line) => line.startsWith("__session=") && /domain=mylumera\.in/i.test(line) && !/domain=\.mylumera\.in/i.test(line)));
-    assert.ok(lines.some((line) => line.startsWith("lumera_csrf=") && /path=\/api(?:;|$)/i.test(line) && /max-age=0/i.test(line)));
+    const lines = refreshSessionExpiryLines(env);
+    const clears = (name: string, path: "/" | "/api", domain?: string) =>
+      lines.some((line) => {
+        if (!line.toLowerCase().startsWith(`${name}=`)) return false;
+        if (!/max-age=0/i.test(line)) return false;
+        const pathOk = path === "/" ? /path=\/(?:;|$)/i.test(line) : /path=\/api(?:;|$)/i.test(line);
+        if (!pathOk) return false;
+        if (!domain) return !/domain=/i.test(line);
+        return new RegExp(`domain=${domain.replace(/\./g, "\\.")}(?:;|$)`, "i").test(line);
+      });
+    for (const name of ["__session", "lumera_csrf"]) {
+      for (const path of ["/", "/api"] as const) {
+        assert.equal(clears(name, path), true, `host-only ${name} ${path}`);
+        assert.equal(clears(name, path, ".mylumera.in"), true, `Domain=.mylumera.in ${name} ${path}`);
+        assert.equal(clears(name, path, "mylumera.in"), true, `Domain=mylumera.in ${name} ${path}`);
+      }
+    }
+    assert.equal(lines.some((line) => /path=\/login(?:;|$)/i.test(line) || /path=\/api\/auth(?:;|$)/i.test(line)), false);
     assert.equal(lines.some((line) => /domain=\.in(?:;|$)/i.test(line)), false);
     assert.equal(lines.some((line) => /domain=evil/i.test(line)), false);
+    const local = refreshSessionExpiryLines({ NODE_ENV: "test" } as NodeJS.ProcessEnv);
+    assert.equal(local.some((line) => /domain=/i.test(line)), false);
+    assert.ok(local.some((line) => line.startsWith("__session=") && /path=\/(?:;|$)/i.test(line)));
     assert.equal(sessionCookieExpiryLines({ NODE_ENV: "test" } as NodeJS.ProcessEnv).length, 0);
   });
 
@@ -678,6 +696,160 @@ describe("stale anonymous __session CSRF refresh", () => {
         "Domain=.mylumera.in cookies must be expired on refresh"
       );
       assert.ok(jar.some((cookie) => cookie.name === "__session" && cookie.domain == null && cookie.value.includes("~")));
+    } finally {
+      globalThis.fetch = previousFetch;
+      setDocumentCookie(null);
+      if (previousOrigins === undefined) delete process.env.ALLOWED_ORIGINS;
+      else process.env.ALLOWED_ORIGINS = previousOrigins;
+    }
+  });
+
+  it("duplicate __session and lumera_csrf cookies log in after one retry", async () => {
+    resetAuthRateLimitStore();
+    const previousOrigins = process.env.ALLOWED_ORIGINS;
+    process.env.ALLOWED_ORIGINS = "https://www.mylumera.in";
+    const host = "www.mylumera.in";
+    type JarCookie = { name: string; value: string; domain: string | null; path: string; httpOnly: boolean; created: number };
+    let clock = 4;
+    const jar: JarCookie[] = [
+      {
+        name: "__session",
+        value: packHostSession("anon.domain-old", "secret-domain"),
+        domain: ".mylumera.in",
+        path: "/",
+        httpOnly: true,
+        created: 1,
+      },
+      {
+        name: "__session",
+        value: packHostSession("anon.path-old", "secret-path"),
+        domain: null,
+        path: "/api",
+        httpOnly: true,
+        created: 2,
+      },
+      {
+        name: "lumera_csrf",
+        value: "readable-stale-first",
+        domain: ".mylumera.in",
+        path: "/",
+        httpOnly: false,
+        created: 1,
+      },
+      {
+        name: "lumera_csrf",
+        value: "readable-stale-second",
+        domain: null,
+        path: "/",
+        httpOnly: false,
+        created: 3,
+      },
+    ];
+    const apply = (setCookies: string[]) => {
+      for (const line of setCookies) {
+        const [pair, ...attrs] = line.split(";").map((part) => part.trim());
+        const eq = pair.indexOf("=");
+        if (eq <= 0) continue;
+        const name = pair.slice(0, eq);
+        const rawValue = pair.slice(eq + 1);
+        const attrMap = new Map<string, string>();
+        for (const attr of attrs) {
+          const idx = attr.indexOf("=");
+          if (idx === -1) attrMap.set(attr.toLowerCase(), "");
+          else attrMap.set(attr.slice(0, idx).toLowerCase(), attr.slice(idx + 1));
+        }
+        const domain = attrMap.has("domain") ? (attrMap.get("domain") || "").toLowerCase() : null;
+        const path = attrMap.get("path") || "/";
+        const same = (cookie: JarCookie) =>
+          cookie.name === name &&
+          cookie.path === path &&
+          ((domain == null && cookie.domain == null) ||
+            (domain != null && (cookie.domain || "").replace(/^\./, "") === domain.replace(/^\./, "")));
+        for (let i = jar.length - 1; i >= 0; i--) if (same(jar[i])) jar.splice(i, 1);
+        if (attrMap.get("max-age") === "0" || rawValue.length === 0) continue;
+        clock += 1;
+        let value = rawValue;
+        try {
+          value = decodeURIComponent(rawValue);
+        } catch {
+          /* keep */
+        }
+        jar.push({ name, value, domain, path, httpOnly: attrMap.has("httponly"), created: clock });
+      }
+    };
+    const headerFor = () =>
+      jar
+        .filter((cookie) => {
+          if (cookie.path !== "/" && !"/api/auth/login".startsWith(cookie.path)) return false;
+          if (!cookie.domain) return true;
+          const domain = cookie.domain.replace(/^\./, "");
+          return host === domain || host.endsWith(`.${domain}`);
+        })
+        .sort((a, b) => b.path.length - a.path.length || a.created - b.created)
+        .map((cookie) => `${cookie.name}=${encodeURIComponent(cookie.value)}`)
+        .join("; ");
+    const documentCookie = () =>
+      jar
+        .filter((cookie) => !cookie.httpOnly)
+        .sort((a, b) => a.created - b.created)
+        .map((cookie) => `${cookie.name}=${cookie.value}`)
+        .join("; ");
+
+    const seen: Array<{ cookie: string; csrf: string; setCookie: string[] }> = [];
+    globalThis.fetch = async (input, init) => {
+      const headers = new Headers(init?.headers);
+      const cookie = headerFor();
+      headers.set("cookie", cookie);
+      const res = await previousFetch(input, { ...init, headers });
+      const setCookie = typeof res.headers.getSetCookie === "function" ? res.headers.getSetCookie() : [];
+      apply(setCookie);
+      seen.push({ cookie, csrf: headers.get("x-csrf-token") || "", setCookie });
+      return res;
+    };
+    setDocumentCookie(documentCookie());
+    try {
+      const loggedIn = await apiFetch<{ user?: { email?: string } }>(`http://127.0.0.1:${server.port}/api/auth/login`, {
+        method: "POST",
+        headers: { "Sec-Fetch-Site": "same-origin" },
+        body: JSON.stringify({ email: "doctor@lumera.me", password: "Lumera@2026" }),
+      });
+      assert.equal(loggedIn.user?.email, "doctor@lumera.me");
+      assert.equal(seen.length, 2);
+      assert.equal((seen[0].cookie.match(/__session=/g) || []).length, 2);
+      assert.equal((seen[0].cookie.match(/lumera_csrf=/g) || []).length, 2);
+      assert.equal(seen[0].csrf, "readable-stale-first");
+      const clears = seen[0].setCookie.filter((line) => /max-age=0/i.test(line));
+      for (const name of ["__session", "lumera_csrf"]) {
+        for (const path of ["/", "/api"] as const) {
+          const pathRe = path === "/" ? /path=\/(?:;|$)/i : /path=\/api(?:;|$)/i;
+          assert.ok(
+            clears.some((line) => line.startsWith(`${name}=`) && pathRe.test(line) && !/domain=/i.test(line)),
+            `host-only ${name} ${path}`
+          );
+          assert.ok(
+            clears.some((line) => line.startsWith(`${name}=`) && pathRe.test(line) && /domain=\.mylumera\.in(?:;|$)/i.test(line)),
+            `Domain=.mylumera.in ${name} ${path}`
+          );
+          assert.ok(
+            clears.some(
+              (line) =>
+                line.startsWith(`${name}=`) &&
+                pathRe.test(line) &&
+                /domain=mylumera\.in(?:;|$)/i.test(line) &&
+                !/domain=\.mylumera\.in/i.test(line)
+            ),
+            `Domain=mylumera.in ${name} ${path}`
+          );
+        }
+      }
+      assert.notEqual(seen[1].csrf, "readable-stale-first");
+      assert.equal((seen[1].cookie.match(/__session=/g) || []).length, 1);
+      assert.doesNotMatch(seen[1].cookie, /secret-domain|secret-path|readable-stale/);
+      const me = await previousFetch(`http://127.0.0.1:${server.port}/api/auth/me`, {
+        headers: { cookie: cookiesForwardedByFirebaseHosting(headerFor()) },
+      });
+      const meJson = (await me.json()) as { user?: { email?: string } | null };
+      assert.equal(meJson.user?.email, "doctor@lumera.me");
     } finally {
       globalThis.fetch = previousFetch;
       setDocumentCookie(null);

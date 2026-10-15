@@ -11,6 +11,7 @@ import {
   csrfSetCookieHeader,
   listCookieValues,
   packHostSession,
+  refreshSessionExpiryLines,
   selectHostSession,
   sessionCookieExpiryLines,
   unpackHostSession,
@@ -178,10 +179,7 @@ export function issueAnonymousCsrfCookie(res: Response, env: NodeJS.ProcessEnv =
   res.setHeader("Cache-Control", "private, no-store");
   // Clears first, including Domain/Path variants, then the new host-only cookie.
   res.setHeader("Set-Cookie", [
-    `${HOST_SESSION_COOKIE}=; ${SESSION_COOKIE_ATTRS}; Max-Age=0`,
-    `${COOKIE}=; ${SESSION_COOKIE_ATTRS}; Max-Age=0`,
-    `${CSRF_COOKIE}=; ${CLEAR_CSRF_ATTRS}; Max-Age=0`,
-    ...sessionCookieExpiryLines(env),
+    ...refreshSessionExpiryLines(env),
     host,
     csrfSetCookieHeader(csrf),
   ]);
