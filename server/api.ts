@@ -42,6 +42,7 @@ import {
   isSeededDemoPasswordSessionEmail,
   clearSessionCookie,
   endPresentedSession,
+  ensureBrowserCsrf,
   getSessionId,
   issueLumeraSession,
   isPlatformAdminRole,
@@ -1541,13 +1542,19 @@ export function createApiRouter(): Router {
 
   const sendSession = (req: Request, res: Response) => {
     res.setHeader("Cache-Control", "private, no-store");
-    if (!req.user) return res.json({ user: null });
+    const csrfToken = ensureBrowserCsrf(req, res);
+    if (!req.user) return res.json({ user: null, ...(csrfToken ? { csrfToken } : {}) });
     if (rejectClinicTenantBlocked(req.user, res)) return;
     let tenant = null;
     if (req.user.tenantId) {
       tenant = getDb().prepare("SELECT * FROM tenants WHERE id = ?").get(req.user.tenantId) as any;
     }
-    return res.json({ user: req.user, tenant, token: getSessionId(req) });
+    return res.json({
+      user: req.user,
+      tenant,
+      token: getSessionId(req),
+      ...(csrfToken ? { csrfToken } : {}),
+    });
   };
 
   api.get("/me", sendSession);

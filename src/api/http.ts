@@ -8,10 +8,26 @@ const CSRF_REFRESHED = "CSRF_REFRESHED";
 
 type ApiErrorBody = { error?: string; code?: string; csrfToken?: string };
 
+/**
+ * Secret from the last API response (`csrfToken` or `X-CSRF-Token`).
+ * Firebase Hosting never forwards `lumera_csrf`, so a value read from that
+ * cookie does not match anything the server can see. The response token does.
+ */
+let csrfFromServer = "";
+
+export function clearRememberedCsrfToken(): void {
+  csrfFromServer = "";
+}
+
 function csrfTokenFromRefresh(res: Response, data: ApiErrorBody): string {
   const fromBody = String(data.csrfToken || "").trim();
   if (fromBody) return fromBody;
   return String(res.headers.get("X-CSRF-Token") || "").trim();
+}
+
+function rememberCsrf(res: Response, data: ApiErrorBody): void {
+  const token = csrfTokenFromRefresh(res, data);
+  if (token) csrfFromServer = token;
 }
 
 /**
@@ -101,10 +117,10 @@ async function apiFetchOnce<T>(
     headers.set("Content-Type", "application/json");
   }
 
-  // Retry must keep the token from the refresh response. Reading document.cookie
-  // again would put the stale lumera_csrf back on the second request.
+  // Prefer the token the server just issued. document.cookie is only a fallback
+  // before the first response; a retry must not read it again.
   if (!retried && !headers.has("X-CSRF-Token")) {
-    const token = csrfTokenFromDocument();
+    const token = csrfFromServer || csrfTokenFromDocument();
     if (token) headers.set("X-CSRF-Token", token);
   }
 
@@ -116,6 +132,7 @@ async function apiFetchOnce<T>(
   });
   const parsed = await res.json().catch(() => ({}));
   const data = (parsed && typeof parsed === "object" ? parsed : {}) as ApiErrorBody;
+  rememberCsrf(res, data);
   if (!res.ok) {
     const refreshed = res.status === 403 && data.code === CSRF_REFRESHED;
     const nextToken = refreshed ? csrfTokenFromRefresh(res, data) : "";

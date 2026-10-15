@@ -326,6 +326,19 @@ const SESSION_COOKIE_NAMES: Array<{ name: string; httpOnly: boolean }> = [
   { name: CSRF_COOKIE, httpOnly: false },
 ];
 
+/**
+ * Older builds set SameSite=None; Partitioned copies. Chrome treats those as
+ * different cookies from the Lax ones, so a Lax Max-Age=0 does not delete them.
+ * These lines only expire. Nothing in the app sets a Partitioned value cookie.
+ */
+export function partitionedCookieExpiryLines(): string[] {
+  return SESSION_COOKIE_NAMES.map(({ name, httpOnly }) => {
+    const parts = [`${name}=`, "Path=/", "Max-Age=0", "Secure", "SameSite=None", "Partitioned"];
+    if (httpOnly) parts.push("HttpOnly");
+    return parts.join("; ");
+  });
+}
+
 function publicHostnames(env: NodeJS.ProcessEnv): string[] {
   const hosts: string[] = [];
   for (const origin of parseAllowedOrigins(env)) {
@@ -376,7 +389,7 @@ function allowlistedCookieDomains(env: NodeJS.ProcessEnv): string[] {
  */
 export function refreshSessionExpiryLines(env: NodeJS.ProcessEnv = process.env): string[] {
   const domains = allowlistedCookieDomains(env);
-  const lines: string[] = [];
+  const lines: string[] = [...partitionedCookieExpiryLines()];
   for (const { name, httpOnly } of SESSION_COOKIE_NAMES) {
     for (const path of STALE_COOKIE_PATHS) {
       lines.push(expireCookieLine(name, { path, httpOnly }));
@@ -441,8 +454,14 @@ export function csrfShouldReject(req: Request): boolean {
   if (!isMutating(req.method)) return false;
   if (hasBearerOrSessionHeader(req)) return false;
   const cookieHeader = typeof req.headers.cookie === "string" ? req.headers.cookie : "";
-  if (!hasSessionCookie(cookieHeader)) return false;
   const headerToken = csrfHeaderValue(req);
+  const hostSessions = listCookieValues(cookieHeader, HOST_SESSION_COOKIE);
+  // Firebase Hosting forwards only __session. The page can still send
+  // X-CSRF-Token read from lumera_csrf, which never reaches Cloud Run.
+  // That anonymous same-origin request is refreshable. A cookieless request
+  // with no token (curl) is unchanged.
+  if (!hostSessions.length && headerToken && !hasSessionCookie(cookieHeader)) return true;
+  if (!hasSessionCookie(cookieHeader)) return false;
   const cookieToken = expectedCsrf(cookieHeader, headerToken);
   return !cookieToken || !headerToken || cookieToken !== headerToken;
 }

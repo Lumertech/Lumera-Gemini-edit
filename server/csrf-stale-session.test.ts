@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { after, before, describe, it } from "node:test";
+import { after, before, beforeEach, describe, it } from "node:test";
 import express from "express";
 import jwt from "jsonwebtoken";
-import { apiFetch } from "../src/api/http.ts";
+import { apiFetch, clearRememberedCsrfToken } from "../src/api/http.ts";
 import { createApiRouter } from "./api.ts";
 import { ensureDemoWorkspaceTenants } from "./demo-workspace-tenants.ts";
 import { getDb, initDatabase } from "./db.ts";
@@ -36,6 +36,8 @@ function createHostingJar(initial: Record<string, string>) {
       const name = pair.slice(0, eq);
       const value = pair.slice(eq + 1);
       const attr = attrs.join(";").toLowerCase();
+      // Partitioned clears a CHIPS cookie only. It must not drop the Lax __session.
+      if (attr.includes("partitioned")) continue;
       if (attr.includes("max-age=0") || value.length === 0) jar.delete(name);
       else jar.set(name, value);
     }
@@ -59,6 +61,10 @@ describe("stale anonymous __session CSRF refresh", () => {
       app.use("/api", createApiRouter());
     });
     previousDocument = globalThis.document;
+  });
+
+  beforeEach(() => {
+    clearRememberedCsrfToken();
   });
 
   after(async () => {
@@ -209,6 +215,41 @@ describe("stale anonymous __session CSRF refresh", () => {
       assert.equal(both.status, 403);
       assert.equal(both.json.code, undefined);
       assert.equal(both.cookies.length, 0);
+
+      const stripped = await previousFetch(`http://127.0.0.1:${port}/api/auth/login`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Sec-Fetch-Site": "same-origin",
+          "X-CSRF-Token": "from-lumera-csrf",
+        },
+        body: "{}",
+      });
+      const strippedJson = (await stripped.json()) as { code?: string; csrfToken?: string };
+      const strippedCookies = typeof stripped.headers.getSetCookie === "function" ? stripped.headers.getSetCookie() : [];
+      assert.equal(stripped.status, 403);
+      assert.equal(strippedJson.code, CSRF_REFRESHED_CODE);
+      assert.ok(strippedJson.csrfToken);
+      const issued = strippedCookies.find((line) => /^__session=[^;]/.test(line) && !/max-age=0/i.test(line));
+      assert.ok(issued, "refresh must set __session when the token arrived without one");
+      assert.match(issued, /SameSite=Lax/i);
+      assert.doesNotMatch(issued, /Partitioned|SameSite=None/i);
+      assert.equal(strippedCookies.some((line) => /partitioned/i.test(line) && !/max-age=0/i.test(line)), false);
+
+      const crossStripped = await previousFetch(`http://127.0.0.1:${port}/api/auth/login`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Sec-Fetch-Site": "cross-site",
+          "X-CSRF-Token": "from-lumera-csrf",
+        },
+        body: "{}",
+      });
+      const crossJson = (await crossStripped.json()) as { code?: string };
+      const crossCookies = typeof crossStripped.headers.getSetCookie === "function" ? crossStripped.headers.getSetCookie() : [];
+      assert.equal(crossStripped.status, 403);
+      assert.equal(crossJson.code, undefined);
+      assert.equal(crossCookies.length, 0);
     } finally {
       await new Promise<void>((resolve, reject) => srv.close((err) => (err ? reject(err) : resolve())));
     }
@@ -363,6 +404,28 @@ describe("stale anonymous __session CSRF refresh", () => {
       headers: { cookie: header, "x-csrf-token": "nope" },
     } as unknown as express.Request;
     assert.equal(csrfShouldReject(matchesNeither), true);
+
+    const tokenWithoutSession = {
+      method: "POST",
+      path: "/api/auth/login",
+      originalUrl: "/api/auth/login",
+      headers: { "x-csrf-token": "from-lumera-csrf" },
+    } as unknown as express.Request;
+    assert.equal(csrfShouldReject(tokenWithoutSession), true);
+    const barePost = {
+      method: "POST",
+      path: "/api/auth/login",
+      originalUrl: "/api/auth/login",
+      headers: {},
+    } as unknown as express.Request;
+    assert.equal(csrfShouldReject(barePost), false);
+    const directCloudRun = {
+      method: "POST",
+      path: "/api/auth/login",
+      originalUrl: "/api/auth/login",
+      headers: { cookie: "lumera_sid=abc.def; lumera_csrf=token-1", "x-csrf-token": "token-1" },
+    } as unknown as express.Request;
+    assert.equal(csrfShouldReject(directCloudRun), false);
   });
 
   it("expiry lines cover Domain and Path variants of the allowlisted host only", () => {
@@ -393,6 +456,13 @@ describe("stale anonymous __session CSRF refresh", () => {
       }
     }
     assert.equal(lines.some((line) => /path=\/login(?:;|$)/i.test(line) || /path=\/api\/auth(?:;|$)/i.test(line)), false);
+    assert.equal(lines.some((line) => /partitioned/i.test(line) && !/max-age=0/i.test(line)), false);
+    for (const name of ["__session", "lumera_csrf"]) {
+      assert.ok(
+        lines.some((line) => line.startsWith(`${name}=`) && /partitioned/i.test(line) && /samesite=none/i.test(line) && /max-age=0/i.test(line)),
+        `partitioned clear ${name}`
+      );
+    }
     assert.equal(lines.some((line) => /domain=\.in(?:;|$)/i.test(line)), false);
     assert.equal(lines.some((line) => /domain=evil/i.test(line)), false);
     const local = refreshSessionExpiryLines({ NODE_ENV: "test" } as NodeJS.ProcessEnv);
@@ -445,6 +515,7 @@ describe("stale anonymous __session CSRF refresh", () => {
           if (idx === -1) attrMap.set(attr.toLowerCase(), "");
           else attrMap.set(attr.slice(0, idx).toLowerCase(), attr.slice(idx + 1));
         }
+        if (attrMap.has("partitioned")) continue;
         const domain = attrMap.has("domain") ? (attrMap.get("domain") || "").toLowerCase() : null;
         const path = attrMap.get("path") || "/";
         const httpOnly = attrMap.has("httponly");
@@ -638,6 +709,7 @@ describe("stale anonymous __session CSRF refresh", () => {
           if (idx === -1) attrMap.set(attr.toLowerCase(), "");
           else attrMap.set(attr.slice(0, idx).toLowerCase(), attr.slice(idx + 1));
         }
+        if (attrMap.has("partitioned")) continue;
         const domain = attrMap.has("domain") ? (attrMap.get("domain") || "").toLowerCase() : null;
         const path = attrMap.get("path") || "/";
         const same = (cookie: JarCookie) =>
@@ -758,6 +830,7 @@ describe("stale anonymous __session CSRF refresh", () => {
           if (idx === -1) attrMap.set(attr.toLowerCase(), "");
           else attrMap.set(attr.slice(0, idx).toLowerCase(), attr.slice(idx + 1));
         }
+        if (attrMap.has("partitioned")) continue;
         const domain = attrMap.has("domain") ? (attrMap.get("domain") || "").toLowerCase() : null;
         const path = attrMap.get("path") || "/";
         const same = (cookie: JarCookie) =>
@@ -855,6 +928,126 @@ describe("stale anonymous __session CSRF refresh", () => {
       setDocumentCookie(null);
       if (previousOrigins === undefined) delete process.env.ALLOWED_ORIGINS;
       else process.env.ALLOWED_ORIGINS = previousOrigins;
+    }
+  });
+
+  it("Firebase-stripped bootstrap still logs in with only __session", async () => {
+    resetAuthRateLimitStore();
+    clearRememberedCsrfToken();
+    type JarCookie = {
+      name: string;
+      value: string;
+      path: string;
+      httpOnly: boolean;
+      partitioned: boolean;
+      sameSite: string;
+    };
+    const jar: JarCookie[] = [
+      { name: "lumera_csrf", value: "partitioned-readable", path: "/", httpOnly: false, partitioned: true, sameSite: "None" },
+      { name: "lumera_sid", value: "partitioned-sid", path: "/", httpOnly: true, partitioned: true, sameSite: "None" },
+      { name: "lumera_csrf", value: "lax-readable", path: "/", httpOnly: false, partitioned: false, sameSite: "Lax" },
+      { name: "lumera_sid", value: "lax-sid", path: "/", httpOnly: true, partitioned: false, sameSite: "Lax" },
+    ];
+    const apply = (setCookies: string[]) => {
+      for (const line of setCookies) {
+        const [pair, ...attrs] = line.split(";").map((part) => part.trim());
+        const eq = pair.indexOf("=");
+        if (eq <= 0) continue;
+        const name = pair.slice(0, eq);
+        const rawValue = pair.slice(eq + 1);
+        const attrMap = new Map<string, string>();
+        for (const attr of attrs) {
+          const idx = attr.indexOf("=");
+          if (idx === -1) attrMap.set(attr.toLowerCase(), "");
+          else attrMap.set(attr.slice(0, idx).toLowerCase(), attr.slice(idx + 1));
+        }
+        const partitioned = attrMap.has("partitioned");
+        const same = (cookie: JarCookie) => cookie.name === name && cookie.path === (attrMap.get("path") || "/") && cookie.partitioned === partitioned;
+        for (let i = jar.length - 1; i >= 0; i--) if (same(jar[i])) jar.splice(i, 1);
+        if (attrMap.get("max-age") === "0" || rawValue.length === 0) continue;
+        let value = rawValue;
+        try {
+          value = decodeURIComponent(rawValue);
+        } catch {
+          /* keep */
+        }
+        jar.push({
+          name,
+          value,
+          path: attrMap.get("path") || "/",
+          httpOnly: attrMap.has("httponly"),
+          partitioned,
+          sameSite: attrMap.get("samesite") || "",
+        });
+      }
+    };
+    const forwarded = () =>
+      jar
+        .filter((cookie) => cookie.name === "__session" && cookie.value)
+        .map((cookie) => `__session=${encodeURIComponent(cookie.value)}`)
+        .join("; ");
+    const documentCookie = () =>
+      jar
+        .filter((cookie) => !cookie.httpOnly)
+        .map((cookie) => `${cookie.name}=${cookie.value}`)
+        .join("; ");
+
+    const seen: Array<{ path: string; cookie: string; csrf: string }> = [];
+    globalThis.fetch = async (input, init) => {
+      const headers = new Headers(init?.headers);
+      const cookie = forwarded();
+      if (cookie) headers.set("cookie", cookie);
+      else headers.delete("cookie");
+      const res = await previousFetch(input, { ...init, headers });
+      const setCookie = typeof res.headers.getSetCookie === "function" ? res.headers.getSetCookie() : [];
+      apply(setCookie);
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      seen.push({ path: new URL(url).pathname, cookie, csrf: headers.get("x-csrf-token") || "" });
+      return res;
+    };
+    setDocumentCookie(documentCookie());
+    try {
+      assert.equal(jar.some((cookie) => cookie.name === "__session"), false);
+      const me = await apiFetch<{ user?: { email?: string } | null; csrfToken?: string }>(
+        `http://127.0.0.1:${server.port}/api/auth/me`,
+        { headers: { "Sec-Fetch-Site": "same-origin" } }
+      );
+      assert.equal(me.user ?? null, null);
+      assert.ok(me.csrfToken);
+      assert.equal(seen[0].path, "/api/auth/me");
+      assert.equal(seen[0].cookie, "");
+      assert.equal(seen[0].csrf, "partitioned-readable");
+      const session = jar.find((cookie) => cookie.name === "__session" && !cookie.partitioned);
+      assert.ok(session, "bootstrap must set a host-only __session");
+      assert.match(session.value, /~/);
+      assert.equal(unpackHostSession(session.value).csrf, me.csrfToken);
+      assert.equal(session.sameSite.toLowerCase(), "lax");
+      assert.equal(jar.some((cookie) => cookie.partitioned), false);
+      assert.equal(jar.some((cookie) => cookie.sameSite.toLowerCase() === "none" && cookie.value), false);
+
+      const loggedIn = await apiFetch<{ user?: { email?: string } }>(`http://127.0.0.1:${server.port}/api/auth/login`, {
+        method: "POST",
+        headers: { "Sec-Fetch-Site": "same-origin" },
+        body: JSON.stringify({ email: "doctor@lumera.me", password: "Lumera@2026" }),
+      });
+      assert.equal(loggedIn.user?.email, "doctor@lumera.me");
+      const login = seen.filter((entry) => entry.path === "/api/auth/login");
+      assert.equal(login.length, 1);
+      assert.match(login[0].cookie, /^__session=/);
+      assert.doesNotMatch(login[0].cookie, /lumera_csrf|lumera_sid/);
+      assert.equal(login[0].csrf, me.csrfToken);
+      assert.notEqual(login[0].csrf, "partitioned-readable");
+      assert.notEqual(login[0].csrf, "lax-readable");
+
+      const after = await previousFetch(`http://127.0.0.1:${server.port}/api/auth/me`, {
+        headers: { cookie: cookiesForwardedByFirebaseHosting(forwarded()) },
+      });
+      const afterJson = (await after.json()) as { user?: { email?: string } | null };
+      assert.equal(afterJson.user?.email, "doctor@lumera.me");
+    } finally {
+      globalThis.fetch = previousFetch;
+      setDocumentCookie(null);
+      clearRememberedCsrfToken();
     }
   });
 

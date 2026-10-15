@@ -8,9 +8,11 @@ import {
   CSRF_HEADER,
   HOST_SESSION_COOKIE,
   csrfCookieValue,
+  csrfRefreshAllowed,
   csrfSetCookieHeader,
   listCookieValues,
   packHostSession,
+  partitionedCookieExpiryLines,
   refreshSessionExpiryLines,
   selectHostSession,
   sessionCookieExpiryLines,
@@ -152,7 +154,13 @@ export function setSessionCookie(res: Response, sessionId: string) {
   res.setHeader("Cache-Control", "private, no-store");
   // Value cookies first so a reader that keeps the first pair still sees them.
   // Variant clears follow and do not share the host-only Path=/ slot.
-  res.setHeader("Set-Cookie", [sid, host, csrfSetCookieHeader(csrf), ...sessionCookieExpiryLines()]);
+  res.setHeader("Set-Cookie", [
+    sid,
+    host,
+    csrfSetCookieHeader(csrf),
+    ...sessionCookieExpiryLines(),
+    ...partitionedCookieExpiryLines(),
+  ]);
 }
 
 export function clearSessionCookie(res: Response) {
@@ -162,7 +170,41 @@ export function clearSessionCookie(res: Response) {
     `${COOKIE}=; ${SESSION_COOKIE_ATTRS}; Max-Age=0`,
     `${CSRF_COOKIE}=; ${CLEAR_CSRF_ATTRS}; Max-Age=0`,
     ...sessionCookieExpiryLines(),
+    ...partitionedCookieExpiryLines(),
   ]);
+}
+
+function appendSetCookies(res: Response, lines: string[]) {
+  if (!lines.length) return;
+  const prev = res.getHeader("Set-Cookie");
+  const existing = prev == null ? [] : Array.isArray(prev) ? prev.map(String) : [String(prev)];
+  res.setHeader("Set-Cookie", [...existing, ...lines]);
+}
+
+/**
+ * Page load calls GET /api/auth/me with no __session when Firebase has stripped
+ * lumera_sid and lumera_csrf. Issue a host-only __session (credential~csrf)
+ * so the next login can echo that secret. Never rotates a real session, and
+ * never sets a cookie for a cross-site request.
+ */
+export function ensureBrowserCsrf(req: Request, res: Response, env: NodeJS.ProcessEnv = process.env): string {
+  if (!csrfRefreshAllowed(req, env)) return "";
+  const header = cookieHeaderOf(req);
+  appendSetCookies(res, partitionedCookieExpiryLines());
+  if (sessionCookieIsAuthenticated(req)) {
+    const csrf = unpackHostSession(selectHostSession(header, presentedCsrfHeader(req))).csrf;
+    if (csrf) res.setHeader("X-CSRF-Token", csrf);
+    return csrf;
+  }
+  const existing = selectHostSession(header, "");
+  const embedded = unpackHostSession(existing).csrf;
+  if (existing && embedded) {
+    res.setHeader("X-CSRF-Token", embedded);
+    return embedded;
+  }
+  const csrf = issueAnonymousCsrfCookie(res, env);
+  res.setHeader("X-CSRF-Token", csrf);
+  return csrf;
 }
 
 /**
