@@ -77,7 +77,6 @@ import { parseSpecialtyPackInput, resolveSpecialtyPack } from "./specialty-packs
 import { appPublicUrl, demoLoginEnabled, isProduction } from "./runtime.ts";
 import { DEMO_PASSWORD } from "../src/lib/demoAccounts.ts";
 import { dispatchWhatsAppCloudMessage, isCloudDispatchFailure, resolveUsageTenantId } from "./graph-whatsapp.ts";
-import { consumeSendOtpAttempt, normalizeOtpPhone, otpSubjectKey, requestClientIp } from "./otp-rate-limit.ts";
 import {
   FacebookOAuthError,
   facebookLoginDialogUrl,
@@ -811,40 +810,19 @@ export function createApiRouter(): Router {
       return res.status(400).json({ error: "WhatsApp Business phone number is required" });
     }
 
-    const otpLimit = consumeSendOtpAttempt(
-      phone,
-      requestClientIp(req),
-      otpSubjectKey({ userId: req.user?.id, email, phone })
-    );
-    if (otpLimit.ok === false) {
-      res.setHeader("Retry-After", String(otpLimit.retryAfterSec));
-      return res.status(429).json({ error: "Too many OTP requests. Try again later." });
-    }
-
-    const phoneKey = normalizeOtpPhone(phone);
-    const pendingRows = getDb()
-      .prepare(
-        `SELECT id, otp, expires_at, phone FROM otp_verifications
-         WHERE purpose = ? AND verified_at IS NULL AND expires_at > ?
-         ORDER BY created_at DESC LIMIT 30`
-      )
-      .all(purpose, new Date().toISOString()) as { id: string; otp: string; expires_at: string; phone: string }[];
-    const pending = pendingRows.find((row) => normalizeOtpPhone(row.phone) === phoneKey && phoneKey);
-    if (pending) {
+    const slot = reserveOtpSend(req, phone, purpose, { userId: req.user?.id, email }, true);
+    if (slot.limited === true) return sendOtpLimited(res, slot.retryAfterSec);
+    if (slot.pending) {
       return res.json({
         ok: true,
-        verificationId: pending.id,
+        verificationId: slot.pending.id,
         reused: true,
         phone,
-        ...otpEchoPayload(pending.otp),
-        expiresAt: pending.expires_at,
+        ...otpEchoPayload(slot.pending.otp),
+        expiresAt: slot.pending.expires_at,
         status: "pending",
         message: "Pending verification reused.",
       });
-    }
-    if (otpLimit.withinCooldown) {
-      res.setHeader("Retry-After", String(otpLimit.retryAfterSec || 1));
-      return res.status(429).json({ error: "Too many OTP requests. Try again later." });
     }
 
     const otp = Math.floor(100000 + Math.random() * 900000).toString();

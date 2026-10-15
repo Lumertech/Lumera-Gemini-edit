@@ -401,6 +401,7 @@ describe("WhatsApp Cloud API outbound status matching", () => {
     status?: string;
     payload: Record<string, unknown>;
     tenantId?: string;
+    sentAt?: string;
   }) {
     const db = getDb();
     db.prepare(
@@ -411,7 +412,7 @@ describe("WhatsApp Cloud API outbound status matching", () => {
       opts.phone,
       opts.status || "sent",
       JSON.stringify(opts.payload),
-      new Date().toISOString(),
+      opts.sentAt || new Date().toISOString(),
       opts.tenantId || statusTenantId
     );
   }
@@ -528,6 +529,47 @@ describe("WhatsApp Cloud API outbound status matching", () => {
       assert.equal(readStatus(eventId), "delivered");
     } finally {
       cleanup([eventId]);
+    }
+  });
+
+  it("phone fallback updates only the newest pending outbound row for that clinic and phone", () => {
+    ensureDb();
+    const olderId = `evt-status-${crypto.randomUUID().slice(0, 8)}`;
+    const newerId = `evt-status-${crypto.randomUUID().slice(0, 8)}`;
+    const otherPhoneId = `evt-status-${crypto.randomUUID().slice(0, 8)}`;
+    const phone = "+91 91111 22233";
+    insertOutbound({
+      id: olderId,
+      phone,
+      payload: { channel: "graph" },
+      sentAt: "2026-01-01T00:00:00.000Z",
+    });
+    insertOutbound({
+      id: newerId,
+      phone,
+      payload: { channel: "graph" },
+      sentAt: "2026-01-02T00:00:00.000Z",
+    });
+    insertOutbound({
+      id: otherPhoneId,
+      phone: "+91 90000 11122",
+      payload: { channel: "graph" },
+      sentAt: "2026-01-03T00:00:00.000Z",
+    });
+    try {
+      const updated = applyWhatsAppOutboundStatus(getDb(), {
+        messageId: `wamid.UNKNOWN_${crypto.randomUUID().slice(0, 8)}`,
+        recipientId: "919111122233",
+        status: "delivered",
+        sentAt: new Date().toISOString(),
+        tenantId: statusTenantId,
+      });
+      assert.equal(updated, 1);
+      assert.equal(readStatus(newerId), "delivered");
+      assert.equal(readStatus(olderId), "sent");
+      assert.equal(readStatus(otherPhoneId), "sent");
+    } finally {
+      cleanup([olderId, newerId, otherPhoneId]);
     }
   });
 

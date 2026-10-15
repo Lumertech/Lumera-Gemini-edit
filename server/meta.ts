@@ -18,6 +18,12 @@ import { tenantIdFromReceivingPhoneNumberId } from "./whatsapp-tenant-resolve.ts
 import { WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
 import type { SqlDatabase } from "./sql-engine.ts";
 
+/** read and failed are terminal. delivered can still become read. */
+function isPendingOutboundStatus(status: string): boolean {
+  const value = status.trim().toLowerCase();
+  return value !== "read" && value !== "failed";
+}
+
 function graphWamidFromPayload(raw: unknown): string {
   if (raw == null || raw === "") return "";
   try {
@@ -34,7 +40,8 @@ function graphWamidFromPayload(raw: unknown): string {
  * Apply a Meta Cloud API message-status webhook to the matching outbound event.
  * Graph stores the wamid in action_payload.messageId (row id is evt-*), and
  * status.recipient_id is digits-only while patient_phone is often E.164 (+91…).
- * Match wamid first; phone is a secondary fallback using phonesMatch.
+ * Match wamid first. Phone is a fallback for the newest in-flight row of that
+ * clinic and patient, not every outbound event to the handset.
  */
 export function applyWhatsAppOutboundStatus(
   db: SqlDatabase,
@@ -72,18 +79,26 @@ export function applyWhatsAppOutboundStatus(
       "replace(replace(replace(replace(patient_phone, '+', ''), ' ', ''), '-', ''), '(', '')";
     const candidates = db
       .prepare(
-        `SELECT id, patient_phone FROM whatsapp_outbound_events
+        `SELECT id, patient_phone, status, sent_at FROM whatsapp_outbound_events
          WHERE ${tenantSql}
            AND (
              patient_phone = ?
              OR patient_phone = ?
              OR ${phoneDigitsExpr} = ?
              OR (? != '' AND ${phoneDigitsExpr} LIKE '%' || ? || '%')
-           )`
+           )
+         ORDER BY sent_at DESC`
       )
-      .all(tenantId, recipientId, plusPrefixed, digits, last10, last10) as Array<{ id: string; patient_phone: string }>;
+      .all(tenantId, recipientId, plusPrefixed, digits, last10, last10) as Array<{
+        id: string;
+        patient_phone: string;
+        status?: string;
+      }>;
     for (const row of candidates) {
-      if (phonesMatch(row.patient_phone, recipientId)) matchedIds.add(row.id);
+      if (!phonesMatch(row.patient_phone, recipientId)) continue;
+      if (!isPendingOutboundStatus(String(row.status || ""))) continue;
+      matchedIds.add(row.id);
+      break;
     }
   }
 

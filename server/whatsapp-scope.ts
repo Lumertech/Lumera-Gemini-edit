@@ -107,12 +107,12 @@ export function upsertScopedConversation(opts: {
   }
 
   let id = String(opts.preferredId || "").trim() || `conv-${tenantId}-${Date.now()}`;
-  const taken = db.prepare("SELECT tenant_id FROM whatsapp_conversations WHERE id = ?").get(id) as
-    | { tenant_id?: string }
-    | undefined;
-  if (taken && String(taken.tenant_id || "").trim() !== tenantId) {
+  const taken = db.prepare("SELECT id FROM whatsapp_conversations WHERE id = ?").get(id) as { id?: string } | undefined;
+  if (taken?.id) {
     const suffix = tenantId.replace(/[^a-z0-9]/gi, "").slice(-8) || "tenant";
     id = `${id}-${suffix}`;
+    const stillTaken = db.prepare("SELECT id FROM whatsapp_conversations WHERE id = ?").get(id) as { id?: string } | undefined;
+    if (stillTaken?.id) id = `${id}-${Date.now().toString(36)}`;
   }
   db.prepare(
     `INSERT INTO whatsapp_conversations (

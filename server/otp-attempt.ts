@@ -1,7 +1,8 @@
 import type { Request, Response } from "express";
+import { toE164Phone } from "./clinical.ts";
 import { getDb } from "./db.ts";
 import type { SqlDatabase } from "./sql-engine.ts";
-import { consumeSendOtpAttempt, normalizeOtpPhone, otpSubjectKey, requestClientIp } from "./otp-rate-limit.ts";
+import { consumeSendOtpAttempt, otpSubjectKey, requestClientIp } from "./otp-rate-limit.ts";
 
 export const OTP_SEND_LIMIT_ERROR = "Too many OTP requests. Try again later.";
 export const OTP_VERIFY_LOCK_ERROR = "Too many incorrect codes. This code is no longer valid. Request a new OTP.";
@@ -46,17 +47,18 @@ export function reserveOtpSend(
 }
 
 function findPendingOtp(phone: string, purpose: string, email: string): PendingOtp | null {
-  const phoneKey = normalizeOtpPhone(phone);
+  const phoneKey = toE164Phone(phone);
   if (!phoneKey) return null;
   const rows = getDb()
     .prepare(
       `SELECT id, otp, expires_at, phone FROM otp_verifications
        WHERE purpose = ? AND lower(email) = ? AND verified_at IS NULL AND expires_at > ?
          AND COALESCE(failed_attempts, 0) < ?
-       ORDER BY created_at DESC LIMIT 30`
+         AND TRIM(COALESCE(otp, '')) != ''
+       ORDER BY created_at DESC`
     )
     .all(purpose, email, new Date().toISOString(), VERIFY_OTP_MAX_FAILURES) as Array<PendingOtp & { phone?: string }>;
-  return rows.find((row) => normalizeOtpPhone(String(row.phone || "")) === phoneKey) || null;
+  return rows.find((row) => toE164Phone(String(row.phone || "")) === phoneKey) || null;
 }
 
 export function rejectWrongOtp(

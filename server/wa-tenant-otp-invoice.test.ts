@@ -511,6 +511,66 @@ describe("WhatsApp tenant scope, send validation, OTP limit, invoice UHID", () =
     resetSendOtpRateLimits();
   });
 
+  it("send-otp does not reuse a code across +1 and +91 numbers that share the last 10 digits", async () => {
+    resetSendOtpRateLimits();
+    const local = `93${String(Date.now()).slice(-8)}`;
+    const email = `country.${local}@wa-iso.example`;
+    const india = `+91 ${local.slice(0, 5)} ${local.slice(5)}`;
+    const us = `+1 ${local.slice(0, 3)} ${local.slice(3, 6)} ${local.slice(6)}`;
+    const first = await jsonRequest(server.port, "POST", "/api/auth/whatsapp/send-otp", {
+      phone: india,
+      email,
+      purpose: "login",
+    });
+    assert.equal(first.status, 200, String(first.json.error || ""));
+    resetSendOtpRateLimits();
+    const second = await jsonRequest(server.port, "POST", "/api/auth/whatsapp/send-otp", {
+      phone: us,
+      email,
+      purpose: "login",
+    });
+    assert.equal(second.status, 200, String(second.json.error || ""));
+    assert.notEqual(second.json.reused, true);
+    assert.notEqual(String(second.json.verificationId || ""), String(first.json.verificationId || ""));
+    resetSendOtpRateLimits();
+  });
+
+  it("send-otp does not reuse a code locked after 5 wrong attempts", async () => {
+    resetSendOtpRateLimits();
+    const phone = `+91 92${String(Date.now()).slice(-8)}`;
+    const email = `locked.${phone.replace(/\D/g, "")}@wa-iso.example`;
+    const first = await jsonRequest(server.port, "POST", "/api/auth/whatsapp/send-otp", {
+      phone,
+      email,
+      purpose: "login",
+    });
+    assert.equal(first.status, 200, String(first.json.error || ""));
+    const verificationId = String(first.json.verificationId || "");
+    assert.ok(verificationId);
+    for (let i = 0; i < 4; i += 1) {
+      const wrong = await jsonRequest(server.port, "POST", "/api/auth/whatsapp/verify-otp", {
+        verificationId,
+        otp: "000000",
+      });
+      assert.equal(wrong.status, 400, String(wrong.json.error || ""));
+    }
+    const locked = await jsonRequest(server.port, "POST", "/api/auth/whatsapp/verify-otp", {
+      verificationId,
+      otp: "000000",
+    });
+    assert.equal(locked.status, 429, String(locked.json.error || ""));
+    resetSendOtpRateLimits();
+    const second = await jsonRequest(server.port, "POST", "/api/auth/whatsapp/send-otp", {
+      phone,
+      email,
+      purpose: "login",
+    });
+    assert.equal(second.status, 200, String(second.json.error || ""));
+    assert.notEqual(second.json.reused, true);
+    assert.notEqual(String(second.json.verificationId || ""), verificationId);
+    resetSendOtpRateLimits();
+  });
+
   it("OTP, receipt, and Rx writes stay on the sending clinic and status can see that tenant", async () => {
     resetSendOtpRateLimits();
     const clinicA = createClinic("isoA");
