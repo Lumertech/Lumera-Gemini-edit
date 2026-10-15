@@ -22,6 +22,7 @@ import { createApiRouter } from "./api.ts";
 import { getDb, initDatabase } from "./db.ts";
 import { hashPassword } from "./password.ts";
 import { DEMO_ACCOUNTS, DEMO_LOGIN_MATRIX } from "../src/lib/demoAccounts.ts";
+import { INDIVIDUAL_DEMO_TENANT_ID } from "./demo-workspace-tenants.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -309,7 +310,7 @@ describe("Wave 1A PHI / auth lock", () => {
     const jwtPayload = verifyJwtToken(token);
     assert.ok(jwtPayload);
     assert.equal(jwtPayload.email, "doctor@lumera.me");
-    assert.equal(jwtPayload.tenantId, "tenant-lumera-main");
+    assert.equal(jwtPayload.tenantId, INDIVIDUAL_DEMO_TENANT_ID);
 
     const patients = await jsonRequest(port, "GET", "/api/patients", undefined, {
       Authorization: `Bearer ${token}`,

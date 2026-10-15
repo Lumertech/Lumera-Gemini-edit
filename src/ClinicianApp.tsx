@@ -503,7 +503,7 @@ export default function ClinicianApp() {
   return (
     <div
       data-testid="clinician-app"
-      className="h-screen w-screen overflow-hidden flex flex-col bg-slate-100 text-slate-900 font-sans selection:bg-blue-600 selection:text-white"
+      className="h-dvh max-h-dvh w-full max-w-full overflow-hidden flex flex-col bg-slate-100 text-slate-900 font-sans selection:bg-blue-600 selection:text-white"
     >
       <Navbar
         currentView={currentView}
@@ -520,7 +520,7 @@ export default function ClinicianApp() {
         isSpecialtyLocked={isSpecialtyLocked}
       />
 
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 min-w-0 overflow-hidden">
         <Sidebar
           currentView={currentView}
           onSelectView={setCurrentView}
@@ -533,7 +533,7 @@ export default function ClinicianApp() {
           onPatientCreated={(p) => setPatients((prev) => [p, ...prev])}
         />
 
-        <main className="flex-1 min-w-0 h-full overflow-y-auto bg-slate-100/70 p-4 sm:p-6 lg:p-8 flex flex-col">
+        <main className="flex-1 min-w-0 w-full h-full overflow-y-auto overflow-x-hidden bg-slate-100/70 p-4 sm:p-6 lg:p-8 flex flex-col">
           {isDemo && (
             <div className="mb-3 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-900" data-testid="demo-sandbox-banner">
               {pack.sandboxNotice}

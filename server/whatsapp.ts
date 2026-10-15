@@ -21,6 +21,7 @@ import {
 import { isProduction } from "./runtime.ts";
 import { reportCaughtError } from "./error-tracker.ts";
 import { CLINICIAN_ROLES, requireAuth, requireRole } from "./auth.ts";
+import { rejectUntrustedTenantClaim } from "./tenant-guard.ts";
 import { serializeOutboundEvent } from "./whatsapp-scope.ts";
 
 let defaultGenAIClient: GoogleGenAI | null = null;
@@ -88,6 +89,7 @@ function respondWhatsAppMessages(res: Response, convId?: string, phone?: string)
 export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null): Router {
   const getGenAI = customGetGenAI || getDefaultGenAI;
   const router = Router();
+  router.use(rejectUntrustedTenantClaim);
 
   // Helper to format timestamps
   function getDisplayTime(): string {
@@ -1242,10 +1244,19 @@ Output strictly in JSON:
     }
   });
 
-  router.get("/lab-report/:id/pdf", (req: Request, res: Response) => {
+  router.get("/lab-report/:id/pdf", requireAuth, requireRole(...CLINICIAN_ROLES), (req: Request, res: Response) => {
     try {
       const db = getDb();
-      const lab = db.prepare("SELECT * FROM lab_reports WHERE id = ?").get(req.params.id) as Record<string, unknown> | undefined;
+      const tenantId = String(req.user?.tenantId || "").trim();
+      const lab = tenantId
+        ? (db
+            .prepare(
+              `SELECT l.* FROM lab_reports l
+               INNER JOIN patients p ON p.id = l.patient_id
+               WHERE l.id = ? AND p.tenant_id = ?`
+            )
+            .get(req.params.id, tenantId) as Record<string, unknown> | undefined)
+        : undefined;
       if (!lab) return res.status(404).send("Lab report not found");
 
       const results = JSON.parse((lab.results as string) || "[]");

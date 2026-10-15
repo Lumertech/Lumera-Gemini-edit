@@ -255,8 +255,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
       data-testid="app-sidebar"
       data-pack-kind={pack.kind}
       className={`${
-        isCollapsed ? 'w-16' : 'w-64'
-      } flex-shrink-0 bg-slate-900 border-r border-slate-800 text-slate-300 flex flex-col justify-between transition-all duration-200 select-none z-20 overflow-hidden`}
+        isCollapsed ? 'w-16 max-md:-translate-x-full md:translate-x-0' : 'w-64'
+      } max-md:fixed max-md:top-14 max-md:bottom-0 max-md:left-0 md:relative flex-shrink-0 bg-slate-900 border-r border-slate-800 text-slate-300 flex flex-col justify-between transition-all duration-200 select-none z-20 overflow-hidden`}
     >
       <div className="flex-1 overflow-y-auto p-3 space-y-5 scrollbar-thin scrollbar-thumb-slate-800">
         {canStartConsult && (

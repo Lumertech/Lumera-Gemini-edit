@@ -70,13 +70,18 @@ describe("LUM-TIP-001 / LUM-TIP-003 prescription and meta catalog authz", () => 
   it("demo clinician can read own-tenant Rx HTML; other tenant and patient cannot", async () => {
     const doctor = await login("doctor@lumera.me");
     const doctorAuth = { Authorization: `Bearer ${doctor}` };
-    const own = await textGet("/api/whatsapp/prescription/rx-101/pdf", doctorAuth);
+    const own = await textGet("/api/whatsapp/prescription/ind-rx-1/pdf", doctorAuth);
     assert.equal(own.status, 200);
-    assert.match(own.body, /Clinical Prescription - RX-2026-0106/);
+    assert.match(own.body, /Clinical Prescription - RX-IND-DEMO-0001/);
     assert.match(own.body, /Rajiv Saxena/);
-    const byNumber = await textGet("/api/whatsapp/prescription/RX-2026-0106/pdf", doctorAuth);
+    const byNumber = await textGet("/api/whatsapp/prescription/RX-IND-DEMO-0001/pdf", doctorAuth);
     assert.equal(byNumber.status, 200);
     assert.match(byNumber.body, /Rajiv Saxena/);
+
+    const metaRx = await textGet("/api/whatsapp/prescription/rx-101/pdf", doctorAuth);
+    assert.equal(metaRx.status, 403);
+    assertNoPhi(metaRx.body);
+    assert.match(metaRx.body, /Insufficient permissions/);
 
     const suffix = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
     const tenantId = `tenant-tipb-${suffix}`;
@@ -95,13 +100,13 @@ describe("LUM-TIP-001 / LUM-TIP-003 prescription and meta catalog authz", () => 
       )
       .run(`user-tipb-${suffix}`, tenantId, email, hashPassword("Lumera@2026"), now, now);
     const other = await login(email);
-    const stolen = await textGet("/api/whatsapp/prescription/rx-101/pdf", { Authorization: `Bearer ${other}` });
+    const stolen = await textGet("/api/whatsapp/prescription/ind-rx-1/pdf", { Authorization: `Bearer ${other}` });
     assert.equal(stolen.status, 403);
     assertNoPhi(stolen.body);
     assert.match(stolen.body, /Insufficient permissions/);
 
     const patient = await login("patient@lumera.me");
-    const denied = await textGet("/api/whatsapp/prescription/RX-2026-0106/pdf", {
+    const denied = await textGet("/api/whatsapp/prescription/RX-IND-DEMO-0001/pdf", {
       Authorization: `Bearer ${patient}`,
     });
     assert.equal(denied.status, 403);
@@ -156,7 +161,7 @@ describe("LUM-TIP-001 / LUM-TIP-003 prescription and meta catalog authz", () => 
   it("logout revokes the presented bearer and clears the session cookie", async () => {
     const token = await login("doctor@lumera.me");
     const auth = { Authorization: `Bearer ${token}` };
-    const before = await textGet("/api/whatsapp/prescription/rx-101/pdf", auth);
+    const before = await textGet("/api/whatsapp/prescription/ind-rx-1/pdf", auth);
     assert.equal(before.status, 200);
 
     const loggedOut = await fetch(`http://127.0.0.1:${port}/api/auth/logout`, {
@@ -168,12 +173,12 @@ describe("LUM-TIP-001 / LUM-TIP-003 prescription and meta catalog authz", () => 
     assert.match(setCookie, /lumera_sid=;/);
     assert.match(setCookie, /Max-Age=0/i);
 
-    const after = await textGet("/api/whatsapp/prescription/rx-101/pdf", auth);
+    const after = await textGet("/api/whatsapp/prescription/ind-rx-1/pdf", auth);
     assert.equal(after.status, 401);
     assertNoPhi(after.body);
 
     const fresh = await login("doctor@lumera.me");
-    const again = await textGet("/api/whatsapp/prescription/rx-101/pdf", { Authorization: `Bearer ${fresh}` });
+    const again = await textGet("/api/whatsapp/prescription/ind-rx-1/pdf", { Authorization: `Bearer ${fresh}` });
     assert.equal(again.status, 200);
   });
 

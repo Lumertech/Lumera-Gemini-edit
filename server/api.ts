@@ -49,6 +49,7 @@ import {
   requirePlatformAdmin,
   requireRole,
 } from "./auth.ts";
+import { rejectUntrustedTenantClaim } from "./tenant-guard.ts";
 import {
   createAdminTenant,
   ensureTenantSubscription,
@@ -378,6 +379,7 @@ function otpDispatchFailure(res: Response, result: OtpDispatchResult) {
 
 export function createApiRouter(): Router {
   const api = Router();
+  api.use(rejectUntrustedTenantClaim);
 
   api.post("/auth/login", async (req: Request, res: Response) => {
     const email = String(req.body?.email || "").trim().toLowerCase();
@@ -1483,7 +1485,7 @@ export function createApiRouter(): Router {
     return res.json({ ok: true });
   });
 
-  api.get("/auth/me", (req: Request, res: Response) => {
+  const sendSession = (req: Request, res: Response) => {
     if (!req.user) return res.json({ user: null });
     if (rejectClinicTenantBlocked(req.user, res)) return;
     let tenant = null;
@@ -1491,6 +1493,25 @@ export function createApiRouter(): Router {
       tenant = getDb().prepare("SELECT * FROM tenants WHERE id = ?").get(req.user.tenantId) as any;
     }
     return res.json({ user: req.user, tenant, token: getSessionId(req) });
+  };
+
+  api.get("/me", sendSession);
+  api.get("/auth/me", sendSession);
+
+  api.get("/w/:workspaceSlug/patients", requireAuth, (req, res) => {
+    const slug = String(req.params.workspaceSlug || "").trim().toLowerCase();
+    const sessionSlug = String(req.user?.workspaceSlug || "").trim().toLowerCase();
+    if (!sessionSlug || slug !== sessionSlug) {
+      return res.status(404).json({ error: "Not found" });
+    }
+    const tenantId = String(req.user?.tenantId || "").trim();
+    const rows = tenantId
+      ? (getDb().prepare("SELECT id, name FROM patients WHERE tenant_id = ? ORDER BY name ASC").all(tenantId) as {
+          id: string;
+          name: string;
+        }[])
+      : [];
+    res.json({ patients: rows });
   });
 
   api.patch("/auth/me", requireAuth, (req: Request, res: Response) => {
@@ -2249,26 +2270,44 @@ export function createApiRouter(): Router {
     res.json({ ok: true });
   });
 
-  api.get("/branches", (_req, res) => {
-    res.json({ branches: getDb().prepare("SELECT * FROM branches ORDER BY name").all() });
+  api.get("/branches", requireAuth, (req, res) => {
+    const tenantId = String(req.user?.tenantId || "");
+    const rows = tenantId
+      ? getDb().prepare("SELECT * FROM branches WHERE tenant_id = ? ORDER BY name").all(tenantId)
+      : [];
+    res.json({ branches: rows });
   });
 
-  api.post("/branches", requireAuth, requireRole(...ADMIN_ROLES), (req, res) => {
+  api.post("/branches", requireAuth, requireRole(...ADMIN_ROLES, "CLINIC_ADMIN", "polyclinic_admin"), (req, res) => {
     const b = req.body || {};
     if (!b.name) return res.status(400).json({ error: "name is required" });
+    const tenantId = String(req.user?.tenantId || "");
+    if (!tenantId) return res.status(403).json({ error: "Forbidden" });
     const id = `b-${crypto.randomUUID().slice(0, 8)}`;
     getDb()
       .prepare(
-        `INSERT INTO branches (id, name, address, phone, opd_hours, active_doctors, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO branches (id, name, address, phone, opd_hours, active_doctors, status, tenant_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(id, b.name, b.address || "", b.phone || "", b.opdHours || b.opd_hours || "", Number(b.activeDoctors || b.active_doctors || 0), b.status || "Operating");
+      .run(
+        id,
+        b.name,
+        b.address || "",
+        b.phone || "",
+        b.opdHours || b.opd_hours || "",
+        Number(b.activeDoctors || b.active_doctors || 0),
+        b.status || "Operating",
+        tenantId
+      );
     audit(req, "Branch created", b.name);
-    res.status(201).json({ branch: getDb().prepare("SELECT * FROM branches WHERE id = ?").get(id) });
+    res.status(201).json({ branch: getDb().prepare("SELECT * FROM branches WHERE id = ? AND tenant_id = ?").get(id, tenantId) });
   });
 
-  api.patch("/branches/:id", requireAuth, requireRole(...ADMIN_ROLES), (req, res) => {
-    const existing = getDb().prepare("SELECT * FROM branches WHERE id = ?").get(req.params.id) as Record<string, unknown> | undefined;
+  api.patch("/branches/:id", requireAuth, requireRole(...ADMIN_ROLES, "CLINIC_ADMIN", "polyclinic_admin"), (req, res) => {
+    const tenantId = String(req.user?.tenantId || "");
+    const existing = getDb()
+      .prepare("SELECT * FROM branches WHERE id = ? AND tenant_id = ?")
+      .get(req.params.id, tenantId) as Record<string, unknown> | undefined;
     if (!existing) return res.status(404).json({ error: "Branch not found" });
     const next = {
       name: req.body.name ?? existing.name,
@@ -2280,15 +2319,20 @@ export function createApiRouter(): Router {
     };
     getDb()
       .prepare(
-        `UPDATE branches SET name = ?, address = ?, phone = ?, opd_hours = ?, active_doctors = ?, status = ? WHERE id = ?`
+        `UPDATE branches SET name = ?, address = ?, phone = ?, opd_hours = ?, active_doctors = ?, status = ? WHERE id = ? AND tenant_id = ?`
       )
-      .run(next.name, next.address, next.phone, next.opd_hours, Number(next.active_doctors), next.status, req.params.id);
+      .run(next.name, next.address, next.phone, next.opd_hours, Number(next.active_doctors), next.status, req.params.id, tenantId);
     audit(req, "Branch updated", String(next.name));
-    res.json({ branch: getDb().prepare("SELECT * FROM branches WHERE id = ?").get(req.params.id) });
+    res.json({ branch: getDb().prepare("SELECT * FROM branches WHERE id = ? AND tenant_id = ?").get(req.params.id, tenantId) });
   });
 
-  api.delete("/branches/:id", requireAuth, requireRole(...ADMIN_ROLES), (req, res) => {
-    getDb().prepare("DELETE FROM branches WHERE id = ?").run(req.params.id);
+  api.delete("/branches/:id", requireAuth, requireRole(...ADMIN_ROLES, "CLINIC_ADMIN", "polyclinic_admin"), (req, res) => {
+    const tenantId = String(req.user?.tenantId || "");
+    const existing = getDb()
+      .prepare("SELECT id FROM branches WHERE id = ? AND tenant_id = ?")
+      .get(req.params.id, tenantId) as { id?: string } | undefined;
+    if (!existing?.id) return res.status(404).json({ error: "Branch not found" });
+    getDb().prepare("DELETE FROM branches WHERE id = ? AND tenant_id = ?").run(req.params.id, tenantId);
     audit(req, "Branch deleted", req.params.id);
     res.json({ ok: true });
   });

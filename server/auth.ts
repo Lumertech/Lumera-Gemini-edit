@@ -89,6 +89,7 @@ export interface AuthUser {
   practiceType?: "individual" | "polyclinic";
   specialty?: string;
   packId?: string;
+  workspaceSlug?: string;
   roleHome?: "admin" | "app" | "portal" | "login";
   homeView?: string;
   isDemoWorkspace?: boolean;
@@ -120,16 +121,19 @@ function parseCookies(header?: string): Record<string, string> {
   return out;
 }
 
+const SESSION_COOKIE_ATTRS = "HttpOnly; Path=/; SameSite=Lax; Secure";
+const CLEAR_CSRF_ATTRS = "Path=/; SameSite=Lax; Secure";
+
 export function setSessionCookie(res: Response, sessionId: string) {
   const maxAge = SESSION_DAYS * 24 * 60 * 60;
-  const sid = `${COOKIE}=${encodeURIComponent(sessionId)}; HttpOnly; Path=/; SameSite=None; Secure; Partitioned; Max-Age=${maxAge}`;
+  const sid = `${COOKIE}=${encodeURIComponent(sessionId)}; ${SESSION_COOKIE_ATTRS}; Max-Age=${maxAge}`;
   res.setHeader("Set-Cookie", [sid, csrfSetCookieHeader(csrfCookieValue())]);
 }
 
 export function clearSessionCookie(res: Response) {
   res.setHeader("Set-Cookie", [
-    `${COOKIE}=; HttpOnly; Path=/; SameSite=None; Secure; Partitioned; Max-Age=0`,
-    `${CSRF_COOKIE}=; Path=/; SameSite=None; Secure; Partitioned; Max-Age=0`,
+    `${COOKIE}=; ${SESSION_COOKIE_ATTRS}; Max-Age=0`,
+    `${CSRF_COOKIE}=; ${CLEAR_CSRF_ATTRS}; Max-Age=0`,
   ]);
 }
 

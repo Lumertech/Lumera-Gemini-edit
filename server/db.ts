@@ -12,6 +12,7 @@ import { DatabaseSync } from "node:sqlite";
 import { type SqlDatabase } from "./sql-engine.ts";
 import { openConfiguredDatabase } from "./sql-open.ts";
 import { ensureDemoPersonaUsers } from "./demo-seed.ts";
+import { ensureDemoWorkspaceTenants } from "./demo-workspace-tenants.ts";
 import { seedPlatformTenantData } from "./platform-tenants.ts";
 
 export type UserRole =
@@ -151,6 +152,7 @@ export function initDatabase(): DatabaseSync {
   ensureMetaTechProviderAndPolicies(db);
   ensureAbdmAndDhisSeeding(db);
   seedPlatformTenantData(db);
+  ensureDemoWorkspaceTenants(db);
   return db as DatabaseSync;
 }
 

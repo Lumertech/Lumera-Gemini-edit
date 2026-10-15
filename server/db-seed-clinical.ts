@@ -52,7 +52,7 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
       UPDATE users
       SET tenant_id = '${DEMO_TENANT_ID}',
           onboarding_completed = 1
-      WHERE id IN ('user-admin', 'user-doctor', 'user-patient', 'user-reception', 'user-receptionist', 'user-clinic-admin')
+      WHERE id = 'user-admin'
          OR id LIKE 'test-user-%'
     `);
     // Legacy per-doctor test logins stay on the shared multi-specialty tenant.

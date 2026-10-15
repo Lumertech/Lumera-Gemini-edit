@@ -734,7 +734,7 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
         note: "Clip A reminder test credit",
         createdBy: "system",
       });
-      const token = await login("doctor@lumera.me");
+      const token = await login("admin@lumera.me");
       const reminded = await jsonRequest(
         port,
         "POST",

@@ -1,6 +1,7 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { getDb } from "./db.ts";
 import { CLINIC_MANAGER_ROLES, isPlatformAdminRole, requireAuth, requirePlatformAdmin, requireRole } from "./auth.ts";
+import { rejectUntrustedTenantClaim } from "./tenant-guard.ts";
 import { isProduction } from "./runtime.ts";
 import { rejectProductionSimulator } from "./meta-security.ts";
 import {
@@ -131,6 +132,7 @@ export function practitionerLinkMiddleware(req: Request, res: Response, next: Ne
 
 export function createWhatsAppNumbersRouter(): Router {
   const router = Router();
+  router.use(rejectUntrustedTenantClaim);
 
   router.get("/admin/whatsapp-numbers", requireAuth, requirePlatformAdmin, (_req, res) => {
     try {
