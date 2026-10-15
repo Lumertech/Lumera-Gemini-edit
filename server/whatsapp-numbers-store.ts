@@ -1,18 +1,18 @@
 import type { DatabaseSync } from "node:sqlite";
 import { getDb } from "./db.ts";
-import { sandboxSimulatorsEnabled } from "./runtime.ts";
+import { isProduction, sandboxSimulatorsEnabled } from "./runtime.ts";
+import { decryptWaSecret, isEncryptedWaSecret, sealWaSecret, waTokenKeyBytes } from "./wa-token-crypto.ts";
 
 /**
  * Two-tier WABA ownership.
  *
- * Token storage: plaintext SQLite column on `whatsapp_number_secrets`, referenced
- * by `whatsapp_numbers.meta_token_ref`. This matches the existing tenant pattern
- * (`tenants.meta_access_token` is a SQLite TEXT column, not Secret Manager).
- * Tokens are intentionally NOT stored on `whatsapp_numbers` itself.
+ * Token storage: `whatsapp_number_secrets.meta_access_token`, referenced by
+ * `whatsapp_numbers.meta_token_ref`. When WA_TOKEN_KEY is set the value is
+ * AES-256-GCM (`waenc1:`). The plaintext token is not copied onto
+ * `tenants.meta_access_token`.
  *
  * `tenants.waba_id` / `phone_number_id` / `meta_waba_name` / `meta_token_expires_at`
- * / `meta_access_token` stay as derived, write-through copies for tenant-owned
- * numbers so existing readers (meta.ts list, graph-whatsapp.ts) keep working.
+ * stay as derived copies for tenant-owned numbers. `meta_access_token` is nulled.
  */
 
 export type WhatsAppOwnerType = "tenant" | "doctor";
@@ -87,10 +87,16 @@ export function ensureWhatsAppOwnershipSchema(database: DatabaseSync) {
       id TEXT PRIMARY KEY,
       whatsapp_number_id TEXT NOT NULL UNIQUE,
       meta_access_token TEXT NOT NULL DEFAULT '',
+      registration_pin TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
   `);
+  try {
+    database.exec("ALTER TABLE whatsapp_number_secrets ADD COLUMN registration_pin TEXT NOT NULL DEFAULT ''");
+  } catch {
+    /* already present */
+  }
 
   try {
     database.exec("ALTER TABLE doctors ADD COLUMN practitioner_id TEXT DEFAULT ''");
@@ -253,15 +259,28 @@ export function getWhatsAppNumberSecret(metaTokenRef: string, database: Database
     const row = database
       .prepare("SELECT meta_access_token FROM whatsapp_number_secrets WHERE id = ?")
       .get(metaTokenRef) as { meta_access_token?: string } | undefined;
-    return String(row?.meta_access_token || "");
-  } catch {
+    return decryptWaSecret(String(row?.meta_access_token || ""));
+  } catch (err) {
+    if (isProduction() && err instanceof Error && /WA_TOKEN_KEY|ciphertext/i.test(err.message)) throw err;
+    return "";
+  }
+}
+
+export function getWhatsAppRegistrationPin(metaTokenRef: string, database: DatabaseSync = getDb()): string {
+  if (!metaTokenRef) return "";
+  try {
+    const row = database
+      .prepare("SELECT registration_pin FROM whatsapp_number_secrets WHERE id = ?")
+      .get(metaTokenRef) as { registration_pin?: string } | undefined;
+    return decryptWaSecret(String(row?.registration_pin || ""));
+  } catch (err) {
+    if (isProduction() && err instanceof Error && /WA_TOKEN_KEY|ciphertext/i.test(err.message)) throw err;
     return "";
   }
 }
 
 export function syncTenantWabaColumns(database: DatabaseSync, tenantId: string) {
   const row = getTenantWabaNumber(tenantId, database);
-  const token = row?.meta_token_ref ? getWhatsAppNumberSecret(row.meta_token_ref, database) : "";
   const now = new Date().toISOString();
   try {
     if (!row || row.status === "disconnected") {
@@ -270,7 +289,7 @@ export function syncTenantWabaColumns(database: DatabaseSync, tenantId: string) 
           `UPDATE tenants
            SET waba_id = '',
                phone_number_id = '',
-               meta_access_token = '',
+               meta_access_token = NULL,
                meta_token_expires_at = COALESCE(meta_token_expires_at, ''),
                meta_waba_name = COALESCE(meta_waba_name, ''),
                meta_onboarding_status = 'disconnected',
@@ -285,7 +304,7 @@ export function syncTenantWabaColumns(database: DatabaseSync, tenantId: string) 
         `UPDATE tenants
          SET waba_id = ?,
              phone_number_id = ?,
-             meta_access_token = ?,
+             meta_access_token = NULL,
              meta_token_expires_at = ?,
              meta_waba_name = ?,
              meta_onboarding_status = ?,
@@ -295,7 +314,6 @@ export function syncTenantWabaColumns(database: DatabaseSync, tenantId: string) 
       .run(
         row.waba_id || "",
         row.phone_number_id || "",
-        token,
         row.meta_token_expires_at || "",
         row.meta_waba_name || "",
         row.status === "connected" ? "connected" : row.status,
@@ -307,24 +325,91 @@ export function syncTenantWabaColumns(database: DatabaseSync, tenantId: string) 
   }
 }
 
-export function storeToken(database: DatabaseSync, numberId: string, tokenRef: string, token: string) {
+export function storeToken(
+  database: DatabaseSync,
+  numberId: string,
+  tokenRef: string,
+  token: string,
+  registrationPin?: string
+) {
   const now = new Date().toISOString();
+  const sealedToken = sealWaSecret(token);
+  const sealedPin = registrationPin === undefined ? undefined : sealWaSecret(registrationPin);
   const existing = database
     .prepare("SELECT id FROM whatsapp_number_secrets WHERE id = ? OR whatsapp_number_id = ?")
     .get(tokenRef, numberId) as { id?: string } | undefined;
   if (existing?.id) {
-    database
-      .prepare("UPDATE whatsapp_number_secrets SET meta_access_token = ?, updated_at = ? WHERE id = ?")
-      .run(token, now, existing.id);
+    if (sealedPin === undefined) {
+      database
+        .prepare("UPDATE whatsapp_number_secrets SET meta_access_token = ?, updated_at = ? WHERE id = ?")
+        .run(sealedToken, now, existing.id);
+    } else {
+      database
+        .prepare(
+          "UPDATE whatsapp_number_secrets SET meta_access_token = ?, registration_pin = ?, updated_at = ? WHERE id = ?"
+        )
+        .run(sealedToken, sealedPin, now, existing.id);
+    }
     return existing.id;
   }
   database
     .prepare(
-      `INSERT INTO whatsapp_number_secrets (id, whatsapp_number_id, meta_access_token, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?)`
+      `INSERT INTO whatsapp_number_secrets (id, whatsapp_number_id, meta_access_token, registration_pin, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)`
     )
-    .run(tokenRef, numberId, token, now, now);
+    .run(tokenRef, numberId, sealedToken, sealedPin || "", now, now);
   return tokenRef;
+}
+
+/**
+ * Encrypt existing plaintext secret rows when WA_TOKEN_KEY is set.
+ * An unset key logs an error and skips encryption so boot can continue.
+ * Clinic sends stay unavailable until the key is set. A malformed key still
+ * fails production boot. Always nulls tenants.meta_access_token.
+ */
+export function migrateWhatsAppSecretEncryption(database: DatabaseSync): void {
+  ensureWhatsAppOwnershipSchema(database);
+  let rows: Array<{ id: string; meta_access_token?: string; registration_pin?: string }> = [];
+  try {
+    rows = database
+      .prepare("SELECT id, meta_access_token, registration_pin FROM whatsapp_number_secrets")
+      .all() as typeof rows;
+  } catch {
+    rows = [];
+  }
+  let key: Buffer | null = null;
+  try {
+    key = waTokenKeyBytes();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "WA_TOKEN_KEY is invalid.";
+    console.error(message);
+    if (isProduction()) throw err;
+    key = null;
+  }
+  if (!key) {
+    console.error(
+      "WA_TOKEN_KEY is unset. Skipping WhatsApp token encryption. Clinic WhatsApp sends are unavailable until WA_TOKEN_KEY is set."
+    );
+  } else {
+    const now = new Date().toISOString();
+    const update = database.prepare(
+      "UPDATE whatsapp_number_secrets SET meta_access_token = ?, registration_pin = ?, updated_at = ? WHERE id = ?"
+    );
+    for (const row of rows) {
+      const token = String(row.meta_access_token || "");
+      const pin = String(row.registration_pin || "");
+      const nextToken = token && !isEncryptedWaSecret(token) ? sealWaSecret(token) : token;
+      const nextPin = pin && !isEncryptedWaSecret(pin) ? sealWaSecret(pin) : pin;
+      if (nextToken !== token || nextPin !== pin) {
+        update.run(nextToken, nextPin, now, row.id);
+      }
+    }
+  }
+  try {
+    database.prepare("UPDATE tenants SET meta_access_token = NULL WHERE COALESCE(meta_access_token, '') != ''").run();
+  } catch {
+    /* tenants table missing in isolated tests */
+  }
 }
 
 export function findPractitionerByPhone(phone: string, database: DatabaseSync = getDb()): PractitionerRow | undefined {
@@ -514,5 +599,6 @@ export type UpsertWhatsAppNumberInput = {
   status?: WhatsAppNumberStatus;
   connectedVia?: WhatsAppConnectedVia;
   metaTokenExpiresAt?: string;
+  registrationPin?: string;
   allowCreate?: boolean;
 };

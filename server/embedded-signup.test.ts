@@ -9,7 +9,7 @@ import { bootWhatsAppOwnershipSchema, createWhatsAppNumbersRouter, practitionerL
 import { getDb, initDatabase } from "./db.ts";
 import { hashPassword } from "./password.ts";
 import { completeEmbeddedSignup, exchangeEmbeddedSignupCode, subscribeAppToCustomerWaba } from "./embedded-signup.ts";
-import { clinicActor, getTenantWabaNumber } from "./whatsapp-numbers.ts";
+import { clinicActor, getTenantWabaNumber, getWhatsAppRegistrationPin } from "./whatsapp-numbers.ts";
 import { buildMetaReadinessOverview } from "./meta-security.ts";
 import { decideDataDeletionSignedRequest, signMetaSignedRequest } from "./meta-signed-request.ts";
 import { wabaOnboardingCapsOverview } from "./waba-onboarding-caps.ts";
@@ -40,7 +40,7 @@ async function jsonRequest(
 }
 
 function mockGraphFetch(
-  calls: Array<{ url: string; method: string }>,
+  calls: Array<{ url: string; method: string; body?: string }>,
   opts: { wabaId?: string; phoneId?: string; appId?: string; passthrough?: typeof fetch } = {}
 ) {
   const rest = opts.passthrough || globalThis.fetch;
@@ -53,7 +53,8 @@ function mockGraphFetch(
     if (!url.includes("graph.facebook.com")) {
       return rest(input as RequestInfo, init);
     }
-    calls.push({ url, method });
+    const body = typeof init?.body === "string" ? init.body : "";
+    calls.push({ url, method, body });
 
     if (url.includes("/oauth/access_token")) {
       assert.equal(url.includes("redirect_uri"), false, "Embedded Signup exchange must omit redirect_uri");
@@ -86,6 +87,13 @@ function mockGraphFetch(
       assert.equal(method, "POST");
       const auth = String((init?.headers as Record<string, string> | undefined)?.Authorization || "");
       assert.match(auth, /^Bearer /);
+      return new Response(JSON.stringify({ success: true }), { status: 200 });
+    }
+    if (url.includes("/register")) {
+      assert.equal(method, "POST");
+      const parsed = JSON.parse(body) as { messaging_product?: string; pin?: string };
+      assert.equal(parsed.messaging_product, "whatsapp");
+      assert.match(String(parsed.pin || ""), /^\d{6}$/);
       return new Response(JSON.stringify({ success: true }), { status: 200 });
     }
     if (url.includes(`/${wabaId}?fields=id,name`) || url.includes(`/${wabaId}?fields=`)) {
@@ -218,8 +226,86 @@ describe("Embedded Signup v4 handshake", () => {
       .prepare("SELECT meta_access_token FROM whatsapp_number_secrets WHERE id = ?")
       .get(row!.meta_token_ref) as { meta_access_token: string };
     assert.equal(secret.meta_access_token, BUSINESS_TOKEN);
+    const tenantToken = getDb()
+      .prepare("SELECT meta_access_token FROM tenants WHERE id = ?")
+      .get(clinic.tenantId) as { meta_access_token: string | null };
+    assert.equal(tenantToken.meta_access_token, null);
     assert.equal(calls.some((c) => c.url.includes("/oauth/access_token")), true);
     assert.equal(calls.some((c) => c.url.includes("/subscribed_apps")), true);
+    const registers = calls.filter((c) => c.method === "POST" && c.url.includes("/register"));
+    assert.equal(registers.length, 1);
+    assert.match(registers[0].url, new RegExp(`/${phoneId}/register`));
+  });
+
+  it("registers the phone again when Embedded Signup is completed a second time", async () => {
+    const clinic = seedClinic("reconnect");
+    const calls: Array<{ url: string; method: string; body?: string }> = [];
+    const wabaId = `10229${Date.now().toString().slice(-8)}${Math.floor(100 + Math.random() * 900)}`;
+    const phoneId = `10654${Date.now().toString().slice(-8)}${Math.floor(100 + Math.random() * 900)}`;
+    const fetchImpl = mockGraphFetch(calls, { wabaId, phoneId }) as typeof fetch;
+    const first = await completeEmbeddedSignup({
+      code: "AQB-embedded-signup-code",
+      wabaId,
+      phoneNumberId: phoneId,
+      actor: clinicActor(clinic.tenantId),
+      ownerType: "tenant",
+      ownerId: clinic.tenantId,
+      fetchImpl,
+    });
+    const second = await completeEmbeddedSignup({
+      code: "AQB-embedded-signup-code",
+      wabaId,
+      phoneNumberId: phoneId,
+      actor: clinicActor(clinic.tenantId),
+      ownerType: "tenant",
+      ownerId: clinic.tenantId,
+      fetchImpl,
+    });
+    const registers = calls.filter((c) => c.method === "POST" && c.url.includes(`/${phoneId}/register`));
+    assert.equal(registers.length, 2);
+    const pins = registers.map((call) => String((JSON.parse(String(call.body || "{}")) as { pin?: string }).pin || ""));
+    assert.match(pins[0], /^\d{6}$/);
+    assert.match(pins[1], /^\d{6}$/);
+    assert.equal(first.registrationPinStored, true);
+    assert.equal(second.registrationPinStored, true);
+    const row = getTenantWabaNumber(clinic.tenantId);
+    assert.equal(pins[1], pins[0]);
+    assert.equal(getWhatsAppRegistrationPin(row!.meta_token_ref), pins[0]);
+  });
+
+  it("reuses the stored 2FA PIN on reconnect and generates a new PIN only when none is stored", async () => {
+    const clinic = seedClinic("pin-reuse");
+    const calls: Array<{ url: string; method: string; body?: string }> = [];
+    const wabaId = `10229${Date.now().toString().slice(-8)}${Math.floor(100 + Math.random() * 900)}`;
+    const phoneId = `10654${Date.now().toString().slice(-8)}${Math.floor(100 + Math.random() * 900)}`;
+    const fetchImpl = mockGraphFetch(calls, { wabaId, phoneId }) as typeof fetch;
+    const input = {
+      code: "AQB-embedded-signup-code",
+      wabaId,
+      phoneNumberId: phoneId,
+      actor: clinicActor(clinic.tenantId),
+      ownerType: "tenant" as const,
+      ownerId: clinic.tenantId,
+      fetchImpl,
+    };
+    await completeEmbeddedSignup(input);
+    await completeEmbeddedSignup(input);
+    const registers = calls.filter((c) => c.method === "POST" && c.url.includes(`/${phoneId}/register`));
+    assert.equal(registers.length, 2);
+    const pins = registers.map((call) => String((JSON.parse(String(call.body || "{}")) as { pin?: string }).pin || ""));
+    assert.match(pins[0], /^\d{6}$/);
+    assert.equal(pins[1], pins[0]);
+    const row = getTenantWabaNumber(clinic.tenantId);
+    assert.equal(getWhatsAppRegistrationPin(row!.meta_token_ref), pins[0]);
+
+    getDb().prepare("UPDATE whatsapp_number_secrets SET registration_pin = '' WHERE id = ?").run(row!.meta_token_ref);
+    await completeEmbeddedSignup(input);
+    const after = calls.filter((c) => c.method === "POST" && c.url.includes(`/${phoneId}/register`));
+    assert.equal(after.length, 3);
+    const fresh = String((JSON.parse(String(after[2].body || "{}")) as { pin?: string }).pin || "");
+    assert.match(fresh, /^\d{6}$/);
+    assert.notEqual(fresh, pins[0]);
+    assert.equal(getWhatsAppRegistrationPin(row!.meta_token_ref), fresh);
   });
 
   it("rejects a phone_number_id that is not granted on the WABA", async () => {
@@ -284,6 +370,7 @@ describe("Embedded Signup v4 handshake", () => {
       assert.equal(secret.meta_access_token, BUSINESS_TOKEN);
       assert.equal(calls.some((c) => c.url.includes("/oauth/access_token") && !c.url.includes("redirect_uri")), true);
       assert.equal(calls.some((c) => c.method === "POST" && c.url.includes("/subscribed_apps")), true);
+      assert.equal(calls.some((c) => c.method === "POST" && c.url.includes(`/${phoneId}/register`)), true);
     } finally {
       globalThis.fetch = originalFetch;
     }

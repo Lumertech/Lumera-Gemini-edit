@@ -129,14 +129,8 @@ export function createUsageBillingRouter(): Router {
     const tenantId = requestTenantId(req, patientPhone);
     const body = req.body || {};
     if (!body.content && !body.media && !body.buttons) return next();
-    if (sender === "agent" && patientPhone) {
-      const outboundText = String(body.content || "").trim() || "[media]";
-      const sent = await dispatchPatientCloudText({
-        tenantId: tenantId || undefined,
-        to: patientPhone,
-        textBody: outboundText,
-      });
-      if (isCloudDispatchFailure(sent)) return walletBlockedJson(res, sent);
+    if (sender === "agent") {
+      // The staff-reply route in whatsapp.ts dispatches this send with isManual: true.
       return next();
     }
     if (sender === "user" && patientPhone) {
@@ -167,7 +161,7 @@ export function createUsageBillingRouter(): Router {
     const clinicName =
       String(body.clinicName || "").trim() ||
       (tenantId ? getTenantLetterhead(tenantId).clinicName : "") ||
-      "Lumera Healthcare Polyclinic";
+      "your clinic";
     const patientName = String(body.patientName || "Patient");
     const uhid = String(body.uhid || "LUM-2026-0001");
     const rxNumber = String(body.rxNumber || "RX-2026-0001");
@@ -207,7 +201,7 @@ export function createUsageBillingRouter(): Router {
     const customPayload = (body.customPayload || {}) as { message?: string; tenantId?: string };
     const tenantId = requestTenantId(req, patientPhone) || String(customPayload.tenantId || "").trim();
     const patientName = String(body.patientName || "Patient");
-    let messageContent = customPayload.message || "Important health notification from Lumera Polyclinic.";
+    let messageContent = customPayload.message || "Important health notification from your clinic.";
     if (eventType === "post_consultation_dispatch") {
       messageContent = `📋 *Consultation Summary & Prescription Signed*\n\nNamaste ${patientName},\nYour digital consultation documents have been generated.`;
     } else if (eventType === "queue_token_update") {

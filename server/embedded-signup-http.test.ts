@@ -55,6 +55,12 @@ function mockGraph(opts: { grantPhone: boolean }): typeof fetch {
         headers: { "Content-Type": "application/json" },
       });
     }
+    if (url.includes("/register")) {
+      return new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
     return new Response(JSON.stringify({ error: { message: `unexpected ${url}` } }), { status: 500 });
   };
   return impl;

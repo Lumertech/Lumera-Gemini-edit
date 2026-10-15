@@ -1,9 +1,9 @@
 import type { DatabaseSync } from "node:sqlite";
 import { graphApiVersion, isProduction, readSecret } from "./runtime.ts";
 import { isUsableGraphToken, isUsablePhoneNumberId } from "./meta-security.ts";
-import {
-  recordWhatsAppUsageAndDebit,
-} from "./usage-billing.ts";
+import { recordWhatsAppUsageAndDebit } from "./usage-billing.ts";
+import { getTenantWabaNumber, getWhatsAppNumberSecret } from "./whatsapp-numbers-store.ts";
+import { waTokenKeyBytes } from "./wa-token-crypto.ts";
 
 /**
  * Shared Meta WhatsApp Cloud API send module (Wave 1B OTP + Wave 2 utilities).
@@ -30,7 +30,28 @@ export type CloudMessageKind =
 
 export type CloudDispatchResult =
   | { ok: true; channel: "graph" | "sandbox"; messageId?: string }
-  | { ok: false; error: string; channel: "none" | "graph" };
+  | { ok: false; error: string; channel: "none" | "graph"; status?: number };
+
+export const CLINIC_WHATSAPP_NOT_CONNECTED = "Clinic WhatsApp not connected";
+export const READ_ONLY_WHATSAPP_SEND_ERROR =
+  "This clinic is read-only. Templates, reminders, and automated WhatsApp sends are not permitted.";
+export const WHATSAPP_WINDOW_CLOSED_ERROR =
+  "Manual WhatsApp replies are limited to 24 hours after the patient's last inbound message.";
+export const CLINIC_DOCTOR_NAME_REQUIRED = "clinic_name and doctor_name are required.";
+export const WA_TOKEN_KEY_UNSET_ERROR =
+  "WA_TOKEN_KEY is unset. Clinic WhatsApp sends are unavailable until it is set.";
+
+const CUSTOMER_SERVICE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+export function cloudDispatchHttpStatus(error: string, status?: number): number {
+  if (status === 403 || status === 402 || status === 503 || status === 400) return status;
+  if (error === CLINIC_WHATSAPP_NOT_CONNECTED || /Clinic WhatsApp not connected/i.test(error)) return 503;
+  if (error === WA_TOKEN_KEY_UNSET_ERROR || /WA_TOKEN_KEY is unset/i.test(error)) return 503;
+  if (error === READ_ONLY_WHATSAPP_SEND_ERROR || error === WHATSAPP_WINDOW_CLOSED_ERROR) return 403;
+  if (/not permitted|24 hours after the patient/i.test(error)) return 403;
+  if (String(error || "").includes("Top up now")) return 402;
+  return isProduction() ? 503 : 502;
+}
 
 export function isCloudDispatchFailure(
   sent: CloudDispatchResult
@@ -38,55 +59,210 @@ export function isCloudDispatchFailure(
   return sent.ok === false;
 }
 
-function usableTenantGraphRow(row: { meta_access_token?: string; phone_number_id?: string } | undefined): GraphCredentials | null {
-  if (!row) return null;
-  const token = String(row.meta_access_token || "");
-  const phoneNumberId = String(row.phone_number_id || "");
+function envGraphCredentials(): GraphCredentials | null {
+  const token = readSecret("META_ACCESS_TOKEN", "WHATSAPP_ACCESS_TOKEN");
+  const phoneNumberId = readSecret("META_PHONE_NUMBER_ID", "WHATSAPP_PHONE_NUMBER_ID");
   if (isUsableGraphToken(token) && isUsablePhoneNumberId(phoneNumberId)) {
-    return { token, phoneNumberId, source: "tenant" };
+    return { token, phoneNumberId, source: "env" };
   }
   return null;
 }
 
-/**
- * Env credentials win for every send.
- * A tenant id (including "") uses only that clinic's row — never another clinic's WABA.
- * Omit tenantId to scan any connected clinic (readiness overview only).
- */
-export function resolveGraphCredentials(db?: DatabaseSync | null, tenantId?: string | null): GraphCredentials | null {
-  const envToken = readSecret("META_ACCESS_TOKEN", "WHATSAPP_ACCESS_TOKEN");
-  const envPhone = readSecret("META_PHONE_NUMBER_ID", "WHATSAPP_PHONE_NUMBER_ID");
-  if (isUsableGraphToken(envToken) && isUsablePhoneNumberId(envPhone)) {
-    return { token: envToken, phoneNumberId: envPhone, source: "env" };
-  }
-
-  if (!db) return null;
+function tenantNumberCredentials(db: DatabaseSync, tenantId: string): GraphCredentials | null {
   try {
-    if (tenantId !== undefined) {
-      const id = String(tenantId || "").trim();
-      if (!id) return null;
-      const row = db
-        .prepare(
-          `SELECT meta_access_token, phone_number_id FROM tenants WHERE id = ?`
-        )
-        .get(id) as { meta_access_token?: string; phone_number_id?: string } | undefined;
-      return usableTenantGraphRow(row);
-    }
-
-    const rows = db
-      .prepare(
-        `SELECT meta_access_token, phone_number_id FROM tenants
-         WHERE COALESCE(meta_access_token, '') != '' AND COALESCE(phone_number_id, '') != ''`
-      )
-      .all() as { meta_access_token: string; phone_number_id: string }[];
-    for (const row of rows) {
-      const creds = usableTenantGraphRow(row);
-      if (creds) return creds;
+    const row = getTenantWabaNumber(tenantId, db);
+    if (!row || row.status !== "connected") return null;
+    const token = row.meta_token_ref ? getWhatsAppNumberSecret(row.meta_token_ref, db) : "";
+    const phoneNumberId = String(row.phone_number_id || "");
+    if (isUsableGraphToken(token) && isUsablePhoneNumberId(phoneNumberId)) {
+      return { token, phoneNumberId, source: "tenant" };
     }
   } catch {
-    /* tenants table may be missing in isolated tests */
+    /* whatsapp_numbers may be missing in isolated tests */
   }
   return null;
+}
+
+/** Sandbox/demo clinics may fall back to platform env creds. Real clinics may not. */
+export function isSandboxOrDemoTenant(db: DatabaseSync | null | undefined, tenantId: string): boolean {
+  const id = String(tenantId || "").trim();
+  if (!id) return false;
+  if (
+    id === "tenant-lumera-main" ||
+    id === "tenant-rehab-mumbai" ||
+    id === "tenant-suspended-demo" ||
+    id.startsWith("tenant-demo-")
+  ) {
+    return true;
+  }
+  if (!db) return false;
+  try {
+    const row = db
+      .prepare("SELECT billing_source FROM tenant_subscriptions WHERE tenant_id = ?")
+      .get(id) as { billing_source?: string } | undefined;
+    const source = String(row?.billing_source || "").trim().toLowerCase();
+    return source === "demo" || source === "sandbox";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A clinic tenant uses only that tenant's connected WhatsApp number row.
+ * Env creds are for platform sends (login OTP, Super Admin) and sandbox/demo
+ * tenants that do not yet have their own number. Never another clinic's WABA.
+ */
+export function resolveGraphCredentials(
+  db?: DatabaseSync | null,
+  tenantId?: string | null,
+  opts?: { platformSend?: boolean }
+): GraphCredentials | null {
+  const envCreds = envGraphCredentials();
+  if (opts?.platformSend) return envCreds;
+
+  if (tenantId !== undefined && tenantId !== null) {
+    const id = String(tenantId || "").trim();
+    if (!id) return null;
+    if (!db) return null;
+    const tenantCreds = tenantNumberCredentials(db, id);
+    if (tenantCreds) return tenantCreds;
+    if (isSandboxOrDemoTenant(db, id)) return envCreds;
+    return null;
+  }
+
+  return envCreds;
+}
+
+/**
+ * Last patient inbound within 24h opens the customer-service window.
+ * The clock is whatsapp_conversations.last_inbound_at for the caller's tenant only.
+ * Unassigned and other-tenant rows never open the window.
+ * tenant_id and last_inbound_at are created by drizzle 0001 and 0003. Do not
+ * probe them with PRAGMA: Postgres rejects that and the failure closed the window.
+ */
+export function isWithinCustomerServiceWindow(
+  db: DatabaseSync | null | undefined,
+  tenantId: string,
+  to: string,
+  nowMs = Date.now()
+): boolean {
+  if (!db) return false;
+  const tenant = String(tenantId || "").trim();
+  if (!tenant) return false;
+  const digits = toWhatsAppRecipient(to);
+  if (digits.length < 10) return false;
+  const like = `%${digits.slice(-10)}`;
+  try {
+    const row = db
+      .prepare(
+        `SELECT last_inbound_at FROM whatsapp_conversations
+         WHERE tenant_id = ?
+           AND last_inbound_at IS NOT NULL
+           AND TRIM(last_inbound_at) != ''
+           AND replace(replace(replace(replace(patient_phone, ' ', ''), '-', ''), '+', ''), '(', '') LIKE ?
+         ORDER BY last_inbound_at DESC
+         LIMIT 1`
+      )
+      .get(tenant, like) as { last_inbound_at?: string } | undefined;
+    const ts = Date.parse(String(row?.last_inbound_at || ""));
+    if (!Number.isFinite(ts)) return false;
+    const age = nowMs - ts;
+    return age >= 0 && age <= CUSTOMER_SERVICE_WINDOW_MS;
+  } catch {
+    return false;
+  }
+}
+
+function tenantHasConnectedWhatsAppNumber(db: DatabaseSync, tenantId: string): boolean {
+  try {
+    const row = getTenantWabaNumber(tenantId, db);
+    return Boolean(row && row.status === "connected" && String(row.phone_number_id || "").trim());
+  } catch {
+    return false;
+  }
+}
+
+/** Real clinic numbers cannot send until WA_TOKEN_KEY can seal and read the token. */
+function clinicTokenKeyMissing(): boolean {
+  try {
+    return waTokenKeyBytes() == null;
+  } catch {
+    return true;
+  }
+}
+
+function clinicWhatsAppRestricted(db: DatabaseSync, tenantId: string): boolean {
+  try {
+    const tenant = db
+      .prepare("SELECT active_status, lifecycle_status, deleted_at FROM tenants WHERE id = ?")
+      .get(tenantId) as { active_status?: number; lifecycle_status?: string; deleted_at?: string } | undefined;
+    if (tenant) {
+      if (String(tenant.deleted_at || "").trim()) return true;
+      const life = String(tenant.lifecycle_status || "").trim().toLowerCase();
+      if (life === "suspended" || life === "deleted") return true;
+      if (Number(tenant.active_status) === 0) return true;
+    }
+  } catch {
+    /* tenants table missing */
+  }
+  try {
+    const sub = db
+      .prepare("SELECT status, ends_at FROM tenant_subscriptions WHERE tenant_id = ?")
+      .get(tenantId) as { status?: string; ends_at?: string } | undefined;
+    if (!sub) return false;
+    const status = String(sub.status || "").trim().toLowerCase();
+    if (status === "past_due" || status === "canceled" || status === "cancelled") return true;
+    if ((status === "trial" || status === "expired") && sub.ends_at) {
+      const ends = Date.parse(String(sub.ends_at));
+      if (Number.isFinite(ends) && ends < Date.now()) return true;
+    }
+  } catch {
+    /* subscription table missing */
+  }
+  return false;
+}
+
+/**
+ * Lapsed or read-only clinics may send only manual staff text inside the
+ * 24h customer-service window. Templates, reminders, bot, and other automated
+ * sends are rejected.
+ */
+export function assertTenantMaySendWhatsApp(
+  tenantId: string,
+  kind: CloudMessageKind,
+  isManual: boolean,
+  db?: DatabaseSync | null,
+  to?: string
+): { ok: true } | { ok: false; error: string; status: 403 } {
+  const id = String(tenantId || "").trim();
+  if (!id || !db) return { ok: true };
+  if (!clinicWhatsAppRestricted(db, id)) return { ok: true };
+  if (!isManual || kind !== "text") {
+    return { ok: false, error: READ_ONLY_WHATSAPP_SEND_ERROR, status: 403 };
+  }
+  if (!to || !isWithinCustomerServiceWindow(db, id, to)) {
+    return { ok: false, error: WHATSAPP_WINDOW_CLOSED_ERROR, status: 403 };
+  }
+  return { ok: true };
+}
+
+function lookupClinicName(db: DatabaseSync | null | undefined, tenantId?: string): string {
+  const id = String(tenantId || "").trim();
+  if (!db || !id) return "";
+  try {
+    const row = db.prepare("SELECT name FROM tenants WHERE id = ?").get(id) as { name?: string } | undefined;
+    return String(row?.name || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+const PLATFORM_AUTH_PURPOSES = new Set(["login", "register", "password_reset"]);
+
+function isPlatformAuthOtp(kind: CloudMessageKind, purpose: string | undefined, explicitTenantId: string): boolean {
+  if (kind !== "otp") return false;
+  if (explicitTenantId) return false;
+  return PLATFORM_AUTH_PURPOSES.has(String(purpose || "").trim().toLowerCase());
 }
 
 export function toWhatsAppRecipient(phone: string): string {
@@ -267,7 +443,7 @@ export async function sendWhatsAppGraphMessage(opts: {
   return sendWhatsAppGraphText({
     credentials: opts.credentials,
     to: opts.to,
-    body: `Lumera verification code: ${opts.otp}\nAction: ${opts.purpose}\nValid for 5 minutes. Do not share this code.`,
+    body: `Verification code: ${opts.otp}\nAction: ${opts.purpose}\nValid for 5 minutes. Do not share this code.`,
     fetchImpl: opts.fetchImpl,
   });
 }
@@ -280,8 +456,58 @@ function utilityTemplateLanguage(): string {
   return envTrim("META_UTILITY_TEMPLATE_LANGUAGE") || envTrim("META_OTP_TEMPLATE_LANGUAGE") || "en";
 }
 
-/** Optional Cloud API template for a kind. Unset → session text body (same as OTP #20). */
-export function templateConfigForKind(kind: CloudMessageKind): { name: string; language: string } | null {
+function approvedTenantTemplate(
+  db: DatabaseSync,
+  tenantId: string,
+  kind: CloudMessageKind
+): { name: string; language: string; category: string } | null {
+  const clause =
+    kind === "otp"
+      ? "(UPPER(category) = 'AUTHENTICATION' OR LOWER(name) LIKE '%otp%' OR LOWER(name) LIKE '%verification%')"
+      : kind === "appointment_reminder"
+        ? "LOWER(name) LIKE '%reminder%'"
+        : kind === "book_confirmation"
+          ? "(LOWER(name) LIKE '%confirm%' OR LOWER(name) LIKE '%booking%')"
+          : kind === "payment_receipt"
+            ? "(LOWER(name) LIKE '%receipt%' OR LOWER(name) LIKE '%payment%')"
+            : "";
+  if (!clause) return null;
+  try {
+    const row = db
+      .prepare(
+        `SELECT name, language, category FROM meta_templates
+         WHERE tenant_id = ? AND UPPER(status) = 'APPROVED' AND ${clause}
+         ORDER BY updated_at DESC
+         LIMIT 1`
+      )
+      .get(tenantId) as { name?: string; language?: string; category?: string } | undefined;
+    const name = String(row?.name || "").trim();
+    if (!name) return null;
+    return {
+      name,
+      language: String(row?.language || "en").trim() || "en",
+      category: String(row?.category || "").trim().toUpperCase(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Tenant sends resolve an APPROVED meta_templates row for that clinic.
+ * Global META_*_TEMPLATE_NAME env is only for platform / unscoped sends.
+ */
+export function templateConfigForKind(
+  kind: CloudMessageKind,
+  db?: DatabaseSync | null,
+  tenantId?: string | null
+): { name: string; language: string } | null {
+  const id = String(tenantId || "").trim();
+  if (id) {
+    if (!db) return null;
+    const row = approvedTenantTemplate(db, id, kind);
+    return row ? { name: row.name, language: row.language } : null;
+  }
   const envName =
     kind === "otp"
       ? "META_OTP_TEMPLATE_NAME"
@@ -303,6 +529,7 @@ export function templateConfigForKind(kind: CloudMessageKind): { name: string; l
 export type ReminderFields = {
   patientName?: string;
   doctorName?: string;
+  clinicName?: string;
   specialty?: string;
   date?: string;
   timeSlot?: string;
@@ -311,6 +538,7 @@ export type ReminderFields = {
 
 export type ReceiptFields = {
   patientName?: string;
+  clinicName?: string;
   amount?: number | string;
   currency?: string;
   invoiceId?: string;
@@ -327,10 +555,12 @@ export function buildReminderText(fields: ReminderFields): string {
     fields.tokenNumber != null && Number(fields.tokenNumber) > 0
       ? `#${String(fields.tokenNumber).padStart(2, "0")}`
       : "pending";
+  const clinic = String(fields.clinicName || "").trim();
+  const doctor = String(fields.doctorName || "").trim();
   return (
-    `⏰ *Appointment reminder — Lumera*\n\n` +
+    `⏰ *Appointment reminder${clinic ? ` — ${clinic}` : ""}*\n\n` +
     `Namaste ${name},\n` +
-    `Your consultation with *${fields.doctorName || "your clinician"}* is scheduled for *${fields.date || "the upcoming slot"}* at *${fields.timeSlot || "TBD"}*.\n\n` +
+    `Your consultation with *${doctor || "the clinician"}* is scheduled for *${fields.date || "the upcoming slot"}* at *${fields.timeSlot || "TBD"}*.\n\n` +
     `🎫 Token: *${token}*\n` +
     (fields.specialty ? `📍 ${fields.specialty}\n\n` : "\n") +
     `Please arrive 10 minutes early for vitals.`
@@ -343,10 +573,12 @@ export function buildBookConfirmationText(fields: ReminderFields & { uhid?: stri
     fields.tokenNumber != null && Number(fields.tokenNumber) > 0
       ? `#${String(fields.tokenNumber).padStart(2, "0")}`
       : "pending";
+  const clinic = String(fields.clinicName || "").trim();
+  const doctor = String(fields.doctorName || "").trim();
   return (
-    `✅ *Appointment confirmed — Lumera*\n\n` +
+    `✅ *Appointment confirmed${clinic ? ` — ${clinic}` : ""}*\n\n` +
     `Namaste ${name},\n` +
-    `Your visit with *${fields.doctorName || "your clinician"}*` +
+    `Your visit with *${doctor || "the clinician"}*` +
     (fields.specialty ? ` (${fields.specialty})` : "") +
     ` is booked for *${fields.date || "the scheduled date"}* at *${fields.timeSlot || "TBD"}*.\n\n` +
     `🎫 Token: *${token}*` +
@@ -360,8 +592,9 @@ export function buildReceiptText(receipt: ReceiptFields): string {
   const amount = String(receipt.amount ?? "").trim() || "0";
   const invoice = receipt.invoiceId ? `\nInvoice: ${receipt.invoiceId}` : "";
   const date = receipt.date ? `\nDate: ${receipt.date}` : "";
+  const clinic = String(receipt.clinicName || "").trim();
   return (
-    `🧰 *Payment receipt — Lumera*\n\n` +
+    `🧰 *Payment receipt${clinic ? ` — ${clinic}` : ""}*\n\n` +
     `Namaste ${name},\n` +
     `We received *${currency}${amount}* for your consultation.${invoice}${date}\n\n` +
     `Thank you.`
@@ -389,16 +622,52 @@ export async function dispatchWhatsAppCloudMessage(opts: {
   fetchImpl?: typeof fetch;
   tenantId?: string;
   inCustomerServiceWindow?: boolean;
+  /** Lumera login OTP and Super Admin messaging. Uses env creds, not a clinic WABA. */
+  platformSend?: boolean;
+  /** Staff typed this reply. Lapsed clinics may send it only inside the 24h window. */
+  isManual?: boolean;
 }): Promise<CloudDispatchResult> {
   const kind: CloudMessageKind = opts.kind || (opts.otp ? "otp" : "text");
+  const explicitTenantId = String(opts.tenantId || "").trim();
+  const platformSend =
+    opts.platformSend === true || isPlatformAuthOtp(kind, opts.purpose, explicitTenantId);
   const tenantId = resolveUsageTenantId(opts.tenantId, opts.to, opts.db);
-  const inCustomerServiceWindow = opts.inCustomerServiceWindow ?? kind === "text";
+  const computedWindow = opts.db ? isWithinCustomerServiceWindow(opts.db, tenantId, opts.to) : false;
+  const inCustomerServiceWindow = opts.inCustomerServiceWindow ?? (opts.db ? computedWindow : kind === "text");
 
-  const creds = resolveGraphCredentials(opts.db, tenantId);
+  const configuredTemplate = platformSend || !tenantId
+    ? templateConfigForKind(kind)
+    : templateConfigForKind(kind, opts.db, tenantId);
+  const templateName = (opts.templateName || "").trim() || configuredTemplate?.name || "";
+  const templateLanguage = (opts.templateLanguage || "").trim() || configuredTemplate?.language || "en";
+  const isManual = Boolean(opts.isManual) && kind === "text" && !templateName;
+
+  if (!platformSend && tenantId) {
+    const policy = assertTenantMaySendWhatsApp(tenantId, kind, isManual, opts.db, opts.to);
+    if (policy.ok === false) {
+      return { ok: false, error: policy.error, channel: "none", status: policy.status };
+    }
+  }
+
+  if (
+    isProduction() &&
+    !platformSend &&
+    tenantId &&
+    opts.db &&
+    !isSandboxOrDemoTenant(opts.db, tenantId) &&
+    tenantHasConnectedWhatsAppNumber(opts.db, tenantId) &&
+    clinicTokenKeyMissing()
+  ) {
+    return { ok: false, channel: "none", error: WA_TOKEN_KEY_UNSET_ERROR, status: 503 };
+  }
+
+  const creds = resolveGraphCredentials(opts.db, platformSend ? undefined : tenantId || undefined, {
+    platformSend,
+  });
 
   if (creds) {
     let graph: GraphMessageResult;
-    if (kind === "otp" && opts.otp) {
+    if (kind === "otp" && opts.otp && platformSend) {
       graph = await sendWhatsAppGraphMessage({
         credentials: creds,
         to: opts.to,
@@ -406,29 +675,43 @@ export async function dispatchWhatsAppCloudMessage(opts: {
         purpose: opts.purpose || "login",
         fetchImpl: opts.fetchImpl,
       });
+    } else if (kind === "otp" && opts.otp && templateName) {
+      const tenantTpl = opts.db && tenantId ? approvedTenantTemplate(opts.db, tenantId, "otp") : null;
+      graph = await sendWhatsAppGraphTemplate({
+        credentials: creds,
+        to: opts.to,
+        name: templateName,
+        language: templateLanguage,
+        bodyParameters: [opts.otp],
+        authOtpButtonParameter: tenantTpl?.category === "AUTHENTICATION" ? opts.otp : undefined,
+        fetchImpl: opts.fetchImpl,
+        failureLabel: "OTP",
+      });
+    } else if (kind === "otp" && opts.otp) {
+      graph = await sendWhatsAppGraphText({
+        credentials: creds,
+        to: opts.to,
+        body: `Verification code: ${opts.otp}\nAction: ${opts.purpose || "verify"}\nValid for 5 minutes. Do not share this code.`,
+        fetchImpl: opts.fetchImpl,
+      });
+    } else if (templateName) {
+      graph = await sendWhatsAppGraphTemplate({
+        credentials: creds,
+        to: opts.to,
+        name: templateName,
+        language: templateLanguage,
+        bodyParameters: opts.templateParameters,
+        fetchImpl: opts.fetchImpl,
+        failureLabel: kind,
+      });
     } else {
-      const templateName = (opts.templateName || "").trim() || templateConfigForKind(kind)?.name || "";
-      const templateLanguage =
-        (opts.templateLanguage || "").trim() || templateConfigForKind(kind)?.language || "en";
-      if (templateName) {
-        graph = await sendWhatsAppGraphTemplate({
-          credentials: creds,
-          to: opts.to,
-          name: templateName,
-          language: templateLanguage,
-          bodyParameters: opts.templateParameters,
-          fetchImpl: opts.fetchImpl,
-          failureLabel: kind,
-        });
-      } else {
-        graph = await sendWhatsAppGraphText({
-          credentials: creds,
-          to: opts.to,
-          body: opts.textBody,
-          previewUrl: opts.previewUrl,
-          fetchImpl: opts.fetchImpl,
-        });
-      }
+      graph = await sendWhatsAppGraphText({
+        credentials: creds,
+        to: opts.to,
+        body: opts.textBody,
+        previewUrl: opts.previewUrl,
+        fetchImpl: opts.fetchImpl,
+      });
     }
     if (graph.ok) {
       meterWhatsAppUsage({
@@ -446,8 +729,13 @@ export async function dispatchWhatsAppCloudMessage(opts: {
     return { ok: false, error: graphError, channel: "graph" };
   }
 
+  const realClinic = Boolean(tenantId) && !platformSend && !(opts.db && isSandboxOrDemoTenant(opts.db, tenantId));
+  if (isProduction() && realClinic) {
+    return { ok: false, channel: "none", error: CLINIC_WHATSAPP_NOT_CONNECTED, status: 503 };
+  }
+
   if (isProduction()) {
-    return { ok: false, channel: "none", error: CLOUD_NOT_CONFIGURED };
+    return { ok: false, channel: "none", error: CLOUD_NOT_CONFIGURED, status: 503 };
   }
 
   meterWhatsAppUsage({
@@ -531,10 +819,26 @@ function meterWhatsAppUsage(opts: {
   }
 }
 
+function requireClinicAndDoctor(opts: {
+  tenantId?: string;
+  db?: DatabaseSync | null;
+  clinicName?: string;
+  doctorName?: string;
+  textBody?: string;
+}): { clinicName: string; doctorName: string } | CloudDispatchResult {
+  const clinicName = String(opts.clinicName || "").trim() || lookupClinicName(opts.db, opts.tenantId);
+  const doctorName = String(opts.doctorName || "").trim();
+  if (opts.tenantId && !opts.textBody && (!clinicName || !doctorName)) {
+    return { ok: false, channel: "none", error: CLINIC_DOCTOR_NAME_REQUIRED, status: 400 };
+  }
+  return { clinicName, doctorName };
+}
+
 export async function sendAppointmentReminder(opts: {
   to: string;
   patientName?: string;
   doctorName?: string;
+  clinicName?: string;
   specialty?: string;
   date?: string;
   timeSlot?: string;
@@ -546,10 +850,12 @@ export async function sendAppointmentReminder(opts: {
   fetchImpl?: typeof fetch;
   tenantId?: string;
 }): Promise<CloudDispatchResult> {
+  const names = requireClinicAndDoctor(opts);
+  if ("channel" in names) return names;
   return dispatchWhatsAppCloudMessage({
     to: opts.to,
     kind: "appointment_reminder",
-    textBody: opts.textBody || buildReminderText(opts),
+    textBody: opts.textBody || buildReminderText({ ...opts, clinicName: names.clinicName, doctorName: names.doctorName }),
     templateName: opts.templateName,
     templateParameters: opts.templateParameters,
     db: opts.db,
@@ -562,6 +868,7 @@ export async function sendBookConfirmation(opts: {
   to: string;
   patientName?: string;
   doctorName?: string;
+  clinicName?: string;
   specialty?: string;
   date?: string;
   timeSlot?: string;
@@ -574,10 +881,14 @@ export async function sendBookConfirmation(opts: {
   fetchImpl?: typeof fetch;
   tenantId?: string;
 }): Promise<CloudDispatchResult> {
+  const names = requireClinicAndDoctor(opts);
+  if ("channel" in names) return names;
   return dispatchWhatsAppCloudMessage({
     to: opts.to,
     kind: "book_confirmation",
-    textBody: opts.textBody || buildBookConfirmationText(opts),
+    textBody:
+      opts.textBody ||
+      buildBookConfirmationText({ ...opts, clinicName: names.clinicName, doctorName: names.doctorName }),
     templateName: opts.templateName,
     templateParameters: opts.templateParameters,
     db: opts.db,
@@ -590,6 +901,7 @@ export async function sendBookConfirmation(opts: {
 export async function sendPaymentReceipt(opts: {
   to: string;
   patientName?: string;
+  clinicName?: string;
   amount?: number | string;
   currency?: string;
   invoiceId?: string;
@@ -602,10 +914,14 @@ export async function sendPaymentReceipt(opts: {
   fetchImpl?: typeof fetch;
   tenantId?: string;
 }): Promise<CloudDispatchResult> {
+  const clinicName = String(opts.clinicName || "").trim() || lookupClinicName(opts.db, opts.tenantId);
+  if (opts.tenantId && !opts.textBody && !clinicName) {
+    return { ok: false, channel: "none", error: CLINIC_DOCTOR_NAME_REQUIRED, status: 400 };
+  }
   return dispatchWhatsAppCloudMessage({
     to: opts.to,
     kind: "payment_receipt",
-    textBody: opts.textBody || buildReceiptText(opts),
+    textBody: opts.textBody || buildReceiptText({ ...opts, clinicName }),
     previewUrl: opts.previewUrl,
     templateName: opts.templateName,
     templateParameters: opts.templateParameters,

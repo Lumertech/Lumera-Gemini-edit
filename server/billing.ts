@@ -7,7 +7,7 @@ import {
 } from "./db.ts";
 import { getTenantLetterhead } from "./letterhead.ts";
 import { scrubSeedBillingIds } from "./seed-branding.ts";
-import { isCloudDispatchFailure, sendPaymentReceipt } from "./graph-whatsapp.ts";
+import { cloudDispatchHttpStatus, isCloudDispatchFailure, sendPaymentReceipt } from "./graph-whatsapp.ts";
 import {
   createRazorpayCollectOrder,
   decideRazorpayWebhookSignature,
@@ -212,7 +212,7 @@ function recordReceiptEvent(opts: {
       tenantId,
       patientPhone: cleanPhone,
       patientName: userName,
-      assignedStaff: "Lumera Billing",
+      assignedStaff: "Billing",
       tags: '["Billing", "Receipt"]',
       preferredLanguage: "en",
       lastMessage: opts.details,
@@ -226,7 +226,7 @@ function recordReceiptEvent(opts: {
         `INSERT INTO whatsapp_messages (
           id, conversation_id, patient_phone, sender, staff_name, content,
           translated_content, detected_language, time_display, buttons, media, status, created_at, tenant_id
-        ) VALUES (?, ?, ?, 'agent', 'Lumera Billing', ?, null, 'en', ?, null, null, ?, ?, ?)`
+        ) VALUES (?, ?, ?, 'agent', 'Billing', ?, null, 'en', ?, null, null, ?, ?, ?)`
       ).run(msgId, convId, cleanPhone, opts.conversationContent, timeDisplay, opts.status, now, tenantId);
     }
 
@@ -260,7 +260,10 @@ function receiptBody(invoice: ReturnType<typeof mapInvoice>, sandbox: boolean): 
 
 async function dispatchInvoiceReceipt(
   invoiceRow: Record<string, unknown>
-): Promise<{ ok: true; channel: "graph" | "sandbox"; messageId?: string } | { ok: false; error: string; channel: "none" | "graph" }> {
+): Promise<
+  | { ok: true; channel: "graph" | "sandbox"; messageId?: string }
+  | { ok: false; error: string; channel: "none" | "graph"; status?: number }
+> {
   const invoice = mapInvoice(invoiceRow);
   // Dual-path Graph/sandbox lives in Meta #28. Billing records invoice events only.
   const sent = await sendPaymentReceipt({
@@ -628,10 +631,10 @@ export function createBillingRouter(): Router {
     const result = await dispatchInvoiceReceipt(row);
     const updated = mapInvoice(getTenantInvoice(tenantId, String(row.id))!);
     if (result.ok === false) {
-      const walletBlocked = /Top up now/i.test(result.error);
-      return res.status(walletBlocked ? 402 : 503).json({
+      const status = cloudDispatchHttpStatus(result.error, result.status);
+      return res.status(status).json({
         error: result.error,
-        code: walletBlocked ? "WALLET_INSUFFICIENT" : undefined,
+        code: status === 402 ? "WALLET_INSUFFICIENT" : undefined,
         invoice: updated,
         channel: result.channel,
         graphDelivered: false,

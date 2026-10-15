@@ -15,6 +15,7 @@ import {
   getTenantWabaNumber,
   listAdminWhatsAppDirectory,
   migrateTenantWabasToWhatsAppNumbers,
+  migrateWhatsAppSecretEncryption,
   platformAdminActor,
   publicWhatsAppNumber,
   simulateEmbeddedSignupForOwner,
@@ -36,6 +37,7 @@ export function bootWhatsAppOwnershipSchema() {
   const database = getDb();
   ensureWhatsAppOwnershipSchema(database);
   migrateTenantWabasToWhatsAppNumbers(database);
+  migrateWhatsAppSecretEncryption(database);
 }
 
 function handleWabaError(res: Response, err: unknown, fallback: string) {

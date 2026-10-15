@@ -100,7 +100,7 @@ export function upsertWhatsAppNumber(actor: WabaActor, input: UpsertWhatsAppNumb
       .run(numberId, ownerType, ownerId, wabaId, phoneNumberId, metaWabaName, status, connectedVia, tokenRef, expiresAt, now, now);
   }
 
-  storeToken(database, numberId, tokenRef, tokenToStore);
+  storeToken(database, numberId, tokenRef, tokenToStore, input.registrationPin);
   if (ownerType === "tenant") syncTenantWabaColumns(database, ownerId);
 
   return database.prepare("SELECT * FROM whatsapp_numbers WHERE id = ?").get(numberId) as WhatsAppNumberRow;
@@ -125,7 +125,9 @@ export function disconnectWhatsAppNumber(actor: WabaActor, ownerType: WhatsAppOw
     .run(now, existing.id);
   if (existing.meta_token_ref) {
     database
-      .prepare("UPDATE whatsapp_number_secrets SET meta_access_token = '', updated_at = ? WHERE id = ?")
+      .prepare(
+        "UPDATE whatsapp_number_secrets SET meta_access_token = '', registration_pin = '', updated_at = ? WHERE id = ?"
+      )
       .run(now, existing.meta_token_ref);
   }
   if (ownerType === "tenant") syncTenantWabaColumns(database, ownerId);

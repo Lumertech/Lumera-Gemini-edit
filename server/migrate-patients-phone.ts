@@ -6,6 +6,14 @@ function sqlIdent(name: string): string {
   return `"${String(name).replace(/"/g, "\"\"")}"`;
 }
 
+/** SQLite says "duplicate column name". Postgres uses SQLSTATE 42701. */
+function isDuplicateColumnError(err: unknown): boolean {
+  const code = err && typeof err === "object" && "code" in err ? String((err as { code?: unknown }).code || "") : "";
+  if (code === "42701") return true;
+  const message = err instanceof Error ? err.message : String(err ?? "");
+  return /duplicate column/i.test(message);
+}
+
 /** Dashboard WhatsApp rows need a tenant_id for isolation filters. */
 export function addWhatsAppTenantColumns(database: SqlDatabase) {
   try {
@@ -31,7 +39,9 @@ export function addWhatsAppTenantColumns(database: SqlDatabase) {
   } catch {}
   try {
     database.exec("ALTER TABLE whatsapp_conversations ADD COLUMN last_inbound_at TEXT");
-  } catch {}
+  } catch (err) {
+    if (!isDuplicateColumnError(err)) throw err;
+  }
   try {
     database.exec("CREATE INDEX IF NOT EXISTS idx_wa_evt_tenant ON whatsapp_outbound_events(tenant_id)");
   } catch {}

@@ -23,6 +23,7 @@ async function dispatchRegisterOtp(phone: string, name: string, otp: string, pur
     purpose,
     db: getDb(),
     tenantId,
+    platformSend: true,
   });
 }
 
