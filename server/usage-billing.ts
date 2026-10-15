@@ -12,11 +12,7 @@ import {
 import { envFlag } from "./runtime.ts";
 import {
   DEFAULT_MARKUP_PERCENT,
-  WALLET_INSUFFICIENT_ERROR,
-  applyWalletTransaction,
   ensureUsageWalletSchema,
-  getMarkupPercent,
-  publicWalletStatus,
   roundMoney,
 } from "./usage-wallet.ts";
 
@@ -143,39 +139,22 @@ export function refreshAiScribeMinutesRollup(tenantId: string, database?: Databa
   }
 }
 
-export function assertWalletAllowsDebit(opts: {
+/**
+ * Founder lock 2026-09-25: clinics fund their own WhatsApp Business accounts and pay Meta directly.
+ * Balance is not read and never blocks a send.
+ */
+export function assertWalletAllowsDebit(_opts: {
   tenantId: string;
   billedAmount: number;
   critical: boolean;
   database?: DatabaseSync;
-}): { readonly ok: true } | { ok: false; error: string; code: "WALLET_INSUFFICIENT"; status: number; wallet: ReturnType<typeof publicWalletStatus> } {
-  const wallet = publicWalletStatus(opts.tenantId, opts.database);
-  if (opts.critical) return { ok: true };
-  const next = roundMoney(wallet.balance - Math.abs(opts.billedAmount));
-  if (next < 0) {
-    return {
-      ok: false,
-      error: WALLET_INSUFFICIENT_ERROR,
-      code: "WALLET_INSUFFICIENT",
-      status: 402,
-      wallet,
-    };
-  }
+}): { readonly ok: true } {
   return { ok: true };
 }
 
-export function assertWalletAllowsAiScribe(tenantId: string, database?: DatabaseSync) {
-  const wallet = publicWalletStatus(tenantId, database);
-  if (wallet.balance <= 0) {
-    return {
-      ok: false as const,
-      error: WALLET_INSUFFICIENT_ERROR,
-      code: "WALLET_INSUFFICIENT" as const,
-      status: 402,
-      wallet,
-    };
-  }
-  return { ok: true as const, wallet };
+/** AI Scribe is not gated on a usage-wallet balance. */
+export function assertWalletAllowsAiScribe(_tenantId: string, _database?: DatabaseSync): { readonly ok: true } {
+  return { ok: true };
 }
 
 export function recordWhatsAppUsageAndDebit(opts: {
@@ -212,25 +191,12 @@ export function recordWhatsAppUsageAndDebit(opts: {
     },
     database: db,
   });
-  if (estimate.rawCost == null) return { usageEventId: usage.id, rawCost: estimate.rawCost, billedAmount: 0, markupPercent: 0 };
-  const markupPercent = getMarkupPercent(tenantId, "whatsapp_message", db);
-  const billedAmount = billedAmountFromRaw(estimate.rawCost, markupPercent);
-  if (billedAmount > 0) {
-    applyWalletTransaction(tenantId, "usage_debit", -billedAmount, {
-      usageEventId: usage.id,
-      createdBy: "system",
-      note: `WhatsApp ${opts.kind || "message"} (${estimate.category}/${estimate.country})`,
-      database: db,
-    });
-  }
-  return { usageEventId: usage.id, rawCost: estimate.rawCost, billedAmount, markupPercent };
+  return { usageEventId: usage.id, rawCost: estimate.rawCost, billedAmount: 0, markupPercent: 0 };
 }
 
 /**
- * Record AI Scribe minutes, then debit the wallet the same way WhatsApp does
- * (`recordWhatsAppUsageAndDebit`): markup on raw_cost when a numeric session
- * cost exists. Null raw_cost → usage_events + minutes rollup, no usage_debit
- * (no invented Gemini per-minute rate).
+ * Record AI Scribe minutes on usage_events. The usage wallet is not read or debited.
+ * Null raw_cost still rolls minutes up and does not invent a Gemini per-minute rate.
  */
 export function recordAiScribeUsage(opts: {
   tenantId: string;
@@ -255,20 +221,7 @@ export function recordAiScribeUsage(opts: {
     },
     database: db,
   });
-  if (rawCost == null) {
-    return { usageEventId: usage.id, rawCost: null, billedAmount: 0, markupPercent: 0 };
-  }
-  const markupPercent = getMarkupPercent(tenantId, "ai_scribe_minutes", db);
-  const billedAmount = billedAmountFromRaw(rawCost, markupPercent);
-  if (billedAmount > 0) {
-    applyWalletTransaction(tenantId, "usage_debit", -billedAmount, {
-      usageEventId: usage.id,
-      createdBy: "system",
-      note: `AI Scribe ${minutes} min`,
-      database: db,
-    });
-  }
-  return { usageEventId: usage.id, rawCost, billedAmount, markupPercent };
+  return { usageEventId: usage.id, rawCost, billedAmount: 0, markupPercent: 0 };
 }
 
 /** Alias matching `recordWhatsAppUsageAndDebit` — same implementation. */

@@ -1,8 +1,6 @@
 import type { Request } from "express";
 import type { DatabaseSync } from "node:sqlite";
-import { WALLET_INSUFFICIENT_ERROR } from "./usage-wallet.ts";
 import {
-  assertWalletAllowsAiScribe,
   recordAiScribeUsage,
   scribeQuantityMinutes,
 } from "./usage-billing.ts";
@@ -12,31 +10,20 @@ export function aiScribeTenantIdFromRequest(req: Request): string {
 }
 
 /**
- * Gate AI Scribe (non-critical). Missing tenantId is blocked — no silent skip.
- * Empty/insufficient wallet → 402 + Top up now (same as `assertWalletAllowsAiScribe`).
+ * Wallet balance does not block AI Scribe. A missing tenant still cannot call Gemini.
  */
-export function blockedAiScribeResponse(tenantId: string, database?: DatabaseSync) {
+export function blockedAiScribeResponse(tenantId: string, _database?: DatabaseSync) {
   const id = String(tenantId || "").trim();
   if (!id) {
     return {
-      status: 402,
+      status: 401,
       body: {
-        error: WALLET_INSUFFICIENT_ERROR,
-        code: "WALLET_INSUFFICIENT" as const,
-        wallet: null as null,
+        error: "Sign in required",
+        code: "AUTH_REQUIRED" as const,
       },
     };
   }
-  const gate = assertWalletAllowsAiScribe(id, database);
-  if (gate.ok) return null;
-  return {
-    status: gate.status,
-    body: {
-      error: gate.error,
-      code: gate.code,
-      wallet: gate.wallet,
-    },
-  };
+  return null;
 }
 
 /** Meter-after-success, mirroring `meterWhatsAppUsage` → `recordWhatsAppUsageAndDebit`. */

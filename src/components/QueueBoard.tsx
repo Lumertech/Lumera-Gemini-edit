@@ -31,6 +31,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { Appointment, Vitals, Patient, Doctor, isAbhaLinked } from '../types';
+import { appointmentsForClinicDay, clinicCalendarDate, formatClinicDayLabel } from '../lib/clinicDay';
 
 interface QueueBoardProps {
   appointments: Appointment[];
@@ -41,6 +42,8 @@ interface QueueBoardProps {
   onStartConsultation: (appointment: Appointment) => void;
   onOpenBill: (appointment: Appointment) => void;
   onAddNewToken: (newToken: Partial<Appointment>) => void;
+  queueDate?: string;
+  onQueueDateChange?: (isoDate: string) => void;
 }
 
 export const QueueBoard: React.FC<QueueBoardProps> = ({
@@ -52,8 +55,17 @@ export const QueueBoard: React.FC<QueueBoardProps> = ({
   onStartConsultation,
   onOpenBill,
   onAddNewToken,
+  queueDate,
+  onQueueDateChange,
 }) => {
   const [filterStatus, setFilterStatus] = useState<string>('All');
+  const [uncontrolledQueueDate, setUncontrolledQueueDate] = useState(() => clinicCalendarDate());
+  const activeQueueDate = queueDate || uncontrolledQueueDate;
+  const setActiveQueueDate = (isoDate: string) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) return;
+    if (onQueueDateChange) onQueueDateChange(isoDate);
+    if (!queueDate) setUncontrolledQueueDate(isoDate);
+  };
   const [callingToken, setCallingToken] = useState<Appointment | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
@@ -105,7 +117,8 @@ export const QueueBoard: React.FC<QueueBoardProps> = ({
     };
   };
 
-  const filteredAppointments = appointments.filter((apt) => {
+  const dayAppointments = appointmentsForClinicDay<Appointment>(appointments, activeQueueDate);
+  const filteredAppointments = dayAppointments.filter((apt) => {
     if (filterStatus !== 'All' && apt.status !== filterStatus) return false;
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
@@ -196,7 +209,7 @@ export const QueueBoard: React.FC<QueueBoardProps> = ({
   const handleCreateToken = () => {
     const pat = patients.find((p) => p.id === selectedPatientId) || patients[0];
     const doc = doctors.find((d) => d.id === selectedDoctorId) || doctors[0];
-    const maxToken = appointments.reduce((max, a) => Math.max(max, a.tokenNumber), 0);
+    const maxToken = dayAppointments.reduce((max, a) => Math.max(max, a.tokenNumber), 0);
 
     const newApt: Partial<Appointment> = {
       id: 'apt-' + Date.now(),
@@ -208,7 +221,7 @@ export const QueueBoard: React.FC<QueueBoardProps> = ({
       doctorId: doc.id,
       doctorName: doc.name,
       specialty: doc.specialty,
-      date: new Date().toISOString().split('T')[0],
+      date: activeQueueDate,
       timeSlot: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       type: consultType,
       status: 'Triage / Vitals',
@@ -236,10 +249,22 @@ export const QueueBoard: React.FC<QueueBoardProps> = ({
             <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-blue-50 text-blue-700 border border-blue-200">
               Live OPD Queue
             </span>
-            <span className="text-xs text-slate-500 font-medium">
-              {new Date().toLocaleDateString('en-IN', { weekday: 'long', day: '2-digit', month: 'short', year: 'numeric' })}
-            </span>
+            <label className="flex items-center gap-1.5 text-xs text-slate-600">
+              <span className="font-medium">Clinic day</span>
+              <input
+                type="date"
+                aria-label="Queue day"
+                data-testid="queue-day"
+                value={activeQueueDate}
+                onChange={(e) => setActiveQueueDate(e.target.value)}
+                className="border border-slate-200 rounded-md px-2 py-1 text-xs text-slate-800 bg-white"
+              />
+            </label>
           </div>
+          <p className="mt-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">Queue date</p>
+          <p className="text-base font-semibold text-slate-900" data-testid="queue-date-label">
+            {formatClinicDayLabel(activeQueueDate)}
+          </p>
           <h1 className="text-lg font-bold tracking-tight text-slate-900 mt-1">
             Patient Flow & Live Token Board
           </h1>
@@ -341,7 +366,7 @@ export const QueueBoard: React.FC<QueueBoardProps> = ({
         <div className="flex items-center justify-between border-t border-slate-100 pt-2.5 overflow-x-auto text-xs">
           <div className="flex space-x-1">
             {['All', 'Waiting', 'Triage / Vitals', 'In Consultation', 'Completed'].map((st) => {
-              const count = appointments.filter((a) => (st === 'All' ? true : a.status === st)).length;
+              const count = dayAppointments.filter((a) => (st === 'All' ? true : a.status === st)).length;
               return (
                 <button
                   key={st}
@@ -359,7 +384,7 @@ export const QueueBoard: React.FC<QueueBoardProps> = ({
           </div>
 
           <div className="text-[11px] text-slate-400 shrink-0 font-medium ml-2">
-            Showing {filteredAppointments.length} tokens
+            <span data-testid="queue-token-count">Showing {filteredAppointments.length} tokens</span>
           </div>
         </div>
       </div>
@@ -370,7 +395,7 @@ export const QueueBoard: React.FC<QueueBoardProps> = ({
           <div className="divide-y divide-slate-100">
             {filteredAppointments.length === 0 ? (
               <div className="p-8 text-center text-slate-500 text-xs">
-                No patient tokens found matching the current filter.
+                No visits on {formatClinicDayLabel(activeQueueDate)}. Earlier visits stay on the appointments calendar.
               </div>
             ) : (
               filteredAppointments.map((apt) => {

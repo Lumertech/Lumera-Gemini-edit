@@ -2,11 +2,6 @@ import type { DatabaseSync } from "node:sqlite";
 import { graphApiVersion, isProduction, readSecret } from "./runtime.ts";
 import { isUsableGraphToken, isUsablePhoneNumberId } from "./meta-security.ts";
 import {
-  assertWalletAllowsDebit,
-  billedAmountFromRaw,
-  estimateWhatsAppRawCostInr,
-  getMarkupPercent,
-  isCriticalWhatsAppKind,
   recordWhatsAppUsageAndDebit,
 } from "./usage-billing.ts";
 
@@ -398,29 +393,6 @@ export async function dispatchWhatsAppCloudMessage(opts: {
   const kind: CloudMessageKind = opts.kind || (opts.otp ? "otp" : "text");
   const tenantId = resolveUsageTenantId(opts.tenantId, opts.to, opts.db);
   const inCustomerServiceWindow = opts.inCustomerServiceWindow ?? kind === "text";
-
-  if (tenantId && opts.db) {
-    try {
-      const estimate = estimateWhatsAppRawCostInr({
-        kind,
-        to: opts.to,
-        inCustomerServiceWindow,
-      });
-      const markupPercent = getMarkupPercent(tenantId, "whatsapp_message", opts.db);
-      const billedAmount = billedAmountFromRaw(estimate.rawCost, markupPercent);
-      const gate = assertWalletAllowsDebit({
-        tenantId,
-        billedAmount,
-        critical: isCriticalWhatsAppKind(kind),
-        database: opts.db,
-      });
-      if (gate.ok === false) {
-        return { ok: false, error: gate.error, channel: "none" };
-      }
-    } catch (err) {
-      console.error("Wallet pre-check failed:", err);
-    }
-  }
 
   const creds = resolveGraphCredentials(opts.db, tenantId);
 

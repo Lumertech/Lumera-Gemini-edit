@@ -83,7 +83,7 @@ describe("HTTP AI Scribe metering", () => {
     return String(res.json.token || "");
   }
 
-  it("successful generation writes usage_events and a wallet debit", async () => {
+  it("successful generation writes usage_events and does not debit the wallet", async () => {
     const token = await login();
     const transcript = "Patient has fever and cough for two days with body ache.";
     const beforeWallet = getDb().prepare("SELECT balance FROM tenant_wallets WHERE tenant_id = ?").get(clinic.tenantId) as {
@@ -105,16 +105,15 @@ describe("HTTP AI Scribe metering", () => {
     assert.ok(Number(event.quantity) > 0);
     const debit = getDb()
       .prepare("SELECT amount FROM wallet_transactions WHERE tenant_id = ? AND type = 'usage_debit' ORDER BY created_at DESC LIMIT 1")
-      .get(clinic.tenantId) as { amount: number };
-    assert.ok(debit);
-    assert.ok(Number(debit.amount) < 0);
+      .get(clinic.tenantId) as { amount: number } | undefined;
+    assert.equal(debit, undefined);
     const afterWallet = getDb().prepare("SELECT balance FROM tenant_wallets WHERE tenant_id = ?").get(clinic.tenantId) as {
       balance: number;
     };
-    assert.ok(Number(afterWallet.balance) < Number(beforeWallet.balance));
+    assert.equal(Number(afterWallet.balance), Number(beforeWallet.balance));
   });
 
-  it("insufficient wallet balance returns 402", async () => {
+  it("empty wallet balance still generates the SOAP note", async () => {
     const empty = seedDoctor();
     const loginRes = await jsonRequest(port, "POST", "/api/auth/login", {
       email: empty.email,
@@ -130,8 +129,13 @@ describe("HTTP AI Scribe metering", () => {
       { transcript: "Short consult note about cough and fever today." },
       { Authorization: `Bearer ${token}` }
     );
-    assert.equal(res.status, 402);
-    assert.equal(res.json.code, "WALLET_INSUFFICIENT");
+    assert.equal(res.status, 200, String(res.json.error || JSON.stringify(res.json)));
+    assert.equal(res.json.success, true);
+    assert.equal(res.json.code, undefined);
+    const balance = getDb().prepare("SELECT balance FROM tenant_wallets WHERE tenant_id = ?").get(empty.tenantId) as {
+      balance: number;
+    } | undefined;
+    assert.equal(Number(balance?.balance || 0), 0);
   });
 
   it("understated client durationMinutes does not reduce billed quantity", async () => {

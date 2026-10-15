@@ -30,15 +30,21 @@ import {
   ReceiptHonesty,
   canMarkPaidLocally,
   displayBillingIds,
+  deskCollectionsView,
+  displayInvoiceNumber,
+  DRAFT_INVOICE_LABEL,
   formatRupees,
+  invoiceNumberToPersist,
   isInvoicePaid,
   paymentModeFromInvoice,
   paymentStatusLabel,
   pickInvoiceForContext,
   receiptHonestyFromResponse,
+  savedInvoiceView,
+  shouldRecomputeDraftLines,
   shouldShowSandboxPay,
-  todayIsoDate,
 } from '../lib/billingCollect';
+import { clinicCalendarDate } from '../lib/clinicDay';
 import { useAuth } from '../auth/AuthContext';
 import { workflowForUser } from '../lib/specialtyWorkflow';
 
@@ -139,7 +145,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
 }) => {
   const { user } = useAuth();
   const pack = workflowForUser(user);
-  const [invoiceNumber, setInvoiceNumber] = useState(`INV-2026-${Math.floor(1000 + Math.random() * 9000)}`);
+  const [invoiceNumber, setInvoiceNumber] = useState(DRAFT_INVOICE_LABEL);
   const [activeTab, setActiveTab] = useState<'invoice' | 'pharmacy_batches' | 'rehab_packages'>('invoice');
   const [pharmacyStock, setPharmacyStock] = useState<PharmacyBatchItem[]>(MOCK_PHARMACY_BATCHES);
 
@@ -164,9 +170,12 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
   const [copiedPayLink, setCopiedPayLink] = useState(false);
   const [billingSettings, setBillingSettings] = useState<BillingSettings | null>(null);
   const [dayEnd, setDayEnd] = useState<DayEndReport | null>(null);
+  const [composeBill, setComposeBill] = useState(false);
+  const [serverBill, setServerBill] = useState<{ subtotal: number; discountAmount: number; totalAmount: number } | null>(null);
 
   const [items, setItems] = useState<BillItem[]>([]);
   const wasPaidRef = useRef(false);
+  const savedInvoiceIdRef = useRef('');
   const onPaymentSuccessRef = useRef(onPaymentSuccess);
   onPaymentSuccessRef.current = onPaymentSuccess;
 
@@ -188,14 +197,24 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
   });
 
   const loadDayEnd = async () => {
-    const report = await apiFetch<DayEndReport>(`/api/billing/day-end?date=${todayIsoDate()}`);
+    const day = clinicCalendarDate(new Date(), user?.timezone);
+    const report = await apiFetch<DayEndReport>(`/api/billing/day-end?date=${day}`);
     setDayEnd(report);
   };
 
   const applyServerInvoice = (invoice: PersistedInvoice, opts?: { notify?: boolean }) => {
     const invoicePaid = isInvoicePaid(invoice);
+    const view = savedInvoiceView(invoice);
+    savedInvoiceIdRef.current = invoice.id;
     setPersistedInvoice(invoice);
-    setInvoiceNumber(invoice.invoiceNumber);
+    setInvoiceNumber(displayInvoiceNumber(invoice.invoiceNumber));
+    setItems(view.items);
+    setDiscountAmount(view.discountAmount);
+    setServerBill({
+      subtotal: view.subtotal,
+      discountAmount: view.discountAmount,
+      totalAmount: view.totalAmount,
+    });
     if (invoice.payLink) setPayLink(invoice.payLink);
     if (invoice.paymentMode) setPaymentMode(paymentModeFromInvoice(invoice.paymentMode));
     setIsPaid(invoicePaid);
@@ -218,6 +237,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
   };
 
   useEffect(() => {
+    if (!shouldRecomputeDraftLines({ id: savedInvoiceIdRef.current })) return;
     setItems(defaultLineItems(currentDoctor, activePrescription));
   }, [activePrescription, currentDoctor, currentPatient.id]);
 
@@ -237,7 +257,13 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
   useEffect(() => {
     let cancelled = false;
     wasPaidRef.current = false;
+    savedInvoiceIdRef.current = '';
+    setComposeBill(false);
     setPersistedInvoice(null);
+    setServerBill(null);
+    setInvoiceNumber(DRAFT_INVOICE_LABEL);
+    setDiscountAmount(0);
+    setItems(defaultLineItems(currentDoctor, activePrescription));
     setPayLink('');
     setIsPaid(false);
     setIsReceiptIssued(false);
@@ -246,12 +272,12 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
     setCollectError('');
 
     const hydrate = async () => {
-      const list = await apiFetch<{ invoices: PersistedInvoice[] }>('/api/invoices');
+      if (!appointmentId) return;
+      const list = await apiFetch<{ invoices: PersistedInvoice[] }>(
+        `/api/invoices?appointmentId=${encodeURIComponent(appointmentId)}`
+      );
       if (cancelled) return;
-      const picked = pickInvoiceForContext(list.invoices || [], {
-        appointmentId,
-        patientId: currentPatient.id,
-      });
+      const picked = pickInvoiceForContext(list.invoices || [], { appointmentId });
       if (picked) {
         applyServerInvoice(picked, { notify: false });
         return;
@@ -269,18 +295,24 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
     };
   }, [currentPatient.id, appointmentId, appointmentIsPaid]);
 
-  const subtotal = items.reduce((sum, item) => sum + item.total, 0);
-  const totalAmount = Math.max(0, subtotal - discountAmount);
+  const draftSubtotal = items.reduce((sum, item) => sum + item.total, 0);
+  const subtotal = serverBill ? serverBill.subtotal : draftSubtotal;
+  const totalAmount = serverBill ? serverBill.totalAmount : Math.max(0, draftSubtotal - discountAmount);
+  const linesLocked = Boolean(serverBill && persistedInvoice?.id);
+  const showInvoicePreview = linesLocked || composeBill;
+  const dayEndView = deskCollectionsView(dayEnd, { hasSavedInvoice: showInvoicePreview });
+  const shownInvoiceNumber = displayInvoiceNumber(linesLocked ? invoiceNumber : DRAFT_INVOICE_LABEL);
 
   const ensureInvoice = async (): Promise<PersistedInvoice> => {
     if (persistedInvoice?.id && persistedInvoice.paymentStatus !== 'Paid') return persistedInvoice;
     if (persistedInvoice?.paymentStatus === 'Paid') return persistedInvoice;
+    const persistedNumber = invoiceNumberToPersist(invoiceNumber);
     const created = await apiFetch<{ invoice: PersistedInvoice }>(
       '/api/invoices',
       {
         method: 'POST',
         body: JSON.stringify({
-          invoiceNumber,
+          ...(persistedNumber ? { invoiceNumber: persistedNumber } : {}),
           appointmentId: appointmentId || '',
           patientId: currentPatient.id,
           patientName: currentPatient.name,
@@ -298,8 +330,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
       }
     );
     const invoice = created.invoice;
-    setPersistedInvoice(invoice);
-    setInvoiceNumber(invoice.invoiceNumber);
+    applyServerInvoice(invoice, { notify: false });
     return invoice;
   };
 
@@ -413,7 +444,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
   }, [persistedInvoice?.id, paid, payLink]);
 
   const handleAddItem = () => {
-    if (!newItemDesc.trim()) return;
+    if (linesLocked || !newItemDesc.trim()) return;
     const newItem: BillItem = {
       id: 'b-' + Date.now(),
       description: newItemDesc,
@@ -429,7 +460,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
   };
 
   const handleAddPharmacyDrugToBill = (drug: PharmacyBatchItem) => {
-    if (drug.currentStock <= 0) return;
+    if (linesLocked || drug.currentStock <= 0) return;
     const newItem: BillItem = {
       id: 'b-med-' + Date.now(),
       description: `${drug.drugName} (Batch: ${drug.batchNumber}, Exp: ${drug.expiryDate})`,
@@ -451,6 +482,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
   };
 
   const handleAddRehabPackageToBill = (pkg: TherapyPackage) => {
+    if (linesLocked) return;
     const newItem: BillItem = {
       id: 'b-pkg-' + Date.now(),
       description: `${pkg.packageName} (${pkg.totalSessions} Total Sessions)`,
@@ -466,6 +498,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
   };
 
   const handleRemoveItem = (id: string) => {
+    if (linesLocked) return;
     setItems(items.filter((i) => i.id !== id));
   };
 
@@ -487,36 +520,69 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
       >
         {pack.billingLabel} · {pack.billingLens} · {pack.formularyLens === "who-eml" ? "WHO-EML / pharmacy" : pack.formularyLens === "rehab-exercises" ? "exercises & packages" : pack.formularyLens === "dental-materials" ? "chair procedures" : pack.formularyLens === "salon-menu" ? "salon menu" : "no clinical formulary"}
       </div>
-      {dayEnd && (
-        <div className="no-print bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      {dayEndView && (
+        <div
+          className="no-print bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+          data-testid="day-end-summary"
+        >
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Day-end collections · {dayEnd.date}</p>
-            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
-              <span className="px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold">
-                Paid {dayEnd.paidCount} · {formatRupees(dayEnd.paidAmount)}
+            <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Day-end collections</p>
+            <p className="mt-1 text-lg font-semibold text-slate-900" data-testid="day-end-date">
+              {dayEndView.dateLabel}
+            </p>
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+              <span className="px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold" data-testid="day-end-paid">
+                Paid {dayEndView.paidCount}
               </span>
-              <span className="px-2.5 py-1 rounded-lg bg-amber-50 text-amber-800 border border-amber-200 font-semibold">
-                Due {dayEnd.dueCount} · {formatRupees(dayEnd.dueAmount)}
+              <span className="px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-900 border border-emerald-200 font-semibold" data-testid="day-end-collected">
+                Collected {formatRupees(dayEndView.totalCollected)}
+              </span>
+              <span className="px-3 py-1.5 rounded-lg bg-amber-50 text-amber-800 border border-amber-200 font-semibold" data-testid="day-end-due">
+                Due {dayEndView.dueCount} · {formatRupees(dayEndView.dueAmount)}
               </span>
             </div>
           </div>
-          <button
-            onClick={() => void loadDayEnd().catch(() => undefined)}
-            className="self-start sm:self-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            Refresh day-end
-          </button>
+          <div className="flex flex-col gap-2 self-start sm:self-auto">
+            <button
+              onClick={() => void loadDayEnd().catch(() => undefined)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              Refresh day-end
+            </button>
+            {!showInvoicePreview ? (
+              <button
+                type="button"
+                data-testid="start-bill"
+                onClick={() => setComposeBill(true)}
+                className="px-3 py-1.5 rounded-lg bg-slate-900 text-white text-xs font-semibold"
+              >
+                Create bill
+              </button>
+            ) : null}
+          </div>
         </div>
       )}
+      {!dayEndView && !showInvoicePreview ? (
+        <button
+          type="button"
+          data-testid="start-bill"
+          onClick={() => setComposeBill(true)}
+          className="no-print self-start px-3 py-1.5 rounded-lg bg-slate-900 text-white text-xs font-semibold"
+        >
+          Create bill
+        </button>
+      ) : null}
 
+      {showInvoicePreview ? (
+      <>
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm no-print">
         <div>
           <div className="flex items-center space-x-2">
             <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-teal-50 text-teal-700 border border-teal-200">
               Integrated OPD Desk & Pharmacy
             </span>
-            <span className="font-mono text-xs text-slate-500 font-medium">{invoiceNumber}</span>
+            <span className="font-mono text-xs text-slate-500 font-medium" data-testid="invoice-number">{shownInvoiceNumber}</span>
             {statusChip}
           </div>
           <h1 className="text-lg font-bold text-slate-900 mt-1">Multi-Specialty Billing, Therapy Packages & Batch Inventory</h1>
@@ -600,7 +666,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
               <span className="px-2.5 py-0.5 rounded text-[10px] font-bold bg-slate-900 text-white uppercase tracking-wider">
                 GST Tax Invoice / Cash Receipt
               </span>
-              <p className="text-xs font-mono text-slate-700 mt-1 font-bold">No: {invoiceNumber}</p>
+              <p className="text-xs font-mono text-slate-700 mt-1 font-bold">No: {shownInvoiceNumber}</p>
               <p className="text-xs text-slate-500">{new Date().toLocaleDateString('en-IN')}</p>
               <div className="mt-1">{statusChip}</div>
             </div>
@@ -625,6 +691,11 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
             </div>
           </div>
 
+          {linesLocked ? (
+            <p className="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2" data-testid="saved-invoice-notice">
+              Saved invoice. Line items and the total are from this bill and are not recalculated.
+            </p>
+          ) : (
           <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 flex flex-col sm:flex-row items-center gap-2 text-xs no-print">
             <input
               type="text"
@@ -658,6 +729,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
               Add Item
             </button>
           </div>
+          )}
 
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs border-collapse">
@@ -687,12 +759,14 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
                       ₹{item.total}
                     </td>
                     <td className="py-2.5 px-3 no-print text-right">
+                      {linesLocked ? null : (
                       <button
                         onClick={() => handleRemoveItem(item.id)}
                         className="text-slate-400 hover:text-red-600"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -754,15 +828,16 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
                 <span>Discount (₹):</span>
                 <input
                   type="number"
-                  value={discountAmount}
+                  value={serverBill ? serverBill.discountAmount : discountAmount}
                   onChange={(e) => setDiscountAmount(Number(e.target.value))}
-                  disabled={paid}
+                  disabled={paid || linesLocked}
+                  readOnly={linesLocked}
                   className="w-20 border border-slate-200 rounded px-1.5 py-0.5 text-right font-mono disabled:bg-slate-100"
                 />
               </div>
               <div className="border-t-2 border-slate-900 pt-2 flex justify-between text-sm">
                 <strong className="text-slate-900">{paid ? 'Total Paid:' : 'Total Payable:'}</strong>
-                <strong className="text-teal-800 font-mono text-base font-black">₹{totalAmount}</strong>
+                <strong className="text-teal-800 font-mono text-base font-black" data-testid="invoice-total">₹{totalAmount}</strong>
               </div>
 
               <div className="pt-2 no-print space-y-1.5">
@@ -835,7 +910,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
 
                   <button
                     onClick={() => handleAddPharmacyDrugToBill(batch)}
-                    disabled={batch.currentStock <= 0}
+                    disabled={linesLocked || batch.currentStock <= 0}
                     className="w-full py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all shadow-xs"
                   >
                     <Plus className="w-3.5 h-3.5" />
@@ -898,7 +973,8 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
 
                 <button
                   onClick={() => handleAddRehabPackageToBill(pkg)}
-                  className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-xs"
+                  disabled={linesLocked}
+                  className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-xs"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   <span>Enrol Patient & Bill ₹{pkg.cost}</span>
@@ -919,7 +995,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
                   <h3 className="font-bold text-base">
                     {paid ? 'GST Payment Receipt & Confirmation' : 'Collect Consultation & Clinical Payment'}
                   </h3>
-                  <p className="text-[11px] text-slate-500 font-mono">Invoice: {invoiceNumber} • UHID: {currentPatient.uhid}</p>
+                  <p className="text-[11px] text-slate-500 font-mono">Invoice: {shownInvoiceNumber} • UHID: {currentPatient.uhid}</p>
                 </div>
               </div>
               <button
@@ -1132,7 +1208,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
                       <CheckCircle className="w-4 h-4 text-emerald-600" />
                       <span>Payment Completed &amp; Reconciled</span>
                     </div>
-                    <span className="font-mono text-[11px] font-bold text-slate-600">{isReceiptIssued ? receiptNumber : invoiceNumber}</span>
+                    <span className="font-mono text-[11px] font-bold text-slate-600">{isReceiptIssued ? receiptNumber : shownInvoiceNumber}</span>
                   </div>
 
                   <div className="grid grid-cols-2 gap-2 text-[11px]">
@@ -1223,6 +1299,8 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
           </div>
         </div>
       )}
+      </>
+      ) : null}
     </div>
   );
 };
