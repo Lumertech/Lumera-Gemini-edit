@@ -2,6 +2,7 @@ import { type SqlDatabase } from "./sql-engine.ts";
 import { DEMO_TENANT_ID } from "./db.ts";
 import { ensureDemoTenantLetterhead } from "./db-migrate.ts";
 import { DEMO_PASSWORD, DOCTOR_SEED, hashPasswordSync } from "./db-seed-maps.ts";
+import { SUNRISE_LOGIN_EMAILS } from "./sunrise-seed.ts";
 import { WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
 
 export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
@@ -43,7 +44,15 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
     );
 
     try {
-      database.exec("UPDATE users SET tenant_id = 'tenant-lumera-main' WHERE tenant_id IS NULL OR tenant_id = ''");
+      // Quarantine is not a clinic, so this branch still runs on a fresh database.
+      // Sunrise video emails are not demo roster rows — do not park them on tenant-lumera-main.
+      database
+        .prepare(
+          `UPDATE users SET tenant_id = ?
+           WHERE (tenant_id IS NULL OR tenant_id = '')
+             AND lower(email) NOT IN (?, ?)`
+        )
+        .run(DEMO_TENANT_ID, SUNRISE_LOGIN_EMAILS[0], SUNRISE_LOGIN_EMAILS[1]);
       database.exec("UPDATE users SET hpr_id = 'HPR-IN-9024819' WHERE role IN ('doctor', 'polyclinic_admin', 'CLINIC_ADMIN') AND (hpr_id IS NULL OR hpr_id = '')");
     } catch {}
   }
