@@ -1488,6 +1488,7 @@ export function createApiRouter(): Router {
   });
 
   const sendSession = (req: Request, res: Response) => {
+    res.setHeader("Cache-Control", "private, no-store");
     if (!req.user) return res.json({ user: null });
     if (rejectClinicTenantBlocked(req.user, res)) return;
     let tenant = null;

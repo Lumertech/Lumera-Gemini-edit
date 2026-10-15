@@ -194,7 +194,9 @@ describe("production SPA history fallback", () => {
     assert.equal(isSpaHistoryFallbackPath("/app/billing"), true);
     assert.equal(isSpaHistoryFallbackPath("/w/dr-demo-physio/whatsapp"), true);
     assert.equal(isSpaHistoryFallbackPath("/w/lumera-apex-polyclinic/whatsapp"), true);
+    assert.equal(isSpaHistoryFallbackPath("/w/lumera-apex-polyclinic/queue"), true);
     assert.equal(isBackendPath("/w/lumera-apex-polyclinic/whatsapp"), false);
+    assert.equal(isBackendPath("/w/lumera-apex-polyclinic/queue"), false);
     assert.equal(isBackendPath("/w/dr-demo-physio/whatsapp"), false);
     assert.equal(isSpaHistoryFallbackPath("/api/public/policies/privacy-policy"), false);
     assert.equal(isSpaHistoryFallbackPath("/assets/index-abc.js"), false);
@@ -246,7 +248,7 @@ describe("production SPA history fallback", () => {
       assert.equal(home.headers.get("x-frame-options"), "DENY");
       assert.match(home.headers.get("permissions-policy") || "", /microphone=\(self\)/);
       assert.match(home.headers.get("referrer-policy") || "", /strict-origin-when-cross-origin/);
-      for (const p of ["/app/rx", "/admin/users", "/signup", "/login"]) {
+      for (const p of ["/app/rx", "/admin/users", "/signup", "/login", "/w/lumera-apex-polyclinic/queue"]) {
         const res = await fetch(`${origin}${p}`);
         assert.equal(res.status, 200, `${p} must rewrite to the SPA shell`);
         assert.match(await res.text(), /Lumera SPA/);

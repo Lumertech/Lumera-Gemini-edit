@@ -47,6 +47,14 @@ describe("workspace URL slug", () => {
       reconcileWorkspacePath("/w/lumera-apex-polyclinic/rx", "malhotra-individual-practice", "doctor"),
       "/w/malhotra-individual-practice/rx"
     );
+    assert.equal(
+      reconcileWorkspacePath("/w/lumera-apex-polyclinic/queue", "malhotra-individual-practice", "doctor"),
+      "/w/malhotra-individual-practice/queue"
+    );
+    assert.equal(
+      reconcileWorkspacePath("/w/lumera-apex-polyclinic/queue", "lumera-apex-polyclinic", "doctor"),
+      null
+    );
     assert.equal(reconcileWorkspacePath("/w/malhotra-individual-practice/rx", "malhotra-individual-practice", "doctor"), null);
     assert.equal(reconcileWorkspacePath("/app/queue", "iyer-city-polyclinic", "CLINIC_ADMIN"), "/w/iyer-city-polyclinic/queue");
     assert.equal(reconcileWorkspacePath("/w/iyer-city-polyclinic/branches", "iyer-city-polyclinic", "super_admin"), "/admin");

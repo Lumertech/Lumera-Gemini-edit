@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import { databaseUrlFromEnv } from "../src/db/url.ts";
 import { createApiRouter } from "./api.ts";
 import {
   INDIVIDUAL_DEMO_SLUG,
@@ -12,7 +14,9 @@ import {
   ensureDemoWorkspaceTenants,
 } from "./demo-workspace-tenants.ts";
 import { getDb, initDatabase } from "./db.ts";
-import { attachHttpSecurity } from "./http-security.ts";
+import { attachHttpSecurity, cookiesForwardedByFirebaseHosting } from "./http-security.ts";
+import { hashPassword } from "./password.ts";
+import { resolveSqlEngineKind } from "./sql-open.ts";
 import { startTestServer, type TestHttpServer } from "./test-http.ts";
 import { createWhatsAppRouter } from "./whatsapp.ts";
 import { META_REVIEW_TENANT_ID, SUNRISE_TENANT_ID } from "./tenant-slug.ts";
@@ -22,6 +26,39 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 function cookiePair(raw: string, name: string): string {
   const match = new RegExp(`${name}=([^;\\s]*)`).exec(raw);
   return match?.[1] ? decodeURIComponent(match[1]) : "";
+}
+
+function cookieJarFromSetCookie(raw: string): string {
+  const pairs: string[] = [];
+  for (const line of raw.split(/\r?\n/)) {
+    const pair = line.split(";")[0]?.trim();
+    if (pair && pair.includes("=")) pairs.push(pair);
+  }
+  return pairs.join("; ");
+}
+
+async function sessionVisibleOnAnotherConnection(userId: string): Promise<boolean> {
+  const now = new Date().toISOString();
+  if (resolveSqlEngineKind() === "postgres") {
+    const pg = await import("pg");
+    const client = new pg.Client({ connectionString: databaseUrlFromEnv() });
+    await client.connect();
+    try {
+      const result = await client.query("SELECT id FROM sessions WHERE user_id = $1 AND expires_at > $2", [userId, now]);
+      return (result.rowCount ?? 0) > 0;
+    } finally {
+      await client.end();
+    }
+  }
+  const fresh = new DatabaseSync(path.join(process.cwd(), "data", "lumera.db"), { readOnly: true });
+  try {
+    const row = fresh.prepare("SELECT id FROM sessions WHERE user_id = ? AND expires_at > ?").get(userId, now) as
+      | { id?: string }
+      | undefined;
+    return Boolean(row?.id);
+  } finally {
+    fresh.close();
+  }
 }
 
 async function login(port: number, email: string) {
@@ -107,6 +144,120 @@ describe("P0 #120 cookie session and tenant isolation", () => {
     });
     const afterJson = (await after.json()) as { user?: { email?: string } | null };
     assert.equal(afterJson.user ?? null, null);
+    assert.match(cleared, /__session=;/);
+  });
+
+  it("authenticates from the Firebase-forwarded __session cookie alone and persists the session in SQL", async () => {
+    const authSrc = fs.readFileSync(path.join(__dirname, "auth.ts"), "utf8");
+    assert.equal(authSrc.includes("new Map"), false);
+    assert.match(authSrc, /INSERT INTO sessions/);
+
+    const session = await login(server.port, "doctor@lumera.me");
+    assert.match(session.setCookie, /__session=/);
+    assert.match(session.setCookie, /HttpOnly/i);
+    assert.match(session.setCookie, /Secure/i);
+    assert.match(session.setCookie, /SameSite=Lax/i);
+    const userId = String((session.json.user as { id?: string } | undefined)?.id || "");
+    assert.ok(userId);
+    assert.equal(await sessionVisibleOnAnotherConnection(userId), true);
+
+    const jar = cookieJarFromSetCookie(session.setCookie);
+    assert.match(jar, /lumera_sid=/);
+    assert.match(jar, /lumera_csrf=/);
+    const forwarded = cookiesForwardedByFirebaseHosting(jar);
+    assert.match(forwarded, /^__session=/);
+    assert.equal(forwarded.includes("lumera_sid="), false);
+    assert.equal(forwarded.includes("lumera_csrf="), false);
+
+    const me = await fetch(`http://127.0.0.1:${server.port}/api/auth/me`, {
+      headers: { cookie: forwarded },
+    });
+    const meJson = (await me.json()) as { user?: { email?: string; id?: string } | null };
+    assert.equal(me.status, 200);
+    assert.equal(me.headers.get("cache-control"), "private, no-store");
+    assert.equal(meJson.user?.email, "doctor@lumera.me");
+    assert.equal(meJson.user?.id, userId);
+
+    const alias = await fetch(`http://127.0.0.1:${server.port}/api/me`, {
+      headers: { cookie: forwarded },
+    });
+    const aliasJson = (await alias.json()) as { user?: { email?: string } | null };
+    assert.equal(alias.status, 200);
+    assert.equal(aliasJson.user?.email, "doctor@lumera.me");
+
+    const patients = await fetch(`http://127.0.0.1:${server.port}/api/patients`, {
+      headers: { cookie: forwarded },
+    });
+    const patientsJson = (await patients.json()) as { patients?: unknown };
+    assert.equal(patients.status, 200);
+    assert.ok(Array.isArray(patientsJson.patients));
+
+    const missingCsrf = await fetch(`http://127.0.0.1:${server.port}/api/auth/logout`, {
+      method: "POST",
+      headers: { cookie: forwarded },
+    });
+    assert.equal(missingCsrf.status, 403);
+
+    const loggedOut = await fetch(`http://127.0.0.1:${server.port}/api/auth/logout`, {
+      method: "POST",
+      headers: { cookie: forwarded, "x-csrf-token": session.csrf },
+    });
+    assert.equal(loggedOut.status, 200);
+
+    const after = await fetch(`http://127.0.0.1:${server.port}/api/auth/me`, {
+      headers: { cookie: forwarded },
+    });
+    const afterJson = (await after.json()) as { user?: { email?: string } | null };
+    assert.equal(afterJson.user ?? null, null);
+  });
+
+  it("restores a Lumera Apex PolyClinic queue session from the hosting cookie", async () => {
+    const slugRow = getDb().prepare("SELECT slug, name FROM tenants WHERE id = ?").get(META_REVIEW_TENANT_ID) as {
+      slug?: string;
+      name?: string;
+    };
+    assert.equal(slugRow.name, "Lumera Apex PolyClinic");
+    assert.equal(String(slugRow.slug || "").toLowerCase(), "lumera-apex-polyclinic");
+
+    const stamp = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    const email = `apex.queue.${stamp}@clinic.test`;
+    const now = new Date().toISOString();
+    getDb()
+      .prepare(
+        `INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, onboarding_completed, practice_type, last_login, created_at)
+         VALUES (?, ?, ?, ?, ?, 'doctor', 'active', ?, 1, 'individual', ?, ?)`
+      )
+      .run(
+        `user-apex-queue-${stamp}`,
+        META_REVIEW_TENANT_ID,
+        email,
+        hashPassword("Lumera@2026"),
+        "Apex Queue Doctor",
+        "+91 97000 00444",
+        now,
+        now
+      );
+
+    const res = await fetch(`http://127.0.0.1:${server.port}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password: "Lumera@2026", skipOtp: true }),
+    });
+    const setCookie =
+      typeof res.headers.getSetCookie === "function" ? res.headers.getSetCookie().join("\n") : res.headers.get("set-cookie") || "";
+    const json = (await res.json()) as { user?: { email?: string; workspaceSlug?: string; role?: string }; error?: string };
+    assert.equal(res.status, 200, json.error || email);
+    const forwarded = cookiesForwardedByFirebaseHosting(cookieJarFromSetCookie(setCookie));
+    assert.match(forwarded, /^__session=/);
+
+    const me = await fetch(`http://127.0.0.1:${server.port}/api/auth/me`, {
+      headers: { cookie: forwarded },
+    });
+    const meJson = (await me.json()) as { user?: { email?: string; workspaceSlug?: string; role?: string } | null };
+    assert.equal(me.status, 200);
+    assert.equal(meJson.user?.email, email);
+    assert.equal(meJson.user?.role, "doctor");
+    assert.equal(meJson.user?.workspaceSlug, "lumera-apex-polyclinic");
   });
 
   it("does not persist an auth token in web storage", () => {
