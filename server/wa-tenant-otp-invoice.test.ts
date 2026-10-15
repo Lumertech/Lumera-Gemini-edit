@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { after, before, describe, it } from "node:test";
-import { createApiRouter } from "./api.ts";
+import { createApiRouter, otpEventTenantId, uniqueOtpClinicId } from "./api.ts";
 import { getDb, initDatabase } from "./db.ts";
 import { applyWhatsAppOutboundStatus } from "./meta.ts";
 import { hashPassword } from "./password.ts";
@@ -568,6 +568,57 @@ describe("WhatsApp tenant scope, send validation, OTP limit, invoice UHID", () =
     assert.equal(second.status, 200, String(second.json.error || ""));
     assert.notEqual(second.json.reused, true);
     assert.notEqual(String(second.json.verificationId || ""), verificationId);
+    resetSendOtpRateLimits();
+  });
+
+  it("OTP threads ignore a shared last-10 suffix and status follows the sending line", async () => {
+    const indiaClinic = createClinic("otpIn");
+    const usClinic = createClinic("otpUs");
+    const lineClinic = createClinic("otpLine");
+    const local = `98${String(Date.now()).slice(-8)}`;
+    const indiaPhone = `+91 ${local.slice(0, 5)} ${local.slice(5)}`;
+    const usPhone = `+1 ${local.slice(0, 3)} ${local.slice(3, 6)} ${local.slice(6)}`;
+    const now = new Date().toISOString();
+    const db = getDb();
+    db.prepare("UPDATE users SET phone = ?, last_login = ? WHERE id = ?").run(indiaPhone, now, indiaClinic.userId);
+    db.prepare("UPDATE users SET phone = ?, last_login = ? WHERE id = ?").run(usPhone, now, usClinic.userId);
+    assert.equal(uniqueOtpClinicId(usPhone), usClinic.tenantId);
+    assert.equal(uniqueOtpClinicId(indiaPhone), indiaClinic.tenantId);
+    assert.notEqual(uniqueOtpClinicId(usPhone), indiaClinic.tenantId);
+
+    const linePhoneNumberId = `9${String(Date.now()).slice(-11)}`;
+    db.prepare("UPDATE tenants SET phone_number_id = ? WHERE id = ?").run(linePhoneNumberId, lineClinic.tenantId);
+    const prevToken = process.env.META_ACCESS_TOKEN;
+    const prevPhone = process.env.META_PHONE_NUMBER_ID;
+    process.env.META_ACCESS_TOKEN = "EAA" + "a".repeat(40);
+    process.env.META_PHONE_NUMBER_ID = linePhoneNumberId;
+    try {
+      assert.equal(otpEventTenantId(indiaPhone), lineClinic.tenantId);
+      assert.notEqual(otpEventTenantId(indiaPhone), indiaClinic.tenantId);
+      process.env.META_PHONE_NUMBER_ID = "000000001111";
+      assert.equal(otpEventTenantId(indiaPhone), WHATSAPP_QUARANTINE_TENANT_ID);
+    } finally {
+      if (prevToken === undefined) delete process.env.META_ACCESS_TOKEN;
+      else process.env.META_ACCESS_TOKEN = prevToken;
+      if (prevPhone === undefined) delete process.env.META_PHONE_NUMBER_ID;
+      else process.env.META_PHONE_NUMBER_ID = prevPhone;
+    }
+
+    resetSendOtpRateLimits();
+    const sent = await jsonRequest(server.port, "POST", "/api/auth/whatsapp/send-otp", {
+      phone: usPhone,
+      purpose: "login",
+      name: "US Clinician",
+    });
+    assert.equal(sent.status, 200, String(sent.json.error || ""));
+    const thread = db
+      .prepare("SELECT tenant_id FROM whatsapp_conversations WHERE patient_phone = ?")
+      .get(usPhone) as { tenant_id: string } | undefined;
+    assert.equal(thread?.tenant_id, usClinic.tenantId);
+    const wrong = db
+      .prepare("SELECT id FROM whatsapp_conversations WHERE patient_phone = ? AND tenant_id = ?")
+      .get(usPhone, indiaClinic.tenantId) as { id?: string } | undefined;
+    assert.equal(wrong, undefined);
     resetSendOtpRateLimits();
   });
 

@@ -16,6 +16,7 @@ import { verifyJwtToken } from "./auth.ts";
 import { createApiRouter } from "./api.ts";
 import { getDb, initDatabase } from "./db.ts";
 import { jsonRequest, startTestServer } from "./test-http.ts";
+import { WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
 
 function hmacSha256(secret: string, body: string): string {
   return "sha256=" + crypto.createHmac("sha256", secret).update(body).digest("hex");
@@ -729,6 +730,69 @@ describe("WhatsApp Cloud API outbound status matching", () => {
       process.env.META_WEBHOOK_ALLOW_UNSIGNED = prevFlag;
       await server.close();
       cleanup([ownId, otherId]);
+    }
+  });
+
+  it("an unknown sending line updates only the quarantined outbound row", async () => {
+    ensureDb();
+    const quarantineId = `evt-status-${crypto.randomUUID().slice(0, 8)}`;
+    const clinicId = `evt-status-${crypto.randomUUID().slice(0, 8)}`;
+    const phone = "+919777766655";
+    insertOutbound({
+      id: quarantineId,
+      phone,
+      payload: { channel: "graph" },
+      tenantId: WHATSAPP_QUARANTINE_TENANT_ID,
+      sentAt: "2026-02-02T00:00:00.000Z",
+    });
+    insertOutbound({
+      id: clinicId,
+      phone,
+      payload: { channel: "graph" },
+      tenantId: statusTenantId,
+      sentAt: "2026-02-03T00:00:00.000Z",
+    });
+    const prevSecret = process.env.META_APP_SECRET;
+    const prevFlag = process.env.META_WEBHOOK_ALLOW_UNSIGNED;
+    process.env.META_APP_SECRET = "unit-status-secret";
+    process.env.META_WEBHOOK_ALLOW_UNSIGNED = "false";
+    const server = await startTestServer((app) => {
+      app.use("/api/meta", createMetaRouter());
+    });
+    const unknownFrom = `1888${String(Date.now()).slice(-8)}`;
+    try {
+      const payload = {
+        object: "whatsapp_business_account",
+        entry: [
+          {
+            changes: [
+              {
+                value: {
+                  metadata: { phone_number_id: "000000001111" },
+                  statuses: [{ id: "wamid.UNKNOWN_LINE", status: "delivered", recipient_id: "919777766655" }],
+                  messages: [{ from: unknownFrom, text: { body: "should not persist" } }],
+                },
+              },
+            ],
+          },
+        ],
+      };
+      const raw = JSON.stringify(payload);
+      const res = await jsonRequest(server.port, "POST", "/api/meta/webhook", payload, {
+        "X-Hub-Signature-256": hmacSha256("unit-status-secret", raw),
+      });
+      assert.equal(res.status, 200);
+      assert.equal(readStatus(quarantineId), "delivered");
+      assert.equal(readStatus(clinicId), "sent");
+      const stored = getDb()
+        .prepare("SELECT id FROM whatsapp_conversations WHERE patient_phone = ?")
+        .get(unknownFrom) as { id?: string } | undefined;
+      assert.equal(stored, undefined);
+    } finally {
+      process.env.META_APP_SECRET = prevSecret;
+      process.env.META_WEBHOOK_ALLOW_UNSIGNED = prevFlag;
+      await server.close();
+      cleanup([quarantineId, clinicId]);
     }
   });
 });
