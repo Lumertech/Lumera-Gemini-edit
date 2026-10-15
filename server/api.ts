@@ -3,6 +3,7 @@ import multer from "multer";
 import fs from "node:fs";
 import path from "node:path";
 import { createWhatsAppRouter } from "./whatsapp.ts";
+import { authorizeLabReport, sendLabReportDenied } from "./lab-report-access.ts";
 import { createMetaRouter } from "./meta.ts";
 import { rememberFacebookAppUser } from "./meta-signed-request.ts";
 import { createAbdmRouter } from "./abdm.ts";
@@ -50,6 +51,7 @@ import {
   requireRole,
 } from "./auth.ts";
 import { rejectUntrustedTenantClaim } from "./tenant-guard.ts";
+import { clinicTenantId } from "./whatsapp-scope.ts";
 import {
   createAdminTenant,
   ensureTenantSubscription,
@@ -2271,7 +2273,7 @@ export function createApiRouter(): Router {
   });
 
   api.get("/branches", requireAuth, (req, res) => {
-    const tenantId = String(req.user?.tenantId || "");
+    const tenantId = clinicTenantId(req);
     const rows = tenantId
       ? getDb().prepare("SELECT * FROM branches WHERE tenant_id = ? ORDER BY name").all(tenantId)
       : [];
@@ -2281,7 +2283,7 @@ export function createApiRouter(): Router {
   api.post("/branches", requireAuth, requireRole(...ADMIN_ROLES, "CLINIC_ADMIN", "polyclinic_admin"), (req, res) => {
     const b = req.body || {};
     if (!b.name) return res.status(400).json({ error: "name is required" });
-    const tenantId = String(req.user?.tenantId || "");
+    const tenantId = clinicTenantId(req);
     if (!tenantId) return res.status(403).json({ error: "Forbidden" });
     const id = `b-${crypto.randomUUID().slice(0, 8)}`;
     getDb()
@@ -2304,7 +2306,7 @@ export function createApiRouter(): Router {
   });
 
   api.patch("/branches/:id", requireAuth, requireRole(...ADMIN_ROLES, "CLINIC_ADMIN", "polyclinic_admin"), (req, res) => {
-    const tenantId = String(req.user?.tenantId || "");
+    const tenantId = clinicTenantId(req);
     const existing = getDb()
       .prepare("SELECT * FROM branches WHERE id = ? AND tenant_id = ?")
       .get(req.params.id, tenantId) as Record<string, unknown> | undefined;
@@ -2327,7 +2329,7 @@ export function createApiRouter(): Router {
   });
 
   api.delete("/branches/:id", requireAuth, requireRole(...ADMIN_ROLES, "CLINIC_ADMIN", "polyclinic_admin"), (req, res) => {
-    const tenantId = String(req.user?.tenantId || "");
+    const tenantId = clinicTenantId(req);
     const existing = getDb()
       .prepare("SELECT id FROM branches WHERE id = ? AND tenant_id = ?")
       .get(req.params.id, tenantId) as { id?: string } | undefined;
@@ -2461,8 +2463,10 @@ export function createApiRouter(): Router {
   api.get("/emr/prescription/:id/pdf", requireAuth, requireRole(...CLINICIAN_ROLES), (req, res) => {
     res.redirect(`/api/whatsapp/prescription/${req.params.id}/pdf`);
   });
-  api.get("/emr/lab-report/:id/pdf", (req, res) => {
-    res.redirect(`/api/whatsapp/lab-report/${req.params.id}/pdf`);
+  api.get("/emr/lab-report/:id/pdf", requireAuth, requireRole(...CLINICIAN_ROLES), (req, res) => {
+    const access = authorizeLabReport(req, String(req.params.id || ""));
+    if (!access.ok) return sendLabReportDenied(res, access);
+    res.redirect(`/api/whatsapp/lab-report/${encodeURIComponent(String(req.params.id))}/pdf`);
   });
 
   api.use(createClinicalRouter());

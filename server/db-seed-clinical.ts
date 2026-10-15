@@ -534,12 +534,13 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
   const labCount = database.prepare("SELECT COUNT(*) AS c FROM lab_reports").get() as { c: number };
   if (labCount.c === 0) {
     const insertLab = database.prepare(`
-      INSERT INTO lab_reports (id, patient_id, patient_uhid, patient_name, date, lab_name, category, doctor_interpretation, results, pdf_url, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO lab_reports (id, tenant_id, patient_id, patient_uhid, patient_name, date, lab_name, category, doctor_interpretation, results, pdf_url, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     insertLab.run(
       "lab-102",
+      DEMO_TENANT_ID,
       "pat-6",
       "LUM-2026-0106",
       "Rajiv Saxena",
@@ -561,6 +562,7 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
 
     insertLab.run(
       "lab-101",
+      DEMO_TENANT_ID,
       "pat-1",
       "LUM-2026-0101",
       "Sunita Roy",

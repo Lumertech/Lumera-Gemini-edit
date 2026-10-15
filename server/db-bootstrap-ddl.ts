@@ -102,6 +102,7 @@ export const BOOTSTRAP_DDL = `
 
     CREATE TABLE IF NOT EXISTS branches (
       id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT '',
       name TEXT NOT NULL,
       address TEXT NOT NULL DEFAULT '',
       phone TEXT NOT NULL DEFAULT '',
@@ -207,6 +208,7 @@ export const BOOTSTRAP_DDL = `
 
     CREATE TABLE IF NOT EXISTS lab_reports (
       id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT '',
       patient_id TEXT NOT NULL,
       patient_uhid TEXT NOT NULL,
       patient_name TEXT NOT NULL,

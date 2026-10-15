@@ -34,6 +34,7 @@ import {
   Stethoscope
 } from 'lucide-react';
 import { Patient, Doctor } from '../types';
+import { InertText } from '../lib/inertText';
 import { DocumentPreviewModal, DocumentPreviewData } from './whatsapp/DocumentPreviewModal';
 import { OutboundTriggerPanel } from './whatsapp/OutboundTriggerPanel';
 import {
@@ -625,7 +626,7 @@ export const WhatsAppAssistant: React.FC<WhatsAppAssistantProps> = ({
                         </div>
                         <div>
                           <h4 className="font-bold text-xs text-slate-900 leading-tight">
-                            {conv.patient_name}
+                            <InertText value={conv.patient_name} />
                           </h4>
                           <span className="text-[10px] text-slate-400 font-mono">
                             {conv.patient_phone} • {conv.patient_uhid}
@@ -828,7 +829,7 @@ export const WhatsAppAssistant: React.FC<WhatsAppAssistantProps> = ({
                       <div key={m.id} className="flex justify-center my-2">
                         <div className="bg-slate-900 border border-slate-800 text-slate-400 rounded-full px-3 py-1 text-[10px] flex items-center gap-1.5 shadow-2xs">
                           <Shield className="w-3 h-3 text-blue-400" />
-                          <span>{m.content}</span>
+                          <span><InertText value={m.content} /></span>
                           <span className="text-slate-600 font-mono">• {m.time_display}</span>
                         </div>
                       </div>
@@ -843,7 +844,7 @@ export const WhatsAppAssistant: React.FC<WhatsAppAssistantProps> = ({
                       {/* Sender label for staff messages */}
                       {!isUser && m.staff_name && (
                         <span className="text-[10px] text-amber-400 font-bold mb-1 px-1 flex items-center gap-1">
-                          <ShieldCheck className="w-3 h-3" /> {m.staff_name}
+                          <ShieldCheck className="w-3 h-3" /> <InertText value={m.staff_name} />
                         </span>
                       )}
 
@@ -854,7 +855,7 @@ export const WhatsAppAssistant: React.FC<WhatsAppAssistantProps> = ({
                             : 'bg-slate-800/90 text-slate-100 border border-slate-700/80 rounded-bl-xs shadow-xs'
                         }`}
                       >
-                        <div className="whitespace-pre-wrap">{m.content}</div>
+                        <div className="whitespace-pre-wrap"><InertText value={m.content} /></div>
 
                         {/* Translation pill if detected */}
                         {m.translated_content && m.detected_language && m.detected_language !== 'en' && (
@@ -862,7 +863,7 @@ export const WhatsAppAssistant: React.FC<WhatsAppAssistantProps> = ({
                             <span className="font-bold flex items-center gap-1 text-[10px] text-purple-400 mb-0.5 uppercase tracking-wider">
                               <Globe className="w-2.5 h-2.5" /> English Translation ({m.detected_language.toUpperCase()}):
                             </span>
-                            "{m.translated_content}"
+                            "<InertText value={m.translated_content} />"
                           </div>
                         )}
 
@@ -876,7 +877,7 @@ export const WhatsAppAssistant: React.FC<WhatsAppAssistantProps> = ({
                                 </div>
                                 <div>
                                   <span className="font-bold text-xs text-white block truncate max-w-[200px]">
-                                    {m.media.title}
+                                    <InertText value={m.media.title} />
                                   </span>
                                   <span className="text-[10px] text-slate-400 block">
                                     {m.media.subtitle || (m.media.size ? `Digital EMR Slip • ${m.media.size}` : 'Verified Medical Document')}

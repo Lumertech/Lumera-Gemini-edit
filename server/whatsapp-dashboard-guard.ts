@@ -9,9 +9,9 @@
  *  - 404s cross-tenant conversation mutations
  *
  * Meta webhooks stay on /api/meta and /meta — they are not on this router.
- * Prescription PDF auth is on the whatsapp route handler (not this inbox guard).
- * Lab-report HTML is still outside this guard. Neither path is an inbox route:
- * req.params.id is the document id, not a conversation id.
+ * Prescription and lab-report PDF auth is on the route handler (session,
+ * clinician role, tenant ownership), not this inbox guard. Neither path is an
+ * inbox route: req.params.id is the document id, not a conversation id.
  */
 import { Router, type NextFunction, type Request, type RequestHandler, type Response } from "express";
 import {
