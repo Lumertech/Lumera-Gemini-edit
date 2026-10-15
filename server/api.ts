@@ -68,6 +68,7 @@ import {
   upsertTenantSubscription,
 } from "./platform-tenants.ts";
 import { generateTemporaryPassword, hashPassword, passwordRuleError, verifyPassword } from "./password.ts";
+import { rejectWrongOtp, reserveOtpSend, sendOtpLimited } from "./otp-attempt.ts";
 import { parseSpecialtyPackInput, resolveSpecialtyPack } from "./specialty-packs.ts";
 import { appPublicUrl, demoLoginEnabled, isProduction } from "./runtime.ts";
 import { DEMO_PASSWORD } from "../src/lib/demoAccounts.ts";
@@ -425,9 +426,24 @@ export function createApiRouter(): Router {
     }
 
     // Mandatory WhatsApp Business Phone Binding & Verification
+    const phone = user.phone || "+91 98234 55667";
+    const slot = reserveOtpSend(req, phone, "login", { userId: user.id, email: user.email }, true);
+    if (slot.limited === true) return sendOtpLimited(res, slot.retryAfterSec);
+    if (slot.pending) {
+      return res.json({
+        requiresOtp: true,
+        verificationId: slot.pending.id,
+        phone,
+        email: user.email,
+        ...otpEchoPayload(slot.pending.otp),
+        expiresAt: slot.pending.expires_at,
+        user: publicUser(user),
+        reused: true,
+        message: "Pending verification reused.",
+      });
+    }
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const verificationId = crypto.randomUUID();
-    const phone = user.phone || "+91 98234 55667";
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
 
     getDb().prepare(`
@@ -703,9 +719,25 @@ export function createApiRouter(): Router {
       });
     }
 
+    const phone = user.phone || "+91 98234 55667";
+    const slot = reserveOtpSend(req, phone, "login", { userId: user.id, email: user.email }, true);
+    if (slot.limited === true) return sendOtpLimited(res, slot.retryAfterSec);
+    if (slot.pending) {
+      return res.json({
+        requiresOtp: true,
+        verificationId: slot.pending.id,
+        phone,
+        email: user.email,
+        ...otpEchoPayload(slot.pending.otp),
+        provider: identity.provider,
+        user: publicUser(user),
+        sandbox: Boolean(identity.sandbox),
+        reused: true,
+        message: "Pending verification reused.",
+      });
+    }
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const verificationId = crypto.randomUUID();
-    const phone = user.phone || "+91 98234 55667";
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
 
     getDb().prepare(`
@@ -811,9 +843,12 @@ export function createApiRouter(): Router {
       return res.status(400).json({ error: "This OTP code has expired. Please click resend to get a fresh code." });
     }
 
-    if (record.otp !== inputOtp) {
-      return res.status(400).json({ error: "Incorrect 6-digit verification code. Please check your WhatsApp and retry." });
-    }
+    const verdict = rejectWrongOtp(
+      record,
+      inputOtp,
+      "Incorrect 6-digit verification code. Please check your WhatsApp and retry."
+    );
+    if (verdict.ok === false) return res.status(verdict.status).json({ error: verdict.error });
 
     // Mark verified
     getDb().prepare("UPDATE otp_verifications SET verified_at = ? WHERE id = ?").run(new Date().toISOString(), verificationId);
@@ -1061,6 +1096,9 @@ export function createApiRouter(): Router {
         error: "An account with this email address already exists. Please switch to Sign In or reset your password.",
       });
     }
+
+    const slot = reserveOtpSend(req, phone, "register", { email }, false);
+    if (slot.limited === true) return sendOtpLimited(res, slot.retryAfterSec);
 
     const now = new Date().toISOString();
     const trialEndsAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
@@ -1395,6 +1433,18 @@ export function createApiRouter(): Router {
     const user = getDb().prepare("SELECT * FROM users WHERE email = ?").get(email) as unknown as DbUser | undefined;
     const phone = user?.phone || "+91 98234 55667";
     const name = user?.name || "Clinician";
+    const slot = reserveOtpSend(req, phone, "password_reset", { userId: user?.id, email }, true);
+    if (slot.limited === true) return sendOtpLimited(res, slot.retryAfterSec);
+    if (slot.pending) {
+      return res.json({
+        ok: true,
+        verificationId: slot.pending.id,
+        phone,
+        ...otpEchoPayload(slot.pending.otp),
+        reused: true,
+        message: "Pending verification reused.",
+      });
+    }
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const verificationId = crypto.randomUUID();
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
@@ -1451,9 +1501,11 @@ export function createApiRouter(): Router {
         expires_at: string;
       } | undefined;
 
-    if (!record || record.otp !== otp || new Date(record.expires_at).getTime() < Date.now()) {
+    if (!record || new Date(record.expires_at).getTime() < Date.now()) {
       return res.status(400).json({ error: "Invalid or expired reset code. Please request a fresh OTP." });
     }
+    const resetVerdict = rejectWrongOtp(record, otp, "Invalid or expired reset code. Please request a fresh OTP.");
+    if (resetVerdict.ok === false) return res.status(resetVerdict.status).json({ error: resetVerdict.error });
 
     let payload: Record<string, any> = {};
     try {

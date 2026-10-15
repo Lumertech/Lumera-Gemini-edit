@@ -372,7 +372,8 @@ export const BOOTSTRAP_DDL = `
       payload TEXT NOT NULL DEFAULT '{}',
       created_at TEXT NOT NULL,
       expires_at TEXT NOT NULL,
-      verified_at TEXT
+      verified_at TEXT,
+      failed_attempts INTEGER NOT NULL DEFAULT 0
     );
 
     -- NHA sandbox: tenant-scoped ABDM consent artefacts.

@@ -314,6 +314,9 @@ export function migrate(database: SqlDatabase) {
   } catch {}
 
   backfillLabReportAndBranchTenants(database);
+  try {
+    database.exec("ALTER TABLE otp_verifications ADD COLUMN failed_attempts INTEGER NOT NULL DEFAULT 0");
+  } catch {}
 }
 
 /**
