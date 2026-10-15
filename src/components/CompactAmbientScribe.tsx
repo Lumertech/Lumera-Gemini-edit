@@ -23,7 +23,7 @@ export type AmbientScribeStatus = "idle" | "listening" | "processing";
 interface CompactAmbientScribeProps {
   currentPatient: Patient;
   currentDoctor: Doctor;
-  onApplyToRx: (soap: SoapNote) => void;
+  onApplyToRx: (soap: SoapNote, meta: { transcript: string; source: string }) => boolean | void;
   isOpen?: boolean;
   onClose?: () => void;
   onStatusChange?: (status: AmbientScribeStatus) => void;
@@ -266,7 +266,8 @@ export const CompactAmbientScribe: React.FC<CompactAmbientScribeProps> = ({
       setGeneratedSoap(soap);
       setExtractSource(source);
       if (apply) {
-        onApplyToRx(soap);
+        const applied = onApplyToRx(soap, { transcript: text, source });
+        if (applied === false) return;
         setAppliedSuccess(true);
         window.setTimeout(() => flashPopulatedRxFields(), 80);
         setTimeout(() => setAppliedSuccess(false), 4000);
@@ -297,7 +298,7 @@ export const CompactAmbientScribe: React.FC<CompactAmbientScribeProps> = ({
     <section
       id="ambient-scribe-top"
       aria-label="Ambient AI Scribe"
-      className="no-print w-full bg-white rounded-xl border border-violet-200 shadow-sm overflow-hidden"
+      className="no-print w-full min-w-0 max-w-full bg-white rounded-xl border border-violet-200 shadow-sm overflow-hidden"
     >
       <div className="px-4 py-3 bg-gradient-to-r from-violet-50 to-slate-50 border-b border-violet-100 flex items-center justify-between gap-3">
         <div className="flex items-center gap-2 min-w-0">

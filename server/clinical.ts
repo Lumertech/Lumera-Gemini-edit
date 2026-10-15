@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { Router, type Request, type Response } from "express";
 import {
   getDb,
@@ -408,15 +409,63 @@ function uniqueRxNumber(requested?: string): string {
   return yearToken("RX");
 }
 
+const RX_NOTE_KEYS = [
+  "historyOfPresentIllness",
+  "pastMedicalHistory",
+  "reviewOfSystems",
+  "physicalExamination",
+  "clinicalFindings",
+  "differentialDiagnoses",
+  "riskLevel",
+  "redFlags",
+  "followUpDays",
+  "aiSource",
+  "aiGeneratedAt",
+  "transcriptHash",
+  "transcriptSummary",
+  "ambientRecordingDurationSec",
+  "reviewedBy",
+  "aiAcknowledged",
+  "pendingAiFields",
+] as const;
+
 function specialtyModulesFromBody(body: Record<string, unknown>): string {
   const modules: Record<string, unknown> = {};
   for (const key of PRESCRIPTION_SPECIALTY_KEYS) {
+    if (body[key] !== undefined) modules[key] = body[key];
+  }
+  for (const key of RX_NOTE_KEYS) {
     if (body[key] !== undefined) modules[key] = body[key];
   }
   if (body.specialtyModules && typeof body.specialtyModules === "object") {
     Object.assign(modules, body.specialtyModules as Record<string, unknown>);
   }
   return JSON.stringify(modules);
+}
+
+/** AI drafts cannot be finalized until a clinician records reviewedBy. Nothing is auto-signed. */
+function assertReviewedAiPrescription(body: Record<string, unknown>) {
+  const aiSource = String(body.aiSource || "").trim();
+  const aiGeneratedAt = String(body.aiGeneratedAt || "").trim();
+  if (!aiSource && !aiGeneratedAt) return;
+  const reviewedBy = String(body.reviewedBy || "").trim();
+  if (!reviewedBy) {
+    throw Object.assign(new Error("Finalize requires reviewedBy after an AI draft"), { status: 400 });
+  }
+}
+
+/**
+ * Privacy policy data minimization: persist a SHA-256 of the consult transcript,
+ * not the raw transcript, inside prescription_drafts.draft_json.
+ */
+function scrubDraftForStorage(body: Record<string, unknown>): Record<string, unknown> {
+  const next = { ...body };
+  const transcript = typeof next.transcript === "string" ? next.transcript : "";
+  if (transcript.trim() && !String(next.transcriptHash || "").trim()) {
+    next.transcriptHash = createHash("sha256").update(transcript).digest("hex");
+  }
+  delete next.transcript;
+  return next;
 }
 
 export function insertPatient(
@@ -718,6 +767,7 @@ export function updateAppointment(
 }
 
 function insertPrescription(tenantId: string, body: Record<string, unknown>) {
+  assertReviewedAiPrescription(body);
   const patientId = String(body.patientId || body.patient_id || "").trim();
   const diagnosis = String(body.diagnosis || "").trim();
   if (!patientId) {
@@ -1104,7 +1154,7 @@ export function createClinicalRouter(): Router {
         return res.status(400).json({ error: "patientId is required for draft auto-save" });
       }
       if (!requireTenantPatient(tenantId, patientId, res)) return;
-      const draftJson = JSON.stringify(body);
+      const draftJson = JSON.stringify(scrubDraftForStorage(body));
       const now = new Date().toISOString();
       const saved = getDb()
         .prepare(
