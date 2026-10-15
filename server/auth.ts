@@ -355,17 +355,36 @@ export function isSeededDemoPasswordSessionEmail(email?: string | null): boolean
 }
 
 /**
+ * Server-only password session for Sunrise Family Clinic video demos (tenant-543feff7).
+ * Those accounts have fake phones and cannot receive a WhatsApp OTP.
+ * Not part of DEMO_ACCOUNTS / DEMO_LOGIN_MATRIX — those feed the public Quick Demo picker and seeding.
+ * Match is trimmed and case-insensitive, and still requires an `@lumera.me` suffix.
+ */
+export const SANDBOX_PASSWORD_SESSION_EMAILS: readonly string[] = [
+  "ananya.sunrise@lumera.me",
+  "reception.sunrise@lumera.me",
+];
+
+export function isSandboxPasswordSessionEmail(email?: string | null): boolean {
+  const value = String(email || "").trim().toLowerCase();
+  if (!value.endsWith("@lumera.me")) return false;
+  return SANDBOX_PASSWORD_SESSION_EMAILS.some((entry) => entry.trim().toLowerCase() === value);
+}
+
+/**
  * Production email+password session — no WhatsApp OTP required.
  * MUST: super_admin / admin (role alias + admin@lumera.me). Clinic admins included so desk login is not Graph-gated.
  * Seeded @lumera.me demos (doctor, reception, pack aliases, patient) are OTP-safe the same way —
- * Clinical UX chrome smoke on www must not invent OTP codes. Client skipOtp stays ignored
- * for everyone outside this allowlist.
+ * Clinical UX chrome smoke on www must not invent OTP codes.
+ * SANDBOX_PASSWORD_SESSION_EMAILS covers the Sunrise video accounts only.
+ * Client skipOtp stays ignored for everyone outside this allowlist.
  */
 export function allowPasswordLoginWithoutOtp(user?: { role?: string; email?: string } | null): boolean {
   const role = String(user?.role || "");
   const email = String(user?.email || "").trim().toLowerCase();
   if (email === "admin@lumera.me") return true;
   if (isSeededDemoPasswordSessionEmail(email)) return true;
+  if (isSandboxPasswordSessionEmail(email)) return true;
   if (role === "admin") return true;
   return (PASSWORD_SESSION_ROLES as readonly string[]).includes(role);
 }

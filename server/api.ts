@@ -37,6 +37,7 @@ import {
   USER_MANAGER_ROLES,
   allowPasswordLoginWithoutOtp,
   allowSkipOtp,
+  isSandboxPasswordSessionEmail,
   isSeededDemoPasswordSessionEmail,
   clearSessionCookie,
   endPresentedSession,
@@ -403,13 +404,16 @@ export function createApiRouter(): Router {
       return res.json({ user: publicUser(user), token: jwtToken, requiresOtp: false });
     };
 
-    // MUST: admin / seeded @lumera.me demo matrix email+password is a production session — not skipOtp.
+    // MUST: admin / seeded @lumera.me demo matrix / server-only Sunrise video emails
+    // email+password is a production session — not skipOtp.
     // Honesty: sandbox/demo password session for product demos; clinic emails still Graph-OTP gated.
     const passwordSession = allowPasswordLoginWithoutOtp(user);
     const skipOtp = Boolean(req.body?.skipOtp) && (allowSkipOtp() || passwordSession);
     if (passwordSession || skipOtp) {
+      const sandboxDemo =
+        isSeededDemoPasswordSessionEmail(user.email) || isSandboxPasswordSessionEmail(user.email);
       const reason = passwordSession
-        ? isSeededDemoPasswordSessionEmail(user.email)
+        ? sandboxDemo
           ? "sandbox/demo password session"
           : "admin password session"
         : "direct session";
