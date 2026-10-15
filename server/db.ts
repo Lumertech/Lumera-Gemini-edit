@@ -1,3 +1,5 @@
+import { isDemoAccountEmail } from "../src/lib/demoAccounts.ts";
+import { isSandboxPasswordSessionEmail } from "./auth.ts";
 import { migrate } from "./db-migrate.ts";
 import {
   seedIfEmpty,
@@ -71,11 +73,25 @@ export function assignedRoleForPracticeType(
   return practiceType === "polyclinic" ? "CLINIC_ADMIN" : "doctor";
 }
 
+const DEMO_WORKSPACE_USER_IDS = new Set([
+  "user-admin",
+  "user-doctor",
+  "user-patient",
+  "user-reception",
+  "user-receptionist",
+]);
+
+/**
+ * Mock-chart workspace is the seeded Quick Demo matrix (`DEMO_LOGIN_MATRIX`) only.
+ * Sunrise video accounts (`SANDBOX_PASSWORD_SESSION_EMAILS`) are real tenants.
+ */
 export function isDemoWorkspaceUser(user: { id?: string; tenant_id?: string; email?: string }): boolean {
+  const email = String(user.email || "").trim().toLowerCase();
+  if (isSandboxPasswordSessionEmail(email)) return false;
+  if (isDemoAccountEmail(email)) return true;
   if (user.tenant_id === DEMO_TENANT_ID) return true;
-  const email = String(user.email || "").toLowerCase();
-  if (email.endsWith("@lumera.me")) return true;
-  return String(user.id || "").startsWith("user-") && ["user-admin", "user-doctor", "user-patient", "user-reception", "user-receptionist"].includes(String(user.id || ""));
+  const id = String(user.id || "");
+  return id.startsWith("user-") && DEMO_WORKSPACE_USER_IDS.has(id);
 }
 
 export interface DbTenant {

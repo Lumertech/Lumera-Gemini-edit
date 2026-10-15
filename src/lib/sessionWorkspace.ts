@@ -1,5 +1,4 @@
 import { AppUser, ClinicSettings, Doctor, Patient, PolyclinicSpecialty, TenantLetterhead, UserRole } from "../types";
-import { DEFAULT_CLINIC_SETTINGS } from "../data/clinicalData";
 import { BLANK_CLINIC_SETTINGS } from "./letterhead";
 import { resolveRxModule } from "./specialtyWorkflow";
 
@@ -77,14 +76,10 @@ export function clinicSettingsFromSession(
   doctor: Doctor,
   letterhead?: TenantLetterhead | null
 ): ClinicSettings {
-  if (user?.isDemoWorkspace && !letterhead) {
-    return {
-      ...DEFAULT_CLINIC_SETTINGS,
-      signatureUrl: doctor.signatureUrl || DEFAULT_CLINIC_SETTINGS.signatureUrl || "",
-    };
-  }
-
-  const base = user?.isDemoWorkspace ? DEFAULT_CLINIC_SETTINGS : BLANK_CLINIC_SETTINGS;
+  // Logged-in tenants render the server letterhead (or blank session fields).
+  // Never paint DEFAULT_CLINIC_SETTINGS ("Lumera Healthcare") when /api/tenant/letterhead
+  // is missing — that seed GSTIN/UPI was leaking onto real clinics.
+  const base = BLANK_CLINIC_SETTINGS;
 
   return {
     ...base,

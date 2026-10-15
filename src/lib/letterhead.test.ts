@@ -62,14 +62,19 @@ const sessionDoctor: Doctor = {
 };
 
 describe("clinicSettingsFromSession letterhead isolation", () => {
-  it("demo workspace keeps Lumera seed GSTIN, UPI, name, and address", () => {
-    const settings = clinicSettingsFromSession(demoUser(), sessionDoctor);
-    assert.equal(settings.gstin, SEED_CLINIC_GSTIN);
-    assert.equal(settings.upiId, SEED_CLINIC_UPI);
-    assert.equal(settings.name, DEFAULT_CLINIC_SETTINGS.name);
-    assert.equal(settings.address, DEFAULT_CLINIC_SETTINGS.address);
-    assert.equal(settings.regId, DEFAULT_CLINIC_SETTINGS.regId);
-    assert.equal(usesSeedLetterheadIdentifiers(settings), true);
+  it("logged-in tenants do not inherit Lumera Healthcare seed letterhead when the server letterhead is missing", () => {
+    const loggedIn = demoUser();
+    const settings = clinicSettingsFromSession(loggedIn, sessionDoctor);
+    assert.equal(settings.name, loggedIn.clinicName);
+    assert.equal(settings.gstin, "");
+    assert.equal(settings.upiId, "");
+    assert.equal(settings.address, "");
+    assert.equal(settings.regId, "");
+    assert.notEqual(settings.address, DEFAULT_CLINIC_SETTINGS.address);
+    assert.notEqual(settings.gstin, SEED_CLINIC_GSTIN);
+    assert.notEqual(settings.upiId, SEED_CLINIC_UPI);
+    assert.equal(usesSeedLetterheadIdentifiers(settings), false);
+    assert.equal(settings.signatureUrl, sessionDoctor.signatureUrl);
   });
 
   it("real tenants do not inherit seed GSTIN, UPI, name, address, or clinic reg", () => {

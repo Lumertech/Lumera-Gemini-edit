@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Wallet } from "lucide-react";
+import { Wallet, X } from "lucide-react";
 import { apiFetch } from "../api/http";
 
 interface WalletStatus {
@@ -25,14 +25,26 @@ export const WalletTopupPanel: React.FC = () => {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [payLink, setPayLink] = useState("");
+  const [dismissed, setDismissed] = useState(false);
+  const [statusFailed, setStatusFailed] = useState(false);
 
   const load = () => {
-    apiFetch<{ wallet: WalletStatus; transactions: WalletTx[] }>("/api/wallet")
-      .then((d) => {
-        setWallet(d.wallet);
-        setTransactions(d.transactions || []);
+    apiFetch<{ wallet: WalletStatus }>("/api/wallet/status")
+      .then(async (status) => {
+        setWallet(status.wallet);
+        setStatusFailed(false);
+        try {
+          const d = await apiFetch<{ wallet: WalletStatus; transactions: WalletTx[] }>("/api/wallet");
+          setWallet(d.wallet);
+          setTransactions(d.transactions || []);
+        } catch {
+          setTransactions([]);
+        }
       })
-      .catch((e) => setError(e instanceof Error ? e.message : "Could not load usage wallet"));
+      .catch(() => {
+        setStatusFailed(true);
+        setError("");
+      });
   };
 
   useEffect(() => {
@@ -66,14 +78,27 @@ export const WalletTopupPanel: React.FC = () => {
     }
   };
 
+  if (dismissed || statusFailed || !wallet) return null;
+
   return (
     <section
       className="mb-4 bg-white border border-slate-200 rounded-xl p-4 space-y-3"
       data-testid="wallet-topup-panel"
     >
-      <h3 className="text-sm font-semibold text-slate-800 flex items-center gap-2">
-        <Wallet className="w-4 h-4 text-blue-700" /> Usage wallet (platform billing)
-      </h3>
+      <div className="flex items-start justify-between gap-2">
+        <h3 className="text-sm font-semibold text-slate-800 flex items-center gap-2">
+          <Wallet className="w-4 h-4 text-blue-700" /> Usage wallet (platform billing)
+        </h3>
+        <button
+          type="button"
+          className="shrink-0 rounded-md p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+          aria-label="Close usage wallet"
+          data-testid="wallet-topup-close"
+          onClick={() => setDismissed(true)}
+        >
+          <X className="w-4 h-4" />
+        </button>
+      </div>
       <p className="text-[11px] text-slate-500">
         Prepaid balance for WhatsApp Cloud API messages and AI Scribe. This is not a patient invoice and not the monthly
         SaaS plan fee.
