@@ -18,6 +18,7 @@ export type { AdminTab, AppView, LoginMode, Surface } from "./surfaces";
 export interface GoOptions {
   adminTab?: AdminTab;
   appView?: AppView | string;
+  recordId?: string;
   policySlug?: string;
   loginNext?: Surface;
   loginNextPath?: string;
@@ -33,6 +34,7 @@ interface NavContextValue {
   surface: Surface;
   adminTab: AdminTab;
   appView: AppView;
+  recordId: string;
   workspaceSlug: string;
   policySlug: string;
   loginNext: Surface;
@@ -77,6 +79,7 @@ export const NavigationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         loginNextPath: opts?.loginNextPath ?? (next === "login" ? parsed.loginNextPath : undefined),
         adminTab: opts?.adminTab ?? (next === "admin" && !opts?.adminTab ? undefined : opts?.adminTab),
         appView: opts?.appView,
+        recordId: opts?.recordId,
         workspaceSlug: ws,
       });
       const current = `${location.pathname}${location.search}`;
@@ -108,6 +111,7 @@ export const NavigationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       surface: parsed.surface,
       adminTab: parsed.adminTab,
       appView: parsed.appView,
+      recordId: parsed.recordId,
       workspaceSlug,
       policySlug: parsed.policySlug,
       loginNext: parsed.loginNext,
@@ -141,5 +145,6 @@ export function goAfterAuth(
     appView: next.appView,
     adminTab: next.adminTab,
     workspaceSlug: next.workspaceSlug,
+    recordId: next.recordId,
   });
 }

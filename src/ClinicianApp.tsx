@@ -51,6 +51,7 @@ import {
   workflowForUser,
 } from './lib/specialtyWorkflow';
 import { SpecialtyPackBoard } from './components/specialty-packs/SpecialtyPackBoard';
+import { PatientsWorkspace } from './components/PatientsWorkspace';
 import {
   alignSessionToPatient,
   canAutosaveDraft,
@@ -68,7 +69,7 @@ import {
 
 export default function ClinicianApp() {
   const { user } = useAuth();
-  const { go, appView, pathname } = useNav();
+  const { go, appView, pathname, recordId } = useNav();
   const isDemo = Boolean(user?.isDemoWorkspace);
   const sessionDoctor = doctorFromUser(user);
   const pack = workflowForUser(user);
@@ -81,6 +82,8 @@ export default function ClinicianApp() {
   const [currentDoctor, setCurrentDoctor] = useState<Doctor>(() => sessionDoctor);
   const [currentPatient, setCurrentPatient] = useState<Patient>(() => UNASSIGNED_PATIENT);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [intakeName, setIntakeName] = useState('');
 
   const [patients, setPatients] = useState<Patient[]>([]);
   const [doctors, setDoctors] = useState<Doctor[]>(() => [sessionDoctor]);
@@ -586,7 +589,13 @@ export default function ClinicianApp() {
         onSelectDoctor={handleSelectDoctor}
         allDoctors={isPolyclinicPractice(user) ? doctors : [currentDoctor]}
         onToggleHexa={() => setIsHexaOpen(!isHexaOpen)}
-        onToggleSidebar={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+        onToggleSidebar={() => {
+          if (window.matchMedia('(max-width: 767px)').matches) {
+            setMobileNavOpen((open) => !open);
+            return;
+          }
+          setIsSidebarCollapsed((collapsed) => !collapsed);
+        }}
         isSidebarCollapsed={isSidebarCollapsed}
         userName={user?.name}
         userRole={user?.role}
@@ -594,18 +603,41 @@ export default function ClinicianApp() {
         isSpecialtyLocked={isSpecialtyLocked}
       />
 
-      <div className="flex flex-1 min-w-0 overflow-hidden">
-        <Sidebar
-          currentView={currentView}
-          onSelectView={setCurrentView}
-          isCollapsed={isSidebarCollapsed}
-          onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-          currentPatient={currentPatient}
-          onSelectPatient={handleSelectPatient}
-          allPatients={patients}
-          currentDoctor={currentDoctor}
-          onPatientCreated={(p) => setPatients((prev) => [p, ...prev])}
-        />
+      <div className="flex flex-1 min-h-0 min-w-0 overflow-hidden">
+        {mobileNavOpen && (
+          <button
+            type="button"
+            className="md:hidden fixed inset-0 z-30 bg-slate-950/50"
+            aria-label="Close navigation"
+            onClick={() => setMobileNavOpen(false)}
+          />
+        )}
+        <div
+          className={
+            mobileNavOpen
+              ? 'fixed inset-y-0 left-0 z-40 flex h-full md:static md:inset-auto md:z-auto'
+              : 'hidden md:flex h-full'
+          }
+        >
+          <Sidebar
+            currentView={currentView}
+            onSelectView={setCurrentView}
+            isCollapsed={isSidebarCollapsed}
+            onToggleCollapse={() => {
+              if (window.matchMedia('(max-width: 767px)').matches) {
+                setMobileNavOpen(false);
+                return;
+              }
+              setIsSidebarCollapsed((collapsed) => !collapsed);
+            }}
+            currentPatient={currentPatient}
+            onSelectPatient={handleSelectPatient}
+            allPatients={patients}
+            currentDoctor={currentDoctor}
+            onPatientCreated={(p) => setPatients((prev) => [p, ...prev])}
+            onNavigate={() => setMobileNavOpen(false)}
+          />
+        </div>
 
         <main className="flex-1 min-w-0 w-full h-full overflow-y-auto overflow-x-hidden bg-slate-100/70 p-4 sm:p-6 lg:p-8 flex flex-col">
           {workspaceError && (
@@ -692,6 +724,32 @@ export default function ClinicianApp() {
                 />
               )}
 
+              {currentView === 'patients' && (
+                <PatientsWorkspace
+                  recordId={recordId}
+                  canPrescribe={allowedViews.includes('rx') || allowedViews.includes('smart-rx')}
+                  onOpenPatient={(id) =>
+                    go('app', { appView: 'patients', recordId: id, workspaceSlug: sessionWorkspace })
+                  }
+                  onBack={() => go('app', { appView: 'patients', workspaceSlug: sessionWorkspace })}
+                  onRegister={(name) => {
+                    setIntakeName(name || '');
+                    setIntakeIntent('register');
+                    setCurrentView('reception');
+                  }}
+                  onSelectPatient={handleSelectPatient}
+                  onOpenPrescription={(patient) => {
+                    handleSelectPatient(patient);
+                    setCurrentView('rx');
+                  }}
+                  onCheckIn={(patient) => {
+                    handleSelectPatient(patient);
+                    setIntakeIntent('register');
+                    setCurrentView('reception');
+                  }}
+                />
+              )}
+
               {currentView === 'reception' && (
             <Reception
               patients={patients}
@@ -700,6 +758,7 @@ export default function ClinicianApp() {
               workflow={pack}
               firstRunHint={intakeIntent !== 'none' || patients.length === 0}
               openRxAfterSave={intakeIntent === 'start-consult'}
+              intakeName={intakeName}
               onSelectPatient={setCurrentPatient}
               onAddNewPatient={async (newPat) => {
                 try {

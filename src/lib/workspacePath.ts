@@ -48,7 +48,8 @@ export function workspaceSlugFromUser(user?: WorkspaceSlugInput | null): string 
  * A mismatched `/w/:slug` is rewritten to that slug (same tab). Super Admin never stays on `/w`.
  */
 export function reconcileWorkspacePath(pathname: string, sessionSlug: string, role?: string | null): string | null {
-  const p = (pathname.split("?")[0] || "/").replace(/\/+$/, "").toLowerCase() || "/";
+  const raw = (pathname.split("?")[0] || "/").replace(/\/+$/, "") || "/";
+  const p = raw.toLowerCase();
   const roleKey = String(role || "");
   if (roleKey === "super_admin" || roleKey === "admin") {
     if (p === "/app" || p.startsWith("/app/") || p === "/w" || p.startsWith("/w/")) return "/admin";
@@ -57,16 +58,19 @@ export function reconcileWorkspacePath(pathname: string, sessionSlug: string, ro
   const slug = slugifyWorkspace(sessionSlug);
   if (!slug) return null;
   if (p === "/app") return `/w/${slug}`;
+  const rawParts = raw.split("/").filter(Boolean);
   if (p.startsWith("/app/")) {
-    const view = p.split("/").filter(Boolean)[1] || "queue";
-    return `/w/${slug}/${view}`;
+    const view = (rawParts[1] || "queue").toLowerCase();
+    const recordId = view === "patients" ? rawParts[2] || "" : "";
+    return recordId ? `/w/${slug}/${view}/${encodeURIComponent(recordId)}` : `/w/${slug}/${view}`;
   }
   if (p === "/w" || p.startsWith("/w/")) {
-    const parts = p.split("/").filter(Boolean);
-    const urlSlug = parts[1] || "";
-    const viewSeg = parts[2];
+    const urlSlug = (rawParts[1] || "").toLowerCase();
+    const viewSeg = (rawParts[2] || "").toLowerCase();
+    const recordId = viewSeg === "patients" ? rawParts[3] || "" : "";
     if (!urlSlug || urlSlug !== slug) {
-      return viewSeg ? `/w/${slug}/${viewSeg}` : `/w/${slug}`;
+      if (!viewSeg) return `/w/${slug}`;
+      return recordId ? `/w/${slug}/${viewSeg}/${encodeURIComponent(recordId)}` : `/w/${slug}/${viewSeg}`;
     }
   }
   return null;

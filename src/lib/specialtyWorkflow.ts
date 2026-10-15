@@ -94,6 +94,8 @@ export interface SpecialtyWorkflowPack {
   formularyLens: FormularyLens;
   queueSemantics: QueueSemantics;
   billingLabel: string;
+  /** Sidebar label only. The route, API, and records stay `patients`. */
+  patientsLabel?: string;
 }
 
 const SANDBOX =
@@ -130,6 +132,7 @@ function medicalPack(specialty: PolyclinicSpecialty, extra: IntakeField[] = []):
     formularyLens: "who-eml",
     queueSemantics: "opd-token",
     billingLabel: "Consult + pharmacy",
+    patientsLabel: "Patients",
   };
 }
 
@@ -208,6 +211,7 @@ const PACKS: Record<string, SpecialtyWorkflowPack> = {
     formularyLens: "dental-materials",
     queueSemantics: "dental-chair",
     billingLabel: "Chair procedures",
+    patientsLabel: "Patients",
   },
   "physiotherapy & rehabilitation": {
     id: "physio",
@@ -240,6 +244,7 @@ const PACKS: Record<string, SpecialtyWorkflowPack> = {
     formularyLens: "rehab-exercises",
     queueSemantics: "rehab-session",
     billingLabel: "Sessions & packages",
+    patientsLabel: "Patients",
   },
   "psychiatry & mental health": {
     id: "therapy",
@@ -277,6 +282,7 @@ const PACKS: Record<string, SpecialtyWorkflowPack> = {
     formularyLens: "none",
     queueSemantics: "session-list",
     billingLabel: "Session fees",
+    patientsLabel: "Clients",
   },
   "wellness & spas": {
     id: "wellness",
@@ -319,6 +325,7 @@ const PACKS: Record<string, SpecialtyWorkflowPack> = {
     formularyLens: "salon-menu",
     queueSemantics: "treatment-board",
     billingLabel: "Services & packages",
+    patientsLabel: "Guests",
   },
   consulting: {
     id: "consultant",
@@ -351,6 +358,7 @@ const PACKS: Record<string, SpecialtyWorkflowPack> = {
     formularyLens: "none",
     queueSemantics: "meeting-board",
     billingLabel: "Engagement fees",
+    patientsLabel: "Clients",
   },
 };
 
@@ -381,6 +389,7 @@ const FRONT_DESK: SpecialtyWorkflowPack = {
   formularyLens: "none",
   queueSemantics: "opd-token",
   billingLabel: "Desk collections",
+  patientsLabel: "Patients",
 };
 
 const PATIENT_PACK: SpecialtyWorkflowPack = {
@@ -513,6 +522,12 @@ export function workflowForUser(user?: AppUser | null): SpecialtyWorkflowPack {
   const fromEmail = demoAccountByEmail(user.email);
   const specialty = fromEmail?.displaySpecialty || user.specialty || fromEmail?.specialty || "";
   return packForSpecialty(specialty);
+}
+
+/** Nav copy for the patients route. Unset packs stay "Patients". */
+export function patientsNavLabel(pack: Pick<SpecialtyWorkflowPack, "patientsLabel">): string {
+  const label = String(pack.patientsLabel || "").trim();
+  return label || "Patients";
 }
 
 export function clinicianHomeView(user?: AppUser | null): WorkflowView {

@@ -159,6 +159,48 @@ export function findTenantPatientByPhone(tenantId: string, phone: string) {
   return rows.find((row) => phoneMatchKey(String(row.phone || "")) === key);
 }
 
+/** Name, phone (last-10 digits), UHID, ABHA number, or ABHA address. Empty query matches every row. */
+export function patientMatchesQuery(row: Record<string, unknown>, query: string): boolean {
+  const q = String(query || "").trim().toLowerCase();
+  if (!q) return true;
+  const name = String(row.name || "").toLowerCase();
+  const uhid = String(row.uhid || "").toLowerCase();
+  const abhaAddress = String(row.abha_address || "").toLowerCase();
+  const abhaRaw = String(row.abha_number || "");
+  const phone = String(row.phone || "");
+  if (name.includes(q) || uhid.includes(q) || abhaAddress.includes(q) || abhaRaw.toLowerCase().includes(q)) {
+    return true;
+  }
+  const wantedAbha = normalizeAbhaNumber(q);
+  if (wantedAbha.length >= 4 && normalizeAbhaNumber(abhaRaw).includes(wantedAbha)) return true;
+  const wantedPhone = phoneMatchKey(q);
+  const rowPhone = phoneMatchKey(phone);
+  if (wantedPhone.length >= 10 && rowPhone.length >= 10 && rowPhone === wantedPhone) return true;
+  if (wantedPhone.length >= 4 && wantedPhone.length < 10 && rowPhone.includes(wantedPhone)) return true;
+  return false;
+}
+
+function patientRecency(row: Record<string, unknown>): string {
+  const last = String(row.last_visit || "").trim();
+  const created = String(row.created_at || "").trim();
+  return last || created;
+}
+
+/** Tenant-scoped patient rows, newest visit first. `query` never crosses tenants. */
+export function listTenantPatients(tenantId: string, query = ""): Record<string, unknown>[] {
+  if (!tenantId) return [];
+  const rows = getDb()
+    .prepare("SELECT * FROM patients WHERE tenant_id = ?")
+    .all(tenantId) as Record<string, unknown>[];
+  const matched = String(query || "").trim() ? rows.filter((row) => patientMatchesQuery(row, query)) : rows;
+  matched.sort((a, b) => {
+    const byDate = patientRecency(b).localeCompare(patientRecency(a));
+    if (byDate !== 0) return byDate;
+    return String(a.name || "").localeCompare(String(b.name || ""), "en");
+  });
+  return matched;
+}
+
 export function findTenantPatientByAbha(tenantId: string, abhaNumber?: string, abhaAddress?: string) {
   const digits = normalizeAbhaNumber(abhaNumber || "");
   const address = String(abhaAddress || "").trim().toLowerCase();
@@ -840,6 +882,8 @@ function insertPrescription(tenantId: string, body: Record<string, unknown>) {
  * Tenant = req.user.tenantId.
  *
  * GET  /patients              → { patients: Patient[] }
+ *   ?q= name | phone | UHID | ABHA number | ABHA address, tenant-scoped
+ * GET  /patients/:id/chart    → { patient, visits, prescriptions } same tenant only
  * POST /patients              → { patient }  practice-simple; phone-idempotent per tenant
  *   Does not invent ABDM consent or ABHA KYC.
  * POST /patients/link-abha    → { patient, abdmMode }  frozen #35 field names
@@ -863,13 +907,46 @@ export function createClinicalRouter(): Router {
     try {
       const tenantId = tenantIdOf(req);
       if (!tenantId) return res.json({ patients: [] });
-      const rows = getDb()
-        .prepare("SELECT * FROM patients WHERE tenant_id = ? ORDER BY name ASC")
-        .all(tenantId) as Record<string, unknown>[];
-      res.json({ patients: rows.map(mapPatient) });
+      const q = String(req.query.q ?? req.query.search ?? "");
+      const limitRaw = Number(req.query.limit);
+      const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(200, Math.floor(limitRaw)) : 0;
+      const rows = listTenantPatients(tenantId, q);
+      const page = limit ? rows.slice(0, limit) : rows;
+      res.json({ patients: page.map(mapPatient) });
     } catch (err) {
       reportCaughtError(err, "clinical.listPatients");
       res.status(500).json({ error: "Failed to fetch patients" });
+    }
+  });
+
+  api.get("/patients/:id/chart", requireAuth, (req, res) => {
+    const tenantId = requireTenant(req, res);
+    if (!tenantId) return;
+    try {
+      const row = getTenantPatient(tenantId, req.params.id);
+      if (!row) return res.status(404).json({ error: "Patient not found" });
+      const visits = getDb()
+        .prepare(
+          `SELECT * FROM appointments
+           WHERE tenant_id = ? AND patient_id = ?
+           ORDER BY date DESC, time_slot DESC`
+        )
+        .all(tenantId, req.params.id) as Record<string, unknown>[];
+      const prescriptions = getDb()
+        .prepare(
+          `SELECT * FROM prescriptions
+           WHERE tenant_id = ? AND patient_id = ?
+           ORDER BY date DESC, created_at DESC`
+        )
+        .all(tenantId, req.params.id) as Record<string, unknown>[];
+      res.json({
+        patient: patientWithConsents(row, tenantId),
+        visits: visits.map(mapAppointment),
+        prescriptions: prescriptions.map(mapPrescription),
+      });
+    } catch (err) {
+      reportCaughtError(err, "clinical.patientChart");
+      res.status(500).json({ error: "Failed to fetch patient chart" });
     }
   });
 

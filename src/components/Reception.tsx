@@ -38,6 +38,7 @@ interface ReceptionProps {
   firstRunHint?: boolean;
   openRxAfterSave?: boolean;
   workflow?: SpecialtyWorkflowPack;
+  intakeName?: string;
 }
 
 export const Reception: React.FC<ReceptionProps> = ({
@@ -52,6 +53,7 @@ export const Reception: React.FC<ReceptionProps> = ({
   firstRunHint = false,
   openRxAfterSave = false,
   workflow,
+  intakeName = "",
 }) => {
   // Search & Filter
   const [searchQuery, setSearchQuery] = useState('');
@@ -94,6 +96,12 @@ export const Reception: React.FC<ReceptionProps> = ({
   const [savingIntake, setSavingIntake] = useState(false);
   const [intakeError, setIntakeError] = useState<string | null>(null);
   const [selectedRecordPatient, setSelectedRecordPatient] = useState<Patient | null>(null);
+
+  useEffect(() => {
+    const next = intakeName.trim();
+    if (!next) return;
+    setFormData((prev) => ({ ...prev, name: next }));
+  }, [intakeName]);
 
   // Filter patients on search
   useEffect(() => {

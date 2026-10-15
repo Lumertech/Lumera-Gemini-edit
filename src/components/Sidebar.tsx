@@ -30,14 +30,14 @@ import { useAuth } from '../auth/AuthContext';
 import { useNav } from '../nav/NavigationContext';
 import { appViewToPath } from '../nav/surfaces';
 import { isPolyclinicPractice } from '../lib/sessionWorkspace';
-import { allowedViewsForWorkflow, workflowForUser } from '../lib/specialtyWorkflow';
+import { allowedViewsForWorkflow, patientsNavLabel, workflowForUser } from '../lib/specialtyWorkflow';
 import { apiFetch } from '../api/http';
 
 export const ROLE_VISIBLE_VIEWS: Record<string, NavView[]> = {
-  doctor: ['welcome', 'queue', 'opd-queue', 'rx', 'smart-rx', 'ambient', 'reports', 'appointments', 'polyclinic', 'whatsapp', 'voicebot', 'pharmacy-hub', 'billing', 'dhis', 'team', 'reception', 'kiosk', 'settings', 'wellness', 'therapy-session', 'consult-practice', 'physio-session', 'dental-chart'],
-  receptionist: ['welcome', 'reception', 'queue', 'opd-queue', 'appointments', 'kiosk', 'pharmacy-hub', 'billing', 'whatsapp', 'settings'],
-  polyclinic_admin: ['welcome', 'queue', 'opd-queue', 'reception', 'appointments', 'polyclinic', 'billing', 'reports', 'whatsapp', 'voicebot', 'pharmacy-hub', 'dhis', 'team', 'kiosk', 'settings'],
-  CLINIC_ADMIN: ['welcome', 'queue', 'opd-queue', 'reception', 'appointments', 'polyclinic', 'billing', 'reports', 'whatsapp', 'voicebot', 'pharmacy-hub', 'dhis', 'portal', 'team', 'kiosk', 'settings'],
+  doctor: ['welcome', 'patients', 'queue', 'opd-queue', 'rx', 'smart-rx', 'ambient', 'reports', 'appointments', 'polyclinic', 'whatsapp', 'voicebot', 'pharmacy-hub', 'billing', 'dhis', 'team', 'reception', 'kiosk', 'settings', 'wellness', 'therapy-session', 'consult-practice', 'physio-session', 'dental-chart'],
+  receptionist: ['welcome', 'patients', 'reception', 'queue', 'opd-queue', 'appointments', 'kiosk', 'pharmacy-hub', 'billing', 'whatsapp', 'settings'],
+  polyclinic_admin: ['welcome', 'patients', 'queue', 'opd-queue', 'reception', 'appointments', 'polyclinic', 'billing', 'reports', 'whatsapp', 'voicebot', 'pharmacy-hub', 'dhis', 'team', 'kiosk', 'settings'],
+  CLINIC_ADMIN: ['welcome', 'patients', 'queue', 'opd-queue', 'reception', 'appointments', 'polyclinic', 'billing', 'reports', 'whatsapp', 'voicebot', 'pharmacy-hub', 'dhis', 'portal', 'team', 'kiosk', 'settings'],
   super_admin: ['welcome', 'queue', 'opd-queue', 'reception', 'rx', 'smart-rx', 'ambient', 'reports', 'appointments', 'polyclinic', 'whatsapp', 'voicebot', 'pharmacy-hub', 'billing', 'dhis', 'team', 'kiosk', 'settings'],
   patient: ['portal'],
   nurse: ['reception', 'queue', 'opd-queue', 'reports', 'pharmacy-hub', 'settings'],
@@ -56,6 +56,7 @@ interface SidebarProps {
   allPatients: Patient[];
   currentDoctor: Doctor;
   onPatientCreated?: (patient: Patient) => void;
+  onNavigate?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -68,6 +69,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   allPatients,
   currentDoctor,
   onPatientCreated,
+  onNavigate,
 }) => {
   const { user, logout } = useAuth();
   const { go, workspaceSlug } = useNav();
@@ -174,6 +176,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
     {
       title: flowTitle,
       items: [
+        {
+          id: 'patients' as NavView,
+          label: patientsNavLabel(pack),
+          icon: User,
+        },
         {
           id: 'queue' as NavView,
           label: pack.queueLabel || 'Live OPD Queue & Triage',
@@ -290,6 +297,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <Link
                     key={item.id}
                     to={appViewToPath(item.id, workspaceSlug)}
+                    onClick={() => onNavigate?.()}
                     data-testid={`app-nav-${item.id}`}
                     title={isCollapsed ? item.label : undefined}
                     className={`w-full flex items-center ${
