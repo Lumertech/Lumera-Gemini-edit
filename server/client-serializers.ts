@@ -199,7 +199,11 @@ function sameContact(a: string, b: string): boolean {
   if (a.includes("@") || b.includes("@")) return a.toLowerCase() === b.toLowerCase();
   const digitsA = a.replace(/\D/g, "");
   const digitsB = b.replace(/\D/g, "");
-  if (digitsA.length >= 8 && digitsA === digitsB) return true;
+  if (digitsA.length >= 8 && digitsB.length >= 8) {
+    const tailA = digitsA.length >= 10 ? digitsA.slice(-10) : digitsA;
+    const tailB = digitsB.length >= 10 ? digitsB.slice(-10) : digitsB;
+    if (tailA === tailB) return true;
+  }
   return a.trim().toLowerCase() === b.trim().toLowerCase();
 }
 

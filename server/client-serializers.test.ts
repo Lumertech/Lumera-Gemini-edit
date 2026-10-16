@@ -381,6 +381,16 @@ describe("client row serializers", () => {
     assert.equal(patientTenant(null), null);
   });
 
+  it("redacts a 10-digit clinic phone when owner_phone is stored with a 91 prefix", () => {
+    const card = patientTenant({
+      name: "Prefix Clinic",
+      phone: "9876543210",
+      owner_phone: "919876543210",
+    });
+    assert.equal(card?.phone, null);
+    assert.equal(JSON.stringify(card).includes("9876543210"), false);
+  });
+
   it("returns null whatsapp_number when it matches the owner's personal phone", () => {
     const ownerPhone = "+91 90000 77771";
     const matched = patientTenant({
