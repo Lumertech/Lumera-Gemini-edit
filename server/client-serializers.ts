@@ -253,7 +253,11 @@ function publishedEmail(row: Record<string, unknown>, settings: Record<string, u
 function publishedWhatsapp(row: Record<string, unknown>, settings: Record<string, unknown>): string | null {
   const explicit = explicitSetting(settings, ["public_whatsapp", "publicWhatsapp", "public_whatsapp_number"]);
   if (explicit.set) return explicit.value;
-  return textOrNull(readColumn(row, "whatsapp_number"));
+  const column = textOrNull(readColumn(row, "whatsapp_number"));
+  const owner = textOrNull(readColumn(row, "owner_phone"));
+  if (!column) return null;
+  if (owner && sameContact(column, owner)) return null;
+  return column;
 }
 
 function publishedAddress(row: Record<string, unknown>, settings: Record<string, unknown>): string | null {

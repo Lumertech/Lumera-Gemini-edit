@@ -379,6 +379,41 @@ describe("client row serializers", () => {
     assert.equal(JSON.stringify(deskLine).includes(ownerEmail), false);
     assert.equal(patientTenant(null), null);
   });
+
+  it("returns null whatsapp_number when it matches the owner's personal phone", () => {
+    const ownerPhone = "+91 90000 77771";
+    const matched = patientTenant({
+      name: "Owner Handset Clinic",
+      phone: "+91 20 4000 1000",
+      whatsapp_number: "919000077771",
+      owner_phone: ownerPhone,
+    });
+    assert.equal(matched?.phone, "+91 20 4000 1000");
+    assert.equal(matched?.whatsapp_number, null);
+    assert.equal(JSON.stringify(matched).includes("9000077771"), false);
+
+    const spaced = patientTenant({
+      name: "Owner Handset Clinic",
+      whatsapp_number: "+91 90000 77771",
+      owner_phone: "91 90000 77771",
+    });
+    assert.equal(spaced?.whatsapp_number, null);
+
+    const distinct = patientTenant({
+      name: "Desk WhatsApp Clinic",
+      whatsapp_number: "+91 98000 42424",
+      owner_phone: ownerPhone,
+    });
+    assert.equal(distinct?.whatsapp_number, "+91 98000 42424");
+
+    const explicit = patientTenant({
+      name: "Chosen WhatsApp Clinic",
+      whatsapp_number: "+91 98000 42424",
+      owner_phone: ownerPhone,
+      practice_settings: { public_whatsapp: ownerPhone },
+    });
+    assert.equal(explicit?.whatsapp_number, ownerPhone);
+  });
 });
 
 describe("tenant, user, and branch HTTP responses omit secrets", () => {
