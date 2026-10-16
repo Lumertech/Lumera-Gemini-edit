@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import type { Server } from "node:http";
 import { after, before, describe, it } from "node:test";
 import express from "express";
 import { attachUser } from "./auth.ts";
 import { createApiRouter } from "./api.ts";
 import { createAbdmRouter } from "./abdm.ts";
+import { readAadhaarOtpSessionForTests, setAadhaarOtpTestFault } from "./abdm-identity-routes.ts";
 import { signAbdmCallback } from "./abdm-hmac.ts";
 import { getDb, initDatabase } from "./db.ts";
 import { hashPassword } from "./password.ts";
@@ -178,6 +180,7 @@ describe("ABDM identity AuthZ", () => {
     else process.env.ABDM_MODE = previousAbdmMode;
     if (previousHashKey === undefined) delete process.env.AADHAAR_HASH_KEY;
     else process.env.AADHAAR_HASH_KEY = previousHashKey;
+    setAadhaarOtpTestFault(null);
     try {
       for (const tenantId of createdTenantIds) purgeTenant(tenantId);
       purgeIdentityFixtures();
@@ -518,6 +521,69 @@ describe("ABDM identity AuthZ", () => {
       .get(patientId, clinic.tenantId) as { abha_number: string; phone: string };
     assertNoAadhaarDigitRun(aadhaar, String(row.abha_number || ""));
     assertNoAadhaarDigitRun(aadhaar, String(row.phone || ""));
+  });
+
+  it("otp session stores only the HMAC and last 4 of the Aadhaar", async () => {
+    resetSendOtpRateLimits();
+    const clinic = seedClinic("sess", "doctor");
+    const token = await login(clinic.email);
+    const aadhaar = "808080808080";
+    const generated = await jsonRequest(
+      port,
+      "POST",
+      "/api/abdm/registration/aadhaar/generateOtp",
+      { aadhaar },
+      auth(token)
+    );
+    assert.equal(generated.status, 200, String(generated.json.error || ""));
+    const txnId = String(generated.json.txnId || "");
+    const session = readAadhaarOtpSessionForTests(txnId);
+    assert.ok(session);
+    assert.equal(session.last4, aadhaar.slice(-4));
+    assert.equal(session.last4.length, 4);
+    const expectedHmac = crypto.createHmac("sha256", "test-aadhaar-hash-key").update(aadhaar).digest("hex");
+    assert.equal(session.aadhaarHmac, expectedHmac);
+    assert.equal(Object.hasOwn(session, "aadhaar"), false);
+    assert.equal(Object.hasOwn(session, "aadhaarNumber"), false);
+    const stored = JSON.stringify(session);
+    assert.equal(stored.includes(aadhaar), false);
+    const { aadhaarHmac: _hmac, ...withoutHmac } = session;
+    assertNoAadhaarDigitRun(aadhaar, JSON.stringify(withoutHmac));
+  });
+
+  it("generate and verify hide upstream errors that contain an Aadhaar", async () => {
+    resetSendOtpRateLimits();
+    const clinic = seedClinic("fault", "doctor");
+    const token = await login(clinic.email);
+    const headers = auth(token);
+    const sentinel = "102938475610";
+    try {
+      setAadhaarOtpTestFault({ phase: "generate", message: `upstream generate failed for ${sentinel}` });
+      const generated = await jsonRequest(
+        port,
+        "POST",
+        "/api/abdm/aadhaar/generate-otp",
+        { aadhaar: "667788990077" },
+        headers
+      );
+      assert.equal(generated.status, 500);
+      assert.equal(generated.json.error, "Failed to generate Aadhaar OTP");
+      assert.equal(JSON.stringify(generated.json).includes(sentinel), false);
+
+      setAadhaarOtpTestFault({ phase: "verify", message: `upstream verify failed for ${sentinel}` });
+      const verified = await jsonRequest(
+        port,
+        "POST",
+        "/api/abdm/aadhaar/verify-otp",
+        { txnId: "txn-fault", otp: "123456" },
+        headers
+      );
+      assert.equal(verified.status, 500);
+      assert.equal(verified.json.error, "Failed to verify Aadhaar OTP");
+      assert.equal(JSON.stringify(verified.json).includes(sentinel), false);
+    } finally {
+      setAadhaarOtpTestFault(null);
+    }
   });
 
   it("super_admin cannot run Aadhaar OTP", async () => {

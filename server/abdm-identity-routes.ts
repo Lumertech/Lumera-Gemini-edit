@@ -89,6 +89,27 @@ function stubAbhaNumber(cleanAadhaar: string): string {
 }
 const otpSessions = new Map<string, AadhaarOtpSession>();
 
+type AadhaarOtpTestFault = { phase: "generate" | "verify"; message: string };
+let aadhaarOtpTestFault: AadhaarOtpTestFault | null = null;
+
+/** Test-only snapshot. Unset in production traffic, so handlers stay unchanged. */
+export function readAadhaarOtpSessionForTests(txnId: string): Readonly<AadhaarOtpSession> | undefined {
+  const session = otpSessions.get(txnId);
+  return session ? { ...session } : undefined;
+}
+
+/** Test-only. When unset, generate and verify do not throw. */
+export function setAadhaarOtpTestFault(fault: AadhaarOtpTestFault | null): void {
+  aadhaarOtpTestFault = fault;
+}
+
+function raiseAadhaarOtpTestFault(phase: AadhaarOtpTestFault["phase"]): void {
+  if (aadhaarOtpTestFault?.phase !== phase) return;
+  const message = aadhaarOtpTestFault.message;
+  aadhaarOtpTestFault = null;
+  throw new Error(message);
+}
+
 /** Clinic staff may read the meter. Patients are 403. Anonymous is 401 via requireAuth. */
 const dhisOverviewGuards = [requireAuth, requireRole(...CLINICIAN_ROLES)] as const;
 
@@ -289,6 +310,7 @@ export function registerAbdmIdentityRoutes(router: Router): void {
     const tenantId = sessionClinicTenant(req, res);
     if (!tenantId) return;
     try {
+      raiseAadhaarOtpTestFault("generate");
       const { aadhaar } = req.body;
       const cleanAadhaar = (aadhaar || "").replace(/\D/g, "");
 
@@ -367,6 +389,7 @@ export function registerAbdmIdentityRoutes(router: Router): void {
     const tenantId = sessionClinicTenant(req, res);
     if (!tenantId) return;
     try {
+      raiseAadhaarOtpTestFault("verify");
       const { txnId, otp } = req.body;
 
       if (!txnId || !otp) {
