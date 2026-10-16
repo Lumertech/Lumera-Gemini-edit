@@ -51,7 +51,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
       id: 'm1',
       sender: 'gemini',
       text: `Hello Dr. ${currentDoctor?.name?.split(' ')[1] || 'Doctor'}. I am **Pulse AI**, an advanced enterprise clinical decision support copilot powered by Google Gemini.\n\nI provide real-time clinical decision support: cross-checking drug-drug interactions, pediatric/geriatric dosage adjustments, ICMR/ADA clinical guidelines, and patient-specific risk reviews.`,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      timestamp: new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: '2-digit', minute: '2-digit' }),
       source: 'Pulse AI (Gemini 3.8 Flash)',
     },
   ]);
@@ -69,7 +69,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
       id: 'u-' + Date.now(),
       sender: 'user',
       text: text,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      timestamp: new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: '2-digit', minute: '2-digit' }),
     };
 
     setMessages((prev) => [...prev, userMsg]);
@@ -98,7 +98,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
         id: 'g-' + Date.now(),
         sender: 'gemini',
         text: data.response || 'Clinical response generated.',
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        timestamp: new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: '2-digit', minute: '2-digit' }),
         source: data.source || 'Gemini 3.8 Flash',
       };
       setMessages((prev) => [...prev, geminiMsg]);
@@ -108,7 +108,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
         id: 'g-' + Date.now(),
         sender: 'gemini',
         text: '⚠️ Unable to connect to Pulse AI Clinical Copilot. Please check your network connection and retry.',
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        timestamp: new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: '2-digit', minute: '2-digit' }),
       };
       setMessages((prev) => [...prev, errorMsg]);
     } finally {

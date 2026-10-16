@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { appPublicUrl, isProduction, isUnsetOrPlaceholder, readSecret, sandboxSimulatorsEnabled } from "./runtime.ts";
+import { formatINR } from "../app/applet/src/lib/currency.ts";
 
 export const RAZORPAY_API_BASE = "https://api.razorpay.com/v1";
 
@@ -116,7 +117,7 @@ export async function createRazorpayCollectOrder(opts: {
 }): Promise<RazorpayLinkResult> {
   const amountPaise = rupeesToPaise(opts.amountRupees);
   if (amountPaise < 100) {
-    return { ok: false, error: "Amount must be at least ₹1.", sandbox: sandboxSimulatorsEnabled() };
+    return { ok: false, error: `Amount must be at least ${formatINR(1)}.`, sandbox: sandboxSimulatorsEnabled() };
   }
 
   const notes = {
@@ -284,7 +285,7 @@ export async function createRazorpayWalletTopupOrder(opts: {
 }): Promise<RazorpayLinkResult> {
   const amountPaise = rupeesToPaise(opts.amountRupees);
   if (amountPaise < 100) {
-    return { ok: false, error: "Amount must be at least ₹1.", sandbox: sandboxSimulatorsEnabled() };
+    return { ok: false, error: `Amount must be at least ${formatINR(1)}.`, sandbox: sandboxSimulatorsEnabled() };
   }
 
   const notes = {
@@ -339,7 +340,7 @@ export async function createRazorpayWalletTopupOrder(opts: {
         amount: amountPaise,
         currency: "INR",
         accept_partial: false,
-        description: opts.description || `Lumera usage wallet top-up ₹${opts.amountRupees}`,
+        description: opts.description || `Lumera usage wallet top-up ${formatINR(opts.amountRupees)}`,
         customer: {
           name: opts.requestedBy?.name || "Clinic",
           contact: String(opts.requestedBy?.phone || "").replace(/[^\d]/g, "").slice(-10),

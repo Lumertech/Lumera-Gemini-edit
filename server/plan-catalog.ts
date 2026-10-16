@@ -1,5 +1,7 @@
 /** Assignable SaaS plan catalog. Codes are SoT — never persist free-text plan names. */
 
+import { formatINR } from "../app/applet/src/lib/currency.ts";
+
 export const PLAN_CODES = ["trial", "starter", "professional", "clinic", "internal"] as const;
 export type PlanCode = (typeof PLAN_CODES)[number];
 
@@ -28,7 +30,7 @@ export const PLAN_CATALOG: PlanCatalogRow[] = [
   {
     code: "trial",
     displayName: "Trial",
-    priceCopy: "₹0 · 14-day trial",
+    priceCopy: `${formatINR(0)} · 14-day trial`,
     monthlyPrice: 0,
     description: "Unpaid product trial. No PSP charge.",
     sortOrder: 10,
@@ -36,7 +38,7 @@ export const PLAN_CATALOG: PlanCatalogRow[] = [
   {
     code: "starter",
     displayName: "Starter",
-    priceCopy: "₹999 / month",
+    priceCopy: `${formatINR(999)} / month`,
     monthlyPrice: 999,
     description: "Catalog price for a single practice. Assign is manual until billing is wired.",
     sortOrder: 20,
@@ -44,7 +46,7 @@ export const PLAN_CATALOG: PlanCatalogRow[] = [
   {
     code: "professional",
     displayName: "Professional",
-    priceCopy: "₹2,499 / month",
+    priceCopy: `${formatINR(2499)} / month`,
     monthlyPrice: 2499,
     description: "Catalog price for a clinician practice. Assign is manual until billing is wired.",
     sortOrder: 30,
@@ -52,7 +54,7 @@ export const PLAN_CATALOG: PlanCatalogRow[] = [
   {
     code: "clinic",
     displayName: "Clinic",
-    priceCopy: "₹4,999 / month",
+    priceCopy: `${formatINR(4999)} / month`,
     monthlyPrice: 4999,
     description: "Catalog price for a multi-chair / polyclinic tenant. Assign is manual until billing is wired.",
     sortOrder: 40,
@@ -60,7 +62,7 @@ export const PLAN_CATALOG: PlanCatalogRow[] = [
   {
     code: "internal",
     displayName: "Internal",
-    priceCopy: "₹0 · platform / demo",
+    priceCopy: `${formatINR(0)} · platform / demo`,
     monthlyPrice: 0,
     description: "Platform operator and sandbox demo tenants. Not a customer invoice.",
     sortOrder: 90,

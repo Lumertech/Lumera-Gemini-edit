@@ -3,6 +3,7 @@ import { GoogleGenAI } from "@google/genai";
 import { requireAuth } from "./auth.ts";
 import { getDb } from "./db.ts";
 import { clinicLine, getTenantLetterhead } from "./letterhead.ts";
+import { AI_RUPEE_OUTPUT_RULE } from "./india-currency-copy.ts";
 
 export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI | null) {
   // 4. Voice Bot & Triage Simulator with Emergency Escalation
@@ -33,7 +34,8 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
     "intent": ${isEmergency ? '"EMERGENCY"' : '"BOOKING" | "REFILL" | "EMERGENCY" | "INQUIRY"'},
     "suggestedAction": "e.g. ${isEmergency ? 'Advise emergency room or 108' : 'Scheduled token #4 for Tomorrow 10:30 AM'}",
     "isEmergency": ${isEmergency}
-  }`;
+  }
+  ${AI_RUPEE_OUTPUT_RULE}`;
 
           const response = await ai.models.generateContent({
             model: "gemini-3.7-flash",
@@ -172,7 +174,8 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
     ],
     "translatedAdvice": ["advice item in ${targetLanguage}"],
     "formattedWhatsAppMessage": "Complete friendly WhatsApp message formatted in ${targetLanguage}"
-  }`;
+  }
+  ${AI_RUPEE_OUTPUT_RULE}`;
 
           const response = await ai.models.generateContent({
             model: "gemini-3.7-flash",

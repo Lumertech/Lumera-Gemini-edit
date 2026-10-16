@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from "react";
 import { CalendarDays, CheckCircle2, Clock, Lock } from "lucide-react";
 import type { Appointment, Doctor } from "../types";
+import { clinicToday, formatClinicDateLabel, formatClinicMonthLabel } from "../lib/clinicDay";
 import {
   addCalendarDays,
   generateFollowUpSlots,
@@ -38,10 +39,7 @@ export const FollowUpSlotPicker: React.FC<FollowUpSlotPickerProps> = ({
   reserved,
   onReserve,
 }) => {
-  const today = useMemo(() => {
-    const now = new Date();
-    return new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  }, []);
+  const today = useMemo(() => clinicToday(), []);
   const suggested = addCalendarDays(today, followUpDays);
   const [open, setOpen] = useState(false);
   const [viewMonth, setViewMonth] = useState(() => new Date(suggested.getFullYear(), suggested.getMonth(), 1));
@@ -103,11 +101,7 @@ export const FollowUpSlotPicker: React.FC<FollowUpSlotPickerProps> = ({
       <div className="flex items-center gap-2">
         <strong className="text-slate-900 text-xs">
           In {followUpDays} Days (
-          {addCalendarDays(today, followUpDays).toLocaleDateString("en-IN", {
-            day: "2-digit",
-            month: "short",
-            year: "numeric",
-          })}
+          {formatClinicDateLabel(isoDate(addCalendarDays(today, followUpDays)))}
           )
         </strong>
       </div>
@@ -179,7 +173,7 @@ export const FollowUpSlotPicker: React.FC<FollowUpSlotPickerProps> = ({
                   ‹
                 </button>
                 <span className="text-[11px] font-bold text-slate-800">
-                  {viewMonth.toLocaleDateString("en-IN", { month: "long", year: "numeric" })}
+                  {formatClinicMonthLabel(viewMonth.getFullYear(), viewMonth.getMonth())}
                 </span>
                 <button
                   type="button"

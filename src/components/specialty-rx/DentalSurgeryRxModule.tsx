@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Smile, Wrench, AlertTriangle, Plus, Trash2, CheckCircle2, Shield } from 'lucide-react';
 import { DentalAssessment, DentalToothCondition } from '../../types';
+import { formatINR } from '../../../app/applet/src/lib/currency.ts';
 
 interface DentalSurgeryRxModuleProps {
   assessment: DentalAssessment;
@@ -238,7 +239,7 @@ export const DentalSurgeryRxModule: React.FC<DentalSurgeryRxModuleProps> = ({
               Planned Procedures & Estimations
             </span>
             <span className="text-xs font-bold text-emerald-700">
-              Est. Total: ₹{assessment.plannedProcedures.reduce((acc, p) => acc + p.estimatedCost, 0)}
+              Est. Total: {formatINR(assessment.plannedProcedures.reduce((acc, p) => acc + p.estimatedCost, 0))}
             </span>
           </div>
 
@@ -257,7 +258,7 @@ export const DentalSurgeryRxModule: React.FC<DentalSurgeryRxModuleProps> = ({
                     <span className="font-medium text-slate-800">{proc.procedure}</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="font-bold text-slate-700">₹{proc.estimatedCost}</span>
+                    <span className="font-bold text-slate-700">{formatINR(proc.estimatedCost)}</span>
                     <button
                       type="button"
                       onClick={() => handleRemoveProcedure(idx)}

@@ -46,18 +46,18 @@ function typeLabel(value: string): string {
 function formatDocDate(iso: string): string {
   const [year, month, day] = iso.split("-").map(Number);
   if (!year || !month || !day) return iso;
-  return new Date(Date.UTC(year, month - 1, day)).toLocaleDateString("en-IN", {
+  return new Date(Date.UTC(year, month - 1, day, 12)).toLocaleDateString("en-IN", {
     day: "numeric",
     month: "short",
     year: "numeric",
-    timeZone: "UTC",
+    timeZone: "Asia/Kolkata",
   });
 }
 
 function formatWhen(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
-  return date.toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+  return date.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", year: "numeric" });
 }
 
 function formatBytes(size: number): string {

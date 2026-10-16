@@ -796,7 +796,7 @@ export const AdminMetaTechProvider: React.FC = () => {
 
                   <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1">
                     <span>Meta ID: {tpl.metaTemplateId || "meta_tpl_verified"}</span>
-                    <span>Updated {new Date(tpl.updatedAt).toLocaleDateString()}</span>
+                    <span>Updated {new Date(tpl.updatedAt).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" })}</span>
                   </div>
                 </div>
               );

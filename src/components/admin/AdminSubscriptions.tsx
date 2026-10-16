@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { KeyRound, Search, AlertTriangle, IndianRupee, Users } from "lucide-react";
 import { apiFetch } from "../../api/http";
+import { formatINR } from "../../../app/applet/src/lib/currency.ts";
 import { useTenantScope } from "./TenantScopeContext";
 import { TenantSubscriptionPanel } from "./TenantSubscriptionPanel";
 import {
@@ -212,7 +213,7 @@ export const AdminSubscriptions: React.FC = () => {
             <p className="text-xs text-slate-500 flex items-center gap-1">
               <IndianRupee className="h-3 w-3" /> Monthly recurring
             </p>
-            <p className="font-manrope font-bold text-2xl text-indigo-700">₹{Number(summary.mrr || 0).toLocaleString("en-IN")}</p>
+            <p className="font-manrope font-bold text-2xl text-indigo-700">{formatINR(Number(summary.mrr || 0))}</p>
           </div>
         </div>
       )}
@@ -284,9 +285,9 @@ export const AdminSubscriptions: React.FC = () => {
                     {normalizeHonestyLabel(r.honestyLabel || r.billingSource)}
                   </span>
                 </td>
-                <td className="px-3 py-2">₹{r.monthlyPrice.toLocaleString("en-IN")}</td>
+                <td className="px-3 py-2">{formatINR(r.monthlyPrice)}</td>
                 <td className="px-3 py-2 text-xs">
-                  {r.endsAt ? new Date(r.endsAt).toLocaleDateString("en-IN") : "—"}
+                  {r.endsAt ? new Date(r.endsAt).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" }) : "—"}
                   {r.daysRemaining !== null && <div className="text-slate-500">{r.daysRemaining}d left</div>}
                 </td>
                 <td className="px-3 py-2 text-xs">{r.autoRenew ? "On" : "Off"}</td>

@@ -28,6 +28,8 @@ import { CLINICIAN_ROLES, requireAuth, requireRole } from "./auth.ts";
 import { rejectUntrustedTenantClaim } from "./tenant-guard.ts";
 import { authenticatedLabReportPath, authorizeLabReport, labOwnerTenantId, sendLabReportDenied } from "./lab-report-access.ts";
 import { WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
+import { formatINR } from "../app/applet/src/lib/currency.ts";
+import { AI_RUPEE_OUTPUT_RULE } from "./india-currency-copy.ts";
 import {
   clinicTenantId,
   getTenantConversation,
@@ -108,7 +110,8 @@ export function clinicOutboundCopy(opts: {
 The patient is asking: "${patientText}".
 Patient Name: ${patientName}.
 Respond in friendly WhatsApp tone with emojis, medical accuracy, and clear next steps. Keep response within 80-120 words.
-Suggest relevant quick actions (booking appointment, checking timings, viewing lab report, or talking to staff).`,
+Suggest relevant quick actions (booking appointment, checking timings, viewing lab report, or talking to staff).
+${AI_RUPEE_OUTPUT_RULE}`,
     assistantFallback: `Thank you for reaching out to ${clinic}. How may we assist you further?`,
     rxDispatcher: doctor,
     pdfVerify: `Digitally signed & verified by ${clinic}`,
@@ -200,7 +203,7 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
 
   // Helper to format timestamps
   function getDisplayTime(): string {
-    return new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
+    return new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "numeric", minute: "2-digit", hour12: true });
   }
 
   // ----------------------------------------------------
@@ -894,7 +897,7 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
 
       if (eventType === "post_consultation_dispatch") {
         details = `Post-consultation digital packet dispatched: Prescription & Diagnostic invoice.`;
-        messageContent = `📋 *Consultation Summary & Prescription Signed*\n\nNamaste ${patientName},\n${outboundCopy.rxDispatcher} has signed your clinical prescription (*RX-2026-0106*).\n\nYour digital consultation receipt (#INV-9921 for ₹700) has been generated. You can preview or download your verified medical documents below.`;
+        messageContent = `📋 *Consultation Summary & Prescription Signed*\n\nNamaste ${patientName},\n${outboundCopy.rxDispatcher} has signed your clinical prescription (*RX-2026-0106*).\n\nYour digital consultation receipt (#INV-9921 for ${formatINR(700)}) has been generated. You can preview or download your verified medical documents below.`;
         buttons = ["📄 View Prescription Slip", "📥 Download PDF", "💊 Order Medicine Home Delivery"];
         media = {
           type: "pdf",
@@ -1095,7 +1098,8 @@ Output strictly in JSON:
   "clinicalSummary": "structured clinical note summary",
   "symptoms": ["symptom 1", "symptom 2"],
   "patientIntent": "appointment | prescription | lab_report | emergency"
-}`;
+}
+${AI_RUPEE_OUTPUT_RULE}`;
 
           const cleanBase64 = audioBase64.replace(/^data:audio\/[a-z0-9]+;base64,/, "");
           const response = await ai.models.generateContent({
@@ -1698,7 +1702,7 @@ async function processBotActionOrQuery(
 
   if (q.includes("book") || q.includes("appointment") || q.includes("schedule") || q.includes("अपॉइंटमेंट") || q.includes("डॉक्टर")) {
     const doctors = db.prepare("SELECT * FROM doctors WHERE active = 1 LIMIT 4").all() as Record<string, unknown>[];
-    const docOptions = doctors.map((d) => `• *${d.name}* (${d.specialty}) - OPD Room ${d.opd_room}, Fee ₹${d.consultation_fee}`).join("\n");
+    const docOptions = doctors.map((d) => `• *${d.name}* (${d.specialty}) - OPD Room ${d.opd_room}, Fee ${formatINR(Number(d.consultation_fee || 0))}`).join("\n");
 
     const bookingCopy = clinicOutboundCopy({
       ...resolveClinicFacingNames(db, tenantId),

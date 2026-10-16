@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { IndianRupee, AlertTriangle, Wallet } from "lucide-react";
 import { apiFetch } from "../../api/http";
+import { formatINR } from "../../../app/applet/src/lib/currency.ts";
 import { useTenantScope } from "./TenantScopeContext";
 
 type WalletState = "ok" | "low" | "empty" | "negative";
@@ -215,15 +216,15 @@ export const AdminUsageBilling: React.FC = () => {
           <div className="grid grid-cols-3 gap-3 text-center" data-testid="admin-usage-margin">
             <div className="bg-slate-50 rounded-lg p-3">
               <div className="text-[10px] uppercase text-slate-500">Raw cost</div>
-              <div className="text-lg font-bold">₹{margin.rawCost.toFixed(2)}</div>
+              <div className="text-lg font-bold">{formatINR(margin.rawCost)}</div>
             </div>
             <div className="bg-slate-50 rounded-lg p-3">
               <div className="text-[10px] uppercase text-slate-500">Billed</div>
-              <div className="text-lg font-bold">₹{margin.billedAmount.toFixed(2)}</div>
+              <div className="text-lg font-bold">{formatINR(margin.billedAmount)}</div>
             </div>
             <div className="bg-emerald-50 rounded-lg p-3">
               <div className="text-[10px] uppercase text-emerald-700">Margin</div>
-              <div className="text-lg font-bold text-emerald-800">₹{margin.margin.toFixed(2)}</div>
+              <div className="text-lg font-bold text-emerald-800">{formatINR(margin.margin)}</div>
             </div>
           </div>
         )}
@@ -283,8 +284,8 @@ export const AdminUsageBilling: React.FC = () => {
         {wallet && (
           <div className="text-sm space-y-1" data-testid="admin-usage-tenant-wallet">
             <p>
-              Balance <strong>₹{wallet.balance.toFixed(2)}</strong> · state {wallet.state} · threshold ₹
-              {wallet.lowBalanceThreshold}
+              Balance <strong>{formatINR(wallet.balance)}</strong> · state {wallet.state} · threshold{" "}
+              {formatINR(wallet.lowBalanceThreshold)}
             </p>
             {markup && (
               <p className="text-xs text-slate-500">
@@ -309,9 +310,9 @@ export const AdminUsageBilling: React.FC = () => {
                 <tr key={`${u.tenantId}-${u.resource}`}>
                   <td>{u.resource}</td>
                   <td>{u.quantity}</td>
-                  <td>₹{u.rawCost.toFixed(4)}</td>
-                  <td>₹{u.billedAmount.toFixed(4)}</td>
-                  <td>₹{u.margin.toFixed(4)}</td>
+                  <td>{formatINR(u.rawCost)}</td>
+                  <td>{formatINR(u.billedAmount)}</td>
+                  <td>{formatINR(u.margin)}</td>
                 </tr>
               ))}
             </tbody>
@@ -345,7 +346,7 @@ export const AdminUsageBilling: React.FC = () => {
         <ul className="text-xs text-slate-600 max-h-48 overflow-y-auto divide-y">
           {transactions.map((t) => (
             <li key={t.id} className="py-1">
-              {t.createdAt} · {t.type} · ₹{t.amount} → ₹{t.balanceAfter} · {t.note}
+              {t.createdAt} · {t.type} · {formatINR(t.amount)} → {formatINR(t.balanceAfter)} · {t.note}
             </li>
           ))}
         </ul>

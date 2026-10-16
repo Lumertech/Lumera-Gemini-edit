@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { apiFetchResponse } from '../../api/http';
+import { formatINR } from '../../../app/applet/src/lib/currency.ts';
 import { 
   Award, 
   TrendingUp, 
@@ -92,7 +93,7 @@ export const DhisMeter: React.FC<{ compact?: boolean; onSimulateSuccess?: () => 
       });
       if (res.ok) {
         const result = await res.json();
-        setLastActionMessage(`+₹20 Incentive Recorded: ${result.transaction.transaction_type} linked to ${result.transaction.abha_address}`);
+        setLastActionMessage(`+${formatINR(20)} Incentive Recorded: ${result.transaction.transaction_type} linked to ${result.transaction.abha_address}`);
         await fetchOverview();
         if (onSimulateSuccess) onSimulateSuccess();
         setTimeout(() => setLastActionMessage(null), 4000);
@@ -127,8 +128,8 @@ export const DhisMeter: React.FC<{ compact?: boolean; onSimulateSuccess?: () => 
     recentTransactions: [],
     schemeDetails: {
       schemeName: 'NHA Digital Health Incentive Scheme (DHIS v3)',
-      baseRate: '₹20 / Qualifying Transaction',
-      splitRatio: '70% Facility (₹14) / 30% Lumera Digital Solution (₹6)',
+      baseRate: `${formatINR(20)} / Qualifying Transaction`,
+      splitRatio: `70% Facility (${formatINR(14)}) / 30% Lumera Digital Solution (${formatINR(6)})`,
       disbursementSchedule: 'Simulated ledger only (local stub — not a live incentive rail)'
     }
   };
@@ -203,9 +204,9 @@ export const DhisMeter: React.FC<{ compact?: boolean; onSimulateSuccess?: () => 
                 <Building2 className="w-3.5 h-3.5 text-purple-300" />
               </div>
               <div className="mt-1 font-mono font-bold text-lg text-emerald-400">
-                ₹{d.clinicShare.toLocaleString('en-IN')}
+                {formatINR(d.clinicShare)}
               </div>
-              <div className="text-[10px] text-purple-200/50">₹14 / qualifying txn</div>
+              <div className="text-[10px] text-purple-200/50">{formatINR(14)} / qualifying txn</div>
             </div>
 
             <div className="bg-white/5 rounded-lg p-3 border border-white/10">
@@ -214,9 +215,9 @@ export const DhisMeter: React.FC<{ compact?: boolean; onSimulateSuccess?: () => 
                 <Sparkles className="w-3.5 h-3.5 text-indigo-300" />
               </div>
               <div className="mt-1 font-mono font-bold text-lg text-indigo-300">
-                ₹{d.lumeraShare.toLocaleString('en-IN')}
+                {formatINR(d.lumeraShare)}
               </div>
-              <div className="text-[10px] text-purple-200/50">₹6 / qualifying txn</div>
+              <div className="text-[10px] text-purple-200/50">{formatINR(6)} / qualifying txn</div>
             </div>
           </div>
 
@@ -228,7 +229,7 @@ export const DhisMeter: React.FC<{ compact?: boolean; onSimulateSuccess?: () => 
               className="flex-1 text-xs py-2 px-3 bg-purple-600 hover:bg-purple-500 active:bg-purple-700 text-white rounded-lg font-medium transition-all shadow-md flex items-center justify-center gap-1.5 disabled:opacity-50"
             >
               {simulating ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <TrendingUp className="w-3.5 h-3.5" />}
-              <span>Simulate sandbox txn (+₹20)</span>
+              <span>Simulate sandbox txn (+{formatINR(20)})</span>
             </button>
           </div>
 
@@ -387,9 +388,9 @@ export const DhisMeter: React.FC<{ compact?: boolean; onSimulateSuccess?: () => 
                   <Coins className="w-4 h-4 text-purple-600" />
                 </div>
                 <div className="text-2xl font-bold font-mono text-slate-900 mt-1">
-                  ₹{d.totalIncentiveEarned.toLocaleString('en-IN')}
+                  {formatINR(d.totalIncentiveEarned)}
                 </div>
-                <div className="text-[11px] text-slate-500 mt-0.5">₹20 per verified transaction</div>
+                <div className="text-[11px] text-slate-500 mt-0.5">{formatINR(20)} per verified transaction</div>
               </div>
 
               <div className="p-4 rounded-xl bg-emerald-50/70 border border-emerald-200">
@@ -398,9 +399,9 @@ export const DhisMeter: React.FC<{ compact?: boolean; onSimulateSuccess?: () => 
                   <Building2 className="w-4 h-4 text-emerald-600" />
                 </div>
                 <div className="text-2xl font-bold font-mono text-emerald-700 mt-1">
-                  ₹{d.clinicShare.toLocaleString('en-IN')}
+                  {formatINR(d.clinicShare)}
                 </div>
-                <div className="text-[11px] text-emerald-600 mt-0.5">₹14 per transaction direct to clinic account</div>
+                <div className="text-[11px] text-emerald-600 mt-0.5">{formatINR(14)} per transaction direct to clinic account</div>
               </div>
 
               <div className="p-4 rounded-xl bg-indigo-50/70 border border-indigo-200">
@@ -409,9 +410,9 @@ export const DhisMeter: React.FC<{ compact?: boolean; onSimulateSuccess?: () => 
                   <Sparkles className="w-4 h-4 text-indigo-600" />
                 </div>
                 <div className="text-2xl font-bold font-mono text-indigo-700 mt-1">
-                  ₹{d.lumeraShare.toLocaleString('en-IN')}
+                  {formatINR(d.lumeraShare)}
                 </div>
-                <div className="text-[11px] text-indigo-600 mt-0.5">₹6 per transaction for EMR/ABDM SaaS</div>
+                <div className="text-[11px] text-indigo-600 mt-0.5">{formatINR(6)} per transaction for EMR/ABDM SaaS</div>
               </div>
             </div>
 
@@ -424,22 +425,22 @@ export const DhisMeter: React.FC<{ compact?: boolean; onSimulateSuccess?: () => 
                 <div className="p-3 bg-white border border-slate-200 rounded-lg">
                   <span className="text-slate-500 block text-[11px]">OPD Consultations</span>
                   <span className="font-bold text-base text-slate-900 font-mono">{d.breakdown.OP_CONSULT}</span>
-                  <span className="text-[10px] text-emerald-600 block mt-0.5">₹{d.breakdown.OP_CONSULT * 20}</span>
+                  <span className="text-[10px] text-emerald-600 block mt-0.5">{formatINR(d.breakdown.OP_CONSULT * 20)}</span>
                 </div>
                 <div className="p-3 bg-white border border-slate-200 rounded-lg">
                   <span className="text-slate-500 block text-[11px]">Tele-Prescriptions</span>
                   <span className="font-bold text-base text-slate-900 font-mono">{d.breakdown.PRESCRIPTION}</span>
-                  <span className="text-[10px] text-emerald-600 block mt-0.5">₹{d.breakdown.PRESCRIPTION * 20}</span>
+                  <span className="text-[10px] text-emerald-600 block mt-0.5">{formatINR(d.breakdown.PRESCRIPTION * 20)}</span>
                 </div>
                 <div className="p-3 bg-white border border-slate-200 rounded-lg">
                   <span className="text-slate-500 block text-[11px]">Diagnostic Reports</span>
                   <span className="font-bold text-base text-slate-900 font-mono">{d.breakdown.DIAGNOSTIC_REPORT}</span>
-                  <span className="text-[10px] text-emerald-600 block mt-0.5">₹{d.breakdown.DIAGNOSTIC_REPORT * 20}</span>
+                  <span className="text-[10px] text-emerald-600 block mt-0.5">{formatINR(d.breakdown.DIAGNOSTIC_REPORT * 20)}</span>
                 </div>
                 <div className="p-3 bg-white border border-slate-200 rounded-lg">
                   <span className="text-slate-500 block text-[11px]">Discharge Summaries</span>
                   <span className="font-bold text-base text-slate-900 font-mono">{d.breakdown.DISCHARGE_SUMMARY}</span>
-                  <span className="text-[10px] text-emerald-600 block mt-0.5">₹{d.breakdown.DISCHARGE_SUMMARY * 20}</span>
+                  <span className="text-[10px] text-emerald-600 block mt-0.5">{formatINR(d.breakdown.DISCHARGE_SUMMARY * 20)}</span>
                 </div>
               </div>
             </div>
@@ -488,13 +489,13 @@ export const DhisMeter: React.FC<{ compact?: boolean; onSimulateSuccess?: () => 
                         {tx.fhir_bundle_id || 'bundle-nrc-r4'}
                       </td>
                       <td className="py-2.5 px-3 font-mono font-bold text-emerald-700">
-                        ₹{tx.clinic_share}
+                        {formatINR(tx.clinic_share)}
                       </td>
                       <td className="py-2.5 px-3 font-mono font-semibold text-indigo-700">
-                        ₹{tx.lumera_share}
+                        {formatINR(tx.lumera_share)}
                       </td>
                       <td className="py-2.5 px-3 text-right text-slate-400 font-mono text-[11px]">
-                        {new Date(tx.created_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                        {new Date(tx.created_at).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' })}
                       </td>
                     </tr>
                   ))}
@@ -514,12 +515,12 @@ export const DhisMeter: React.FC<{ compact?: boolean; onSimulateSuccess?: () => 
               </div>
               <div>
                 <h3 className="font-bold text-sm text-slate-900">Live Sandbox Simulator</h3>
-                <p className="text-xs text-slate-500">Simulate ABDM events & earn +₹20</p>
+                <p className="text-xs text-slate-500">Simulate ABDM events & earn +{formatINR(20)}</p>
               </div>
             </div>
 
             <p className="text-xs text-slate-600">
-              Each clinical event serializes an NRCeS FHIR R4 Bundle, encrypts it via Diffie-Hellman ECDH, and logs an audited ₹20 transaction.
+              Each clinical event serializes an NRCeS FHIR R4 Bundle, encrypts it via Diffie-Hellman ECDH, and logs an audited {formatINR(20)} transaction.
             </p>
 
             <div className="space-y-2">
@@ -535,7 +536,7 @@ export const DhisMeter: React.FC<{ compact?: boolean; onSimulateSuccess?: () => 
                   <div className="text-[11px] text-slate-500">OPConsultRecord profile</div>
                 </div>
                 <span className="font-mono font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded border border-emerald-200">
-                  +₹20
+                  +{formatINR(20)}
                 </span>
               </button>
 
@@ -551,7 +552,7 @@ export const DhisMeter: React.FC<{ compact?: boolean; onSimulateSuccess?: () => 
                   <div className="text-[11px] text-slate-500">MedicationRequest + SNOMED</div>
                 </div>
                 <span className="font-mono font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded border border-emerald-200">
-                  +₹20
+                  +{formatINR(20)}
                 </span>
               </button>
 
@@ -567,7 +568,7 @@ export const DhisMeter: React.FC<{ compact?: boolean; onSimulateSuccess?: () => 
                   <div className="text-[11px] text-slate-500">Observation + LOINC codes</div>
                 </div>
                 <span className="font-mono font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded border border-emerald-200">
-                  +₹20
+                  +{formatINR(20)}
                 </span>
               </button>
 
@@ -583,7 +584,7 @@ export const DhisMeter: React.FC<{ compact?: boolean; onSimulateSuccess?: () => 
                   <div className="text-[11px] text-slate-500">CarePlan + Encounter profile</div>
                 </div>
                 <span className="font-mono font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded border border-emerald-200">
-                  +₹20
+                  +{formatINR(20)}
                 </span>
               </button>
             </div>

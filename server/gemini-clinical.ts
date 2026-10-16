@@ -4,6 +4,7 @@ import { requireAuth } from "./auth.ts";
 import { mountGeminiVoiceRoutes } from "./gemini-voice.ts";
 import { generateRuleBasedSoap, getPulseFallbackAnswer } from "./gemini-fallbacks.ts";
 import { aiScribeTenantIdFromRequest, blockedAiScribeResponse, meterSuccessfulGeminiScribe } from "./gemini-scribe-meter.ts";
+import { AI_RUPEE_OUTPUT_RULE } from "./india-currency-copy.ts";
 
 let testSoapGenerator: ((body: Record<string, unknown>) => Promise<unknown>) | undefined;
 
@@ -68,7 +69,7 @@ export function mountGeminiClinicalRoutes(app: Express) {
       const ai = getGenAI();
       if (ai) {
         try {
-          const prompt = `You are Lumera AI, an expert Clinical AI Medical Scribe. Generate a structured SOAP note.\nPATIENT: ${patientName} ${patientAge} / ${patientGender}, Doctor ${doctorName} (${doctorSpecialty}).\nTRANSCRIPT:\n${transcript}\nReturn JSON SOAP with subjective, objective, assessment, plan.`;
+          const prompt = `You are Lumera AI, an expert Clinical AI Medical Scribe. Generate a structured SOAP note.\nPATIENT: ${patientName} ${patientAge} / ${patientGender}, Doctor ${doctorName} (${doctorSpecialty}).\nTRANSCRIPT:\n${transcript}\nReturn JSON SOAP with subjective, objective, assessment, plan.\n${AI_RUPEE_OUTPUT_RULE}`;
           const response = await ai.models.generateContent({
             model: "gemini-3.7-flash",
             contents: prompt,
@@ -102,7 +103,7 @@ export function mountGeminiClinicalRoutes(app: Express) {
       const ai = getGenAI();
       if (ai) {
         try {
-          const systemInstruction = `You are Pulse AI, an advanced enterprise clinical decision support copilot powered by Google Gemini.`;
+          const systemInstruction = `You are Pulse AI, an advanced enterprise clinical decision support copilot powered by Google Gemini.\n${AI_RUPEE_OUTPUT_RULE}`;
           const contents: any[] = [];
           if (patientContext && Object.keys(patientContext).length > 0) {
             contents.push({ role: "user", parts: [{ text: `Current Patient Profile: ${JSON.stringify(patientContext)}` }] });

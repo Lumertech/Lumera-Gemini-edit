@@ -185,7 +185,7 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
         console.warn('Microphone permission denied or unsupported:', err);
         setIsRecording(true);
         if (!transcript) {
-          setTranscript(`[Ambient Recording in progress at ${new Date().toLocaleTimeString()}]...\nDoctor: Please tell me how you are feeling today.`);
+          setTranscript(`[Ambient Recording in progress at ${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}]...\nDoctor: Please tell me how you are feeling today.`);
         }
       }
     } else {

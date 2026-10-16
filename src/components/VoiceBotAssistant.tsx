@@ -59,7 +59,7 @@ export const VoiceBotAssistant: React.FC<VoiceBotAssistantProps> = ({
     {
       speaker: 'AI Voice Assistant',
       text: selectedLang.greeting,
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      time: new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: '2-digit', minute: '2-digit' })
     },
   ]);
   const [voiceVolume, setVoiceVolume] = useState(65);
@@ -71,7 +71,7 @@ export const VoiceBotAssistant: React.FC<VoiceBotAssistantProps> = ({
         {
           speaker: 'AI Voice Assistant',
           text: selectedLang.greeting,
-          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          time: new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: '2-digit', minute: '2-digit' })
         }
       ]);
     }
@@ -119,7 +119,7 @@ export const VoiceBotAssistant: React.FC<VoiceBotAssistantProps> = ({
     const text = queryText || spokenInput;
     if (!text.trim() || isProcessing) return;
 
-    const timeNow = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const timeNow = new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: '2-digit', minute: '2-digit' });
     const callerEntry = { speaker: 'Caller' as const, text: text, time: timeNow };
     setCallLog((prev) => [...prev, callerEntry]);
     setSpokenInput('');
@@ -148,12 +148,12 @@ export const VoiceBotAssistant: React.FC<VoiceBotAssistantProps> = ({
         setHasEmergency(true);
       }
 
-      setCallLog((prev) => [...prev, { speaker: 'AI Voice Assistant', text: aiReply, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }]);
+      setCallLog((prev) => [...prev, { speaker: 'AI Voice Assistant', text: aiReply, time: new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: '2-digit', minute: '2-digit' }) }]);
       speakText(aiReply);
     } catch (err) {
       console.error(err);
       const fallbackReply = `Thank you. Your request has been logged successfully for ${selectedLang.name}.`;
-      setCallLog((prev) => [...prev, { speaker: 'AI Voice Assistant', text: fallbackReply, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }]);
+      setCallLog((prev) => [...prev, { speaker: 'AI Voice Assistant', text: fallbackReply, time: new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: '2-digit', minute: '2-digit' }) }]);
       speakText(fallbackReply);
     } finally {
       setIsProcessing(false);

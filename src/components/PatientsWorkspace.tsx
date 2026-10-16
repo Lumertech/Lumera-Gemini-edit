@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { ArrowLeft, Phone, Search, UserPlus } from "lucide-react";
 import { apiFetch } from "../api/http";
 import { PatientDocuments } from "./PatientDocuments";
-import { formatInr } from "../lib/money";
+import { formatINR } from "../../app/applet/src/lib/currency.ts";
 import { isAbhaLinked, type Appointment, type Patient, type Prescription, type Vitals } from "../types";
 
 interface ChartResponse {
@@ -390,7 +390,7 @@ const PatientDetail: React.FC<{
                         {visit.doctorName ? ` · ${visit.doctorName}` : ""}
                       </p>
                       <p className="text-xs text-slate-800 mt-1">
-                        Fee {formatInr(Number(visit.consultationFee || 0))}
+                        Fee {formatINR(Number(visit.consultationFee || 0))}
                         {visit.isPaid ? " · Paid" : " · Unpaid"}
                       </p>
                       {vitals && <p className="text-xs text-slate-600 mt-1 break-words">{vitals}</p>}
@@ -445,7 +445,7 @@ const PatientDetail: React.FC<{
                           .filter((test) => typeof test.price === "number")
                           .map((test) => (
                             <li key={test.id || test.testName} className="text-xs text-slate-700 break-words">
-                              {test.testName} · {formatInr(Number(test.price))}
+                              {test.testName} · {formatINR(Number(test.price))}
                             </li>
                           ))}
                       </ul>

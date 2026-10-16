@@ -8,6 +8,7 @@ import { applyBundledServerNodeEnv, failFastRequiredProductionEnv } from "./runt
 import { attachProductionSpaFallback } from "./spa-fallback.ts";
 import { isPublicPolicyHtmlPath } from "./policy-html.ts";
 import { generateRuleBasedSoap, getPulseFallbackAnswer } from "./gemini-clinical-helpers.ts";
+import { AI_RUPEE_OUTPUT_RULE } from "./india-currency-copy.ts";
 
 export { generateRuleBasedSoap, getPulseFallbackAnswer } from "./gemini-clinical-helpers.ts";
 
@@ -31,7 +32,8 @@ export function attachGeminiClinicalRest(app: Express, getGenAI: () => GoogleGen
   3. Drug dosage recommendations, contraindications, and pediatric/geriatric adjustments when applicable
   4. Differential diagnoses & red flag alerts
   5. Active patient risk analysis if patient profile is provided
-  Always maintain an objective, rigorous, professional medical tone.`;
+  Always maintain an objective, rigorous, professional medical tone.
+  ${AI_RUPEE_OUTPUT_RULE}`;
 
           const contents: any[] = [];
           if (patientContext && Object.keys(patientContext).length > 0) {
@@ -116,7 +118,8 @@ export function attachGeminiClinicalRest(app: Express, getGenAI: () => GoogleGen
         "clinicalRecommendation": "Alternative drug or dosing advice"
       }
     ]
-  }`;
+  }
+  ${AI_RUPEE_OUTPUT_RULE}`;
 
           const response = await ai.models.generateContent({
             model: "gemini-3.7-flash",
@@ -220,7 +223,8 @@ export function attachGeminiClinicalRest(app: Express, getGenAI: () => GoogleGen
     "speechText": "Natural conversational voice response",
     "intent": "BOOKING" | "REFILL" | "EMERGENCY" | "INQUIRY",
     "suggestedAction": "e.g. Scheduled token #4 for Tomorrow 10:30 AM"
-  }`;
+  }
+  ${AI_RUPEE_OUTPUT_RULE}`;
 
           const response = await ai.models.generateContent({
             model: "gemini-3.7-flash",
@@ -274,7 +278,8 @@ export function attachGeminiClinicalRest(app: Express, getGenAI: () => GoogleGen
     ],
     "translatedAdvice": ["advice item in ${targetLanguage}"],
     "formattedWhatsAppMessage": "Complete friendly WhatsApp message formatted in ${targetLanguage}"
-  }`;
+  }
+  ${AI_RUPEE_OUTPUT_RULE}`;
 
           const response = await ai.models.generateContent({
             model: "gemini-3.7-flash",

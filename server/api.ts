@@ -294,7 +294,7 @@ function recordWhatsAppOtpEvent(opts: {
   try {
     const db = getDb();
     const now = new Date().toISOString();
-    const timeDisplay = new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
+    const timeDisplay = new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "numeric", minute: "2-digit", hour12: true });
     const cleanPhone = opts.phone.trim() || "+91 98234 55667";
     const preferredId = `conv-otp-${cleanPhone.replace(/\D/g, "").slice(-8) || "user"}`;
     const userName = opts.name.trim() || "Healthcare Clinician";

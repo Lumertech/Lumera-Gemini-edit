@@ -22,6 +22,7 @@ import { BillItem, Patient, Doctor, ClinicSettings, PharmacyBatchItem, TherapyPa
 import { MOCK_PHARMACY_BATCHES, MOCK_THERAPY_PACKAGES } from '../data/clinicalData';
 import { BLANK_CLINIC_SETTINGS } from '../lib/letterhead';
 import { apiFetch } from '../api/http';
+import { formatINR } from '../../app/applet/src/lib/currency.ts';
 import {
   BillingPaymentMode,
   BillingSettings,
@@ -33,7 +34,6 @@ import {
   deskCollectionsView,
   displayInvoiceNumber,
   DRAFT_INVOICE_LABEL,
-  formatRupees,
   invoiceNumberToPersist,
   isInvoicePaid,
   paymentModeFromInvoice,
@@ -535,10 +535,10 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
                 Paid {dayEndView.paidCount}
               </span>
               <span className="px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-900 border border-emerald-200 font-semibold" data-testid="day-end-collected">
-                Collected {formatRupees(dayEndView.totalCollected)}
+                Collected {formatINR(dayEndView.totalCollected)}
               </span>
               <span className="px-3 py-1.5 rounded-lg bg-amber-50 text-amber-800 border border-amber-200 font-semibold" data-testid="day-end-due">
-                Due {dayEndView.dueCount} · {formatRupees(dayEndView.dueAmount)}
+                Due {dayEndView.dueCount} · {formatINR(dayEndView.dueAmount)}
               </span>
             </div>
           </div>
@@ -667,7 +667,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
                 GST Tax Invoice / Cash Receipt
               </span>
               <p className="text-xs font-mono text-slate-700 mt-1 font-bold">No: {shownInvoiceNumber}</p>
-              <p className="text-xs text-slate-500">{new Date().toLocaleDateString('en-IN')}</p>
+              <p className="text-xs text-slate-500">{new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}</p>
               <div className="mt-1">{statusChip}</div>
             </div>
           </div>
@@ -754,9 +754,9 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
                     </td>
                     <td className="py-2.5 px-3 font-mono text-slate-500">{item.hsnSacCode}</td>
                     <td className="py-2.5 px-3 font-medium">{item.quantity}</td>
-                    <td className="py-2.5 px-3 font-mono">₹{item.unitPrice}</td>
+                    <td className="py-2.5 px-3 font-mono">{formatINR(item.unitPrice)}</td>
                     <td className="py-2.5 px-3 font-mono font-bold text-slate-900 text-right">
-                      ₹{item.total}
+                      {formatINR(item.total)}
                     </td>
                     <td className="py-2.5 px-3 no-print text-right">
                       {linesLocked ? null : (
@@ -818,11 +818,11 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
             <div className="w-full sm:w-64 space-y-2 text-xs">
               <div className="flex justify-between text-slate-600">
                 <span>Subtotal:</span>
-                <strong className="font-mono">₹{subtotal}</strong>
+                <strong className="font-mono">{formatINR(subtotal)}</strong>
               </div>
               <div className="flex justify-between text-slate-600">
                 <span>GST (Healthcare Exempt):</span>
-                <strong className="font-mono">₹0.00</strong>
+                <strong className="font-mono">{formatINR(0)}</strong>
               </div>
               <div className="flex justify-between text-slate-600 items-center no-print">
                 <span>Discount (₹):</span>
@@ -837,7 +837,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
               </div>
               <div className="border-t-2 border-slate-900 pt-2 flex justify-between text-sm">
                 <strong className="text-slate-900">{paid ? 'Total Paid:' : 'Total Payable:'}</strong>
-                <strong className="text-teal-800 font-mono text-base font-black" data-testid="invoice-total">₹{totalAmount}</strong>
+                <strong className="text-teal-800 font-mono text-base font-black" data-testid="invoice-total">{formatINR(totalAmount)}</strong>
               </div>
 
               <div className="pt-2 no-print space-y-1.5">
@@ -903,7 +903,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
 
                   <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-700 bg-white p-2 rounded-lg border border-slate-200/80">
                     <div>Stock: <strong className={batch.currentStock < batch.reorderLevel ? 'text-rose-600' : 'text-slate-900'}>{batch.currentStock} units</strong></div>
-                    <div>MRP: <strong className="text-teal-700">₹{batch.mrp}</strong></div>
+                    <div>MRP: <strong className="text-teal-700">{formatINR(batch.mrp)}</strong></div>
                     <div>Expiry: <strong className={batch.daysToExpiry < 60 ? 'text-amber-700' : 'text-slate-700'}>{batch.expiryDate}</strong></div>
                     <div>Reorder: <strong>{batch.reorderLevel} units</strong></div>
                   </div>
@@ -957,7 +957,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
                   </div>
 
                   <h4 className="font-bold text-xs text-slate-900 leading-snug">{pkg.packageName}</h4>
-                  <p className="text-sm font-black text-emerald-800">₹{pkg.cost}</p>
+                  <p className="text-sm font-black text-emerald-800">{formatINR(pkg.cost)}</p>
                 </div>
 
                 <div className="space-y-1 text-[11px] text-slate-600 border-t border-slate-200/80 pt-2">
@@ -977,7 +977,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
                   className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-xs"
                 >
                   <Plus className="w-3.5 h-3.5" />
-                  <span>Enrol Patient & Bill ₹{pkg.cost}</span>
+                  <span>Enrol Patient & Bill {formatINR(pkg.cost)}</span>
                 </button>
               </div>
             ))}
@@ -1014,7 +1014,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
               </div>
               <div className="text-right">
                 <span className="text-slate-400 block text-[10px] uppercase font-bold">{paid ? 'Amount Paid' : 'Total Amount Due'}</span>
-                <strong className="text-teal-800 font-mono text-xl font-black">₹{totalAmount}</strong>
+                <strong className="text-teal-800 font-mono text-xl font-black">{formatINR(totalAmount)}</strong>
                 <span className={`text-[10px] font-bold block ${paid ? 'text-emerald-700' : 'text-amber-700'}`}>
                   {paid ? 'PAID IN FULL' : 'UNPAID'}
                 </span>
@@ -1053,7 +1053,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
                       <div className="text-xs space-y-1 min-w-0">
                         <span className="text-teal-900 font-bold block text-sm">Razorpay UPI collect</span>
                         <p className="font-mono text-[11px] text-slate-700 font-semibold">VPA: {billingIds.upiLabel}</p>
-                        <p className="text-[11px] text-slate-600">Amount: <strong>₹{totalAmount}</strong></p>
+                        <p className="text-[11px] text-slate-600">Amount: <strong>{formatINR(totalAmount)}</strong></p>
                         <p className="text-[10px] text-amber-800 font-semibold">Invoice stays Unpaid until webhook (or SANDBOX pay).</p>
                       </div>
                     </div>
@@ -1120,7 +1120,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
                           onClick={() => setCashTendered(amt)}
                           className="px-2 py-0.5 rounded bg-white border border-amber-200 text-amber-900 font-mono text-[11px] font-bold hover:bg-amber-100"
                         >
-                          ₹{amt}
+                          {formatINR(amt)}
                         </button>
                       ))}
                     </div>
@@ -1128,7 +1128,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
                     <div className="pt-2 border-t border-amber-200 flex justify-between items-center text-xs">
                       <span className="font-bold text-slate-700">Change to Return to Patient:</span>
                       <span className="font-mono font-black text-amber-900 text-sm">
-                        ₹{Math.max(0, (cashTendered || 0) - totalAmount)}
+                        {formatINR(Math.max(0, (cashTendered || 0) - totalAmount))}
                       </span>
                     </div>
                   </div>
@@ -1177,7 +1177,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
                       className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-sm shadow-emerald-200 transition-all cursor-pointer"
                     >
                       {collectBusy ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                      <span>{payLink ? 'Waiting for verified Razorpay webhook…' : `Create Razorpay pay link for ₹${totalAmount}`}</span>
+                      <span>{payLink ? 'Waiting for verified Razorpay webhook…' : `Create Razorpay pay link for ${formatINR(totalAmount)}`}</span>
                     </button>
                     {showSandboxPay && (
                       <button
@@ -1196,7 +1196,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
                     className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-sm shadow-emerald-200 transition-all cursor-pointer"
                   >
                     {collectBusy ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                    <span>Record {paymentMode} collection of ₹{totalAmount}</span>
+                    <span>Record {paymentMode} collection of {formatINR(totalAmount)}</span>
                   </button>
                 )}
               </div>
@@ -1218,7 +1218,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
                     </div>
                     <div>
                       <span className="text-slate-500 block">Amount Paid:</span>
-                      <strong className="text-emerald-800 font-mono text-sm">₹{totalAmount}</strong>
+                      <strong className="text-emerald-800 font-mono text-sm">{formatINR(totalAmount)}</strong>
                     </div>
                     <div>
                       <span className="text-slate-500 block">GSTIN:</span>

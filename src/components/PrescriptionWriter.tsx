@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { formatINR } from '../../app/applet/src/lib/currency.ts';
 import { apiFetchResponse } from '../api/http';
 import { 
   FileText, 
@@ -1300,7 +1301,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
           </div>
           <div>
             <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Date & Time</span>
-            <span className="font-semibold text-slate-800">{new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
+            <span className="font-semibold text-slate-800">{new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' })}</span>
             <span className="text-slate-500 block text-[11px] font-mono">{rxNumber}</span>
           </div>
           <div>
@@ -1819,7 +1820,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
                   {dentalAssessment.plannedProcedures?.map((p: any, i: number) => (
                     <div key={i} className="text-[11px] bg-white p-1.5 rounded border border-amber-100 flex justify-between">
                       <span>{p.toothNumber ? `Tooth #${p.toothNumber}: ` : ''}{p.procedure}</span>
-                      <span className="font-bold text-amber-800">₹{p.estimatedCost}</span>
+                      <span className="font-bold text-amber-800">{formatINR(p.estimatedCost)}</span>
                     </div>
                   ))}
                 </div>
@@ -2181,7 +2182,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
                 <option value="">+ Add Diagnostic Test...</option>
                 {STANDARD_LAB_TESTS.map((t) => (
                   <option key={t.id} value={t.id}>
-                    {t.testName} (₹{t.price})
+                    {t.testName} ({formatINR(t.price)})
                   </option>
                 ))}
               </select>

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { formatINR } from '../../app/applet/src/lib/currency.ts';
 import { 
   Sparkles, 
   FileText, 
@@ -239,7 +240,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           id: 'dhis' as NavView,
           label: 'DHIS Incentive & Analytics Meter',
           icon: Award,
-          badge: '₹20/tx',
+          badge: `${formatINR(20)}/tx`,
           badgeColor: 'bg-purple-500/20 text-purple-300 border-purple-500/30',
         },
       ],

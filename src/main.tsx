@@ -1,4 +1,5 @@
 import "@vitejs/plugin-react/preamble";
+import "./lib/chartCurrency.ts";
 import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import {PRODUCT_DOCUMENT_TITLE} from './brand';

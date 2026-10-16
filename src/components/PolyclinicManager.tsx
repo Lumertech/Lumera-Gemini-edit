@@ -11,9 +11,9 @@ import {
   Edit3,
   Camera,
   Calendar,
-  IndianRupee,
 } from 'lucide-react';
 import { Doctor, PolyclinicSpecialty } from '../types';
+import { formatINR } from '../../app/applet/src/lib/currency.ts';
 import { DoctorProfileModal } from './DoctorProfileModal';
 
 interface PolyclinicManagerProps {
@@ -78,7 +78,7 @@ export const PolyclinicManager: React.FC<PolyclinicManagerProps> = ({
         <div className="flex items-center gap-3">
           <div className="bg-slate-50 px-3.5 py-1.5 rounded-lg border border-slate-200 text-right">
             <span className="text-[10px] text-slate-500 uppercase tracking-wider block font-medium">Today&apos;s OPD Revenue</span>
-            <strong className="text-sm font-mono font-bold text-blue-700">₹61,450</strong>
+            <strong className="text-sm font-mono font-bold text-blue-700">{formatINR(61450)}</strong>
           </div>
           <div className="bg-slate-50 px-3.5 py-1.5 rounded-lg border border-slate-200 text-right">
             <span className="text-[10px] text-slate-500 uppercase tracking-wider block font-medium">Total Footfall</span>
@@ -109,7 +109,7 @@ export const PolyclinicManager: React.FC<PolyclinicManagerProps> = ({
               
               <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] font-mono">
                 <span className="text-slate-500">{dept.patientsToday} pts</span>
-                <span className="font-bold text-blue-700">₹{dept.revenueToday}</span>
+                <span className="font-bold text-blue-700">{formatINR(dept.revenueToday)}</span>
               </div>
             </button>
           ))}
@@ -220,9 +220,8 @@ export const PolyclinicManager: React.FC<PolyclinicManagerProps> = ({
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-slate-500 text-[11px]">Consultation Fee:</span>
-                    <strong className="text-blue-800 font-bold text-xs flex items-center">
-                      <IndianRupee className="w-3 h-3" />
-                      {doc.consultationFee}
+                    <strong className="text-blue-800 font-bold text-xs">
+                      {formatINR(doc.consultationFee)}
                     </strong>
                   </div>
                 </div>

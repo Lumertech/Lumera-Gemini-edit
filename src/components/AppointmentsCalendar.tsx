@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { formatINR } from '../../app/applet/src/lib/currency.ts';
 import { 
   Calendar as CalendarIcon, 
   Clock, 
@@ -201,7 +202,7 @@ export const AppointmentsCalendar: React.FC<AppointmentsCalendarProps> = ({
 
                   <td className="py-3 px-4">
                     <div className="flex items-center space-x-2">
-                      <span className="font-semibold text-slate-900 font-mono text-xs">₹{apt.consultationFee}</span>
+                      <span className="font-semibold text-slate-900 font-mono text-xs">{formatINR(apt.consultationFee)}</span>
                       <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
                         apt.isPaid ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
                       }`}>
@@ -256,7 +257,7 @@ export const AppointmentsCalendar: React.FC<AppointmentsCalendarProps> = ({
                 >
                   {doctors.map((d) => (
                     <option key={d.id} value={d.id}>
-                      {d.name} ({d.specialty} • ₹{d.consultationFee})
+                      {d.name} ({d.specialty} • {formatINR(d.consultationFee)})
                     </option>
                   ))}
                 </select>

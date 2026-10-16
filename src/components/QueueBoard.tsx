@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { formatINR } from '../../app/applet/src/lib/currency.ts';
 import { 
   Users, 
   Volume2, 
@@ -197,7 +198,7 @@ export const QueueBoard: React.FC<QueueBoardProps> = ({
       heightCm: height,
       bmi: bmiCalc,
       bloodSugarRandom: bloodSugar,
-      recordedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      recordedAt: new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: '2-digit', minute: '2-digit' }),
       recordedBy: 'OPD Nurse',
     };
 
@@ -222,7 +223,7 @@ export const QueueBoard: React.FC<QueueBoardProps> = ({
       doctorName: doc.name,
       specialty: doc.specialty,
       date: activeQueueDate,
-      timeSlot: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      timeSlot: new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: '2-digit', minute: '2-digit' }),
       type: consultType,
       status: 'Triage / Vitals',
       source: 'Walk-in',
@@ -1107,7 +1108,7 @@ export const QueueBoard: React.FC<QueueBoardProps> = ({
                 >
                   {doctors.map((d) => (
                     <option key={d.id} value={d.id}>
-                      {d.name} ({d.specialty} • ₹{d.consultationFee})
+                      {d.name} ({d.specialty} • {formatINR(d.consultationFee)})
                     </option>
                   ))}
                 </select>

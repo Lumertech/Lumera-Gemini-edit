@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Pill, TestTube, ShieldCheck, Send, CheckCircle2, RefreshCw, Truck, Building2, UserCheck, Sparkles } from 'lucide-react';
 import { Patient, Prescription } from '../types';
 import { apiFetch } from '../api/http';
+import { formatINR } from '../../app/applet/src/lib/currency.ts';
 
 interface PharmacyDiagnosticsHubProps {
   currentPatient: Patient;
@@ -229,7 +230,7 @@ export const PharmacyDiagnosticsHub: React.FC<PharmacyDiagnosticsHubProps> = ({
                 </div>
                 <p className="text-[11px] leading-relaxed">{insuranceStatus.message}</p>
                 {insuranceStatus.pmjayEligible && (
-                  <p className="font-bold text-indigo-700 pt-0.5">Cover Limit: ₹5,00,000 Cashless</p>
+                  <p className="font-bold text-indigo-700 pt-0.5">Cover Limit: {formatINR(500000)} Cashless</p>
                 )}
               </div>
             )}

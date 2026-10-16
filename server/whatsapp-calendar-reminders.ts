@@ -128,7 +128,7 @@ function recordOutboundEvent(opts: {
   );
 
   if (opts.conversationContent) {
-    const timeDisplay = new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
+    const timeDisplay = new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "numeric", minute: "2-digit", hour12: true });
     let conv = db
       .prepare(
         `SELECT id, tenant_id FROM whatsapp_conversations
