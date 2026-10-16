@@ -31,5 +31,5 @@ No fake JWT defaults in production. `STRICT_PRODUCTION` / `REQUIRE_PRODUCTION_DB
 
 ## Optional embed / demo flags
 
-- `DEMO_LOGIN_ENABLED` — set to `true` only if the public "Try the demo" / Quick Demo button should mint a session for the seeded clinician. Off by default. The app does not auto-login on page load.
+- `DEMO_LOGIN_ENABLED` — set to `true` only if the public "Try the demo" / Quick Demo button should mint a session for the seeded clinician. Off by default. The app does not auto-login on page load. Sunrise video logins are repaired on boot only while this flag is on; with it off, boot does not move those emails or rewrite their password hashes.
 - `FRAME_ANCESTORS` — space-separated CSP allowlist when the app must be embedded (for example `https://aistudio.google.com https://ai.studio`). Unset stays `frame-ancestors 'none'` plus `X-Frame-Options: DENY`. Do not set `*`.

@@ -56,6 +56,7 @@ function freshPasswords(): { doctor: string; reception: string } {
 
 function passwordEnv(passwords: { doctor: string; reception: string }): NodeJS.ProcessEnv {
   return {
+    DEMO_LOGIN_ENABLED: "true",
     SUNRISE_DOCTOR_PASSWORD: passwords.doctor,
     SUNRISE_RECEPTION_PASSWORD: passwords.reception,
   };
@@ -309,7 +310,7 @@ describe("Sunrise clinic seed", () => {
         passwordHash: existingHash,
         name: "Dr. Ananya Sunrise",
       });
-      ensureSunriseClinic(db, { NODE_ENV: "production" });
+      ensureSunriseClinic(db, { NODE_ENV: "production", DEMO_LOGIN_ENABLED: "true" });
       const row = db.prepare("SELECT tenant_id, role, password_hash FROM users WHERE email = ?").get("ananya.sunrise@lumera.me") as {
         tenant_id: string;
         role: string;
@@ -331,8 +332,114 @@ describe("Sunrise clinic seed", () => {
     }
   });
 
+  it("is a no-op when demo login is off, including production with secrets set", () => {
+    const passwords = freshPasswords();
+    const existingHash = hashPassword(`kept-${randomBytes(6).toString("hex")}`);
+    const flags: Array<string | undefined> = [undefined, "", "false", "0", "no", "off"];
+    for (const flag of flags) {
+      const { db, close } = openSqlite();
+      const warnings: string[] = [];
+      const originalWarn = console.warn;
+      console.warn = (message?: unknown) => {
+        warnings.push(String(message ?? ""));
+      };
+      try {
+        migrate(db);
+        seedUnrelated(db);
+        insertTenant(db, DEMO_TENANT_ID, "Lumera Apex PolyClinic");
+        insertUser(db, {
+          id: "user-sunrise-ananya",
+          email: "ananya.sunrise@lumera.me",
+          tenantId: DEMO_TENANT_ID,
+          role: "receptionist",
+          passwordHash: existingHash,
+          name: "Dr. Ananya Sunrise",
+        });
+        const before = snapshot(db);
+        const env: NodeJS.ProcessEnv = {
+          NODE_ENV: "production",
+          SUNRISE_DOCTOR_PASSWORD: passwords.doctor,
+          SUNRISE_RECEPTION_PASSWORD: passwords.reception,
+          SUNRISE_PASSWORD: passwords.doctor,
+        };
+        if (flag !== undefined) env.DEMO_LOGIN_ENABLED = flag;
+        ensureSunriseClinic(db, env);
+        ensureSunriseClinic(db, { ...env, NODE_ENV: "test" });
+        const after = snapshot(db);
+        assert.deepEqual(after, before, `flag ${JSON.stringify(flag)}`);
+        assert.equal(after.users.length, 1, `flag ${JSON.stringify(flag)}`);
+        assert.equal(after.users[0].tenant_id, DEMO_TENANT_ID);
+        assert.equal(after.users[0].role, "receptionist");
+        assert.equal(after.users[0].password_hash, existingHash);
+        assert.equal(after.tenant, undefined);
+        const reception = db.prepare("SELECT id FROM users WHERE email = ?").get("reception.sunrise@lumera.me") as { id?: string } | undefined;
+        assert.equal(reception, undefined);
+        assert.equal(warnings.length, 0);
+        assert.equal(after.unrelatedUser.password_hash, before.unrelatedUser.password_hash);
+        assert.equal(after.quarantine.id, WHATSAPP_QUARANTINE_TENANT_ID);
+      } finally {
+        console.warn = originalWarn;
+        close();
+      }
+    }
+  });
+
+  it("writes a password hash only for a new user or a hash that does not verify", () => {
+    const passwords = freshPasswords();
+    const env = passwordEnv(passwords);
+    const { db, close } = openSqlite();
+    try {
+      migrate(db);
+      const verifying = hashPassword(passwords.doctor);
+      insertUser(db, {
+        id: "user-sunrise-ananya",
+        email: "ananya.sunrise@lumera.me",
+        tenantId: SUNRISE_TENANT_ID,
+        role: "doctor",
+        passwordHash: verifying,
+        name: "Dr. Ananya Sunrise",
+      });
+      insertTenant(db, SUNRISE_TENANT_ID, SUNRISE_TENANT_NAME);
+      ensureSunriseClinic(db, env);
+      const doctor = db.prepare("SELECT password_hash, tenant_id, role FROM users WHERE email = ?").get("ananya.sunrise@lumera.me") as {
+        password_hash: string;
+        tenant_id: string;
+        role: string;
+      };
+      assert.equal(doctor.password_hash, verifying);
+      assert.equal(doctor.tenant_id, SUNRISE_TENANT_ID);
+      assert.equal(doctor.role, "doctor");
+      const created = db.prepare("SELECT password_hash FROM users WHERE email = ?").get("reception.sunrise@lumera.me") as {
+        password_hash: string;
+      };
+      assert.equal(verifyPassword(passwords.reception, created.password_hash), true);
+      const createdHash = created.password_hash;
+      ensureSunriseClinic(db, env);
+      const createdAgain = db.prepare("SELECT password_hash FROM users WHERE email = ?").get("reception.sunrise@lumera.me") as {
+        password_hash: string;
+      };
+      assert.equal(createdAgain.password_hash, createdHash);
+      const stale = hashPassword(`stale-${randomBytes(6).toString("hex")}`);
+      db.prepare("UPDATE users SET password_hash = ? WHERE email = ?").run(stale, "reception.sunrise@lumera.me");
+      ensureSunriseClinic(db, env);
+      const repaired = db.prepare("SELECT password_hash FROM users WHERE email = ?").get("reception.sunrise@lumera.me") as {
+        password_hash: string;
+      };
+      assert.notEqual(repaired.password_hash, stale);
+      assert.equal(verifyPassword(passwords.reception, repaired.password_hash), true);
+      const doctorAfter = db.prepare("SELECT password_hash FROM users WHERE email = ?").get("ananya.sunrise@lumera.me") as {
+        password_hash: string;
+      };
+      assert.equal(doctorAfter.password_hash, verifying);
+    } finally {
+      close();
+    }
+  });
+
   it("logs in after the quarantine seed path moved Sunrise onto the demo tenant", async () => {
     clearPasswordEnv();
+    const prevDemo = process.env.DEMO_LOGIN_ENABLED;
+    process.env.DEMO_LOGIN_ENABLED = "true";
     if (!process.env.JWT_SECRET) process.env.JWT_SECRET = "test-jwt-secret-sunrise-seed";
     const passwords = freshPasswords();
     process.env.SUNRISE_DOCTOR_PASSWORD = passwords.doctor;
@@ -414,6 +521,8 @@ describe("Sunrise clinic seed", () => {
     } finally {
       if (prevNodeEnv === undefined) delete process.env.NODE_ENV;
       else process.env.NODE_ENV = prevNodeEnv;
+      if (prevDemo === undefined) delete process.env.DEMO_LOGIN_ENABLED;
+      else process.env.DEMO_LOGIN_ENABLED = prevDemo;
       clearPasswordEnv();
       await server.close();
     }

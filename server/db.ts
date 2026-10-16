@@ -182,9 +182,9 @@ export function initDatabase(): DatabaseSync {
   seedPlatformTenantData(db);
   ensureDemoWorkspaceTenants(db);
   backfillWhatsAppTenantIds(db);
-  // After clinic seed. migrate() inserts the WhatsApp quarantine tenant first;
-  // this repair is not gated on tenant count, and it runs after the blank-tenant
-  // demo assignment so Sunrise emails are not left on tenant-lumera-main.
+  // After clinic seed. migrate() inserts the WhatsApp quarantine tenant first.
+  // The repair itself returns immediately unless DEMO_LOGIN_ENABLED is on, so a
+  // production boot with demo login off does not move these emails or rewrite hashes.
   ensureSunriseClinic(db);
   return db as DatabaseSync;
 }

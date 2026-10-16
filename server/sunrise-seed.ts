@@ -1,4 +1,4 @@
-import { isUnsetOrPlaceholder } from "./runtime.ts";
+import { demoLoginEnabled, isUnsetOrPlaceholder } from "./runtime.ts";
 import type { SqlDatabase, SqlRunResult } from "./sql-engine.ts";
 import { hashPassword, verifyPassword } from "./password.ts";
 import { SUNRISE_TENANT_ID } from "./tenant-slug.ts";
@@ -8,6 +8,7 @@ import { SUNRISE_TENANT_ID } from "./tenant-slug.ts";
  * Passwords come from the process environment through the same placeholder
  * rules as `readSecret` (empty and replace-with-* values are ignored).
  * There is no hardcoded fallback.
+ * `ensureSunriseClinic` runs only while `demoLoginEnabled()` is true.
  */
 export const SUNRISE_LOGIN_EMAILS = ["ananya.sunrise@lumera.me", "reception.sunrise@lumera.me"] as const;
 
@@ -230,13 +231,17 @@ function placeExistingUser(database: SqlDatabase, account: SunriseAccount, row: 
 }
 
 /**
- * Idempotent Sunrise clinic repair.
- * Creates tenant-543feff7 when it is missing and does not rewrite an existing tenant row.
- * Places the two video logins on that tenant with their roles.
- * Sets a password only from SUNRISE_* env vars, and only when the stored hash does not already match.
+ * Idempotent Sunrise clinic repair for the sandbox demo.
+ * No-op unless `DEMO_LOGIN_ENABLED` is on, including production with demo login off:
+ * it does not insert the tenant, move these emails, or write password hashes.
+ * When the flag is on, creates tenant-543feff7 only when it is missing and does not
+ * rewrite an existing tenant row. Places the two video logins on that tenant.
+ * Sets a password only from SUNRISE_* env vars, and only when the user is new or
+ * the stored hash does not verify against that secret. A verifying hash is left as stored.
  * Leaves every other user, tenant, and the WhatsApp quarantine row alone.
  */
 export function ensureSunriseClinic(database: SqlDatabase, env: NodeJS.ProcessEnv = process.env): void {
+  if (!demoLoginEnabled(env)) return;
   const now = new Date().toISOString();
   const existingTenant = database.prepare("SELECT id FROM tenants WHERE id = ?").get(SUNRISE_TENANT_ID) as { id?: string } | undefined;
   if (!existingTenant?.id) insertSunriseTenant(database, now);
@@ -259,6 +264,7 @@ export function ensureSunriseClinic(database: SqlDatabase, env: NodeJS.ProcessEn
     placeExistingUser(database, account, row);
     if (!password) continue;
     row = findUser(database, account.email) || row;
+    // Rehash only when the stored hash does not verify. A match keeps the existing salt.
     if (passwordMatches(password, row.password_hash)) continue;
     database.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(hashPassword(password), row.id);
   }
