@@ -142,6 +142,7 @@ describe("ABDM identity AuthZ", () => {
   let port = 0;
   let close: (() => Promise<void>) | undefined;
   const realFetch = globalThis.fetch;
+  const previousAbdmMode = process.env.ABDM_MODE;
 
   before(async () => {
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -167,6 +168,8 @@ describe("ABDM identity AuthZ", () => {
 
   after(async () => {
     globalThis.fetch = realFetch;
+    if (previousAbdmMode === undefined) delete process.env.ABDM_MODE;
+    else process.env.ABDM_MODE = previousAbdmMode;
     try {
       for (const tenantId of createdTenantIds) purgeTenant(tenantId);
       purgeIdentityFixtures();
