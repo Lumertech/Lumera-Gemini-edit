@@ -155,13 +155,35 @@ describe("health document consent gate", () => {
 
     const audits = getDb()
       .prepare(
-        `SELECT action, tenant_id, patient_id, actor_role, entity_type FROM audit_logs
+        `SELECT action, timestamp, details, tenant_id, patient_id, actor_role, entity_type FROM audit_logs
          WHERE patient_id = ? AND action LIKE 'patient_document_consent.%'`
       )
-      .all(patientId) as Array<{ action: string; tenant_id: string; patient_id: string; actor_role: string; entity_type: string }>;
+      .all(patientId) as Array<{
+        action: string;
+        timestamp: string;
+        details: string;
+        tenant_id: string;
+        patient_id: string;
+        actor_role: string;
+        entity_type: string;
+      }>;
     assert.equal(audits.length >= 2, true);
     assert.equal(audits.every((row) => row.tenant_id === doctor.tenantId && row.patient_id === patientId), true);
     assert.equal(audits.every((row) => row.actor_role === "doctor" && row.entity_type === "patient_health_document_consent"), true);
+    assert.equal(
+      audits.every((row) => /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(row.timestamp)),
+      true
+    );
+    const grant = audits.find((row) => row.action === "patient_document_consent.granted");
+    assert.ok(grant);
+    const grantDetails = JSON.parse(grant.details) as {
+      language?: string;
+      guardianName?: string;
+      guardianRelation?: string;
+    };
+    assert.equal(grantDetails.language, "hi");
+    assert.equal(grantDetails.guardianName, "");
+    assert.equal(grantDetails.guardianRelation, "");
   });
 
   it("requires a guardian for a minor and denies super_admin", async () => {
@@ -198,6 +220,21 @@ describe("health document consent gate", () => {
       auth
     );
     assert.equal(granted.status, 201, String(granted.json.error || ""));
+    const grantAudit = getDb()
+      .prepare(
+        `SELECT details, timestamp FROM audit_logs
+         WHERE patient_id = ? AND action = 'patient_document_consent.granted'`
+      )
+      .get(patientId) as { details: string; timestamp: string };
+    const minorGrant = JSON.parse(grantAudit.details) as {
+      language?: string;
+      guardianName?: string;
+      guardianRelation?: string;
+    };
+    assert.equal(minorGrant.language, "en");
+    assert.equal(minorGrant.guardianName, "Lata Rao");
+    assert.equal(minorGrant.guardianRelation, "Mother");
+    assert.match(grantAudit.timestamp, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
     const saved = await upload(token, patientId);
     assert.equal(saved.status, 201, String(saved.json.error || ""));
 
@@ -215,5 +252,40 @@ describe("health document consent gate", () => {
     });
     assert.equal(deniedConsent.status, 403);
     assert.equal(JSON.stringify(deniedConsent.json).includes("Lata"), false);
+  });
+
+  it("refuses consent capture when the tenant clinic name is blank", async () => {
+    const doctor = createClinicUser("consent-noname", "doctor");
+    getDb().prepare("UPDATE tenants SET name = '' WHERE id = ?").run(doctor.tenantId);
+    const token = await login(doctor.email);
+    const auth = { Authorization: `Bearer ${token}` };
+    const created = await jsonRequest(
+      port,
+      "POST",
+      "/api/patients",
+      { name: "No Clinic Name", phone: "+91 98111 77703", age: 40, gender: "Female" },
+      auth
+    );
+    assert.equal(created.status, 201, String(created.json.error || ""));
+    const patientId = String((created.json.patient as { id: string }).id);
+    const notice = await jsonRequest(port, "GET", `/api/patients/${patientId}/document-consent`, undefined, auth);
+    assert.equal(notice.status, 200);
+    assert.equal(notice.json.clinicName, "");
+    assert.equal(notice.json.clinicNameSet, false);
+    assert.equal(String((notice.json.notices as { en: { body: string } }).en.body).includes("This clinic"), false);
+    const blocked = await jsonRequest(
+      port,
+      "POST",
+      `/api/patients/${patientId}/document-consent`,
+      { language: "en", method: "in_app", attested: true },
+      auth
+    );
+    assert.equal(blocked.status, 400);
+    assert.equal(blocked.json.code, "CLINIC_NAME_REQUIRED");
+    assert.match(String(blocked.json.error), /clinic name/i);
+    const rows = getDb()
+      .prepare("SELECT id FROM patient_health_document_consents WHERE patient_id = ?")
+      .all(patientId);
+    assert.equal(rows.length, 0);
   });
 });

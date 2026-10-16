@@ -1,8 +1,7 @@
 /**
  * Health-document storage notice v1.
  * English body is the Compliance paste from #116, with the clinic name substituted.
- * Hindi is the paired v1 translation of that same paragraph (the issue comment
- * asked for a Hindi option and did not paste a separate Hindi text).
+ * Hindi is the Compliance paragraph. A native Hindi speaker must check it before production.
  * Other Eighth Schedule languages can be added beside these two without a new purpose.
  */
 
@@ -23,15 +22,21 @@ export type HealthDocumentConsentMethod = (typeof HEALTH_DOCUMENT_CONSENT_METHOD
 export type HealthDocumentNoticeLanguage = "en" | "hi";
 
 export const HEALTH_DOCUMENT_NOTICE_EN_TITLE = "Storing your medical reports";
-export const HEALTH_DOCUMENT_NOTICE_HI_TITLE = "आपकी चिकित्सा रिपोर्ट का संग्रह";
+export const HEALTH_DOCUMENT_NOTICE_HI_TITLE = "आपकी मेडिकल रिपोर्ट रखने के बारे में";
 
 const PRIVACY_URL = "https://www.mylumera.in/privacy-policy";
 const PRIVACY_EMAIL = "ravee@lumer.me";
 
-/** Never invent "Lumera" as the clinic. Blank names become a neutral phrase. */
+/** Shown to staff when the tenant has no clinic name. Consent capture stays blocked. */
+export const CLINIC_NAME_REQUIRED_MESSAGE =
+  "Set the clinic name in clinic settings before recording consent. The notice must name this clinic.";
+
+/** Hindi-only stand-in. Never use an English placeholder such as "This clinic". */
+const HINDI_CLINIC_NAME_FALLBACK = "यह क्लिनिक";
+
+/** Trimmed tenant clinic name. Blank stays blank so consent capture can be refused. */
 export function clinicNameForNotice(raw: string | null | undefined): string {
-  const name = String(raw || "").replace(/\s+/g, " ").trim().slice(0, 120);
-  return name || "This clinic";
+  return String(raw || "").replace(/\s+/g, " ").trim().slice(0, 120);
 }
 
 export function healthDocumentNoticeTitle(language: HealthDocumentNoticeLanguage): string {
@@ -39,9 +44,12 @@ export function healthDocumentNoticeTitle(language: HealthDocumentNoticeLanguage
 }
 
 export function healthDocumentNoticeBody(language: HealthDocumentNoticeLanguage, clinicName: string): string {
-  const clinic = clinicNameForNotice(clinicName);
+  const trimmed = clinicNameForNotice(clinicName);
+  const clinic = trimmed || (language === "hi" ? HINDI_CLINIC_NAME_FALLBACK : "");
+  if (!clinic) throw new Error(CLINIC_NAME_REQUIRED_MESSAGE);
   if (language === "hi") {
-    return `${clinic} आपके द्वारा साझा की गई चिकित्सा रिपोर्ट (फ़ोटो या PDF) आपके रोगी रिकॉर्ड में रखेगा, ताकि आपके डॉक्टर और क्लिनिक के कर्मचारी आपकी देखभाल के लिए उनका उपयोग कर सकें। इन्हें Lumera सुरक्षित रूप से संग्रहित करता है, जो वह सॉफ़्टवेयर है जिसका यह क्लिनिक उपयोग करता है, और ये केवल इस क्लिनिक के अधिकृत कर्मचारियों को दिखाई देती हैं। हम इन्हें तब तक रखते हैं जब तक चिकित्सा रिकॉर्ड के नियम आवश्यक करते हैं, फिर हटा देते हैं। आप क्लिनिक को बताकर किसी भी समय सहमति वापस ले सकते हैं; उसके बाद नई रिपोर्ट संग्रहित नहीं की जाएँगी। प्रश्नों या शिकायतों के लिए क्लिनिक से संपर्क करें। Lumera डेटा कैसे संभालता है, इसके लिए ${PRIVACY_URL} देखें या ${PRIVACY_EMAIL} पर लिखें।`;
+    // A native Hindi speaker must check this text before production.
+    return `${clinic} आपकी दी हुई मेडिकल रिपोर्ट (फ़ोटो या PDF) आपके मरीज़ रिकॉर्ड में रखेगा, ताकि आपके डॉक्टर और क्लिनिक का स्टाफ़ आपके इलाज के लिए उनका इस्तेमाल कर सकें। ये रिपोर्ट Lumera में सुरक्षित रूप से सेव की जाती हैं। Lumera वह सॉफ़्टवेयर है जिसे यह क्लिनिक इस्तेमाल करता है। इन्हें सिर्फ़ इस क्लिनिक के वही कर्मचारी देख सकते हैं जिन्हें इसकी अनुमति है। मेडिकल रिकॉर्ड के नियमों के अनुसार जितने समय तक ज़रूरी हो, हम इन्हें रखते हैं, उसके बाद इन्हें मिटा देते हैं। आप कभी भी क्लिनिक को बताकर अपनी सहमति वापस ले सकते हैं; इसके बाद आपकी कोई नई रिपोर्ट सेव नहीं की जाएगी। किसी सवाल या शिकायत के लिए क्लिनिक से संपर्क करें। Lumera आपका डेटा कैसे संभालता है, यह जानने के लिए ${PRIVACY_URL} देखें या ${PRIVACY_EMAIL} पर लिखें।`;
   }
   return `${clinic} will store the medical reports you share (photos or PDFs) in your patient record so your doctor and clinic staff can use them for your care. They are stored securely by Lumera, the software the clinic uses, and are visible only to authorised staff at this clinic. We keep them as long as medical record rules require, then delete them. You can withdraw consent at any time by telling the clinic; new reports will then not be stored. For questions or complaints, contact the clinic. For how Lumera handles data, see ${PRIVACY_URL} or write to ${PRIVACY_EMAIL}.`;
 }
@@ -50,14 +58,21 @@ export function healthDocumentNotices(clinicName: string): Record<
   HealthDocumentNoticeLanguage,
   { title: string; body: string }
 > {
+  const clinic = clinicNameForNotice(clinicName);
+  if (!clinic) {
+    return {
+      en: { title: healthDocumentNoticeTitle("en"), body: "" },
+      hi: { title: healthDocumentNoticeTitle("hi"), body: "" },
+    };
+  }
   return {
     en: {
       title: healthDocumentNoticeTitle("en"),
-      body: healthDocumentNoticeBody("en", clinicName),
+      body: healthDocumentNoticeBody("en", clinic),
     },
     hi: {
       title: healthDocumentNoticeTitle("hi"),
-      body: healthDocumentNoticeBody("hi", clinicName),
+      body: healthDocumentNoticeBody("hi", clinic),
     },
   };
 }

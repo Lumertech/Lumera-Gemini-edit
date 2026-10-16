@@ -14,6 +14,7 @@ import {
   HEALTH_DOCUMENT_NOTICE_VERSION,
   HEALTH_DOCUMENT_PURPOSE,
   HEALTH_DOCUMENT_RETENTION_YEARS_PLACEHOLDER,
+  CLINIC_NAME_REQUIRED_MESSAGE,
   clinicNameForNotice,
   healthDocumentNotices,
   isHealthDocumentConsentMethod,
@@ -23,6 +24,7 @@ import {
 
 export const CONSENT_REQUIRED_CODE = "CONSENT_REQUIRED";
 export const GUARDIAN_REQUIRED_CODE = "GUARDIAN_REQUIRED";
+export const CLINIC_NAME_REQUIRED_CODE = "CLINIC_NAME_REQUIRED";
 
 export type ConsentEventRow = {
   id: string;
@@ -115,20 +117,26 @@ function publicEvent(row: ConsentEventRow) {
   };
 }
 
-function auditConsent(req: Request, action: string, tenantId: string, patientId: string, eventId: string) {
-  writeAudit(getDb(), req.user?.id || null, req.user?.name || "Staff", action, JSON.stringify({
+function auditConsent(req: Request, action: string, tenantId: string, patientId: string, row: ConsentEventRow) {
+  const details: Record<string, string> = {
     tenantId,
     patientId,
     entityType: "patient_health_document_consent",
-    entityId: eventId,
+    entityId: row.id,
     purpose: HEALTH_DOCUMENT_PURPOSE,
     noticeVersion: HEALTH_DOCUMENT_NOTICE_VERSION,
-  }), {
+    language: row.language,
+  };
+  if (row.event === "granted") {
+    details.guardianName = row.guardian_name || "";
+    details.guardianRelation = row.guardian_relation || "";
+  }
+  writeAudit(getDb(), req.user?.id || null, req.user?.name || "Staff", action, JSON.stringify(details), {
     tenantId,
     patientId,
     actorRole: String(req.user?.role || ""),
     entityType: "patient_health_document_consent",
-    entityId: eventId,
+    entityId: row.id,
   });
 }
 
@@ -143,6 +151,7 @@ export function consentStatus(tenantId: string, patientId: string) {
     purpose: HEALTH_DOCUMENT_PURPOSE,
     noticeVersion: HEALTH_DOCUMENT_NOTICE_VERSION,
     clinicName,
+    clinicNameSet: clinicName.length > 0,
     minor,
     active: consentIsActive(latest, minor),
     retentionYears: retentionYearsForTenant(tenantId),
@@ -259,6 +268,12 @@ export function registerPatientDocumentConsentRoutes(api: Router) {
       if (consentIsActive(latest, minor)) {
         return res.json({ consent: publicEvent(latest!), status: consentStatus(tenantId, req.params.id) });
       }
+      if (!clinicNameForTenant(tenantId)) {
+        return res.status(400).json({
+          error: CLINIC_NAME_REQUIRED_MESSAGE,
+          code: CLINIC_NAME_REQUIRED_CODE,
+        });
+      }
       const row = insertEvent({
         tenantId,
         patientId: req.params.id,
@@ -271,7 +286,7 @@ export function registerPatientDocumentConsentRoutes(api: Router) {
         guardianName,
         guardianRelation,
       });
-      auditConsent(req, "patient_document_consent.granted", tenantId, req.params.id, row.id);
+      auditConsent(req, "patient_document_consent.granted", tenantId, req.params.id, row);
       res.status(201).json({ consent: publicEvent(row), status: consentStatus(tenantId, req.params.id) });
     } catch (err) {
       const status = typeof err === "object" && err && "status" in err ? Number((err as { status: number }).status) : 500;
@@ -304,7 +319,7 @@ export function registerPatientDocumentConsentRoutes(api: Router) {
         guardianName: "",
         guardianRelation: "",
       });
-      auditConsent(req, "patient_document_consent.withdrawn", tenantId, req.params.id, row.id);
+      auditConsent(req, "patient_document_consent.withdrawn", tenantId, req.params.id, row);
       res.status(201).json({ consent: publicEvent(row), status: consentStatus(tenantId, req.params.id) });
     } catch (err) {
       reportCaughtError(err, "consent.withdraw");

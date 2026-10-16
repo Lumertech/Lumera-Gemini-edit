@@ -4,6 +4,7 @@ import { apiFetch } from "../api/http";
 import { PatientDocuments } from "./PatientDocuments";
 import { type DocumentConsentStatus } from "./PatientDocumentConsentDialog";
 import { PatientTimeline, type PatientTimelineItem, type TimelineLinkView } from "./PatientTimeline";
+import { CLINIC_NAME_REQUIRED_MESSAGE } from "../lib/healthDocumentNotice";
 import { isAbhaLinked, type Appointment, type Patient, type Prescription } from "../types";
 
 interface ChartResponse {
@@ -379,6 +380,11 @@ const PatientDetail: React.FC<{
             {consent && !consent.active && consent.latest?.event === "withdrawn" && (
               <p className="text-xs text-slate-700 break-words" data-testid="consent-withdrawn-note">
                 Consent withdrawn. Existing reports stay for the retention period ({consent.retentionYears} years, pending confirmation). New reports will not be stored.
+              </p>
+            )}
+            {consent && consent.clinicNameSet === false && (
+              <p className="text-xs text-rose-800 break-words" role="alert" data-testid="clinic-name-required">
+                {CLINIC_NAME_REQUIRED_MESSAGE}
               </p>
             )}
             {consentError && (

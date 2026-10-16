@@ -287,6 +287,7 @@ export const PatientDocuments: React.FC<{
           setConsentOpen(true);
           return;
         }
+        // Missing consent is 409. A 403 opens this dialog only when the body carries a consent code, so a CSRF 403 does not.
         if (res.status === 403 && (code === "CONSENT_REQUIRED" || code === "GUARDIAN_REQUIRED")) {
           updatePending(item.key, { uploading: false, error: "" });
           pendingAction.current = () => {

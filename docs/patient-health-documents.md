@@ -26,7 +26,7 @@ Deep links are existing views: appointments, prescription studio (prescribers on
 
 ## Consent
 
-Purpose `health_document_storage`, notice version `v1`. English text is the Compliance paste. Hindi is the paired translation of that paragraph. The clinic name is the tenant name, never a hardcoded "Lumera".
+Purpose `health_document_storage`, notice version `v1`. English text is the Compliance paste. Hindi is the Compliance paragraph; a native Hindi speaker must check it before production. The clinic name is the tenant name. A blank tenant name blocks consent capture with **400** `{ "code": "CLINIC_NAME_REQUIRED" }` and the message to set the clinic name in clinic settings. The notice is not filled with an English placeholder.
 
 `GET /api/patients/:id/document-consent`
 
@@ -42,7 +42,7 @@ A patient under 18 (date of birth, or age when date of birth is empty) requires 
 
 `POST /api/patients/:id/document-consent/withdraw` appends a withdrawal row. It does not erase stored files.
 
-History is insert-only.
+The `patient_health_document_consents` table is append-only by convention: application code only inserts grant and withdrawal rows. A database trigger or a role restriction that rejects UPDATE and DELETE is a follow-up.
 
 ## Upload
 
@@ -50,7 +50,7 @@ History is insert-only.
 
 Types: `lab_report`, `prescription`, `discharge_summary`, `imaging`, `other`.
 
-Magic bytes: PDF, JPEG, PNG, HEIC. **10 MB per file.** Without an active v1 consent the response is **409** `{ "code": "CONSENT_REQUIRED" }` or `{ "code": "GUARDIAN_REQUIRED" }` and no bytes are stored. A 403 with the same code means the same gate.
+Magic bytes: PDF, JPEG, PNG, HEIC. **10 MB per file.** Without an active v1 consent the server always returns **409** `{ "code": "CONSENT_REQUIRED" }` or `{ "code": "GUARDIAN_REQUIRED" }` and stores no bytes.
 
 `GET /api/patients/:id/documents` returns metadata plus `storage.available`. When production has no `PATIENT_DOCS_GCS_BUCKET`, `storage.available` is false, upload and read return **503**, and nothing is written to local disk.
 
@@ -60,13 +60,13 @@ Magic bytes: PDF, JPEG, PNG, HEIC. **10 MB per file.** Without an active v1 cons
 
 ## Audit
 
-`audit_logs` rows for upload, view, delete, consent granted, and consent withdrawn include `tenant_id`, `patient_id`, `actor_role`, `entity_type`, and `entity_id`.
+`audit_logs` rows for upload, view, delete, consent granted, and consent withdrawn include `tenant_id`, `patient_id`, `actor_role`, `entity_type`, and `entity_id`. `timestamp` is a UTC ISO-8601 string. A consent grant also records `language`, `guardianName`, and `guardianRelation` in `details`.
 
 ## Retention
 
 In-app delete is a soft delete and hides the file immediately.
 
-`tenants.health_document_retention_years` defaults to **3** (the compliance floor). Withdrawal does not force immediate erasure. A purge job is not in this change. Founder confirmation is still required before real tenants.
+The purge job is still open. `tenants.health_document_retention_years` defaults to **3** years, and that default is waiting on the founder to confirm before real tenants. Withdrawal does not force immediate erasure.
 
 ## Not in this contract
 

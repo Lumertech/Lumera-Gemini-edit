@@ -1,11 +1,17 @@
 import React, { useEffect, useId, useState } from "react";
 import { apiFetch } from "../api/http";
-import { consentMethodLabel, type HealthDocumentConsentMethod, type HealthDocumentNoticeLanguage } from "../lib/healthDocumentNotice";
+import {
+  CLINIC_NAME_REQUIRED_MESSAGE,
+  consentMethodLabel,
+  type HealthDocumentConsentMethod,
+  type HealthDocumentNoticeLanguage,
+} from "../lib/healthDocumentNotice";
 
 export interface DocumentConsentStatus {
   active: boolean;
   minor: boolean;
   clinicName: string;
+  clinicNameSet?: boolean;
   retentionYears: number;
   notices: {
     en: { title: string; body: string };
@@ -38,6 +44,7 @@ export const PatientDocumentConsentDialog: React.FC<{
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const notice = status.notices[language];
+  const clinicNameMissing = status.clinicNameSet === false || !status.clinicName.trim();
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -49,6 +56,10 @@ export const PatientDocumentConsentDialog: React.FC<{
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
+    if (clinicNameMissing) {
+      setError(CLINIC_NAME_REQUIRED_MESSAGE);
+      return;
+    }
     if (!attested || !method) {
       setError("Show the notice, confirm agreement, and choose how it was given.");
       return;
@@ -112,9 +123,15 @@ export const PatientDocumentConsentDialog: React.FC<{
             </button>
           </div>
         </div>
-        <p className="text-sm text-slate-800 whitespace-pre-wrap break-words" data-testid="health-document-notice-body">
-          {notice.body}
-        </p>
+        {clinicNameMissing ? (
+          <p className="text-sm text-rose-800 break-words" role="alert" data-testid="clinic-name-required">
+            {CLINIC_NAME_REQUIRED_MESSAGE}
+          </p>
+        ) : (
+          <p className="text-sm text-slate-800 whitespace-pre-wrap break-words" data-testid="health-document-notice-body">
+            {notice.body}
+          </p>
+        )}
         <label className="block text-xs font-semibold text-slate-600">
           How consent was given
           <select
@@ -175,7 +192,7 @@ export const PatientDocumentConsentDialog: React.FC<{
           </button>
           <button
             type="submit"
-            disabled={saving}
+            disabled={saving || clinicNameMissing}
             className="px-3 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold disabled:opacity-50"
           >
             {saving ? "Saving…" : "Record consent"}

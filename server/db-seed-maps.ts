@@ -532,6 +532,11 @@ export function findDataDeletionRequest(
     .get(confirmationCode) as DataDeletionRequestRow | undefined;
 }
 
+/** UTC ISO-8601 with a Z suffix. Audit rows never store local wall time. */
+export function utcIsoTimestamp(now = new Date()): string {
+  return now.toISOString();
+}
+
 export function writeAudit(
   database: SqlDatabase,
   userId: string | null,
@@ -554,7 +559,7 @@ export function writeAudit(
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     crypto.randomUUID(),
-    new Date().toISOString(),
+    utcIsoTimestamp(),
     userId,
     userName,
     action,
