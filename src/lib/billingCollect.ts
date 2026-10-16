@@ -77,6 +77,9 @@ export type PersistedInvoice = {
   receiptWhatsAppChannel?: string;
   receiptWhatsAppStatus?: string;
   receiptWhatsAppMessageId?: string;
+  issuedBy?: string;
+  consultingDoctorId?: string;
+  consultingDoctorName?: string;
 };
 
 export type ReceiptDispatchResult = {

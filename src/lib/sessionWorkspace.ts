@@ -47,8 +47,40 @@ export function resolveSessionDoctor(user: AppUser | null | undefined, doctors: 
   return doctorFromUser(user);
 }
 
+/** Desk and admin accounts are not consulting doctors. A linked doctor row still resolves in resolveSessionDoctor. */
+const NON_CONSULTING_ROLES = new Set<UserRole>([
+  "receptionist",
+  "polyclinic_admin",
+  "CLINIC_ADMIN",
+  "super_admin",
+  "patient",
+]);
+
+function emptyDoctor(): Doctor {
+  return {
+    id: "",
+    userId: null,
+    name: "",
+    qualification: "",
+    regNumber: "",
+    specialty: "General Medicine",
+    experienceYears: 0,
+    consultationFee: 0,
+    opdRoom: "",
+    availableDays: [],
+    opdTiming: "",
+    phone: "",
+    email: "",
+    hprId: "",
+    active: false,
+    slotDurationMinutes: 15,
+    rxTemplate: "classic",
+  };
+}
+
 export function doctorFromUser(user: AppUser | null | undefined, fallback?: Doctor | null): Doctor {
   if (fallback && fallback.id && user?.id && fallback.userId === user.id) return fallback;
+  if (user?.role && NON_CONSULTING_ROLES.has(user.role)) return emptyDoctor();
   const name = displayDoctorName(user?.name) || "Clinician";
   return {
     id: user?.id ? `session-${user.id}` : "session-doctor",

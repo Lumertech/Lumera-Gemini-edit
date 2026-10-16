@@ -1,6 +1,8 @@
+import { clinicCalendarDate } from "../src/lib/clinicDay.ts";
 import { demoLoginEnabled, isUnsetOrPlaceholder } from "./runtime.ts";
 import type { SqlDatabase, SqlRunResult } from "./sql-engine.ts";
 import { hashPassword, verifyPassword } from "./password.ts";
+import { tableExists } from "./sql-catalog.ts";
 import { SUNRISE_TENANT_ID } from "./tenant-slug.ts";
 
 /**
@@ -239,6 +241,8 @@ function placeExistingUser(database: SqlDatabase, account: SunriseAccount, row: 
  * Sets a password only from SUNRISE_* env vars, and only when the user is new or
  * the stored hash does not verify against that secret. A verifying hash is left as stored.
  * Leaves every other user, tenant, and the WhatsApp quarantine row alone.
+ * For this tenant only, drops drafts older than 24 hours or tied to a completed
+ * or missing visit, and marks past In Consultation visits Completed.
  */
 export function ensureSunriseClinic(database: SqlDatabase, env: NodeJS.ProcessEnv = process.env): void {
   if (!demoLoginEnabled(env)) return;
@@ -268,4 +272,50 @@ export function ensureSunriseClinic(database: SqlDatabase, env: NodeJS.ProcessEn
     if (passwordMatches(password, row.password_hash)) continue;
     database.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(hashPassword(password), row.id);
   }
+  cleanupSunriseDemoVisits(database);
+}
+
+/**
+ * Demo boot only. Drops stale Sunrise drafts and closes past visits left In Consultation.
+ * Other tenants are not updated. Safe to run on every boot.
+ */
+function cleanupSunriseDemoVisits(database: SqlDatabase, now = new Date()): void {
+  if (!tableExists(database, "prescription_drafts") || !tableExists(database, "appointments")) {
+    console.log("[sunrise] demo cleanup skipped; draft or appointment table is missing");
+    return;
+  }
+  const cutoff = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+  const today = clinicCalendarDate(now);
+  const drafts = database
+    .prepare(
+      `DELETE FROM prescription_drafts
+       WHERE tenant_id = ?
+         AND (
+           updated_at < ?
+           OR NOT EXISTS (
+             SELECT 1 FROM appointments a
+             WHERE a.id = prescription_drafts.appointment_id
+               AND a.tenant_id = prescription_drafts.tenant_id
+           )
+           OR EXISTS (
+             SELECT 1 FROM appointments a
+             WHERE a.id = prescription_drafts.appointment_id
+               AND a.tenant_id = prescription_drafts.tenant_id
+               AND a.status = 'Completed'
+           )
+         )`
+    )
+    .run(SUNRISE_TENANT_ID, cutoff);
+  const visits = database
+    .prepare(
+      `UPDATE appointments
+       SET status = 'Completed'
+       WHERE tenant_id = ?
+         AND status = 'In Consultation'
+         AND date < ?`
+    )
+    .run(SUNRISE_TENANT_ID, today);
+  console.log(
+    `[sunrise] demo cleanup removed ${changes(drafts)} prescription drafts and completed ${changes(visits)} past in-consultation visits`
+  );
 }

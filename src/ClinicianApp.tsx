@@ -88,7 +88,7 @@ export default function ClinicianApp() {
   const [intakeName, setIntakeName] = useState('');
 
   const [patients, setPatients] = useState<Patient[]>([]);
-  const [doctors, setDoctors] = useState<Doctor[]>(() => [sessionDoctor]);
+  const [doctors, setDoctors] = useState<Doctor[]>(() => (sessionDoctor.id ? [sessionDoctor] : []));
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [queueDate, setQueueDate] = useState(() => clinicCalendarDate());
   const [queueAppointments, setQueueAppointments] = useState<Appointment[]>([]);
@@ -111,6 +111,19 @@ export default function ClinicianApp() {
 
   const draftSession = alignSessionToPatient(draftState, currentPatient.id || '');
   const sessionTenantId = sessionDemoDraftTenant(user?.tenantId);
+  const draftAppointmentId = useMemo(() => {
+    const byId = new Map<string, Appointment>();
+    for (const row of [...appointments, ...queueAppointments]) byId.set(row.id, row);
+    const pool = [...byId.values()];
+    const inConsult = pool.find(
+      (row) => row.patientId === currentPatient.id && row.status === 'In Consultation'
+    );
+    if (inConsult?.id) return inConsult.id;
+    return appointmentIdForBillContext(pool, {
+      patientId: currentPatient.id,
+      day: clinicCalendarDate(),
+    });
+  }, [appointments, queueAppointments, currentPatient.id]);
 
   useEffect(() => {
     const patientId = currentPatient.id;
@@ -125,9 +138,14 @@ export default function ClinicianApp() {
       try {
         let raw: unknown = null;
         if (isDemo) {
-          raw = sessionTenantId ? readDemoDraft(sessionStorage, sessionTenantId, patientId) : null;
+          raw = sessionTenantId
+            ? readDemoDraft(sessionStorage, sessionTenantId, patientId, draftAppointmentId)
+            : null;
         } else {
-          const res = await apiFetch<{ draft: unknown }>(`/api/prescriptions/draft/${patientId}`);
+          const query = draftAppointmentId
+            ? `?appointmentId=${encodeURIComponent(draftAppointmentId)}`
+            : '';
+          const res = await apiFetch<{ draft: unknown }>(`/api/prescriptions/draft/${patientId}${query}`);
           raw = res.draft ?? null;
         }
         if (cancelled) return;
@@ -141,7 +159,7 @@ export default function ClinicianApp() {
     return () => {
       cancelled = true;
     };
-  }, [currentPatient.id, isDemo, sessionTenantId]);
+  }, [currentPatient.id, draftAppointmentId, isDemo, sessionTenantId]);
 
   useEffect(() => {
     if (!canAutosaveDraft(draftSession)) return;
@@ -155,6 +173,7 @@ export default function ClinicianApp() {
       patientId,
       doctorId,
       ...currentDraftRx,
+      appointmentId: draftAppointmentId,
     });
 
     const persist = async () => {
@@ -165,7 +184,7 @@ export default function ClinicianApp() {
             setAutoSaveStatus('unsaved');
             return;
           }
-          writeDemoDraft(sessionStorage, sessionTenantId, patientId, body);
+          writeDemoDraft(sessionStorage, sessionTenantId, patientId, body, draftAppointmentId);
           setAutoSaveStatus('saved');
           return;
         }
@@ -189,7 +208,7 @@ export default function ClinicianApp() {
       void persist();
     }, 1200);
     return () => clearTimeout(timer);
-  }, [currentDraftRx, currentPatient.id, draftSession.phase, isDemo, sessionTenantId, currentDoctor.id]);
+  }, [currentDraftRx, currentPatient.id, draftAppointmentId, draftSession.phase, isDemo, sessionTenantId, currentDoctor.id]);
 
   const clinicSettings = useMemo(
     () => clinicSettingsFromSession(user, currentDoctor, letterhead),
@@ -252,7 +271,7 @@ export default function ClinicianApp() {
           setCurrentDoctor(() => resolveSessionDoctor(user, nextDoctors));
         } else {
           const fallback = doctorFromUser(user);
-          setDoctors([fallback]);
+          setDoctors(fallback.id ? [fallback] : []);
           setCurrentDoctor(fallback);
         }
 
@@ -267,7 +286,7 @@ export default function ClinicianApp() {
       } catch (err) {
         if (cancelled) return;
         const fallback = doctorFromUser(user);
-        setDoctors([fallback]);
+        setDoctors(fallback.id ? [fallback] : []);
         setCurrentDoctor(fallback);
         setPatients([]);
         setCurrentPatient(UNASSIGNED_PATIENT);
@@ -529,7 +548,7 @@ export default function ClinicianApp() {
       try {
         const { prescription } = await apiFetch<{ prescription: Prescription }>('/api/prescriptions', {
           method: 'POST',
-          body: JSON.stringify(newRx),
+          body: JSON.stringify({ ...newRx, appointmentId: draftAppointmentId }),
         });
         setPrescriptions((prev) => [prescription, ...prev.filter((p) => p.id !== prescription.id && p.id !== newRx.id)]);
         const inConsult = appointments.find(
@@ -1082,6 +1101,7 @@ export default function ClinicianApp() {
               clinicSettings={clinicSettings}
               activePrescription={prescriptions.find((p) => p.patientId === currentPatient.id) || null}
               appointmentId={billingAppointmentId || undefined}
+              appointment={billingAppointment}
               appointmentIsPaid={Boolean(billingAppointment?.isPaid)}
               onPaymentSuccess={(_invoiceNumber, _amount) => {
                 void Promise.all([

@@ -759,6 +759,8 @@ export function mapInvoice(row: { [key: string]: unknown }) {
     payLink: (row.pay_link as string) || "",
     upiId: ids.upiId,
     issuedBy: (row.issued_by as string) || "",
+    consultingDoctorId: (row.consulting_doctor_id as string) || "",
+    consultingDoctorName: (row.consulting_doctor_name as string) || "",
     receiptWhatsAppStatus: (row.receipt_whatsapp_status as string) || "unsent",
     receiptWhatsAppChannel: (row.receipt_whatsapp_channel as string) || "",
     receiptWhatsAppMessageId: (row.receipt_whatsapp_message_id as string) || "",
