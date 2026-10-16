@@ -64,6 +64,14 @@ const guardedCalls: GuardedCall[] = [
   ["POST", "/api/meta/waba-connect", { wabaId: "waba_role_probe", phoneNumberId: "phone_role_probe" }],
   ["POST", "/api/meta/waba-disconnect", {}],
   ["GET", "/api/meta/templates", undefined],
+  ["GET", "/api/meta/wabas", undefined],
+  ["GET", "/api/meta/overview", undefined],
+  ["GET", "/meta/wabas", undefined],
+  ["GET", "/meta/overview", undefined],
+  ["POST", "/meta/templates", { name: "role_probe_tpl", category: "UTILITY", language: "en" }],
+  ["POST", "/meta/simulate-embedded-signup", {}],
+  ["POST", "/meta/send-test", { recipientPhone: "+910000000001" }],
+  ["POST", "/meta/templates/tpl-missing/approve", {}],
   ["POST", "/api/meta/templates", { name: "role_probe_tpl", category: "UTILITY", language: "en" }],
   ["DELETE", "/api/meta/templates/tpl-missing", undefined],
   ["POST", "/api/meta/simulate-embedded-signup", {}],
@@ -226,17 +234,13 @@ describe("Meta WABA and template AuthZ", () => {
       assert.notEqual(res.json.error, "Authentication required");
     }
 
-    for (const path of ["/api/meta/wabas", "/api/meta/overview"]) {
-      const res = await jsonRequest(port, "GET", path);
-      assert.equal(res.status, 401, path);
-      assert.equal(res.json.error, "Authentication required");
-    }
   });
 
-  it("patient and receptionist are 403", async () => {
+  it("doctor, patient, and receptionist are 403", async () => {
+    const doctor = await login("doctor@lumera.me");
     const patient = await login("patient@lumera.me");
     const reception = await login("reception@lumera.me");
-    for (const token of [patient, reception]) {
+    for (const token of [doctor, patient, reception]) {
       for (const [method, path, body] of guardedCalls) {
         const res = await jsonRequest(port, method, path, body, auth(token));
         assert.equal(res.status, 403, `${method} ${path}`);
@@ -277,6 +281,51 @@ describe("Meta WABA and template AuthZ", () => {
     assert.equal(kept.waba_id, "waba_b_keep");
     assert.equal(kept.phone_number_id, "phone_b_keep");
     assert.equal(kept.meta_onboarding_status, "disconnected");
+
+    const wabas = await jsonRequest(port, "GET", "/api/meta/wabas", undefined, headers);
+    assert.equal(wabas.status, 200);
+    const wabaRows = wabas.json.wabas as Array<{ tenantId: string; wabaId: string; clinicPhone: string }>;
+    assert.equal(wabaRows.some((row) => row.tenantId === b.tenantId || row.wabaId === "waba_b_keep"), false);
+    const foreignWabas = await jsonRequest(
+      port,
+      "GET",
+      `/api/meta/wabas?tenantId=${encodeURIComponent(b.tenantId)}`,
+      undefined,
+      headers
+    );
+    assert.equal(foreignWabas.status, 403);
+    assert.equal(JSON.stringify(foreignWabas.json).includes("waba_b_keep"), false);
+
+    const overview = await jsonRequest(port, "GET", "/api/meta/overview", undefined, headers);
+    assert.equal(overview.status, 200);
+    assert.equal(overview.json.totalClinics, 1);
+    assert.equal(overview.json.totalTemplatesCount, 0);
+    const foreignOverview = await jsonRequest(
+      port,
+      "GET",
+      `/api/meta/overview?tenantId=${encodeURIComponent(b.tenantId)}`,
+      undefined,
+      headers
+    );
+    assert.equal(foreignOverview.status, 403);
+
+    const simulate = await jsonRequest(
+      port,
+      "POST",
+      "/api/meta/simulate-embedded-signup",
+      { tenantId: b.tenantId },
+      headers
+    );
+    assert.equal(simulate.status, 403);
+    const send = await jsonRequest(
+      port,
+      "POST",
+      "/api/meta/send-test",
+      { recipientPhone: "+910000000099", tenantId: b.tenantId },
+      headers
+    );
+    assert.equal(send.status, 403);
+    assert.equal(tenantWaba(b.tenantId).waba_id, "waba_b_keep");
 
     const createForeign = await jsonRequest(
       port,

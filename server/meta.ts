@@ -258,6 +258,12 @@ export function sessionMetaTenant(req: Request, res: Response): string | null {
   return sessionTenant;
 }
 
+/** Admin desk (platform admin) keeps the full catalog. Clinic admins read their session clinic only. */
+function catalogReadScope(req: Request, res: Response): "all" | string | null {
+  if (isPlatformAdminRole(req.user?.role)) return "all";
+  return sessionMetaTenant(req, res);
+}
+
 export function createMetaRouter(): Router {
   const router = Router();
 
@@ -452,14 +458,26 @@ export function createMetaRouter(): Router {
   // ----------------------------------------------------
 
   // GET /api/meta/overview - High level overview for Admin Dashboard
-  router.get("/overview", requireAuth, requireMetaCatalog, (_req: Request, res: Response) => {
+  router.get("/overview", ...metaCatalogGuards, (req: Request, res: Response) => {
     try {
+      const scope = catalogReadScope(req, res);
+      if (!scope) return;
       const db = getDb();
-      const tenants = db.prepare("SELECT id, name, waba_id, phone_number_id, meta_quality_rating, meta_onboarding_status FROM tenants").all() as any[];
-      const templates = db.prepare("SELECT id, status, category FROM meta_templates").all() as any[];
+      const scoped = scope !== "all";
+      const scopeParams = scoped ? [scope] : [];
+      const tenants = db.prepare(
+        `SELECT id, name, waba_id, phone_number_id, meta_quality_rating, meta_onboarding_status FROM tenants${scoped ? " WHERE id = ?" : ""}`
+      ).all(...scopeParams) as any[];
+      const templates = db.prepare(
+        `SELECT id, status, category FROM meta_templates${scoped ? " WHERE tenant_id = ?" : ""}`
+      ).all(...scopeParams) as any[];
       const approvedTemplatesCount = templates.filter(t => t.status === "APPROVED").length;
-      const totalMessages = (db.prepare("SELECT COUNT(*) AS c FROM whatsapp_messages").get() as { c: number }).c;
-      const totalOutbound = (db.prepare("SELECT COUNT(*) AS c FROM whatsapp_outbound_events").get() as { c: number }).c;
+      const totalMessages = (db.prepare(
+        `SELECT COUNT(*) AS c FROM whatsapp_messages${scoped ? " WHERE TRIM(COALESCE(tenant_id, '')) = ?" : ""}`
+      ).get(...scopeParams) as { c: number }).c;
+      const totalOutbound = (db.prepare(
+        `SELECT COUNT(*) AS c FROM whatsapp_outbound_events${scoped ? " WHERE TRIM(COALESCE(tenant_id, '')) = ?" : ""}`
+      ).get(...scopeParams) as { c: number }).c;
 
       res.json(
         buildMetaReadinessOverview({
@@ -481,15 +499,19 @@ export function createMetaRouter(): Router {
     }
   });
 
-  // GET /api/meta/wabas - List all clinic WABAs
-  router.get("/wabas", requireAuth, requireMetaCatalog, (_req: Request, res: Response) => {
+  // GET /api/meta/wabas - List clinic WABAs visible to this session
+  router.get("/wabas", ...metaCatalogGuards, (req: Request, res: Response) => {
     try {
+      const scope = catalogReadScope(req, res);
+      if (!scope) return;
       const db = getDb();
+      const scoped = scope !== "all";
       const rows = db.prepare(`
         SELECT id, name, specialty, country, phone, waba_id, phone_number_id, meta_token_expires_at, meta_waba_name, meta_quality_rating, meta_onboarding_status, updated_at
         FROM tenants
+        ${scoped ? "WHERE id = ?" : ""}
         ORDER BY name ASC
-      `).all() as any[];
+      `).all(...(scoped ? [scope] : [])) as any[];
 
       const wabas = rows.map((r) => ({
         tenantId: r.id,
