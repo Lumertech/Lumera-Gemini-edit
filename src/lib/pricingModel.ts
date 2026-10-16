@@ -1,4 +1,4 @@
-import { formatInr } from "./money.ts";
+import { formatINR } from "./currency.ts";
 import {
   ANNUAL_REFUND,
   CONTACT_EMAIL,
@@ -70,8 +70,12 @@ const MONTHS = [
 
 const IST_OFFSET_MS = (5 * 60 + 30) * 60 * 1000;
 
+/** Whole rupees stay ₹17,999. Paise stay ₹21,238.82. Both come from formatINR. */
 export function formatInrPaise(paise: number): string {
-  return formatInr(paise / 100);
+  const rupees = paise / 100;
+  const formatted = formatINR(rupees).replace(/[\s\u00a0\u202f]/g, "");
+  if (Number.isInteger(paise) && paise % 100 === 0) return formatted.replace(/\.00$/, "");
+  return formatted;
 }
 
 export function gstOnPaise(basePaise: number, gstRateBps: number): { gstPaise: number; totalPaise: number } {
@@ -176,11 +180,11 @@ export function planAfterTrial(quote: MoneyQuote): string {
 }
 
 export function monthlyAutopayCopy(planName: string, quote: MoneyQuote, day31Label: string): string {
-  return `Set up AutoPay now (₹0 today) so there's no interruption. On ${day31Label} we'll charge ${quote.base} + 18% GST = ${quote.total} for the ${planName} monthly plan, then every month until you cancel. We'll remind you on WhatsApp and email 3 days and 1 day before the first charge, and your bank or UPI app will notify you at least 24 hours before every debit. Cancel any time on the Billing page before ${day31Label} and you won't be charged.`;
+  return `Set up AutoPay now (${formatInrPaise(0)} today) so there's no interruption. On ${day31Label} we'll charge ${quote.base} + 18% GST = ${quote.total} for the ${planName} monthly plan, then every month until you cancel. We'll remind you on WhatsApp and email 3 days and 1 day before the first charge, and your bank or UPI app will notify you at least 24 hours before every debit. Cancel any time on the Billing page before ${day31Label} and you won't be charged.`;
 }
 
 export function annualApprovalCopy(quote: MoneyQuote, day31Label: string): string {
-  return `Add a payment method now (₹0 today). Your annual plan renews with your approval. On ${day31Label} we'll ask you to approve ${quote.base} + 18% GST = ${quote.total} with your UPI PIN or card OTP, and again at each yearly renewal. We'll remind you on WhatsApp and email 7, 3 and 1 day before. Cancel any time on the Billing page before ${day31Label} and you won't be charged. ${ANNUAL_REFUND}`;
+  return `Add a payment method now (${formatInrPaise(0)} today). Your annual plan renews with your approval. On ${day31Label} we'll ask you to approve ${quote.base} + 18% GST = ${quote.total} with your UPI PIN or card OTP, and again at each yearly renewal. We'll remind you on WhatsApp and email 7, 3 and 1 day before. Cancel any time on the Billing page before ${day31Label} and you won't be charged. ${ANNUAL_REFUND}`;
 }
 
 export function featureLine(label: string, status: FeatureStatus): string {
