@@ -62,13 +62,13 @@ function bump(store: Map<string, Bucket>, key: string, now: number) {
   prev.lastAt = now;
 }
 
-export function consumeSendOtpAttempt(
-  phone: string,
+function consumeOtpWindow(
+  targetKey: string,
   ip: string,
   userKey: string,
-  now = Date.now()
+  now: number
 ): { ok: true; withinCooldown: boolean; targetCooldown: boolean; retryAfterSec: number } | { ok: false; retryAfterSec: number } {
-  const phoneKey = normalizeOtpPhone(phone) || String(phone || "").trim();
+  const phoneKey = String(targetKey || "").trim();
   const ipKey = String(ip || "unknown");
   const subject = String(userKey || "").trim() || `phone:${phoneKey}`;
   const trackIp = tracksClientIp(ipKey);
@@ -87,6 +87,29 @@ export function consumeSendOtpAttempt(
   if (trackIp) bump(ipBuckets, ipKey, now);
   bump(userBuckets, subject, now);
   return { ok: true, withinCooldown: retryAfterSec > 0, targetCooldown: targetRetryAfterSec > 0, retryAfterSec };
+}
+
+export function consumeSendOtpAttempt(
+  phone: string,
+  ip: string,
+  userKey: string,
+  now = Date.now()
+): { ok: true; withinCooldown: boolean; targetCooldown: boolean; retryAfterSec: number } | { ok: false; retryAfterSec: number } {
+  const phoneKey = normalizeOtpPhone(phone) || String(phone || "").trim();
+  return consumeOtpWindow(phoneKey, ip, userKey, now);
+}
+
+/**
+ * Same windows as send-otp. targetKey is stored as given so a caller can pass
+ * a hash instead of a phone. Do not pass a raw Aadhaar number.
+ */
+export function consumeHashedOtpAttempt(
+  targetKey: string,
+  ip: string,
+  userKey: string,
+  now = Date.now()
+): { ok: true; withinCooldown: boolean; targetCooldown: boolean; retryAfterSec: number } | { ok: false; retryAfterSec: number } {
+  return consumeOtpWindow(String(targetKey || "").trim(), ip, userKey, now);
 }
 
 /** Loopback is the test server and a local proxy hop, not a shared clinic client. */

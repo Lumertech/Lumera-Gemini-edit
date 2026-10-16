@@ -5,8 +5,10 @@
 import { type NextFunction, type Request, type Response, type Router } from "express";
 import crypto from "node:crypto";
 import { getDb, writeAudit } from "./db.ts";
-import { allowOtpEcho, CLINICIAN_ROLES, requireAuth, requireRole } from "./auth.ts";
+import { allowOtpEcho, CLINICIAN_ROLES, denyUnlessPatientRecordRole as denyUnlessClinicianRole, isPlatformAdminRole, requireAuth, requireRole } from "./auth.ts";
 import { denyUnlessPatientRecordRole, isPatientRecordRole } from "./patient-access.ts";
+import { sendOtpLimited } from "./otp-attempt.ts";
+import { consumeHashedOtpAttempt, otpSubjectKey, requestClientIp } from "./otp-rate-limit.ts";
 import { rejectProductionSimulator } from "./meta-security.ts";
 import { isAbdmPlaceholderRegistryMode, resolveAbdmMode } from "./abdm-mode.ts";
 import { formatAbdmRegistryLabel } from "../src/lib/abdmRegistryLabel.ts";
@@ -25,6 +27,7 @@ import {
   tenantIdOf,
   recordDhisTransaction,
   buildAbdmStatusPayload,
+  callbackHmac,
 } from "./abdm-internal.ts";
 
 // In-Memory ABDM Token Cache
@@ -87,8 +90,47 @@ const FHIR_SAMPLE_DOCTOR: DoctorContext = {
   qualification: "SAMPLE",
 };
 
-/** Doctor, reception, and clinic admin. Patients are 403. Anonymous is 401 via requireAuth. */
-const identityStaffGuards = [requireAuth, requireRole(...CLINICIAN_ROLES)] as const;
+/** Patient-record staff only. Anonymous is 401 via requireAuth, before Aadhaar validation. */
+const aadhaarOtpGuards = [requireAuth, denyUnlessClinicianRole] as const;
+
+/** Bridge session is server-internal: a matched ABDM HMAC, or a super/clinic admin. */
+const BRIDGE_ADMIN_ROLES = ["super_admin", "polyclinic_admin", "CLINIC_ADMIN"] as const;
+
+function bridgeSessionGuard(req: Request, res: Response, next: NextFunction) {
+  const decision = callbackHmac(req);
+  if (decision.ok && decision.matched) return next();
+  if (!req.user) return res.status(401).json({ error: "Authentication required" });
+  const role = String(req.user.role || "");
+  const allowed = (BRIDGE_ADMIN_ROLES as readonly string[]).includes(role) || isPlatformAdminRole(role);
+  if (!allowed) return res.status(403).json({ error: "Insufficient permissions" });
+  next();
+}
+
+function aadhaarHashKey(cleanAadhaar: string): string {
+  return crypto.createHash("sha256").update(`aadhaar:${cleanAadhaar}`).digest("hex");
+}
+
+function maskedAadhaar(cleanAadhaar: string): string {
+  return `XXXX-XXXX-${cleanAadhaar.slice(-4)}`;
+}
+
+/** 429 when the shared OTP window is exhausted. Generate also honors the send cooldown. */
+function rejectAadhaarOtpLimit(req: Request, res: Response, cleanAadhaar: string, enforceCooldown: boolean): boolean {
+  const decision = consumeHashedOtpAttempt(
+    aadhaarHashKey(cleanAadhaar),
+    requestClientIp(req),
+    otpSubjectKey({ userId: req.user?.id, email: req.user?.email, phone: req.user?.phone || "" })
+  );
+  if (!decision.ok) {
+    sendOtpLimited(res, decision.retryAfterSec);
+    return true;
+  }
+  if (enforceCooldown && decision.targetCooldown) {
+    sendOtpLimited(res, decision.retryAfterSec || 1);
+    return true;
+  }
+  return false;
+}
 
 /** Simulate writes a ledger row. Clinic-admin desk and super_admin only, and only outside production. */
 const DHIS_SIMULATE_ROLES = ["super_admin", "polyclinic_admin", "CLINIC_ADMIN"] as const;
@@ -138,7 +180,8 @@ export function registerAbdmIdentityRoutes(router: Router): void {
   // 1. ABDM V3 GATEWAY BRIDGE SESSION (/v3/bridgesession)
   // -------------------------------------------------------------
   const handleBridgeSession = (req: Request, res: Response) => {
-    const tenantId = sessionClinicTenant(req, res);
+    const hmac = callbackHmac(req);
+    const tenantId = hmac.ok && hmac.matched ? "abdm-gateway" : sessionClinicTenant(req, res);
     if (!tenantId) return;
     try {
       const clientId = req.body?.clientId || req.headers["x-client-id"] || ABDM_CONFIG.CLIENT_ID;
@@ -187,7 +230,7 @@ export function registerAbdmIdentityRoutes(router: Router): void {
     }
   };
 
-  router.post(["/v3/bridgesession", "/bridgesession", "/v3/sessions", "/sessions"], ...identityStaffGuards, handleBridgeSession);
+  router.post(["/v3/bridgesession", "/bridgesession", "/v3/sessions", "/sessions"], bridgeSessionGuard, handleBridgeSession);
 
   // Status check — exactly { abdmMode, bridgeReady } (#47 / #38 freeze).
   router.get("/status", (_req, res) => {
@@ -211,6 +254,7 @@ export function registerAbdmIdentityRoutes(router: Router): void {
           error: "Invalid Aadhaar number. Must be a 12-digit number.",
         });
       }
+      if (rejectAadhaarOtpLimit(req, res, cleanAadhaar, true)) return;
 
       const txnId = `txn-abdm-${crypto.randomUUID().slice(0, 8)}`;
       const testOtp = "123456"; // Standard ABDM Sandbox OTP
@@ -246,6 +290,13 @@ export function registerAbdmIdentityRoutes(router: Router): void {
       });
 
       const abdmMode = resolveAbdmMode();
+      writeAudit(
+        getDb(),
+        req.user?.id || null,
+        req.user?.name || "Reception Desk",
+        "ABDM_AADHAAR_OTP_GENERATED",
+        `tenant: ${tenantId}; aadhaar: ${maskedAadhaar(cleanAadhaar)}`
+      );
       res.json({
         txnId,
         message: `OTP sent successfully to Aadhaar-registered mobile ending in ******${lastFour}`,
@@ -260,7 +311,7 @@ export function registerAbdmIdentityRoutes(router: Router): void {
     }
   };
 
-  router.post(["/v3/registration/aadhaar/generateOtp", "/registration/aadhaar/generateOtp", "/aadhaar/generate-otp"], ...identityStaffGuards, handleGenerateAadhaarOtp);
+  router.post(["/v3/registration/aadhaar/generateOtp", "/registration/aadhaar/generateOtp", "/aadhaar/generate-otp"], ...aadhaarOtpGuards, handleGenerateAadhaarOtp);
 
   // Step 2: Verify Aadhaar OTP (/v3/registration/aadhaar/verifyOTP)
   const handleVerifyAadhaarOtp = (req: Request, res: Response) => {
@@ -274,6 +325,8 @@ export function registerAbdmIdentityRoutes(router: Router): void {
       }
 
       const session = otpSessions.get(txnId);
+      const aadhaarForLimit = session && session.tenantId === tenantId ? session.aadhaarNumber : "unknown";
+      if (rejectAadhaarOtpLimit(req, res, aadhaarForLimit, false)) return;
       if (!session || session.tenantId !== tenantId) {
         return res.status(400).json({ error: "Transaction session expired or invalid. Please request a new OTP." });
       }
@@ -296,7 +349,7 @@ export function registerAbdmIdentityRoutes(router: Router): void {
         req.user?.id || null,
         req.user?.name || "Reception Desk",
         "ABHA OTP matched (NHA sandbox)",
-        `ABHA: ${abhaNumber} (${abhaAddress}); tenant: ${tenantId}`
+        `tenant: ${tenantId}; aadhaar: ${maskedAadhaar(session.aadhaarNumber)}`
       );
 
       res.json({
@@ -320,7 +373,7 @@ export function registerAbdmIdentityRoutes(router: Router): void {
     }
   };
 
-  router.post(["/v3/registration/aadhaar/verifyOTP", "/registration/aadhaar/verifyOTP", "/aadhaar/verify-otp"], ...identityStaffGuards, handleVerifyAadhaarOtp);
+  router.post(["/v3/registration/aadhaar/verifyOTP", "/registration/aadhaar/verifyOTP", "/aadhaar/verify-otp"], ...aadhaarOtpGuards, handleVerifyAadhaarOtp);
 
   // Search by ABHA — tenant-scoped; do not invent a profile when missing.
   router.post(["/v3/search/searchByAbha", "/search/searchByAbha", "/v3/search/searchByMobile", "/search/searchByMobile"], requireAuth, (req, res) => {

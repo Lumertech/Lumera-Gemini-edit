@@ -493,6 +493,22 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
+/**
+ * Staff who may open a patient record. Patients are 403.
+ * Anonymous is 401 when this runs without requireAuth in front.
+ */
+export function denyUnlessPatientRecordRole(req: Request, res: Response, next: NextFunction) {
+  if (!req.user) {
+    return res.status(401).json({ error: "Authentication required" });
+  }
+  const allowed =
+    (CLINICIAN_ROLES as readonly string[]).includes(req.user.role) || isPlatformAdminRole(req.user.role);
+  if (!allowed) {
+    return res.status(403).json({ error: "Insufficient permissions" });
+  }
+  next();
+}
+
 export function requireRole(...roles: UserRole[]) {
   return (req: Request, res: Response, next: NextFunction) => {
     if (!req.user) {

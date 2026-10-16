@@ -5,8 +5,10 @@ import express from "express";
 import { attachUser } from "./auth.ts";
 import { createApiRouter } from "./api.ts";
 import { createAbdmRouter } from "./abdm.ts";
+import { signAbdmCallback } from "./abdm-hmac.ts";
 import { getDb, initDatabase } from "./db.ts";
 import { hashPassword } from "./password.ts";
+import { resetSendOtpRateLimits } from "./otp-rate-limit.ts";
 
 /**
  * Production mounts the same ABDM router at /api/abdm, /api/v3, and /v3.
@@ -42,6 +44,7 @@ function gatedCalls(): Call[] {
 
 async function startAbdmServer(): Promise<{ port: number; close: () => Promise<void> }> {
   const app = express();
+  app.set("trust proxy", 1);
   app.use(express.json());
   app.use(attachUser);
   app.use("/api/v3", createAbdmRouter());
@@ -197,6 +200,9 @@ describe("ABDM identity AuthZ", () => {
       assert.equal(res.status, 401, `${method} ${path}`);
       assert.equal(res.json.error, "Authentication required");
     }
+    const invalid = await jsonRequest(port, "POST", "/api/abdm/aadhaar/generate-otp", { aadhaar: "12" });
+    assert.equal(invalid.status, 401);
+    assert.equal(invalid.json.error, "Authentication required");
   });
 
   it("patients are 403 on every identity alias and mount", async () => {
@@ -206,29 +212,49 @@ describe("ABDM identity AuthZ", () => {
       assert.equal(res.status, 403, `${method} ${path}`);
       assert.equal(res.json.error, "Insufficient permissions");
     }
+    const invalid = await jsonRequest(port, "POST", "/api/abdm/aadhaar/generate-otp", { aadhaar: "12" }, auth(token));
+    assert.equal(invalid.status, 403);
+    assert.equal(invalid.json.error, "Insufficient permissions");
   });
 
-  it("doctor, reception, and clinic admin pass the local identity stubs", async () => {
+  it("patient-record staff pass OTP stubs and clinic admin passes bridgesession", async () => {
+    resetSendOtpRateLimits();
     const doctor = await login("doctor@lumera.me");
     const reception = await login("reception@lumera.me");
     const clinicAdmin = await login("clinic.admin@lumera.me");
+    const superAdmin = await login("admin@lumera.me");
 
     for (const [label, token] of [
       ["doctor", doctor],
       ["reception", reception],
+    ] as const) {
+      const bridge = await jsonRequest(port, "POST", "/api/abdm/bridgesession", {}, auth(token));
+      assert.equal(bridge.status, 403, `${label} bridgesession`);
+      assert.equal(bridge.json.error, "Insufficient permissions");
+    }
+
+    for (const [label, token] of [
       ["clinic admin", clinicAdmin],
+      ["super admin", superAdmin],
     ] as const) {
       const bridge = await jsonRequest(port, "POST", "/api/abdm/bridgesession", {}, auth(token));
       assert.equal(bridge.status, 200, `${label} bridgesession: ${String(bridge.json.error || "")}`);
       assert.equal(typeof bridge.json.accessToken, "string");
       assert.ok(String(bridge.json.accessToken).length > 0);
       assert.equal(bridge.json.tokenType, "Bearer");
+    }
 
+    const staff = [
+      ["doctor", doctor, "432156789012"],
+      ["reception", reception, "432156789013"],
+      ["clinic admin", clinicAdmin, "432156789014"],
+    ] as const;
+    for (const [label, token, aadhaar] of staff) {
       const otp = await jsonRequest(
         port,
         "POST",
         "/api/abdm/v3/registration/aadhaar/generateOtp",
-        { aadhaar: AADHAAR },
+        { aadhaar },
         auth(token)
       );
       assert.equal(otp.status, 200, `${label} generateOtp: ${String(otp.json.error || "")}`);
@@ -249,8 +275,9 @@ describe("ABDM identity AuthZ", () => {
   });
 
   it("identity stubs stay on the session clinic", async () => {
-    const clinicA = seedClinic("docA", "doctor");
-    const clinicB = seedClinic("recB", "receptionist");
+    resetSendOtpRateLimits();
+    const clinicA = seedClinic("admA", "CLINIC_ADMIN");
+    const clinicB = seedClinic("admB", "CLINIC_ADMIN");
     const tokenA = await login(clinicA.email);
     const tokenB = await login(clinicB.email);
 
@@ -317,5 +344,125 @@ describe("ABDM identity AuthZ", () => {
     );
     assert.equal(owner.status, 200, String(owner.json.error || ""));
     assert.equal(owner.json.success, true);
+  });
+
+  it("audit rows store a masked Aadhaar, never the full number", async () => {
+    resetSendOtpRateLimits();
+    const clinic = seedClinic("audA", "doctor");
+    const token = await login(clinic.email);
+    const aadhaar = "908172635451";
+    const generated = await jsonRequest(
+      port,
+      "POST",
+      "/api/abdm/registration/aadhaar/generateOtp",
+      { aadhaar },
+      auth(token)
+    );
+    assert.equal(generated.status, 200, String(generated.json.error || ""));
+    const txnId = String(generated.json.txnId || "");
+    const verified = await jsonRequest(
+      port,
+      "POST",
+      "/api/abdm/registration/aadhaar/verifyOTP",
+      { txnId, otp: "123456" },
+      auth(token)
+    );
+    assert.equal(verified.status, 200, String(verified.json.error || ""));
+
+    const rows = getDb()
+      .prepare(
+        `SELECT action, details, user_name FROM audit_logs
+         WHERE user_id = ? AND action IN ('ABDM_AADHAAR_OTP_GENERATED', 'ABHA OTP matched (NHA sandbox)')
+         ORDER BY timestamp DESC LIMIT 2`
+      )
+      .all(clinic.userId) as Array<{ action: string; details: string; user_name: string }>;
+    assert.equal(rows.length, 2);
+    for (const row of rows) {
+      const blob = `${row.action}\n${row.user_name}\n${row.details}`;
+      assert.equal(blob.includes(aadhaar), false, blob);
+      assert.equal(blob.includes(aadhaar.slice(0, 8)), false, blob);
+      assert.match(row.details, /XXXX-XXXX-5451/);
+    }
+  });
+
+  it("Aadhaar OTP rate limit returns 429 per hash, user, and IP", async () => {
+    resetSendOtpRateLimits();
+    const userA = seedClinic("limA", "doctor");
+    const userB = seedClinic("limB", "receptionist");
+    const userC = seedClinic("limC", "CLINIC_ADMIN");
+    const userD = seedClinic("limD", "doctor");
+    const userE = seedClinic("limE", "receptionist");
+    const userF = seedClinic("limF", "doctor");
+    const tokenA = await login(userA.email);
+    const tokenB = await login(userB.email);
+    const tokenC = await login(userC.email);
+    const tokenD = await login(userD.email);
+    const tokenE = await login(userE.email);
+    const tokenF = await login(userF.email);
+    const sharedAadhaar = "667788990011";
+
+    const first = await jsonRequest(
+      port,
+      "POST",
+      "/api/abdm/aadhaar/generate-otp",
+      { aadhaar: sharedAadhaar },
+      { ...auth(tokenA), "x-forwarded-for": "203.0.113.10" }
+    );
+    assert.equal(first.status, 200, String(first.json.error || ""));
+
+    const sameAadhaar = await jsonRequest(
+      port,
+      "POST",
+      "/api/abdm/registration/aadhaar/generateOtp",
+      { aadhaar: sharedAadhaar },
+      { ...auth(tokenB), "x-forwarded-for": "203.0.113.11" }
+    );
+    assert.equal(sameAadhaar.status, 429, String(sameAadhaar.json.error || ""));
+
+    const sameUser = await jsonRequest(
+      port,
+      "POST",
+      "/api/abdm/v3/registration/aadhaar/generateOtp",
+      { aadhaar: "667788990022" },
+      { ...auth(tokenA), "x-forwarded-for": "203.0.113.12" }
+    );
+    assert.equal(sameUser.status, 429, String(sameUser.json.error || ""));
+
+    const sharedIp = "198.51.100.20";
+    const ipCalls = [
+      [tokenC, "667788990033"],
+      [tokenD, "667788990044"],
+      [tokenE, "667788990055"],
+      [tokenF, "667788990066"],
+    ] as const;
+    for (let i = 0; i < ipCalls.length; i += 1) {
+      const [token, aadhaar] = ipCalls[i];
+      const res = await jsonRequest(
+        port,
+        "POST",
+        "/api/abdm/aadhaar/generate-otp",
+        { aadhaar },
+        { ...auth(token), "x-forwarded-for": sharedIp }
+      );
+      assert.equal(res.status, i < 3 ? 200 : 429, `${i}: ${String(res.json.error || "")}`);
+    }
+  });
+
+  it("a matched ABDM HMAC can open bridgesession without a staff session", async () => {
+    const previous = process.env.ABDM_CALLBACK_SECRET;
+    const secret = "callback-secret-for-identity-tests";
+    process.env.ABDM_CALLBACK_SECRET = secret;
+    try {
+      const body = {};
+      const signature = signAbdmCallback(secret, JSON.stringify(body));
+      const res = await jsonRequest(port, "POST", "/api/abdm/bridgesession", body, {
+        "x-abdm-signature": signature,
+      });
+      assert.equal(res.status, 200, String(res.json.error || ""));
+      assert.equal(typeof res.json.accessToken, "string");
+    } finally {
+      if (previous === undefined) delete process.env.ABDM_CALLBACK_SECRET;
+      else process.env.ABDM_CALLBACK_SECRET = previous;
+    }
   });
 });
