@@ -15,7 +15,6 @@ import {
   X
 } from 'lucide-react';
 import { Appointment, Doctor, Patient } from '../types';
-import { formatInr } from '../lib/money';
 
 interface AppointmentsCalendarProps {
   appointments: Appointment[];
@@ -164,7 +163,7 @@ export const AppointmentsCalendar: React.FC<AppointmentsCalendarProps> = ({
                   <p className="font-semibold text-slate-900 text-sm truncate">{apt.patientName}</p>
                   <p className="text-xs text-slate-500">{apt.timeSlot} · {apt.type}</p>
                 </div>
-                <p className="text-sm font-semibold text-slate-900 shrink-0">{formatInr(apt.consultationFee || 0)}</p>
+                <p className="text-sm font-semibold text-slate-900 shrink-0">{formatINR(apt.consultationFee || 0)}</p>
               </div>
               <div className="flex items-center justify-between gap-2">
                 <span className="text-xs text-slate-500">{apt.status}</span>

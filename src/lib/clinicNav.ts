@@ -1,7 +1,7 @@
 import type { AppUser } from "../types";
 import type { NavView } from "../components/Navbar";
 import { clinicCalendarDate, IST_OFFSET_MINUTES, shiftIsoDate } from "./clinicDay";
-import { formatInr } from "./money";
+import { formatINR } from "./currency";
 
 export interface ClinicNavItem {
   id: NavView;
@@ -311,7 +311,7 @@ export function homeMetrics(visits: readonly VisitLite[], now = new Date()) {
 }
 
 export function formatHomeInr(amount: number): string {
-  return formatInr(amount);
+  return formatINR(amount);
 }
 
 /** Today's visits: the same three states the day is made of. */
