@@ -445,7 +445,7 @@ export function storeConsentArtefact(
     actor?.id || null,
     actor?.name || "Clinician",
     "ABHA consent stored",
-    `patient ${patientId} consent ${consentId}`
+    `patient ${patientId} consent ${consentId} mode:'${resolveAbdmMode()}'`
   );
   return listTenantConsentArtefacts(tenantId, patientId);
 }
@@ -457,7 +457,7 @@ const LINK_SOURCES = new Set(["aadhaar_otp", "abha_search", "qr"]);
 export function rejectUnlockedKyc(body: Record<string, unknown>) {
   const kyc = String(body.kycStatus || body.kyc_status || "");
   if (/^verified$/i.test(kyc) || /government|unlocked/i.test(kyc)) {
-    throw httpError(400, "kycStatus must be LINKED_SANDBOX");
+    throw httpError(400, "kycStatus must be LINKED_SANDBOX; mode:'sandbox'");
   }
 }
 
@@ -818,7 +818,7 @@ export function linkPatientAbha(
     actor?.id || null,
     actor?.name || "Clinician",
     "ABHA linked",
-    `patient ${id} ABHA ${mapped.abhaNumber} source ${source} mode ${abdmMode}`
+    `patient ${id} ABHA ${mapped.abhaNumber} source ${source} mode:'${abdmMode}'`
   );
   return {
     abdmMode,

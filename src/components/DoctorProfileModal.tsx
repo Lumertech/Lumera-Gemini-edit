@@ -599,7 +599,7 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
                   <div>
                     <label className="block text-xs font-semibold text-slate-300 mb-1.5 flex items-center gap-1.5">
                       <ShieldCheck className="w-3.5 h-3.5 text-blue-400" />
-                      ABDM HPR ID
+                      ABDM HPR ID (sandbox)
                     </label>
                     <input
                       type="text"
@@ -629,7 +629,7 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
                 <div className="p-3.5 bg-blue-500/10 border border-blue-500/20 rounded-xl text-xs text-blue-300 flex items-start gap-2.5">
                   <CheckCircle2 className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
                   <div>
-                    <span className="font-semibold block">ABDM records:</span>
+                    <span className="font-semibold block">ABDM records (sandbox):</span>
                     Registration numbers and HPR IDs are copied into prescriptions when present. Locally generated HPR values are pending — not yet verified with the National Health Authority. Contact ravee@lumer.me for credential questions.
                   </div>
                 </div>

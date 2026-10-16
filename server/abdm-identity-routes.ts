@@ -425,7 +425,7 @@ export function registerAbdmIdentityRoutes(router: Router): void {
         req.user?.id || null,
         req.user?.name || "Reception Desk",
         "ABHA OTP matched",
-        `tenant: ${tenantId}; aadhaar: ${maskedLast4(session.last4)}`
+        `tenant: ${tenantId}; aadhaar: ${maskedLast4(session.last4)}; mode:'${resolveAbdmMode()}'`
       );
 
       res.json({

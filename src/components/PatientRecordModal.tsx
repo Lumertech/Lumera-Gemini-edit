@@ -178,7 +178,7 @@ export const PatientRecordModal: React.FC<PatientRecordModalProps> = ({
                     </span>
                     {patient.abhaNumber && (
                       <span className="px-2 py-0.5 rounded text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
-                        <ShieldCheck className="w-3 h-3" /> ABHA Linked
+                        <ShieldCheck className="w-3 h-3" /> ABHA Linked (sandbox)
                       </span>
                     )}
                   </div>

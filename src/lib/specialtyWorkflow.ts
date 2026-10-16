@@ -371,7 +371,7 @@ const FRONT_DESK: SpecialtyWorkflowPack = {
   homeView: "reception",
   chartLabel: "Desk",
   queueLabel: "OPD queue",
-  receptionLabel: "Reception & ABHA intake",
+  receptionLabel: "Reception & ABHA intake (sandbox)",
   appointmentsLabel: "Appointments",
   primaryCta: "Register patient",
   consultTypeDefault: "Walk-in Consultation",

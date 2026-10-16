@@ -56,7 +56,7 @@ const RX_TEMPLATES = [
   {
     id: "classic" as const,
     title: "Classic Letterhead",
-    description: "Full clinic header, doctor credentials, signature block, and ABDM footer.",
+    description: "Full clinic header, doctor credentials, signature block, and ABDM footer (sandbox).",
   },
   {
     id: "compact" as const,
@@ -379,7 +379,7 @@ export const OnboardingWizard: React.FC = () => {
                 Your clinician profile
               </h2>
               <p className="text-xs text-slate-400 mt-0.5">
-                Name, registration, specialty, and signature print on prescriptions and ABHA letters.
+                Name, registration, specialty, and signature print on prescriptions and ABHA letters (sandbox).
               </p>
             </div>
             <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-950/60 text-emerald-400 border border-emerald-800/60">

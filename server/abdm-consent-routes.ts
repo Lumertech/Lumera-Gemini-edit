@@ -161,7 +161,7 @@ export function registerAbdmConsentRoutes(router: Router): void {
       req.user?.id || null,
       req.user?.name || "ABDM callback",
       `ABDM ${kind}`,
-      `patient ${patientId} artefact ${artefact.consentId}`
+      `patient ${patientId} artefact ${artefact.consentId} mode:'${resolveAbdmMode()}'`
     );
     const artefacts = listTenantConsentArtefacts(tenantId, patientId);
     const ack = kind === "hiu_fetch" || kind === "hiu_receive" || kind === "hip_on_request" ? 200 : 202;

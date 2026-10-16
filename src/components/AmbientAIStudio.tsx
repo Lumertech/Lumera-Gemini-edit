@@ -282,7 +282,7 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
               {isAbhaLinked(currentPatient) && (
                 <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-0.5">
                   <ShieldCheck className="w-3 h-3 text-emerald-600" />
-                  <span>ABHA</span>
+                  <span>ABHA (sandbox)</span>
                 </span>
               )}
             </div>
@@ -297,7 +297,7 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
             >
               {allPatients.map((p) => (
                 <option key={p.id} value={p.id} className="bg-white text-slate-800">
-                  {p.name} ({p.age}y/{p.gender.charAt(0)}) - {p.uhid} {p.abhaNumber ? '✓ ABHA' : ''}
+                  {p.name} ({p.age}y/{p.gender.charAt(0)}) - {p.uhid} {p.abhaNumber ? '✓ ABHA (sandbox)' : ''}
                 </option>
               ))}
             </select>
