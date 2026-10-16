@@ -22,7 +22,8 @@ import { invoiceNumberToPersist } from "../src/lib/billingCollect.ts";
 import { upsertScopedConversation } from "./whatsapp-scope.ts";
 import { WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
 import { formatINR } from "../src/lib/currency.ts";
-import { loadPatientTenant, rejectPatientRole, requestIsPatient, sessionPatientId } from "./patient-tenant.ts";
+import { denyUnlessPatientRecordRole } from "./patient-access.ts";
+import { loadPatientTenant, requestIsPatient, sessionPatientId } from "./patient-tenant.ts";
 
 function tenantIdOf(req: Request): string {
   return String(req.user?.tenantId || "").trim();
@@ -448,7 +449,7 @@ export function createBillingRouter(): Router {
   const api = Router();
 
   api.get("/billing/settings", requireAuth, (req, res) => {
-    if (rejectPatientRole(req, res)) return;
+    if (!denyUnlessPatientRecordRole(req, res)) return;
     const tenantId = tenantIdOf(req);
     const letterhead = getTenantLetterhead(tenantId, req.user?.id);
     const ids = scrubSeedBillingIds(tenantId, { gstin: letterhead.gstin, upiId: letterhead.upiId });
@@ -466,7 +467,7 @@ export function createBillingRouter(): Router {
   });
 
   api.get("/billing/day-end", requireAuth, (req, res) => {
-    if (rejectPatientRole(req, res)) return;
+    if (!denyUnlessPatientRecordRole(req, res)) return;
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     const date = todayDate(String(req.query.date || ""));
@@ -550,7 +551,7 @@ export function createBillingRouter(): Router {
   });
 
   api.post("/invoices", requireAuth, (req, res) => {
-    if (rejectPatientRole(req, res)) return;
+    if (!denyUnlessPatientRecordRole(req, res)) return;
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     try {
@@ -631,7 +632,7 @@ export function createBillingRouter(): Router {
   });
 
   api.post("/invoices/:id/sandbox-pay", requireAuth, (req, res) => {
-    if (rejectPatientRole(req, res)) return;
+    if (!denyUnlessPatientRecordRole(req, res)) return;
     if (!sandboxSimulatorsEnabled()) {
       return res.status(403).json({
         error: "SANDBOX / DEV-ONLY Razorpay mock is disabled in production.",
@@ -656,7 +657,7 @@ export function createBillingRouter(): Router {
   });
 
   api.post("/invoices/:id/desk-collect", requireAuth, (req, res) => {
-    if (rejectPatientRole(req, res)) return;
+    if (!denyUnlessPatientRecordRole(req, res)) return;
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     const row = getTenantInvoice(tenantId, req.params.id);
@@ -676,7 +677,7 @@ export function createBillingRouter(): Router {
   });
 
   api.post("/invoices/:id/receipt", requireAuth, async (req, res) => {
-    if (rejectPatientRole(req, res)) return;
+    if (!denyUnlessPatientRecordRole(req, res)) return;
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     const row = getTenantInvoice(tenantId, req.params.id);

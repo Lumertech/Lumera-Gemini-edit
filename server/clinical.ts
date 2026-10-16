@@ -15,10 +15,10 @@ import { reportCaughtError } from "./error-tracker.ts";
 import { resolveAbdmMode, type AbdmMode } from "./abdm-mode.ts";
 import { registerPatientDocumentRoutes } from "./patient-documents.ts";
 import { clinicCalendarDate, parseAppointmentListDate } from "../src/lib/clinicDay.ts";
+import { denyUnlessPatientRecordRole } from "./patient-access.ts";
 import {
   loadPatientClinicPhone,
   loadPatientTenant,
-  rejectPatientRole,
   requestIsPatient,
   sessionPatientId,
 } from "./patient-tenant.ts";
@@ -975,7 +975,7 @@ export function createClinicalRouter(): Router {
   const api = Router();
 
   api.get("/patients", requireAuth, (req, res) => {
-    if (rejectPatientRole(req, res)) return;
+    if (!denyUnlessPatientRecordRole(req, res)) return;
     try {
       const tenantId = tenantIdOf(req);
       if (!tenantId) return res.json({ patients: [] });
@@ -1033,7 +1033,7 @@ export function createClinicalRouter(): Router {
   });
 
   api.post("/patients", requireAuth, (req, res) => {
-    if (rejectPatientRole(req, res)) return;
+    if (!denyUnlessPatientRecordRole(req, res)) return;
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     try {
@@ -1061,7 +1061,7 @@ export function createClinicalRouter(): Router {
   });
 
   api.post("/patients/link-abha", requireAuth, (req, res) => {
-    if (rejectPatientRole(req, res)) return;
+    if (!denyUnlessPatientRecordRole(req, res)) return;
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     try {
@@ -1080,7 +1080,7 @@ export function createClinicalRouter(): Router {
   });
 
   api.patch("/patients/:id/abha", requireAuth, (req, res) => {
-    if (rejectPatientRole(req, res)) return;
+    if (!denyUnlessPatientRecordRole(req, res)) return;
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     try {
@@ -1108,10 +1108,11 @@ export function createClinicalRouter(): Router {
   });
 
   api.patch("/patients/:id", requireAuth, (req, res) => {
+    if (!denyUnlessPatientRecordRole(req, res)) return;
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     const existing = getTenantPatient(tenantId, req.params.id);
-    if (!existing || !patientCanRead(req, existing.id)) return res.status(404).json({ error: "Patient not found" });
+    if (!existing) return res.status(404).json({ error: "Patient not found" });
     try {
       rejectUnlockedKyc((req.body || {}) as Record<string, unknown>);
     } catch (err: unknown) {
@@ -1292,7 +1293,7 @@ export function createClinicalRouter(): Router {
   });
 
   api.post("/prescriptions", requireAuth, (req, res) => {
-    if (rejectPatientRole(req, res)) return;
+    if (!denyUnlessPatientRecordRole(req, res)) return;
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     try {
@@ -1347,7 +1348,7 @@ export function createClinicalRouter(): Router {
   });
 
   api.post("/prescriptions/draft", requireAuth, (req, res) => {
-    if (rejectPatientRole(req, res)) return;
+    if (!denyUnlessPatientRecordRole(req, res)) return;
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     try {

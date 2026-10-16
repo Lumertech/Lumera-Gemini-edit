@@ -184,7 +184,15 @@ describe("patient role sees only their own clinical and billing records", () => 
     for (const path of blockedGets) {
       const res = await jsonRequest(port, "GET", path, undefined, authA);
       assert.equal(res.status, 403, path);
+      assert.equal(res.json.code, "ROLE_DENIED", path);
     }
+
+    const patchOwn = await jsonRequest(port, "PATCH", `/api/patients/pat-a-${suffix}`, { name: "Renamed" }, authA);
+    assert.equal(patchOwn.status, 403);
+    assert.equal(patchOwn.json.code, "ROLE_DENIED");
+    const patchOther = await jsonRequest(port, "PATCH", `/api/patients/pat-b-${suffix}`, { name: "Renamed" }, authA);
+    assert.equal(patchOther.status, 403);
+    assert.equal(patchOther.json.code, "ROLE_DENIED");
 
     const blockedPosts: Array<[string, unknown]> = [
       ["/api/invoices", { patientId: `pat-a-${suffix}`, totalAmount: 10 }],

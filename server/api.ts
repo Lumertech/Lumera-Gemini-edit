@@ -56,7 +56,8 @@ import { rejectUntrustedTenantClaim } from "./tenant-guard.ts";
 import { publicBranch, publicTenant } from "./client-serializers.ts";
 import { clinicTenantId, upsertScopedConversation } from "./whatsapp-scope.ts";
 import { WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
-import { loadPatientTenant, patientLetterhead, rejectPatientRole, requestIsPatient } from "./patient-tenant.ts";
+import { denyUnlessPatientRecordRole } from "./patient-access.ts";
+import { loadPatientTenant, patientLetterhead, requestIsPatient } from "./patient-tenant.ts";
 import {
   createAdminTenant,
   ensureTenantSubscription,
@@ -1651,7 +1652,7 @@ export function createApiRouter(): Router {
     if (!sessionSlug || slug !== sessionSlug) {
       return res.status(404).json({ error: "Not found" });
     }
-    if (rejectPatientRole(req, res)) return;
+    if (!denyUnlessPatientRecordRole(req, res)) return;
     const tenantId = String(req.user?.tenantId || "").trim();
     const rows = tenantId
       ? (getDb().prepare("SELECT id, name FROM patients WHERE tenant_id = ? ORDER BY name ASC").all(tenantId) as {

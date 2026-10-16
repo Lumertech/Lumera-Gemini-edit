@@ -1,4 +1,4 @@
-import type { Request, Response } from "express";
+import type { Request } from "express";
 import {
   patientTenant,
   patientVisibleClinicPhone,
@@ -8,13 +8,6 @@ import { getDb } from "./db.ts";
 
 export function requestIsPatient(req: Request): boolean {
   return req.user?.role === "patient";
-}
-
-/** 403 when the session is a patient. Staff roles fall through unchanged. */
-export function rejectPatientRole(req: Request, res: Response): boolean {
-  if (!requestIsPatient(req)) return false;
-  res.status(403).json({ error: "Insufficient permissions" });
-  return true;
 }
 
 function contactDigits(value: unknown): string {
