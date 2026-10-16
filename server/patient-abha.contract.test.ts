@@ -400,19 +400,29 @@ describe("#35 dual onboard — same patientId + frozen link-abha", () => {
   });
 
   it("OTP verify / QR share never emit unlocked KYC and carry NHA sandbox notices", async () => {
-    const otp = await jsonRequest(port, "POST", "/api/abdm/registration/aadhaar/generateOtp", {
-      aadhaar: "999988887777",
-    });
+    const clinic = createClinicUser("otpnotice");
+    const token = await login(clinic.email);
+    const staff = { Authorization: `Bearer ${token}` };
+    const otp = await jsonRequest(
+      port,
+      "POST",
+      "/api/abdm/registration/aadhaar/generateOtp",
+      { aadhaar: "999988887777" },
+      staff
+    );
     assert.equal(otp.status, 200, String(otp.json.error || ""));
     const txnId = String(otp.json.txnId || "");
     assert.ok(txnId);
     assert.match(String(otp.json.sandboxNotice || ""), /NHA sandbox/);
     assert.equal(otp.json.kycStatus, undefined);
 
-    const verify = await jsonRequest(port, "POST", "/api/abdm/registration/aadhaar/verifyOTP", {
-      txnId,
-      otp: "123456",
-    });
+    const verify = await jsonRequest(
+      port,
+      "POST",
+      "/api/abdm/registration/aadhaar/verifyOTP",
+      { txnId, otp: "123456" },
+      staff
+    );
     assert.equal(verify.status, 200, String(verify.json.error || ""));
     assert.equal(verify.json.kycStatus, "LINKED_SANDBOX");
     assert.notEqual(verify.json.kycStatus, "VERIFIED");

@@ -33,7 +33,7 @@ interface AbdmSession {
   expiresAt: number;
   tokenType: string;
 }
-let cachedSession: AbdmSession | null = null;
+const cachedSessions = new Map<string, AbdmSession>();
 
 // In-Memory Aadhaar OTP Session Cache for Sandbox Flow
 interface AadhaarOtpSession {
@@ -47,6 +47,7 @@ interface AadhaarOtpSession {
   mobile: string;
   pincode: string;
   address: string;
+  tenantId: string;
 }
 const otpSessions = new Map<string, AadhaarOtpSession>();
 
@@ -86,6 +87,9 @@ const FHIR_SAMPLE_DOCTOR: DoctorContext = {
   qualification: "SAMPLE",
 };
 
+/** Doctor, reception, and clinic admin. Patients are 403. Anonymous is 401 via requireAuth. */
+const identityStaffGuards = [requireAuth, requireRole(...CLINICIAN_ROLES)] as const;
+
 /** Simulate writes a ledger row. Clinic-admin desk and super_admin only, and only outside production. */
 const DHIS_SIMULATE_ROLES = ["super_admin", "polyclinic_admin", "CLINIC_ADMIN"] as const;
 const dhisSimulateGuards = [
@@ -103,8 +107,8 @@ function claimStrings(value: unknown): string[] {
   return [];
 }
 
-/** DHIS reads and simulator writes use the session clinic. A foreign tenant claim is rejected. */
-function sessionDhisTenant(req: Request, res: Response): string | null {
+/** Identity stubs and DHIS reads/writes use the session clinic. A foreign tenant claim is rejected. */
+function sessionClinicTenant(req: Request, res: Response): string | null {
   const sessionTenant = tenantIdOf(req);
   const body =
     req.body && typeof req.body === "object" && !Array.isArray(req.body)
@@ -134,11 +138,14 @@ export function registerAbdmIdentityRoutes(router: Router): void {
   // 1. ABDM V3 GATEWAY BRIDGE SESSION (/v3/bridgesession)
   // -------------------------------------------------------------
   const handleBridgeSession = (req: Request, res: Response) => {
+    const tenantId = sessionClinicTenant(req, res);
+    if (!tenantId) return;
     try {
       const clientId = req.body?.clientId || req.headers["x-client-id"] || ABDM_CONFIG.CLIENT_ID;
       const clientSecret = req.body?.clientSecret || req.headers["x-client-secret"] || ABDM_CONFIG.CLIENT_SECRET;
 
-      // Check cache
+      // Check cache for this clinic only
+      const cachedSession = cachedSessions.get(tenantId);
       if (cachedSession && cachedSession.expiresAt > Date.now() + 60000) {
         return res.json({
           accessToken: cachedSession.accessToken,
@@ -156,13 +163,13 @@ export function registerAbdmIdentityRoutes(router: Router): void {
       const expiresIn = 1800; // 30 minutes
       const accessToken = `eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.abdm_sbx_${crypto.randomUUID().replace(/-/g, "")}.${Date.now()}`;
 
-      cachedSession = {
+      cachedSessions.set(tenantId, {
         accessToken,
         expiresAt: Date.now() + expiresIn * 1000,
         tokenType: "Bearer",
-      };
+      });
 
-      writeAudit(getDb(), req.user?.id || null, req.user?.name || "ABDM Service", "ABDM_OAUTH_TOKEN_EXCHANGED", `Client: ${clientId}`);
+      writeAudit(getDb(), req.user?.id || null, req.user?.name || "ABDM Service", "ABDM_OAUTH_TOKEN_EXCHANGED", `Client: ${clientId}; tenant: ${tenantId}`);
 
       res.json({
         accessToken,
@@ -180,7 +187,7 @@ export function registerAbdmIdentityRoutes(router: Router): void {
     }
   };
 
-  router.post(["/v3/bridgesession", "/bridgesession", "/v3/sessions", "/sessions"], handleBridgeSession);
+  router.post(["/v3/bridgesession", "/bridgesession", "/v3/sessions", "/sessions"], ...identityStaffGuards, handleBridgeSession);
 
   // Status check — exactly { abdmMode, bridgeReady } (#47 / #38 freeze).
   router.get("/status", (_req, res) => {
@@ -193,6 +200,8 @@ export function registerAbdmIdentityRoutes(router: Router): void {
 
   // Step 1: Generate Aadhaar OTP (/v3/registration/aadhaar/generateOtp)
   const handleGenerateAadhaarOtp = (req: Request, res: Response) => {
+    const tenantId = sessionClinicTenant(req, res);
+    if (!tenantId) return;
     try {
       const { aadhaar } = req.body;
       const cleanAadhaar = (aadhaar || "").replace(/\D/g, "");
@@ -233,6 +242,7 @@ export function registerAbdmIdentityRoutes(router: Router): void {
         mobile: matched.mobile,
         pincode: "560066",
         address: "E-104, Palm Meadows, Whitefield, Bengaluru, Karnataka",
+        tenantId,
       });
 
       const abdmMode = resolveAbdmMode();
@@ -250,10 +260,12 @@ export function registerAbdmIdentityRoutes(router: Router): void {
     }
   };
 
-  router.post(["/v3/registration/aadhaar/generateOtp", "/registration/aadhaar/generateOtp", "/aadhaar/generate-otp"], handleGenerateAadhaarOtp);
+  router.post(["/v3/registration/aadhaar/generateOtp", "/registration/aadhaar/generateOtp", "/aadhaar/generate-otp"], ...identityStaffGuards, handleGenerateAadhaarOtp);
 
   // Step 2: Verify Aadhaar OTP (/v3/registration/aadhaar/verifyOTP)
   const handleVerifyAadhaarOtp = (req: Request, res: Response) => {
+    const tenantId = sessionClinicTenant(req, res);
+    if (!tenantId) return;
     try {
       const { txnId, otp } = req.body;
 
@@ -262,7 +274,7 @@ export function registerAbdmIdentityRoutes(router: Router): void {
       }
 
       const session = otpSessions.get(txnId);
-      if (!session) {
+      if (!session || session.tenantId !== tenantId) {
         return res.status(400).json({ error: "Transaction session expired or invalid. Please request a new OTP." });
       }
 
@@ -284,7 +296,7 @@ export function registerAbdmIdentityRoutes(router: Router): void {
         req.user?.id || null,
         req.user?.name || "Reception Desk",
         "ABHA OTP matched (NHA sandbox)",
-        `ABHA: ${abhaNumber} (${abhaAddress})`
+        `ABHA: ${abhaNumber} (${abhaAddress}); tenant: ${tenantId}`
       );
 
       res.json({
@@ -308,7 +320,7 @@ export function registerAbdmIdentityRoutes(router: Router): void {
     }
   };
 
-  router.post(["/v3/registration/aadhaar/verifyOTP", "/registration/aadhaar/verifyOTP", "/aadhaar/verify-otp"], handleVerifyAadhaarOtp);
+  router.post(["/v3/registration/aadhaar/verifyOTP", "/registration/aadhaar/verifyOTP", "/aadhaar/verify-otp"], ...identityStaffGuards, handleVerifyAadhaarOtp);
 
   // Search by ABHA — tenant-scoped; do not invent a profile when missing.
   router.post(["/v3/search/searchByAbha", "/search/searchByAbha", "/v3/search/searchByMobile", "/search/searchByMobile"], requireAuth, (req, res) => {
@@ -388,7 +400,7 @@ export function registerAbdmIdentityRoutes(router: Router): void {
   // 4. DHIS INCENTIVE TRACKER & AUDIT ENGINE
   // -------------------------------------------------------------
   router.get("/dhis/overview", ...dhisOverviewGuards, (req, res) => {
-    const tenantId = sessionDhisTenant(req, res);
+    const tenantId = sessionClinicTenant(req, res);
     if (!tenantId) return;
     try {
       const db = getDb();
@@ -472,7 +484,7 @@ export function registerAbdmIdentityRoutes(router: Router): void {
   // Simulate a DHIS transaction for testing & demonstration. Auth runs before the production gate
   // so an anonymous caller is 401 even when simulators are disabled.
   router.post("/dhis/simulate-transaction", ...dhisSimulateGuards, (req, res) => {
-    const tenantId = sessionDhisTenant(req, res);
+    const tenantId = sessionClinicTenant(req, res);
     if (!tenantId) return;
     try {
       const { type = "OP_CONSULT", abhaAddress = "rajiv.saxena@abdm" } = req.body || {};
