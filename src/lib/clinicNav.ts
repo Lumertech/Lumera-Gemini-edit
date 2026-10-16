@@ -267,6 +267,28 @@ export function formatHomeInr(amount: number): string {
   return formatInr(amount);
 }
 
+/** Four distinct snapshot numbers. The OPD strip owns today/week/month visit counts. */
+export function homeKpiCards(
+  metrics: ReturnType<typeof homeMetrics>,
+  patientCount: number
+): Array<{ label: string; value: string }> {
+  return [
+    { label: "Waiting", value: String(metrics.waiting) },
+    { label: "Done", value: String(metrics.done) },
+    { label: "Patients", value: String(patientCount) },
+    { label: "Revenue", value: formatHomeInr(metrics.todayCollected) },
+  ];
+}
+
+/** Visit counts across the three windows. No money and no waiting/done split. */
+export function opdTrend(metrics: ReturnType<typeof homeMetrics>): Array<{ label: string; value: string }> {
+  return [
+    { label: "Today", value: String(metrics.todayAppointments) },
+    { label: "Week", value: String(metrics.weekAppointments) },
+    { label: "Month", value: String(metrics.monthAppointments) },
+  ];
+}
+
 /** One honest nudge. No invented tiers. */
 export function homeNudge(metrics: ReturnType<typeof homeMetrics>, patientCount: number): string {
   if (patientCount === 0) return "Register a patient to open the day.";

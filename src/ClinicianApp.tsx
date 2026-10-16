@@ -1126,27 +1126,14 @@ export default function ClinicianApp() {
         </main>
       </div>
 
-      <footer className="h-7 bg-slate-950 text-slate-400 border-t border-slate-800 flex items-center justify-between px-4 text-[11px] font-mono shrink-0 select-none z-30">
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span className="text-slate-400">EMR Core:</span>
-            <span className="text-slate-200 font-semibold">Synchronized</span>
-          </div>
-          <div className="hidden sm:flex items-center gap-1 text-slate-400">
-            <span>Doctor:</span>
-            <span className="text-blue-400">{currentDoctor.name}</span>
-          </div>
-          <div className="hidden md:flex items-center gap-1 text-slate-400">
-            <span>Patient:</span>
-            <span className="text-slate-200">
-              {currentPatient.id ? `${currentPatient.name} (${currentPatient.uhid})` : 'No patient selected'}
-            </span>
-          </div>
-        </div>
-        <div className="flex items-center gap-4 text-slate-400">
-          <div className="hidden sm:block">ABHA linking (ABDM sandbox testing; not yet live)</div>
-        </div>
+      <footer className="h-8 bg-white text-slate-500 border-t border-slate-200 flex items-center justify-end px-3 sm:px-4 shrink-0 select-none z-30">
+        <span
+          className="inline-flex max-w-full items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] text-slate-500"
+          title="ABHA linking (ABDM sandbox testing; not yet live)"
+        >
+          <span className="sm:hidden">ABHA sandbox</span>
+          <span className="hidden sm:inline">ABHA linking (ABDM sandbox testing; not yet live)</span>
+        </span>
       </footer>
 
       <GeminiAssistant

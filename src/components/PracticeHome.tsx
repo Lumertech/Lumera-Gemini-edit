@@ -1,13 +1,5 @@
 import React, { useEffect, useState } from "react";
-import {
-  Calendar,
-  Clock,
-  IndianRupee,
-  Users,
-  Stethoscope,
-  ChevronDown,
-  ChevronRight,
-} from "lucide-react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import type { Appointment, AppUser, Doctor, Patient } from "../types";
 import type { SpecialtyWorkflowPack } from "../lib/specialtyWorkflow";
 import type { NavView } from "./Navbar";
@@ -16,9 +8,10 @@ import {
   formatVisitTime,
   pickNextVisit,
   greetingClinicName,
-  greetingLine,
+  homeKpiCards,
   homeMetrics,
   homeNudge,
+  opdTrend,
   setupChecklist,
   setupProgress,
   showsSetupChecklist,
@@ -44,24 +37,11 @@ interface PracticeHomeProps {
   onCreateBill?: (appointment: Appointment) => void;
 }
 
-function Kpi({
-  label,
-  value,
-  icon,
-  tone,
-}: {
-  label: string;
-  value: string;
-  icon: React.ReactNode;
-  tone: string;
-}) {
+function Kpi({ label, value }: { label: string; value: string }) {
   return (
-    <div className="bg-white rounded-xl border border-slate-200/80 shadow-sm px-3 py-2.5 min-w-0">
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-[10px] font-semibold tracking-wide text-slate-500 uppercase truncate">{label}</p>
-        <span className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${tone}`}>{icon}</span>
-      </div>
-      <p className="mt-1 text-lg font-semibold text-slate-900 tabular-nums truncate">{value}</p>
+    <div className="bg-white rounded-xl border border-slate-200/80 shadow-sm px-3 py-2.5 min-w-0" data-testid="home-kpi">
+      <p className="text-xs text-slate-500 whitespace-nowrap">{label}</p>
+      <p className="mt-0.5 text-xl font-semibold text-slate-900 tabular-nums">{value}</p>
     </div>
   );
 }
@@ -164,7 +144,8 @@ export const PracticeHome: React.FC<PracticeHomeProps> = ({
   }, [showBranches, user.tenantId]);
 
   const timeLabel = next ? formatVisitTime(next) : "";
-  const bucketLine = `${metrics.waiting} waiting · ${metrics.withDoctor} with doctor · ${metrics.done} done`;
+  const kpis = homeKpiCards(metrics, patients.length);
+  const trend = opdTrend(metrics);
 
   const specialtyTiles = (() => {
     if (pack.kind === "physio") {
@@ -172,11 +153,9 @@ export const PracticeHome: React.FC<PracticeHomeProps> = ({
         <div className="space-y-3">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Tile title="Today's sessions">
-              <p>{metrics.todayAppointments} booked · {bucketLine}</p>
               {next ? <p className="text-slate-800">{next.patientName} · {timeLabel}</p> : <p>No session booked.</p>}
             </Tile>
-            <Tile title="Collections today">
-              <p>Collected {formatHomeInr(metrics.todayCollected)}</p>
+            <Tile title="Still to collect">
               <p>Pending {formatHomeInr(metrics.todayPending)}</p>
             </Tile>
           </div>
@@ -200,7 +179,6 @@ export const PracticeHome: React.FC<PracticeHomeProps> = ({
               ))}
             </Tile>
             <Tile title="Balances">
-              <p>Collected {formatHomeInr(metrics.todayCollected)}</p>
               <p>Outstanding today {formatHomeInr(metrics.todayPending)}</p>
             </Tile>
           </div>
@@ -217,8 +195,8 @@ export const PracticeHome: React.FC<PracticeHomeProps> = ({
     if (pack.kind === "medical") {
       return (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <Tile title="OPD queue">
-            <p>{bucketLine}</p>
+          <Tile title="With the doctor">
+            <p>{metrics.withDoctor === 0 ? "No one is in consult." : `${metrics.withDoctor} in consult.`}</p>
           </Tile>
           <Tile title="Follow-ups today">
             <p>{metrics.followUps === 0 ? "None due today." : `${metrics.followUps} follow-up${metrics.followUps === 1 ? "" : "s"} on the book.`}</p>
@@ -233,7 +211,7 @@ export const PracticeHome: React.FC<PracticeHomeProps> = ({
             </button>
           </Tile>
           <Tile title="Day end">
-            <p>{metrics.done} completed · {formatHomeInr(metrics.todayCollected)} collected</p>
+            <p>Still to collect {formatHomeInr(metrics.todayPending)}</p>
           </Tile>
         </div>
       );
@@ -266,16 +244,15 @@ export const PracticeHome: React.FC<PracticeHomeProps> = ({
 
   return (
     <div className="max-w-6xl mx-auto space-y-3 sm:space-y-5 min-w-0" data-testid="practice-home">
-      <div className="rounded-2xl bg-gradient-to-r from-blue-600 to-teal-500 text-white px-4 py-3.5 sm:px-8 sm:py-7 shadow-sm">
-        <h2 className="text-lg sm:text-2xl font-semibold tracking-tight">{greetingLine(user.name)}</h2>
-        <p className="mt-0.5 text-sm text-white/90">Here's what's happening at {clinic} today.</p>
+      <div className="rounded-2xl bg-white border border-slate-200/80 px-4 py-3 sm:px-5 sm:py-4">
+        <h2 className="text-[13px] leading-5 sm:text-lg sm:leading-7 font-semibold tracking-tight text-slate-900">Welcome back to {clinic}</h2>
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
-        <Kpi label="Total appointments" value={String(metrics.totalAppointments)} tone="bg-blue-50 text-blue-600" icon={<Calendar className="w-3.5 h-3.5" />} />
-        <Kpi label="Patients" value={String(patients.length)} tone="bg-violet-50 text-violet-600" icon={<Users className="w-3.5 h-3.5" />} />
-        <Kpi label="Today's appointments" value={String(metrics.todayAppointments)} tone="bg-orange-50 text-orange-600" icon={<Clock className="w-3.5 h-3.5" />} />
-        <Kpi label="Total revenue" value={formatHomeInr(metrics.totalRevenue)} tone="bg-emerald-50 text-emerald-600" icon={<IndianRupee className="w-3.5 h-3.5" />} />
+        <Kpi label={kpis[0].label} value={kpis[0].value} />
+        <Kpi label={kpis[1].label} value={kpis[1].value} />
+        <Kpi label={kpis[2].label} value={kpis[2].value} />
+        <Kpi label={kpis[3].label} value={kpis[3].value} />
       </div>
 
       <section
@@ -296,33 +273,25 @@ export const PracticeHome: React.FC<PracticeHomeProps> = ({
         {nextAction}
       </section>
 
-      <section className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-4 sm:p-5 space-y-4">
-        <div className="flex items-center gap-2">
-          <Stethoscope className="w-4 h-4 text-slate-500" />
-          <h3 className="text-sm font-semibold text-slate-900">OPD performance</h3>
-          <span className="text-[11px] font-medium rounded-full bg-slate-100 text-slate-600 px-2 py-0.5">{pack.specialty || pack.practiceLine}</span>
-        </div>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
-          <div className="rounded-xl bg-slate-50 px-3 py-2.5">
-            <p className="text-xs text-slate-500">Today</p>
-            <p className="text-xl font-semibold text-slate-900">{metrics.todayAppointments}</p>
-            <p className="text-xs text-slate-500" data-testid="home-today-breakdown">{bucketLine}</p>
+      <p className="rounded-xl bg-amber-50 border border-amber-100 px-3 py-2 text-sm text-amber-950" data-testid="home-nudge">
+        {nudge}
+      </p>
+
+      <section className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-4 sm:p-5 space-y-3" data-testid="home-opd-trend">
+        <h3 className="text-sm font-semibold text-slate-900">OPD trend</h3>
+        <div className="grid grid-cols-3 gap-2">
+          <div className="rounded-xl bg-slate-50 px-3 py-2.5 min-w-0">
+            <p className="text-xs text-slate-500 whitespace-nowrap">{trend[0].label}</p>
+            <p className="text-xl font-semibold text-slate-900 tabular-nums" data-testid="home-today-breakdown">{trend[0].value}</p>
           </div>
-          <div className="rounded-xl bg-emerald-50/70 px-3 py-2.5">
-            <p className="text-xs text-slate-500">This week</p>
-            <p className="text-xl font-semibold text-slate-900">{metrics.weekAppointments}</p>
+          <div className="rounded-xl bg-slate-50 px-3 py-2.5 min-w-0">
+            <p className="text-xs text-slate-500 whitespace-nowrap">{trend[1].label}</p>
+            <p className="text-xl font-semibold text-slate-900 tabular-nums">{trend[1].value}</p>
           </div>
-          <div className="rounded-xl bg-violet-50/70 px-3 py-2.5">
-            <p className="text-xs text-slate-500">This month</p>
-            <p className="text-xl font-semibold text-slate-900">{metrics.monthAppointments}</p>
+          <div className="rounded-xl bg-slate-50 px-3 py-2.5 min-w-0">
+            <p className="text-xs text-slate-500 whitespace-nowrap">{trend[2].label}</p>
+            <p className="text-xl font-semibold text-slate-900 tabular-nums">{trend[2].value}</p>
           </div>
-          <div className="rounded-xl bg-emerald-50 px-3 py-2.5">
-            <p className="text-xs text-slate-500">Monthly revenue</p>
-            <p className="text-xl font-semibold text-slate-900">{formatHomeInr(metrics.monthRevenue)}</p>
-          </div>
-        </div>
-        <div className="rounded-xl bg-amber-50 border border-amber-100 px-4 py-3 text-sm text-amber-950" data-testid="home-nudge">
-          {nudge}
         </div>
       </section>
 

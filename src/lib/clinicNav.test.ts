@@ -6,8 +6,10 @@ import {
   canStartConsultRole,
   clinicNavItems,
   greetingClinicName,
+  homeKpiCards,
   homeMetrics,
   homeNudge,
+  opdTrend,
   labelWordCount,
   moreNavLabels,
   navLabelsInOrder,
@@ -146,6 +148,16 @@ describe("clinic home routing and nav", () => {
     assert.equal(metrics.totalRevenue, 1500);
     assert.match(homeNudge(metrics, 3), /waiting/);
     assert.equal(homeNudge(metrics, 0), "Register a patient to open the day.");
+    const cards = homeKpiCards(metrics, 3);
+    const trend = opdTrend(metrics);
+    assert.deepEqual(cards.map((card) => card.label), ["Waiting", "Done", "Patients", "Revenue"]);
+    assert.deepEqual(trend.map((cell) => cell.label), ["Today", "Week", "Month"]);
+    for (const label of [...cards, ...trend].map((item) => item.label)) {
+      assert.equal(label.split(/\s+/).length <= 2, true);
+      assert.notEqual(label, label.toUpperCase());
+    }
+    assert.equal(cards.some((card) => card.value === trend[0].value && card.label === "Today"), false);
+    assert.equal(trend.some((cell) => cell.value.includes("₹")), false);
   });
 
   it("tracks setup progress without marking missing steps done", () => {
