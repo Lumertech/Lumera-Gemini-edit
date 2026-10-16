@@ -75,7 +75,8 @@ export const Navbar: React.FC<NavbarProps> = ({
 }) => {
   const toggleCopilot = onTogglePulse || onToggleGemini || onToggleHexa || (() => {});
   const [menuOpen, setMenuOpen] = useState(false);
-  const canConsult = userRole === "doctor";
+  const platformAdmin = userRole === 'super_admin' || userRole === 'admin';
+  const canConsult = userRole === "doctor" && !platformAdmin;
   const showLocked = userRole === "doctor" || Boolean(isSpecialtyLocked);
   const { logout } = useAuth();
   const { go, workspaceSlug } = useNav();
