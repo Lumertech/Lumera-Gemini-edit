@@ -1094,7 +1094,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
               title="Proceed to Billing & Collect Payment"
             >
               <Receipt className="w-3.5 h-3.5" />
-              <span>Collect Payment</span>
+              <span>Create bill</span>
               <ArrowRight className="w-3 h-3" />
             </button>
           )}

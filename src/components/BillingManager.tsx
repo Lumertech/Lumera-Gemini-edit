@@ -378,8 +378,9 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
     }
   };
 
-  const collectDeskPayment = async () => {
-    if (!canMarkPaidLocally(paymentMode)) {
+  const collectDeskPayment = async (modeOverride?: typeof paymentMode) => {
+    const chosen = modeOverride || paymentMode;
+    if (!canMarkPaidLocally(chosen)) {
       setCollectError('UPI / Razorpay stays Unpaid until a verified webhook (or SANDBOX / DEV-ONLY sandbox-pay).');
       return;
     }
@@ -389,7 +390,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
       const invoice = await ensureInvoice();
       const res = await apiFetch<{ invoice: PersistedInvoice }>(`/api/invoices/${invoice.id}/desk-collect`, {
         method: 'POST',
-        body: JSON.stringify({ paymentMode }),
+        body: JSON.stringify({ paymentMode: chosen }),
       });
       applyServerInvoice(res.invoice);
     } catch (err) {
@@ -521,6 +522,19 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
       >
         {pack.billingLabel} · {pack.billingLens} · {pack.formularyLens === "who-eml" ? "WHO-EML / pharmacy" : pack.formularyLens === "rehab-exercises" ? "exercises & packages" : pack.formularyLens === "dental-materials" ? "chair procedures" : pack.formularyLens === "salon-menu" ? "salon menu" : "no clinical formulary"}
       </div>
+      {!paid && (
+        <button
+          type="button"
+          data-testid="mark-paid"
+          onClick={() => {
+            setPaymentMode("Cash");
+            void collectDeskPayment("Cash");
+          }}
+          className="no-print self-start px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-semibold"
+        >
+          Mark paid
+        </button>
+      )}
       {dayEndView && (
         <div
           className="no-print bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3"

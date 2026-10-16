@@ -1,5 +1,4 @@
-import React, { useState } from 'react';
-import { formatINR } from '../lib/currency.ts';
+import React, { useEffect, useState } from 'react';
 import { 
   Sparkles, 
   FileText, 
@@ -11,6 +10,7 @@ import {
   MessageSquare, 
   PhoneCall, 
   Users, 
+  LayoutDashboard,
   User,
   UserPlus,
   X,
@@ -31,20 +31,21 @@ import { useAuth } from '../auth/AuthContext';
 import { useNav } from '../nav/NavigationContext';
 import { appViewToPath } from '../nav/surfaces';
 import { isPolyclinicPractice } from '../lib/sessionWorkspace';
-import { allowedViewsForWorkflow, patientsNavLabel, workflowForUser } from '../lib/specialtyWorkflow';
+import { allowedViewsForWorkflow, clinicianHomeView, patientsNavLabel, workflowForUser } from '../lib/specialtyWorkflow';
+import { clinicNavItems, greetingClinicName, moreNavItems, primaryNavItems, whatsAppPillFromStatus, type WhatsAppPillState } from '../lib/clinicNav';
 import { apiFetch } from '../api/http';
 
 export const ROLE_VISIBLE_VIEWS: Record<string, NavView[]> = {
-  doctor: ['welcome', 'patients', 'queue', 'opd-queue', 'rx', 'smart-rx', 'ambient', 'reports', 'appointments', 'polyclinic', 'whatsapp', 'voicebot', 'pharmacy-hub', 'billing', 'dhis', 'team', 'reception', 'kiosk', 'settings', 'wellness', 'therapy-session', 'consult-practice', 'physio-session', 'dental-chart'],
-  receptionist: ['welcome', 'patients', 'reception', 'queue', 'opd-queue', 'appointments', 'kiosk', 'pharmacy-hub', 'billing', 'whatsapp', 'settings'],
-  polyclinic_admin: ['welcome', 'patients', 'queue', 'opd-queue', 'reception', 'appointments', 'polyclinic', 'billing', 'reports', 'whatsapp', 'voicebot', 'pharmacy-hub', 'dhis', 'team', 'kiosk', 'settings'],
-  CLINIC_ADMIN: ['welcome', 'patients', 'queue', 'opd-queue', 'reception', 'appointments', 'polyclinic', 'billing', 'reports', 'whatsapp', 'voicebot', 'pharmacy-hub', 'dhis', 'portal', 'team', 'kiosk', 'settings'],
-  super_admin: ['welcome', 'queue', 'opd-queue', 'reception', 'rx', 'smart-rx', 'ambient', 'reports', 'appointments', 'polyclinic', 'whatsapp', 'voicebot', 'pharmacy-hub', 'billing', 'dhis', 'team', 'kiosk', 'settings'],
+  doctor: ['welcome', 'gp-home', 'patients', 'queue', 'opd-queue', 'rx', 'smart-rx', 'ambient', 'reports', 'appointments', 'polyclinic', 'whatsapp', 'voicebot', 'pharmacy-hub', 'billing', 'dhis', 'team', 'reception', 'kiosk', 'settings', 'wellness', 'therapy-session', 'consult-practice', 'physio-session', 'dental-chart'],
+  receptionist: ['welcome', 'gp-home', 'patients', 'reception', 'queue', 'opd-queue', 'appointments', 'kiosk', 'pharmacy-hub', 'billing', 'whatsapp', 'settings'],
+  polyclinic_admin: ['welcome', 'gp-home', 'patients', 'queue', 'opd-queue', 'reception', 'appointments', 'polyclinic', 'billing', 'reports', 'whatsapp', 'voicebot', 'pharmacy-hub', 'dhis', 'team', 'kiosk', 'settings'],
+  CLINIC_ADMIN: ['welcome', 'gp-home', 'patients', 'queue', 'opd-queue', 'reception', 'appointments', 'polyclinic', 'billing', 'reports', 'whatsapp', 'voicebot', 'pharmacy-hub', 'dhis', 'portal', 'team', 'kiosk', 'settings'],
+  super_admin: ['settings'],
   patient: ['portal'],
   nurse: ['reception', 'queue', 'opd-queue', 'reports', 'pharmacy-hub', 'settings'],
   lab_technician: ['reports', 'queue', 'opd-queue', 'pharmacy-hub', 'settings'],
   pharmacist: ['billing', 'pharmacy-hub', 'queue', 'opd-queue', 'settings'],
-  default: ['welcome', 'queue', 'opd-queue', 'reception', 'appointments', 'pharmacy-hub', 'billing', 'settings']
+  default: ['welcome', 'gp-home', 'queue', 'opd-queue', 'reception', 'appointments', 'pharmacy-hub', 'billing', 'settings']
 };
 
 interface SidebarProps {
@@ -83,9 +84,37 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const pack = workflowForUser(user);
   allowedViews = allowedViewsForWorkflow(allowedViews, pack);
 
-  const canStartConsult = allowedViews.includes('rx') || allowedViews.includes('smart-rx') || allowedViews.includes(pack.homeView as NavView);
-  const startView = (pack.showMedicalRx ? 'rx' : pack.homeView) as NavView;
   const canOpenAdminCms = userRole === 'super_admin';
+  const homeView = clinicianHomeView(user);
+  const navItems = clinicNavItems({
+    role: userRole,
+    allowedViews,
+    homeView,
+    patientsLabel: patientsNavLabel(pack),
+  });
+  const primaryItems = primaryNavItems(navItems);
+  const moreItems = moreNavItems(navItems);
+  const clinicLabel = greetingClinicName(user?.clinicName);
+  const [waPill, setWaPill] = useState<{ label: string; state: WhatsAppPillState }>({
+    label: "WhatsApp status unavailable",
+    state: "unknown",
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    void apiFetch<{ tenantNumber?: { status?: string } | null }>("/api/whatsapp-numbers/mine")
+      .then((data) => {
+        if (cancelled) return;
+        const status = data?.tenantNumber?.status;
+        setWaPill(whatsAppPillFromStatus(status || "disconnected"));
+      })
+      .catch(() => {
+        if (!cancelled) setWaPill(whatsAppPillFromStatus(null));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.tenantId]);
 
   const [isQuickAddOpen, setIsQuickAddOpen] = useState(false);
   const [quickName, setQuickName] = useState('');
@@ -126,308 +155,183 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
-  const suiteTitle =
-    pack.kind === 'physio' ? '1. Rehab suite' :
-    pack.kind === 'dental' ? '1. Dental operatory' :
-    pack.kind === 'wellness' ? '1. Salon / spa book' :
-    pack.kind === 'therapy' ? '1. Therapy desk' :
-    pack.kind === 'consultant' ? '1. Consulting desk' :
-    '1. Clinical Suite';
-  const flowTitle =
-    pack.kind === 'physio' ? '2. Sessions' :
-    pack.kind === 'dental' ? '2. Chair flow' :
-    pack.kind === 'wellness' ? '2. Bookings' :
-    pack.kind === 'therapy' ? '2. Calendar' :
-    pack.kind === 'consultant' ? '2. Meetings' :
-    '2. OPD Flow & Queue';
-
-  const NAV_SECTIONS = [
-    {
-      title: suiteTitle,
-      items: [
-        ...(pack.homeView !== 'queue' && pack.homeView !== 'rx'
-          ? [{ id: pack.homeView as NavView, label: pack.chartLabel, icon: Sparkles }]
-          : []),
-        ...(pack.showMedicalRx
-          ? [{
-              id: 'rx' as NavView,
-              label: pack.kind === 'physio' ? 'Exercises & procedures' : pack.kind === 'dental' ? 'Odontogram / visit' : 'Smart Rx Studio',
-              icon: FileText,
-              badge: pack.kind === 'medical' ? 'Rx' : pack.kind === 'physio' ? 'HEP' : 'Chart',
-              badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
-            }]
-          : []),
-        ...(pack.kind === 'medical'
-          ? [{
-              id: 'ambient' as NavView,
-              label: 'Ambient AI Scribe',
-              icon: Sparkles,
-              badge: 'Live',
-              badgeColor: 'bg-blue-500/20 text-blue-300 border-blue-500/30',
-            }, {
-              id: 'reports' as NavView,
-              label: 'AI Lab OCR & Diagnostic Trends',
-              icon: Activity,
-              badge: 'OCR',
-              badgeColor: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30',
-            }]
-          : []),
-      ],
-    },
-    {
-      title: flowTitle,
-      items: [
-        {
-          id: 'patients' as NavView,
-          label: patientsNavLabel(pack),
-          icon: User,
-        },
-        {
-          id: 'queue' as NavView,
-          label: pack.queueLabel || 'Live OPD Queue & Triage',
-          icon: Users,
-        },
-        {
-          id: 'reception' as NavView,
-          label: pack.receptionLabel || 'OPD Reception & ABHA (ABDM)',
-          icon: UserCheck,
-          badge: pack.kind === 'medical' ? 'ABDM' : undefined,
-          badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
-        },
-        {
-          id: 'appointments' as NavView,
-          label: pack.appointmentsLabel || 'Appointments & Schedule',
-          icon: Calendar,
-        },
-        {
-          id: 'polyclinic' as NavView,
-          label: 'Polyclinic Roster',
-          icon: Building2,
-        },
-        {
-          id: 'kiosk' as NavView,
-          label: 'TV Waiting Kiosk Display',
-          icon: Monitor,
-        },
-      ],
-    },
-    {
-      title: '3. Practice & Financial Management',
-      items: [
-        {
-          id: 'pharmacy-hub' as NavView,
-          label: 'Connected Pharmacy & Labs Hub',
-          icon: Pill,
-          badge: 'India',
-          badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
-        },
-        {
-          id: 'billing' as NavView,
-          label: pack.billingLabel || 'Billing, Claims & E-Invoicing',
-          icon: Receipt,
-        },
-        {
-          id: 'whatsapp' as NavView,
-          label: 'WhatsApp Suite & Patient Engagement',
-          icon: MessageSquare,
-        },
-        {
-          id: 'voicebot' as NavView,
-          label: 'AI Voice Receptionist',
-          icon: PhoneCall,
-        },
-        {
-          id: 'dhis' as NavView,
-          label: 'DHIS Incentive & Analytics Meter',
-          icon: Award,
-          badge: `${formatINR(20)}/tx`,
-          badgeColor: 'bg-purple-500/20 text-purple-300 border-purple-500/30',
-        },
-      ],
-    },
-  ];
-
-  const filteredSections = NAV_SECTIONS.map(section => ({
-    ...section,
-    items: section.items.filter(item => 
-      allowedViews.includes(item.id) ||
-      (item.id === 'queue' && allowedViews.includes('opd-queue')) ||
-      (item.id === 'rx' && allowedViews.includes('smart-rx'))
-    )
-  })).filter(section => section.items.length > 0);
-
   const selectablePatients = allPatients.filter((p) => p.id);
+  const NAV_ICONS: Partial<Record<NavView, typeof Calendar>> = {
+    welcome: LayoutDashboard,
+    'gp-home': LayoutDashboard,
+    appointments: Calendar,
+    queue: Users,
+    rx: FileText,
+    billing: Receipt,
+    patients: User,
+    reception: UserCheck,
+    'pharmacy-hub': Pill,
+    reports: Activity,
+    whatsapp: MessageSquare,
+    voicebot: PhoneCall,
+    kiosk: Monitor,
+    ambient: Sparkles,
+    dhis: Award,
+    team: Users,
+    polyclinic: Building2,
+    portal: User,
+    settings: Settings,
+    'physio-session': Sparkles,
+    'dental-chart': Sparkles,
+    wellness: Sparkles,
+    'therapy-session': Sparkles,
+    'consult-practice': Sparkles,
+  };
 
   return (
     <aside
       data-testid="app-sidebar"
       data-pack-kind={pack.kind}
       className={`${
-        isCollapsed ? 'w-16 max-md:-translate-x-full md:translate-x-0' : 'w-64'
-      } max-md:fixed max-md:top-14 max-md:bottom-0 max-md:left-0 md:relative flex-shrink-0 bg-slate-900 border-r border-slate-800 text-slate-300 flex flex-col justify-between transition-all duration-200 select-none z-20 overflow-hidden`}
+        isCollapsed ? 'w-16' : 'w-60'
+      } h-full flex-shrink-0 bg-white border-r border-slate-200 text-slate-600 flex flex-col transition-all duration-200 select-none overflow-hidden`}
     >
-      <div className="flex-1 overflow-y-auto p-3 space-y-5 scrollbar-thin scrollbar-thumb-slate-800">
-        {canStartConsult && (
-          <Link
-            to={appViewToPath(startView, workspaceSlug)}
-            title={isCollapsed ? pack.primaryCta : undefined}
-            className={`w-full flex items-center ${
-              isCollapsed ? 'justify-center px-2' : 'justify-center gap-2 px-3'
-            } py-2.5 rounded-xl text-xs font-bold bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-lg shadow-blue-600/30 hover:from-cyan-400 hover:to-blue-500`}
-          >
-            <Plus className="w-4 h-4 shrink-0" />
-            {!isCollapsed && <span>+ {pack.primaryCta}</span>}
-          </Link>
+      <div className={`flex items-center gap-2 px-3 py-2.5 border-b border-slate-100 ${isCollapsed ? 'justify-center' : ''}`}>
+        <div className="w-9 h-9 rounded-xl bg-teal-600 text-white flex items-center justify-center font-semibold shrink-0">
+          {clinicLabel.charAt(0).toUpperCase()}
+        </div>
+        {!isCollapsed && (
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-slate-900 truncate">{clinicLabel}</p>
+            <p className="text-[11px] text-slate-400 truncate">{pack.practiceLine}</p>
+          </div>
         )}
-
-        {filteredSections.map((section, idx) => (
-          <div key={idx} className="space-y-1">
-            {!isCollapsed && (
-              <h3 className="px-3 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                {section.title}
-              </h3>
-            )}
-            <div className="space-y-0.5">
-              {section.items.map((item) => {
-                const Icon = item.icon;
-                const isActive =
-                  currentView === item.id ||
-                  (item.id === 'queue' && currentView === 'opd-queue') ||
-                  (item.id === 'rx' && currentView === 'smart-rx');
+      </div>
+      <div className="flex-1 min-h-0 overflow-hidden p-2 space-y-0.5">
+        {primaryItems.map((item) => {
+          const Icon = NAV_ICONS[item.id] || Sparkles;
+          const isActive =
+            !item.payFocus &&
+            (currentView === item.id ||
+              (item.id === 'queue' && currentView === 'opd-queue') ||
+              (item.id === 'rx' && currentView === 'smart-rx') ||
+              (item.label === 'Dashboard' && currentView === homeView));
+          return (
+            <Link
+              key={item.testId}
+              to={appViewToPath(item.id, workspaceSlug)}
+              onClick={() => {
+                if (item.payFocus) {
+                  try { sessionStorage.setItem('lumera-bill-focus', 'pay'); } catch { /* ignore */ }
+                }
+                onNavigate?.();
+              }}
+              data-testid={item.testId}
+              title={isCollapsed ? item.label : undefined}
+              className={`w-full flex items-center ${
+                isCollapsed ? 'justify-center px-2' : 'gap-2.5 px-3'
+              } py-1.5 rounded-xl text-sm font-medium transition-colors ${
+                isActive
+                  ? 'bg-blue-600 text-white'
+                  : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+              }`}
+            >
+              <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-white' : 'text-slate-400'}`} />
+              {!isCollapsed && <span className="truncate">{item.label}</span>}
+            </Link>
+          );
+        })}
+        {moreItems.length > 0 && (
+          <details className="group" data-testid="nav-more">
+            <summary className={`cursor-pointer list-none flex items-center ${isCollapsed ? 'justify-center px-2' : 'gap-2.5 px-3'} py-1.5 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100`}>
+              <ChevronRight className="w-4 h-4 shrink-0 text-slate-400 group-open:rotate-90" />
+              {!isCollapsed && <span>More</span>}
+            </summary>
+            <div className="mt-0.5 space-y-0.5 max-h-40 overflow-y-auto">
+              {moreItems.map((item) => {
+                const Icon = NAV_ICONS[item.id] || Sparkles;
+                const isActive = !item.payFocus && currentView === item.id;
                 return (
                   <Link
-                    key={item.id}
+                    key={item.testId}
                     to={appViewToPath(item.id, workspaceSlug)}
                     onClick={() => onNavigate?.()}
-                    data-testid={`app-nav-${item.id}`}
+                    data-testid={item.testId}
                     title={isCollapsed ? item.label : undefined}
                     className={`w-full flex items-center ${
-                      isCollapsed ? 'justify-center px-2' : 'justify-between px-3'
-                    } py-2 rounded-lg text-xs font-medium transition-all ${
-                      isActive
-                        ? 'bg-blue-600 text-white font-semibold shadow-sm'
-                        : 'text-slate-300 hover:text-white hover:bg-slate-800/80'
+                      isCollapsed ? 'justify-center px-2' : 'gap-2.5 px-3'
+                    } py-1.5 rounded-xl text-sm font-medium ${
+                      isActive ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100'
                     }`}
                   >
-                    <div className="flex items-center space-x-2.5 min-w-0">
-                      <Icon
-                        className={`w-4 h-4 shrink-0 ${
-                          isActive ? 'text-white' : 'text-slate-400'
-                        }`}
-                      />
-                      {!isCollapsed && <span className="truncate">{item.label}</span>}
-                    </div>
-
-                    {!isCollapsed && item.badge && (
-                      <span
-                        className={`text-[9px] px-1.5 py-0.2 rounded border font-mono font-semibold ${
-                          isActive
-                            ? 'bg-white/20 text-white border-white/30'
-                            : item.badgeColor
-                        }`}
-                      >
-                        {item.badge}
-                      </span>
-                    )}
+                    <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-white' : 'text-slate-400'}`} />
+                    {!isCollapsed && <span className="truncate">{item.label}</span>}
                   </Link>
                 );
               })}
+              {selectablePatients.length > 0 && !isCollapsed && (
+                <label className="block px-2 pt-1 text-[10px] text-slate-400">
+                  Active patient
+                  <select
+                    aria-label="Quick Select Active Patient"
+                    value={currentPatient.id}
+                    onChange={(e) => {
+                      const p = allPatients.find((pat) => pat.id === e.target.value);
+                      if (p) onSelectPatient(p);
+                    }}
+                    className="mt-1 w-full bg-white border border-slate-200 text-slate-800 text-xs rounded px-2 py-1"
+                  >
+                    {!currentPatient.id && <option value="">No patient selected</option>}
+                    {selectablePatients.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
             </div>
-          </div>
-        ))}
+          </details>
+        )}
       </div>
 
-      <div className="p-3 border-t border-slate-800 bg-slate-950/60 space-y-2.5 shrink-0">
+      <div className="p-3 border-t border-slate-100 bg-white space-y-2.5 shrink-0">
         {!isCollapsed && (
-          <div className="space-y-0.5 pb-1">
-            <h3 className="px-3 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-              4. Settings & Profile
-            </h3>
-            <Link
-              to={appViewToPath('settings', workspaceSlug)}
-              data-testid="app-nav-settings"
-              className={`w-full flex items-center px-3 py-2 rounded-lg text-xs font-medium ${
-                currentView === 'settings'
-                  ? 'bg-blue-600 text-white font-semibold'
-                  : 'text-slate-300 hover:text-white hover:bg-slate-800/80'
-              }`}
-            >
-              <Settings className="w-4 h-4 shrink-0 mr-2.5" />
-              Clinic & Doctor Profile Settings
-            </Link>
-            {canOpenAdminCms && (
-              <Link
-                to="/admin"
-                className="w-full flex items-center px-3 py-2 rounded-lg text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800/80"
-              >
-                <Shield className="w-4 h-4 shrink-0 mr-2.5" />
-                Admin CMS
-              </Link>
-            )}
-          </div>
-        )}
-        {isCollapsed && (
-          <Link
-            to={appViewToPath('settings', workspaceSlug)}
-            className="w-full flex justify-center py-2 rounded-lg text-slate-300 hover:bg-slate-800"
-            title="Clinic & Doctor Profile Settings"
+          <p
+            data-testid="whatsapp-status-pill"
+            data-state={waPill.state}
+            className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium ${
+              waPill.state === "connected"
+                ? "bg-emerald-50 text-emerald-700"
+                : waPill.state === "disconnected"
+                  ? "bg-rose-50 text-rose-700"
+                  : "bg-slate-100 text-slate-500"
+            }`}
           >
-            <Settings className="w-4 h-4" />
+            <span className={`w-1.5 h-1.5 rounded-full ${waPill.state === "connected" ? "bg-emerald-500" : waPill.state === "disconnected" ? "bg-rose-500" : "bg-slate-400"}`} />
+            {waPill.label}
+          </p>
+        )}
+        {canOpenAdminCms && !isCollapsed && (
+          <Link
+            to="/admin"
+            className="w-full flex items-center px-3 py-2 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100"
+          >
+            <Shield className="w-4 h-4 shrink-0 mr-2.5" />
+            Admin
           </Link>
         )}
 
         {!isCollapsed ? (
-          <div className="bg-slate-800/80 rounded-lg p-2.5 border border-slate-700/80 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1">
-                <User className="w-3 h-3 text-blue-400" />
-                Active Patient
-              </span>
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => setIsQuickAddOpen(true)}
-                  className="text-[10px] font-semibold text-blue-400 hover:text-blue-300 bg-blue-500/10 hover:bg-blue-500/20 px-1.5 py-0.5 rounded transition-colors flex items-center gap-0.5"
-                  title="Quick Add Patient (Name & Phone)"
-                >
-                  <UserPlus className="w-3 h-3" />
-                  Quick Add
-                </button>
-                <span className="text-[9px] font-mono text-blue-300 bg-blue-500/20 px-1.5 py-0.2 rounded">
-                  {currentPatient.uhid}
-                </span>
-              </div>
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-full bg-blue-600 text-white text-xs font-semibold flex items-center justify-center shrink-0">
+              {(user?.name || "U").charAt(0)}
             </div>
-
-            {selectablePatients.length > 0 ? (
-              <select
-                aria-label="Quick Select Active Patient"
-                value={currentPatient.id}
-                onChange={(e) => {
-                  const p = allPatients.find((pat) => pat.id === e.target.value);
-                  if (p) onSelectPatient(p);
-                }}
-                className="w-full bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded px-2 py-1 focus:ring-1 focus:ring-blue-500 focus:outline-none cursor-pointer"
-              >
-                {!currentPatient.id && (
-                  <option value="" className="bg-slate-900 text-white">
-                    No patient selected
-                  </option>
-                )}
-                {selectablePatients.map((p) => (
-                  <option key={p.id} value={p.id} className="bg-slate-900 text-white">
-                    {p.name} ({p.age}y/{p.gender.charAt(0)})
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <p className="text-[11px] text-slate-400">No patients registered yet.</p>
-            )}
-
-            <div className="text-[10px] text-slate-400 flex items-center justify-between pt-0.5">
-              <span>Doctor:</span>
-              <span className="text-slate-200 font-medium truncate max-w-[120px]">{currentDoctor.name}</span>
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-semibold text-slate-900 truncate">{user?.name || "Signed in"}</p>
+              <p className="text-[10px] text-slate-500 truncate">{user?.email}</p>
             </div>
+            <button
+              type="button"
+              onClick={() => setIsQuickAddOpen(true)}
+              className="text-blue-700 p-1 rounded hover:bg-blue-50"
+              title="Quick Add Patient"
+            >
+              <UserPlus className="w-4 h-4" />
+            </button>
           </div>
         ) : (
           <div className="flex flex-col items-center space-y-2">
@@ -523,7 +427,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         <button
           onClick={() => logout().then(() => go("landing"))}
-          className={`w-full flex items-center ${isCollapsed ? 'justify-center' : 'space-x-2 px-3'} py-2 text-xs text-rose-300 hover:text-white hover:bg-rose-500/20 rounded-md transition-colors border border-rose-500/20`}
+          className={`w-full flex items-center ${isCollapsed ? 'justify-center' : 'space-x-2 px-3'} py-2 text-xs text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg`}
           title="Logout"
         >
           <LogOut className="w-4 h-4 shrink-0" />
@@ -532,7 +436,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         <button
           onClick={onToggleCollapse}
-          className="w-full flex items-center justify-center space-x-1.5 py-1.5 text-xs text-slate-400 hover:text-white hover:bg-slate-800/80 rounded-md transition-colors"
+          className="w-full flex items-center justify-center space-x-1.5 py-1.5 text-xs text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-md transition-colors"
           title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
         >
           {isCollapsed ? (

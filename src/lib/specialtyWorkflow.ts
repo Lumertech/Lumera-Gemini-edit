@@ -17,7 +17,8 @@ export type WorkflowView =
   | "therapy-session"
   | "consult-practice"
   | "physio-session"
-  | "dental-chart";
+  | "dental-chart"
+  | "gp-home";
 
 export type NoteKind =
   | "medical-rx"
@@ -107,7 +108,7 @@ function medicalPack(specialty: PolyclinicSpecialty, extra: IntakeField[] = []):
     kind: "medical",
     specialty,
     practiceLine: "Doctors & Clinics",
-    homeView: "queue",
+    homeView: "gp-home",
     chartLabel: `${specialty} consult & Rx`,
     queueLabel: `${specialty} OPD queue`,
     receptionLabel: `${specialty} intake`,
@@ -532,9 +533,11 @@ export function patientsNavLabel(pack: Pick<SpecialtyWorkflowPack, "patientsLabe
 
 export function clinicianHomeView(user?: AppUser | null): WorkflowView {
   if (!user) return "queue";
-  if (user.role === "receptionist") return "reception";
+  if (user.role === "receptionist") return "welcome";
+  if (user.role === "super_admin") return "welcome";
+  // Owners and admins land on the same pack home as their clinicians.
   if (user.role === "CLINIC_ADMIN" || user.role === "polyclinic_admin") {
-    return user.practiceType === "polyclinic" ? "welcome" : "queue";
+    return workflowForUser(user).homeView;
   }
   return workflowForUser(user).homeView;
 }
@@ -546,6 +549,7 @@ export function allowedViewsForWorkflow<T extends string>(base: T[], pack: Speci
   if (pack.kind === "consultant") extra.add("consult-practice");
   if (pack.kind === "physio") extra.add("physio-session");
   if (pack.kind === "dental") extra.add("dental-chart");
+  if (pack.kind === "medical") extra.add("gp-home");
   if (!pack.showMedicalRx) {
     extra.delete("rx");
     extra.delete("smart-rx");

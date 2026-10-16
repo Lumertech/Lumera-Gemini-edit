@@ -17,7 +17,7 @@ import { ClinicTeamManager } from './components/ClinicTeamManager';
 import { GeminiAssistant } from './components/GeminiAssistant';
 import { Reception } from './components/Reception';
 import { DhisMeter } from './components/dhis/DhisMeter';
-import { WelcomeSetupDashboard } from './components/WelcomeSetupDashboard';
+import { PracticeHome } from './components/PracticeHome';
 import { ClinicProfileSettings } from './components/ClinicProfileSettings';
 import { PharmacyDiagnosticsHub } from './components/PharmacyDiagnosticsHub';
 import {
@@ -51,6 +51,7 @@ import {
   clinicianRxSpecialty,
   workflowForUser,
 } from './lib/specialtyWorkflow';
+import { canStartConsultRole, istClock } from './lib/clinicNav';
 import { SpecialtyPackBoard } from './components/specialty-packs/SpecialtyPackBoard';
 import { PatientsWorkspace } from './components/PatientsWorkspace';
 import {
@@ -620,7 +621,8 @@ export default function ClinicianApp() {
     currentView === 'therapy-session' ||
     currentView === 'consult-practice' ||
     currentView === 'physio-session' ||
-    currentView === 'dental-chart';
+    currentView === 'dental-chart' ||
+    currentView === 'gp-home';
 
   useEffect(() => {
     if (!isPolyclinicPractice(user) && (currentView === 'polyclinic' || currentView === 'team')) {
@@ -709,7 +711,7 @@ export default function ClinicianApp() {
           )}
           {isDemo && (
             <div className="mb-3 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-900" data-testid="demo-sandbox-banner">
-              {pack.sandboxNotice}
+              Sandbox workspace. Sample data only.
             </div>
           )}
           {!isViewAllowed ? (
@@ -730,35 +732,64 @@ export default function ClinicianApp() {
             </div>
           ) : (
             <>
-              {currentView === 'welcome' && (
-                <WelcomeSetupDashboard
-                  hasPatients={patients.length > 0}
-                  hasSelectedPatient={Boolean(currentPatient.id)}
-                  onAddPatients={() => {
-                    setIntakeIntent('register');
-                    setCurrentView('reception');
-                  }}
-                  onStartFirstConsultation={() => {
-                    if (currentPatient.id) {
-                      setCurrentView('rx');
-                      return;
-                    }
-                    setIntakeIntent('start-consult');
-                    setCurrentView('reception');
-                  }}
-                  onAddStaff={() => setCurrentView('team')}
-                />
-              )}
-
-              {(currentView === 'wellness' || currentView === 'therapy-session' || currentView === 'consult-practice' || currentView === 'physio-session' || currentView === 'dental-chart') && (
-                <SpecialtyPackBoard
-                  pack={pack}
-                  patients={patients}
-                  appointments={appointments}
-                  currentDoctor={currentDoctor}
-                  onSelectView={setCurrentView}
-                  onSelectPatient={handleSelectPatient}
-                />
+              {(currentView === 'welcome' || currentView === 'gp-home' || currentView === 'wellness' || currentView === 'therapy-session' || currentView === 'consult-practice' || currentView === 'physio-session' || currentView === 'dental-chart') && (
+                <div className="space-y-4">
+                  <PracticeHome
+                    user={user}
+                    pack={pack}
+                    patients={patients}
+                    appointments={appointments}
+                    doctor={currentDoctor}
+                    canConsult={canStartConsultRole(user.role, allowedViews)}
+                    hasLogo={Boolean(letterhead?.signatureUrl)}
+                    hasHoursAndFees={Number(currentDoctor.consultationFee) > 0}
+                    onOpen={setCurrentView}
+                    onCheckInWalkIn={() => {
+                      const patient = patients[0];
+                      if (!patient) {
+                        setIntakeIntent('register');
+                        setCurrentView('reception');
+                        return;
+                      }
+                      void persistAppointmentCreate({
+                        patientId: patient.id,
+                        doctorId: currentDoctor.id,
+                        date: clinicCalendarDate(),
+                        timeSlot: istClock(),
+                        type: 'New Consultation',
+                        source: 'Walk-in',
+                        status: 'Waiting',
+                      }).then(() => setCurrentView('queue'));
+                    }}
+                    onCheckIn={(apt) => {
+                      handleUpdateAppointmentStatus(apt.id, 'Waiting');
+                      setQueueDate(apt.date || clinicCalendarDate());
+                      setCurrentView('queue');
+                    }}
+                    onReady={(apt) => {
+                      handleUpdateAppointmentStatus(apt.id, 'Triage / Vitals');
+                      setQueueDate(apt.date || clinicCalendarDate());
+                      setCurrentView('queue');
+                    }}
+                    onStartConsult={canStartConsultRole(user.role, allowedViews) ? handleStartConsultation : undefined}
+                    onCreateBill={handleOpenBillForAppointment}
+                  />
+                  {currentView !== 'welcome' && currentView !== 'gp-home' && (
+                    <details className="bg-white rounded-2xl border border-slate-200">
+                      <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-slate-800">Session tools</summary>
+                      <div className="px-2 pb-4">
+                        <SpecialtyPackBoard
+                          pack={pack}
+                          patients={patients}
+                          appointments={appointments}
+                          currentDoctor={currentDoctor}
+                          onSelectView={setCurrentView}
+                          onSelectPatient={handleSelectPatient}
+                        />
+                      </div>
+                    </details>
+                  )}
+                </div>
               )}
 
               {currentView === 'settings' && (
@@ -832,7 +863,7 @@ export default function ClinicianApp() {
                     patientId: pat.id,
                     doctorId: doc.id,
                     date: clinicCalendarDate(),
-                    timeSlot: new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' }),
+                    timeSlot: istClock(),
                     type: (type as Appointment['type']) || 'New Consultation',
                     source: 'Walk-in',
                   });
@@ -941,6 +972,7 @@ export default function ClinicianApp() {
               onStartConsultation={handleStartConsultation}
               onOpenBill={handleOpenBillForAppointment}
               onAddNewToken={handleAddNewToken}
+              canConsult={canStartConsultRole(user.role, allowedViews)}
             />
           )}
 
@@ -972,7 +1004,7 @@ export default function ClinicianApp() {
                     patientId: newPat.id,
                     doctorId: doc.id,
                     date: clinicCalendarDate(),
-                    timeSlot: new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' }),
+                    timeSlot: istClock(),
                     type: 'New Consultation',
                     source: 'Walk-in',
                   });
@@ -998,6 +1030,11 @@ export default function ClinicianApp() {
               doctors={doctors}
               patients={patients}
               onBookAppointment={handleBookAppointment}
+              onCheckIn={(apt) => {
+                handleUpdateAppointmentStatus(apt.id, 'Waiting');
+                setQueueDate(apt.date || clinicCalendarDate());
+                setCurrentView('queue');
+              }}
             />
           )}
 
@@ -1089,31 +1126,14 @@ export default function ClinicianApp() {
         </main>
       </div>
 
-      <footer className="h-7 bg-slate-950 text-slate-400 border-t border-slate-800 flex items-center justify-between px-4 text-[11px] font-mono shrink-0 select-none z-30">
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span className="text-slate-400">EMR Core:</span>
-            <span className="text-slate-200 font-semibold">Synchronized</span>
-          </div>
-          <div className="hidden sm:flex items-center gap-1 text-slate-400">
-            <span>Doctor:</span>
-            <span className="text-blue-400">{currentDoctor.name}</span>
-          </div>
-          <div className="hidden md:flex items-center gap-1 text-slate-400">
-            <span>Patient:</span>
-            <span className="text-slate-200">
-              {currentPatient.id ? `${currentPatient.name} (${currentPatient.uhid})` : 'No patient selected'}
-            </span>
-          </div>
-        </div>
-        <div className="flex items-center gap-4 text-slate-400">
-          <div className="hidden sm:block">ICD-10 · ABDM-aligned (NHA sandbox)</div>
-          <div className="text-purple-400 font-medium flex items-center gap-1">
-            <span className="w-2 h-2 rounded-full bg-purple-400 animate-pulse"></span>
-            Pulse AI (Gemini 3.8 Flash)
-          </div>
-        </div>
+      <footer className="h-8 bg-white text-slate-500 border-t border-slate-200 flex items-center justify-end px-3 sm:px-4 shrink-0 select-none z-30">
+        <span
+          className="inline-flex max-w-full items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] text-slate-500"
+          title="ABHA linking (ABDM sandbox testing; not yet live)"
+        >
+          <span className="sm:hidden">ABHA sandbox</span>
+          <span className="hidden sm:inline">ABHA linking (ABDM sandbox testing; not yet live)</span>
+        </span>
       </footer>
 
       <GeminiAssistant

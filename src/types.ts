@@ -568,6 +568,8 @@ export interface Appointment {
   source: 'Walk-in' | 'WhatsApp Bot' | 'Online Portal' | 'Call Desk';
   consultationFee: number;
   isPaid: boolean;
+  /** ISO instant the visit was created. Walk-in stamps use this, not timeSlot. */
+  createdAt?: string;
   vitals?: Vitals;
   age?: number;
   gender?: 'Male' | 'Female' | 'Other';

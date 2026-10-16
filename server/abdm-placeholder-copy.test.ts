@@ -229,7 +229,7 @@ describe("ABDM placeholder-ID copy (registration + surfaces)", () => {
   it("user-facing surfaces inventory: pending copy present; large files not truncated", () => {
     const onboarding = readRepo("src/pages/OnboardingWizard.tsx");
     const edge = readRepo("server/abdm-registry-public.ts");
-    const welcome = readRepo("src/components/WelcomeSetupDashboard.tsx");
+    const welcome = readRepo("src/components/PracticeHome.tsx");
     const dhis = readRepo("src/components/dhis/DhisMeter.tsx");
     const doctorModal = readRepo("src/components/DoctorProfileModal.tsx");
     const landing = readRepo("src/components/LandingPage.tsx");
@@ -243,8 +243,7 @@ describe("ABDM placeholder-ID copy (registration + surfaces)", () => {
     assert.match(onboarding, /formatAbdmRegistryLabel/);
     assert.match(edge, /practiceRegisteredWelcomeMessage/);
     assert.match(edge, /abdmRegistryPublicFields/);
-    assert.match(welcome, /hfrLabel/);
-    assert.match(welcome, /formatAbdmRegistryLabel/);
+    assert.equal(/hfrLabel|HFR|HPR/.test(welcome), false);
     assert.match(dhis, /pending — not yet verified with the National Health Authority/);
     assert.match(doctorModal, /pending — not yet verified with the National Health Authority/);
     assert.match(doctorModal, /ravee@lumer\.me/);
@@ -272,7 +271,7 @@ describe("ABDM placeholder-ID copy (registration + surfaces)", () => {
 
     for (const [rel, src] of [
       ["src/pages/OnboardingWizard.tsx", onboarding],
-      ["src/components/WelcomeSetupDashboard.tsx", welcome],
+      ["src/components/PracticeHome.tsx", welcome],
       ["src/components/DoctorProfileModal.tsx", doctorModal],
     ] as const) {
       assertNoConfirmedRegistryClaim(src, rel);
