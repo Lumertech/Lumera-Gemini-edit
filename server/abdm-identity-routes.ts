@@ -2,11 +2,11 @@
  * ABDM identity, DHIS, and FHIR sample routes.
  * Extracted from server/abdm.ts so GitHub MCP can upload without truncating the gateway.
  */
-import { type Request, type Response, type Router } from "express";
+import { type NextFunction, type Request, type Response, type Router } from "express";
 import crypto from "node:crypto";
-import { getDb, writeAudit, type UserRole } from "./db.ts";
+import { getDb, writeAudit } from "./db.ts";
 import { allowOtpEcho, CLINICIAN_ROLES, requireAuth, requireRole } from "./auth.ts";
-import { denyUnlessPatientRecordRole } from "./patient-access.ts";
+import { denyUnlessPatientRecordRole, isPatientRecordRole } from "./patient-access.ts";
 import { rejectProductionSimulator } from "./meta-security.ts";
 import { isAbdmPlaceholderRegistryMode, resolveAbdmMode } from "./abdm-mode.ts";
 import { formatAbdmRegistryLabel } from "../src/lib/abdmRegistryLabel.ts";
@@ -53,12 +53,16 @@ const otpSessions = new Map<string, AadhaarOtpSession>();
 /** Clinic staff may read the meter. Patients are 403. Anonymous is 401 via requireAuth. */
 const dhisOverviewGuards = [requireAuth, requireRole(...CLINICIAN_ROLES)] as const;
 
-/**
- * Synthetic FHIR samples are staff-only. Same set as PATIENT_RECORD_ROLES in
- * patient-access.ts. Patients are 403. Anonymous callers are 401 via requireAuth.
- */
-const FHIR_SAMPLE_STAFF_ROLES: UserRole[] = ["doctor", "receptionist", "polyclinic_admin", "CLINIC_ADMIN"];
-const fhirSampleGuards = [requireAuth, requireRole(...FHIR_SAMPLE_STAFF_ROLES)] as const;
+/** Sample bundles are patient-record staff only. Patients and super_admin are 403. Anonymous is 401 via requireAuth. */
+function requireFhirSampleStaff(req: Request, res: Response, next: NextFunction) {
+  if (!isPatientRecordRole(req.user?.role)) {
+    res.status(403).json({ error: "Insufficient permissions" });
+    return;
+  }
+  next();
+}
+
+const fhirSampleGuards = [requireAuth, requireFhirSampleStaff] as const;
 
 /** Obviously fake identity. This route must not read the patients or doctors tables. */
 const FHIR_SAMPLE_PATIENT: PatientContext = {

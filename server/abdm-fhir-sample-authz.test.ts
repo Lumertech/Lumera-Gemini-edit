@@ -133,11 +133,21 @@ describe("ABDM FHIR sample AuthZ", () => {
     }
   });
 
-  it("patients are 403", async () => {
-    const token = await login("patient@lumera.me");
-    const res = await jsonRequest(port, "GET", SAMPLE_PATHS[0], undefined, auth(token));
-    assert.equal(res.status, 403);
-    assert.equal(res.json.error, "Insufficient permissions");
+  it("anonymous callers are 401 on both mounts even with the production Origin", async () => {
+    for (const path of SAMPLE_PATHS) {
+      const res = await jsonRequest(port, "GET", path, undefined, { Origin: "https://www.mylumera.in" });
+      assert.equal(res.status, 401, path);
+      assert.equal(res.json.error, "Authentication required");
+    }
+  });
+
+  it("patients and super_admin are 403", async () => {
+    for (const email of ["patient@lumera.me", "admin@lumera.me"]) {
+      const token = await login(email);
+      const res = await jsonRequest(port, "GET", SAMPLE_PATHS[0], undefined, auth(token));
+      assert.equal(res.status, 403, email);
+      assert.equal(res.json.error, "Insufficient permissions");
+    }
   });
 
   it("staff receive a synthetic bundle with no field from a real patient row", async () => {
