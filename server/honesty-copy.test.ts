@@ -426,7 +426,11 @@ describe("legacy honesty copy migration", () => {
     const db = new DatabaseSync(":memory:");
     db.exec(`
       CREATE TABLE tenants (id TEXT PRIMARY KEY, footer_disclaimer TEXT DEFAULT '');
-      CREATE TABLE meta_templates (id TEXT PRIMARY KEY, components TEXT NOT NULL DEFAULT '[]');
+      CREATE TABLE meta_templates (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        components TEXT NOT NULL DEFAULT '[]'
+      );
     `);
     const insertTenant = db.prepare("INSERT INTO tenants (id, footer_disclaimer) VALUES (?, ?)");
     insertTenant.run("exact", OLD_FOOTER);
@@ -439,10 +443,20 @@ describe("legacy honesty copy migration", () => {
       { type: "BODY", text: "Dear {{1}}" },
       { type: "FOOTER", text: "Lumera Health EMR System • Certified Digital Rx" },
     ]);
-    const customComponents = JSON.stringify([{ type: "FOOTER", text: "Lumera Central Diagnostics" }]);
-    const insertTpl = db.prepare("INSERT INTO meta_templates (id, components) VALUES (?, ?)");
-    insertTpl.run("tpl-2", oldComponents);
-    insertTpl.run("tpl-3", customComponents);
+    const labComponents = JSON.stringify([{ type: "FOOTER", text: "Lumera Central Diagnostics" }]);
+    const customPhrase = "Clinic note: Certified Digital Rx for our patients only";
+    const customComponents = JSON.stringify([
+      { type: "BODY", text: "Hello {{1}}" },
+      { type: "FOOTER", text: customPhrase },
+    ]);
+    const nearComponents = JSON.stringify([
+      { type: "FOOTER", text: "Lumera Health EMR System • Certified Digital Rx — edited" },
+    ]);
+    const insertTpl = db.prepare("INSERT INTO meta_templates (id, name, components) VALUES (?, ?, ?)");
+    insertTpl.run("tpl-2", "post_consultation_rx", oldComponents);
+    insertTpl.run("tpl-3", "lab_report_ready", labComponents);
+    insertTpl.run("tpl-custom", "clinic_branded_rx", customComponents);
+    insertTpl.run("tpl-near", "post_consultation_rx", nearComponents);
 
     rewriteLegacyHonestyCopy(db);
     rewriteLegacyHonestyCopy(db);
@@ -455,12 +469,18 @@ describe("legacy honesty copy migration", () => {
     assert.equal(footer("empty"), "");
     assert.equal(footer("already"), NEW_FOOTER);
 
-    const tpl2 = (db.prepare("SELECT components AS v FROM meta_templates WHERE id = ?").get("tpl-2") as { v: string }).v;
-    const tpl3 = (db.prepare("SELECT components AS v FROM meta_templates WHERE id = ?").get("tpl-3") as { v: string }).v;
+    const componentsOf = (id: string) =>
+      (db.prepare("SELECT components AS v FROM meta_templates WHERE id = ?").get(id) as { v: string }).v;
+    const tpl2 = componentsOf("tpl-2");
     assert.equal(tpl2.includes("Certified Digital Rx"), false);
     assert.match(tpl2, /Lumera Health EMR System • Digital Rx/);
-    assert.match(tpl3, /Lumera Central Diagnostics/);
     const parsed = JSON.parse(tpl2) as { type: string; text?: string }[];
     assert.equal(parsed[0].text, "Dear {{1}}");
+    assert.equal(parsed.find((part) => part.type === "FOOTER")?.text, "Lumera Health EMR System • Digital Rx");
+
+    assert.equal(componentsOf("tpl-3"), labComponents);
+    assert.equal(componentsOf("tpl-custom"), customComponents);
+    assert.equal(componentsOf("tpl-near"), nearComponents);
+    assert.match(componentsOf("tpl-custom"), /Certified Digital Rx/);
   });
 });

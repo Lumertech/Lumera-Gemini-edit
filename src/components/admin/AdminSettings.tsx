@@ -48,8 +48,8 @@ export const AdminSettings: React.FC = () => {
         <label className="block text-xs font-semibold">
           Clinical model
           <select className="mt-1 w-full border rounded px-3 py-2" value={settings.gemini_model || ""} onChange={(e) => setSettings({ ...settings, gemini_model: e.target.value })}>
-            <option value="models/gemini-3.7-flash">gemini-3.7-flash</option>
-            <option value="models/gemini-3.7-pro">gemini-3.7-pro</option>
+            <option value="models/gemini-3.7-flash">Pulse AI – Fast</option>
+            <option value="models/gemini-3.7-pro">Pulse AI – Pro</option>
           </select>
         </label>
         <label className="block text-xs font-semibold">

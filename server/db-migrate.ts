@@ -27,13 +27,22 @@ const DEMO_LETTERHEAD_SEED = {
 /** Previous seeded Rx footer. Matched only to rewrite stored rows; not a default. */
 const LEGACY_SEEDED_FOOTER_DISCLAIMER =
   "This prescription is digitally verified under National Health Authority (NHA) & Telemedicine Practice Guidelines. Please report any adverse drug reactions immediately.";
-const LEGACY_WHATSAPP_RX_FOOTER = "Certified Digital Rx";
-const WHATSAPP_RX_FOOTER = "Digital Rx";
+/** Full seeded FOOTER text. A row changes only when that component text matches exactly. */
+const LEGACY_SEEDED_RX_TEMPLATE_FOOTER = "Lumera Health EMR System • Certified Digital Rx";
+const SEEDED_RX_TEMPLATE_FOOTER = "Lumera Health EMR System • Digital Rx";
+/**
+ * Seeded template whose footer was that sentence. lab_report_ready does not apply:
+ * its seeded footer is "Lumera Central Diagnostics".
+ */
+const SEEDED_RX_TEMPLATE_NAMES = ["post_consultation_rx"] as const;
+
+type TemplateComponent = { type?: string; text?: string; [key: string]: unknown };
 
 /**
  * Idempotent copy fix. Rewrites a tenant footer only when it still equals the
  * old seeded default. A custom footer that merely contains the old phrase stays.
- * Seeded WhatsApp template rows lose the "Certified Digital Rx" phrase.
+ * A WhatsApp template changes only when its name is a seeded Rx template and a
+ * FOOTER component's text equals the old seeded footer exactly.
  */
 export function rewriteLegacyHonestyCopy(database: SqlDatabase): void {
   try {
@@ -48,16 +57,44 @@ export function rewriteLegacyHonestyCopy(database: SqlDatabase): void {
     /* footer_disclaimer is added in this same migrate() pass */
   }
   try {
-    database
+    const names = [...SEEDED_RX_TEMPLATE_NAMES];
+    const rows = database
       .prepare(
-        `UPDATE meta_templates
-            SET components = replace(components, ?, ?)
-          WHERE components LIKE '%' || ? || '%'`
+        `SELECT id, components FROM meta_templates WHERE name IN (${names.map(() => "?").join(", ")})`
       )
-      .run(LEGACY_WHATSAPP_RX_FOOTER, WHATSAPP_RX_FOOTER, LEGACY_WHATSAPP_RX_FOOTER);
+      .all(...names) as { id: string; components: unknown }[];
+    const update = database.prepare("UPDATE meta_templates SET components = ? WHERE id = ?");
+    for (const row of rows) {
+      const next = rewriteExactSeededFooter(row.components);
+      if (next != null) update.run(next, row.id);
+    }
   } catch {
     /* meta_templates is created by BOOTSTRAP_DDL before this runs */
   }
+}
+
+/** Returns new JSON only when a FOOTER text equals the old seeded footer. */
+function rewriteExactSeededFooter(components: unknown): string | null {
+  let parsed: unknown = components;
+  if (typeof components === "string") {
+    try {
+      parsed = JSON.parse(components);
+    } catch {
+      return null;
+    }
+  }
+  if (!Array.isArray(parsed)) return null;
+  let changed = false;
+  const next = parsed.map((part) => {
+    if (!part || typeof part !== "object") return part;
+    const component = part as TemplateComponent;
+    if (component.type === "FOOTER" && component.text === LEGACY_SEEDED_RX_TEMPLATE_FOOTER) {
+      changed = true;
+      return { ...component, text: SEEDED_RX_TEMPLATE_FOOTER };
+    }
+    return part;
+  });
+  return changed ? JSON.stringify(next) : null;
 }
 
 const DEMO_TENANT_ID = "tenant-lumera-main";
