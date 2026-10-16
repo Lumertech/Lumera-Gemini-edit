@@ -22,9 +22,56 @@ import { invoiceNumberToPersist } from "../src/lib/billingCollect.ts";
 import { upsertScopedConversation } from "./whatsapp-scope.ts";
 import { WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
 import { formatINR } from "../src/lib/currency.ts";
+import { denyUnlessPatientRecordRole } from "./patient-access.ts";
+import { loadPatientTenant, requestIsPatient, sessionPatientId } from "./patient-tenant.ts";
 
 function tenantIdOf(req: Request): string {
   return String(req.user?.tenantId || "").trim();
+}
+
+const PATIENT_INVOICE_DROP = [
+  "razorpayOrderId",
+  "razorpayPaymentId",
+  "razorpayPaymentLinkId",
+  "issuedBy",
+  "receiptWhatsAppStatus",
+  "receiptWhatsAppChannel",
+  "receiptWhatsAppMessageId",
+] as const;
+
+function invoiceForPatient(row: Record<string, unknown>) {
+  const mapped = { ...mapInvoice(row) } as Record<string, unknown>;
+  for (const key of PATIENT_INVOICE_DROP) delete mapped[key];
+  return mapped;
+}
+
+function invoiceForClient(req: Request, row: Record<string, unknown>) {
+  if (!requestIsPatient(req)) return { invoice: mapInvoice(row) };
+  return {
+    invoice: invoiceForPatient(row),
+    tenant: loadPatientTenant(String(row.tenant_id || tenantIdOf(req))),
+  };
+}
+
+function patientOwnsInvoice(req: Request, row: Record<string, unknown>): boolean {
+  const ownId = String(sessionPatientId(req) || "").trim();
+  const invoicePatientId = String(row.patient_id || "").trim();
+  if (!ownId || !invoicePatientId) return false;
+  return invoicePatientId === ownId;
+}
+
+function rejectPatientInvoice(
+  req: Request,
+  res: Response,
+  row: Record<string, unknown> | undefined
+): row is undefined {
+  if (row && (!requestIsPatient(req) || patientOwnsInvoice(req, row))) return false;
+  if (row && requestIsPatient(req) && !String(sessionPatientId(req) || "").trim()) {
+    res.status(403).json({ error: "Insufficient permissions" });
+    return true;
+  }
+  res.status(404).json({ error: "Invoice not found" });
+  return true;
 }
 
 function requireTenant(req: Request, res: Response): string | null {
@@ -419,6 +466,7 @@ export function createBillingRouter(): Router {
   const api = Router();
 
   api.get("/billing/settings", requireAuth, (req, res) => {
+    if (!denyUnlessPatientRecordRole(req, res)) return;
     const tenantId = tenantIdOf(req);
     const letterhead = getTenantLetterhead(tenantId, req.user?.id);
     const ids = scrubSeedBillingIds(tenantId, { gstin: letterhead.gstin, upiId: letterhead.upiId });
@@ -436,6 +484,7 @@ export function createBillingRouter(): Router {
   });
 
   api.get("/billing/day-end", requireAuth, (req, res) => {
+    if (!denyUnlessPatientRecordRole(req, res)) return;
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     const date = todayDate(String(req.query.date || ""));
@@ -483,10 +532,25 @@ export function createBillingRouter(): Router {
         clauses.push("appointment_id = ?");
         params.push(appointmentId);
       }
+      if (requestIsPatient(req)) {
+        const ownId = sessionPatientId(req);
+        if (!ownId) {
+          return res.json({ invoices: [], tenant: loadPatientTenant(tenantId) });
+        }
+        clauses.push("patient_id = ?");
+        params.push(ownId);
+      }
       const rows = getDb()
         .prepare(`SELECT * FROM invoices WHERE ${clauses.join(" AND ")} ORDER BY created_at DESC`)
         .all(...params) as Record<string, unknown>[];
-      res.json({ invoices: rows.map(mapInvoice) });
+      if (!requestIsPatient(req)) {
+        res.json({ invoices: rows.map(mapInvoice) });
+        return;
+      }
+      res.json({
+        invoices: rows.map(invoiceForPatient),
+        tenant: loadPatientTenant(tenantId),
+      });
     } catch (err) {
       reportCaughtError(err, "billing.listInvoices");
       res.status(500).json({ error: "Failed to fetch invoices" });
@@ -497,11 +561,12 @@ export function createBillingRouter(): Router {
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     const row = getTenantInvoice(tenantId, req.params.id);
-    if (!row) return res.status(404).json({ error: "Invoice not found" });
-    res.json({ invoice: mapInvoice(row) });
+    if (rejectPatientInvoice(req, res, row)) return;
+    res.json(invoiceForClient(req, row));
   });
 
   api.post("/invoices", requireAuth, (req, res) => {
+    if (!denyUnlessPatientRecordRole(req, res)) return;
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     try {
@@ -513,7 +578,7 @@ export function createBillingRouter(): Router {
         "Invoice created",
         mapInvoice(row).invoiceNumber
       );
-      res.status(201).json({ invoice: mapInvoice(row) });
+      res.status(201).json(invoiceForClient(req, row));
     } catch (err: unknown) {
       const status =
         typeof err === "object" && err && "status" in err ? Number((err as { status: number }).status) : 500;
@@ -526,9 +591,9 @@ export function createBillingRouter(): Router {
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     const row = getTenantInvoice(tenantId, req.params.id);
-    if (!row) return res.status(404).json({ error: "Invoice not found" });
+    if (rejectPatientInvoice(req, res, row)) return;
     if (String(row.status) === "Paid") {
-      return res.json({ invoice: mapInvoice(row), sandbox: false, alreadyPaid: true });
+      return res.json({ ...invoiceForClient(req, row), sandbox: false, alreadyPaid: true });
     }
 
     const mapped = mapInvoice(row);
@@ -564,9 +629,9 @@ export function createBillingRouter(): Router {
         tenantId
       );
 
-    const updated = mapInvoice(getTenantInvoice(tenantId, mapped.id)!);
+    const updatedRow = getTenantInvoice(tenantId, mapped.id)!;
     res.json({
-      invoice: updated,
+      ...invoiceForClient(req, updatedRow),
       payLink: created.payLink,
       orderId: created.orderId,
       paymentLinkId: created.paymentLinkId,
@@ -580,6 +645,7 @@ export function createBillingRouter(): Router {
   });
 
   api.post("/invoices/:id/sandbox-pay", requireAuth, (req, res) => {
+    if (!denyUnlessPatientRecordRole(req, res)) return;
     if (!sandboxSimulatorsEnabled()) {
       return res.status(403).json({
         error: "SANDBOX / DEV-ONLY Razorpay mock is disabled in production.",
@@ -597,13 +663,14 @@ export function createBillingRouter(): Router {
       razorpayPaymentId: `pay_sandbox_${row.id}`,
     });
     res.json({
-      invoice: mapInvoice(paid),
+      ...invoiceForClient(req, paid),
       sandbox: true,
       notice: "SANDBOX / DEV-ONLY mock capture. Not a Razorpay settlement.",
     });
   });
 
   api.post("/invoices/:id/desk-collect", requireAuth, (req, res) => {
+    if (!denyUnlessPatientRecordRole(req, res)) return;
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     const row = getTenantInvoice(tenantId, req.params.id);
@@ -619,10 +686,11 @@ export function createBillingRouter(): Router {
       paymentMode: mode,
       paymentRef: String(req.body?.paymentRef || req.body?.payment_ref || `desk_${row.id}`),
     });
-    res.json({ invoice: mapInvoice(paid) });
+    res.json(invoiceForClient(req, paid));
   });
 
   api.post("/invoices/:id/receipt", requireAuth, async (req, res) => {
+    if (!denyUnlessPatientRecordRole(req, res)) return;
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     const row = getTenantInvoice(tenantId, req.params.id);
@@ -631,13 +699,16 @@ export function createBillingRouter(): Router {
       return res.status(409).json({ error: "Receipt can only be sent for a Paid invoice." });
     }
     const result = await dispatchInvoiceReceipt(row);
-    const updated = mapInvoice(getTenantInvoice(tenantId, String(row.id))!);
+    const updated = invoiceForClient(req, getTenantInvoice(tenantId, String(row.id))!);
     if (result.ok === false) {
       const status = cloudDispatchHttpStatus(result.error, result.status);
       return res.status(status).json({
-        error: result.error,
-        code: status === 402 ? "WALLET_INSUFFICIENT" : undefined,
-        invoice: updated,
+        error:
+          status === 402
+            ? "WhatsApp could not send this receipt. Meta needs a payment method on the clinic number."
+            : result.error,
+        code: status === 402 ? "META_PAYMENT_REQUIRED" : undefined,
+        ...updated,
         channel: result.channel,
         graphDelivered: false,
         sandbox: false,
@@ -649,7 +720,7 @@ export function createBillingRouter(): Router {
     const wamid = graphDelivered ? result.messageId || null : null;
     res.json({
       ok: true,
-      invoice: updated,
+      ...updated,
       channel: result.channel,
       sandbox: result.channel === "sandbox",
       graphDelivered,

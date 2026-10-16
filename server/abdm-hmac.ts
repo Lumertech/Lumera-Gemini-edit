@@ -36,22 +36,28 @@ export type AbdmCallbackAuth =
   | { ok: false; status: number; error: string };
 
 /**
- * HMAC hook is wired. Without a real callback secret the stub path is
- * sandbox-tolerant (accept unsigned). sandbox mode with a secret requires
- * a matching X-ABDM-Signature.
+ * HMAC hook is wired. Outside production, a missing or placeholder secret is
+ * sandbox-tolerant (accept unsigned, matched false). Production fails closed.
+ * sandbox mode with a real secret requires a matching X-ABDM-Signature.
  */
 export function decideAbdmCallbackSignature(opts: {
   rawBody: Buffer | string;
   signatureHeader?: string | string[];
   secret?: string;
   mode?: AbdmMode;
+  /** Defaults to NODE_ENV=production. Tests pass this explicitly. */
+  production?: boolean;
 }): AbdmCallbackAuth {
   const mode = opts.mode ?? resolveAbdmMode();
+  const production = opts.production ?? process.env.NODE_ENV === "production";
   const secret = String(opts.secret ?? process.env.ABDM_CALLBACK_SECRET ?? "").trim();
   const usableSecret = secret && !isPlaceholderAbdmSecret(secret) ? secret : "";
   const header = Array.isArray(opts.signatureHeader) ? opts.signatureHeader[0] : opts.signatureHeader;
 
   if (!usableSecret) {
+    if (production) {
+      return { ok: false, status: 401, error: "ABDM callback secret is not configured" };
+    }
     return { ok: true, matched: false, sandboxTolerant: true };
   }
 

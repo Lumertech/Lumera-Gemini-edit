@@ -4,6 +4,7 @@
  */
 import { type Request, type Response, type Router } from "express";
 import crypto from "node:crypto";
+import { requireAuth } from "./auth.ts";
 import { getDb, mapPatient, writeAudit } from "./db.ts";
 import { isAbdmPlaceholderRegistryMode, resolveAbdmMode } from "./abdm-mode.ts";
 import { formatAbdmArtefactLabel } from "../src/lib/abdmRegistryLabel.ts";
@@ -14,10 +15,12 @@ import {
   listTenantConsentArtefacts,
   storeConsentArtefact,
 } from "./clinical.ts";
+import { denyUnlessPatientRecordRole } from "./patient-access.ts";
 import {
   ABDM_CONFIG,
   NHA_SANDBOX_NOTICE,
   callbackTenantId,
+  tenantIdOf,
   callbackHmac,
   careContextReference,
   findTenantArtefactByConsentId,
@@ -39,6 +42,12 @@ export function registerAbdmConsentRoutes(router: Router): void {
     | "hiu_fetch"
     | "hiu_receive";
 
+  const callbackClinicId = (req: Request, hmac: { matched?: boolean }): string | null =>
+    callbackTenantId(
+      req as unknown as { user?: { tenantId?: string }; headers: Record<string, unknown>; body?: Record<string, unknown> },
+      { signatureMatched: hmac.matched === true }
+    );
+
   const persistCallbackArtefact = (
     req: Request,
     res: Response,
@@ -49,9 +58,7 @@ export function registerAbdmConsentRoutes(router: Router): void {
       return res.status(hmac.status).json({ error: hmac.error, abdmMode: resolveAbdmMode(), sandboxNotice: NHA_SANDBOX_NOTICE });
     }
 
-    const tenantId = callbackTenantId(
-      req as unknown as { user?: { tenantId?: string }; headers: Record<string, unknown>; body?: Record<string, unknown> }
-    );
+    const tenantId = callbackClinicId(req, hmac);
     if (!tenantId) {
       return res.status(401).json({ error: "Authentication required", abdmMode: resolveAbdmMode(), sandboxNotice: NHA_SANDBOX_NOTICE });
     }
@@ -137,9 +144,7 @@ export function registerAbdmConsentRoutes(router: Router): void {
     if (hmac.ok === false) {
       return res.status(hmac.status).json({ error: hmac.error, abdmMode: resolveAbdmMode(), sandboxNotice: NHA_SANDBOX_NOTICE });
     }
-    const tenantId = callbackTenantId(
-      req as unknown as { user?: { tenantId?: string }; headers: Record<string, unknown>; body?: Record<string, unknown> }
-    );
+    const tenantId = callbackClinicId(req, hmac);
     if (!tenantId) {
       return res.status(401).json({ error: "Authentication required", abdmMode: resolveAbdmMode(), sandboxNotice: NHA_SANDBOX_NOTICE });
     }
@@ -183,14 +188,18 @@ export function registerAbdmConsentRoutes(router: Router): void {
     });
   };
 
-  const handleHipPatientDiscover = (req: Request, res: Response) => {
+  const requireMatchedGatewaySignature = (req: Request, res: Response): boolean => {
     const hmac = callbackHmac(req);
-    if (hmac.ok === false) {
-      return res.status(hmac.status).json({ error: hmac.error, abdmMode: resolveAbdmMode(), sandboxNotice: NHA_SANDBOX_NOTICE });
-    }
-    const tenantId = callbackTenantId(
-      req as unknown as { user?: { tenantId?: string }; headers: Record<string, unknown>; body?: Record<string, unknown> }
-    );
+    if (hmac.ok === true && hmac.matched === true) return true;
+    const status = hmac.ok === false ? hmac.status : 401;
+    const error = hmac.ok === false ? hmac.error : "X-ABDM-Signature is required";
+    res.status(status).json({ error, abdmMode: resolveAbdmMode(), sandboxNotice: NHA_SANDBOX_NOTICE });
+    return false;
+  };
+
+  const handleHipPatientDiscover = (req: Request, res: Response) => {
+    if (!requireMatchedGatewaySignature(req, res)) return;
+    const tenantId = callbackClinicId(req, { matched: true });
     if (!tenantId) {
       return res.status(401).json({ error: "Authentication required", abdmMode: resolveAbdmMode(), sandboxNotice: NHA_SANDBOX_NOTICE });
     }
@@ -240,13 +249,8 @@ export function registerAbdmConsentRoutes(router: Router): void {
   };
 
   const handleHipOnRequest = (req: Request, res: Response) => {
-    const hmac = callbackHmac(req);
-    if (hmac.ok === false) {
-      return res.status(hmac.status).json({ error: hmac.error, abdmMode: resolveAbdmMode(), sandboxNotice: NHA_SANDBOX_NOTICE });
-    }
-    const tenantId = callbackTenantId(
-      req as unknown as { user?: { tenantId?: string }; headers: Record<string, unknown>; body?: Record<string, unknown> }
-    );
+    if (!requireMatchedGatewaySignature(req, res)) return;
+    const tenantId = callbackClinicId(req, { matched: true });
     if (!tenantId) {
       return res.status(401).json({ error: "Authentication required", abdmMode: resolveAbdmMode(), sandboxNotice: NHA_SANDBOX_NOTICE });
     }
@@ -369,9 +373,7 @@ export function registerAbdmConsentRoutes(router: Router): void {
     if (hmac.ok === false) {
       return res.status(hmac.status).json({ error: hmac.error, abdmMode: resolveAbdmMode(), sandboxNotice: NHA_SANDBOX_NOTICE });
     }
-    const tenantId = callbackTenantId(
-      req as unknown as { user?: { tenantId?: string }; headers: Record<string, unknown>; body?: Record<string, unknown> }
-    );
+    const tenantId = callbackClinicId(req, hmac);
     if (!tenantId) {
       return res.status(401).json({ error: "Authentication required", abdmMode: resolveAbdmMode(), sandboxNotice: NHA_SANDBOX_NOTICE });
     }
@@ -406,9 +408,8 @@ export function registerAbdmConsentRoutes(router: Router): void {
   };
 
   const handleHiuListConsents = (req: Request, res: Response) => {
-    const tenantId = callbackTenantId(
-      req as unknown as { user?: { tenantId?: string }; headers: Record<string, unknown>; body?: Record<string, unknown> }
-    );
+    if (!denyUnlessPatientRecordRole(req, res)) return;
+    const tenantId = tenantIdOf(req);
     if (!tenantId) {
       return res.status(401).json({ error: "Authentication required", abdmMode: resolveAbdmMode(), sandboxNotice: NHA_SANDBOX_NOTICE });
     }
@@ -467,6 +468,6 @@ export function registerAbdmConsentRoutes(router: Router): void {
     ["/hiu/health-information/on-receive", "/v3/hiu/health-information/on-receive"],
     (req, res) => persistCallbackArtefact(req, res, "hiu_receive")
   );
-  router.get(["/hiu/consents", "/v3/hiu/consents"], handleHiuListConsents);
+  router.get(["/hiu/consents", "/v3/hiu/consents"], requireAuth, handleHiuListConsents);
 
 }

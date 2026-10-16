@@ -15,9 +15,125 @@ import { reportCaughtError } from "./error-tracker.ts";
 import { resolveAbdmMode, type AbdmMode } from "./abdm-mode.ts";
 import { registerPatientDocumentRoutes } from "./patient-documents.ts";
 import { clinicCalendarDate, parseAppointmentListDate } from "../src/lib/clinicDay.ts";
+import { denyUnlessPatientRecordRole } from "./patient-access.ts";
+import {
+  loadPatientClinicPhone,
+  loadPatientTenant,
+  requestIsPatient,
+  sessionPatientId,
+} from "./patient-tenant.ts";
+import type { PatientTenantExtras } from "./client-serializers.ts";
 
 function tenantIdOf(req: Request): string {
   return String(req.user?.tenantId || "").trim();
+}
+
+function withPatientTenant<T extends Record<string, unknown>>(
+  req: Request,
+  tenantId: string,
+  body: T,
+  extras?: PatientTenantExtras
+): T & { tenant?: ReturnType<typeof loadPatientTenant> } {
+  if (!requestIsPatient(req)) return body;
+  return { ...body, tenant: loadPatientTenant(tenantId, extras) };
+}
+
+function prescriptionForClient(req: Request, tenantId: string, row: Record<string, unknown>) {
+  const mapped = mapPrescription(row);
+  if (!requestIsPatient(req)) return mapped;
+  const phone = loadPatientClinicPhone(tenantId, mapped.clinicPhone);
+  return { ...mapped, clinicPhone: phone || "" };
+}
+
+function patientCanRead(req: Request, recordPatientId: unknown): boolean {
+  if (!requestIsPatient(req)) return true;
+  const own = sessionPatientId(req);
+  return Boolean(own) && own === String(recordPatientId || "").trim();
+}
+
+function tenantDoctor(tenantId: string, doctorId: string): Record<string, unknown> | undefined {
+  if (!doctorId) return undefined;
+  return getDb()
+    .prepare(
+      `SELECT d.* FROM doctors d
+       INNER JOIN users u ON u.id = d.user_id
+       WHERE d.id = ? AND u.tenant_id = ?`
+    )
+    .get(doctorId, tenantId) as Record<string, unknown> | undefined;
+}
+
+/** Patient booking accepts doctor, date, slot, and type. Fee, status, and source are server-side. */
+function patientBookingBody(tenantId: string, ownPatientId: string, body: Record<string, unknown>): Record<string, unknown> {
+  const doctorId = String(body.doctorId || body.doctor_id || "").trim();
+  const date = String(body.date || "").trim();
+  const timeSlot = String(body.timeSlot || body.time_slot || "").trim();
+  const type = String(body.type || "New Consultation").trim() || "New Consultation";
+  if (!doctorId || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !timeSlot) {
+    throw Object.assign(new Error("doctor, date, and time slot are required"), { status: 400 });
+  }
+  const doctor = tenantDoctor(tenantId, doctorId);
+  if (!doctor) {
+    throw Object.assign(new Error("Doctor not found"), { status: 404 });
+  }
+  return {
+    patientId: ownPatientId,
+    doctorId,
+    date,
+    timeSlot,
+    type,
+    consultationFee: Number(doctor.consultation_fee || 0),
+    status: "Waiting",
+    source: "Portal",
+    isPaid: false,
+  };
+}
+
+const PATIENT_APPOINTMENT_KEYS = new Set(["date", "timeSlot", "time_slot", "status"]);
+
+/** Patients may reschedule (date and/or slot) or cancel. Other fields are rejected. */
+function patientAppointmentPatch(body: Record<string, unknown>): Record<string, unknown> {
+  const keys = Object.keys(body || {});
+  if (keys.length === 0 || keys.some((key) => !PATIENT_APPOINTMENT_KEYS.has(key))) {
+    throw Object.assign(new Error("Patients can only reschedule or cancel their own appointment"), { status: 400 });
+  }
+  const cancelling = body.status !== undefined;
+  const rescheduling = body.date !== undefined || body.timeSlot !== undefined || body.time_slot !== undefined;
+  if (cancelling && String(body.status) !== "Cancelled") {
+    throw Object.assign(new Error("Patients can only cancel an appointment"), { status: 400 });
+  }
+  if (cancelling && rescheduling) {
+    throw Object.assign(new Error("Patients can only reschedule or cancel their own appointment"), { status: 400 });
+  }
+  if (rescheduling) {
+    const next: Record<string, unknown> = {};
+    if (body.date !== undefined) {
+      const date = String(body.date).trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        throw Object.assign(new Error("date must be YYYY-MM-DD"), { status: 400 });
+      }
+      next.date = date;
+    }
+    if (body.timeSlot !== undefined || body.time_slot !== undefined) {
+      const slot = String(body.timeSlot ?? body.time_slot).trim();
+      if (!slot) throw Object.assign(new Error("time slot is required"), { status: 400 });
+      next.timeSlot = slot;
+    }
+    return next;
+  }
+  return { status: "Cancelled" };
+}
+
+function appointmentDoctorExtras(row: Record<string, unknown>): PatientTenantExtras {
+  const doctorId = String(row.doctor_id || "").trim();
+  const doctor = doctorId
+    ? (getDb().prepare("SELECT reg_number FROM doctors WHERE id = ?").get(doctorId) as
+        | { reg_number?: string }
+        | undefined)
+    : undefined;
+  return {
+    doctorName: String(row.doctor_name || ""),
+    doctorRegNumber: String(doctor?.reg_number || ""),
+  };
 }
 
 function requireTenant(req: Request, res: Response): string | null {
@@ -931,6 +1047,7 @@ export function createClinicalRouter(): Router {
   const api = Router();
 
   api.get("/patients", requireAuth, (req, res) => {
+    if (!denyUnlessPatientRecordRole(req, res)) return;
     try {
       const tenantId = tenantIdOf(req);
       if (!tenantId) return res.json({ patients: [] });
@@ -951,7 +1068,7 @@ export function createClinicalRouter(): Router {
     if (!tenantId) return;
     try {
       const row = getTenantPatient(tenantId, req.params.id);
-      if (!row) return res.status(404).json({ error: "Patient not found" });
+      if (!row || !patientCanRead(req, row.id)) return res.status(404).json({ error: "Patient not found" });
       const visits = getDb()
         .prepare(
           `SELECT * FROM appointments
@@ -966,11 +1083,13 @@ export function createClinicalRouter(): Router {
            ORDER BY date DESC, created_at DESC`
         )
         .all(tenantId, req.params.id) as Record<string, unknown>[];
-      res.json({
-        patient: patientWithConsents(row, tenantId),
-        visits: visits.map(mapAppointment),
-        prescriptions: prescriptions.map(mapPrescription),
-      });
+      res.json(
+        withPatientTenant(req, tenantId, {
+          patient: patientWithConsents(row, tenantId),
+          visits: visits.map(mapAppointment),
+          prescriptions: prescriptions.map((prescription) => prescriptionForClient(req, tenantId, prescription)),
+        })
+      );
     } catch (err) {
       reportCaughtError(err, "clinical.patientChart");
       res.status(500).json({ error: "Failed to fetch patient chart" });
@@ -981,11 +1100,12 @@ export function createClinicalRouter(): Router {
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     const row = getTenantPatient(tenantId, req.params.id);
-    if (!row) return res.status(404).json({ error: "Patient not found" });
+    if (!row || !patientCanRead(req, row.id)) return res.status(404).json({ error: "Patient not found" });
     res.json({ patient: patientWithConsents(row, tenantId) });
   });
 
   api.post("/patients", requireAuth, (req, res) => {
+    if (!denyUnlessPatientRecordRole(req, res)) return;
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     try {
@@ -1013,6 +1133,7 @@ export function createClinicalRouter(): Router {
   });
 
   api.post("/patients/link-abha", requireAuth, (req, res) => {
+    if (!denyUnlessPatientRecordRole(req, res)) return;
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     try {
@@ -1031,6 +1152,7 @@ export function createClinicalRouter(): Router {
   });
 
   api.patch("/patients/:id/abha", requireAuth, (req, res) => {
+    if (!denyUnlessPatientRecordRole(req, res)) return;
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     try {
@@ -1058,6 +1180,7 @@ export function createClinicalRouter(): Router {
   });
 
   api.patch("/patients/:id", requireAuth, (req, res) => {
+    if (!denyUnlessPatientRecordRole(req, res)) return;
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     const existing = getTenantPatient(tenantId, req.params.id);
@@ -1115,8 +1238,13 @@ export function createClinicalRouter(): Router {
       if (!tenantId) return res.json({ appointments: [] });
       const parsed = parseAppointmentListDate(req.query.date);
       const date = parsed.kind === "all" ? null : parsed.kind === "today" ? clinicDayForTenant(tenantId) : parsed.date;
-      const rows = listTenantAppointments(tenantId, date);
-      res.json(date ? { appointments: rows.map(mapAppointment), date } : { appointments: rows.map(mapAppointment) });
+      const ownPatientId = requestIsPatient(req) ? sessionPatientId(req) : null;
+      const rows = listTenantAppointments(tenantId, date).filter((row) => {
+        if (!requestIsPatient(req)) return true;
+        return Boolean(ownPatientId) && ownPatientId === String(row.patient_id || "");
+      });
+      const appointments = rows.map(mapAppointment);
+      res.json(withPatientTenant(req, tenantId, date ? { appointments, date } : { appointments }));
     } catch (err) {
       const status = errorStatus(err);
       if (status >= 400 && status < 500) {
@@ -1131,13 +1259,30 @@ export function createClinicalRouter(): Router {
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     const row = getTenantAppointment(tenantId, req.params.id);
-    if (!row) return res.status(404).json({ error: "Appointment not found" });
-    res.json({ appointment: mapAppointment(row) });
+    if (!row || !patientCanRead(req, row.patient_id)) return res.status(404).json({ error: "Appointment not found" });
+    res.json(
+      withPatientTenant(req, tenantId, { appointment: mapAppointment(row) }, appointmentDoctorExtras(row))
+    );
   });
 
   api.post("/appointments", requireAuth, (req, res) => {
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
+    if (requestIsPatient(req)) {
+      const own = sessionPatientId(req);
+      const body = (req.body || {}) as Record<string, unknown>;
+      const requested = String(body.patientId || body.patient_id || "").trim();
+      if (!own || (requested && requested !== own)) {
+        return res.status(403).json({ error: "Insufficient permissions" });
+      }
+      try {
+        req.body = patientBookingBody(tenantId, own, body);
+      } catch (err: unknown) {
+        const status = errorStatus(err);
+        const message = err instanceof Error ? err.message : "Failed to create appointment";
+        return res.status(status || 400).json({ error: message });
+      }
+    }
     try {
       const row = insertAppointment(tenantId, req.body || {}, { id: req.user?.id, name: req.user?.name });
       writeAudit(
@@ -1147,7 +1292,7 @@ export function createClinicalRouter(): Router {
         "Appointment created",
         `${mapAppointment(row).patientName} token ${mapAppointment(row).tokenNumber}`
       );
-      res.status(201).json({ appointment: mapAppointment(row) });
+      res.status(201).json(withPatientTenant(req, tenantId, { appointment: mapAppointment(row) }));
     } catch (err: unknown) {
       const status = typeof err === "object" && err && "status" in err ? Number((err as { status: number }).status) : 500;
       const message = err instanceof Error ? err.message : "Failed to create appointment";
@@ -1158,9 +1303,23 @@ export function createClinicalRouter(): Router {
   api.patch("/appointments/:id", requireAuth, (req, res) => {
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
+    let patch = (req.body || {}) as Record<string, unknown>;
+    if (requestIsPatient(req)) {
+      const existing = getTenantAppointment(tenantId, req.params.id);
+      if (!existing || !patientCanRead(req, existing.patient_id)) {
+        return res.status(404).json({ error: "Appointment not found" });
+      }
+      try {
+        patch = patientAppointmentPatch(patch);
+      } catch (err: unknown) {
+        const status = errorStatus(err);
+        const message = err instanceof Error ? err.message : "Failed to update appointment";
+        return res.status(status || 400).json({ error: message });
+      }
+    }
     try {
-      const row = updateAppointment(tenantId, req.params.id, req.body || {});
-      res.json({ appointment: mapAppointment(row) });
+      const row = updateAppointment(tenantId, req.params.id, patch);
+      res.json(withPatientTenant(req, tenantId, { appointment: mapAppointment(row) }));
     } catch (err: unknown) {
       const status = typeof err === "object" && err && "status" in err ? Number((err as { status: number }).status) : 500;
       const message = err instanceof Error ? err.message : "Failed to update appointment";
@@ -1172,7 +1331,17 @@ export function createClinicalRouter(): Router {
     try {
       const tenantId = tenantIdOf(req);
       if (!tenantId) return res.json({ prescriptions: [] });
-      const patientId = String(req.query.patientId || req.query.patient_id || "").trim();
+      let patientId = String(req.query.patientId || req.query.patient_id || "").trim();
+      if (requestIsPatient(req)) {
+        const own = sessionPatientId(req);
+        if (patientId && patientId !== own) {
+          return res.status(404).json({ error: "Prescription not found" });
+        }
+        if (!own) {
+          return res.json(withPatientTenant(req, tenantId, { prescriptions: [] }));
+        }
+        patientId = own;
+      }
       const rows = (
         patientId
           ? getDb()
@@ -1186,7 +1355,8 @@ export function createClinicalRouter(): Router {
               .prepare("SELECT * FROM prescriptions WHERE tenant_id = ? ORDER BY created_at DESC")
               .all(tenantId)
       ) as Record<string, unknown>[];
-      res.json({ prescriptions: rows.map(mapPrescription) });
+      const prescriptions = rows.map((prescription) => prescriptionForClient(req, tenantId, prescription));
+      res.json(withPatientTenant(req, tenantId, { prescriptions }));
     } catch (err) {
       reportCaughtError(err, "clinical.listPrescriptions");
       res.status(500).json({ error: "Failed to fetch prescriptions" });
@@ -1201,16 +1371,23 @@ export function createClinicalRouter(): Router {
       (getDb()
         .prepare("SELECT * FROM prescriptions WHERE tenant_id = ? AND rx_number = ?")
         .get(tenantId, req.params.id) as Record<string, unknown> | undefined);
-    if (!row) return res.status(404).json({ error: "Prescription not found" });
-    res.json({ prescription: mapPrescription(row) });
+    if (!row || !patientCanRead(req, row.patient_id)) return res.status(404).json({ error: "Prescription not found" });
+    const prescription = prescriptionForClient(req, tenantId, row);
+    res.json(
+      withPatientTenant(req, tenantId, { prescription }, {
+        doctorName: prescription.doctorName,
+        doctorRegNumber: prescription.doctorRegNumber,
+      })
+    );
   });
 
   api.post("/prescriptions", requireAuth, (req, res) => {
+    if (!denyUnlessPatientRecordRole(req, res)) return;
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     try {
       const row = insertPrescription(tenantId, req.body || {});
-      const mapped = mapPrescription(row);
+      const mapped = prescriptionForClient(req, tenantId, row);
       writeAudit(
         getDb(),
         req.user?.id || null,
@@ -1225,7 +1402,12 @@ export function createClinicalRouter(): Router {
           getDb().prepare("DELETE FROM prescription_drafts WHERE tenant_id = ? AND patient_id = ?").run(tenantId, patientId);
         }
       } catch {}
-      res.status(201).json({ prescription: mapped });
+      res.status(201).json(
+        withPatientTenant(req, tenantId, { prescription: mapped }, {
+          doctorName: mapped.doctorName,
+          doctorRegNumber: mapped.doctorRegNumber,
+        })
+      );
     } catch (err: unknown) {
       const status = typeof err === "object" && err && "status" in err ? Number((err as { status: number }).status) : 500;
       const message = err instanceof Error ? err.message : "Failed to create prescription";
@@ -1234,9 +1416,13 @@ export function createClinicalRouter(): Router {
   });
 
   api.get("/prescriptions/draft/:patientId", requireAuth, (req, res) => {
+    if (!denyUnlessPatientRecordRole(req, res)) return;
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     const patientId = req.params.patientId;
+    if (requestIsPatient(req) && !patientCanRead(req, patientId)) {
+      return res.status(404).json({ error: "Prescription not found" });
+    }
     if (!requireTenantPatient(tenantId, patientId, res)) return;
     const row = getDb()
       .prepare("SELECT * FROM prescription_drafts WHERE tenant_id = ? AND patient_id = ?")
@@ -1252,6 +1438,7 @@ export function createClinicalRouter(): Router {
   });
 
   api.post("/prescriptions/draft", requireAuth, (req, res) => {
+    if (!denyUnlessPatientRecordRole(req, res)) return;
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     try {
@@ -1287,6 +1474,7 @@ export function createClinicalRouter(): Router {
 
   // Connected Pharmacy, Diagnostics Dispatch & PM-JAY Insurance Pre-Check
   api.post("/pharmacy/dispatch-order", requireAuth, (req, res) => {
+    if (!denyUnlessPatientRecordRole(req, res)) return;
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     const { patientName, phone, medicines, partner = "Apollo Pharmacy Partner", patientId, patient_id } = req.body;
@@ -1303,6 +1491,7 @@ export function createClinicalRouter(): Router {
   });
 
   api.post("/diagnostics/dispatch-order", requireAuth, (req, res) => {
+    if (!denyUnlessPatientRecordRole(req, res)) return;
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     const { patientName, phone, labTests, provider = "Dr. Lal PathLabs Home Collection", patientId, patient_id } = req.body;
@@ -1319,6 +1508,7 @@ export function createClinicalRouter(): Router {
   });
 
   api.post("/insurance/pmjay-precheck", requireAuth, (req, res) => {
+    if (!denyUnlessPatientRecordRole(req, res)) return;
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     const { abhaNumber, patientName, patientId, patient_id } = req.body;

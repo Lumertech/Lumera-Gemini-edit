@@ -56,6 +56,8 @@ import { rejectUntrustedTenantClaim } from "./tenant-guard.ts";
 import { publicBranch, publicTenant } from "./client-serializers.ts";
 import { clinicTenantId, upsertScopedConversation } from "./whatsapp-scope.ts";
 import { WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
+import { denyUnlessPatientRecordRole } from "./patient-access.ts";
+import { bindUnboundPatientUser, loadPatientTenant, patientLetterhead, requestIsPatient } from "./patient-tenant.ts";
 import {
   createAdminTenant,
   ensureTenantSubscription,
@@ -969,7 +971,8 @@ export function createApiRouter(): Router {
       }
       if (rejectClinicTenantBlocked(user, res)) return;
 
-      const activePhone = updatedPhone || record.phone || user.phone;
+      const activePhone =
+        user.role === "patient" ? String(record.phone || user.phone || "") : updatedPhone || record.phone || user.phone;
       const avatarUrl = payload.avatarUrl || user.avatar_url || "";
 
       getDb().prepare(`
@@ -977,6 +980,7 @@ export function createApiRouter(): Router {
         SET last_login = ?, whatsapp_verified = 1, phone = ?, avatar_url = ?
         WHERE id = ?
       `).run(now, activePhone, avatarUrl, user.id);
+      if (user.role === "patient") bindUnboundPatientUser(user.id);
 
       const updatedUser = getDb().prepare("SELECT * FROM users WHERE id = ?").get(user.id) as unknown as DbUser;
       const jwtToken = issueLumeraSession(res, updatedUser);
@@ -1630,7 +1634,7 @@ export function createApiRouter(): Router {
       const row = getDb().prepare("SELECT * FROM tenants WHERE id = ?").get(req.user.tenantId) as
         | Record<string, unknown>
         | undefined;
-      tenant = publicTenant(row);
+      tenant = requestIsPatient(req) ? loadPatientTenant(req.user.tenantId) : publicTenant(row);
     }
     // Session credential stays in the HttpOnly cookie. Echoing getSessionId here
     // let page scripts read it. Native clients keep the JWT from the login body.
@@ -1650,6 +1654,7 @@ export function createApiRouter(): Router {
     if (!sessionSlug || slug !== sessionSlug) {
       return res.status(404).json({ error: "Not found" });
     }
+    if (!denyUnlessPatientRecordRole(req, res)) return;
     const tenantId = String(req.user?.tenantId || "").trim();
     const rows = tenantId
       ? (getDb().prepare("SELECT id, name FROM patients WHERE tenant_id = ? ORDER BY name ASC").all(tenantId) as {
@@ -1667,8 +1672,20 @@ export function createApiRouter(): Router {
     if (!existing) return res.status(404).json({ error: "User not found" });
 
     const name = req.body?.name != null ? String(req.body.name).trim() : existing.name;
-    const phone = req.body?.phone != null ? String(req.body.phone).trim() : existing.phone;
-    const email = req.body?.email ? String(req.body.email).trim().toLowerCase() : existing.email;
+    const requestedPhone = req.body?.phone != null ? String(req.body.phone).trim() : existing.phone;
+    const requestedEmail = req.body?.email ? String(req.body.email).trim().toLowerCase() : existing.email;
+    if (existing.role === "patient") {
+      const phoneChanged = requestedPhone !== String(existing.phone || "");
+      const emailChanged = requestedEmail !== String(existing.email || "").trim().toLowerCase();
+      if (phoneChanged || emailChanged) {
+        return res.status(403).json({
+          error: "Patients cannot change phone or email",
+          code: "PATIENT_CONTACT_LOCKED",
+        });
+      }
+    }
+    const phone = existing.role === "patient" ? existing.phone : requestedPhone;
+    const email = existing.role === "patient" ? existing.email : requestedEmail;
     const avatarUrl = req.body?.avatarUrl != null ? String(req.body.avatarUrl).trim() : existing.avatar_url || "";
     if (!name) return res.status(400).json({ error: "Name is required" });
     if (!email || !email.includes("@")) return res.status(400).json({ error: "A valid email is required" });
@@ -1701,6 +1718,11 @@ export function createApiRouter(): Router {
     if (!tenantId) {
       return res.status(404).json({ error: "No tenant associated with this account." });
     }
+    if (requestIsPatient(req)) {
+      const tenant = loadPatientTenant(tenantId);
+      if (!tenant) return res.status(404).json({ error: "Tenant record not found." });
+      return res.json({ tenant, letterhead: patientLetterhead(tenant) });
+    }
     const tenant = publicTenant(
       getDb().prepare("SELECT * FROM tenants WHERE id = ?").get(tenantId) as Record<string, unknown> | undefined
     );
@@ -1725,6 +1747,11 @@ export function createApiRouter(): Router {
     const tenant = getDb().prepare("SELECT id FROM tenants WHERE id = ?").get(tenantId) as { id: string } | undefined;
     if (!tenant) {
       return res.status(404).json({ error: "Tenant record not found." });
+    }
+    if (requestIsPatient(req)) {
+      const card = loadPatientTenant(tenantId);
+      if (!card) return res.status(404).json({ error: "Tenant record not found." });
+      return res.json({ tenant: card, letterhead: patientLetterhead(card) });
     }
     return res.json({
       letterhead: getTenantLetterhead(tenantId, req.user?.id),
@@ -1780,7 +1807,21 @@ export function createApiRouter(): Router {
          ORDER BY d.name`
       )
       .all(tenantId) as Record<string, unknown>[];
-    res.json({ doctors: rows.map(mapDoctor) });
+    const doctors = rows.map(mapDoctor);
+    if (requestIsPatient(req)) {
+      return res.json({
+        tenant: loadPatientTenant(tenantId),
+        doctors: doctors.map((doctor) => ({
+          id: doctor.id,
+          name: doctor.name,
+          regNumber: doctor.regNumber,
+          specialty: doctor.specialty,
+          qualification: doctor.qualification,
+          opdTiming: doctor.opdTiming,
+        })),
+      });
+    }
+    res.json({ doctors });
   });
 
   api.get("/clinic/team", requireAuth, requireRole(...CLINICIAN_ROLES), (req, res) => {

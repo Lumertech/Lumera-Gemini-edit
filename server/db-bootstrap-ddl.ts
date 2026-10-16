@@ -18,7 +18,8 @@ export const BOOTSTRAP_DDL = `
       onboarding_completed INTEGER DEFAULT 0,
       practice_type TEXT DEFAULT 'individual',
       specialty TEXT DEFAULT '',
-      facebook_id TEXT DEFAULT ''
+      facebook_id TEXT DEFAULT '',
+      patient_id TEXT DEFAULT ''
     );
 
     CREATE TABLE IF NOT EXISTS sessions (

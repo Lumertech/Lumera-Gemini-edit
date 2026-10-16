@@ -10,8 +10,6 @@ COPY index.html metadata.json tsconfig.json vite.config.ts ./
 COPY public ./public
 COPY src ./src
 COPY server ./server
-# server/abdm-identity-routes.ts still imports this path. The file re-exports src/lib/currency.ts.
-COPY app/applet/src/lib/currency.ts ./app/applet/src/lib/currency.ts
 COPY server.ts ./
 RUN npm run build
 

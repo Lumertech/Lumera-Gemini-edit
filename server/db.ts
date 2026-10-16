@@ -48,6 +48,7 @@ export interface DbUser {
   specialty?: string;
   pack_id?: string;
   facebook_id?: string;
+  patient_id?: string;
 }
 
 export const DEMO_TENANT_ID = "tenant-lumera-main";

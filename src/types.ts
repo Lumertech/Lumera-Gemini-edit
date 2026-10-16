@@ -31,6 +31,8 @@ export interface AppUser {
   isDemoWorkspace?: boolean;
   gstin?: string;
   upiId?: string;
+  /** Patient logins only. False until WhatsApp OTP binds users.patient_id. */
+  chartLinked?: boolean;
 }
 
 export interface TenantLetterhead {
