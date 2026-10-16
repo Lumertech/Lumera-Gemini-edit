@@ -46,8 +46,49 @@ jobs:
         run: npm run lint
 
       # Exact globs from package.json "test" script — a failing step fails the workflow.
+      # postgres-double-boot.test.ts boots initDatabase twice against the service above.
       - name: Test
         run: npx tsx --test --test-concurrency=1 server/*.test.ts src/lib/*.test.ts src/nav/*.test.ts src/pages/*.test.ts src/components/admin/*.test.ts src/db/*.test.ts
 
       - name: Build
         run: npm run build
+
+  # Second Cloud Run boot must survive Postgres. The service container is the
+  # same engine as production; server/postgres-double-boot.test.ts calls
+  # initDatabase twice and fails if sqlite_master or dhis_transactions_pkey fires.
+  postgres-double-boot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      JWT_SECRET: test-jwt-secret
+      SUNRISE_TEST_DATABASE_URL: postgres://lumera:ci-only-db@127.0.0.1:5432/lumera_sunrise_test
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: lumera
+          POSTGRES_PASSWORD: ci-only-db
+          POSTGRES_DB: lumera_sunrise_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U lumera -d lumera_sunrise_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: ${{ hashFiles('package-lock.json') != '' && 'npm' || '' }}
+
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+
+      - name: Boot initDatabase twice on Postgres
+        run: npx tsx --test --test-concurrency=1 server/postgres-double-boot.test.ts server/sql-catalog.test.ts
