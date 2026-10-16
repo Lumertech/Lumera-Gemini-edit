@@ -2,11 +2,11 @@
  * ABDM identity, DHIS, and FHIR sample routes.
  * Extracted from server/abdm.ts so GitHub MCP can upload without truncating the gateway.
  */
-import { type Request, type Response, type Router } from "express";
+import { type NextFunction, type Request, type Response, type Router } from "express";
 import crypto from "node:crypto";
 import { getDb, writeAudit } from "./db.ts";
 import { allowOtpEcho, CLINICIAN_ROLES, requireAuth, requireRole } from "./auth.ts";
-import { denyUnlessPatientRecordRole } from "./patient-access.ts";
+import { denyUnlessPatientRecordRole, isPatientRecordRole } from "./patient-access.ts";
 import { rejectProductionSimulator } from "./meta-security.ts";
 import { isAbdmPlaceholderRegistryMode, resolveAbdmMode } from "./abdm-mode.ts";
 import { formatAbdmRegistryLabel } from "../src/lib/abdmRegistryLabel.ts";
@@ -52,6 +52,39 @@ const otpSessions = new Map<string, AadhaarOtpSession>();
 
 /** Clinic staff may read the meter. Patients are 403. Anonymous is 401 via requireAuth. */
 const dhisOverviewGuards = [requireAuth, requireRole(...CLINICIAN_ROLES)] as const;
+
+/** Sample bundles are patient-record staff only. Patients and super_admin are 403. Anonymous is 401 via requireAuth. */
+function requireFhirSampleStaff(req: Request, res: Response, next: NextFunction) {
+  if (!isPatientRecordRole(req.user?.role)) {
+    res.status(403).json({ error: "Insufficient permissions" });
+    return;
+  }
+  next();
+}
+
+const fhirSampleGuards = [requireAuth, requireFhirSampleStaff] as const;
+
+/** Obviously fake identity. This route must not read the patients or doctors tables. */
+const FHIR_SAMPLE_PATIENT: PatientContext = {
+  id: "sample-patient",
+  uhid: "SAMPLE-UHID-0000",
+  name: "Fictional Sample Patient",
+  gender: "Unknown",
+  age: 40,
+  phone: "0000000000",
+  abhaNumber: "00-0000-0000-0000",
+  abhaAddress: "sample.patient@abdm",
+  kycStatus: "LINKED_SANDBOX",
+};
+
+const FHIR_SAMPLE_DOCTOR: DoctorContext = {
+  id: "sample-doctor",
+  name: "Dr. Fictional Sample",
+  regNumber: "SAMPLE-REG-0000",
+  specialty: "Sample Specialty",
+  hprId: "HPR-SAMPLE-0000",
+  qualification: "SAMPLE",
+};
 
 /** Simulate writes a ledger row. Clinic-admin desk and super_admin only, and only outside production. */
 const DHIS_SIMULATE_ROLES = ["super_admin", "polyclinic_admin", "CLINIC_ADMIN"] as const;
@@ -474,33 +507,12 @@ export function registerAbdmIdentityRoutes(router: Router): void {
     }
   });
 
-  // FHIR Bundle Validation and Inspector Endpoint
-  router.get("/fhir/sample/:type", (req, res) => {
+  // FHIR Bundle Validation and Inspector Endpoint.
+  // Staff-only synthetic sample. Never reads patients or doctors.
+  router.get("/fhir/sample/:type", ...fhirSampleGuards, (req, res) => {
     const { type } = req.params;
-    const db = getDb();
-    const patient = (db.prepare("SELECT * FROM patients LIMIT 1").get() || {}) as any;
-    const doctor = (db.prepare("SELECT * FROM doctors LIMIT 1").get() || {}) as any;
-
-    const patientContext: PatientContext = {
-      id: patient.id || "pat-6",
-      uhid: patient.uhid || "LUM-2026-0106",
-      name: patient.name || "Rajiv Saxena",
-      gender: patient.gender || "Male",
-      age: patient.age || 44,
-      phone: patient.phone || "+91 98234 55667",
-      abhaNumber: patient.abha_number || "91-4428-9102-3841",
-      abhaAddress: patient.abha_address || "rajiv.saxena@abdm",
-      kycStatus: "LINKED_SANDBOX",
-    };
-
-    const doctorContext: DoctorContext = {
-      id: doctor.id || "doc-1",
-      name: doctor.name || "Dr. Vikram Malhotra",
-      regNumber: doctor.reg_number || "MCI-2012-8819",
-      specialty: doctor.specialty || "General Medicine",
-      hprId: doctor.hpr_id || "HPR-IN-9024819",
-      qualification: doctor.qualification || "MBBS, MD",
-    };
+    const patientContext = FHIR_SAMPLE_PATIENT;
+    const doctorContext = FHIR_SAMPLE_DOCTOR;
 
     const tenantContext: TenantContext = {
       id: "tenant-lumera-main",
