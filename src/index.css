@@ -44,6 +44,18 @@
     box-shadow: none !important;
     border: none !important;
   }
+  .sample-tax-banner {
+    display: block !important;
+    border: 2px solid #000 !important;
+    color: #000 !important;
+    background: #fde68a !important;
+    font-weight: 800 !important;
+  }
+}
+
+.sample-tax-banner {
+  print-color-adjust: exact;
+  -webkit-print-color-adjust: exact;
 }
 
 /* Custom smooth scrollbars */

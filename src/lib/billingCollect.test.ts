@@ -257,6 +257,12 @@ describe("BillingManager Wave 2 source gates", () => {
     assert.doesNotMatch(billingUi, /INV-2026-\$\{Math\.floor/);
     assert.doesNotMatch(billingUi, /pickInvoiceForContext\([\s\S]{0,180}patientId/);
     assert.doesNotMatch(billingUi, /Lumera/);
+    assert.match(billingUi, /SAMPLE_TAX_INVOICE_BANNER/);
+    assert.match(billingUi, /sample-tax-banner/);
+    assert.equal((billingUi.match(/<SampleTaxBanner/g) || []).length, 2);
+    const bannerAt = billingUi.indexOf('data-testid="sample-tax-invoice-banner"');
+    assert.ok(bannerAt > 0);
+    assert.doesNotMatch(billingUi.slice(bannerAt - 180, bannerAt + 220), /no-print/);
     assert.match(billingUi, /receiptFailureMessage/);
     assert.doesNotMatch(billingUi, /WALLET_INSUFFICIENT/);
   });

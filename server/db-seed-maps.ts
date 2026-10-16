@@ -1,5 +1,5 @@
 import { hashPassword } from "./password.ts";
-import { scrubSeedBillingIds } from "./seed-branding.ts";
+import { isSampleTaxInvoice, scrubSeedBillingIds } from "./seed-branding.ts";
 import { CMS_POLICY_UPSERTS } from "./cms-policy-seed.ts";
 import { type SqlDatabase } from "./sql-engine.ts";
 import {
@@ -728,13 +728,17 @@ export function getTenantBillingProfile(tenantId: string): {
 }
 
 export function mapInvoice(row: { [key: string]: unknown }) {
-  const ids = scrubSeedBillingIds(String(row.tenant_id || ""), {
-    gstin: (row.gstin as string) || "",
-    upiId: (row.upi_id as string) || "",
+  const tenantId = String(row.tenant_id || "");
+  const rawGstin = (row.gstin as string) || "";
+  const rawUpi = (row.upi_id as string) || "";
+  const ids = scrubSeedBillingIds(tenantId, {
+    gstin: rawGstin,
+    upiId: rawUpi,
   });
   return {
     id: row.id as string,
-    tenantId: row.tenant_id as string,
+    tenantId,
+    sampleTaxInvoice: isSampleTaxInvoice({ tenantId, gstin: rawGstin, upiId: rawUpi }),
     invoiceNumber: row.invoice_number as string,
     appointmentId: (row.appointment_id as string) || "",
     patientId: (row.patient_id as string) || "",
