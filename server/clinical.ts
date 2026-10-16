@@ -13,6 +13,7 @@ import { clinicLine, getTenantLetterhead } from "./letterhead.ts";
 import { requireAuth } from "./auth.ts";
 import { reportCaughtError } from "./error-tracker.ts";
 import { resolveAbdmMode, type AbdmMode } from "./abdm-mode.ts";
+import { maskedLast4 } from "./mask-last4.ts";
 import { registerPatientDocumentRoutes } from "./patient-documents.ts";
 import { clinicCalendarDate, parseAppointmentListDate } from "../src/lib/clinicDay.ts";
 import { denyUnlessPatientRecordRole } from "./patient-access.ts";
@@ -457,7 +458,7 @@ const LINK_SOURCES = new Set(["aadhaar_otp", "abha_search", "qr"]);
 export function rejectUnlockedKyc(body: Record<string, unknown>) {
   const kyc = String(body.kycStatus || body.kyc_status || "");
   if (/^verified$/i.test(kyc) || /government|unlocked/i.test(kyc)) {
-    throw httpError(400, "kycStatus must be LINKED_SANDBOX; mode:'sandbox'");
+    throw httpError(400, `kycStatus must be LINKED_SANDBOX; mode:'${resolveAbdmMode()}'`);
   }
 }
 
@@ -818,7 +819,7 @@ export function linkPatientAbha(
     actor?.id || null,
     actor?.name || "Clinician",
     "ABHA linked",
-    `patient ${id} ABHA ${mapped.abhaNumber} source ${source} mode:'${abdmMode}'`
+    `patient ${id} ABHA ${maskedLast4(mapped.abhaNumber)} source ${source} mode:'${abdmMode}'`
   );
   return {
     abdmMode,

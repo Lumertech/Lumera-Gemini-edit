@@ -11,6 +11,7 @@ import { sendOtpLimited } from "./otp-attempt.ts";
 import { consumeHashedOtpAttempt, otpSubjectKey, requestClientIp } from "./otp-rate-limit.ts";
 import { rejectProductionSimulator } from "./meta-security.ts";
 import { isAbdmPlaceholderRegistryMode, resolveAbdmMode } from "./abdm-mode.ts";
+import { maskedLast4 } from "./mask-last4.ts";
 import { formatAbdmRegistryLabel } from "../src/lib/abdmRegistryLabel.ts";
 import { formatINR } from "../src/lib/currency.ts";
 import {
@@ -175,10 +176,6 @@ function bridgeSessionGuard(req: Request, res: Response, next: NextFunction) {
   const allowed = (BRIDGE_ADMIN_ROLES as readonly string[]).includes(role) || isPlatformAdminRole(role);
   if (!allowed) return res.status(403).json({ error: "Insufficient permissions" });
   next();
-}
-
-function maskedLast4(last4: string): string {
-  return `XXXX-XXXX-${last4}`;
 }
 
 /** 429 when the shared OTP window is exhausted. Generate also honors the send cooldown. */

@@ -22,6 +22,7 @@ export type BillingSettings = {
   gstin: string;
   upiId: string;
   clinicName: string;
+  sampleTaxInvoice?: boolean;
   letterhead?: BillingLetterhead;
   notice?: string;
 };
@@ -69,6 +70,7 @@ export type PersistedInvoice = {
   payLink?: string;
   gstin?: string;
   upiId?: string;
+  sampleTaxInvoice?: boolean;
   subtotal?: number;
   discountAmount?: number;
   totalAmount?: number;

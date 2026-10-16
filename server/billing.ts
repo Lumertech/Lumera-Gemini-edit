@@ -6,7 +6,7 @@ import {
   writeAudit,
 } from "./db.ts";
 import { getTenantLetterhead } from "./letterhead.ts";
-import { scrubSeedBillingIds } from "./seed-branding.ts";
+import { isSampleTaxInvoice, sampleTaxInvoiceReceiptText, scrubSeedBillingIds } from "./seed-branding.ts";
 import { cloudDispatchHttpStatus, isCloudDispatchFailure, sendPaymentReceipt } from "./graph-whatsapp.ts";
 import {
   createRazorpayCollectOrder,
@@ -346,13 +346,14 @@ function recordReceiptEvent(opts: {
   }
 }
 
-function receiptBody(invoice: ReturnType<typeof mapInvoice>, sandbox: boolean): string {
+export function receiptBody(invoice: ReturnType<typeof mapInvoice>, sandbox: boolean): string {
   const gstinLine = invoice.gstin ? `\nGSTIN: ${invoice.gstin}` : "";
   const upiLine = invoice.upiId ? `\nUPI: ${invoice.upiId}` : "";
   const sandboxLine = sandbox
     ? "\n\nSANDBOX / DEV-ONLY — recorded locally, not sent via WhatsApp Cloud API."
     : "";
-  return `*Payment receipt*\nInvoice *${invoice.invoiceNumber}*\nPatient: ${invoice.patientName}\nAmount paid: ${formatINR(invoice.totalAmount)}\nStatus: ${invoice.paymentStatus}${gstinLine}${upiLine}${sandboxLine}`;
+  const body = `*Payment receipt*\nInvoice *${invoice.invoiceNumber}*\nPatient: ${invoice.patientName}\nAmount paid: ${formatINR(invoice.totalAmount)}\nStatus: ${invoice.paymentStatus}${gstinLine}${upiLine}${sandboxLine}`;
+  return sampleTaxInvoiceReceiptText(body, Boolean(invoice.sampleTaxInvoice));
 }
 
 async function dispatchInvoiceReceipt(
@@ -530,6 +531,11 @@ export function createBillingRouter(): Router {
       gstin: ids.gstin,
       upiId: ids.upiId,
       clinicName: letterhead.clinicName,
+      sampleTaxInvoice: isSampleTaxInvoice({
+        tenantId,
+        gstin: letterhead.gstin,
+        upiId: letterhead.upiId,
+      }),
       letterhead: { ...letterhead, gstin: ids.gstin, upiId: ids.upiId },
       notice:
         "Razorpay collect is not a PCI DSS certification and does not imply a certified payment-partner status.",

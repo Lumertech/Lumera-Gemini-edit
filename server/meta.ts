@@ -758,7 +758,7 @@ export function createMetaRouter(): Router {
       const templates = rows.map((r) => ({
         id: r.id,
         tenantId: r.tenant_id,
-        tenantName: r.tenant_name || "Lumera Health",
+        tenantName: r.tenant_name || "Clinic",
         wabaId: r.waba_id,
         name: r.name,
         category: r.category,
@@ -796,9 +796,9 @@ export function createMetaRouter(): Router {
       const wabaId = tenant?.waba_id || "waba_398249018247019";
 
       const parsedComponents = Array.isArray(components) ? components : [
-        { type: "HEADER", format: "TEXT", text: "Lumera Health Alert" },
+        { type: "HEADER", format: "TEXT", text: "Clinic update" },
         { type: "BODY", text: "Hello {{1}}, this is an update regarding your medical care.", example: { body_text: [["Patient"]] } },
-        { type: "FOOTER", text: "Lumera Apex PolyClinic" }
+        { type: "FOOTER", text: "Sent by your clinic" }
       ];
 
       db.prepare(`

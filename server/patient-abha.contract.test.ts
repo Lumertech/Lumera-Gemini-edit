@@ -9,7 +9,8 @@ import { attachUser } from "./auth.ts";
 import { signAbdmCallback } from "./abdm-hmac.ts";
 import { createApiRouter } from "./api.ts";
 import { getDb, initDatabase, presentPatientKyc } from "./db.ts";
-import { getAbdmBridgeStatus } from "./abdm-mode.ts";
+import { getAbdmBridgeStatus, resolveAbdmMode } from "./abdm-mode.ts";
+import { maskedLast4 } from "./mask-last4.ts";
 import { hashPassword } from "./password.ts";
 
 const GATEWAY_HMAC_SECRET = "test-abdm-callback-hmac-secret";
@@ -210,10 +211,16 @@ describe("#35 dual onboard — same patientId + frozen link-abha", () => {
     assert.equal(ids.length, 1);
 
     const audits = getDb()
-      .prepare("SELECT action FROM audit_logs WHERE details LIKE ?")
-      .all(`%${p1.id}%`) as Array<{ action: string }>;
+      .prepare("SELECT action, details FROM audit_logs WHERE details LIKE ?")
+      .all(`%${p1.id}%`) as Array<{ action: string; details: string }>;
     assert.ok(audits.some((a) => /ABHA linked/i.test(a.action)));
     assert.ok(audits.some((a) => /consent stored/i.test(a.action)));
+    const linkedAudit = audits.find((row) => /ABHA linked/i.test(row.action));
+    assert.ok(linkedAudit);
+    const last4 = abhaNumber.replace(/\D/g, "").slice(-4);
+    assert.match(linkedAudit.details, new RegExp(`ABHA ${maskedLast4(abhaNumber).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+    assert.match(linkedAudit.details, new RegExp(`XXXX-XXXX-${last4}`));
+    assert.equal(linkedAudit.details.includes(abhaNumber), false);
   });
 
   it("(b) ABHA-first create then simple same phone → same id; simple path mints no consent", async () => {
@@ -379,6 +386,7 @@ describe("#35 dual onboard — same patientId + frozen link-abha", () => {
     );
     assert.equal(rejected.status, 400);
     assert.match(String(rejected.json.error || ""), /kycStatus must be LINKED_SANDBOX/);
+    assert.match(String(rejected.json.error || ""), new RegExp(`mode:'${resolveAbdmMode()}'`));
     assert.doesNotMatch(String(rejected.json.error || ""), /NHA sandbox|ABDM-aligned/);
 
     for (const unlocked of ["Government", "Unlocked"]) {
@@ -775,6 +783,9 @@ describe("#35 overclaim grep (Platform ABHA / ABDM)", () => {
       .map((rel) => fs.readFileSync(path.join(root, rel), "utf8"))
       .join("\n");
     assert.match(clinical, /ABHA link and consent artefact storage until credentials are provisioned/);
+    assert.match(clinical, /resolveAbdmMode\(\)/);
+    assert.doesNotMatch(clinical, /mode:'sandbox'/);
+    assert.match(clinical, /maskedLast4\(mapped\.abhaNumber\)/);
     assert.match(abdm, /Local stand-in until credentials are provisioned/);
     assert.doesNotMatch(clinical, /ABDM-aligned/);
     assert.match(clinical, /LINKED_SANDBOX/);

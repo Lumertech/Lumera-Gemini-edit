@@ -5,6 +5,7 @@ import { recordWhatsAppUsageAndDebit } from "./usage-billing.ts";
 import { getTenantWabaNumber, getWhatsAppNumberSecret } from "./whatsapp-numbers-store.ts";
 import { waTokenKeyBytes } from "./wa-token-crypto.ts";
 import { formatINR } from "../src/lib/currency.ts";
+import { isSampleTaxInvoice, sampleTaxInvoiceReceiptText } from "../src/lib/sampleTaxInvoice.ts";
 
 /**
  * Shared Meta WhatsApp Cloud API send module (Wave 1B OTP + Wave 2 utilities).
@@ -544,6 +545,10 @@ export type ReceiptFields = {
   currency?: string;
   invoiceId?: string;
   date?: string;
+  tenantId?: string;
+  gstin?: string;
+  upiId?: string;
+  sampleTaxInvoice?: boolean;
 };
 
 export function sandboxBanner(body: string): string {
@@ -593,12 +598,15 @@ export function buildReceiptText(receipt: ReceiptFields): string {
   const invoice = receipt.invoiceId ? `\nInvoice: ${receipt.invoiceId}` : "";
   const date = receipt.date ? `\nDate: ${receipt.date}` : "";
   const clinic = String(receipt.clinicName || "").trim();
-  return (
+  const body =
     `🧰 *Payment receipt${clinic ? ` — ${clinic}` : ""}*\n\n` +
     `Namaste ${name},\n` +
     `We received *${amountLabel}* for your consultation.${invoice}${date}\n\n` +
-    `Thank you.`
-  );
+    `Thank you.`;
+  const sample =
+    Boolean(receipt.sampleTaxInvoice) ||
+    isSampleTaxInvoice({ tenantId: receipt.tenantId, gstin: receipt.gstin, upiId: receipt.upiId });
+  return sampleTaxInvoiceReceiptText(body, sample);
 }
 
 const CLOUD_NOT_CONFIGURED =

@@ -21,6 +21,7 @@ import {
 import { BillItem, Patient, Doctor, ClinicSettings, PharmacyBatchItem, TherapyPackage, Prescription, Appointment } from '../types';
 import { MOCK_PHARMACY_BATCHES, MOCK_THERAPY_PACKAGES } from '../data/clinicalData';
 import { BLANK_CLINIC_SETTINGS } from '../lib/letterhead';
+import { isSampleTaxInvoice, SAMPLE_TAX_INVOICE_BANNER } from '../lib/sampleTaxInvoice';
 import { apiFetch } from '../api/http';
 import { formatINR } from '../lib/currency.ts';
 import {
@@ -49,6 +50,19 @@ import { clinicCalendarDate } from '../lib/clinicDay';
 import { useAuth } from '../auth/AuthContext';
 import { workflowForUser } from '../lib/specialtyWorkflow';
 import { resolveConsultingDoctor } from '../lib/consultingDoctor';
+
+function SampleTaxBanner({ show }: { show: boolean }) {
+  if (!show) return null;
+  return (
+    <p
+      data-testid="sample-tax-invoice-banner"
+      role="note"
+      className="sample-tax-banner mb-4 rounded-md border-2 border-black bg-amber-200 px-3 py-2 text-center text-sm font-black tracking-wide text-black"
+    >
+      {SAMPLE_TAX_INVOICE_BANNER}
+    </p>
+  );
+}
 
 interface BillingManagerProps {
   currentPatient: Patient;
@@ -201,6 +215,18 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
     name: clinicSettings.name,
   });
   const clinicName = billingIds.clinicName || clinicSettings.name || 'Clinic name not set';
+  const sampleTaxInvoice = [
+    user?.isDemoWorkspace,
+    billingSettings?.sampleTaxInvoice,
+    persistedInvoice?.sampleTaxInvoice,
+    isSampleTaxInvoice({ tenantId: user?.tenantId, gstin: billingIds.gstin, upiId: billingIds.upiId }),
+    isSampleTaxInvoice({ tenantId: user?.tenantId, gstin: clinicSettings.gstin, upiId: clinicSettings.upiId }),
+    isSampleTaxInvoice({
+      tenantId: user?.tenantId,
+      gstin: persistedInvoice?.gstin,
+      upiId: persistedInvoice?.upiId,
+    }),
+  ].some(Boolean);
   const statusLabel = paymentStatusLabel({
     invoicePaid: isPaid,
     appointmentIsPaid: isPaid ? true : appointmentIsPaid && !persistedInvoice,
@@ -696,6 +722,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
 
       {activeTab === 'invoice' && (
         <div className="bg-white rounded-2xl border border-slate-200 shadow-md p-6 sm:p-8 space-y-6">
+          <SampleTaxBanner show={sampleTaxInvoice} />
           <div className="border-b-2 border-slate-900 pb-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div>
               <h2 className="text-xl font-bold text-slate-900">{clinicName}</h2>
@@ -1279,6 +1306,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
               </div>
             ) : (
               <div className="space-y-4">
+                <SampleTaxBanner show={sampleTaxInvoice} />
                 <div className="p-4 bg-emerald-50 rounded-xl border border-emerald-200 space-y-3 text-xs">
                   <div className="flex items-center justify-between border-b border-emerald-200 pb-2">
                     <div className="flex items-center gap-1.5 text-emerald-800 font-bold">

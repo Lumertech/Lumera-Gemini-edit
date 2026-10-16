@@ -1,20 +1,29 @@
-/** Seed Lumera identifiers — never persist or print these on real-tenant invoices. */
-export const SEED_CLINIC_GSTIN = "19AABCL8899K1Z5";
-export const SEED_CLINIC_UPI = "lumerahealth@icici";
+/**
+ * Seed clinic identifiers — never persist or print these on real-tenant invoices.
+ * Demo-tenant and seed-id checks live in src/lib/sampleTaxInvoice.ts.
+ */
+import { isSeedGstin, isSeedUpi } from "../src/lib/sampleTaxInvoice.ts";
+
+export {
+  SEED_CLINIC_GSTIN,
+  SEED_CLINIC_UPI,
+  SAMPLE_TAX_INVOICE_BANNER,
+  isDemoTenant,
+  isSampleTaxInvoice,
+  isSeedGstin,
+  isSeedUpi,
+  sampleTaxInvoiceReceiptText,
+} from "../src/lib/sampleTaxInvoice.ts";
 
 /** Same id as DEMO_TENANT_ID in db.ts — kept local to avoid an import cycle. */
 const DEMO_TENANT = "tenant-lumera-main";
 
+/**
+ * Seed GSTIN/UPI may remain on the Meta review clinic's stored bill.
+ * Sunrise is a sample tax tenant (see isDemoTenant) and still has seed ids scrubbed.
+ */
 export function isDemoTenantId(tenantId: string): boolean {
   return tenantId === DEMO_TENANT;
-}
-
-export function isSeedGstin(value: string): boolean {
-  return value.trim().toUpperCase() === SEED_CLINIC_GSTIN.toUpperCase();
-}
-
-export function isSeedUpi(value: string): boolean {
-  return value.trim().toLowerCase() === SEED_CLINIC_UPI.toLowerCase();
 }
 
 /** Real tenants: empty or their own letterhead. Demo may keep seed branding. */

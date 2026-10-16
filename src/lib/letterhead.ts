@@ -1,9 +1,9 @@
 import { apiFetch } from "../api/http";
 import { ClinicSettings, Doctor, TenantLetterhead } from "../types";
+import { SEED_CLINIC_GSTIN, SEED_CLINIC_UPI } from "./sampleTaxInvoice";
 
 /** Seed GSTIN/UPI that must never appear on real-tenant Rx or invoices. */
-export const SEED_CLINIC_GSTIN = "19AABCL8899K1Z5";
-export const SEED_CLINIC_UPI = "lumerahealth@icici";
+export { SEED_CLINIC_GSTIN, SEED_CLINIC_UPI };
 
 /** UI chrome only — not Lumera legal/branding identifiers. */
 const LETTERHEAD_CHROME = {
