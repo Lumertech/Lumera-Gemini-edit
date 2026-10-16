@@ -22,7 +22,9 @@ import {
   reportError,
 } from "./server/error-tracker.ts";
 import { attachProductionSpaFallback } from "./server/spa-fallback.ts";
-import { attachPublicPolicyHtml, isPublicPolicyHtmlPath } from "./server/policy-html.ts";
+import { attachPublicPolicyHtml } from "./server/policy-html.ts";
+import { attachPublicPricingHtml } from "./server/pricing-html.ts";
+import { isDedicatedPublicHtmlPath } from "./server/spa-fallback.ts";
 import { mountGeminiClinicalRoutes } from "./server/gemini-clinical.ts";
 import { installWhatsAppRouterPatch, protectWhatsAppDashboard } from "./server/whatsapp-dashboard-guard.ts";
 import { createLiveRegistrationRouter } from "./server/live-registration-routes.ts";
@@ -78,6 +80,7 @@ app.post("/data-deletion-callback", (req, res, next) => {
   createMetaRouter()(req, res, next);
 });
 attachPublicPolicyHtml(app);
+attachPublicPricingHtml(app);
 mountGeminiClinicalRoutes(app);
 
 
@@ -110,7 +113,7 @@ async function startServer() {
         p.startsWith("/src") ||
         p.startsWith("/node_modules") ||
         p.includes(".");
-      if ((req.method === "GET" || req.method === "HEAD") && !isAsset && !isPublicPolicyHtmlPath(p)) {
+      if ((req.method === "GET" || req.method === "HEAD") && !isAsset && !isDedicatedPublicHtmlPath(p)) {
         req.url = "/index.html";
       }
       next();

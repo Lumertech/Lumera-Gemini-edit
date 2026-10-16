@@ -4,6 +4,7 @@ import type { Express, NextFunction, Request, Response } from "express";
 import express from "express";
 import { applyHtmlDocumentSecurityHeaders } from "./html-security-headers.ts";
 import { isPublicPolicyHtmlPath, PUBLIC_POLICY_HTML_PATHS } from "./policy-html.ts";
+import { isPricingHtmlPath } from "./pricing-html.ts";
 
 /** Public paths that must 200 without login. Policy slugs are SSR HTML, not SPA shells. */
 export const PUBLIC_SPA_PATHS = [
@@ -17,6 +18,11 @@ export const PUBLIC_SPA_PATHS = [
   "/admin",
   "/dashboard",
 ] as const;
+
+/** Policy, pricing, and refund documents are server HTML, not the SPA shell. */
+export function isDedicatedPublicHtmlPath(pathname: string): boolean {
+  return isPublicPolicyHtmlPath(pathname) || isPricingHtmlPath(pathname);
+}
 
 export function isBackendPath(pathname: string): boolean {
   const p = (pathname.split("?")[0] || "/").toLowerCase();
@@ -40,7 +46,7 @@ export function isBackendPath(pathname: string): boolean {
  */
 export function isSpaHistoryFallbackPath(pathname: string): boolean {
   if (isBackendPath(pathname)) return false;
-  if (isPublicPolicyHtmlPath(pathname)) return false;
+  if (isDedicatedPublicHtmlPath(pathname)) return false;
   const clean = (pathname.split("?")[0] || "/").replace(/\/+$/, "") || "/";
   const last = clean.split("/").pop() || "";
   if (last.includes(".")) return false;
@@ -49,7 +55,7 @@ export function isSpaHistoryFallbackPath(pathname: string): boolean {
 
 /** SPA shells and public policy documents — the responses that need CSP. */
 export function isHtmlDocumentPath(pathname: string): boolean {
-  if (isPublicPolicyHtmlPath(pathname)) return true;
+  if (isDedicatedPublicHtmlPath(pathname)) return true;
   return isSpaHistoryFallbackPath(pathname);
 }
 

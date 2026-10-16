@@ -58,6 +58,11 @@ describe("public vs app surface routing (founder lock #48)", () => {
     assert.equal(surfaceToPath("landing"), "/");
     assert.equal(surfaceToPath("app"), "/app");
     assert.equal(surfaceToPath("login"), "/login");
+    assert.equal(pathToNav("/pricing").surface, "pricing");
+    assert.equal(isProtectedSurface("pricing"), false);
+    assert.equal(surfaceToPath("pricing"), "/pricing");
+    assert.equal(pathToNav("/refund-policy").surface, "legal");
+    assert.equal(pathToNav("/refund-policy").policySlug, "refund-policy");
     assert.equal(surfaceToPath("login", { loginMode: "register" }), "/signup");
     assert.equal(pathToNav("/signup").surface, "login");
     assert.equal(pathToNav("/register").surface, "login");
