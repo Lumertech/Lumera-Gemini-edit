@@ -34,6 +34,7 @@ const PATIENT_INVOICE_DROP = [
   "razorpayPaymentId",
   "razorpayPaymentLinkId",
   "issuedBy",
+  "consultingDoctorId",
   "receiptWhatsAppStatus",
   "receiptWhatsAppChannel",
   "receiptWhatsAppMessageId",
@@ -83,25 +84,45 @@ function requireTenant(req: Request, res: Response): string | null {
   return tenantId;
 }
 
-function consultingDoctorForInvoice(
-  tenantId: string,
-  body: Record<string, unknown>
-): { id: string; name: string } {
-  const id = String(body.consultingDoctorId || body.consulting_doctor_id || "").trim();
-  const name = String(body.consultingDoctorName || body.consulting_doctor_name || "").trim();
-  if (!id) return { id: "", name };
-  const row = getDb()
+function tenantDoctorRow(tenantId: string, doctorId: string): { id?: string; name?: string } | undefined {
+  if (!doctorId) return undefined;
+  return getDb()
     .prepare(
       `SELECT d.id, d.name
        FROM doctors d
        INNER JOIN users u ON u.id = d.user_id
        WHERE d.id = ? AND u.tenant_id = ?`
     )
-    .get(id, tenantId) as { id?: string; name?: string } | undefined;
+    .get(doctorId, tenantId) as { id?: string; name?: string } | undefined;
+}
+
+function consultingDoctorForInvoice(
+  tenantId: string,
+  body: Record<string, unknown>,
+  appointmentId: string
+): { id: string; name: string } {
+  if (appointmentId) {
+    const apt = getDb()
+      .prepare("SELECT doctor_id, doctor_name FROM appointments WHERE id = ? AND tenant_id = ?")
+      .get(appointmentId, tenantId) as { doctor_id?: string; doctor_name?: string } | undefined;
+    const id = String(apt?.doctor_id || "").trim();
+    const roster = tenantDoctorRow(tenantId, id);
+    if (roster?.id) return { id: String(roster.id), name: String(roster.name || "") };
+    return { id, name: String(apt?.doctor_name || "").trim() };
+  }
+  const id = String(body.consultingDoctorId || body.consulting_doctor_id || "").trim();
+  const suppliedName = String(body.consultingDoctorName || body.consulting_doctor_name || "").trim();
+  if (!id) {
+    if (suppliedName) {
+      throw Object.assign(new Error("Consulting doctor is not in this clinic"), { status: 400 });
+    }
+    return { id: "", name: "" };
+  }
+  const row = tenantDoctorRow(tenantId, id);
   if (!row?.id) {
     throw Object.assign(new Error("Consulting doctor is not in this clinic"), { status: 400 });
   }
-  return { id: String(row.id), name: String(row.name || name) };
+  return { id: String(row.id), name: String(row.name || "") };
 }
 
 function shortId(prefix: string): string {
@@ -445,7 +466,7 @@ function insertInvoice(tenantId: string, body: Record<string, unknown>, actor?: 
     }
   }
 
-  const consulting = consultingDoctorForInvoice(tenantId, body);
+  const consulting = consultingDoctorForInvoice(tenantId, body, appointmentId);
 
   const id = shortId("inv");
   const invoiceNumber = uniqueInvoiceNumber(tenantId, String(body.invoiceNumber || body.invoice_number || ""));

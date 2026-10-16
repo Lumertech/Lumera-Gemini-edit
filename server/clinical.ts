@@ -893,7 +893,8 @@ export function insertAppointment(tenantId: string, body: Record<string, unknown
 export function updateAppointment(
   tenantId: string,
   appointmentId: string,
-  body: Record<string, unknown>
+  body: Record<string, unknown>,
+  actor?: { id?: string | null; name?: string }
 ): Record<string, unknown> {
   const existing = getTenantAppointment(tenantId, appointmentId);
   if (!existing) {
@@ -954,7 +955,14 @@ export function updateAppointment(
       tenantId
     );
   if (body.status !== undefined && (status === "Completed" || status === "Cancelled")) {
-    deletePrescriptionDraft(tenantId, String(existing.patient_id || mapped.patientId || ""), appointmentId);
+    deletePrescriptionDraft({
+      tenantId,
+      patientId: String(existing.patient_id || mapped.patientId || ""),
+      appointmentId,
+      actorId: actor?.id || null,
+      actorName: actor?.name || "Clinician",
+      reason: status,
+    });
   }
   return getTenantAppointment(tenantId, appointmentId)!;
 }
@@ -963,20 +971,109 @@ function draftAppointmentId(body: Record<string, unknown>): string {
   return String(body.appointmentId || body.appointment_id || "").trim();
 }
 
-function deletePrescriptionDraft(tenantId: string, patientId: string, appointmentId: string): void {
-  const visitId = String(appointmentId || "").trim();
+function tenantDoctorRow(tenantId: string, doctorId: string): { id?: string } | undefined {
+  if (!doctorId) return undefined;
+  return getDb()
+    .prepare(
+      `SELECT d.id
+       FROM doctors d
+       INNER JOIN users u ON u.id = d.user_id
+       WHERE d.id = ? AND u.tenant_id = ?`
+    )
+    .get(doctorId, tenantId) as { id?: string } | undefined;
+}
+
+/** The visit on this draft must belong to the same patient. */
+function draftAppointmentMatchesPatient(tenantId: string, patientId: string, appointmentId: string): boolean {
+  if (!appointmentId) return true;
+  const apt = getDb()
+    .prepare("SELECT patient_id FROM appointments WHERE id = ? AND tenant_id = ?")
+    .get(appointmentId, tenantId) as { patient_id?: string } | undefined;
+  return Boolean(apt && String(apt.patient_id || "") === patientId);
+}
+
+function doctorIdForDraft(req: Request, tenantId: string, body: Record<string, unknown>): string {
+  if (String(req.user?.role || "") === "doctor") {
+    const linked = getDb()
+      .prepare(
+        `SELECT d.id
+         FROM doctors d
+         INNER JOIN users u ON u.id = d.user_id
+         WHERE u.id = ? AND u.tenant_id = ?`
+      )
+      .get(String(req.user?.id || ""), tenantId) as { id?: string } | undefined;
+    if (linked?.id) return String(linked.id);
+    const userId = String(req.user?.id || "").trim();
+    if (!userId) {
+      throw Object.assign(new Error("Consulting doctor is not in this clinic"), { status: 400 });
+    }
+    return userId;
+  }
+  const id = String(body.doctorId || body.doctor_id || "").trim();
+  const row = tenantDoctorRow(tenantId, id);
+  if (!row?.id) {
+    throw Object.assign(new Error("Consulting doctor is not in this clinic"), { status: 400 });
+  }
+  return String(row.id);
+}
+
+/**
+ * Signing omits the visit id sometimes. Use a same-patient appointment from the
+ * body, otherwise the open consultation, otherwise the draft's own visit.
+ */
+function appointmentIdForSignedDraft(tenantId: string, patientId: string, body: Record<string, unknown>): string {
+  const requested = draftAppointmentId(body);
+  if (requested) {
+    return draftAppointmentMatchesPatient(tenantId, patientId, requested) ? requested : "";
+  }
+  const inConsult = getDb()
+    .prepare(
+      `SELECT id FROM appointments
+       WHERE tenant_id = ? AND patient_id = ? AND status = 'In Consultation'
+       ORDER BY created_at DESC LIMIT 1`
+    )
+    .get(tenantId, patientId) as { id?: string } | undefined;
+  if (inConsult?.id) return String(inConsult.id);
+  const drafted = getDb()
+    .prepare(
+      `SELECT appointment_id FROM prescription_drafts
+       WHERE tenant_id = ? AND patient_id = ? AND appointment_id != ''
+       ORDER BY updated_at DESC LIMIT 1`
+    )
+    .get(tenantId, patientId) as { appointment_id?: string } | undefined;
+  const fromDraft = String(drafted?.appointment_id || "").trim();
+  if (fromDraft && draftAppointmentMatchesPatient(tenantId, patientId, fromDraft)) return fromDraft;
+  return "";
+}
+
+function deletePrescriptionDraft(input: {
+  tenantId: string;
+  patientId: string;
+  appointmentId: string;
+  actorId: string | null;
+  actorName: string;
+  reason: string;
+}): void {
+  const tenantId = input.tenantId;
+  let patientId = String(input.patientId || "").trim();
+  const visitId = String(input.appointmentId || "").trim();
   if (!patientId && visitId) {
-    getDb()
-      .prepare("DELETE FROM prescription_drafts WHERE tenant_id = ? AND appointment_id = ?")
-      .run(tenantId, visitId);
-    return;
+    const apt = getDb()
+      .prepare("SELECT patient_id FROM appointments WHERE id = ? AND tenant_id = ?")
+      .get(visitId, tenantId) as { patient_id?: string } | undefined;
+    patientId = String(apt?.patient_id || "").trim();
   }
   if (!patientId) return;
   getDb()
-    .prepare(
-      "DELETE FROM prescription_drafts WHERE tenant_id = ? AND patient_id = ? AND appointment_id = ?"
-    )
+    .prepare("DELETE FROM prescription_drafts WHERE tenant_id = ? AND patient_id = ? AND appointment_id = ?")
     .run(tenantId, patientId, visitId);
+  writeAudit(
+    getDb(),
+    input.actorId,
+    input.actorName || "Clinician",
+    "Prescription draft deleted",
+    `tenant ${tenantId}; patient ${patientId}; appointment ${visitId}; reason ${input.reason}`
+  );
 }
 
 function insertPrescription(tenantId: string, body: Record<string, unknown>) {
@@ -1348,7 +1445,10 @@ export function createClinicalRouter(): Router {
       }
     }
     try {
-      const row = updateAppointment(tenantId, req.params.id, patch);
+      const row = updateAppointment(tenantId, req.params.id, patch, {
+        id: req.user?.id || null,
+        name: req.user?.name,
+      });
       res.json(withPatientTenant(req, tenantId, { appointment: mapAppointment(row) }));
     } catch (err: unknown) {
       const status = typeof err === "object" && err && "status" in err ? Number((err as { status: number }).status) : 500;
@@ -1425,18 +1525,36 @@ export function createClinicalRouter(): Router {
         "Prescription signed",
         `${mapped.rxNumber} for ${mapped.patientName}`
       );
-      // Signing clears this visit's draft. Other visits for the same patient stay.
+      const patientId = String(req.body.patientId || req.body.patient_id || "").trim();
+      let draftCleanupError = "";
       try {
-        const patientId = String(req.body.patientId || req.body.patient_id || "").trim();
         if (patientId) {
-          deletePrescriptionDraft(tenantId, patientId, draftAppointmentId(req.body || {}));
+          deletePrescriptionDraft({
+            tenantId,
+            patientId,
+            appointmentId: appointmentIdForSignedDraft(tenantId, patientId, req.body || {}),
+            actorId: req.user?.id || null,
+            actorName: req.user?.name || "Clinician",
+            reason: "sign",
+          });
         }
-      } catch {}
+      } catch (err: unknown) {
+        reportCaughtError(err, "clinical.deleteDraftOnSign");
+        draftCleanupError = err instanceof Error ? err.message : "Failed to clear the prescription draft";
+      }
       res.status(201).json(
-        withPatientTenant(req, tenantId, { prescription: mapped }, {
-          doctorName: mapped.doctorName,
-          doctorRegNumber: mapped.doctorRegNumber,
-        })
+        withPatientTenant(
+          req,
+          tenantId,
+          {
+            prescription: mapped,
+            ...(draftCleanupError ? { draftCleanupError } : {}),
+          },
+          {
+            doctorName: mapped.doctorName,
+            doctorRegNumber: mapped.doctorRegNumber,
+          }
+        )
       );
     } catch (err: unknown) {
       const status = typeof err === "object" && err && "status" in err ? Number((err as { status: number }).status) : 500;
@@ -1455,11 +1573,8 @@ export function createClinicalRouter(): Router {
     }
     if (!requireTenantPatient(tenantId, patientId, res)) return;
     const appointmentId = String(req.query.appointmentId || req.query.appointment_id || "").trim();
-    if (appointmentId) {
-      const apt = getDb()
-        .prepare("SELECT id FROM appointments WHERE id = ? AND tenant_id = ?")
-        .get(appointmentId, tenantId);
-      if (!apt) return res.status(404).json({ error: "Appointment not found" });
+    if (!draftAppointmentMatchesPatient(tenantId, patientId, appointmentId)) {
+      return res.status(404).json({ error: "Appointment not found" });
     }
     const row = getDb()
       .prepare(
@@ -1483,18 +1598,15 @@ export function createClinicalRouter(): Router {
     try {
       const body = req.body || {};
       const patientId = String(body.patientId || body.patient_id || "").trim();
-      const doctorId = String(body.doctorId || body.doctor_id || req.user?.id || "").trim();
       const appointmentId = draftAppointmentId(body);
       if (!patientId) {
         return res.status(400).json({ error: "patientId is required for draft auto-save" });
       }
       if (!requireTenantPatient(tenantId, patientId, res)) return;
-      if (appointmentId) {
-        const apt = getDb()
-          .prepare("SELECT id FROM appointments WHERE id = ? AND tenant_id = ?")
-          .get(appointmentId, tenantId);
-        if (!apt) return res.status(404).json({ error: "Appointment not found" });
+      if (!draftAppointmentMatchesPatient(tenantId, patientId, appointmentId)) {
+        return res.status(404).json({ error: "Appointment not found" });
       }
+      const doctorId = doctorIdForDraft(req, tenantId, body);
       const draftJson = JSON.stringify(scrubDraftForStorage(body));
       const now = new Date().toISOString();
       const saved = getDb()
@@ -1513,7 +1625,7 @@ export function createClinicalRouter(): Router {
       res.json({ success: true, updatedAt: now });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Failed to auto-save draft";
-      res.status(500).json({ error: message });
+      res.status(errorStatus(err)).json({ error: message });
     }
   });
 

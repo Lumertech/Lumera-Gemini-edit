@@ -794,10 +794,10 @@ describe("tenant, user, and branch HTTP responses omit secrets", () => {
       .prepare(
         `INSERT INTO invoices (
            id, tenant_id, invoice_number, patient_id, date, gstin, upi_id, total_amount, status, created_at,
-           razorpay_order_id, issued_by, receipt_whatsapp_status
-         ) VALUES (?, ?, ?, ?, '2026-10-16', ?, 'publishedclinic@upi', 500, 'Paid', ?, 'order_canary', 'Dr Hidden Owner', 'sent')`
+           razorpay_order_id, issued_by, receipt_whatsapp_status, consulting_doctor_id, consulting_doctor_name
+         ) VALUES (?, ?, ?, ?, '2026-10-16', ?, 'publishedclinic@upi', 500, 'Paid', ?, 'order_canary', 'Dr Hidden Owner', 'sent', ?, ?)`
       )
-      .run(`inv-${suffix}`, tenantId, `INV-${suffix}`, patientId, gstin, now);
+      .run(`inv-${suffix}`, tenantId, `INV-${suffix}`, patientId, gstin, now, `doc-hidden-${suffix}`, doctorName);
 
     const patientToken = await login(patientEmail);
     const patientAuth = { Authorization: `Bearer ${patientToken}` };
@@ -864,6 +864,9 @@ describe("tenant, user, and branch HTTP responses omit secrets", () => {
     assert.equal(invoice.upiId, "publishedclinic@upi");
     assert.equal(Object.prototype.hasOwnProperty.call(invoice, "razorpayOrderId"), false);
     assert.equal(Object.prototype.hasOwnProperty.call(invoice, "issuedBy"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(invoice, "consultingDoctorId"), false);
+    assert.equal(invoice.consultingDoctorName, doctorName);
+    assert.equal(JSON.stringify(invoices.json).includes(`doc-hidden-${suffix}`), false);
     assert.equal(Object.prototype.hasOwnProperty.call(invoice, "receiptWhatsAppStatus"), false);
 
     const me = await jsonRequest(port, "GET", "/api/auth/me", undefined, patientAuth);
@@ -889,6 +892,8 @@ describe("tenant, user, and branch HTTP responses omit secrets", () => {
     assert.equal(staffDoctor.userId, ownerUserId);
     const staffInvoice = await jsonRequest(port, "GET", `/api/invoices/inv-${suffix}`, undefined, staffAuth);
     assert.equal((staffInvoice.json.invoice as { gstin?: string }).gstin, gstin);
+    assert.equal((staffInvoice.json.invoice as { consultingDoctorId?: string }).consultingDoctorId, `doc-hidden-${suffix}`);
+    assert.equal((staffInvoice.json.invoice as { consultingDoctorName?: string }).consultingDoctorName, doctorName);
     assert.equal(staffInvoice.json.tenant, undefined);
   });
 });

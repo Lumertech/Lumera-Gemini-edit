@@ -901,5 +901,42 @@ describe("Wave 2 Razorpay UPI collect", () => {
     );
     assert.equal(crossed.status, 400);
     assert.match(String(crossed.json.error), /Consulting doctor/);
+
+    const overridden = await jsonRequest(
+      port,
+      "POST",
+      "/api/invoices",
+      {
+        appointmentId: appointment.id,
+        patientId: patient.id,
+        patientName: patient.name,
+        items: [{ id: "b-consult", description: "OPD", quantity: 1, unitPrice: 800, total: 800 }],
+        consultingDoctorId: otherDoctorId,
+        consultingDoctorName: "Dr. Other Clinic",
+      },
+      receptionAuth
+    );
+    assert.equal(overridden.status, 201, String(overridden.json.error || ""));
+    const overriddenInvoice = overridden.json.invoice as { consultingDoctorId: string; consultingDoctorName: string };
+    assert.equal(overriddenInvoice.consultingDoctorId, ananyaDoctorId);
+    assert.match(overriddenInvoice.consultingDoctorName, /Ananya/);
+    assert.equal(overriddenInvoice.consultingDoctorName.includes("Other"), false);
+
+    const namedOnly = await jsonRequest(
+      port,
+      "POST",
+      "/api/invoices",
+      {
+        patientId: patient.id,
+        patientName: patient.name,
+        items: [{ id: "b-consult", description: "OPD", quantity: 1, unitPrice: 500, total: 500 }],
+        consultingDoctorName: "Not On The Roster",
+      },
+      receptionAuth
+    );
+    assert.equal(namedOnly.status, 400);
+    assert.match(String(namedOnly.json.error), /Consulting doctor/);
+    const leaked = db.prepare("SELECT id FROM invoices WHERE consulting_doctor_name = ?").get("Not On The Roster");
+    assert.equal(leaked, undefined);
   });
 });

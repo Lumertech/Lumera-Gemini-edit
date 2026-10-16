@@ -389,4 +389,230 @@ describe("prescription draft scoping and AI review gate", () => {
     );
     assert.equal(afterCancel.json.draft, null);
   });
+
+  it("rejects a draft whose appointment belongs to another patient", async () => {
+    const clinic = createClinicUser("mismatch");
+    const token = await login(clinic.email);
+    const auth = { Authorization: `Bearer ${token}` };
+    const owner = await createPatient(auth, "Visit Owner", `+91 98510 ${clinic.tenantId.slice(-4)}`);
+    const other = await createPatient(auth, "Other Patient", `+91 98511 ${clinic.tenantId.slice(-4)}`);
+    const booked = await jsonRequest(
+      port,
+      "POST",
+      "/api/appointments",
+      { patientId: owner.id, date: "2026-10-16", timeSlot: "12:00", doctorId: clinic.userId },
+      auth
+    );
+    assert.equal(booked.status, 201, String(booked.json.error || ""));
+    const appointmentId = (booked.json.appointment as { id: string }).id;
+
+    const posted = await jsonRequest(
+      port,
+      "POST",
+      "/api/prescriptions/draft",
+      { ...fullDraft(other.id), appointmentId, diagnosis: "WRONG-PATIENT" },
+      auth
+    );
+    assert.equal(posted.status, 404);
+    const loaded = await jsonRequest(
+      port,
+      "GET",
+      `/api/prescriptions/draft/${other.id}?appointmentId=${encodeURIComponent(appointmentId)}`,
+      undefined,
+      auth
+    );
+    assert.equal(loaded.status, 404);
+    const stored = getDb()
+      .prepare("SELECT patient_id FROM prescription_drafts WHERE tenant_id = ? AND appointment_id = ?")
+      .get(clinic.tenantId, appointmentId);
+    assert.equal(stored, undefined);
+  });
+
+  it("rejects a cross-tenant doctor id on a draft", async () => {
+    const clinic = createClinicUser("draft-doc");
+    const other = createClinicUser("draft-doc-b");
+    const now = new Date().toISOString();
+    const receptionId = `user-desk-${clinic.tenantId.slice(-6)}`;
+    const receptionEmail = `desk.${clinic.tenantId.slice(-6)}@opd-test.example`;
+    getDb()
+      .prepare(
+        `INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, clinic_name, onboarding_completed, practice_type, specialty, last_login, created_at)
+         VALUES (?, ?, ?, ?, 'Desk Clerk', 'receptionist', 'active', '+91 90000 55555', 'Clinic draft-doc', 1, 'individual', 'General Medicine', ?, ?)`
+      )
+      .run(receptionId, clinic.tenantId, receptionEmail, hashPassword("Lumera@2026"), now, now);
+    const foreignDoctorId = `doc-foreign-${other.tenantId.slice(-6)}`;
+    getDb()
+      .prepare(
+        `INSERT INTO doctors (
+           id, user_id, name, qualification, reg_number, specialty, experience_years, consultation_fee,
+           opd_room, available_days, opd_timing, phone, email, avatar_url, bio, hpr_id, active
+         ) VALUES (?, ?, 'Dr Foreign', '', 'REG-F', 'General Medicine', 1, 0, '', '[]', '', '', '', '', '', '', 1)`
+      )
+      .run(foreignDoctorId, other.userId);
+    const token = await login(receptionEmail);
+    const auth = { Authorization: `Bearer ${token}` };
+    const patient = await createPatient(auth, "Desk Patient", `+91 98520 ${clinic.tenantId.slice(-4)}`);
+    const saved = await jsonRequest(
+      port,
+      "POST",
+      "/api/prescriptions/draft",
+      { ...fullDraft(patient.id), doctorId: foreignDoctorId, diagnosis: "FOREIGN-DOC" },
+      auth
+    );
+    assert.equal(saved.status, 400);
+    assert.match(String(saved.json.error), /Consulting doctor/);
+    const stored = getDb()
+      .prepare("SELECT doctor_id FROM prescription_drafts WHERE tenant_id = ? AND patient_id = ?")
+      .get(clinic.tenantId, patient.id);
+    assert.equal(stored, undefined);
+  });
+
+  it("clears only this patient's visit draft and records the deletion", async () => {
+    const clinic = createClinicUser("draft-del");
+    const token = await login(clinic.email);
+    const auth = { Authorization: `Bearer ${token}` };
+    const patient = await createPatient(auth, "Signed Patient", `+91 98530 ${clinic.tenantId.slice(-4)}`);
+    const neighbour = await createPatient(auth, "Neighbour Patient", `+91 98531 ${clinic.tenantId.slice(-4)}`);
+
+    async function book(patientId: string, timeSlot: string) {
+      const res = await jsonRequest(
+        port,
+        "POST",
+        "/api/appointments",
+        { patientId, date: "2026-10-16", timeSlot, doctorId: clinic.userId },
+        auth
+      );
+      assert.equal(res.status, 201, String(res.json.error || ""));
+      return res.json.appointment as { id: string };
+    }
+
+    const visit = await book(patient.id, "13:00");
+    const otherVisit = await book(neighbour.id, "13:30");
+    const saved = await jsonRequest(
+      port,
+      "POST",
+      "/api/prescriptions/draft",
+      { ...fullDraft(patient.id), appointmentId: visit.id, diagnosis: "KEEP-UNTIL-SIGN" },
+      auth
+    );
+    assert.equal(saved.status, 200, String(saved.json.error || ""));
+    const neighbourDraft = await jsonRequest(
+      port,
+      "POST",
+      "/api/prescriptions/draft",
+      { ...fullDraft(neighbour.id), appointmentId: otherVisit.id, diagnosis: "NEIGHBOUR" },
+      auth
+    );
+    assert.equal(neighbourDraft.status, 200, String(neighbourDraft.json.error || ""));
+    const now = new Date().toISOString();
+    getDb()
+      .prepare(
+        `INSERT INTO prescription_drafts (tenant_id, patient_id, appointment_id, doctor_id, draft_json, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        clinic.tenantId,
+        neighbour.id,
+        visit.id,
+        clinic.userId,
+        JSON.stringify({ diagnosis: "SAME-VISIT-OTHER-PATIENT" }),
+        now
+      );
+
+    const signed = await jsonRequest(
+      port,
+      "POST",
+      "/api/prescriptions",
+      { patientId: patient.id, diagnosis: "Signed without visit id", medicines: [] },
+      auth
+    );
+    assert.equal(signed.status, 201, String(signed.json.error || ""));
+    assert.equal(signed.json.draftCleanupError, undefined);
+    const afterSign = await jsonRequest(
+      port,
+      "GET",
+      `/api/prescriptions/draft/${patient.id}?appointmentId=${encodeURIComponent(visit.id)}`,
+      undefined,
+      auth
+    );
+    assert.equal(afterSign.json.draft, null);
+    const neighbourStill = await jsonRequest(
+      port,
+      "GET",
+      `/api/prescriptions/draft/${neighbour.id}?appointmentId=${encodeURIComponent(otherVisit.id)}`,
+      undefined,
+      auth
+    );
+    assert.equal((neighbourStill.json.draft as { diagnosis: string }).diagnosis, "NEIGHBOUR");
+    const sharedVisit = getDb()
+      .prepare(
+        "SELECT draft_json FROM prescription_drafts WHERE tenant_id = ? AND patient_id = ? AND appointment_id = ?"
+      )
+      .get(clinic.tenantId, neighbour.id, visit.id) as { draft_json: string } | undefined;
+    assert.match(String(sharedVisit?.draft_json || ""), /SAME-VISIT-OTHER-PATIENT/);
+
+    const signAudit = getDb()
+      .prepare(
+        "SELECT user_name, details FROM audit_logs WHERE action = ? AND details LIKE ? ORDER BY timestamp DESC LIMIT 1"
+      )
+      .get("Prescription draft deleted", `%patient ${patient.id}; appointment ${visit.id}; reason sign%`) as
+      | { user_name: string; details: string }
+      | undefined;
+    assert.ok(signAudit);
+    assert.match(signAudit.user_name, /draft-del/);
+    assert.match(signAudit.details, new RegExp(`tenant ${clinic.tenantId}`));
+
+    const next = await book(patient.id, "14:00");
+    const again = await jsonRequest(
+      port,
+      "POST",
+      "/api/prescriptions/draft",
+      { ...fullDraft(patient.id), appointmentId: next.id, diagnosis: "CLOSE-ME" },
+      auth
+    );
+    assert.equal(again.status, 200, String(again.json.error || ""));
+    const completed = await jsonRequest(port, "PATCH", `/api/appointments/${next.id}`, { status: "Completed" }, auth);
+    assert.equal(completed.status, 200, String(completed.json.error || ""));
+    const afterComplete = await jsonRequest(
+      port,
+      "GET",
+      `/api/prescriptions/draft/${patient.id}?appointmentId=${encodeURIComponent(next.id)}`,
+      undefined,
+      auth
+    );
+    assert.equal(afterComplete.json.draft, null);
+    const neighbourAfterComplete = await jsonRequest(
+      port,
+      "GET",
+      `/api/prescriptions/draft/${neighbour.id}?appointmentId=${encodeURIComponent(otherVisit.id)}`,
+      undefined,
+      auth
+    );
+    assert.equal((neighbourAfterComplete.json.draft as { diagnosis: string }).diagnosis, "NEIGHBOUR");
+    const completeAudit = getDb()
+      .prepare("SELECT details FROM audit_logs WHERE action = ? AND details LIKE ?")
+      .get("Prescription draft deleted", `%appointment ${next.id}; reason Completed%`) as { details: string } | undefined;
+    assert.match(String(completeAudit?.details || ""), new RegExp(`patient ${patient.id}`));
+    assert.match(String(completeAudit?.details || ""), new RegExp(`tenant ${clinic.tenantId}`));
+
+    const last = await book(patient.id, "14:30");
+    const cancelDraft = await jsonRequest(
+      port,
+      "POST",
+      "/api/prescriptions/draft",
+      { ...fullDraft(patient.id), appointmentId: last.id, diagnosis: "CANCEL-ME" },
+      auth
+    );
+    assert.equal(cancelDraft.status, 200, String(cancelDraft.json.error || ""));
+    const cancelled = await jsonRequest(port, "PATCH", `/api/appointments/${last.id}`, { status: "Cancelled" }, auth);
+    assert.equal(cancelled.status, 200, String(cancelled.json.error || ""));
+    const cancelAudit = getDb()
+      .prepare("SELECT details FROM audit_logs WHERE action = ? AND details LIKE ?")
+      .get("Prescription draft deleted", `%appointment ${last.id}; reason Cancelled%`) as { details: string } | undefined;
+    assert.match(String(cancelAudit?.details || ""), new RegExp(`patient ${patient.id}`));
+    const neighbourAfter = getDb()
+      .prepare("SELECT patient_id FROM prescription_drafts WHERE tenant_id = ? AND patient_id = ?")
+      .all(clinic.tenantId, neighbour.id) as Array<{ patient_id: string }>;
+    assert.equal(neighbourAfter.length, 2);
+  });
 });
