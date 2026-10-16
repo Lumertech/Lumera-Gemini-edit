@@ -79,11 +79,63 @@ function auth(token: string) {
   return { Authorization: `Bearer ${token}` };
 }
 
+const createdTenantIds: string[] = [];
+
+function purgeTenant(tenantId: string) {
+  const db = getDb();
+  const run = (sql: string, ...params: string[]) => {
+    try {
+      db.prepare(sql).run(...params);
+    } catch {
+      /* optional table on a database that has not migrated that feature yet */
+    }
+  };
+  try {
+    const numbers = db
+      .prepare("SELECT meta_token_ref FROM whatsapp_numbers WHERE owner_type = 'tenant' AND owner_id = ?")
+      .all(tenantId) as Array<{ meta_token_ref?: string }>;
+    for (const number of numbers) {
+      const ref = String(number.meta_token_ref || "").trim();
+      if (ref) run("DELETE FROM whatsapp_number_secrets WHERE id = ?", ref);
+    }
+  } catch {
+    /* whatsapp_numbers is created on first WABA boot */
+  }
+  run("DELETE FROM whatsapp_numbers WHERE owner_type = 'tenant' AND owner_id = ?", tenantId);
+  run("DELETE FROM meta_templates WHERE tenant_id = ?", tenantId);
+  run("DELETE FROM tenant_subscriptions WHERE tenant_id = ? OR id = ?", tenantId, `tsub-${tenantId}`.slice(0, 40));
+  run("DELETE FROM users WHERE tenant_id = ?", tenantId);
+  run("DELETE FROM tenants WHERE id = ?", tenantId);
+}
+
+function purgeAuthzFixtures() {
+  const db = getDb();
+  const rows = db
+    .prepare("SELECT id FROM tenants WHERE id LIKE 'tenant-meta-authz-%' OR id LIKE 'tmaaz%'")
+    .all() as Array<{ id: string }>;
+  for (const row of rows) purgeTenant(row.id);
+  try {
+    db.prepare(
+      `DELETE FROM tenant_subscriptions
+       WHERE id LIKE 'tsub-tenant-meta-authz%' OR id LIKE 'tsub-tmaaz%'
+          OR tenant_id LIKE 'tenant-meta-authz-%' OR tenant_id LIKE 'tmaaz%'`
+    ).run();
+  } catch {
+    /* subscription table is created with platform tenant migration */
+  }
+  try {
+    db.prepare("DELETE FROM meta_templates WHERE name = ?").run("role_probe_tpl");
+  } catch {
+    /* templates table missing only before migrate */
+  }
+}
+
 function seedClinic(label: string) {
-  const suffix = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-  const tenantId = `tenant-meta-authz-${label}-${suffix}`;
-  const userId = `user-meta-authz-${label}-${suffix}`;
-  const email = `${label}.${suffix}@meta-authz-test.example`.toLowerCase();
+  const suffix = Math.random().toString(36).slice(2, 10);
+  const tenantId = `tmaaz${label.slice(0, 3)}${suffix}`;
+  const userId = `umaz${label.slice(0, 3)}${suffix}`;
+  const email = `${label.slice(0, 8)}.${suffix}@meta-authz-test.example`.toLowerCase();
+  createdTenantIds.push(tenantId);
   const now = new Date().toISOString();
   const db = getDb();
   db.prepare(
@@ -126,6 +178,7 @@ describe("Meta WABA and template AuthZ", () => {
     } catch {
       initDatabase();
     }
+    purgeAuthzFixtures();
     const server = await startProductionOrderServer();
     port = server.port;
     close = server.close;
@@ -133,9 +186,10 @@ describe("Meta WABA and template AuthZ", () => {
 
   after(async () => {
     try {
-      getDb().prepare("DELETE FROM meta_templates WHERE name = ?").run("role_probe_tpl");
+      for (const tenantId of createdTenantIds) purgeTenant(tenantId);
+      purgeAuthzFixtures();
     } catch {
-      /* table missing only if init never ran */
+      /* init never ran */
     }
     await close?.();
   });
