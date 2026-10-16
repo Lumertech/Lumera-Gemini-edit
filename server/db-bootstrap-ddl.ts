@@ -200,11 +200,13 @@ export const BOOTSTRAP_DDL = `
     );
 
     CREATE TABLE IF NOT EXISTS prescription_drafts (
-      patient_id TEXT PRIMARY KEY,
       tenant_id TEXT NOT NULL,
+      patient_id TEXT NOT NULL,
+      appointment_id TEXT NOT NULL DEFAULT '',
       doctor_id TEXT NOT NULL,
       draft_json TEXT NOT NULL,
-      updated_at TEXT NOT NULL
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (tenant_id, patient_id, appointment_id)
     );
 
     CREATE TABLE IF NOT EXISTS lab_reports (
@@ -336,6 +338,8 @@ export const BOOTSTRAP_DDL = `
       pay_link TEXT NOT NULL DEFAULT '',
       upi_id TEXT NOT NULL DEFAULT '',
       issued_by TEXT NOT NULL DEFAULT '',
+      consulting_doctor_id TEXT NOT NULL DEFAULT '',
+      consulting_doctor_name TEXT NOT NULL DEFAULT '',
       receipt_whatsapp_status TEXT NOT NULL DEFAULT 'unsent',
       receipt_whatsapp_channel TEXT NOT NULL DEFAULT '',
       receipt_whatsapp_message_id TEXT NOT NULL DEFAULT '',

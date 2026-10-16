@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Receipt,
   Printer,
@@ -18,7 +18,7 @@ import {
   Copy,
   ExternalLink,
 } from 'lucide-react';
-import { BillItem, Patient, Doctor, ClinicSettings, PharmacyBatchItem, TherapyPackage, Prescription } from '../types';
+import { BillItem, Patient, Doctor, ClinicSettings, PharmacyBatchItem, TherapyPackage, Prescription, Appointment } from '../types';
 import { MOCK_PHARMACY_BATCHES, MOCK_THERAPY_PACKAGES } from '../data/clinicalData';
 import { BLANK_CLINIC_SETTINGS } from '../lib/letterhead';
 import { apiFetch } from '../api/http';
@@ -48,6 +48,7 @@ import {
 import { clinicCalendarDate } from '../lib/clinicDay';
 import { useAuth } from '../auth/AuthContext';
 import { workflowForUser } from '../lib/specialtyWorkflow';
+import { resolveConsultingDoctor } from '../lib/consultingDoctor';
 
 interface BillingManagerProps {
   currentPatient: Patient;
@@ -55,20 +56,22 @@ interface BillingManagerProps {
   clinicSettings?: ClinicSettings;
   activePrescription?: Prescription | null;
   appointmentId?: string;
+  appointment?: Appointment | null;
   appointmentIsPaid?: boolean;
   onPaymentSuccess?: (invoiceNumber: string, amount: number) => void;
 }
 
-function defaultLineItems(currentDoctor: Doctor, activePrescription?: Prescription | null): BillItem[] {
+function defaultLineItems(consultingDoctor: Doctor, activePrescription?: Prescription | null): BillItem[] {
+  const fee = consultingDoctor.consultationFee || 600;
   const defaultConsultation: BillItem = {
     id: 'b-consult',
-    description: `OPD Specialist Consultation - ${currentDoctor.specialty} (${currentDoctor.name})`,
+    description: `OPD Specialist Consultation - ${consultingDoctor.specialty} (${consultingDoctor.name})`,
     category: 'Consultation',
     hsnSacCode: '999312',
     quantity: 1,
-    unitPrice: currentDoctor.consultationFee || 600,
+    unitPrice: fee,
     gstPercent: 0,
-    total: currentDoctor.consultationFee || 600,
+    total: fee,
   };
 
   const newItems: BillItem[] = [defaultConsultation];
@@ -137,10 +140,10 @@ function defaultLineItems(currentDoctor: Doctor, activePrescription?: Prescripti
 
 export const BillingManager: React.FC<BillingManagerProps> = ({
   currentPatient,
-  currentDoctor,
   clinicSettings = BLANK_CLINIC_SETTINGS,
   activePrescription,
   appointmentId,
+  appointment,
   appointmentIsPaid = false,
   onPaymentSuccess,
 }) => {
@@ -175,6 +178,18 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
   const [serverBill, setServerBill] = useState<{ subtotal: number; discountAmount: number; totalAmount: number } | null>(null);
 
   const [items, setItems] = useState<BillItem[]>([]);
+  const [roster, setRoster] = useState<Doctor[]>([]);
+  const [selectedDoctorId, setSelectedDoctorId] = useState('');
+  const consulting = useMemo(
+    () =>
+      resolveConsultingDoctor({
+        appointment,
+        doctors: roster,
+        selectedDoctorId,
+      }),
+    [appointment, roster, selectedDoctorId]
+  );
+  const consultingDoctor = consulting.doctor;
   const wasPaidRef = useRef(false);
   const savedInvoiceIdRef = useRef('');
   const onPaymentSuccessRef = useRef(onPaymentSuccess);
@@ -238,9 +253,27 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
   };
 
   useEffect(() => {
+    let cancelled = false;
+    apiFetch<{ doctors: Doctor[] }>('/api/doctors')
+      .then((res) => {
+        if (!cancelled) setRoster(Array.isArray(res.doctors) ? res.doctors : []);
+      })
+      .catch(() => {
+        if (!cancelled) setRoster([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     if (!shouldRecomputeDraftLines({ id: savedInvoiceIdRef.current })) return;
-    setItems(defaultLineItems(currentDoctor, activePrescription));
-  }, [activePrescription, currentDoctor, currentPatient.id]);
+    if (!consultingDoctor) {
+      if (consulting.needsChoice) setItems([]);
+      return;
+    }
+    setItems(defaultLineItems(consultingDoctor, activePrescription));
+  }, [activePrescription, consulting.needsChoice, consultingDoctor, currentPatient.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -264,7 +297,8 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
     setServerBill(null);
     setInvoiceNumber(DRAFT_INVOICE_LABEL);
     setDiscountAmount(0);
-    setItems(defaultLineItems(currentDoctor, activePrescription));
+    setSelectedDoctorId('');
+    setItems(consultingDoctor ? defaultLineItems(consultingDoctor, activePrescription) : []);
     setPayLink('');
     setIsPaid(false);
     setIsReceiptIssued(false);
@@ -305,6 +339,13 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
   const shownInvoiceNumber = displayInvoiceNumber(linesLocked ? invoiceNumber : DRAFT_INVOICE_LABEL);
 
   const ensureInvoice = async (): Promise<PersistedInvoice> => {
+    if (!consultingDoctor) {
+      const message = consulting.needsChoice
+        ? 'Select the consulting doctor for this bill.'
+        : 'Consulting doctor is not available for this bill.';
+      setCollectError(message);
+      throw new Error(message);
+    }
     if (persistedInvoice?.id && persistedInvoice.paymentStatus !== 'Paid') return persistedInvoice;
     if (persistedInvoice?.paymentStatus === 'Paid') return persistedInvoice;
     const persistedNumber = invoiceNumberToPersist(invoiceNumber);
@@ -326,7 +367,9 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
           gstPercent: 0,
           gstin: billingIds.gstin,
           upiId: billingIds.upiId,
-          issuedBy: currentDoctor.name,
+          issuedBy: user?.name || '',
+          consultingDoctorId: consultingDoctor?.id || '',
+          consultingDoctorName: consultingDoctor?.name || '',
         }),
       }
     );
@@ -671,9 +714,9 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
             </div>
 
             <div className="text-left sm:text-right">
-              {(clinicSettings.signatureUrl || currentDoctor.signatureUrl) && (
+              {(clinicSettings.signatureUrl || consultingDoctor?.signatureUrl) && (
                 <img
-                  src={clinicSettings.signatureUrl || currentDoctor.signatureUrl}
+                  src={clinicSettings.signatureUrl || consultingDoctor?.signatureUrl}
                   alt="Clinic signature"
                   className="max-h-10 object-contain mb-1 ml-auto"
                 />
@@ -698,7 +741,21 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
             </div>
             <div>
               <span className="text-slate-400 block text-[10px] uppercase font-bold">Consulting Doctor</span>
-              <span className="text-slate-800 font-semibold text-xs">{currentDoctor.name}</span>
+              {consulting.canChoose ? (
+                <select
+                  aria-label="Consulting doctor"
+                  value={selectedDoctorId}
+                  onChange={(e) => setSelectedDoctorId(e.target.value)}
+                  className="mt-1 w-full border border-slate-200 rounded-lg px-2 py-1 bg-white text-slate-800 font-semibold text-xs"
+                >
+                  <option value="">Select a doctor</option>
+                  {roster.filter((doctor) => doctor.id && doctor.name).map((doctor) => (
+                    <option key={doctor.id} value={doctor.id}>{doctor.name}</option>
+                  ))}
+                </select>
+              ) : (
+                <span className="text-slate-800 font-semibold text-xs" data-testid="consulting-doctor">{consultingDoctor?.name || '—'}</span>
+              )}
             </div>
             <div>
               <span className="text-slate-400 block text-[10px] uppercase font-bold">Payment Status</span>

@@ -618,6 +618,8 @@ export interface Invoice {
   upiId?: string;
   payLink?: string;
   issuedBy: string;
+  consultingDoctorId?: string;
+  consultingDoctorName?: string;
 }
 
 export interface WhatsAppMessage {

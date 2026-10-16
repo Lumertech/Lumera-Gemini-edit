@@ -234,4 +234,159 @@ describe("prescription draft scoping and AI review gate", () => {
     );
     assert.equal(manual.status, 201, String(manual.json.error || ""));
   });
+
+  it("keeps visit drafts apart, drops them when the visit closes, and hides them from the chart list", async () => {
+    const clinic = createClinicUser("visits");
+    const other = createClinicUser("visits-b");
+    const token = await login(clinic.email);
+    const otherToken = await login(other.email);
+    const auth = { Authorization: `Bearer ${token}` };
+    const otherAuth = { Authorization: `Bearer ${otherToken}` };
+    const patient = await createPatient(auth, "Visit Draft Patient", `+91 98400 ${clinic.tenantId.slice(-4)}`);
+
+    async function book(timeSlot: string) {
+      const res = await jsonRequest(
+        port,
+        "POST",
+        "/api/appointments",
+        { patientId: patient.id, date: "2026-10-16", timeSlot, doctorId: clinic.userId },
+        auth
+      );
+      assert.equal(res.status, 201, String(res.json.error || ""));
+      return res.json.appointment as { id: string };
+    }
+
+    const first = await book("09:00");
+    const second = await book("09:30");
+    const before = await jsonRequest(port, "GET", "/api/appointments?date=2026-10-16", undefined, auth);
+    const beforeIds = ((before.json.appointments as Array<{ id: string }>) || []).map((row) => row.id).sort();
+
+    const savedA = await jsonRequest(
+      port,
+      "POST",
+      "/api/prescriptions/draft",
+      { ...fullDraft(patient.id), appointmentId: first.id, diagnosis: "VISIT-A", doctorId: clinic.userId },
+      auth
+    );
+    assert.equal(savedA.status, 200, String(savedA.json.error || ""));
+    const savedB = await jsonRequest(
+      port,
+      "POST",
+      "/api/prescriptions/draft",
+      { ...fullDraft(patient.id), appointmentId: second.id, diagnosis: "VISIT-B", doctorId: other.userId },
+      otherAuth
+    );
+    assert.equal(savedB.status, 404);
+
+    const sameClinicOtherDoctor = `user-visits-peer-${clinic.tenantId.slice(-6)}`;
+    getDb()
+      .prepare(
+        `INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, clinic_name, onboarding_completed, practice_type, specialty, last_login, created_at)
+         VALUES (?, ?, ?, ?, 'Dr Peer', 'doctor', 'active', '+91 90000 44444', 'Clinic visits', 1, 'individual', 'General Medicine', ?, ?)`
+      )
+      .run(
+        sameClinicOtherDoctor,
+        clinic.tenantId,
+        `peer.${clinic.tenantId.slice(-6)}@opd-test.example`,
+        hashPassword("Lumera@2026"),
+        new Date().toISOString(),
+        new Date().toISOString()
+      );
+    const peerToken = await login(`peer.${clinic.tenantId.slice(-6)}@opd-test.example`);
+    const peerAuth = { Authorization: `Bearer ${peerToken}` };
+    const savedPeer = await jsonRequest(
+      port,
+      "POST",
+      "/api/prescriptions/draft",
+      { ...fullDraft(patient.id), appointmentId: second.id, diagnosis: "VISIT-B", doctorId: sameClinicOtherDoctor },
+      peerAuth
+    );
+    assert.equal(savedPeer.status, 200, String(savedPeer.json.error || ""));
+
+    const loadA = await jsonRequest(
+      port,
+      "GET",
+      `/api/prescriptions/draft/${patient.id}?appointmentId=${encodeURIComponent(first.id)}`,
+      undefined,
+      auth
+    );
+    assert.equal((loadA.json.draft as { diagnosis: string }).diagnosis, "VISIT-A");
+    const loadB = await jsonRequest(
+      port,
+      "GET",
+      `/api/prescriptions/draft/${patient.id}?appointmentId=${encodeURIComponent(second.id)}`,
+      undefined,
+      peerAuth
+    );
+    assert.equal((loadB.json.draft as { diagnosis: string }).diagnosis, "VISIT-B");
+
+    const listed = await jsonRequest(port, "GET", "/api/prescriptions", undefined, auth);
+    const prescriptions = (listed.json.prescriptions as Array<{ diagnosis?: string }>) || [];
+    assert.equal(prescriptions.some((row) => row.diagnosis === "VISIT-A" || row.diagnosis === "VISIT-B"), false);
+    const queued = await jsonRequest(port, "GET", "/api/appointments?date=2026-10-16", undefined, auth);
+    const queuedIds = ((queued.json.appointments as Array<{ id: string }>) || []).map((row) => row.id).sort();
+    assert.deepEqual(queuedIds, beforeIds);
+    assert.equal(JSON.stringify(queued.json).includes("VISIT-A"), false);
+
+    const completed = await jsonRequest(port, "PATCH", `/api/appointments/${first.id}`, { status: "Completed" }, auth);
+    assert.equal(completed.status, 200, String(completed.json.error || ""));
+    const afterComplete = await jsonRequest(
+      port,
+      "GET",
+      `/api/prescriptions/draft/${patient.id}?appointmentId=${encodeURIComponent(first.id)}`,
+      undefined,
+      auth
+    );
+    assert.equal(afterComplete.json.draft, null);
+    const stillB = await jsonRequest(
+      port,
+      "GET",
+      `/api/prescriptions/draft/${patient.id}?appointmentId=${encodeURIComponent(second.id)}`,
+      undefined,
+      auth
+    );
+    assert.equal((stillB.json.draft as { diagnosis: string }).diagnosis, "VISIT-B");
+
+    const signed = await jsonRequest(
+      port,
+      "POST",
+      "/api/prescriptions",
+      { patientId: patient.id, appointmentId: second.id, diagnosis: "Signed note", medicines: [] },
+      auth
+    );
+    assert.equal(signed.status, 201, String(signed.json.error || ""));
+    const afterSign = await jsonRequest(
+      port,
+      "GET",
+      `/api/prescriptions/draft/${patient.id}?appointmentId=${encodeURIComponent(second.id)}`,
+      undefined,
+      auth
+    );
+    assert.equal(afterSign.json.draft, null);
+    const chart = await jsonRequest(port, "GET", "/api/prescriptions", undefined, auth);
+    const diagnoses = ((chart.json.prescriptions as Array<{ diagnosis?: string }>) || []).map((row) => row.diagnosis);
+    assert.equal(diagnoses.includes("Signed note"), true);
+    assert.equal(diagnoses.includes("VISIT-A"), false);
+    assert.equal(diagnoses.includes("VISIT-B"), false);
+
+    const third = await book("10:00");
+    const savedC = await jsonRequest(
+      port,
+      "POST",
+      "/api/prescriptions/draft",
+      { ...fullDraft(patient.id), appointmentId: third.id, diagnosis: "VISIT-C" },
+      auth
+    );
+    assert.equal(savedC.status, 200, String(savedC.json.error || ""));
+    const cancelled = await jsonRequest(port, "PATCH", `/api/appointments/${third.id}`, { status: "Cancelled" }, auth);
+    assert.equal(cancelled.status, 200, String(cancelled.json.error || ""));
+    const afterCancel = await jsonRequest(
+      port,
+      "GET",
+      `/api/prescriptions/draft/${patient.id}?appointmentId=${encodeURIComponent(third.id)}`,
+      undefined,
+      auth
+    );
+    assert.equal(afterCancel.json.draft, null);
+  });
 });

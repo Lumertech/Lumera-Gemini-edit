@@ -17,6 +17,7 @@ import {
   real,
   text,
   unique,
+  primaryKey,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 
@@ -309,14 +310,19 @@ export const prescriptions = pgTable(
   ]
 );
 
-/** Autosaved Rx drafts. patient_id is the primary key, matching BOOTSTRAP_DDL. */
-export const prescriptionDrafts = pgTable("prescription_drafts", {
-  patientId: text("patient_id").primaryKey(),
-  tenantId: text("tenant_id").notNull(),
-  doctorId: text("doctor_id").notNull(),
-  draftJson: text("draft_json").notNull(),
-  updatedAt: text("updated_at").notNull(),
-});
+/** Autosaved Rx drafts. One row per tenant, patient, and visit (appointment_id '' when none). */
+export const prescriptionDrafts = pgTable(
+  "prescription_drafts",
+  {
+    tenantId: text("tenant_id").notNull(),
+    patientId: text("patient_id").notNull(),
+    appointmentId: text("appointment_id").notNull().default(""),
+    doctorId: text("doctor_id").notNull(),
+    draftJson: text("draft_json").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.tenantId, t.patientId, t.appointmentId] })]
+);
 
 /** Private patient files. Bytes live outside public /uploads; this row never stores a public URL. */
 export const patientDocuments = pgTable(

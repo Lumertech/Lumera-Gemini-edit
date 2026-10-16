@@ -156,6 +156,8 @@ export const invoices = pgTable(
     payLink: text("pay_link").notNull().default(""),
     upiId: text("upi_id").notNull().default(""),
     issuedBy: text("issued_by").notNull().default(""),
+    consultingDoctorId: text("consulting_doctor_id").notNull().default(""),
+    consultingDoctorName: text("consulting_doctor_name").notNull().default(""),
     receiptWhatsappStatus: text("receipt_whatsapp_status").notNull().default("unsent"),
     receiptWhatsappChannel: text("receipt_whatsapp_channel").notNull().default(""),
     receiptWhatsappMessageId: text("receipt_whatsapp_message_id").notNull().default(""),

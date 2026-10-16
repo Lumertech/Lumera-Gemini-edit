@@ -406,6 +406,25 @@ describe("demo draft sessionStorage", () => {
     assert.equal(readDemoDraft(storage, "tenant-demo-polyclinic", "patient-a")?.diagnosis, "POLY");
     assert.equal([...mem.keys()].some((key) => key.includes(".demo.")), false);
   });
+
+  it("keeps each visit draft separate when an appointment id is set", () => {
+    const mem = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => mem.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        mem.set(key, value);
+      },
+    };
+    assert.equal(
+      demoDraftStorageKey("tenant-1", "patient-a", "apt-1"),
+      "lumera.rxDraft.tenant-1.patient-a.apt-1"
+    );
+    writeDemoDraft(storage, "tenant-1", "patient-a", { diagnosis: "VISIT-A" }, "apt-1");
+    writeDemoDraft(storage, "tenant-1", "patient-a", { diagnosis: "VISIT-B" }, "apt-2");
+    assert.equal(readDemoDraft(storage, "tenant-1", "patient-a", "apt-1")?.diagnosis, "VISIT-A");
+    assert.equal(readDemoDraft(storage, "tenant-1", "patient-a", "apt-2")?.diagnosis, "VISIT-B");
+    assert.equal(readDemoDraft(storage, "tenant-1", "patient-a")?.diagnosis, undefined);
+  });
 });
 
 describe("AI review gate", () => {

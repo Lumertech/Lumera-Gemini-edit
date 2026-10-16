@@ -83,6 +83,27 @@ function requireTenant(req: Request, res: Response): string | null {
   return tenantId;
 }
 
+function consultingDoctorForInvoice(
+  tenantId: string,
+  body: Record<string, unknown>
+): { id: string; name: string } {
+  const id = String(body.consultingDoctorId || body.consulting_doctor_id || "").trim();
+  const name = String(body.consultingDoctorName || body.consulting_doctor_name || "").trim();
+  if (!id) return { id: "", name };
+  const row = getDb()
+    .prepare(
+      `SELECT d.id, d.name
+       FROM doctors d
+       INNER JOIN users u ON u.id = d.user_id
+       WHERE d.id = ? AND u.tenant_id = ?`
+    )
+    .get(id, tenantId) as { id?: string; name?: string } | undefined;
+  if (!row?.id) {
+    throw Object.assign(new Error("Consulting doctor is not in this clinic"), { status: 400 });
+  }
+  return { id: String(row.id), name: String(row.name || name) };
+}
+
 function shortId(prefix: string): string {
   return `${prefix}-${crypto.randomUUID().slice(0, 8)}`;
 }
@@ -424,6 +445,8 @@ function insertInvoice(tenantId: string, body: Record<string, unknown>, actor?: 
     }
   }
 
+  const consulting = consultingDoctorForInvoice(tenantId, body);
+
   const id = shortId("inv");
   const invoiceNumber = uniqueInvoiceNumber(tenantId, String(body.invoiceNumber || body.invoice_number || ""));
   const now = new Date().toISOString();
@@ -434,8 +457,9 @@ function insertInvoice(tenantId: string, body: Record<string, unknown>, actor?: 
       `INSERT INTO invoices (
         id, tenant_id, invoice_number, appointment_id, patient_id, patient_name, patient_phone,
         patient_uhid, date, items, subtotal, discount_amount, gstin, gst_percent, tax_amount,
-        total_amount, paid_amount, status, payment_mode, payment_ref, upi_id, issued_by, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'Unpaid', '', '', ?, ?, ?)`
+        total_amount, paid_amount, status, payment_mode, payment_ref, upi_id, issued_by,
+        consulting_doctor_id, consulting_doctor_name, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'Unpaid', '', '', ?, ?, ?, ?, ?)`
     )
     .run(
       id,
@@ -455,7 +479,9 @@ function insertInvoice(tenantId: string, body: Record<string, unknown>, actor?: 
       taxAmount,
       totalAmount,
       snapshot.upiId,
-      String(body.issuedBy || body.issued_by || actor?.name || ""),
+      String(actor?.name || body.issuedBy || body.issued_by || ""),
+      consulting.id,
+      consulting.name,
       now
     );
 

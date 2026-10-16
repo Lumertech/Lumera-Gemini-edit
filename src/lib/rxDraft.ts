@@ -456,11 +456,13 @@ export function sessionDemoDraftTenant(tenantId: string | null | undefined): str
   return id.length > 0 ? id : null;
 }
 
-export function demoDraftStorageKey(tenantId: string, patientId: string): string | null {
+export function demoDraftStorageKey(tenantId: string, patientId: string, appointmentId = ""): string | null {
   const tenant = sessionDemoDraftTenant(tenantId);
   const patient = String(patientId ?? "").trim();
   if (!tenant || !patient) return null;
-  return `${DEMO_DRAFT_KEY_PREFIX}.${tenant}.${patient}`;
+  const visit = String(appointmentId ?? "").trim();
+  const base = `${DEMO_DRAFT_KEY_PREFIX}.${tenant}.${patient}`;
+  return visit ? `${base}.${visit}` : base;
 }
 
 export function draftForStorage<T extends Record<string, unknown>>(draft: T): Omit<T, "transcript"> {
@@ -469,8 +471,13 @@ export function draftForStorage<T extends Record<string, unknown>>(draft: T): Om
   return next as Omit<T, "transcript">;
 }
 
-export function readDemoDraft(storage: DraftStorage, tenantId: string, patientId: string): RxClinicalFields | null {
-  const key = demoDraftStorageKey(tenantId, patientId);
+export function readDemoDraft(
+  storage: DraftStorage,
+  tenantId: string,
+  patientId: string,
+  appointmentId = ""
+): RxClinicalFields | null {
+  const key = demoDraftStorageKey(tenantId, patientId, appointmentId);
   if (!key) return null;
   const raw = storage.getItem(key);
   if (!raw) return null;
@@ -481,8 +488,14 @@ export function readDemoDraft(storage: DraftStorage, tenantId: string, patientId
   }
 }
 
-export function writeDemoDraft(storage: DraftStorage, tenantId: string, patientId: string, draft: Record<string, unknown>): void {
-  const key = demoDraftStorageKey(tenantId, patientId);
+export function writeDemoDraft(
+  storage: DraftStorage,
+  tenantId: string,
+  patientId: string,
+  draft: Record<string, unknown>,
+  appointmentId = ""
+): void {
+  const key = demoDraftStorageKey(tenantId, patientId, appointmentId);
   if (!key) return;
   const stored = draftForStorage(draft);
   storage.setItem(key, JSON.stringify(stored));

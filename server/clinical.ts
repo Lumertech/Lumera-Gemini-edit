@@ -953,7 +953,30 @@ export function updateAppointment(
       appointmentId,
       tenantId
     );
+  if (body.status !== undefined && (status === "Completed" || status === "Cancelled")) {
+    deletePrescriptionDraft(tenantId, String(existing.patient_id || mapped.patientId || ""), appointmentId);
+  }
   return getTenantAppointment(tenantId, appointmentId)!;
+}
+
+function draftAppointmentId(body: Record<string, unknown>): string {
+  return String(body.appointmentId || body.appointment_id || "").trim();
+}
+
+function deletePrescriptionDraft(tenantId: string, patientId: string, appointmentId: string): void {
+  const visitId = String(appointmentId || "").trim();
+  if (!patientId && visitId) {
+    getDb()
+      .prepare("DELETE FROM prescription_drafts WHERE tenant_id = ? AND appointment_id = ?")
+      .run(tenantId, visitId);
+    return;
+  }
+  if (!patientId) return;
+  getDb()
+    .prepare(
+      "DELETE FROM prescription_drafts WHERE tenant_id = ? AND patient_id = ? AND appointment_id = ?"
+    )
+    .run(tenantId, patientId, visitId);
 }
 
 function insertPrescription(tenantId: string, body: Record<string, unknown>) {
@@ -1402,11 +1425,11 @@ export function createClinicalRouter(): Router {
         "Prescription signed",
         `${mapped.rxNumber} for ${mapped.patientName}`
       );
-      // Clean up draft upon signing prescription
+      // Signing clears this visit's draft. Other visits for the same patient stay.
       try {
         const patientId = String(req.body.patientId || req.body.patient_id || "").trim();
         if (patientId) {
-          getDb().prepare("DELETE FROM prescription_drafts WHERE tenant_id = ? AND patient_id = ?").run(tenantId, patientId);
+          deletePrescriptionDraft(tenantId, patientId, draftAppointmentId(req.body || {}));
         }
       } catch {}
       res.status(201).json(
@@ -1431,9 +1454,18 @@ export function createClinicalRouter(): Router {
       return res.status(404).json({ error: "Prescription not found" });
     }
     if (!requireTenantPatient(tenantId, patientId, res)) return;
+    const appointmentId = String(req.query.appointmentId || req.query.appointment_id || "").trim();
+    if (appointmentId) {
+      const apt = getDb()
+        .prepare("SELECT id FROM appointments WHERE id = ? AND tenant_id = ?")
+        .get(appointmentId, tenantId);
+      if (!apt) return res.status(404).json({ error: "Appointment not found" });
+    }
     const row = getDb()
-      .prepare("SELECT * FROM prescription_drafts WHERE tenant_id = ? AND patient_id = ?")
-      .get(tenantId, patientId) as { draft_json?: string; updated_at?: string } | undefined;
+      .prepare(
+        "SELECT * FROM prescription_drafts WHERE tenant_id = ? AND patient_id = ? AND appointment_id = ?"
+      )
+      .get(tenantId, patientId, appointmentId) as { draft_json?: string; updated_at?: string } | undefined;
     if (!row) {
       return res.json({ draft: null });
     }
@@ -1452,23 +1484,29 @@ export function createClinicalRouter(): Router {
       const body = req.body || {};
       const patientId = String(body.patientId || body.patient_id || "").trim();
       const doctorId = String(body.doctorId || body.doctor_id || req.user?.id || "").trim();
+      const appointmentId = draftAppointmentId(body);
       if (!patientId) {
         return res.status(400).json({ error: "patientId is required for draft auto-save" });
       }
       if (!requireTenantPatient(tenantId, patientId, res)) return;
+      if (appointmentId) {
+        const apt = getDb()
+          .prepare("SELECT id FROM appointments WHERE id = ? AND tenant_id = ?")
+          .get(appointmentId, tenantId);
+        if (!apt) return res.status(404).json({ error: "Appointment not found" });
+      }
       const draftJson = JSON.stringify(scrubDraftForStorage(body));
       const now = new Date().toISOString();
       const saved = getDb()
         .prepare(
-          `INSERT INTO prescription_drafts (patient_id, tenant_id, doctor_id, draft_json, updated_at)
-           VALUES (?, ?, ?, ?, ?)
-           ON CONFLICT(patient_id) DO UPDATE SET
+          `INSERT INTO prescription_drafts (patient_id, tenant_id, doctor_id, draft_json, updated_at, appointment_id)
+           VALUES (?, ?, ?, ?, ?, ?)
+           ON CONFLICT(tenant_id, patient_id, appointment_id) DO UPDATE SET
              doctor_id = excluded.doctor_id,
              draft_json = excluded.draft_json,
-             updated_at = excluded.updated_at
-           WHERE prescription_drafts.tenant_id = excluded.tenant_id`
+             updated_at = excluded.updated_at`
         )
-        .run(patientId, tenantId, doctorId, draftJson, now);
+        .run(patientId, tenantId, doctorId, draftJson, now, appointmentId);
       if (Number(saved.changes) === 0) {
         return res.status(409).json({ error: "Draft belongs to another clinic." });
       }

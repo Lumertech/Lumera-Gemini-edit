@@ -7,6 +7,7 @@ import {
   migrateWhatsAppConversationKey,
 } from "./migrate-patients-phone.ts";
 import { backfillWhatsAppTenantIds } from "./whatsapp-tenant-backfill.ts";
+import { migratePrescriptionDraftKey } from "./migrate-prescription-drafts.ts";
 
 const DEMO_LETTERHEAD_SEED = {
   name: "Lumera Healthcare & Polyclinic Institute",
@@ -60,6 +61,13 @@ export function ensureDemoTenantLetterhead(database: SqlDatabase) {
 
 export function migrate(database: SqlDatabase) {
   database.exec(BOOTSTRAP_DDL);
+  migratePrescriptionDraftKey(database);
+  try {
+    database.exec("ALTER TABLE invoices ADD COLUMN consulting_doctor_id TEXT NOT NULL DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE invoices ADD COLUMN consulting_doctor_name TEXT NOT NULL DEFAULT ''");
+  } catch {}
 
   try {
     database.exec("ALTER TABLE doctors ADD COLUMN avatar_url TEXT DEFAULT ''");

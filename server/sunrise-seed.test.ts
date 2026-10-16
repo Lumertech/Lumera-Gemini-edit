@@ -21,6 +21,7 @@ import {
   sunriseAccountPassword,
 } from "./sunrise-seed.ts";
 import { startTestServer, type TestHttpServer } from "./test-http.ts";
+import { clinicCalendarDate } from "../src/lib/clinicDay.ts";
 import { SUNRISE_TENANT_ID } from "./tenant-slug.ts";
 import { WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
 
@@ -525,6 +526,84 @@ describe("Sunrise clinic seed", () => {
       else process.env.DEMO_LOGIN_ENABLED = prevDemo;
       clearPasswordEnv();
       await server.close();
+    }
+  });
+
+  it("cleans only Sunrise demo drafts and past in-consultation visits", () => {
+    const { db, close } = openSqlite();
+    const logs: string[] = [];
+    const originalLog = console.log;
+    console.log = (message?: unknown) => {
+      logs.push(String(message ?? ""));
+    };
+    try {
+      migrate(db);
+      const now = new Date();
+      const today = clinicCalendarDate(now);
+      const yesterday = "2000-01-01";
+      const stale = "2000-01-01T00:00:00.000Z";
+      const fresh = now.toISOString();
+      const otherTenant = "tenant-other-clinic";
+      const insertAppointment = db.prepare(
+        `INSERT INTO appointments (
+           id, tenant_id, token_number, patient_id, patient_name, patient_phone, uhid,
+           doctor_id, doctor_name, specialty, date, time_slot, status, created_at
+         ) VALUES (?, ?, 1, 'pat', 'Pat', '+91 90000 00000', 'UH', 'doc', 'Doc', 'General Medicine', ?, '10:00', ?, ?)`
+      );
+      const insertDraft = db.prepare(
+        `INSERT INTO prescription_drafts (tenant_id, patient_id, appointment_id, doctor_id, draft_json, updated_at)
+         VALUES (?, ?, ?, 'doc', ?, ?)`
+      );
+      insertAppointment.run("apt-other-past", otherTenant, yesterday, "In Consultation", fresh);
+      insertAppointment.run("apt-other-open", otherTenant, today, "Waiting", fresh);
+      insertDraft.run(otherTenant, "pat-other", "apt-other-open", '{"diagnosis":"KEEP"}', stale);
+      insertDraft.run(otherTenant, "pat-other-2", "", '{"diagnosis":"KEEP-BLANK"}', fresh);
+
+      insertAppointment.run("apt-sun-open", SUNRISE_TENANT_ID, today, "Waiting", fresh);
+      insertAppointment.run("apt-sun-done", SUNRISE_TENANT_ID, today, "Completed", fresh);
+      insertAppointment.run("apt-sun-past", SUNRISE_TENANT_ID, yesterday, "In Consultation", fresh);
+      insertAppointment.run("apt-sun-today", SUNRISE_TENANT_ID, today, "In Consultation", fresh);
+      insertDraft.run(SUNRISE_TENANT_ID, "pat-keep", "apt-sun-open", '{"diagnosis":"KEEP-SUN"}', fresh);
+      insertDraft.run(SUNRISE_TENANT_ID, "pat-old", "apt-sun-open", '{"diagnosis":"OLD"}', stale);
+      insertDraft.run(SUNRISE_TENANT_ID, "pat-done", "apt-sun-done", '{"diagnosis":"DONE"}', fresh);
+      insertDraft.run(SUNRISE_TENANT_ID, "pat-missing", "apt-missing", '{"diagnosis":"MISSING"}', fresh);
+
+      ensureSunriseClinic(db, { DEMO_LOGIN_ENABLED: "false" });
+      const before = db.prepare("SELECT COUNT(*) AS c FROM prescription_drafts WHERE tenant_id = ?").get(SUNRISE_TENANT_ID) as {
+        c: number;
+      };
+      assert.equal(Number(before.c), 4);
+
+      ensureSunriseClinic(db, { DEMO_LOGIN_ENABLED: "true" });
+      const sunriseDrafts = db
+        .prepare("SELECT patient_id, appointment_id FROM prescription_drafts WHERE tenant_id = ? ORDER BY patient_id")
+        .all(SUNRISE_TENANT_ID) as Array<{ patient_id: string; appointment_id: string }>;
+      assert.equal(sunriseDrafts.length, 1);
+      assert.equal(sunriseDrafts[0].patient_id, "pat-keep");
+      assert.equal(sunriseDrafts[0].appointment_id, "apt-sun-open");
+      const past = db.prepare("SELECT status FROM appointments WHERE id = ?").get("apt-sun-past") as { status: string };
+      const todayVisit = db.prepare("SELECT status FROM appointments WHERE id = ?").get("apt-sun-today") as { status: string };
+      assert.equal(past.status, "Completed");
+      assert.equal(todayVisit.status, "In Consultation");
+
+      const otherDrafts = db.prepare("SELECT COUNT(*) AS c FROM prescription_drafts WHERE tenant_id = ?").get(otherTenant) as {
+        c: number;
+      };
+      assert.equal(Number(otherDrafts.c), 2);
+      const otherPast = db.prepare("SELECT status FROM appointments WHERE id = ?").get("apt-other-past") as { status: string };
+      assert.equal(otherPast.status, "In Consultation");
+
+      ensureSunriseClinic(db, { DEMO_LOGIN_ENABLED: "true" });
+      const sunriseAgain = db.prepare("SELECT COUNT(*) AS c FROM prescription_drafts WHERE tenant_id = ?").get(SUNRISE_TENANT_ID) as {
+        c: number;
+      };
+      assert.equal(Number(sunriseAgain.c), 1);
+      const otherAgain = db.prepare("SELECT status FROM appointments WHERE id = ?").get("apt-other-past") as { status: string };
+      assert.equal(otherAgain.status, "In Consultation");
+      assert.ok(logs.some((line) => /demo cleanup removed \d+ prescription drafts and completed \d+ past in-consultation visits/.test(line)));
+    } finally {
+      console.log = originalLog;
+      close();
     }
   });
 });
