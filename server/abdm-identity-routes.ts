@@ -92,18 +92,21 @@ const otpSessions = new Map<string, AadhaarOtpSession>();
 type AadhaarOtpTestFault = { phase: "generate" | "verify"; message: string };
 let aadhaarOtpTestFault: AadhaarOtpTestFault | null = null;
 
-/** Test-only snapshot. Unset in production traffic, so handlers stay unchanged. */
+/** Test-only snapshot. No-op unless NODE_ENV is test. */
 export function readAadhaarOtpSessionForTests(txnId: string): Readonly<AadhaarOtpSession> | undefined {
+  if (process.env.NODE_ENV !== "test") return undefined;
   const session = otpSessions.get(txnId);
   return session ? { ...session } : undefined;
 }
 
-/** Test-only. When unset, generate and verify do not throw. */
+/** Test-only. No-op unless NODE_ENV is test. */
 export function setAadhaarOtpTestFault(fault: AadhaarOtpTestFault | null): void {
+  if (process.env.NODE_ENV !== "test") return;
   aadhaarOtpTestFault = fault;
 }
 
 function raiseAadhaarOtpTestFault(phase: AadhaarOtpTestFault["phase"]): void {
+  if (process.env.NODE_ENV !== "test") return;
   if (aadhaarOtpTestFault?.phase !== phase) return;
   const message = aadhaarOtpTestFault.message;
   aadhaarOtpTestFault = null;
@@ -370,7 +373,7 @@ export function registerAbdmIdentityRoutes(router: Router): void {
       );
       res.json({
         txnId,
-        message: `OTP sent successfully to Aadhaar-registered mobile ending in ******${lastFour}`,
+        message: `OTP sent successfully to Aadhaar-registered mobile ending in ******${matched.mobile.replace(/\D/g, "").slice(-4)}`,
         // Stub-only echo when allowOtpEcho(); never in production or sandbox.
         testOtp: allowOtpEcho() && abdmMode === "stub" ? "123456" : undefined,
         expiresInSeconds: 600,

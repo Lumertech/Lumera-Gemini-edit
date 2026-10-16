@@ -150,6 +150,7 @@ describe("ABDM identity AuthZ", () => {
   const realFetch = globalThis.fetch;
   const previousAbdmMode = process.env.ABDM_MODE;
   const previousHashKey = process.env.AADHAAR_HASH_KEY;
+  const previousNodeEnv = process.env.NODE_ENV;
 
   before(async () => {
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -161,6 +162,7 @@ describe("ABDM identity AuthZ", () => {
     }) as typeof fetch;
 
     if (!process.env.JWT_SECRET) process.env.JWT_SECRET = "test-jwt-secret-identity-authz";
+    process.env.NODE_ENV = "test";
     process.env.ABDM_MODE = "stub";
     process.env.AADHAAR_HASH_KEY = "test-aadhaar-hash-key";
     try {
@@ -180,7 +182,10 @@ describe("ABDM identity AuthZ", () => {
     else process.env.ABDM_MODE = previousAbdmMode;
     if (previousHashKey === undefined) delete process.env.AADHAAR_HASH_KEY;
     else process.env.AADHAAR_HASH_KEY = previousHashKey;
+    process.env.NODE_ENV = "test";
     setAadhaarOtpTestFault(null);
+    if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousNodeEnv;
     try {
       for (const tenantId of createdTenantIds) purgeTenant(tenantId);
       purgeIdentityFixtures();
@@ -536,6 +541,8 @@ describe("ABDM identity AuthZ", () => {
       auth(token)
     );
     assert.equal(generated.status, 200, String(generated.json.error || ""));
+    assert.match(String(generated.json.message || ""), /\*\*\*\*\*\*1111$/);
+    assert.equal(String(generated.json.message || "").includes(aadhaar.slice(-4)), false);
     const txnId = String(generated.json.txnId || "");
     const session = readAadhaarOtpSessionForTests(txnId);
     assert.ok(session);
@@ -549,6 +556,14 @@ describe("ABDM identity AuthZ", () => {
     assert.equal(stored.includes(aadhaar), false);
     const { aadhaarHmac: _hmac, ...withoutHmac } = session;
     assertNoAadhaarDigitRun(aadhaar, JSON.stringify(withoutHmac));
+    process.env.NODE_ENV = "production";
+    try {
+      assert.equal(readAadhaarOtpSessionForTests(txnId), undefined);
+      setAadhaarOtpTestFault({ phase: "generate", message: `must not arm ${aadhaar}` });
+    } finally {
+      process.env.NODE_ENV = "test";
+    }
+    assert.equal(readAadhaarOtpSessionForTests(txnId)?.txnId, txnId);
   });
 
   it("generate and verify hide upstream errors that contain an Aadhaar", async () => {
