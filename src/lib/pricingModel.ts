@@ -70,7 +70,7 @@ const MONTHS = [
 
 const IST_OFFSET_MS = (5 * 60 + 30) * 60 * 1000;
 
-/** Whole rupees stay ₹17,999. Paise stay ₹21,238.82. Both come from formatINR. */
+/** Whole rupees drop the trailing zeroes formatINR adds. Paise stay. */
 export function formatInrPaise(paise: number): string {
   const rupees = paise / 100;
   const formatted = formatINR(rupees).replace(/[\s\u00a0\u202f]/g, "");
