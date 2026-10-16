@@ -222,10 +222,6 @@ function contentDisposition(download: boolean, filename: string): string {
   return `${download ? "attachment" : "inline"}; filename="${ascii}"`;
 }
 
-function isClinicAdmin(role: string | undefined): boolean {
-  return role === "CLINIC_ADMIN" || role === "polyclinic_admin";
-}
-
 function isDocumentStaff(req: Request, res: Response): boolean {
   if (!DOCUMENT_STAFF.has(String(req.user?.role || ""))) {
     res.status(403).json({ error: "Insufficient permissions", code: "ROLE_DENIED" });
@@ -259,10 +255,11 @@ function loadDocument(tenantId: string, patientId: string, documentId: string): 
     .get(documentId, tenantId, patientId) as DocumentRow | undefined;
 }
 
+/** Only the clinic admin of the document's tenant. Doctors, uploaders, and other staff cannot. */
 function canDelete(req: Request, row: DocumentRow): boolean {
-  const role = String(req.user?.role || "");
-  if (role === "doctor" || isClinicAdmin(role)) return true;
-  return Boolean(req.user?.id) && req.user?.id === row.uploaded_by_id;
+  if (String(req.user?.role || "") !== "CLINIC_ADMIN") return false;
+  const tenantId = String(req.user?.tenantId || "").trim();
+  return Boolean(tenantId) && tenantId === String(row.tenant_id || "");
 }
 
 function publicDocument(row: DocumentRow, req: Request) {
@@ -652,7 +649,7 @@ async function handleDelete(req: Request, res: Response) {
     const row = loadDocument(tenantId, req.params.id, req.params.documentId);
     if (!row) return res.status(404).json({ error: "Document not found" });
     if (!canDelete(req, row)) {
-      return res.status(403).json({ error: "Only a doctor, the uploader, or a clinic admin can delete this document." });
+      return res.status(403).json({ error: "Only a clinic admin can delete this document." });
     }
     const now = new Date().toISOString();
     getDb()

@@ -60,7 +60,7 @@ Magic bytes: PDF, JPEG, PNG. HEIC and HEIF are rejected. Each file must be **10 
 
 `GET /api/patients/:id/documents/:documentId/file` is session-authenticated. A GCS V4 signed URL, when the bucket is set, is used only on the server and expires in 300 seconds. It is not returned to the client. An expired signed URL fails and is not fetched. Preview tickets expire after 300 seconds, are single-use, and an expired or replayed ticket fails. Soft-deleted rows are omitted and are not readable.
 
-`DELETE` sets `deleted_at` and leaves the object in private storage until the retention purge. Doctors and clinic admins may delete any document in the tenant. A receptionist may delete only a document they uploaded. The list, timeline, and file route hide a soft-deleted row immediately.
+`DELETE` sets `deleted_at` and leaves the object in private storage until the retention purge. Only `CLINIC_ADMIN` in the document's tenant may delete. Doctors, the uploader, reception, and other staff receive **403**. A clinic admin from another tenant receives **404**. The chart hides Delete unless `canDelete` is true. The list, timeline, and file route hide a soft-deleted row immediately. The delete writes an audit row.
 
 ## Audit
 

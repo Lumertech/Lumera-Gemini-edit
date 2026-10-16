@@ -303,7 +303,7 @@ describe("patient document API", () => {
     });
     assert.equal(pdf.status, 201, String(pdf.json.error || ""));
     const pdfDoc = pdf.json.document as { id: string; uploadedByName: string; canDelete: boolean; mimeType: string };
-    assert.equal(pdfDoc.canDelete, true);
+    assert.equal(pdfDoc.canDelete, false);
     assert.equal(pdfDoc.mimeType, "application/pdf");
     assert.equal(pdfDoc.uploadedByName, "docs-a user");
     assert.equal("storageKey" in (pdf.json.document as object), false);
@@ -319,7 +319,7 @@ describe("patient document API", () => {
     });
     assert.equal(image.status, 201, String(image.json.error || ""));
     const imageDoc = image.json.document as { id: string; canDelete: boolean };
-    assert.equal(imageDoc.canDelete, true);
+    assert.equal(imageDoc.canDelete, false);
 
     const row = getDb()
       .prepare("SELECT storage_key, storage_backend, mime_type FROM patient_documents WHERE id = ?")
@@ -352,7 +352,7 @@ describe("patient document API", () => {
     const otherRow = ((otherList.json.documents as Array<{ id: string; canDelete: boolean }>) || []).find(
       (doc) => doc.id === pdfDoc.id
     );
-    assert.equal(otherRow?.canDelete, true);
+    assert.equal(otherRow?.canDelete, false);
 
     for (const headers of [{ Authorization: `Bearer ${tokenB}` }]) {
       const stolenList = await jsonRequest(port, "GET", `/api/patients/${patientId}/documents`, undefined, headers);
@@ -510,7 +510,19 @@ describe("patient document API", () => {
       undefined,
       { Authorization: `Bearer ${tokenOther}` }
     );
-    assert.equal(removed.status, 200);
+    assert.equal(removed.status, 403);
+    const imageUntouched = getDb()
+      .prepare("SELECT deleted_at FROM patient_documents WHERE id = ?")
+      .get(imageDoc.id) as { deleted_at: string | null };
+    assert.equal(imageUntouched.deleted_at, null);
+    const adminRemovedImage = await jsonRequest(
+      port,
+      "DELETE",
+      `/api/patients/${patientId}/documents/${imageDoc.id}`,
+      undefined,
+      { Authorization: `Bearer ${tokenAdmin}` }
+    );
+    assert.equal(adminRemovedImage.status, 200);
     assert.equal(fs.existsSync(imageFull), true);
     const imageDeleted = getDb()
       .prepare("SELECT deleted_at FROM patient_documents WHERE id = ?")
@@ -710,6 +722,119 @@ describe("patient document API", () => {
     assert.equal(portalConsent.status, 403);
     assert.equal(portalConsent.json.code, "ROLE_DENIED");
     assert.equal(JSON.stringify(portalConsent.json).includes("Role Gate Nair"), false);
+  });
+
+  it("lets only the clinic admin in the tenant soft-delete a report", async () => {
+    const clinic = createClinicUser("docs-del-doc", "doctor");
+    const otherDoctor = createClinicUser("docs-del-doc2", "doctor");
+    getDb().prepare("UPDATE users SET tenant_id = ? WHERE id = ?").run(clinic.tenantId, otherDoctor.userId);
+    const desk = createClinicUser("docs-del-desk", "receptionist");
+    getDb().prepare("UPDATE users SET tenant_id = ? WHERE id = ?").run(clinic.tenantId, desk.userId);
+    const admin = createClinicUser("docs-del-admin", "CLINIC_ADMIN");
+    getDb().prepare("UPDATE users SET tenant_id = ? WHERE id = ?").run(clinic.tenantId, admin.userId);
+    const otherAdmin = createClinicUser("docs-del-admin-b", "CLINIC_ADMIN");
+    const portal = createClinicUser("docs-del-patient", "patient");
+
+    const token = await login(clinic.email);
+    const created = await jsonRequest(
+      port,
+      "POST",
+      "/api/patients",
+      { name: "Delete Gate Patient", phone: "+91 98111 55521", age: 36, gender: "Female" },
+      { Authorization: `Bearer ${token}` }
+    );
+    assert.equal(created.status, 201, String(created.json.error || ""));
+    const patientId = String((created.json.patient as { id: string }).id);
+    const granted = await jsonRequest(
+      port,
+      "POST",
+      `/api/patients/${patientId}/document-consent`,
+      { language: "en", method: "staff_attested_verbal", attested: true },
+      { Authorization: `Bearer ${token}` }
+    );
+    assert.equal(granted.status, 201, String(granted.json.error || ""));
+    const uploaded = await upload(token, patientId, pdfBytes(), {
+      filename: "delete-gate.pdf",
+      mime: "application/pdf",
+      title: "Delete gate report",
+      docType: "lab_report",
+      documentDate: "2026-10-08",
+    });
+    assert.equal(uploaded.status, 201, String(uploaded.json.error || ""));
+    const documentId = String((uploaded.json.document as { id: string; canDelete: boolean }).id);
+    assert.equal((uploaded.json.document as { canDelete: boolean }).canDelete, false);
+    const stored = getDb()
+      .prepare("SELECT storage_key FROM patient_documents WHERE id = ?")
+      .get(documentId) as { storage_key: string };
+    const full = path.join(docsDir, stored.storage_key);
+
+    const denied: Array<[string, string]> = [
+      ["doctor", token],
+      ["other doctor", await login(otherDoctor.email)],
+      ["reception", await login(desk.email)],
+      ["patient", await login(portal.email)],
+    ];
+    for (const [label, deniedToken] of denied) {
+      const res = await jsonRequest(
+        port,
+        "DELETE",
+        `/api/patients/${patientId}/documents/${documentId}`,
+        undefined,
+        { Authorization: `Bearer ${deniedToken}` }
+      );
+      assert.equal(res.status, 403, label);
+      const row = getDb()
+        .prepare("SELECT deleted_at FROM patient_documents WHERE id = ?")
+        .get(documentId) as { deleted_at: string | null };
+      assert.equal(row.deleted_at, null, label);
+    }
+
+    const foreign = await jsonRequest(
+      port,
+      "DELETE",
+      `/api/patients/${patientId}/documents/${documentId}`,
+      undefined,
+      { Authorization: `Bearer ${await login(otherAdmin.email)}` }
+    );
+    assert.ok(foreign.status === 404 || foreign.status === 403);
+    assert.equal(JSON.stringify(foreign.json).includes("Delete gate report"), false);
+    const stillThere = getDb()
+      .prepare("SELECT deleted_at FROM patient_documents WHERE id = ?")
+      .get(documentId) as { deleted_at: string | null };
+    assert.equal(stillThere.deleted_at, null);
+
+    const adminList = await jsonRequest(port, "GET", `/api/patients/${patientId}/documents`, undefined, {
+      Authorization: `Bearer ${await login(admin.email)}`,
+    });
+    assert.equal(adminList.status, 200);
+    const listed = ((adminList.json.documents as Array<{ id: string; canDelete: boolean }>) || []).find(
+      (doc) => doc.id === documentId
+    );
+    assert.equal(listed?.canDelete, true);
+
+    const removed = await jsonRequest(
+      port,
+      "DELETE",
+      `/api/patients/${patientId}/documents/${documentId}`,
+      undefined,
+      { Authorization: `Bearer ${await login(admin.email)}` }
+    );
+    assert.equal(removed.status, 200);
+    assert.equal(fs.existsSync(full), true);
+    const deleted = getDb()
+      .prepare("SELECT deleted_at FROM patient_documents WHERE id = ?")
+      .get(documentId) as { deleted_at: string | null };
+    assert.equal(deleted.deleted_at != null && deleted.deleted_at.length > 0, true);
+    const audit = getDb()
+      .prepare(
+        `SELECT tenant_id, patient_id, actor_role FROM audit_logs
+         WHERE action = 'patient_document.delete' AND details LIKE ?`
+      )
+      .all(`%${documentId}%`) as Array<{ tenant_id: string; patient_id: string; actor_role: string }>;
+    assert.equal(audit.length, 1);
+    assert.equal(audit[0].tenant_id, clinic.tenantId);
+    assert.equal(audit[0].patient_id, patientId);
+    assert.equal(audit[0].actor_role, "CLINIC_ADMIN");
   });
 
   it("rejects an 11 MB file at the upload limit", async () => {
