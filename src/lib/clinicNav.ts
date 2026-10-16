@@ -294,7 +294,7 @@ export function homeMetrics(visits: readonly VisitLite[], now = new Date()) {
   return {
     today,
     totalAppointments: visits.length,
-    todayAppointments: waiting + withDoctor + done,
+    todayAppointments: todayVisitCount({ waiting, withDoctor, done }),
     weekAppointments: weekRows.filter(active).length,
     monthAppointments: monthRows.filter(active).length,
     totalRevenue: paidSum(visits),
@@ -314,6 +314,11 @@ export function formatHomeInr(amount: number): string {
   return formatInr(amount);
 }
 
+/** Today's visits: the same three states the day is made of. */
+export function todayVisitCount(metrics: { waiting: number; withDoctor: number; done: number }): number {
+  return metrics.waiting + metrics.withDoctor + metrics.done;
+}
+
 /** Four distinct snapshot numbers. The OPD strip owns today/week/month visit counts. */
 export function homeKpiCards(
   metrics: ReturnType<typeof homeMetrics>,
@@ -330,7 +335,7 @@ export function homeKpiCards(
 /** Visit counts across the three windows. No money and no waiting/done split. */
 export function opdTrend(metrics: ReturnType<typeof homeMetrics>): Array<{ label: string; value: string }> {
   return [
-    { label: "Today", value: String(metrics.todayAppointments) },
+    { label: "Today", value: String(todayVisitCount(metrics)) },
     { label: "Week", value: String(metrics.weekAppointments) },
     { label: "Month", value: String(metrics.monthAppointments) },
   ];

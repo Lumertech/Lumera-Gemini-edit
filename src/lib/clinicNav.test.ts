@@ -14,6 +14,7 @@ import {
   homeMetrics,
   homeNudge,
   opdTrend,
+  todayVisitCount,
   labelWordCount,
   moreNavLabels,
   navLabelsInOrder,
@@ -175,6 +176,77 @@ describe("clinic home routing and nav", () => {
     }
     assert.equal(cards.some((card) => card.value === trend[0].value && card.label === "Today"), false);
     assert.equal(trend.some((cell) => cell.value.includes("₹")), false);
+    const today = Number(trend.find((cell) => cell.label === "Today")?.value);
+    const week = Number(trend.find((cell) => cell.label === "Week")?.value);
+    const month = Number(trend.find((cell) => cell.label === "Month")?.value);
+    const waiting = Number(cards.find((card) => card.label === "Waiting")?.value);
+    const done = Number(cards.find((card) => card.label === "Done")?.value);
+    assert.equal(today, todayVisitCount(metrics));
+    assert.equal(today, waiting + metrics.withDoctor + done);
+    assert.ok(today <= week);
+    assert.ok(week <= month);
+  });
+
+  it("counts today as waiting, in consult, and done for every role home", () => {
+    const now = new Date("2026-10-16T04:00:00.000Z");
+    const books = {
+      doctor: [
+        { id: "dw", date: "2026-10-16", status: "Waiting", consultationFee: 500, isPaid: false },
+        { id: "dr", date: "2026-10-16", status: "Triage / Vitals", consultationFee: 500, isPaid: false },
+        { id: "dc", date: "2026-10-16", status: "In Consultation", consultationFee: 500, isPaid: false },
+        { id: "dd", date: "2026-10-16", status: "Completed", consultationFee: 500, isPaid: true },
+        { id: "dwk", date: "2026-10-12", status: "Completed", consultationFee: 500, isPaid: true },
+        { id: "dmo", date: "2026-10-03", status: "Waiting", consultationFee: 500, isPaid: false },
+      ],
+      reception: [
+        { id: "dw", date: "2026-10-16", status: "Waiting", consultationFee: 500, isPaid: false },
+        { id: "dr", date: "2026-10-16", status: "Triage / Vitals", consultationFee: 500, isPaid: false },
+        { id: "dc", date: "2026-10-16", status: "In Consultation", consultationFee: 500, isPaid: false },
+        { id: "dd", date: "2026-10-16", status: "Completed", consultationFee: 500, isPaid: true },
+        { id: "dwk", date: "2026-10-12", status: "Completed", consultationFee: 500, isPaid: true },
+        { id: "dmo", date: "2026-10-03", status: "Waiting", consultationFee: 500, isPaid: false },
+      ],
+      "clinic-admin": [
+        { id: "aw", date: "2026-10-16", status: "Waiting", consultationFee: 600, isPaid: false },
+        { id: "aw2", date: "2026-10-16", status: "Waiting", consultationFee: 600, isPaid: false },
+        { id: "ad", date: "2026-10-16", status: "Completed", consultationFee: 600, isPaid: true },
+        { id: "awk", date: "2026-10-14", status: "Waiting", consultationFee: 600, isPaid: false },
+        { id: "amo", date: "2026-10-04", status: "Completed", consultationFee: 600, isPaid: true },
+      ],
+      physio: [
+        { id: "pw", date: "2026-10-16", status: "Waiting", consultationFee: 700, isPaid: false },
+        { id: "pw2", date: "2026-10-16", status: "Waiting", consultationFee: 700, isPaid: false },
+        { id: "pw3", date: "2026-10-16", status: "Waiting", consultationFee: 700, isPaid: false },
+        { id: "pd", date: "2026-10-16", status: "Completed", consultationFee: 700, isPaid: true },
+        { id: "pd2", date: "2026-10-16", status: "Completed", consultationFee: 700, isPaid: true },
+        { id: "pwk", date: "2026-10-11", status: "Completed", consultationFee: 700, isPaid: true },
+        { id: "pmo", date: "2026-10-02", status: "Waiting", consultationFee: 700, isPaid: false },
+      ],
+    };
+    const seen = new Set<string>();
+    for (const [role, visits] of Object.entries(books)) {
+      const metrics = homeMetrics(visits, now);
+      const cards = homeKpiCards(metrics, 4);
+      const trend = opdTrend(metrics);
+      const value = (items: Array<{ label: string; value: string }>, label: string) =>
+        Number(items.find((item) => item.label === label)?.value);
+      const waiting = value(cards, "Waiting");
+      const done = value(cards, "Done");
+      const today = value(trend, "Today");
+      const week = value(trend, "Week");
+      const month = value(trend, "Month");
+      assert.equal(today, waiting + metrics.withDoctor + done, role);
+      assert.equal(today, todayVisitCount(metrics), role);
+      assert.ok(today <= week, role);
+      assert.ok(week <= month, role);
+      seen.add(`${today}/${week}/${month}`);
+    }
+    assert.equal(books.physio.filter((row) => row.date === "2026-10-16" && row.status === "Waiting").length, 3);
+    assert.equal(books.physio.filter((row) => row.date === "2026-10-16" && row.status === "Completed").length, 2);
+    const physio = homeMetrics(books.physio, now);
+    assert.equal(physio.todayAppointments, 5);
+    assert.equal(physio.withDoctor, 0);
+    assert.ok(seen.size >= 2);
   });
 
   it("tracks setup progress without marking missing steps done", () => {

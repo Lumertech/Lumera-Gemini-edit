@@ -2,10 +2,26 @@ import type { SqlDatabase } from "./sql-engine.ts";
 import { clinicCalendarDate, shiftIsoDate } from "../src/lib/clinicDay.ts";
 import { DEMO_PHYSIO_PACKAGES } from "../src/lib/demoPhysioBook.ts";
 
-/** Visits kept inside the current clinic month for a demo book. */
-export const DEMO_BOOK_SIZE = 80;
-const TODAY_COUNT = 6;
-const WEEK_COUNT = 25;
+/** How many active visits land on today, inside the week, and inside the month. */
+export interface DemoBookWindow {
+  today: number;
+  week: number;
+  month: number;
+  /** Completed rows inside today. The rest of today stays waiting. Nobody is left in consult. */
+  doneToday: number;
+}
+
+/** Individual, polyclinic, and physio books are different sizes so the counts are not one shape. */
+export const INDIVIDUAL_DEMO_WINDOW: DemoBookWindow = { today: 8, week: 20, month: 47, doneToday: 0 };
+export const POLYCLINIC_DEMO_WINDOW: DemoBookWindow = { today: 7, week: 16, month: 31, doneToday: 3 };
+export const PHYSIO_DEMO_WINDOW: DemoBookWindow = { today: 5, week: 12, month: 24, doneToday: 2 };
+
+export function demoBookWindowFor(tenantId: string): DemoBookWindow {
+  if (tenantId === "tenant-demo-polyclinic") return POLYCLINIC_DEMO_WINDOW;
+  if (tenantId === "tenant-demo-physio") return PHYSIO_DEMO_WINDOW;
+  if (tenantId === "tenant-demo-individual") return INDIVIDUAL_DEMO_WINDOW;
+  return { today: 3, week: 9, month: 18, doneToday: 1 };
+}
 
 const CLINIC_SLOTS = ["09:00 AM", "09:30 AM", "10:00 AM", "10:30 AM", "11:00 AM", "11:30 AM", "04:00 PM", "04:30 PM"];
 
@@ -27,19 +43,19 @@ function datesFrom(start: string, endExclusive: string): string[] {
   return days;
 }
 
-/** Stable date for each active visit, relative to the clinic day. */
-export function demoBookDateForIndex(index: number, today: string): string {
+/** Stable date for each active visit, relative to the clinic day and that tenant's window. */
+export function demoBookDateForIndex(index: number, today: string, window: DemoBookWindow = INDIVIDUAL_DEMO_WINDOW): string {
   const monthStart = `${today.slice(0, 8)}01`;
   const weekStart = shiftIsoDate(today, -6);
   const outside = shiftIsoDate(monthStart, -1);
-  if (index < TODAY_COUNT) return today;
-  if (index < WEEK_COUNT) {
+  if (index < window.today) return today;
+  if (index < window.week) {
     const weekOnly = datesFrom(weekStart, today);
-    return weekOnly[(index - TODAY_COUNT) % weekOnly.length] || outside;
+    return weekOnly[(index - window.today) % weekOnly.length] || outside;
   }
-  if (index < DEMO_BOOK_SIZE) {
+  if (index < window.month) {
     const monthOnly = datesFrom(monthStart, weekStart);
-    return monthOnly[(index - WEEK_COUNT) % monthOnly.length] || outside;
+    return monthOnly[(index - window.week) % monthOnly.length] || outside;
   }
   return outside;
 }
@@ -56,13 +72,18 @@ function isActiveStatus(status: string): boolean {
   return status !== "Cancelled" && status !== "No-Show";
 }
 
-/** Today keeps a waiting queue, someone in session, and paid completed visits. */
-export function namedDemoVisitPlan(index: number, sessionType: string): { status: string; isPaid: number; type: string } {
+/** Today is only waiting and completed, so the cards and the Today trend count the same visits. */
+export function namedDemoVisitPlan(
+  index: number,
+  sessionType: string,
+  window: DemoBookWindow
+): { status: string; isPaid: number; type: string } {
   const type = index === 1 && sessionType === "New Consultation" ? "Follow-up" : sessionType;
-  if (index < 3) return { status: "Waiting", isPaid: 0, type };
-  if (index === 3) return { status: "In Consultation", isPaid: 0, type: sessionType };
-  if (index < 6 || index % 3 === 2) return { status: "Completed", isPaid: 1, type: sessionType };
-  return { status: "Waiting", isPaid: 0, type: sessionType };
+  if (index >= window.month) return { status: "Waiting", isPaid: 0, type: sessionType };
+  const doneToday = index < window.today && index >= window.today - window.doneToday;
+  const doneEarlier = index >= window.today && index % 3 === 0;
+  if (doneToday || doneEarlier) return { status: "Completed", isPaid: 1, type: sessionType };
+  return { status: "Waiting", isPaid: 0, type };
 }
 
 interface DemoPerson {
@@ -131,6 +152,7 @@ function hasTable(database: SqlDatabase, name: string): boolean {
 }
 
 function ensureNamedDemoBook(database: SqlDatabase, book: NamedBook, today: string, now: Date): void {
+  const window = demoBookWindowFor(book.tenantId);
   const stamp = now.toISOString();
   if (hasTable(database, "patients")) {
     const insertPatient = database.prepare(
@@ -166,9 +188,9 @@ function ensureNamedDemoBook(database: SqlDatabase, book: NamedBook, today: stri
      SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Walk-in', ?, ?, ?
      WHERE NOT EXISTS (SELECT 1 FROM appointments WHERE id = ?)`
   );
-  for (let n = 0; n < DEMO_BOOK_SIZE; n += 1) {
+  for (let n = 0; n < window.month; n += 1) {
     const person = book.people[n % book.people.length];
-    const plan = namedDemoVisitPlan(n, book.sessionType);
+    const plan = namedDemoVisitPlan(n, book.sessionType, window);
     const id = `demo-book-${book.tenantId}-${String(n).padStart(3, "0")}`;
     insertVisit.run(
       id,
@@ -244,13 +266,14 @@ export function spreadDemoBookDates(database: SqlDatabase, now = new Date()): vo
   for (const tenantId of tenantIds) {
     const book = namedBookFor(tenantId);
     if (book) ensureNamedDemoBook(database, book, today, now);
+    const window = demoBookWindowFor(tenantId);
     const rows = list.all(tenantId) as AppointmentRow[];
     const active = rows.filter((row) => isActiveStatus(String(row.status || "")));
     const sample = rows[0];
-    if (!book && sample && active.length < DEMO_BOOK_SIZE) {
+    if (!book && sample && active.length < window.month) {
       const people = rows.filter((row, index, all) => all.findIndex((item) => item.patient_id === row.patient_id) === index);
       const stamp = now.toISOString();
-      for (let n = active.length; n < DEMO_BOOK_SIZE; n += 1) {
+      for (let n = active.length; n < window.month; n += 1) {
         const person = people[n % people.length] || sample;
         const id = `demo-book-${tenantId}-${String(n).padStart(3, "0")}`;
         insert.run(
@@ -278,9 +301,9 @@ export function spreadDemoBookDates(database: SqlDatabase, now = new Date()): vo
       const inactiveNamed = refreshed.filter((row) => !isActiveStatus(String(row.status || "")));
       activeNamed.sort((a, b) => a.id.localeCompare(b.id));
       [...activeNamed, ...inactiveNamed].forEach((row, index) => {
-        const date = demoBookDateForIndex(index, today);
+        const date = demoBookDateForIndex(index, today, window);
         const slot = CLINIC_SLOTS[index % CLINIC_SLOTS.length];
-        const plan = namedDemoVisitPlan(index, book.sessionType);
+        const plan = namedDemoVisitPlan(index, book.sessionType, window);
         updateNamed.run(date, slot, plan.status, plan.isPaid, plan.type, book.fee, row.id, tenantId);
       });
       continue;
@@ -290,7 +313,7 @@ export function spreadDemoBookDates(database: SqlDatabase, now = new Date()): vo
     const inactive = rows.filter((row) => !isActiveStatus(String(row.status || "")));
     const ordered = [...active, ...inactive];
     ordered.forEach((row, index) => {
-      const date = demoBookDateForIndex(index, today);
+      const date = demoBookDateForIndex(index, today, window);
       const slot = CLINIC_SLOTS[index % CLINIC_SLOTS.length];
       update.run(date, slot, row.id, tenantId);
     });

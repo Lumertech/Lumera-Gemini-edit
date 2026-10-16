@@ -1,10 +1,17 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { DatabaseSync } from "node:sqlite";
-import { homeMetrics } from "../src/lib/clinicNav.ts";
+import { homeKpiCards, homeMetrics, opdTrend, todayVisitCount } from "../src/lib/clinicNav.ts";
 import { clinicCalendarDate } from "../src/lib/clinicDay.ts";
 import { DEMO_PHYSIO_PACKAGES, completedSessionsForPatient } from "../src/lib/demoPhysioBook.ts";
-import { DEMO_BOOK_SIZE, demoBookDateForIndex, isDemoSeedTenantId, spreadDemoBookDates } from "./demo-book-dates.ts";
+import {
+  INDIVIDUAL_DEMO_WINDOW,
+  PHYSIO_DEMO_WINDOW,
+  POLYCLINIC_DEMO_WINDOW,
+  demoBookDateForIndex,
+  isDemoSeedTenantId,
+  spreadDemoBookDates,
+} from "./demo-book-dates.ts";
 
 const NOW = new Date("2026-10-16T04:00:00.000Z");
 
@@ -81,7 +88,7 @@ describe("demo book dates", () => {
       isPaid: number;
       type: string;
     }>;
-    assert.equal(demo.length, DEMO_BOOK_SIZE);
+    assert.equal(demo.length, INDIVIDUAL_DEMO_WINDOW.month);
     const metrics = homeMetrics(
       demo.map((row) => ({
         id: row.id,
@@ -94,9 +101,10 @@ describe("demo book dates", () => {
       NOW
     );
     assert.equal(metrics.today, today);
-    assert.equal(metrics.todayAppointments, 6);
-    assert.equal(metrics.weekAppointments, 25);
-    assert.equal(metrics.monthAppointments, 80);
+    assert.equal(metrics.todayAppointments, INDIVIDUAL_DEMO_WINDOW.today);
+    assert.equal(metrics.weekAppointments, INDIVIDUAL_DEMO_WINDOW.week);
+    assert.equal(metrics.monthAppointments, INDIVIDUAL_DEMO_WINDOW.month);
+    assert.equal(metrics.todayAppointments, metrics.waiting + metrics.withDoctor + metrics.done);
     assert.equal(demo.some((row) => row.time_slot === "12:18 AM"), false);
 
     const real = db.prepare(`SELECT date, time_slot FROM appointments WHERE id = 'real-1'`).get() as { date: string; time_slot: string };
@@ -112,14 +120,14 @@ describe("demo book dates", () => {
     const second = JSON.stringify(db.prepare(`SELECT id, date, time_slot FROM appointments ORDER BY id`).all());
     assert.equal(second, first);
     assert.equal(demoBookDateForIndex(0, today), today);
-    assert.notEqual(demoBookDateForIndex(DEMO_BOOK_SIZE, today), today);
+    assert.notEqual(demoBookDateForIndex(INDIVIDUAL_DEMO_WINDOW.month, today), today);
     assert.equal(
       (db.prepare(`SELECT COUNT(*) AS c FROM appointments WHERE tenant_id = ?`).get("tenant-demo-physio") as { c: number }).c,
-      DEMO_BOOK_SIZE
+      PHYSIO_DEMO_WINDOW.month
     );
     assert.equal(
       (db.prepare(`SELECT COUNT(*) AS c FROM appointments WHERE tenant_id = ?`).get("tenant-demo-polyclinic") as { c: number }).c,
-      DEMO_BOOK_SIZE
+      POLYCLINIC_DEMO_WINDOW.month
     );
   });
 
@@ -166,14 +174,26 @@ describe("demo book dates", () => {
         isPaid: number;
       }>;
 
+    for (let i = 0; i < 4; i += 1) insertVisit(db, `ind-${i}`, "tenant-demo-individual", "2026-10-16");
+    spreadDemoBookDates(db, NOW);
+
     const physio = load("tenant-demo-physio");
     const poly = load("tenant-demo-polyclinic");
-    assert.equal(physio.length, DEMO_BOOK_SIZE);
-    assert.equal(poly.length, DEMO_BOOK_SIZE);
+    const individual = load("tenant-demo-individual");
+    assert.equal(physio.length, PHYSIO_DEMO_WINDOW.month);
+    assert.equal(poly.length, POLYCLINIC_DEMO_WINDOW.month);
+    assert.equal(individual.length, INDIVIDUAL_DEMO_WINDOW.month);
     assert.equal(physio.every((row) => row.type === "Rehab session"), true);
     assert.equal(poly.some((row) => row.type === "Follow-up"), true);
 
-    for (const [rows, label] of [[physio, "physio"], [poly, "clinic"]] as const) {
+    const totals = new Set<string>();
+    const roles = [
+      ["doctor", individual, INDIVIDUAL_DEMO_WINDOW],
+      ["reception", individual, INDIVIDUAL_DEMO_WINDOW],
+      ["clinic-admin", poly, POLYCLINIC_DEMO_WINDOW],
+      ["physio", physio, PHYSIO_DEMO_WINDOW],
+    ] as const;
+    for (const [role, rows, window] of roles) {
       const metrics = homeMetrics(
         rows.map((row) => ({
           id: row.id,
@@ -185,13 +205,30 @@ describe("demo book dates", () => {
         })),
         NOW
       );
-      assert.equal(metrics.todayAppointments, 6, label);
-      assert.equal(metrics.weekAppointments, 25, label);
-      assert.equal(metrics.monthAppointments, 80, label);
-      assert.ok(metrics.waiting > 0, label);
-      assert.ok(metrics.done > 0, label);
-      assert.ok(metrics.todayCollected > 0, label);
+      const cards = homeKpiCards(metrics, 4);
+      const trend = opdTrend(metrics);
+      const value = (items: Array<{ label: string; value: string }>, label: string) =>
+        Number(items.find((item) => item.label === label)?.value);
+      const waiting = value(cards, "Waiting");
+      const done = value(cards, "Done");
+      const todayCount = value(trend, "Today");
+      const weekCount = value(trend, "Week");
+      const monthCount = value(trend, "Month");
+      assert.equal(todayCount, waiting + metrics.withDoctor + done, role);
+      assert.equal(todayCount, todayVisitCount(metrics), role);
+      assert.equal(todayCount, window.today, role);
+      assert.equal(weekCount, window.week, role);
+      assert.equal(monthCount, window.month, role);
+      assert.equal(metrics.withDoctor, 0, role);
+      assert.ok(todayCount <= weekCount, role);
+      assert.ok(weekCount <= monthCount, role);
+      totals.add(`${todayCount}/${weekCount}/${monthCount}`);
+      if (role === "physio" || role === "clinic-admin") {
+        assert.ok(metrics.done > 0, role);
+        assert.ok(metrics.todayCollected > 0, role);
+      }
     }
+    assert.equal(totals.size, 3);
 
     for (const pkg of DEMO_PHYSIO_PACKAGES) {
       assert.ok(completedSessionsForPatient(physio, pkg.patientId) > 0, pkg.patientId);
