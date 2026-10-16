@@ -207,11 +207,15 @@ export function migrate(database: SqlDatabase) {
         patient_id TEXT NOT NULL,
         consent_id TEXT NOT NULL,
         artefact_json TEXT NOT NULL,
+        source TEXT NOT NULL DEFAULT 'staff',
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         UNIQUE (tenant_id, consent_id)
       )
     `);
+  } catch {}
+  try {
+    database.exec("ALTER TABLE abdm_consent_artefacts ADD COLUMN source TEXT NOT NULL DEFAULT 'staff'");
   } catch {}
   try {
     database.exec(
