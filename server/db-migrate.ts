@@ -21,9 +21,46 @@ const DEMO_LETTERHEAD_SEED = {
   upiId: "lumerahealth@icici",
   whatsappNumber: "+91 98000 12345",
   sealText: "Authorized Medical Seal & Digital Signature Verified",
-  footerDisclaimer:
-    "This prescription is digitally verified under National Health Authority (NHA) & Telemedicine Practice Guidelines. Please report any adverse drug reactions immediately.",
+  footerDisclaimer: "Prescription issued under the Telemedicine Practice Guidelines, 2020.",
 };
+
+/** Previous seeded Rx footer. Matched only to rewrite stored rows; not a default. */
+const LEGACY_SEEDED_FOOTER_DISCLAIMER =
+  "This prescription is digitally verified under National Health Authority (NHA) & Telemedicine Practice Guidelines. Please report any adverse drug reactions immediately.";
+const LEGACY_FOOTER_MARK = "digitally verified under";
+const LEGACY_WHATSAPP_RX_FOOTER = "Certified Digital Rx";
+const WHATSAPP_RX_FOOTER = "Digital Rx";
+
+/**
+ * Idempotent copy fix. Rewrites a tenant footer when it is still the old seeded
+ * default or still contains "digitally verified under". Custom footer text stays.
+ * Seeded WhatsApp template rows lose the "Certified Digital Rx" phrase.
+ */
+export function rewriteLegacyHonestyCopy(database: SqlDatabase): void {
+  try {
+    database
+      .prepare(
+        `UPDATE tenants
+            SET footer_disclaimer = ?
+          WHERE footer_disclaimer = ?
+             OR lower(footer_disclaimer) LIKE '%' || ? || '%'`
+      )
+      .run(DEMO_LETTERHEAD_SEED.footerDisclaimer, LEGACY_SEEDED_FOOTER_DISCLAIMER, LEGACY_FOOTER_MARK);
+  } catch {
+    /* footer_disclaimer is added in this same migrate() pass */
+  }
+  try {
+    database
+      .prepare(
+        `UPDATE meta_templates
+            SET components = replace(components, ?, ?)
+          WHERE components LIKE '%' || ? || '%'`
+      )
+      .run(LEGACY_WHATSAPP_RX_FOOTER, WHATSAPP_RX_FOOTER, LEGACY_WHATSAPP_RX_FOOTER);
+  } catch {
+    /* meta_templates is created by BOOTSTRAP_DDL before this runs */
+  }
+}
 
 const DEMO_TENANT_ID = "tenant-lumera-main";
 
@@ -378,6 +415,7 @@ export function migrate(database: SqlDatabase) {
   backfillWhatsAppTenantIds(database);
   migrateWhatsAppConversationKey(database);
   enforceWhatsAppTenantNotNull(database);
+  rewriteLegacyHonestyCopy(database);
 }
 
 /**

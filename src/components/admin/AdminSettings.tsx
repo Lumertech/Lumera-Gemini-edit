@@ -35,7 +35,7 @@ export const AdminSettings: React.FC = () => {
           Clinic site / AI settings. Multi-clinic Branches belong to Polyclinic User Admin, not Super Admin.
         </p>
         <p className="text-xs text-slate-500">
-          Gemini key status: {geminiConfigured ? "configured in .env" : "missing — local fallbacks will be used"}. Keys are never stored in SQLite.
+          Pulse AI key status: {geminiConfigured ? "configured in .env" : "missing — local fallbacks will be used"}. Keys are never stored in SQLite.
         </p>
         <label className="block text-xs font-semibold">
           Clinic name

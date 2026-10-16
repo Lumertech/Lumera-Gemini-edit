@@ -118,7 +118,7 @@ export function mountGeminiClinicalRoutes(app: Express) {
             contents,
             config: { systemInstruction, temperature: 0.2 },
           });
-          return res.json({ response: response.text, source: "Pulse AI (Google Gemini 3.8 Flash)" });
+          return res.json({ response: response.text, source: "Pulse AI" });
         } catch (err: any) {
           console.error("Pulse AI / Gemini Copilot API error:", err?.message);
         }

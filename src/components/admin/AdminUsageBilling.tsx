@@ -354,7 +354,7 @@ export const AdminUsageBilling: React.FC = () => {
 
       <p className="text-[11px] text-slate-400 flex items-start gap-1">
         <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-        Gemini AI Scribe raw_cost is null until a real per-minute figure exists — usage is recorded but not debited.
+        Pulse AI Scribe raw_cost is null until a real per-minute figure exists — usage is recorded but not debited.
         invoices and tenant_subscriptions are untouched.
       </p>
     </div>

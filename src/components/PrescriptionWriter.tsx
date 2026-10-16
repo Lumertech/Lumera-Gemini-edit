@@ -2591,7 +2591,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
             <div className="space-y-1">
               <div className="flex items-center justify-between text-xs">
                 <label className="font-bold text-slate-700 text-[11px]">WhatsApp Message Content:</label>
-                {isTranslating && <span className="text-blue-600 font-semibold animate-pulse text-[11px]">Translating via Gemini AI...</span>}
+                {isTranslating && <span className="text-blue-600 font-semibold animate-pulse text-[11px]">Translating via Pulse AI...</span>}
               </div>
               <textarea
                 value={translatedWhatsAppText}

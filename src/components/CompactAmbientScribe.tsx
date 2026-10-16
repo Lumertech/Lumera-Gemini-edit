@@ -339,7 +339,7 @@ export const CompactAmbientScribe: React.FC<CompactAmbientScribeProps> = ({
               Live mic + transcript for this {resolveRxModule(practiceSpecialty || currentDoctor.specialty)} consult. Pulse AI fills the Rx — review highlighted fields before signing.
             </p>
             {showAbhaStatus ? (
-              <p className="text-[10px] leading-snug text-slate-400" data-testid="abha-linking-status">
+              <p className="no-print text-[10px] leading-snug text-slate-400" data-testid="abha-linking-status">
                 {ABHA_LINKING_STATUS}
               </p>
             ) : null}

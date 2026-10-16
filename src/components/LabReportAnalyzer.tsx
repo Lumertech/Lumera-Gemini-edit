@@ -110,7 +110,7 @@ export const LabReportAnalyzer: React.FC<LabReportAnalyzerProps> = ({
             </div>
             <h1 className="text-xl font-bold tracking-tight">Lab Report OCR & Longitudinal Trend Visualizer</h1>
             <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-              Gemini Vision Scribe
+              Pulse AI
             </span>
           </div>
           <p className="text-xs text-slate-300 max-w-2xl">
@@ -128,7 +128,7 @@ export const LabReportAnalyzer: React.FC<LabReportAnalyzerProps> = ({
             {isProcessingOcr ? (
               <>
                 <Sparkles className="w-4 h-4 animate-spin text-blue-200" />
-                <span>Extracting with Gemini OCR...</span>
+                <span>Extracting with Pulse AI...</span>
               </>
             ) : (
               <>

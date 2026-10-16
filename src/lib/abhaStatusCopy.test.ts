@@ -25,7 +25,7 @@ describe("ABHA linking status copy", () => {
     const portal = fs.readFileSync(path.join(root, "src/components/PatientPortal.tsx"), "utf8");
     const whatsapp = fs.readFileSync(path.join(root, "server/whatsapp.ts"), "utf8");
     assert.match(scribe, /showsAbhaSandboxStatus\(user\?\.role\)/);
-    assert.match(scribe, /data-testid="abha-linking-status"/);
+    assert.match(scribe, /className="no-print[^"]*"\s+data-testid="abha-linking-status"/);
     assert.equal(scribe.includes("Powered by ABDM"), false);
     assert.equal(scribe.includes("NHA Tech Provider"), false);
     assert.equal(scribe.includes("Gemini 3.5"), false);

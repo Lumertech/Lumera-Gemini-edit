@@ -1335,7 +1335,7 @@ export const DEFAULT_CLINIC_SETTINGS: ClinicSettings = {
   showLogo: true,
   showQrCode: true,
   sealText: 'Authorized Medical Seal & Digital Signature Verified',
-  footerDisclaimer: 'This prescription is digitally verified under National Health Authority (NHA) & Telemedicine Practice Guidelines. Please report any adverse drug reactions immediately.'
+  footerDisclaimer: 'Prescription issued under the Telemedicine Practice Guidelines, 2020.'
 };
 
 export const DEFAULT_WHATSAPP_TEMPLATES: WhatsAppTemplate[] = [
