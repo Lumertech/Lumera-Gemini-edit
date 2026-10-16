@@ -1,4 +1,4 @@
-export type Surface = "landing" | "login" | "app" | "admin" | "portal" | "policy" | "legal" | "onboarding";
+export type Surface = "landing" | "login" | "app" | "admin" | "portal" | "policy" | "legal" | "onboarding" | "pricing";
 
 export const ADMIN_TABS = [
   "overview",
@@ -88,7 +88,7 @@ export const DEFAULT_NAV: NavLocation = {
 };
 
 /** Surfaces anyone may see without a session. No clinician chrome. */
-export const PUBLIC_SURFACES: readonly Surface[] = ["landing", "login", "legal", "policy"];
+export const PUBLIC_SURFACES: readonly Surface[] = ["landing", "login", "legal", "policy", "pricing"];
 
 /** Surfaces that must never render until a session exists. */
 export const PROTECTED_SURFACES: readonly Surface[] = ["app", "admin", "portal", "onboarding"];
@@ -104,6 +104,7 @@ const POLICY_PATHS: Record<string, string> = {
   "/government-requests": "government-data-request-policy",
   "/government": "government-data-request-policy",
   "/security": "security",
+  "/refund-policy": "refund-policy",
 };
 
 export function normalizePath(pathname: string): string {
@@ -278,6 +279,7 @@ export function pathToNav(pathname = "/", search = ""): NavLocation {
     return nav("admin", { adminTab: canonicalizeAdminTab(firstSegmentAfter("/admin", p)) });
   }
   if (p === "/portal" || p === "/patient") return nav("portal");
+  if (p === "/pricing") return nav("pricing");
   if (p === "/landing" || p === "/site" || p === "/public") return nav("landing");
   if (p === "/onboarding") return nav("onboarding");
   if (p === "/w" || p.startsWith("/w/")) {
@@ -335,6 +337,7 @@ export function surfaceToPath(surface: Surface, opts?: SurfacePathOpts): string 
   if (surface === "admin") {
     return opts?.adminTab ? adminTabToPath(opts.adminTab) : "/admin";
   }
+  if (surface === "pricing") return "/pricing";
   if (surface === "portal") return "/portal";
   if (surface === "onboarding") return "/onboarding";
   if (surface === "legal" || surface === "policy") {
@@ -431,7 +434,7 @@ export function nextAuthenticatedSurface(args: {
   needsOnboarding: boolean;
 }): Surface {
   const { surface, pathname, roleHome, needsOnboarding } = args;
-  if (surface === "legal" || surface === "policy") return surface;
+  if (surface === "legal" || surface === "policy" || surface === "pricing") return surface;
   if (needsOnboarding) return "onboarding";
   if (surface === "onboarding") return roleHome;
   if (surface === "login") return roleHome;

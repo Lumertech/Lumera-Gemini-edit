@@ -6,6 +6,7 @@ import { NavigationProvider, goAfterAuth, useNav } from "./nav/NavigationContext
 import { decideChrome, nextAuthenticatedSurface, surfaceToPath } from "./nav/surfaces";
 import { LandingPage } from "./components/LandingPage";
 import { LoginPage } from "./pages/LoginPage";
+import { PricingPage } from "./pages/PricingPage";
 import { PolicyPage } from "./pages/PolicyPage";
 import { AdminShell } from "./components/admin/AdminShell";
 import ClinicianApp from "./ClinicianApp";
@@ -92,6 +93,7 @@ function SurfaceRoot() {
 
   const view = chrome.renderSurface;
 
+  if (view === "pricing") return <PricingPage />;
   if (view === "login") return <LoginPage />;
   if (view === "policy" || view === "legal") return <PolicyPage slug={policySlug} />;
   if (view === "onboarding") return <OnboardingWizard />;

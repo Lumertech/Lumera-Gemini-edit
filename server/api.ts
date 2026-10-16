@@ -24,6 +24,7 @@ import {
 } from "./db.ts";
 import { persistSpecialtyPackId } from "../src/lib/specialtyPack.ts";
 import { PRODUCT_NAME } from "../src/brand.ts";
+import { publicPlansResponse } from "./pricing-catalog.ts";
 import { reportCaughtError } from "./error-tracker.ts";
 import { createClinicalRouter } from "./clinical.ts";
 import { createBillingRouter } from "./billing.ts";
@@ -451,6 +452,10 @@ function withSessionCredential<T extends Record<string, unknown>>(
 export function createApiRouter(): Router {
   const api = Router();
   api.use(rejectUntrustedTenantClaim);
+
+  api.get("/public/plans", (_req, res) => {
+    res.json(publicPlansResponse());
+  });
 
   api.post("/auth/login", async (req: Request, res: Response) => {
     const email = String(req.body?.email || "").trim().toLowerCase();

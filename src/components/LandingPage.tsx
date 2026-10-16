@@ -302,6 +302,13 @@ export const LandingPage: React.FC = () => {
 
         {/* Consolidated Single Sign In Button */}
         <div className="flex items-center gap-3">
+          <a
+            href="/pricing"
+            data-testid="landing-pricing"
+            className="px-3 py-2 text-sm font-semibold text-slate-200 hover:text-white"
+          >
+            Pricing
+          </a>
           <Link
             to={surfaceToPath("login", { loginNext: "app", loginMode: "signin" })}
             data-testid="landing-signin"
@@ -332,8 +339,8 @@ export const LandingPage: React.FC = () => {
 
         {/* HERO CTA BUTTON: Direct routing to single-card auth */}
         <div className="mt-8 flex flex-col items-center justify-center">
-          <Link
-            to={surfaceToPath("login", { loginNext: "app", loginMode: "register" })}
+          <a
+            href="/pricing"
             data-testid="landing-try-free"
             data-default-practice="individual"
             className="inline-flex items-center gap-2.5 px-9 py-4 rounded-xl bg-blue-600 hover:bg-blue-500 font-manrope font-bold text-base text-white shadow-xl shadow-blue-600/30 hover:shadow-blue-600/50 hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer"
@@ -341,7 +348,7 @@ export const LandingPage: React.FC = () => {
             <Stethoscope className="w-5 h-5 text-blue-200" />
             <span>Try for free</span>
             <ArrowRight className="w-4 h-4 text-blue-200" />
-          </Link>
+          </a>
 
           {demoLoginEnabled ? (
             <button
@@ -928,18 +935,19 @@ export const LandingPage: React.FC = () => {
             Ready to Experience the AI Clinical Operating System?
           </h3>
           <p className="text-slate-300 text-xs sm:text-sm max-w-xl mx-auto">
-            Get instant sandbox access in 30 seconds. No credit card required. Designed for ABDM M1–M3 &amp; DPDP (sandbox path).
+            Start a 30-day free trial. No card needed. ABDM integration is in sandbox testing and not yet live. We follow India's DPDP Act in how we handle data.
           </p>
           <div className="pt-2">
-            <Link
-              to={surfaceToPath("login", { loginNext: "app", loginMode: "register" })}
+            <a
+              href="/pricing"
+              data-testid="landing-try-free-banner"
               data-default-practice="individual"
               className="inline-flex items-center gap-2 px-8 py-3.5 rounded-xl bg-blue-600 hover:bg-blue-500 font-manrope font-bold text-sm text-white shadow-xl shadow-blue-600/40 hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer"
             >
               <Stethoscope className="w-4 h-4" />
               <span>Try for free</span>
               <ArrowRight className="w-4 h-4" />
-            </Link>
+            </a>
           </div>
         </div>
       </section>
@@ -960,6 +968,9 @@ export const LandingPage: React.FC = () => {
 
           {/* Policy Links */}
           <div className="flex flex-wrap justify-center gap-4 sm:gap-6 text-xs text-slate-300 font-medium pt-2 border-t border-slate-900">
+            <a href="/pricing" data-testid="landing-footer-pricing" className="hover:text-blue-400 transition">
+              Pricing
+            </a>
             <button
               type="button"
               onClick={() => go("legal", { policySlug: "terms-of-service" })}

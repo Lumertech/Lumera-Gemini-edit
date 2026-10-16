@@ -44,6 +44,8 @@ import { PolyclinicSpecialty } from "../types";
 import { BrandMark } from "../components/BrandMark";
 import { DEMO_LOGIN_MATRIX, DEMO_PASSWORD } from "../lib/demoAccounts";
 import { showFacebookOAuthButton, showGoogleOAuthButton } from "../lib/oauthUi";
+import { billingSelectionFromSearch, type BillingCycle, type PublicPlans } from "../lib/pricingModel";
+import { TrialTermsPanel } from "../components/TrialTermsPanel";
 
 const SPECIALTIES: PolyclinicSpecialty[] = [
   "General Medicine",
@@ -153,10 +155,21 @@ export const LoginPage: React.FC = () => {
 
   // Mode: Sign In vs Create Clinic Account
   const [mode, setMode] = useState<"signin" | "register">(loginMode || "signin");
-  const [regPracticeType, setRegPracticeType] = useState<PracticeType>(() =>
-    initialRegisterPracticeType(typeof window !== "undefined" ? window.location.search : "")
+  const [billingCycle, setBillingCycle] = useState<BillingCycle>(() =>
+    billingSelectionFromSearch(typeof window !== "undefined" ? window.location.search : "").cycle
   );
-  const [explicitPolyclinicChoice, setExplicitPolyclinicChoice] = useState(false);
+  const [regPracticeType, setRegPracticeType] = useState<PracticeType>(() => {
+    const billing = billingSelectionFromSearch(typeof window !== "undefined" ? window.location.search : "");
+    if (billing.plan === "polyclinic") return "polyclinic";
+    return initialRegisterPracticeType(typeof window !== "undefined" ? window.location.search : "");
+  });
+  const [explicitPolyclinicChoice, setExplicitPolyclinicChoice] = useState(
+    () => billingSelectionFromSearch(typeof window !== "undefined" ? window.location.search : "").plan === "polyclinic"
+  );
+  const [publicPlans, setPublicPlans] = useState<PublicPlans | null>(null);
+  const [agreedToTerms, setAgreedToTerms] = useState(false);
+  const [showMandateStep, setShowMandateStep] = useState(false);
+  const [mandateAgreed, setMandateAgreed] = useState(false);
 
   // Sign In Sub-Method: Email & Password vs WhatsApp Phone Number
   const [signInMethod, setSignInMethod] = useState<"email" | "whatsapp">("email");
@@ -229,26 +242,65 @@ export const LoginPage: React.FC = () => {
     setMode("register");
     setRegPracticeType(DEFAULT_PRACTICE_TYPE);
     setExplicitPolyclinicChoice(false);
+    setBillingCycle("annual");
+    setShowMandateStep(false);
+    setAgreedToTerms(false);
+    setMandateAgreed(false);
     setError("");
   };
 
-  // Keep mode in sync if changed via navigation. Re-entering register always
-  // reseeds Individual — URL / last click must not leave Multispecialty selected.
+  const applyBillingSearch = (search: string) => {
+    const billing = billingSelectionFromSearch(search);
+    setBillingCycle(billing.cycle);
+    if (billing.plan === "polyclinic") {
+      setRegPracticeType("polyclinic");
+      setExplicitPolyclinicChoice(true);
+      return;
+    }
+    setRegPracticeType(DEFAULT_PRACTICE_TYPE);
+    setExplicitPolyclinicChoice(false);
+  };
+
+  // Keep mode in sync if changed via navigation. A pricing CTA (?plan=polyclinic)
+  // is an explicit choice. Any other query still starts as Individual.
   useEffect(() => {
     if (loginMode) {
       setMode(loginMode);
     }
     if (loginMode === "register") {
-      setRegPracticeType(DEFAULT_PRACTICE_TYPE);
-      setExplicitPolyclinicChoice(false);
+      applyBillingSearch(typeof window !== "undefined" ? window.location.search : "");
+      setShowMandateStep(false);
     }
   }, [loginMode]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+    const billing = billingSelectionFromSearch(window.location.search);
+    setBillingCycle(billing.cycle);
+    if (billing.plan === "polyclinic") {
+      setRegPracticeType("polyclinic");
+      setExplicitPolyclinicChoice(true);
+      return;
+    }
     setRegPracticeType(initialRegisterPracticeType(window.location.search));
     setExplicitPolyclinicChoice(false);
   }, []);
+
+  useEffect(() => {
+    if (mode !== "register") return;
+    let cancelled = false;
+    apiFetchResponse("/api/public/plans")
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error("plans"))))
+      .then((data: PublicPlans) => {
+        if (!cancelled) setPublicPlans(data);
+      })
+      .catch(() => {
+        if (!cancelled) setPublicPlans(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [mode]);
 
   // Auto-redirect if already authenticated and not verifying OTP / completing OAuth.
   useEffect(() => {
@@ -532,8 +584,34 @@ export const LoginPage: React.FC = () => {
   };
 
   // Handle Practice Registration Submit
+  const mandateIsMonthly =
+    billingCycle === "monthly" &&
+    (regPracticeType === "individual" || publicPlans?.polyclinicMonthlyEnabled === true);
+
+  const openMandateStep = () => {
+    if (!agreedToTerms) {
+      setError("Agree to the Terms of Service and Refund policy before adding a payment method.");
+      return;
+    }
+    setError("");
+    setShowMandateStep(true);
+  };
+
+  const confirmMandateStep = () => {
+    if (!mandateAgreed) {
+      setError("Confirm the payment terms first. Nothing is charged today.");
+      return;
+    }
+    const form = document.getElementById("create-clinic-form");
+    if (form instanceof HTMLFormElement) form.requestSubmit();
+  };
+
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!agreedToTerms) {
+      setError("Agree to the Terms of Service and Refund policy before starting the trial.");
+      return;
+    }
     setBusy(true);
     setError("");
     setSuccessMsg("");
@@ -1516,6 +1594,22 @@ export const LoginPage: React.FC = () => {
                   </div>
                 </div>
 
+                <TrialTermsPanel
+                  plans={publicPlans}
+                  plan={regPracticeType}
+                  cycle={billingCycle}
+                  onCycleChange={(next) => {
+                    setBillingCycle(next);
+                    setShowMandateStep(false);
+                    setMandateAgreed(false);
+                  }}
+                  agreed={agreedToTerms}
+                  onAgreedChange={setAgreedToTerms}
+                  showMandateStep={showMandateStep}
+                  mandateAgreed={mandateAgreed}
+                  onMandateAgreedChange={setMandateAgreed}
+                />
+
                 {/* Quota Highlights Card */}
                 <div className="p-2.5 rounded-xl bg-purple-500/10 border border-purple-500/20 text-[11px] text-purple-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1.5">
                   <span className="flex items-start sm:items-center gap-1.5 font-medium min-w-0">
@@ -1525,25 +1619,56 @@ export const LoginPage: React.FC = () => {
                   <span className="font-mono text-xs text-emerald-400 font-bold shrink-0">NHA sandbox</span>
                 </div>
 
-                {/* Desktop submit — phone uses the sticky action bar so the CTA is never clipped */}
-                <button
-                  type="submit"
-                  disabled={busy}
-                  className="hidden md:flex w-full min-h-11 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-semibold text-xs sm:text-sm transition-all shadow-md shadow-purple-600/30 items-center justify-center gap-2 disabled:opacity-50"
-                >
-                  {busy ? (
+                {/* Desktop submit — phone uses the sticky action bar so the CTA is never clipped.
+                    Trial terms above are stated before either button opens AutoPay. */}
+                <div className="hidden md:grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {showMandateStep ? (
                     <>
-                      <RefreshCw className="w-4 h-4 animate-spin" /> Provisioning Practice...
+                      <button
+                        type="submit"
+                        disabled={busy}
+                        className="w-full min-h-11 py-2.5 rounded-xl border border-slate-600 text-white font-semibold text-xs sm:text-sm"
+                      >
+                        Skip for now
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={confirmMandateStep}
+                        className="w-full min-h-11 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 text-white font-semibold text-xs sm:text-sm"
+                      >
+                        {mandateIsMonthly ? "Set up AutoPay" : "Add payment method"}
+                      </button>
                     </>
                   ) : (
                     <>
-                      {regPracticeType === "polyclinic"
-                        ? "Create multi-specialty clinic"
-                        : "Create individual practice"}{" "}
-                      <ArrowRight className="w-4 h-4" />
+                      <button
+                        type="submit"
+                        disabled={busy}
+                        className="w-full min-h-11 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-semibold text-xs sm:text-sm transition-all shadow-md shadow-purple-600/30 flex items-center justify-center gap-2 disabled:opacity-50"
+                      >
+                        {busy ? (
+                          <>
+                            <RefreshCw className="w-4 h-4 animate-spin" /> Provisioning Practice...
+                          </>
+                        ) : (
+                          <>
+                            Start free trial <ArrowRight className="w-4 h-4" />
+                          </>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        data-testid="add-payment-method"
+                        disabled={busy}
+                        onClick={openMandateStep}
+                        className="w-full min-h-11 py-2.5 rounded-xl border border-slate-600 text-white font-semibold text-xs sm:text-sm"
+                      >
+                        Add payment method now
+                      </button>
                     </>
                   )}
-                </button>
+                </div>
               </form>
             )}
           </div>
@@ -1570,25 +1695,56 @@ export const LoginPage: React.FC = () => {
           data-testid="register-sticky-actions"
           className="sticky bottom-0 z-20 -mx-4 mt-4 px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] bg-gradient-to-t from-slate-900 via-slate-900/95 to-slate-900/70 border-t border-slate-800/80 md:static md:mx-0 md:mt-6 md:px-0 md:pt-0 md:pb-0 md:bg-none md:border-0"
         >
-            <button
-              type="submit"
-              form="create-clinic-form"
-              disabled={busy}
-              className="md:hidden w-full min-h-11 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-semibold text-xs sm:text-sm transition-all shadow-md shadow-purple-600/30 flex items-center justify-center gap-2 disabled:opacity-50"
-            >
-              {busy ? (
+            <div className="grid grid-cols-1 gap-2">
+              {showMandateStep ? (
                 <>
-                  <RefreshCw className="w-4 h-4 animate-spin" /> Provisioning Practice...
+                  <button
+                    type="submit"
+                    form="create-clinic-form"
+                    disabled={busy}
+                    className="md:hidden w-full min-h-11 py-2.5 rounded-xl border border-slate-600 text-white font-semibold text-xs sm:text-sm"
+                  >
+                    Skip for now
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={confirmMandateStep}
+                    className="md:hidden w-full min-h-11 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 text-white font-semibold text-xs sm:text-sm"
+                  >
+                    {mandateIsMonthly ? "Set up AutoPay" : "Add payment method"}
+                  </button>
                 </>
               ) : (
                 <>
-                  {regPracticeType === "polyclinic"
-                    ? "Create multi-specialty clinic"
-                    : "Create individual practice"}{" "}
-                  <ArrowRight className="w-4 h-4" />
+                  <button
+                    type="submit"
+                    form="create-clinic-form"
+                    disabled={busy}
+                    className="md:hidden w-full min-h-11 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-semibold text-xs sm:text-sm transition-all shadow-md shadow-purple-600/30 flex items-center justify-center gap-2 disabled:opacity-50"
+                  >
+                    {busy ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" /> Provisioning Practice...
+                      </>
+                    ) : (
+                      <>
+                        Start free trial <ArrowRight className="w-4 h-4" />
+                      </>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="add-payment-method-mobile"
+                    disabled={busy}
+                    onClick={openMandateStep}
+                    className="md:hidden w-full min-h-11 py-2.5 rounded-xl border border-slate-600 text-white font-semibold text-xs sm:text-sm"
+                  >
+                    Add payment method now
+                  </button>
                 </>
               )}
-            </button>
+            </div>
             <Link
               to={surfaceToPath("login", { loginMode: "signin", loginNextPath })}
               data-testid="auth-tab-signin"

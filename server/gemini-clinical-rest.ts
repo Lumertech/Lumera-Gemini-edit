@@ -5,8 +5,7 @@ import { initDatabase, getDb } from "./db.ts";
 import { startAppointmentReminderScheduler } from "./whatsapp-calendar.ts";
 import { ensureUsageWalletSchema, seedDemoUsageWallet } from "./usage-billing.ts";
 import { applyBundledServerNodeEnv, failFastRequiredProductionEnv } from "./runtime.ts";
-import { attachProductionSpaFallback } from "./spa-fallback.ts";
-import { isPublicPolicyHtmlPath } from "./policy-html.ts";
+import { attachProductionSpaFallback, isDedicatedPublicHtmlPath } from "./spa-fallback.ts";
 import { generateRuleBasedSoap, getPulseFallbackAnswer } from "./gemini-clinical-helpers.ts";
 import { AI_RUPEE_OUTPUT_RULE } from "./india-currency-copy.ts";
 
@@ -336,7 +335,7 @@ export async function startLumeraServer(app: Express, PORT: number) {
         p.startsWith("/src") ||
         p.startsWith("/node_modules") ||
         p.includes(".");
-      if ((req.method === "GET" || req.method === "HEAD") && !isAsset && !isPublicPolicyHtmlPath(p)) {
+      if ((req.method === "GET" || req.method === "HEAD") && !isAsset && !isDedicatedPublicHtmlPath(p)) {
         req.url = "/index.html";
       }
       next();

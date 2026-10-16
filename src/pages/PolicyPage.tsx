@@ -164,7 +164,7 @@ export const PolicyPage: React.FC<{ slug: string }> = ({ slug: initialSlug }) =>
             </p>
             {updatedAt && (
               <div className="mt-3 text-xs text-slate-400">
-                Last statutory revision: {new Date(updatedAt).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", year: "numeric", month: "long", day: "numeric" })}
+                Last updated: {new Date(updatedAt).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", year: "numeric", month: "long", day: "numeric" })}
               </div>
             )}
           </div>
@@ -285,7 +285,7 @@ export const PolicyPage: React.FC<{ slug: string }> = ({ slug: initialSlug }) =>
           <div className="bg-gradient-to-br from-slate-900 to-slate-800 text-white rounded-xl p-5 shadow-md space-y-3">
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-emerald-400" />
-              <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">Statutory Notice</span>
+              <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">Notice</span>
             </div>
             <p className="text-xs text-slate-300 leading-relaxed">
               {PRODUCT_NAME} is building a WhatsApp Cloud API integration. This is not Meta Tech Provider certification and App Review is not submitted. Policies below describe intended processing:
@@ -297,11 +297,11 @@ export const PolicyPage: React.FC<{ slug: string }> = ({ slug: initialSlug }) =>
               </li>
               <li className="flex items-center gap-1.5">
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                India DPDP Act &amp; ABDM Health Standards
+                We follow India&apos;s DPDP Act in how we handle data. ABDM is in sandbox testing and not yet live.
               </li>
               <li className="flex items-center gap-1.5">
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                TLS 1.3 End-to-End Edge Encryption
+                Traffic is encrypted in transit with TLS.
               </li>
             </ul>
           </div>
