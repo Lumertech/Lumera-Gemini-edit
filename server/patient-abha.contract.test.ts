@@ -544,9 +544,8 @@ describe("#35 dual onboard — same patientId + frozen link-abha", () => {
     const careContexts = discover.json.careContexts as Array<{ careContextReference: string }>;
     assert.ok(careContexts.some((row) => row.careContextReference === `CARE-CTX-${patient.uhid}-enc-1`));
 
-    const confirm = await jsonRequest(
+    const confirm = await signedGatewayRequest(
       port,
-      "POST",
       "/api/abdm/hip/link/on-confirm",
       { patientId, careContextReference: ctx.json.careContextReference },
       auth
@@ -571,9 +570,8 @@ describe("#35 dual onboard — same patientId + frozen link-abha", () => {
     assert.ok(init.json.consentRequestId);
     assert.equal(init.json.abdmMode, "stub");
 
-    const notify = await jsonRequest(
+    const notify = await signedGatewayRequest(
       port,
-      "POST",
       "/api/abdm/hiu/consent-request/on-status",
       {
         patientId,
@@ -595,9 +593,8 @@ describe("#35 dual onboard — same patientId + frozen link-abha", () => {
     assert.equal(notify.json.abdmMode, "stub");
     assert.match(String(notify.json.sandboxNotice || ""), /NHA sandbox/);
 
-    const hip = await jsonRequest(
+    const hip = await signedGatewayRequest(
       port,
-      "POST",
       "/api/abdm/hip/consent/on-notify",
       { patientId, consentId: `hip-${patientId}`, purpose: "HIP share stub" },
       auth
@@ -606,9 +603,8 @@ describe("#35 dual onboard — same patientId + frozen link-abha", () => {
     assert.equal(hip.json.kind, "hip_notify");
     assert.equal(hip.json.abdmMode, "stub");
 
-    const requested = await jsonRequest(
+    const requested = await signedGatewayRequest(
       port,
-      "POST",
       "/api/abdm/hiu/health-information/request",
       { patientId, consentId },
       auth
@@ -616,9 +612,8 @@ describe("#35 dual onboard — same patientId + frozen link-abha", () => {
     assert.equal(requested.status, 200, String(requested.json.error || ""));
     assert.equal(requested.json.kind, "hiu_fetch");
 
-    const received = await jsonRequest(
+    const received = await signedGatewayRequest(
       port,
-      "POST",
       "/api/abdm/hiu/health-information/on-receive",
       { patientId, consentId },
       auth
@@ -669,16 +664,14 @@ describe("#35 dual onboard — same patientId + frozen link-abha", () => {
     }
 
     const deniedId = `denied-${patientId}`;
-    await jsonRequest(
+    await signedGatewayRequest(
       port,
-      "POST",
       "/api/abdm/hiu/consent-request/on-status",
       { patientId, consentArtefact: { consentId: deniedId, status: "DENIED", purpose: "blocked" } },
       auth
     );
-    const blocked = await jsonRequest(
+    const blocked = await signedGatewayRequest(
       port,
-      "POST",
       "/api/abdm/hiu/health-information/request",
       { patientId, consentId: deniedId },
       auth

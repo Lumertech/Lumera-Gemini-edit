@@ -49,8 +49,17 @@ export function registerAbdmConsentRoutes(router: Router): void {
       { signatureMatched: hmac.matched === true }
     );
 
-  const allowCallbackWrite = (req: Request, res: Response, hmac: ReturnType<typeof callbackHmac>): boolean => {
-    const decision = authorizeAbdmCallbackWrite({ role: req.user?.role, hmac });
+  const allowCallbackWrite = (
+    req: Request,
+    res: Response,
+    hmac: ReturnType<typeof callbackHmac>,
+    opts?: { consentArtefact?: boolean }
+  ): boolean => {
+    const decision = authorizeAbdmCallbackWrite({
+      role: req.user?.role,
+      hmac,
+      consentArtefact: opts?.consentArtefact,
+    });
     if (decision.accept === false) {
       if (decision.code === "ROLE_DENIED") {
         denyUnlessPatientRecordRole(req, res);
@@ -58,6 +67,7 @@ export function registerAbdmConsentRoutes(router: Router): void {
       }
       res.status(decision.status).json({
         error: decision.error,
+        ...(decision.code ? { code: decision.code } : {}),
         abdmMode: resolveAbdmMode(),
         sandboxNotice: NHA_SANDBOX_NOTICE,
       });
@@ -74,7 +84,7 @@ export function registerAbdmConsentRoutes(router: Router): void {
     kind: ArtefactKind
   ) => {
     const hmac = callbackHmac(req);
-    if (!allowCallbackWrite(req, res, hmac)) return;
+    if (!allowCallbackWrite(req, res, hmac, { consentArtefact: true })) return;
 
     const tenantId = callbackClinicId(req, hmac);
     if (!tenantId) {

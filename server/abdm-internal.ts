@@ -75,25 +75,38 @@ export function callbackHmac(req: Request) {
 
 export type AbdmCallbackWriteAuth =
   | { accept: true }
-  | { accept: false; status: number; error: string; code?: "ROLE_DENIED" };
+  | { accept: false; status: number; error: string; code?: "ROLE_DENIED" | "SIGNATURE_REQUIRED" };
 
 /**
- * Gateway writes are allowed when the callback signature matched, or when the
- * caller is clinic staff. A patient session is never a callback caller, even
- * with a matching signature: callbackTenantId would otherwise use that clinic
- * and the body patientId.
- * Staff is still accepted when the signature is absent, including production
- * stub, so clinician screens keep working. Anonymous and failed signatures
- * stay closed.
+ * Care-context writes are allowed when the callback signature matched, or when
+ * the caller is clinic staff. A patient session is never a callback caller.
+ * Consent-artefact writes (`consentArtefact`) require a matched gateway
+ * signature. A staff session alone must not create or update one, or a clinic
+ * could store a GRANTED consent the gateway never issued.
  */
 export function authorizeAbdmCallbackWrite(opts: {
   role?: string | null;
   hmac: AbdmCallbackAuth;
+  consentArtefact?: boolean;
 }): AbdmCallbackWriteAuth {
   if (opts.role === "patient") {
     return { accept: false, status: 403, error: "Insufficient permissions", code: "ROLE_DENIED" };
   }
   if (opts.hmac.ok === true && opts.hmac.matched === true) return { accept: true };
+  if (opts.consentArtefact) {
+    if (opts.role) {
+      return {
+        accept: false,
+        status: 403,
+        error: "A matching X-ABDM-Signature is required",
+        code: "SIGNATURE_REQUIRED",
+      };
+    }
+    if (opts.hmac.ok === false) {
+      return { accept: false, status: opts.hmac.status, error: opts.hmac.error };
+    }
+    return { accept: false, status: 401, error: "Authentication required" };
+  }
   if (opts.role && isPatientRecordRole(opts.role)) return { accept: true };
   if (opts.hmac.ok === false) {
     return { accept: false, status: opts.hmac.status, error: opts.hmac.error };

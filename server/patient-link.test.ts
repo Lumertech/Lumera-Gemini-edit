@@ -433,6 +433,72 @@ describe("patient logins bind to users.patient_id", () => {
     assert.equal(ownInit.json.code, "ROLE_DENIED");
   });
 
+  it("stores a consent artefact only with a matched signature and still lets staff link a care context", async () => {
+    const { tenantId, now, suffix } = seedClinic("artefact");
+    const hfr = `HFR-ART-${suffix}`;
+    getDb().prepare("UPDATE tenants SET hfr_id = ? WHERE id = ?").run(hfr, tenantId);
+    const phone = localPhone("96131");
+    const staffEmail = `staff.art.${suffix}@example.com`;
+    const patientId = `pat-art-${suffix}`;
+    insertPatient(tenantId, patientId, phone, `chart.art.${suffix}@example.com`, now);
+    insertLogin(tenantId, `user-art-${suffix}`, "+91 96000 10031", staffEmail, now, "", "doctor");
+    const staffAuth = { Authorization: `Bearer ${await login(staffEmail)}` };
+    const artefactCount = () =>
+      (
+        getDb()
+          .prepare("SELECT COUNT(*) AS n FROM abdm_consent_artefacts WHERE tenant_id = ? AND patient_id = ?")
+          .get(tenantId, patientId) as { n: number }
+      ).n;
+    const before = artefactCount();
+    const granted = {
+      patientId,
+      consentArtefact: { consentId: `grant-${suffix}`, status: "GRANTED", purpose: "forged" },
+    };
+
+    const missing = await jsonRequest(port, "POST", "/api/abdm/hiu/consent-request/on-status", granted, staffAuth);
+    assert.equal(missing.status, 403, String(missing.json.error || "missing signature"));
+    assert.equal(missing.json.code, "SIGNATURE_REQUIRED");
+    assert.equal(artefactCount(), before);
+
+    const previous = process.env.ABDM_CALLBACK_SECRET;
+    process.env.ABDM_CALLBACK_SECRET = GATEWAY_HMAC_SECRET;
+    try {
+      const bad = await jsonRequest(port, "POST", "/api/abdm/hip/consent/on-notify", granted, {
+        ...staffAuth,
+        "X-ABDM-Signature": "sha256=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      });
+      assert.equal(bad.status, 403, String(bad.json.error || "bad signature"));
+      assert.equal(bad.json.code, "SIGNATURE_REQUIRED");
+      assert.equal(artefactCount(), before);
+
+      const signedBody = {
+        patientId,
+        consentArtefact: { consentId: `grant-ok-${suffix}`, status: "GRANTED", purpose: "gateway" },
+      };
+      const signed = await jsonRequest(port, "POST", "/api/abdm/hiu/consent-request/on-status", signedBody, {
+        "X-HIP-ID": hfr,
+        "X-ABDM-Signature": signAbdmCallback(GATEWAY_HMAC_SECRET, JSON.stringify(signedBody)),
+      });
+      assert.equal(signed.status, 202, String(signed.json.error || "signed gateway"));
+      assert.equal(signed.json.patientId, patientId);
+      assert.equal(signed.json.kind, "hiu_consent");
+      assert.equal(artefactCount(), before + 1);
+    } finally {
+      if (previous === undefined) delete process.env.ABDM_CALLBACK_SECRET;
+      else process.env.ABDM_CALLBACK_SECRET = previous;
+    }
+
+    const care = await jsonRequest(
+      port,
+      "POST",
+      "/api/abdm/hip/link/care-context",
+      { patientId, encounterId: "enc-staff", display: "OPD" },
+      staffAuth
+    );
+    assert.equal(care.status, 200, String(care.json.error || "staff care-context"));
+    assert.equal(care.json.patientId, patientId);
+  });
+
   it("shows unlinked patients the WhatsApp OTP record prompt", () => {
     const portal = fs.readFileSync(path.join(root, "src/components/PatientPortal.tsx"), "utf8");
     assert.match(portal, /Verify via WhatsApp OTP to see your records/);

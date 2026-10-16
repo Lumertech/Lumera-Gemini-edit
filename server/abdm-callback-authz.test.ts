@@ -31,4 +31,20 @@ describe("ABDM callback write authorization", () => {
     assert.equal(anonymousRejected.accept, false);
     if (!anonymousRejected.accept) assert.equal(anonymousRejected.status, 401);
   });
+
+  it("requires a matched signature for consent artefacts and still allows staff care contexts", () => {
+    const staffMissing = authorizeAbdmCallbackWrite({ role: "doctor", hmac: unsigned, consentArtefact: true });
+    assert.equal(staffMissing.accept, false);
+    if (!staffMissing.accept) {
+      assert.equal(staffMissing.status, 403);
+      assert.equal(staffMissing.code, "SIGNATURE_REQUIRED");
+    }
+    const staffBad = authorizeAbdmCallbackWrite({ role: "doctor", hmac: rejected, consentArtefact: true });
+    assert.equal(staffBad.accept, false);
+    if (!staffBad.accept) assert.equal(staffBad.status, 403);
+
+    assert.equal(authorizeAbdmCallbackWrite({ role: undefined, hmac: signed, consentArtefact: true }).accept, true);
+    assert.equal(authorizeAbdmCallbackWrite({ role: "doctor", hmac: signed, consentArtefact: true }).accept, true);
+    assert.equal(authorizeAbdmCallbackWrite({ role: "doctor", hmac: unsigned }).accept, true);
+  });
 });
