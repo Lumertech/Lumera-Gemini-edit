@@ -39,6 +39,7 @@ import {
   paymentModeFromInvoice,
   paymentStatusLabel,
   pickInvoiceForContext,
+  receiptFailureMessage,
   receiptHonestyFromResponse,
   savedInvoiceView,
   shouldRecomputeDraftLines,
@@ -429,7 +430,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
     } catch (err) {
       setWhatsAppReceiptSent(false);
       setReceiptHonesty(null);
-      setCollectError(err instanceof Error ? err.message : 'WhatsApp receipt failed');
+      setCollectError(receiptFailureMessage(err));
     } finally {
       setIsSendingWhatsAppReceipt(false);
     }

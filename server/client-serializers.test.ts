@@ -7,6 +7,7 @@ import {
   PUBLIC_TENANT_KEYS,
   isClientSecretKey,
   patientTenant,
+  patientVisibleClinicPhone,
   publicBranch,
   publicTenant,
 } from "./client-serializers.ts";
@@ -414,6 +415,24 @@ describe("client row serializers", () => {
     });
     assert.equal(explicit?.whatsapp_number, ownerPhone);
   });
+
+  it("prints only a published clinic phone and drops an unlisted stamp", () => {
+    assert.equal(
+      patientVisibleClinicPhone("+91 91111 22222", {
+        phone: "+91 20 4000 1000",
+        owner_phone: "+91 90000 77771",
+        whatsapp_number: "",
+      }),
+      "+91 20 4000 1000"
+    );
+    assert.equal(
+      patientVisibleClinicPhone("+91 90000 77771", {
+        phone: "+91 90000 77771",
+        owner_phone: "+91 90000 77771",
+      }),
+      null
+    );
+  });
 });
 
 describe("tenant, user, and branch HTTP responses omit secrets", () => {
@@ -679,6 +698,8 @@ describe("tenant, user, and branch HTTP responses omit secrets", () => {
     const passwordHash = hashPassword("Lumera@2026");
     const adminEmail = `admin.${suffix}@serializer-test.example`;
     const patientEmail = `patient.${suffix}@serializer-test.example`;
+    const patientPhone = `+91 98${String(Date.now()).slice(-8)}`;
+    const patientId = `pat-${suffix}`;
 
     getDb()
       .prepare(
@@ -731,9 +752,17 @@ describe("tenant, user, and branch HTTP responses omit secrets", () => {
         `INSERT INTO users (
            id, tenant_id, email, password_hash, name, role, status, phone, clinic_name,
            onboarding_completed, practice_type, specialty, last_login, created_at
-         ) VALUES (?, ?, ?, ?, 'Portal Patient', 'patient', 'active', '+91 98200 11111', 'Minimised Clinic', 1, 'individual', 'General Medicine', ?, ?)`
+         ) VALUES (?, ?, ?, ?, 'Portal Patient', 'patient', 'active', ?, 'Minimised Clinic', 1, 'individual', 'General Medicine', ?, ?)`
       )
-      .run(`user-patient-${suffix}`, tenantId, patientEmail, passwordHash, now, now);
+      .run(`user-patient-${suffix}`, tenantId, patientEmail, passwordHash, patientPhone, now, now);
+    getDb()
+      .prepare(
+        `INSERT INTO patients (
+           id, tenant_id, uhid, name, age, gender, phone, email, blood_group, allergies, chronic_conditions,
+           emergency_contact, address, created_at
+         ) VALUES (?, ?, ?, 'Portal Patient', 40, 'Female', ?, ?, 'O+', '[]', '[]', '', '', ?)`
+      )
+      .run(patientId, tenantId, `UHID-${suffix}`, patientPhone, patientEmail, now);
     getDb()
       .prepare(
         `INSERT INTO doctors (
@@ -748,20 +777,21 @@ describe("tenant, user, and branch HTTP responses omit secrets", () => {
            id, tenant_id, rx_number, patient_id, patient_name, patient_phone, patient_uhid,
            doctor_id, doctor_name, doctor_specialty, doctor_reg_number, date, diagnosis,
            medicines, lab_tests, advice, follow_up_date, pdf_url, created_at, clinic_name, clinic_phone
-         ) VALUES (?, ?, ?, ?, 'Portal Patient', '+91 98200 11111', 'UHID-1', ?, ?, 'General Medicine', ?, '2026-10-16', 'Checkup', '[]', '[]', '[]', '', '', ?, 'Minimised Clinic', ?)`
+         ) VALUES (?, ?, ?, ?, 'Portal Patient', ?, 'UHID-1', ?, ?, 'General Medicine', ?, '2026-10-16', 'Checkup', '[]', '[]', '[]', '', '', ?, 'Minimised Clinic', ?)`
       )
-      .run(`rx-${suffix}`, tenantId, `RX-${suffix}`, `pat-${suffix}`, `doc-${suffix}`, doctorName, doctorReg, now, ownerPhone);
+      .run(`rx-${suffix}`, tenantId, `RX-${suffix}`, patientId, patientPhone, `doc-${suffix}`, doctorName, doctorReg, now, ownerPhone);
     getDb()
       .prepare(
         `INSERT INTO invoices (
-           id, tenant_id, invoice_number, date, gstin, upi_id, total_amount, status, created_at
-         ) VALUES (?, ?, ?, '2026-10-16', ?, 'publishedclinic@upi', 500, 'Paid', ?)`
+           id, tenant_id, invoice_number, patient_id, date, gstin, upi_id, total_amount, status, created_at,
+           razorpay_order_id, issued_by, receipt_whatsapp_status
+         ) VALUES (?, ?, ?, ?, '2026-10-16', ?, 'publishedclinic@upi', 500, 'Paid', ?, 'order_canary', 'Dr Hidden Owner', 'sent')`
       )
-      .run(`inv-${suffix}`, tenantId, `INV-${suffix}`, gstin, now);
+      .run(`inv-${suffix}`, tenantId, `INV-${suffix}`, patientId, gstin, now);
 
     const patientToken = await login(patientEmail);
     const patientAuth = { Authorization: `Bearer ${patientToken}` };
-    const forbidden = [ownerPhone, ownerEmail, ownerName, ownerUserId, gstin, pan, TOKEN, doctorPhone, doctorEmail, "QCANARY", "waba_hidden_canary", "pnid_hidden_canary"];
+    const forbidden = [ownerPhone, ownerEmail, ownerName, ownerUserId, pan, TOKEN, doctorPhone, doctorEmail, "QCANARY", "waba_hidden_canary", "pnid_hidden_canary"];
 
     function assertAllowlistedTenant(tenant: Record<string, unknown>, label: string) {
       assert.deepEqual(Object.keys(tenant).sort(), [...PATIENT_TENANT_KEYS].sort(), label);
@@ -770,19 +800,20 @@ describe("tenant, user, and branch HTTP responses omit secrets", () => {
       assert.equal(tenant.email, null, label);
       assert.equal(tenant.whatsapp_number, null, label);
       assert.equal(tenant.upi_id, "publishedclinic@upi", label);
-      assert.equal(tenant.doctor_name, doctorName, label);
-      assert.equal(tenant.doctor_reg_number, doctorReg, label);
+      assert.equal(tenant.doctor_name, null, label);
+      assert.equal(tenant.doctor_reg_number, null, label);
       assert.equal(tenant.opening_hours, "09:00-13:00", label);
       assert.deepEqual(tenant.specialties, ["General Medicine"], label);
       assert.equal(tenant.address, "1 Public Lane, Pune", label);
     }
 
-    const paths = ["/api/me", "/api/auth/me", "/api/tenant/current", "/api/tenant/letterhead", "/api/billing/settings", "/api/appointments", "/api/doctors", "/api/prescriptions", "/api/invoices"];
+    const paths = ["/api/me", "/api/auth/me", "/api/tenant/current", "/api/tenant/letterhead", "/api/appointments", "/api/doctors", "/api/prescriptions", "/api/invoices"];
     for (const path of paths) {
       const res = await jsonRequest(port, "GET", path, undefined, patientAuth);
       assert.equal(res.status, 200, `${path} ${String(res.json.error || "")}`);
       const tenant = res.json.tenant as Record<string, unknown>;
       assertAllowlistedTenant(tenant, path);
+      assert.equal(JSON.stringify(tenant).includes(gstin), false, path);
       const body = JSON.stringify(res.json);
       for (const secret of forbidden) {
         assert.equal(body.includes(secret), false, `${path} leaked ${secret}`);
@@ -797,8 +828,7 @@ describe("tenant, user, and branch HTTP responses omit secrets", () => {
     assert.equal(card.whatsappNumber, null);
 
     const settings = await jsonRequest(port, "GET", "/api/billing/settings", undefined, patientAuth);
-    assert.equal(Object.prototype.hasOwnProperty.call(settings.json, "gstin"), false);
-    assert.equal(settings.json.upiId, "publishedclinic@upi");
+    assert.equal(settings.status, 403);
 
     const doctors = await jsonRequest(port, "GET", "/api/doctors", undefined, patientAuth);
     const doctor = (doctors.json.doctors as Record<string, unknown>[])[0];
@@ -813,11 +843,18 @@ describe("tenant, user, and branch HTTP responses omit secrets", () => {
     assert.equal(rx.doctorName, doctorName);
     assert.equal(rx.doctorRegNumber, doctorReg);
     assert.equal(rx.clinicPhone, "");
+    const oneRx = await jsonRequest(port, "GET", `/api/prescriptions/rx-${suffix}`, undefined, patientAuth);
+    assert.equal(oneRx.status, 200);
+    assert.equal((oneRx.json.tenant as { doctor_name?: string }).doctor_name, doctorName);
+    assert.equal((oneRx.json.tenant as { doctor_reg_number?: string }).doctor_reg_number, doctorReg);
 
     const invoices = await jsonRequest(port, "GET", "/api/invoices", undefined, patientAuth);
     const invoice = (invoices.json.invoices as Record<string, unknown>[])[0];
-    assert.equal(Object.prototype.hasOwnProperty.call(invoice, "gstin"), false);
+    assert.equal(invoice.gstin, gstin);
     assert.equal(invoice.upiId, "publishedclinic@upi");
+    assert.equal(Object.prototype.hasOwnProperty.call(invoice, "razorpayOrderId"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(invoice, "issuedBy"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(invoice, "receiptWhatsAppStatus"), false);
 
     const me = await jsonRequest(port, "GET", "/api/auth/me", undefined, patientAuth);
     assert.equal(Object.prototype.hasOwnProperty.call(me.json.user, "gstin"), false);

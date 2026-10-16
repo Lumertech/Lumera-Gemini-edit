@@ -15,6 +15,8 @@ import {
   paymentModeFromInvoice,
   paymentStatusLabel,
   pickInvoiceForContext,
+  META_PAYMENT_REQUIRED,
+  receiptFailureMessage,
   receiptHonestyFromResponse,
   savedInvoiceView,
   shouldRecomputeDraftLines,
@@ -255,5 +257,14 @@ describe("BillingManager Wave 2 source gates", () => {
     assert.doesNotMatch(billingUi, /INV-2026-\$\{Math\.floor/);
     assert.doesNotMatch(billingUi, /pickInvoiceForContext\([\s\S]{0,180}patientId/);
     assert.doesNotMatch(billingUi, /Lumera/);
+    assert.match(billingUi, /receiptFailureMessage/);
+    assert.doesNotMatch(billingUi, /WALLET_INSUFFICIENT/);
+  });
+
+  it("names a Meta payment failure instead of a wallet top-up", () => {
+    const err = new Error("Usage wallet balance is insufficient. Top up now to continue AI Scribe.");
+    (err as Error & { code?: string }).code = META_PAYMENT_REQUIRED;
+    assert.equal(receiptFailureMessage(err), "WhatsApp could not send this receipt. Meta needs a payment method on the clinic number.");
+    assert.equal(receiptFailureMessage(new Error("Network down")), "Network down");
   });
 });

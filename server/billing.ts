@@ -22,20 +22,38 @@ import { invoiceNumberToPersist } from "../src/lib/billingCollect.ts";
 import { upsertScopedConversation } from "./whatsapp-scope.ts";
 import { WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
 import { formatINR } from "../src/lib/currency.ts";
-import { loadPatientTenant, patientLetterhead, requestIsPatient } from "./patient-tenant.ts";
+import { loadPatientTenant, rejectPatientRole, requestIsPatient, sessionPatientId } from "./patient-tenant.ts";
 
 function tenantIdOf(req: Request): string {
   return String(req.user?.tenantId || "").trim();
 }
 
+const PATIENT_INVOICE_DROP = [
+  "razorpayOrderId",
+  "razorpayPaymentId",
+  "razorpayPaymentLinkId",
+  "issuedBy",
+  "receiptWhatsAppStatus",
+  "receiptWhatsAppChannel",
+  "receiptWhatsAppMessageId",
+] as const;
+
+function invoiceForPatient(row: Record<string, unknown>) {
+  const mapped = { ...mapInvoice(row) } as Record<string, unknown>;
+  for (const key of PATIENT_INVOICE_DROP) delete mapped[key];
+  return mapped;
+}
+
 function invoiceForClient(req: Request, row: Record<string, unknown>) {
-  const mapped = mapInvoice(row);
-  if (!requestIsPatient(req)) return { invoice: mapped };
-  const { gstin: _gstin, ...rest } = mapped;
+  if (!requestIsPatient(req)) return { invoice: mapInvoice(row) };
   return {
-    invoice: rest,
+    invoice: invoiceForPatient(row),
     tenant: loadPatientTenant(String(row.tenant_id || tenantIdOf(req))),
   };
+}
+
+function patientOwnsInvoice(req: Request, row: Record<string, unknown>): boolean {
+  return String(row.patient_id || "") === (sessionPatientId(req) || "");
 }
 
 function requireTenant(req: Request, res: Response): string | null {
@@ -430,16 +448,8 @@ export function createBillingRouter(): Router {
   const api = Router();
 
   api.get("/billing/settings", requireAuth, (req, res) => {
+    if (rejectPatientRole(req, res)) return;
     const tenantId = tenantIdOf(req);
-    if (requestIsPatient(req)) {
-      const tenant = loadPatientTenant(tenantId);
-      return res.json({
-        clinicName: tenant?.name ?? null,
-        upiId: tenant?.upi_id ?? null,
-        tenant,
-        letterhead: patientLetterhead(tenant),
-      });
-    }
     const letterhead = getTenantLetterhead(tenantId, req.user?.id);
     const ids = scrubSeedBillingIds(tenantId, { gstin: letterhead.gstin, upiId: letterhead.upiId });
     res.json({
@@ -456,6 +466,7 @@ export function createBillingRouter(): Router {
   });
 
   api.get("/billing/day-end", requireAuth, (req, res) => {
+    if (rejectPatientRole(req, res)) return;
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     const date = todayDate(String(req.query.date || ""));
@@ -483,13 +494,7 @@ export function createBillingRouter(): Router {
       paidAmount,
       dueCount,
       dueAmount,
-      invoices: requestIsPatient(req)
-        ? rows.map((row) => {
-            const { gstin: _gstin, ...rest } = mapInvoice(row);
-            return rest;
-          })
-        : rows.map(mapInvoice),
-      ...(requestIsPatient(req) ? { tenant: loadPatientTenant(tenantId) } : {}),
+      invoices: rows.map(mapInvoice),
     });
   });
 
@@ -509,6 +514,14 @@ export function createBillingRouter(): Router {
         clauses.push("appointment_id = ?");
         params.push(appointmentId);
       }
+      if (requestIsPatient(req)) {
+        const ownId = sessionPatientId(req);
+        if (!ownId) {
+          return res.json({ invoices: [], tenant: loadPatientTenant(tenantId) });
+        }
+        clauses.push("patient_id = ?");
+        params.push(ownId);
+      }
       const rows = getDb()
         .prepare(`SELECT * FROM invoices WHERE ${clauses.join(" AND ")} ORDER BY created_at DESC`)
         .all(...params) as Record<string, unknown>[];
@@ -517,10 +530,7 @@ export function createBillingRouter(): Router {
         return;
       }
       res.json({
-        invoices: rows.map((row) => {
-          const { gstin: _gstin, ...rest } = mapInvoice(row);
-          return rest;
-        }),
+        invoices: rows.map(invoiceForPatient),
         tenant: loadPatientTenant(tenantId),
       });
     } catch (err) {
@@ -533,11 +543,14 @@ export function createBillingRouter(): Router {
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     const row = getTenantInvoice(tenantId, req.params.id);
-    if (!row) return res.status(404).json({ error: "Invoice not found" });
+    if (!row || (requestIsPatient(req) && !patientOwnsInvoice(req, row))) {
+      return res.status(404).json({ error: "Invoice not found" });
+    }
     res.json(invoiceForClient(req, row));
   });
 
   api.post("/invoices", requireAuth, (req, res) => {
+    if (rejectPatientRole(req, res)) return;
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     try {
@@ -562,7 +575,9 @@ export function createBillingRouter(): Router {
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     const row = getTenantInvoice(tenantId, req.params.id);
-    if (!row) return res.status(404).json({ error: "Invoice not found" });
+    if (!row || (requestIsPatient(req) && !patientOwnsInvoice(req, row))) {
+      return res.status(404).json({ error: "Invoice not found" });
+    }
     if (String(row.status) === "Paid") {
       return res.json({ ...invoiceForClient(req, row), sandbox: false, alreadyPaid: true });
     }
@@ -616,6 +631,7 @@ export function createBillingRouter(): Router {
   });
 
   api.post("/invoices/:id/sandbox-pay", requireAuth, (req, res) => {
+    if (rejectPatientRole(req, res)) return;
     if (!sandboxSimulatorsEnabled()) {
       return res.status(403).json({
         error: "SANDBOX / DEV-ONLY Razorpay mock is disabled in production.",
@@ -640,6 +656,7 @@ export function createBillingRouter(): Router {
   });
 
   api.post("/invoices/:id/desk-collect", requireAuth, (req, res) => {
+    if (rejectPatientRole(req, res)) return;
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     const row = getTenantInvoice(tenantId, req.params.id);
@@ -659,6 +676,7 @@ export function createBillingRouter(): Router {
   });
 
   api.post("/invoices/:id/receipt", requireAuth, async (req, res) => {
+    if (rejectPatientRole(req, res)) return;
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     const row = getTenantInvoice(tenantId, req.params.id);
@@ -671,8 +689,11 @@ export function createBillingRouter(): Router {
     if (result.ok === false) {
       const status = cloudDispatchHttpStatus(result.error, result.status);
       return res.status(status).json({
-        error: result.error,
-        code: status === 402 ? "WALLET_INSUFFICIENT" : undefined,
+        error:
+          status === 402
+            ? "WhatsApp could not send this receipt. Meta needs a payment method on the clinic number."
+            : result.error,
+        code: status === 402 ? "META_PAYMENT_REQUIRED" : undefined,
         ...updated,
         channel: result.channel,
         graphDelivered: false,

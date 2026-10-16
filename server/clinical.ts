@@ -15,7 +15,13 @@ import { reportCaughtError } from "./error-tracker.ts";
 import { resolveAbdmMode, type AbdmMode } from "./abdm-mode.ts";
 import { registerPatientDocumentRoutes } from "./patient-documents.ts";
 import { clinicCalendarDate, parseAppointmentListDate } from "../src/lib/clinicDay.ts";
-import { loadPatientClinicPhone, loadPatientTenant, requestIsPatient } from "./patient-tenant.ts";
+import {
+  loadPatientClinicPhone,
+  loadPatientTenant,
+  rejectPatientRole,
+  requestIsPatient,
+  sessionPatientId,
+} from "./patient-tenant.ts";
 import type { PatientTenantExtras } from "./client-serializers.ts";
 
 function tenantIdOf(req: Request): string {
@@ -37,6 +43,25 @@ function prescriptionForClient(req: Request, tenantId: string, row: Record<strin
   if (!requestIsPatient(req)) return mapped;
   const phone = loadPatientClinicPhone(tenantId, mapped.clinicPhone);
   return { ...mapped, clinicPhone: phone || "" };
+}
+
+function patientCanRead(req: Request, recordPatientId: unknown): boolean {
+  if (!requestIsPatient(req)) return true;
+  const own = sessionPatientId(req);
+  return Boolean(own) && own === String(recordPatientId || "").trim();
+}
+
+function appointmentDoctorExtras(row: Record<string, unknown>): PatientTenantExtras {
+  const doctorId = String(row.doctor_id || "").trim();
+  const doctor = doctorId
+    ? (getDb().prepare("SELECT reg_number FROM doctors WHERE id = ?").get(doctorId) as
+        | { reg_number?: string }
+        | undefined)
+    : undefined;
+  return {
+    doctorName: String(row.doctor_name || ""),
+    doctorRegNumber: String(doctor?.reg_number || ""),
+  };
 }
 
 function requireTenant(req: Request, res: Response): string | null {
@@ -950,6 +975,7 @@ export function createClinicalRouter(): Router {
   const api = Router();
 
   api.get("/patients", requireAuth, (req, res) => {
+    if (rejectPatientRole(req, res)) return;
     try {
       const tenantId = tenantIdOf(req);
       if (!tenantId) return res.json({ patients: [] });
@@ -970,7 +996,7 @@ export function createClinicalRouter(): Router {
     if (!tenantId) return;
     try {
       const row = getTenantPatient(tenantId, req.params.id);
-      if (!row) return res.status(404).json({ error: "Patient not found" });
+      if (!row || !patientCanRead(req, row.id)) return res.status(404).json({ error: "Patient not found" });
       const visits = getDb()
         .prepare(
           `SELECT * FROM appointments
@@ -1002,11 +1028,12 @@ export function createClinicalRouter(): Router {
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     const row = getTenantPatient(tenantId, req.params.id);
-    if (!row) return res.status(404).json({ error: "Patient not found" });
+    if (!row || !patientCanRead(req, row.id)) return res.status(404).json({ error: "Patient not found" });
     res.json({ patient: patientWithConsents(row, tenantId) });
   });
 
   api.post("/patients", requireAuth, (req, res) => {
+    if (rejectPatientRole(req, res)) return;
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     try {
@@ -1034,6 +1061,7 @@ export function createClinicalRouter(): Router {
   });
 
   api.post("/patients/link-abha", requireAuth, (req, res) => {
+    if (rejectPatientRole(req, res)) return;
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     try {
@@ -1052,6 +1080,7 @@ export function createClinicalRouter(): Router {
   });
 
   api.patch("/patients/:id/abha", requireAuth, (req, res) => {
+    if (rejectPatientRole(req, res)) return;
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     try {
@@ -1082,7 +1111,7 @@ export function createClinicalRouter(): Router {
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     const existing = getTenantPatient(tenantId, req.params.id);
-    if (!existing) return res.status(404).json({ error: "Patient not found" });
+    if (!existing || !patientCanRead(req, existing.id)) return res.status(404).json({ error: "Patient not found" });
     try {
       rejectUnlockedKyc((req.body || {}) as Record<string, unknown>);
     } catch (err: unknown) {
@@ -1136,7 +1165,7 @@ export function createClinicalRouter(): Router {
       if (!tenantId) return res.json({ appointments: [] });
       const parsed = parseAppointmentListDate(req.query.date);
       const date = parsed.kind === "all" ? null : parsed.kind === "today" ? clinicDayForTenant(tenantId) : parsed.date;
-      const rows = listTenantAppointments(tenantId, date);
+      const rows = listTenantAppointments(tenantId, date).filter((row) => patientCanRead(req, row.patient_id));
       const appointments = rows.map(mapAppointment);
       res.json(withPatientTenant(req, tenantId, date ? { appointments, date } : { appointments }));
     } catch (err) {
@@ -1153,13 +1182,25 @@ export function createClinicalRouter(): Router {
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     const row = getTenantAppointment(tenantId, req.params.id);
-    if (!row) return res.status(404).json({ error: "Appointment not found" });
-    res.json(withPatientTenant(req, tenantId, { appointment: mapAppointment(row) }));
+    if (!row || !patientCanRead(req, row.patient_id)) return res.status(404).json({ error: "Appointment not found" });
+    res.json(
+      withPatientTenant(req, tenantId, { appointment: mapAppointment(row) }, appointmentDoctorExtras(row))
+    );
   });
 
   api.post("/appointments", requireAuth, (req, res) => {
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
+    if (requestIsPatient(req)) {
+      const own = sessionPatientId(req);
+      const body = (req.body || {}) as Record<string, unknown>;
+      const requested = String(body.patientId || body.patient_id || "").trim();
+      if (!own || (requested && requested !== own)) {
+        return res.status(403).json({ error: "Insufficient permissions" });
+      }
+      body.patientId = own;
+      req.body = body;
+    }
     try {
       const row = insertAppointment(tenantId, req.body || {}, { id: req.user?.id, name: req.user?.name });
       writeAudit(
@@ -1180,6 +1221,12 @@ export function createClinicalRouter(): Router {
   api.patch("/appointments/:id", requireAuth, (req, res) => {
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
+    if (requestIsPatient(req)) {
+      const existing = getTenantAppointment(tenantId, req.params.id);
+      if (!existing || !patientCanRead(req, existing.patient_id)) {
+        return res.status(404).json({ error: "Appointment not found" });
+      }
+    }
     try {
       const row = updateAppointment(tenantId, req.params.id, req.body || {});
       res.json(withPatientTenant(req, tenantId, { appointment: mapAppointment(row) }));
@@ -1194,7 +1241,17 @@ export function createClinicalRouter(): Router {
     try {
       const tenantId = tenantIdOf(req);
       if (!tenantId) return res.json({ prescriptions: [] });
-      const patientId = String(req.query.patientId || req.query.patient_id || "").trim();
+      let patientId = String(req.query.patientId || req.query.patient_id || "").trim();
+      if (requestIsPatient(req)) {
+        const own = sessionPatientId(req);
+        if (patientId && patientId !== own) {
+          return res.status(404).json({ error: "Prescription not found" });
+        }
+        if (!own) {
+          return res.json(withPatientTenant(req, tenantId, { prescriptions: [] }));
+        }
+        patientId = own;
+      }
       const rows = (
         patientId
           ? getDb()
@@ -1224,7 +1281,7 @@ export function createClinicalRouter(): Router {
       (getDb()
         .prepare("SELECT * FROM prescriptions WHERE tenant_id = ? AND rx_number = ?")
         .get(tenantId, req.params.id) as Record<string, unknown> | undefined);
-    if (!row) return res.status(404).json({ error: "Prescription not found" });
+    if (!row || !patientCanRead(req, row.patient_id)) return res.status(404).json({ error: "Prescription not found" });
     const prescription = prescriptionForClient(req, tenantId, row);
     res.json(
       withPatientTenant(req, tenantId, { prescription }, {
@@ -1235,6 +1292,7 @@ export function createClinicalRouter(): Router {
   });
 
   api.post("/prescriptions", requireAuth, (req, res) => {
+    if (rejectPatientRole(req, res)) return;
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     try {
@@ -1271,6 +1329,9 @@ export function createClinicalRouter(): Router {
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     const patientId = req.params.patientId;
+    if (requestIsPatient(req) && !patientCanRead(req, patientId)) {
+      return res.status(404).json({ error: "Prescription not found" });
+    }
     if (!requireTenantPatient(tenantId, patientId, res)) return;
     const row = getDb()
       .prepare("SELECT * FROM prescription_drafts WHERE tenant_id = ? AND patient_id = ?")
@@ -1286,6 +1347,7 @@ export function createClinicalRouter(): Router {
   });
 
   api.post("/prescriptions/draft", requireAuth, (req, res) => {
+    if (rejectPatientRole(req, res)) return;
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     try {

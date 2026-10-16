@@ -331,17 +331,12 @@ export function patientTenant(
 
 /** Phone printed on an Rx for a patient: the published clinic line, never the owner handset. */
 export function patientVisibleClinicPhone(
-  stamped: unknown,
+  _stamped: unknown,
   row: Record<string, unknown> | null | undefined
 ): string | null {
   const tenant = patientTenant(row);
   const published = [tenant?.phone, tenant?.whatsapp_number].filter(
     (value): value is string => typeof value === "string" && value.length > 0
   );
-  const text = textOrNull(stamped);
-  if (text && published.some((value) => sameContact(text, value))) return text;
-  const owner = row ? textOrNull(readColumn(row, "owner_phone")) : null;
-  if (text && owner && sameContact(text, owner)) return published[0] || null;
-  if (text) return text;
   return published[0] || null;
 }

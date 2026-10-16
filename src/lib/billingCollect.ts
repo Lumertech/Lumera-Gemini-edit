@@ -86,7 +86,20 @@ export type ReceiptDispatchResult = {
   wamid?: string | null;
   messageId?: string | null;
   notice?: string;
+  code?: string;
 };
+
+/** Receipt send failed because Meta needs a payment method. Not a Lumera wallet. */
+export const META_PAYMENT_REQUIRED = "META_PAYMENT_REQUIRED";
+
+export function receiptFailureMessage(error: unknown): string {
+  const code =
+    error && typeof error === "object" && "code" in error ? String((error as { code?: string }).code || "") : "";
+  if (code === META_PAYMENT_REQUIRED) {
+    return "WhatsApp could not send this receipt. Meta needs a payment method on the clinic number.";
+  }
+  return error instanceof Error ? error.message : "WhatsApp receipt failed";
+}
 
 export type ReceiptHonesty = {
   graphDelivered: boolean;
