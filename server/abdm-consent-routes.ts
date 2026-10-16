@@ -160,8 +160,8 @@ export function registerAbdmConsentRoutes(router: Router): void {
       getDb(),
       req.user?.id || null,
       req.user?.name || "ABDM callback",
-      `ABDM ${kind} (NHA sandbox)`,
-      `patient ${patientId} artefact ${artefact.consentId}`
+      `ABDM ${kind}`,
+      `patient ${patientId} artefact ${artefact.consentId} mode:'${resolveAbdmMode()}'`
     );
     const artefacts = listTenantConsentArtefacts(tenantId, patientId);
     const ack = kind === "hiu_fetch" || kind === "hiu_receive" || kind === "hip_on_request" ? 200 : 202;
@@ -346,7 +346,7 @@ export function registerAbdmConsentRoutes(router: Router): void {
         id: persistId,
         rxNumber: `RX-SBX-${persistId.slice(-6)}`,
         date: new Date().toISOString(),
-        diagnosis: "NHA sandbox stub record",
+        diagnosis: "local stub record",
         icd10Code: "",
         medicines: [],
       },

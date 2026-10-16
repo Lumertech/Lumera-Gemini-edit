@@ -152,7 +152,7 @@ export const DhisMeter: React.FC<{ compact?: boolean; onSimulateSuccess?: () => 
                 <h3 className="font-bold text-sm text-white flex items-center gap-1.5">
                   DHIS Incentive Meter
                   <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 font-mono font-semibold">
-                    NHA sandbox
+                    local stub
                   </span>
                 </h3>
                 <p className="text-xs text-purple-200/70">NHA Digital Health Incentive Scheme ({d.currentMonth})</p>
@@ -257,14 +257,14 @@ export const DhisMeter: React.FC<{ compact?: boolean; onSimulateSuccess?: () => 
               <div>
                 <div className="flex items-center gap-2">
                   <h2 className="text-xl font-bold text-slate-900 font-manrope">
-                    ABDM v3 Gateway & DHIS Incentive Automation
+                    ABDM v3 Gateway & DHIS Incentive Automation (local stub)
                   </h2>
                   <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1">
-                    <CheckCircle2 className="w-3 h-3" /> NHA sandbox
+                    <CheckCircle2 className="w-3 h-3" /> local stub
                   </span>
                 </div>
                 <p className="text-sm text-slate-500 mt-0.5">
-                  Ayushman Bharat Digital Mission (ABDM) M1–M3 path — local stub / NHA sandbox (not a live incentive claim)
+                  Ayushman Bharat Digital Mission (ABDM) M1–M3 path — local stub (not a live incentive claim)
                 </p>
               </div>
             </div>
@@ -305,10 +305,10 @@ export const DhisMeter: React.FC<{ compact?: boolean; onSimulateSuccess?: () => 
           <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
             <div className="flex items-center gap-1.5 text-xs text-slate-500 mb-1">
               <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-              <span className="font-semibold text-slate-700">M2: Aadhaar e-KYC</span>
+              <span className="font-semibold text-slate-700">M2: Aadhaar e-KYC (sandbox)</span>
             </div>
-            <span className="font-mono text-xs font-bold text-slate-900 block">ABHA Creation & QR</span>
-            <span className="text-[11px] text-slate-500">NHA sandbox path</span>
+            <span className="font-mono text-xs font-bold text-slate-900 block">ABHA Creation & QR (sandbox)</span>
+            <span className="text-[11px] text-slate-500">ABHA (sandbox)</span>
           </div>
 
           <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
@@ -343,7 +343,7 @@ export const DhisMeter: React.FC<{ compact?: boolean; onSimulateSuccess?: () => 
                   Monthly Threshold Tracker: Month of {d.currentMonth}
                 </h3>
                 <p className="text-xs text-slate-500">
-                  NHA guidelines mandate minimum 100 ABDM-linked health records/month to qualify for direct incentive disbursements.
+                  Sandbox illustration only: 100 ABDM-linked records/month is the sample threshold. Local stub — not a live incentive disbursement.
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -412,7 +412,7 @@ export const DhisMeter: React.FC<{ compact?: boolean; onSimulateSuccess?: () => 
                 <div className="text-2xl font-bold font-mono text-indigo-700 mt-1">
                   {formatINR(d.lumeraShare)}
                 </div>
-                <div className="text-[11px] text-indigo-600 mt-0.5">{formatINR(6)} per transaction for EMR/ABDM SaaS</div>
+                <div className="text-[11px] text-indigo-600 mt-0.5">{formatINR(6)} per transaction for EMR/ABDM SaaS (sandbox)</div>
               </div>
             </div>
 
@@ -451,7 +451,7 @@ export const DhisMeter: React.FC<{ compact?: boolean; onSimulateSuccess?: () => 
             <div className="flex items-center justify-between mb-4">
               <div>
                 <h3 className="font-bold text-base text-slate-900">Recent DHIS simulated transactions</h3>
-                <p className="text-xs text-slate-500">Local stub ledger — NHA sandbox-unverified, not a live incentive claim</p>
+                <p className="text-xs text-slate-500">Local stub ledger — sandbox-unverified, not a live incentive claim</p>
               </div>
               <span className="text-xs text-slate-500 font-mono">
                 {d.recentTransactions.length} records shown
@@ -464,7 +464,7 @@ export const DhisMeter: React.FC<{ compact?: boolean; onSimulateSuccess?: () => 
                   <tr className="border-b border-slate-200 bg-slate-50 text-slate-500 font-semibold">
                     <th className="py-2.5 px-3">Transaction ID</th>
                     <th className="py-2.5 px-3">Artifact Type</th>
-                    <th className="py-2.5 px-3">Patient ABHA</th>
+                    <th className="py-2.5 px-3">Patient ABHA (sandbox)</th>
                     <th className="py-2.5 px-3">FHIR Bundle</th>
                     <th className="py-2.5 px-3">Clinic (70%)</th>
                     <th className="py-2.5 px-3">Lumera (30%)</th>
@@ -515,7 +515,7 @@ export const DhisMeter: React.FC<{ compact?: boolean; onSimulateSuccess?: () => 
               </div>
               <div>
                 <h3 className="font-bold text-sm text-slate-900">Live Sandbox Simulator</h3>
-                <p className="text-xs text-slate-500">Simulate ABDM events & earn +{formatINR(20)}</p>
+                <p className="text-xs text-slate-500">Simulate ABDM events (sandbox) & earn +{formatINR(20)}</p>
               </div>
             </div>
 

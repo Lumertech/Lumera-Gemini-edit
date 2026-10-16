@@ -919,7 +919,7 @@ export const AdminMetaTechProvider: React.FC = () => {
                 </div>
 
                 <div className="pt-3 border-t border-slate-800 text-[11px] text-slate-500">
-                  Logs are auto-recorded in Outbound Events for ABDM and clinical auditability.
+                  Logs are auto-recorded in Outbound Events for ABDM (sandbox) and clinical auditability.
                 </div>
               </div>
             </div>

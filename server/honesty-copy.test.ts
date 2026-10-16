@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
+import { RETIRED_USER_COPY, retiredUserCopyLabels, scanBuiltBundle } from "./banned-user-copy.ts";
 import { rewriteLegacyHonestyCopy } from "./db-migrate.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -15,6 +17,7 @@ const PHRASES: { re: RegExp; label: string }[] = [
   { re: /Certified Digital Rx/, label: "Certified Digital Rx" },
   { re: /\bgemini\b/i, label: "Gemini" },
   { re: /(valid|verified) under (the )?NHA/i, label: "(valid|verified) under NHA" },
+  ...RETIRED_USER_COPY,
 ];
 
 function lineOf(source: string, index: number): number {
@@ -46,9 +49,13 @@ function allowListed(content: string, lookback: string): boolean {
   return false;
 }
 
+function isConsoleCall(lookback: string): boolean {
+  return /console\.(?:error|warn|log|info|debug)\s*\(\s*$/.test(lookback.trimEnd());
+}
+
 function isUserFacingString(lookback: string): boolean {
   const tail = lookback.trimEnd();
-  if (/console\.(?:error|warn|log|info|debug)\s*\(\s*$/.test(tail)) return false;
+  if (isConsoleCall(tail)) return false;
   if (/(?:source|label|text|title|placeholder|aria-label|aria-labelledby|alt|message|footerText|footerDisclaimer)\s*:\s*$/.test(tail)) {
     return true;
   }
@@ -218,6 +225,279 @@ function lookback(source: string, index: number): string {
 }
 
 /**
+ * Positive honesty rule: a user-visible ABHA / ABDM / e-KYC badge or label
+ * must carry sandbox, not-yet-live, or local-stub on the same line or the
+ * same JSX element. `@abdm` address domains are identifiers, not badges.
+ * Allowlist only with `honesty-allow:` plus a real justification.
+ */
+const ABDM_LABEL_TOKEN = /(?<!@)\b(?:ABHA|ABDM|e-?KYC)\b/i;
+const NOT_LIVE_MARKER = /sandbox|not[- ]yet[- ]live|local[- ]stub/i;
+const HONESTY_ALLOW = /honesty-allow:\s*\S[^\n*]{23,}/;
+
+/** Paths and kebab-case ids are not badges. `e-KYC` stays a label because it is not lowercase. */
+function isCodeIdentifier(content: string): boolean {
+  const trimmed = content.trim();
+  if (/^(?:https?:\/\/|\/)[\w./?=&:-]*$/i.test(trimmed)) return true;
+  if (/^[a-z0-9]+(?:-[a-z0-9]+)+$/.test(trimmed)) return true;
+  return false;
+}
+
+function isSrcProductFile(file: string): boolean {
+  return /(^|\/)src\/.+\.(tsx?|jsx?)$/.test(file.replace(/\\/g, "/"));
+}
+
+/** Server badge/label props. Generic ternaries and thrown errors are not labels. */
+function isBadgeOrLabelProp(lookbackText: string): boolean {
+  const tail = lookbackText.trimEnd();
+  if (isFooterDefault(tail)) return true;
+  if (/(?:source|label|text|title|placeholder|aria-label|aria-labelledby|alt|footerText|footerDisclaimer)\s*:\s*$/.test(tail)) {
+    return true;
+  }
+  if (/(?:label|title|placeholder|aria-label|aria-labelledby|alt|text)\s*=\s*\{?\s*$/.test(tail)) return true;
+  return false;
+}
+
+function skipString(source: string, i: number): number {
+  const quote = source[i];
+  let j = i + 1;
+  while (j < source.length) {
+    if (source[j] === "\\") {
+      j += 2;
+      continue;
+    }
+    if (quote === "`" && source[j] === "$" && source[j + 1] === "{") {
+      j += 2;
+      let depth = 1;
+      while (j < source.length && depth > 0) {
+        const ch = source[j];
+        if (ch === "'" || ch === '"' || ch === "`") {
+          j = skipString(source, j);
+          continue;
+        }
+        if (ch === "{") depth++;
+        else if (ch === "}") depth--;
+        j++;
+      }
+      continue;
+    }
+    if (source[j] === quote) return j + 1;
+    j++;
+  }
+  return source.length;
+}
+
+function stripComments(source: string): string {
+  let out = "";
+  let i = 0;
+  while (i < source.length) {
+    const ch = source[i];
+    const next = source[i + 1];
+    if (ch === "/" && next === "/") {
+      out += "  ";
+      i += 2;
+      while (i < source.length && source[i] !== "\n") {
+        out += " ";
+        i++;
+      }
+      continue;
+    }
+    if (ch === "/" && next === "*") {
+      out += "  ";
+      i += 2;
+      while (i < source.length && !(source[i] === "*" && source[i + 1] === "/")) {
+        out += source[i] === "\n" ? "\n" : " ";
+        i++;
+      }
+      if (i < source.length) {
+        out += "  ";
+        i += 2;
+      }
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === "`") {
+      const end = skipString(source, i);
+      out += source.slice(i, end);
+      i = end;
+      continue;
+    }
+    out += ch;
+    i++;
+  }
+  return out;
+}
+
+function prevNonWs(source: string, i: number): string {
+  let j = i - 1;
+  while (j >= 0 && /\s/.test(source[j])) j--;
+  return j >= 0 ? source[j] : "";
+}
+
+function isJsxTagStart(source: string, i: number): boolean {
+  if (source[i] !== "<") return false;
+  const next = source[i + 1];
+  if (!next || next === "=" || next === "!" || /\s/.test(next)) return false;
+  if (next === "/") return true;
+  if (next !== ">" && !/[A-Za-z]/.test(next)) return false;
+  const prev = prevNonWs(source, i);
+  if (prev && /[A-Za-z0-9_$]/.test(prev)) return false;
+  return true;
+}
+
+function findTagEnd(source: string, i: number): number {
+  let j = i + 1;
+  while (j < source.length) {
+    const ch = source[j];
+    if (ch === "'" || ch === '"' || ch === "`") {
+      j = skipString(source, j);
+      continue;
+    }
+    if (ch === "{") {
+      j++;
+      let depth = 1;
+      while (j < source.length && depth > 0) {
+        const inner = source[j];
+        if (inner === "'" || inner === '"' || inner === "`") {
+          j = skipString(source, j);
+          continue;
+        }
+        if (inner === "{") depth++;
+        else if (inner === "}") depth--;
+        j++;
+      }
+      continue;
+    }
+    if (ch === ">") return j + 1;
+    j++;
+  }
+  return source.length;
+}
+
+type JsxEl = { start: number; end: number };
+
+function jsxElements(source: string): JsxEl[] {
+  const els: JsxEl[] = [];
+  const stack: number[] = [];
+  let i = 0;
+  while (i < source.length) {
+    const ch = source[i];
+    const next = source[i + 1];
+    if (ch === "/" && next === "/") {
+      i += 2;
+      while (i < source.length && source[i] !== "\n") i++;
+      continue;
+    }
+    if (ch === "/" && next === "*") {
+      i += 2;
+      while (i < source.length && !(source[i] === "*" && source[i + 1] === "/")) i++;
+      i = Math.min(source.length, i + 2);
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === "`") {
+      i = skipString(source, i);
+      continue;
+    }
+    if (ch === "<" && isJsxTagStart(source, i)) {
+      if (next === "/") {
+        const closeEnd = source.indexOf(">", i);
+        const end = closeEnd === -1 ? source.length : closeEnd + 1;
+        const start = stack.pop();
+        if (start !== undefined && end > start) els.push({ start, end });
+        i = Math.max(i + 1, end);
+        continue;
+      }
+      const tagEnd = findTagEnd(source, i);
+      const selfClosing = tagEnd >= 2 && source[tagEnd - 2] === "/";
+      if (selfClosing) els.push({ start: i, end: tagEnd });
+      else stack.push(i);
+      i = Math.max(i + 1, tagEnd);
+      continue;
+    }
+    i++;
+  }
+  return els;
+}
+
+function innermostElement(els: JsxEl[], index: number): JsxEl | null {
+  let best: JsxEl | null = null;
+  for (const el of els) {
+    if (el.start <= index && index < el.end && (!best || el.start >= best.start)) best = el;
+  }
+  if (!best) return null;
+  const slice = best.end - best.start;
+  // A page-sized wrapper must not launder a distant sandbox note onto a badge.
+  if (slice > 2500) return null;
+  return best;
+}
+
+function lineText(source: string, index: number): string {
+  const start = source.lastIndexOf("\n", Math.max(0, index - 1)) + 1;
+  const endIdx = source.indexOf("\n", index);
+  return source.slice(start, endIdx === -1 ? source.length : endIdx);
+}
+
+function nearbySource(source: string, index: number): string {
+  let from = index;
+  let lines = 0;
+  while (from > 0 && lines < 12) {
+    from--;
+    if (source[from] === "\n") lines++;
+  }
+  return source.slice(from, Math.min(source.length, index + 120));
+}
+
+function unmarkedAbdmLabels(source: string, file: string): HonestyViolation[] {
+  const product = isSrcProductFile(file);
+  const ui = isSrcUiFile(file);
+  if (!product && !/(^|\/)server\//.test(file.replace(/\\/g, "/"))) return [];
+  const els = product ? jsxElements(source) : [];
+  const violations: HonestyViolation[] = [];
+  const seen = new Set<string>();
+  const push = (index: number, sample: string) => {
+    const snippet = sample.replace(/\s+/g, " ").trim().slice(0, 80);
+    const key = `${lineOf(source, index)}:${snippet}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    violations.push({
+      file,
+      line: lineOf(source, index),
+      message: `user-visible ABHA/ABDM/e-KYC label lacks a not-live marker (sandbox, not-yet-live, or local stub) ("${snippet}")`,
+    });
+  };
+  const marked = (index: number, content: string) => {
+    if (NOT_LIVE_MARKER.test(content)) return true;
+    if (NOT_LIVE_MARKER.test(stripComments(lineText(source, index)))) return true;
+    const el = innermostElement(els, index);
+    if (el && NOT_LIVE_MARKER.test(stripComments(source.slice(el.start, el.end)))) return true;
+    if (HONESTY_ALLOW.test(nearbySource(source, index))) return true;
+    return false;
+  };
+  const inScope = (content: string, index: number) => {
+    if (!ABDM_LABEL_TOKEN.test(content) || isCodeIdentifier(content)) return false;
+    const before = lookback(source, index);
+    if (allowListed(content, before) || isConsoleCall(before)) return false;
+    if (product) return true;
+    return isBadgeOrLabelProp(before);
+  };
+
+  for (const hit of stringLiterals(source)) {
+    if (!inScope(hit.content, hit.index)) continue;
+    if (!marked(hit.index, hit.content)) push(hit.index, hit.content);
+  }
+  if (ui) {
+    const masked = maskNonJsxText(source);
+    const textRe = />([^<>{}]*)</g;
+    let text: RegExpExecArray | null;
+    while ((text = textRe.exec(masked))) {
+      const sample = text[1];
+      const index = text.index + 1;
+      if (!inScope(sample, index)) continue;
+      if (!marked(index, sample)) push(index, sample);
+    }
+  }
+  return violations;
+}
+
+/**
  * User-facing copy only: src JSX text and string props, server response
  * source/label strings, and seed/default footer text.
  */
@@ -236,14 +516,18 @@ export function findHonestyViolations(source: string, file = "src/components/Exa
   const ui = isSrcUiFile(file);
   for (const hit of stringLiterals(source)) {
     const labels = phraseHits(hit.content);
-    if (labels.length === 0) continue;
+    const retired = retiredUserCopyLabels(hit.content);
+    if (labels.length === 0 && retired.length === 0) continue;
     const before = lookback(source, hit.index);
     if (allowListed(hit.content, before)) continue;
     const footer = isFooterDefault(before);
     const response = isResponseLabel(before);
     const instruction = isAiInstruction(before);
     const facing = ui && isUserFacingString(before);
-    if (footer || response || instruction || facing) push(hit.index, labels);
+    if (labels.length && (footer || response || instruction || facing)) push(hit.index, labels);
+    // Retired labels are banned in every shipped string, not only JSX props.
+    // Console lines stay allowed; comments never reach this parser.
+    if (retired.length && !isConsoleCall(before)) push(hit.index, retired);
   }
 
   if (ui) {
@@ -257,6 +541,7 @@ export function findHonestyViolations(source: string, file = "src/components/Exa
       if (labels.length) push(text.index + 1, labels);
     }
   }
+  violations.push(...unmarkedAbdmLabels(source, file));
   return violations;
 }
 
@@ -306,7 +591,28 @@ describe("honesty copy scan", () => {
       `export function Rx(){ return <p>Verified under the NHA sandbox</p>; }\n`,
       "src/components/Rx.tsx"
     );
-    assert.equal(nhaThe.length, 1);
+    assert.equal(nhaThe.length, 2);
+    assert.ok(nhaThe.some((item) => item.message.includes("(valid|verified) under NHA")));
+    assert.ok(nhaThe.some((item) => item.message.includes("NHA sandbox")));
+
+    const notice = findHonestyViolations(
+      `export const NOTICE = "NHA sandbox: local stand-in";\n`,
+      "server/clinical.ts"
+    );
+    assert.equal(notice.length, 1);
+    assert.match(notice[0].message, /NHA sandbox/);
+
+    const aligned = findHonestyViolations(
+      `export function Badge(){ return <span>ABDM-aligned records</span>; }\n`,
+      "src/components/Badge.tsx"
+    );
+    assert.ok(aligned.some((item) => item.message.includes("ABDM-aligned")));
+
+    const logLine = findHonestyViolations(
+      `console.info("NHA sandbox boot");\n`,
+      "server/clinical.ts"
+    );
+    assert.deepEqual(logLine, []);
 
     const certified = findHonestyViolations(
       `export function Badge(){ return <span>Certified Digital Rx</span>; }\n`,
@@ -346,6 +652,86 @@ describe("honesty copy scan", () => {
       "server/db-seed-meta.ts"
     );
     assert.equal(whatsapp.length, 1);
+  });
+
+  it("requires a not-live marker on the same ABHA, ABDM, or e-KYC label", () => {
+    const bare = findHonestyViolations(
+      `export function Badge(){ return <span>ABHA</span>; }\n`,
+      "src/components/Badge.tsx"
+    );
+    assert.ok(bare.some((item) => item.message.includes("not-live marker")));
+
+    const marked = findHonestyViolations(
+      `export function Badge(){ return <span>ABHA (sandbox)</span>; }\n`,
+      "src/components/Badge.tsx"
+    );
+    assert.deepEqual(marked.filter((item) => item.message.includes("not-live marker")), []);
+
+    const localStub = findHonestyViolations(
+      `export function Note(){ return <span>Auto-filled from ABHA KYC (local stub)</span>; }\n`,
+      "src/components/Note.tsx"
+    );
+    assert.deepEqual(localStub.filter((item) => item.message.includes("not-live marker")), []);
+
+    const notYet = findHonestyViolations(
+      `export function Foot(){ return <p>Designed for ABDM records (sandbox — not yet live)</p>; }\n`,
+      "src/components/Foot.tsx"
+    );
+    assert.deepEqual(notYet.filter((item) => item.message.includes("not-live marker")), []);
+
+    const ekyc = findHonestyViolations(
+      `export function Kyc(){ return <span>Aadhaar e-KYC linked</span>; }\n`,
+      "src/components/Kyc.tsx"
+    );
+    assert.ok(ekyc.some((item) => item.message.includes("not-live marker")));
+
+    const sameElement = findHonestyViolations(
+      `export function Badge(){\n  return <span title="sandbox-unverified">\n    ABHA\n  </span>;\n}\n`,
+      "src/components/Badge.tsx"
+    );
+    assert.deepEqual(sameElement.filter((item) => item.message.includes("not-live marker")), []);
+
+    const distant = findHonestyViolations(
+      `export function Page(){\n  return <div>\n    <p>ABDM integration is in sandbox testing and not yet live.</p>\n    <span>ABDM records</span>\n  </div>;\n}\n`,
+      "src/components/Page.tsx"
+    );
+    assert.ok(distant.some((item) => item.message.includes("not-live marker")));
+
+    const allow = findHonestyViolations(
+      `export function Search(){\n  return (\n    // honesty-allow: names the ABHA id as a search field, not a live-link badge\n    <input placeholder="Name, phone, or ABHA" />\n  );\n}\n`,
+      "src/components/Search.tsx"
+    );
+    assert.deepEqual(allow.filter((item) => item.message.includes("not-live marker")), []);
+
+    const thinAllow = findHonestyViolations(
+      `export function Search(){\n  // honesty-allow: ok\n  return <span>ABHA</span>;\n}\n`,
+      "src/components/Search.tsx"
+    );
+    assert.ok(thinAllow.some((item) => item.message.includes("not-live marker")));
+
+    const address = findHonestyViolations(
+      `export function Card(){ return <span>rajiv.saxena@abdm</span>; }\n`,
+      "src/components/Card.tsx"
+    );
+    assert.deepEqual(address.filter((item) => item.message.includes("not-live marker")), []);
+
+    const serverTitle = findHonestyViolations(
+      `title: "ABDM records"\n`,
+      "server/db-seed-meta.ts"
+    );
+    assert.ok(serverTitle.some((item) => item.message.includes("not-live marker")));
+
+    const serverError = findHonestyViolations(
+      `throw httpError(409, "Phone and ABHA resolve to different patients");\n`,
+      "server/clinical.ts"
+    );
+    assert.deepEqual(serverError.filter((item) => item.message.includes("not-live marker")), []);
+
+    const path = findHonestyViolations(
+      `export function Load(){ return apiFetch("/api/abdm/v3/registration/aadhaar/generateOtp"); }\nconst id = "abha-linking-status";\n`,
+      "src/components/Load.tsx"
+    );
+    assert.deepEqual(path.filter((item) => item.message.includes("not-live marker")), []);
   });
 
   it("allow-lists imports, file names, env vars, and model ids", () => {
@@ -418,6 +804,31 @@ describe("honesty copy scan", () => {
       [],
       violations.map((item) => `${item.file}:${item.line} ${item.message}`).join("\n")
     );
+  });
+
+  it("fails the built bundle when retired labels are emitted", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lumera-bundle-scan-"));
+    try {
+      fs.writeFileSync(path.join(dir, "app.js"), `console.log("ok");\n`);
+      fs.writeFileSync(path.join(dir, "notes.map"), "NHA sandbox in a sourcemap comment\n");
+      assert.deepEqual(scanBuiltBundle(dir), []);
+      fs.writeFileSync(path.join(dir, "chunk.js"), `p("ABDM-aligned records")`);
+      const hits = scanBuiltBundle(dir);
+      assert.equal(hits.length, 1);
+      assert.equal(hits[0].label, "ABDM-" + "aligned");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+
+    const dist = path.join(root, "dist");
+    if (fs.existsSync(dist)) {
+      const shipped = scanBuiltBundle(dist);
+      assert.deepEqual(
+        shipped,
+        [],
+        shipped.map((hit) => `${hit.file}:${hit.line} ${hit.label}`).join("\n")
+      );
+    }
   });
 });
 

@@ -312,16 +312,16 @@ export const Reception: React.FC<ReceptionProps> = ({
         <div>
           <div className="flex items-center gap-2">
               <h1 className="text-xl font-bold text-slate-900 font-manrope">
-              {workflow?.receptionLabel || 'OPD Reception & ABHA Intake Desk'}
+              {workflow?.receptionLabel || 'OPD Reception & ABHA Intake Desk (sandbox)'}
             </h1>
             <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1">
-              <BadgeCheck className="w-3.5 h-3.5" /> NHA sandbox
+              <BadgeCheck className="w-3.5 h-3.5" /> ABHA (sandbox)
             </span>
           </div>
           <p className="text-xs text-slate-500 mt-1">
             {firstRunHint
               ? 'Register the first patient for this clinic. Saving writes a durable chart and a Waiting OPD token — both survive refresh.'
-              : 'Patient registration with ABHA QR scanning and Aadhaar e-KYC in NHA sandbox (local stub — not government-registry KYC).'}
+              : 'Patient registration with ABHA QR scanning and Aadhaar e-KYC (local stub — not government-registry KYC).'}
           </p>
         </div>
 
@@ -331,7 +331,7 @@ export const Reception: React.FC<ReceptionProps> = ({
             className="px-4 py-2.5 bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold rounded-lg shadow-sm transition-all flex items-center gap-2"
           >
             <QrCode className="w-4 h-4" />
-            <span>Scan ABHA QR Code</span>
+            <span>Scan ABHA QR Code (sandbox)</span>
           </button>
         </div>
       </div>
@@ -346,7 +346,7 @@ export const Reception: React.FC<ReceptionProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <span className="text-xs font-bold uppercase tracking-wider text-purple-200">
-                  NHA sandbox Aadhaar e-KYC & ABHA (local stub)
+                  Aadhaar e-KYC & ABHA (local stub)
                 </span>
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 font-mono">
                   Sandbox v3
@@ -400,7 +400,7 @@ export const Reception: React.FC<ReceptionProps> = ({
                   className="px-3.5 py-2 bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 disabled:opacity-50"
                 >
                   {isVerifyingOtp ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
-                  <span>Verify & Issue ABHA</span>
+                  <span>Verify & Issue ABHA (sandbox)</span>
                 </button>
                 <button
                   onClick={() => {
@@ -429,15 +429,15 @@ export const Reception: React.FC<ReceptionProps> = ({
               <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
               <div>
                 <span className="font-bold text-emerald-300">
-                  Aadhaar e-KYC linked (NHA sandbox): {verificationSuccess.name}
+                  Aadhaar e-KYC linked (sandbox): {verificationSuccess.name}
                 </span>
                 <span className="block text-emerald-200/80 font-mono text-[11px]">
-                  ABHA: {verificationSuccess.abhaNumber} • {verificationSuccess.abhaAddress}
+                  ABHA (sandbox): {verificationSuccess.abhaNumber} • {verificationSuccess.abhaAddress}
                 </span>
               </div>
             </div>
             <span className="px-2.5 py-1 bg-emerald-500/30 text-emerald-200 rounded font-semibold text-[11px] border border-emerald-400/30">
-              ABHA · NHA sandbox
+              ABHA (sandbox)
             </span>
           </div>
         )}
@@ -456,7 +456,7 @@ export const Reception: React.FC<ReceptionProps> = ({
             </div>
             {verificationSuccess && (
               <span className="text-[11px] px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-medium">
-                Auto-filled from NHA sandbox KYC
+                Auto-filled from ABHA KYC (local stub)
               </span>
             )}
           </div>
@@ -605,7 +605,8 @@ export const Reception: React.FC<ReceptionProps> = ({
         <div className="lg:col-span-6 bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="font-bold text-sm text-slate-900">Registered Patients & ABHA Status</h3>
+              <h3 className="font-bold text-sm text-slate-900">Registered Patients & ABHA Status (sandbox)</h3>
+              {/* honesty-allow: names the ABHA address field a receptionist can search, not a live-link badge */}
               <p className="text-xs text-slate-500">Search by ABHA address, UHID, or phone</p>
             </div>
             <span className="text-xs font-mono text-slate-500">
@@ -649,7 +650,7 @@ export const Reception: React.FC<ReceptionProps> = ({
                       <span className="text-slate-500 font-mono text-[11px]">{p.uhid}</span>
                       {isKyc ? (
                         <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1">
-                          <BadgeCheck className="w-3 h-3" /> ABHA · NHA sandbox
+                          <BadgeCheck className="w-3 h-3" /> ABHA (sandbox)
                         </span>
                       ) : (
                         <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
@@ -709,7 +710,7 @@ export const Reception: React.FC<ReceptionProps> = ({
                   <QrCode className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-base text-slate-900">ABHA QR Scanner (NHA sandbox)</h3>
+                  <h3 className="font-bold text-base text-slate-900">ABHA QR Scanner (sandbox)</h3>
                   <p className="text-xs text-slate-500">Scan physical card or select simulated sandbox patient</p>
                 </div>
               </div>
@@ -724,7 +725,7 @@ export const Reception: React.FC<ReceptionProps> = ({
             <div className="bg-slate-50 border-2 border-dashed border-slate-300 rounded-xl p-6 text-center space-y-3">
               <Camera className="w-10 h-10 text-purple-600 mx-auto" />
               <div>
-                <p className="text-sm font-semibold text-slate-800">Scan ABHA QR Code via Camera</p>
+                <p className="text-sm font-semibold text-slate-800">Scan ABHA QR Code via Camera (sandbox)</p>
                 <p className="text-xs text-slate-500 mt-0.5">
                   Point camera at the patient's Ayushman Bharat Health Card QR code
                 </p>
@@ -754,7 +755,7 @@ export const Reception: React.FC<ReceptionProps> = ({
                   <div>
                     <div className="font-bold text-slate-900">Rajiv Saxena (44 Yrs / Male)</div>
                     <div className="text-slate-500 font-mono text-[11px]">
-                      ABHA: 91-4428-9102-3841 • rajiv.saxena@abdm
+                      ABHA (sandbox): 91-4428-9102-3841 • rajiv.saxena@abdm
                     </div>
                   </div>
                   <span className="px-2 py-1 bg-emerald-100 text-emerald-800 font-semibold rounded text-[10px]">
@@ -780,7 +781,7 @@ export const Reception: React.FC<ReceptionProps> = ({
                   <div>
                     <div className="font-bold text-slate-900">Priyanka Mukherjee (52 Yrs / Female)</div>
                     <div className="text-slate-500 font-mono text-[11px]">
-                      ABHA: 91-7291-0384-9182 • priyanka.m@abdm
+                      ABHA (sandbox): 91-7291-0384-9182 • priyanka.m@abdm
                     </div>
                   </div>
                   <span className="px-2 py-1 bg-emerald-100 text-emerald-800 font-semibold rounded text-[10px]">

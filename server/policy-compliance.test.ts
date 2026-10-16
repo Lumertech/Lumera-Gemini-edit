@@ -95,7 +95,8 @@ describe("Compliance #26 re-skim bar", () => {
       readRepo("server/db-seed-meta.ts"),
     ].join("\n");
     assert.match(feat6, /id = 'feat-6'/);
-    assert.match(feat6, /ABDM-aligned \(NHA sandbox\)/);
+    assert.match(feat6, /title: "ABDM records"/);
+    assert.equal(/ABDM-aligned \(NHA sandbox\)/.test(feat6), false);
     assert.equal(/feat-6[\s\S]{0,400}ABDM Compliant/i.test(feat6), false);
   });
 

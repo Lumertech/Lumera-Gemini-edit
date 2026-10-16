@@ -200,7 +200,8 @@ describe("#35 dual onboard — same patientId + frozen link-abha", () => {
     assert.notEqual(patient.kycStatus, "VERIFIED");
     assert.ok(patient.abhaLinkedAt);
     assert.equal(linked.json.abdmMode, "stub");
-    assert.match(String(linked.json.sandboxNotice || ""), /NHA sandbox/);
+    assert.match(String(linked.json.sandboxNotice || ""), /ABHA link and consent artefact storage until credentials are provisioned/);
+    assert.doesNotMatch(String(linked.json.sandboxNotice || ""), /NHA sandbox|ABDM-aligned/);
     assert.ok(patient.consentArtefacts.some((c) => c.consentId === `consent-a-${p1.id}`));
 
     const list = await jsonRequest(port, "GET", "/api/patients", undefined, auth);
@@ -377,8 +378,8 @@ describe("#35 dual onboard — same patientId + frozen link-abha", () => {
       auth
     );
     assert.equal(rejected.status, 400);
-    assert.match(String(rejected.json.error || ""), /NHA sandbox/);
-    assert.match(String(rejected.json.error || ""), /LINKED_SANDBOX/);
+    assert.match(String(rejected.json.error || ""), /kycStatus must be LINKED_SANDBOX/);
+    assert.doesNotMatch(String(rejected.json.error || ""), /NHA sandbox|ABDM-aligned/);
 
     for (const unlocked of ["Government", "Unlocked"]) {
       const again = await jsonRequest(
@@ -395,7 +396,7 @@ describe("#35 dual onboard — same patientId + frozen link-abha", () => {
         auth
       );
       assert.equal(again.status, 400, unlocked);
-      assert.match(String(again.json.error || ""), /NHA sandbox/);
+      assert.match(String(again.json.error || ""), /kycStatus must be LINKED_SANDBOX/);
     }
   });
 
@@ -413,7 +414,8 @@ describe("#35 dual onboard — same patientId + frozen link-abha", () => {
     assert.equal(otp.status, 200, String(otp.json.error || ""));
     const txnId = String(otp.json.txnId || "");
     assert.ok(txnId);
-    assert.match(String(otp.json.sandboxNotice || ""), /NHA sandbox/);
+    assert.match(String(otp.json.sandboxNotice || ""), /Local stand-in until credentials are provisioned/);
+    assert.doesNotMatch(String(otp.json.sandboxNotice || ""), /NHA sandbox|ABDM-aligned/);
     assert.equal(otp.json.kycStatus, undefined);
 
     const verify = await jsonRequest(
@@ -426,7 +428,7 @@ describe("#35 dual onboard — same patientId + frozen link-abha", () => {
     assert.equal(verify.status, 200, String(verify.json.error || ""));
     assert.equal(verify.json.kycStatus, "LINKED_SANDBOX");
     assert.notEqual(verify.json.kycStatus, "VERIFIED");
-    assert.match(String(verify.json.sandboxNotice || ""), /NHA sandbox/);
+    assert.match(String(verify.json.sandboxNotice || ""), /Local stand-in until credentials are provisioned/);
     assert.equal(verify.json.patient, undefined);
 
     const qr = await jsonRequest(port, "POST", "/api/abdm/profile/share", {
@@ -444,7 +446,7 @@ describe("#35 dual onboard — same patientId + frozen link-abha", () => {
     assert.equal(qr.status, 200, String(qr.json.error || ""));
     assert.equal(qr.json.kycStatus, "LINKED_SANDBOX");
     assert.notEqual(qr.json.kycStatus, "VERIFIED");
-    assert.match(String(qr.json.sandboxNotice || ""), /NHA sandbox/);
+    assert.match(String(qr.json.sandboxNotice || ""), /Local stand-in until credentials are provisioned/);
   });
 
   it("new clinic tenant does not inherit demo patients or Vikram charts", async () => {
@@ -601,7 +603,7 @@ describe("#35 dual onboard — same patientId + frozen link-abha", () => {
     assert.equal(notify.json.patientId, patientId);
     assert.equal(notify.json.kind, "hiu_consent");
     assert.equal(notify.json.abdmMode, "stub");
-    assert.match(String(notify.json.sandboxNotice || ""), /NHA sandbox/);
+    assert.match(String(notify.json.sandboxNotice || ""), /Local stand-in until credentials are provisioned/);
 
     const hip = await signedGatewayRequest(
       port,
@@ -772,8 +774,9 @@ describe("#35 overclaim grep (Platform ABHA / ABDM)", () => {
     ]
       .map((rel) => fs.readFileSync(path.join(root, rel), "utf8"))
       .join("\n");
-    assert.match(clinical, /NHA sandbox/);
-    assert.match(abdm, /NHA sandbox/);
+    assert.match(clinical, /ABHA link and consent artefact storage until credentials are provisioned/);
+    assert.match(abdm, /Local stand-in until credentials are provisioned/);
+    assert.doesNotMatch(clinical, /ABDM-aligned/);
     assert.match(clinical, /LINKED_SANDBOX/);
     assert.match(abdm, /\/hip\/link\/care-context/);
     assert.match(abdm, /\/hip\/patient-discover/);

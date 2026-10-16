@@ -92,7 +92,7 @@ export const PharmacyDiagnosticsHub: React.FC<PharmacyDiagnosticsHubProps> = ({
             <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider bg-blue-50 text-blue-700 border border-blue-200 flex items-center gap-1.5">
               <Sparkles className="w-3.5 h-3.5 text-blue-600" /> Connected Ecosystem Hub
             </span>
-            <span className="text-xs text-slate-400 font-mono">India Health Stack (ABDM / PM-JAY / Pharmacy)</span>
+            <span className="text-xs text-slate-400 font-mono">India Health Stack (ABDM sandbox / PM-JAY / Pharmacy)</span>
           </div>
           <h1 className="text-lg font-bold text-slate-900 mt-1">Pharmacy, Diagnostics & Insurance Fulfillment Hub</h1>
           <p className="text-xs text-slate-500 mt-0.5">
@@ -206,12 +206,12 @@ export const PharmacyDiagnosticsHub: React.FC<PharmacyDiagnosticsHubProps> = ({
               <span>PM-JAY & Insurance Pre-Check</span>
             </div>
             <p className="text-xs text-slate-500 leading-relaxed">
-              Verify Ayushman Bharat PM-JAY eligibility and pre-authorize cashless health insurance coverage instantly via ABHA.
+              Verify Ayushman Bharat PM-JAY eligibility and pre-authorize cashless coverage via ABHA (sandbox — not yet live).
             </p>
 
             <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-xs space-y-1 mt-3">
               <div className="flex justify-between">
-                <span className="text-slate-500">ABHA Number:</span>
+                <span className="text-slate-500">ABHA Number (sandbox):</span>
                 <span className="font-mono font-semibold text-slate-800">{currentPatient.abhaNumber || 'Not on file'}</span>
               </div>
               <div className="flex justify-between">

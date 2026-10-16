@@ -424,8 +424,8 @@ export function registerAbdmIdentityRoutes(router: Router): void {
         getDb(),
         req.user?.id || null,
         req.user?.name || "Reception Desk",
-        "ABHA OTP matched (NHA sandbox)",
-        `tenant: ${tenantId}; aadhaar: ${maskedLast4(session.last4)}`
+        "ABHA OTP matched",
+        `tenant: ${tenantId}; aadhaar: ${maskedLast4(session.last4)}; mode:'${resolveAbdmMode()}'`
       );
 
       res.json({
@@ -602,7 +602,7 @@ export function registerAbdmIdentityRoutes(router: Router): void {
           baseRate: `${formatINR(20)} / Qualifying Transaction`,
           splitRatio: `70% Facility (${formatINR(14)}) / 30% Lumera Digital Solution (${formatINR(6)})`,
           disbursementSchedule: "Simulated ledger only (local stub — not a live incentive rail)",
-          notice: "DHIS meter is a local stub / NHA sandbox simulation — not a live incentive claim.",
+          notice: "DHIS meter is a local stub — not a live incentive claim.",
         },
       });
     } catch (err: any) {

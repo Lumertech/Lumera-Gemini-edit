@@ -54,7 +54,7 @@ const NAV: { id: AdminTab; label: string; icon: typeof Users; badge?: string; gr
   { id: "tenants", label: "Tenants", icon: Network, group: "superadmin" },
   { id: "subscriptions", label: "Subscriptions", icon: KeyRound, group: "superadmin" },
   { id: "usage", label: "Usage wallet", icon: Wallet, group: "superadmin" },
-  { id: "dhis", label: "ABDM & DHIS Meter", icon: Award, group: "platform" },
+  { id: "dhis", label: "ABDM sandbox & DHIS Meter", icon: Award, group: "platform" },
   { id: "meta", label: "Meta WhatsApp", icon: Share2, badge: "SANDBOX", group: "platform" },
   { id: "site", label: "Website CMS", icon: Globe, group: "platform" },
   { id: "policies", label: "Pages & policies", icon: FileText, group: "platform" },

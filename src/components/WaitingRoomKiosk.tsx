@@ -106,7 +106,7 @@ export const WaitingRoomKiosk: React.FC<WaitingRoomKioskProps> = ({
               </span>
             </h1>
             <p className="text-xs text-slate-400">
-              Waiting Area High-Definition Signage & Automated ABHA Digital Self-Registration
+              Waiting Area High-Definition Signage & Automated ABHA Digital Self-Registration (sandbox)
             </p>
           </div>
         </div>
@@ -132,7 +132,7 @@ export const WaitingRoomKiosk: React.FC<WaitingRoomKioskProps> = ({
               }`}
             >
               <QrCode className="w-3.5 h-3.5" />
-              <span>ABHA Check-in</span>
+              <span>ABHA Check-in (sandbox)</span>
             </button>
           </div>
 
@@ -261,9 +261,9 @@ export const WaitingRoomKiosk: React.FC<WaitingRoomKioskProps> = ({
             <div className="w-14 h-14 rounded-2xl bg-teal-50 text-teal-600 mx-auto flex items-center justify-center shadow-xs">
               <QrCode className="w-7 h-7" />
             </div>
-            <h2 className="text-xl font-bold text-slate-900">Self-Service Check-In & ABHA Scanner</h2>
+            <h2 className="text-xl font-bold text-slate-900">Self-Service Check-In & ABHA Scanner (sandbox)</h2>
             <p className="text-xs text-slate-500 max-w-md mx-auto">
-              Scan your Ayushman Bharat Health Account (ABHA) QR code or enter your UHID / Mobile number to retrieve your token instantly.
+              Scan your Ayushman Bharat Health Account (ABHA) QR code or enter your UHID / Mobile number to retrieve your token instantly (sandbox — not yet live).
             </p>
           </div>
 
@@ -280,9 +280,9 @@ export const WaitingRoomKiosk: React.FC<WaitingRoomKioskProps> = ({
             <div className="w-48 h-48 mx-auto border-2 border-dashed border-teal-400 rounded-xl flex flex-col items-center justify-center p-4 relative">
               <div className="absolute inset-x-4 top-2 h-0.5 bg-teal-400 animate-bounce"></div>
               <QrCode className="w-16 h-16 text-teal-400 opacity-60" />
-              <span className="text-[11px] text-teal-200 font-medium mt-2">Hold ABHA QR Card Here</span>
+              <span className="text-[11px] text-teal-200 font-medium mt-2">Hold ABHA QR Card Here (sandbox)</span>
             </div>
-            <p className="text-xs text-slate-400">Camera Active: Auto-detecting NHA ABHA Health Card</p>
+            <p className="text-xs text-slate-400">Camera Active: Auto-detecting an ABHA card (sandbox — not yet live)</p>
           </div>
 
           {/* Manual Search Form */}

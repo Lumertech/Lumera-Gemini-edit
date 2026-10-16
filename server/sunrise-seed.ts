@@ -1,4 +1,5 @@
 import { clinicCalendarDate } from "../src/lib/clinicDay.ts";
+import { TPG_2020_FOOTER_DISCLAIMER } from "./letterhead.ts";
 import { demoLoginEnabled, isUnsetOrPlaceholder } from "./runtime.ts";
 import type { SqlDatabase, SqlRunResult } from "./sql-engine.ts";
 import { hashPassword, verifyPassword } from "./password.ts";
@@ -237,7 +238,8 @@ function placeExistingUser(database: SqlDatabase, account: SunriseAccount, row: 
  * No-op unless `DEMO_LOGIN_ENABLED` is on, including production with demo login off:
  * it does not insert the tenant, move these emails, or write password hashes.
  * When the flag is on, creates tenant-543feff7 only when it is missing and does not
- * rewrite an existing tenant row. Places the two video logins on that tenant.
+ * rewrite an existing tenant row except footer_disclaimer, which is set to the
+ * TPG 2020 default when it differs. Places the two video logins on that tenant.
  * Sets a password only from SUNRISE_* env vars, and only when the user is new or
  * the stored hash does not verify against that secret. A verifying hash is left as stored.
  * Leaves every other user, tenant, and the WhatsApp quarantine row alone.
@@ -249,6 +251,7 @@ export function ensureSunriseClinic(database: SqlDatabase, env: NodeJS.ProcessEn
   const now = new Date().toISOString();
   const existingTenant = database.prepare("SELECT id FROM tenants WHERE id = ?").get(SUNRISE_TENANT_ID) as { id?: string } | undefined;
   if (!existingTenant?.id) insertSunriseTenant(database, now);
+  syncSunriseLetterheadFooter(database);
 
   const production = String(env.NODE_ENV || "").trim() === "production";
   for (const account of SUNRISE_ACCOUNTS) {
@@ -273,6 +276,23 @@ export function ensureSunriseClinic(database: SqlDatabase, env: NodeJS.ProcessEn
     database.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(hashPassword(password), row.id);
   }
   cleanupSunriseDemoVisits(database);
+}
+
+/**
+ * Sunrise only. Sets the letterhead footer to the TPG 2020 sentence when the
+ * stored value differs, including null. A matching value is not written.
+ * Other tenants and invoice rows are not updated.
+ */
+function syncSunriseLetterheadFooter(database: SqlDatabase): void {
+  if (!tableExists(database, "tenants")) return;
+  database
+    .prepare(
+      `UPDATE tenants
+          SET footer_disclaimer = ?
+        WHERE id = ?
+          AND footer_disclaimer IS DISTINCT FROM ?`
+    )
+    .run(TPG_2020_FOOTER_DISCLAIMER, SUNRISE_TENANT_ID, TPG_2020_FOOTER_DISCLAIMER);
 }
 
 /**

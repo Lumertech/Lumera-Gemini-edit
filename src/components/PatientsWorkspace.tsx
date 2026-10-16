@@ -116,6 +116,7 @@ const PatientList: React.FC<{
     <div data-testid="patients-page" className="w-full min-w-0 max-w-full overflow-x-hidden space-y-4">
       <div className="min-w-0">
         <h1 className="text-lg sm:text-xl font-bold text-slate-900">Patients</h1>
+        {/* honesty-allow: search copy names ABHA as an id to match, not a live-link badge */}
         <p className="text-sm text-slate-600 mt-1 break-words">
           Find a patient in this clinic by name, phone, or ABHA, then open their chart.
         </p>
@@ -129,6 +130,7 @@ const PatientList: React.FC<{
         }}
       >
         <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+        {/* honesty-allow: search box names the ABHA id field, not a live-link badge */}
         <input
           ref={searchRef}
           data-testid="patients-search"
@@ -169,6 +171,7 @@ const PatientList: React.FC<{
         {!loading && patients.length === 0 && trimmed && (
           <div className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-8 text-center">
             <p className="text-sm font-semibold text-slate-900 break-words">No matches for “{trimmed}”</p>
+            {/* honesty-allow: empty-search note names ABHA as a match field, not a live-link badge */}
             <p className="text-xs text-slate-500 mt-1">Search covers name, phone, and ABHA in this clinic only.</p>
             <button
               type="button"
@@ -195,11 +198,11 @@ const PatientList: React.FC<{
                   <span className="font-mono text-[11px] text-slate-500 break-all">{patient.uhid}</span>
                   {linked ? (
                     <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                      ABHA · NHA sandbox
+                      ABHA (sandbox)
                     </span>
                   ) : (
                     <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-800 border border-amber-200">
-                      ABHA not linked
+                      ABHA not linked (sandbox)
                     </span>
                   )}
                 </div>
@@ -298,11 +301,11 @@ const PatientDetail: React.FC<{
                 <p className="text-xs font-mono text-slate-500 mt-1 break-all">UHID {patient.uhid || "—"}</p>
                 {isAbhaLinked(patient) ? (
                   <p className="text-xs text-emerald-800 mt-2 break-all">
-                    ABHA {patient.abhaNumber || "linked"}
-                    {patient.abhaAddress ? ` · ${patient.abhaAddress}` : ""} · NHA sandbox
+                    ABHA (sandbox) {patient.abhaNumber || "linked"}
+                    {patient.abhaAddress ? ` · ${patient.abhaAddress}` : ""}
                   </p>
                 ) : (
-                  <p className="text-xs text-amber-800 mt-2">ABHA not linked · NHA sandbox</p>
+                  <p className="text-xs text-amber-800 mt-2">ABHA not linked (sandbox)</p>
                 )}
               </div>
               <div className="flex flex-col gap-2 w-full sm:w-auto sm:min-w-[10rem]">
