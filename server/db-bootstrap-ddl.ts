@@ -391,6 +391,7 @@ export const BOOTSTRAP_DDL = `
       patient_id TEXT NOT NULL,
       consent_id TEXT NOT NULL,
       artefact_json TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'staff',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       UNIQUE (tenant_id, consent_id)

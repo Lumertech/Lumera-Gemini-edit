@@ -222,7 +222,7 @@ describe("patient logins bind to users.patient_id", () => {
     assert.notEqual(staffList.json.code, "ROLE_DENIED");
   });
 
-  it("rejects a user session on HIP discover and on-request unless the gateway signature matches", async () => {
+  it("rejects a user session on HIP discover and on-request, and refuses an unknown consent", async () => {
     const { tenantId, now, suffix } = seedClinic("hip");
     const phone = localPhone("96101");
     const patientEmail = `patient.hip.${suffix}@example.com`;
@@ -268,7 +268,7 @@ describe("patient logins bind to users.patient_id", () => {
           "X-ABDM-Signature": signAbdmCallback(GATEWAY_HMAC_SECRET, JSON.stringify(onRequestBody)),
         }
       );
-      assert.equal(signedOnRequest.status, 200, String(signedOnRequest.json.error || "signed on-request"));
+      assert.equal(signedOnRequest.status, 403, String(signedOnRequest.json.error || "signed on-request"));
     } finally {
       if (previous === undefined) delete process.env.ABDM_CALLBACK_SECRET;
       else process.env.ABDM_CALLBACK_SECRET = previous;
@@ -307,12 +307,30 @@ describe("patient logins bind to users.patient_id", () => {
     const previous = process.env.ABDM_CALLBACK_SECRET;
     process.env.ABDM_CALLBACK_SECRET = GATEWAY_HMAC_SECRET;
     try {
-      const signed = await jsonRequest(port, "POST", "/api/abdm/hip/link/care-context", body, {
+      const signedCare = await jsonRequest(port, "POST", "/api/abdm/hip/link/care-context", body, {
         "X-HIP-ID": hfr,
         "X-ABDM-Signature": signAbdmCallback(GATEWAY_HMAC_SECRET, JSON.stringify(body)),
       });
-      assert.equal(signed.status, 200, String(signed.json.error || "signed hip header"));
+      assert.equal(signedCare.status, 401, String(signedCare.json.error || "signed care-context without a session"));
+
+      const notifyBody = {
+        patientId,
+        consentId: `notify-${suffix}`,
+        tenantId: other.tenantId,
+        tenant_id: other.tenantId,
+        purpose: "hip header",
+      };
+      const signed = await jsonRequest(port, "POST", "/api/abdm/hip/consent/on-notify", notifyBody, {
+        "X-HIP-ID": hfr,
+        "X-ABDM-Signature": signAbdmCallback(GATEWAY_HMAC_SECRET, JSON.stringify(notifyBody)),
+      });
+      assert.equal(signed.status, 202, String(signed.json.error || "signed hip header"));
       assert.equal(signed.json.patientId, patientId);
+      const stored = getDb()
+        .prepare("SELECT tenant_id, source FROM abdm_consent_artefacts WHERE consent_id = ?")
+        .get(`notify-${suffix}`) as { tenant_id: string; source: string };
+      assert.equal(stored.tenant_id, tenantId);
+      assert.equal(stored.source, "gateway_signed");
     } finally {
       if (previous === undefined) delete process.env.ABDM_CALLBACK_SECRET;
       else process.env.ABDM_CALLBACK_SECRET = previous;

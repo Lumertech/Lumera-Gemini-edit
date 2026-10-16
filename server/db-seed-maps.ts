@@ -597,17 +597,21 @@ export function mapPatient(row: { [key: string]: unknown }) {
 }
 
 export function mapConsentArtefact(row: { [key: string]: unknown }) {
-  const parsed = parseJsonColumn(row.artefact_json, {});
+  const parsed = parseJsonColumn(row.artefact_json, {}) as Record<string, unknown>;
+  const { source: _jsonSource, ...rest } = parsed;
+  const columnSource = row.source === "gateway_signed" ? "gateway_signed" : "staff";
   return {
+    ...rest,
     id: row.id as string,
     tenantId: row.tenant_id as string,
     patientId: row.patient_id as string,
-    consentId: (row.consent_id as string) || String(parsed.consentId || ""),
+    consentId: (row.consent_id as string) || String(rest.consentId || ""),
     createdAt: (row.created_at as string) || "",
     updatedAt: (row.updated_at as string) || "",
-    status: parsed.status,
-    dateRange: parsed.dateRange as { from?: string; to?: string } | undefined,
-    ...parsed,
+    status: rest.status,
+    dateRange: rest.dateRange as { from?: string; to?: string } | undefined,
+    kind: rest.kind,
+    source: columnSource,
   };
 }
 

@@ -80,9 +80,8 @@ export type AbdmCallbackWriteAuth =
 /**
  * An invalid callback signature is 401 for every caller, including staff.
  * Gateway-only routes (`gatewayOnly`) then require a matched signature.
- * Staff may write only the routes they start: care context (this function,
- * unsigned) and HIU consent init (session auth, not this function).
- * A patient session is never a callback caller.
+ * Staff care-context linking and HIU consent init use session auth and do not
+ * call this function. A patient session is never a callback caller.
  */
 export function authorizeAbdmCallbackWrite(opts: {
   role?: string | null;
@@ -114,11 +113,78 @@ export function findTenantArtefactByConsentId(tenantId: string, consentId: strin
   return row ? mapConsentArtefact(row) : undefined;
 }
 
-export function consentBlocksFetch(artefact: { status?: unknown; dateRange?: unknown } | undefined): boolean {
-  const status = String(artefact?.status || "").toUpperCase();
-  const until = String((artefact?.dateRange as { to?: string } | undefined)?.to || "");
-  const expired = Boolean(until && new Date(until).getTime() < Date.now());
-  return status === "DENIED" || status === "REVOKED" || expired;
+function consentRangeBound(value: string, bound: "start" | "end"): number {
+  const trimmed = value.trim();
+  if (!trimmed) return Number.NaN;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    const stamp = bound === "end" ? `${trimmed}T23:59:59.999Z` : `${trimmed}T00:00:00.000Z`;
+    return new Date(stamp).getTime();
+  }
+  return new Date(trimmed).getTime();
+}
+
+/**
+ * Health information may be shared only for a gateway-signed GRANTED consent
+ * of kind hip_notify or hiu_consent, still inside its date range, for this
+ * tenant and patient. Care-context rows, staff-written rows, and anything
+ * else are refused.
+ */
+export function consentAllowsFetch(
+  artefact:
+    | {
+        status?: unknown;
+        dateRange?: unknown;
+        kind?: unknown;
+        source?: unknown;
+        tenantId?: unknown;
+        patientId?: unknown;
+      }
+    | undefined,
+  opts: { tenantId: string; patientId: string; now?: number }
+): boolean {
+  if (!artefact) return false;
+  const kind = String(artefact.kind || "");
+  if (kind !== "hip_notify" && kind !== "hiu_consent") return false;
+  if (artefact.source !== "gateway_signed") return false;
+  if (String(artefact.status || "").toUpperCase() !== "GRANTED") return false;
+  if (String(artefact.tenantId || "") !== opts.tenantId) return false;
+  if (String(artefact.patientId || "") !== opts.patientId) return false;
+  const range = artefact.dateRange as { from?: string; to?: string } | undefined;
+  const from = consentRangeBound(String(range?.from || ""), "start");
+  const to = consentRangeBound(String(range?.to || ""), "end");
+  if (!Number.isFinite(from) || !Number.isFinite(to)) return false;
+  const now = opts.now ?? Date.now();
+  return now >= from && now <= to;
+}
+
+export type TenantEncounterDoctor = {
+  id: string;
+  name: string;
+  reg_number: string;
+  specialty: string;
+  hpr_id: string;
+  qualification: string;
+};
+
+/** Doctor on this tenant's encounter. Never a doctor from another clinic. */
+export function findTenantEncounterDoctor(
+  tenantId: string,
+  patientId: string,
+  encounterId: string
+): TenantEncounterDoctor | undefined {
+  const encounter = String(encounterId || "").trim();
+  if (!tenantId || !patientId || !encounter) return undefined;
+  const row = getDb()
+    .prepare(
+      `SELECT d.id AS id, d.name AS name, d.reg_number AS reg_number, d.specialty AS specialty,
+              d.hpr_id AS hpr_id, d.qualification AS qualification
+       FROM appointments a
+       INNER JOIN doctors d ON d.id = a.doctor_id
+       WHERE a.tenant_id = ? AND a.patient_id = ? AND a.id = ?`
+    )
+    .get(tenantId, patientId, encounter) as TenantEncounterDoctor | undefined;
+  if (!row?.id) return undefined;
+  return row;
 }
 
 // In-Memory Consent Artefacts Registry

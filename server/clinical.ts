@@ -392,15 +392,19 @@ function errorStatus(err: unknown, fallback = 500): number {
   return typeof err === "object" && err && "status" in err ? Number((err as { status: number }).status) : fallback;
 }
 
+export type ConsentArtefactSource = "gateway_signed" | "staff";
+
 /**
  * Persist an NHA sandbox consent artefact for the ABDM path only.
  * The practice-simple onboard path must not call this.
+ * `source` is server-set. A value on the artefact object is discarded.
  */
 export function storeConsentArtefact(
   tenantId: string,
   patientId: string,
   artefact: Record<string, unknown>,
-  actor?: { id?: string | null; name?: string }
+  actor?: { id?: string | null; name?: string },
+  source: ConsentArtefactSource = "staff"
 ) {
   const consentId = String(artefact.consentId || artefact.consent_id || "").trim();
   if (!consentId) {
@@ -410,9 +414,12 @@ export function storeConsentArtefact(
   if (!patient) {
     throw httpError(404, "Patient not found");
   }
+  const serverSource: ConsentArtefactSource = source === "gateway_signed" ? "gateway_signed" : "staff";
+  const supplied = { ...artefact };
+  delete supplied.source;
   const now = new Date().toISOString();
-  const kind = String(artefact.kind || artefact.artefactKind || "consent").trim() || "consent";
-  const payload = JSON.stringify({ ...artefact, consentId, kind });
+  const kind = String(supplied.kind || supplied.artefactKind || "consent").trim() || "consent";
+  const payload = JSON.stringify({ ...supplied, consentId, kind, source: serverSource });
   const existing = getDb()
     .prepare("SELECT id FROM abdm_consent_artefacts WHERE tenant_id = ? AND consent_id = ?")
     .get(tenantId, consentId) as { id: string } | undefined;
@@ -420,18 +427,18 @@ export function storeConsentArtefact(
     getDb()
       .prepare(
         `UPDATE abdm_consent_artefacts
-         SET patient_id = ?, artefact_json = ?, updated_at = ?
+         SET patient_id = ?, artefact_json = ?, source = ?, updated_at = ?
          WHERE id = ? AND tenant_id = ?`
       )
-      .run(patientId, payload, now, existing.id, tenantId);
+      .run(patientId, payload, serverSource, now, existing.id, tenantId);
   } else {
     getDb()
       .prepare(
         `INSERT INTO abdm_consent_artefacts (
-          id, tenant_id, patient_id, consent_id, artefact_json, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+          id, tenant_id, patient_id, consent_id, artefact_json, source, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(shortId("consent"), tenantId, patientId, consentId, payload, now, now);
+      .run(shortId("consent"), tenantId, patientId, consentId, payload, serverSource, now, now);
   }
   writeAudit(
     getDb(),

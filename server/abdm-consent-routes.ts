@@ -25,7 +25,8 @@ import {
   callbackHmac,
   careContextReference,
   findTenantArtefactByConsentId,
-  consentBlocksFetch,
+  consentAllowsFetch,
+  findTenantEncounterDoctor,
   encryptFhirPayloadWithDiffieHellman,
 } from "./abdm-internal.ts";
 
@@ -98,13 +99,17 @@ export function registerAbdmConsentRoutes(router: Router): void {
       return res.status(403).json({ error: "Patient not found", abdmMode: resolveAbdmMode(), sandboxNotice: NHA_SANDBOX_NOTICE });
     }
 
-    const existing = listTenantConsentArtefacts(tenantId, patientId);
     const grantId = String(
       req.body?.consentId || req.body?.consent_id || req.body?.consentArtefact?.consentId || ""
     ).trim();
-    if (kind === "hiu_fetch" || kind === "hiu_receive" || kind === "hip_on_request") {
-      const consent = existing.find((row) => !grantId || String(row.consentId) === grantId) || findTenantArtefactByConsentId(tenantId, grantId);
-      if (consentBlocksFetch(consent)) {
+    if (kind === "hiu_fetch" || kind === "hiu_receive") {
+      const consent = findTenantArtefactByConsentId(tenantId, grantId);
+      const consentPatient = String(consent?.patientId || "");
+      if (
+        !grantId ||
+        (consent && consentPatient !== patientId) ||
+        !consentAllowsFetch(consent, { tenantId, patientId })
+      ) {
         return res.status(403).json({
           error: "HIU fetch blocked: consent is not granted",
           abdmMode: resolveAbdmMode(),
@@ -144,7 +149,13 @@ export function registerAbdmConsentRoutes(router: Router): void {
           };
     artefact.kind = kind;
     artefact.consentId = persistId;
-    storeConsentArtefact(tenantId, patientId, artefact, { id: req.user?.id, name: req.user?.name || "ABDM callback" });
+    storeConsentArtefact(
+      tenantId,
+      patientId,
+      artefact,
+      { id: req.user?.id, name: req.user?.name || "ABDM callback" },
+      "gateway_signed"
+    );
     writeAudit(
       getDb(),
       req.user?.id || null,
@@ -168,9 +179,8 @@ export function registerAbdmConsentRoutes(router: Router): void {
   };
 
   const handleHipCareContext = (req: Request, res: Response) => {
-    const hmac = callbackHmac(req);
-    if (!allowCallbackWrite(req, res, hmac)) return;
-    const tenantId = callbackClinicId(req, hmac);
+    if (!denyUnlessPatientRecordRole(req, res)) return;
+    const tenantId = tenantIdOf(req);
     if (!tenantId) {
       return res.status(401).json({ error: "Authentication required", abdmMode: resolveAbdmMode(), sandboxNotice: NHA_SANDBOX_NOTICE });
     }
@@ -203,7 +213,8 @@ export function registerAbdmConsentRoutes(router: Router): void {
         recordProducer: "lumera",
         purpose: "hip_care_context",
       },
-      { id: req.user?.id, name: req.user?.name || "HIP care-context" }
+      { id: req.user?.id, name: req.user?.name || "HIP care-context" },
+      "staff"
     );
     return res.json({
       careContextReference: ref,
@@ -281,52 +292,55 @@ export function registerAbdmConsentRoutes(router: Router): void {
     const grantId = String(
       req.body?.consentId || req.body?.consent_id || req.body?.consent?.id || req.body?.consent?.consentId || ""
     ).trim();
-    let patientId = String(req.body?.patientId || req.body?.patient_id || "").trim();
-    const byConsent = grantId ? findTenantArtefactByConsentId(tenantId, grantId) : undefined;
-    if (!patientId && byConsent?.patientId) patientId = String(byConsent.patientId);
-    if (!patientId) {
-      return res.status(400).json({ error: "patientId is required", abdmMode: resolveAbdmMode(), sandboxNotice: NHA_SANDBOX_NOTICE });
+    const grant = findTenantArtefactByConsentId(tenantId, grantId);
+    const bodyPatient = String(req.body?.patientId || req.body?.patient_id || "").trim();
+    if (bodyPatient && grant && String(grant.patientId) !== bodyPatient) {
+      return res.status(403).json({
+        error: "HIU fetch blocked: consent is not granted",
+        abdmMode: resolveAbdmMode(),
+        sandboxNotice: NHA_SANDBOX_NOTICE,
+      });
+    }
+    const patientId = bodyPatient || String(grant?.patientId || "");
+    if (!grantId || !grant || !patientId || !consentAllowsFetch(grant, { tenantId, patientId })) {
+      return res.status(403).json({
+        error: "HIU fetch blocked: consent is not granted",
+        abdmMode: resolveAbdmMode(),
+        sandboxNotice: NHA_SANDBOX_NOTICE,
+      });
     }
     const row = getTenantPatient(tenantId, patientId);
     if (!row) {
       return res.status(403).json({ error: "Patient not found", abdmMode: resolveAbdmMode(), sandboxNotice: NHA_SANDBOX_NOTICE });
     }
-    if (grantId) {
-      const grant = byConsent || findTenantArtefactByConsentId(tenantId, grantId);
-      if (consentBlocksFetch(grant)) {
-        return res.status(403).json({
-          error: "HIU fetch blocked: consent is not granted",
-          abdmMode: resolveAbdmMode(),
-          sandboxNotice: NHA_SANDBOX_NOTICE,
-        });
-      }
-    }
     const patient = mapPatient(row);
-    const encounterId = String(req.body?.encounterId || req.body?.encounter_id || "OPD").trim() || "OPD";
+    const encounterId = String(req.body?.encounterId || req.body?.encounter_id || "").trim();
     const ref = careContextReference(patient.uhid, encounterId);
-    const persistId = `hip-req-${grantId || crypto.randomUUID().slice(0, 8)}`;
+    const persistId = `hip-req-${grantId}`;
     storeConsentArtefact(
       tenantId,
       patientId,
       {
         consentId: persistId,
-        grantId: grantId || undefined,
+        grantId,
         kind: "hip_on_request",
         status: "SHARED",
         careContextReference: ref,
         purpose: "hip_on_request",
         transactionId: req.body?.transactionId,
       },
-      { id: req.user?.id, name: req.user?.name || "HIP on-request" }
+      { id: req.user?.id, name: req.user?.name || "HIP on-request" },
+      "gateway_signed"
     );
 
-    const doctor = (getDb().prepare("SELECT * FROM doctors LIMIT 1").get() || {
-      id: "doc-stub",
-      name: "Clinician",
+    const doctor = findTenantEncounterDoctor(tenantId, patientId, encounterId) || {
+      id: "",
+      name: "",
       reg_number: "",
-      specialty: "General Medicine",
+      specialty: "",
       hpr_id: "",
-    }) as Record<string, unknown>;
+      qualification: "",
+    };
     const rxBundle = createPrescriptionBundle(
       {
         id: persistId,
@@ -348,12 +362,12 @@ export function registerAbdmConsentRoutes(router: Router): void {
         kycStatus: "LINKED_SANDBOX",
       },
       {
-        id: String(doctor.id || "doc-stub"),
-        name: String(doctor.name || "Clinician"),
-        regNumber: String(doctor.reg_number || ""),
-        specialty: String(doctor.specialty || "General Medicine"),
-        hprId: String(doctor.hpr_id || ""),
-        qualification: String(doctor.qualification || ""),
+        id: doctor.id,
+        name: doctor.name,
+        regNumber: doctor.reg_number,
+        specialty: doctor.specialty,
+        hprId: doctor.hpr_id,
+        qualification: doctor.qualification,
       },
       { id: tenantId, name: ABDM_CONFIG.FACILITY_NAME, hfrId: ABDM_CONFIG.HFR_ID }
     );
@@ -367,7 +381,8 @@ export function registerAbdmConsentRoutes(router: Router): void {
       transactionId: String(req.body?.transactionId || `tx-sbx-${crypto.randomUUID().slice(0, 8)}`),
       abdmMode: resolveAbdmMode(),
       patientId,
-      consentId: grantId || persistId,
+      consentId: grantId,
+      doctorId: doctor.id,
       careContextReference: ref,
       keyMaterial: {
         cryptoAlg: "ECDH",
@@ -418,7 +433,8 @@ export function registerAbdmConsentRoutes(router: Router): void {
         purpose: req.body?.purpose || "hiu_consent_init",
         abhaAddress: req.body?.abhaAddress,
       },
-      { id: req.user?.id, name: req.user?.name || "HIU consent init" }
+      { id: req.user?.id, name: req.user?.name || "HIU consent init" },
+      "staff"
     );
     return res.json({
       consentRequestId,
@@ -449,7 +465,7 @@ export function registerAbdmConsentRoutes(router: Router): void {
     });
   };
 
-  router.post(["/hip/link/care-context", "/v3/hip/link/care-context"], handleHipCareContext);
+  router.post(["/hip/link/care-context", "/v3/hip/link/care-context"], requireAuth, handleHipCareContext);
   router.post(["/hip/patient-discover", "/v3/hip/patient-discover"], handleHipPatientDiscover);
   router.post(["/hip/link/on-confirm", "/v3/hip/link/on-confirm"], handleHipOnConfirm);
   router.post(
