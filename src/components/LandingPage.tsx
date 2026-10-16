@@ -101,7 +101,7 @@ export const REGIONAL_LANGUAGES = [
 const FALLBACK: SitePayload = {
   settings: {
     brandName: PRODUCT_NAME,
-    badgeText: "ABDM-aligned AI Healthcare OS & Voice Receptionist (sandbox path)",
+    badgeText: "AI Healthcare OS & Voice Receptionist",
     heroTitle: "Next-Gen AI Receptionist & Ambient Clinical Scribe",
     heroSubtitle:
       "Automate patient call answering, 3-click WhatsApp appointment scheduling, and ambient consultation SOAP notes across regional Indian languages.",
@@ -109,7 +109,7 @@ const FALLBACK: SitePayload = {
     ctaPrimary: "Experience Doctor EHR",
     ctaSecondary: "Open Clinical Demo",
     ctaBannerTitle: "Ready to Supercharge Your Practice?",
-    ctaBannerSubtitle: "Experience seamless AI receptionist calls, smart prescriptions, and ABDM-aligned records (sandbox path).",
+    ctaBannerSubtitle: "Experience seamless AI receptionist calls, smart prescriptions, and ABDM records.",
     logoUrl: "",
     clinicName: PRODUCT_NAME,
   },
@@ -406,7 +406,7 @@ export const LandingPage: React.FC = () => {
                 <ShieldCheck className="w-5 h-5" />
               </div>
               <div className="text-left">
-                <span className="block text-xs font-bold text-slate-100 uppercase tracking-wider">ABDM M1–M3 · NHA sandbox path</span>
+                <span className="block text-xs font-bold text-slate-100 uppercase tracking-wider">ABDM records</span>
                 <span className="text-[11px] text-slate-400 font-medium">Ayushman Bharat Digital Mission</span>
               </div>
             </div>
@@ -506,7 +506,7 @@ export const LandingPage: React.FC = () => {
                 </li>
                 <li className="flex items-center gap-2">
                   <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                  <span>ABDM-aligned FHIR R4 Bundle output</span>
+                  <span>FHIR R4 Bundle output</span>
                 </li>
               </ul>
             </div>
@@ -963,7 +963,7 @@ export const LandingPage: React.FC = () => {
             />
           </div>
           <p className="text-xs text-slate-400 max-w-2xl mx-auto">
-            Empowering Indian healthcare with multilingual ambient scribing, automated WhatsApp patient self-service, and ABDM-aligned interoperability (sandbox path).
+            Empowering Indian healthcare with multilingual ambient scribing, automated WhatsApp patient self-service, and ABDM records.
           </p>
 
           {/* Policy Links */}

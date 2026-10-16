@@ -362,7 +362,7 @@ export function ensureAbdmAndDhisSeeding(database: SqlDatabase) {
     database.prepare(
       "UPDATE cms_sections SET payload = ? WHERE id = 'feat-6'"
     ).run(JSON.stringify({
-      title: "ABDM-aligned (NHA sandbox)",
+      title: "ABDM records",
       desc: "ABHA ID integration path, digital consent, and sandbox-unverified health records — not production HIU/HIP approval.",
     }));
     database.prepare(

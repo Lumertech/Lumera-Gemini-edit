@@ -100,7 +100,7 @@ export interface SpecialtyWorkflowPack {
 }
 
 const SANDBOX =
-  "SANDBOX / DEMO workspace — sample data and NHA sandbox path only. Not ABDM certified.";
+  "SANDBOX / DEMO workspace — sample data only. Not ABDM certified.";
 
 function medicalPack(specialty: PolyclinicSpecialty, extra: IntakeField[] = []): SpecialtyWorkflowPack {
   return {

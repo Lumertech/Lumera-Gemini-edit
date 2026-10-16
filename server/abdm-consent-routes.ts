@@ -160,7 +160,7 @@ export function registerAbdmConsentRoutes(router: Router): void {
       getDb(),
       req.user?.id || null,
       req.user?.name || "ABDM callback",
-      `ABDM ${kind} (NHA sandbox)`,
+      `ABDM ${kind}`,
       `patient ${patientId} artefact ${artefact.consentId}`
     );
     const artefacts = listTenantConsentArtefacts(tenantId, patientId);
@@ -346,7 +346,7 @@ export function registerAbdmConsentRoutes(router: Router): void {
         id: persistId,
         rxNumber: `RX-SBX-${persistId.slice(-6)}`,
         date: new Date().toISOString(),
-        diagnosis: "NHA sandbox stub record",
+        diagnosis: "local stub record",
         icd10Code: "",
         medicines: [],
       },

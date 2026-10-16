@@ -8,6 +8,7 @@ import { after, describe, it } from "node:test";
 import { Pool } from "pg";
 import { createApiRouter } from "./api.ts";
 import { DEMO_TENANT_ID, getDb, initDatabase } from "./db.ts";
+import { TPG_2020_FOOTER_DISCLAIMER } from "./letterhead.ts";
 import { migrate } from "./db-migrate.ts";
 import { seedClinicalAndWhatsAppIfMissing } from "./db-seed.ts";
 import { hashPassword, verifyPassword } from "./password.ts";
@@ -606,6 +607,82 @@ describe("Sunrise clinic seed", () => {
       close();
     }
   });
+
+  it("sets only the Sunrise letterhead footer to the TPG 2020 default", () => {
+    const { db, close } = openSqlite();
+    try {
+      migrate(db);
+      const otherFooter = "GSTIN and UPI shown here are placeholders for another clinic.";
+      const sentinel = "2001-01-01T00:00:00.000Z";
+      insertTenant(db, "tenant-unrelated", "Unrelated Clinic");
+      db.prepare("UPDATE tenants SET footer_disclaimer = ?, updated_at = ? WHERE id = ?").run(otherFooter, sentinel, "tenant-unrelated");
+      const demoFooter = "Demo clinic footer stays put.";
+      const demoRow = db.prepare("SELECT id FROM tenants WHERE id = ?").get(DEMO_TENANT_ID) as { id?: string } | undefined;
+      if (!demoRow?.id) insertTenant(db, DEMO_TENANT_ID, "Demo Clinic");
+      db.prepare("UPDATE tenants SET footer_disclaimer = ? WHERE id = ?").run(demoFooter, DEMO_TENANT_ID);
+
+      ensureSunriseClinic(db, { DEMO_LOGIN_ENABLED: "false" });
+      assert.equal(
+        (db.prepare("SELECT id FROM tenants WHERE id = ?").get(SUNRISE_TENANT_ID) as { id?: string } | undefined)?.id,
+        undefined
+      );
+
+      ensureSunriseClinic(db, { DEMO_LOGIN_ENABLED: "true" });
+      const footerOf = (id: string) =>
+        db.prepare("SELECT footer_disclaimer AS v, updated_at AS u FROM tenants WHERE id = ?").get(id) as {
+          v: string | null;
+          u: string;
+        };
+      assert.equal(footerOf(SUNRISE_TENANT_ID).v, TPG_2020_FOOTER_DISCLAIMER);
+      assert.equal(footerOf("tenant-unrelated").v, otherFooter);
+      assert.equal(footerOf("tenant-unrelated").u, sentinel);
+      assert.equal(footerOf(DEMO_TENANT_ID).v, demoFooter);
+
+      const now = "2026-10-16T00:00:00.000Z";
+      db.prepare(
+        `INSERT INTO invoices (id, tenant_id, invoice_number, date, created_at, gstin, upi_id, total_amount, status)
+         VALUES ('inv-sun-footer', ?, 'INV-SUN-FOOTER', '2026-10-01', ?, '19PLACEHOLDER1Z5', 'placeholder@upi', 500, 'Unpaid')`
+      ).run(SUNRISE_TENANT_ID, now);
+      db.prepare(
+        `INSERT INTO invoices (id, tenant_id, invoice_number, date, created_at, gstin, upi_id, total_amount, status)
+         VALUES ('inv-other-footer', ?, 'INV-OTHER-FOOTER', '2026-10-01', ?, '27OTHERGSTIN1Z5', 'other@upi', 800, 'Paid')`
+      ).run("tenant-unrelated", now);
+      const invoiceOf = (id: string) =>
+        db.prepare("SELECT tenant_id, gstin, upi_id, total_amount, status FROM invoices WHERE id = ?").get(id) as {
+          tenant_id: string;
+          gstin: string;
+          upi_id: string;
+          total_amount: number;
+          status: string;
+        };
+      const sunInvoice = invoiceOf("inv-sun-footer");
+      const otherInvoice = invoiceOf("inv-other-footer");
+
+      db.prepare("UPDATE tenants SET updated_at = ? WHERE id = ?").run(sentinel, SUNRISE_TENANT_ID);
+      ensureSunriseClinic(db, { DEMO_LOGIN_ENABLED: "true" });
+      assert.equal(footerOf(SUNRISE_TENANT_ID).v, TPG_2020_FOOTER_DISCLAIMER);
+      assert.equal(footerOf(SUNRISE_TENANT_ID).u, sentinel);
+      assert.equal(footerOf("tenant-unrelated").v, otherFooter);
+      assert.deepEqual(invoiceOf("inv-sun-footer"), sunInvoice);
+      assert.deepEqual(invoiceOf("inv-other-footer"), otherInvoice);
+
+      const replaced = "Placeholder GSTIN/UPI disclosure that used to live on the Sunrise footer.";
+      db.prepare("UPDATE tenants SET footer_disclaimer = ? WHERE id = ?").run(replaced, SUNRISE_TENANT_ID);
+      ensureSunriseClinic(db, { DEMO_LOGIN_ENABLED: "true" });
+      assert.equal(footerOf(SUNRISE_TENANT_ID).v, TPG_2020_FOOTER_DISCLAIMER);
+      assert.equal(footerOf(SUNRISE_TENANT_ID).u, sentinel);
+      assert.equal(footerOf("tenant-unrelated").v, otherFooter);
+      assert.equal(footerOf(DEMO_TENANT_ID).v, demoFooter);
+      assert.deepEqual(invoiceOf("inv-sun-footer"), sunInvoice);
+
+      db.prepare("UPDATE tenants SET footer_disclaimer = ? WHERE id = ?").run("Clinic edited this footer.", SUNRISE_TENANT_ID);
+      ensureSunriseClinic(db, { DEMO_LOGIN_ENABLED: "false" });
+      assert.equal(footerOf(SUNRISE_TENANT_ID).v, "Clinic edited this footer.");
+      assert.equal(footerOf("tenant-unrelated").v, otherFooter);
+    } finally {
+      close();
+    }
+  });
 });
 
 function postgresTestUrl(): string | null {
@@ -658,6 +735,10 @@ describe("Sunrise clinic seed on Postgres", () => {
         name: "Postgres Desk",
       });
       const quarantineBefore = db.prepare("SELECT name FROM tenants WHERE id = ?").get(WHATSAPP_QUARANTINE_TENANT_ID) as { name: string };
+      const otherFooter = "Other clinic footer stays put.";
+      const demoFooter = "Demo clinic footer stays put.";
+      db.prepare("UPDATE tenants SET footer_disclaimer = ? WHERE id = ?").run(otherFooter, "tenant-unrelated");
+      db.prepare("UPDATE tenants SET footer_disclaimer = ? WHERE id = ?").run(demoFooter, DEMO_TENANT_ID);
       ensureSunriseClinic(db, passwordEnv(passwords));
       assertPasswords(db, passwords);
       const first = snapshot(db);
@@ -668,6 +749,11 @@ describe("Sunrise clinic seed on Postgres", () => {
       assert.equal(first.conversation.tenant_id, WHATSAPP_QUARANTINE_TENANT_ID);
       const names = db.prepare("SELECT name FROM users WHERE email = ?").get("ananya.sunrise@lumera.me") as { name: string };
       assert.equal(names.name, "Postgres Ananya");
+      const footerOf = (id: string) =>
+        (db.prepare("SELECT footer_disclaimer AS v FROM tenants WHERE id = ?").get(id) as { v: string }).v;
+      assert.equal(footerOf(SUNRISE_TENANT_ID), TPG_2020_FOOTER_DISCLAIMER);
+      assert.equal(footerOf("tenant-unrelated"), otherFooter);
+      assert.equal(footerOf(DEMO_TENANT_ID), demoFooter);
     } finally {
       if (prevDbUrl === undefined) delete process.env.DATABASE_URL;
       else process.env.DATABASE_URL = prevDbUrl;

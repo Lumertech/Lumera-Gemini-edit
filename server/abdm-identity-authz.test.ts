@@ -385,7 +385,7 @@ describe("ABDM identity AuthZ", () => {
     const rows = getDb()
       .prepare(
         `SELECT action, details, user_name FROM audit_logs
-         WHERE user_id = ? AND action IN ('ABDM_AADHAAR_OTP_GENERATED', 'ABHA OTP matched (NHA sandbox)')
+         WHERE user_id = ? AND action IN ('ABDM_AADHAAR_OTP_GENERATED', 'ABHA OTP matched')
          ORDER BY timestamp DESC LIMIT 2`
       )
       .all(clinic.userId) as Array<{ action: string; details: string; user_name: string }>;

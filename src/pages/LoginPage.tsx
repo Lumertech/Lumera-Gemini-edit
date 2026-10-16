@@ -1616,7 +1616,7 @@ export const LoginPage: React.FC = () => {
                     <Sparkles className="w-3.5 h-3.5 text-purple-400 shrink-0 mt-0.5 sm:mt-0" />
                     <span className="leading-snug">Starter Enterprise Tier • 30-Day Free Trial • 500 AI Scribe Mins</span>
                   </span>
-                  <span className="font-mono text-xs text-emerald-400 font-bold shrink-0">NHA sandbox</span>
+                  <span className="font-mono text-xs text-emerald-400 font-bold shrink-0">ABHA</span>
                 </div>
 
                 {/* Desktop submit — phone uses the sticky action bar so the CTA is never clipped.
@@ -1761,7 +1761,7 @@ export const LoginPage: React.FC = () => {
         ) : null}
 
         <div className={`mt-6 pt-4 border-t border-slate-800/80 text-center text-[11px] sm:text-xs text-slate-500 items-center justify-center gap-2 px-1 ${mode === "register" ? "hidden md:flex" : "flex"}`}>
-          <span className="leading-relaxed">Protected by AES-256 GCM · Designed for ABDM (NHA sandbox path)</span>
+          <span className="leading-relaxed">Protected by AES-256 GCM · Designed for ABDM records</span>
         </div>
       </div>
       </div>

@@ -388,7 +388,7 @@ export function seedCms(database: SqlDatabase, now: string) {
     { title: "Smart Scheduling", desc: "AI manages your calendar, prevents double-bookings, and optimizes appointment slots." },
     { title: "Automated Reminders", desc: "WhatsApp & voice reminders reduce no-shows by up to 95%. Smart follow-ups included." },
     { title: "Instant Payments", desc: "Send payment links via WhatsApp. Accept UPI, cards, or Razorpay. Get paid faster." },
-    { title: "ABDM-aligned (NHA sandbox)", desc: "ABHA ID integration path, digital consent, and sandbox-unverified health records — not production HIU/HIP approval." },
+    { title: "ABDM records", desc: "ABHA ID integration path, digital consent, and sandbox-unverified health records — not production HIU/HIP approval." },
   ];
   features.forEach((f, i) => insertSection.run(`feat-${i + 1}`, "feature", i, JSON.stringify(f)));
 

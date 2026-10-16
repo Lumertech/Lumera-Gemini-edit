@@ -388,7 +388,7 @@ export const BOOTSTRAP_DDL = `
       failed_attempts INTEGER NOT NULL DEFAULT 0
     );
 
-    -- NHA sandbox: tenant-scoped ABDM consent artefacts.
+    -- Tenant-scoped ABDM consent artefacts.
     CREATE TABLE IF NOT EXISTS abdm_consent_artefacts (
       id TEXT PRIMARY KEY,
       tenant_id TEXT NOT NULL,

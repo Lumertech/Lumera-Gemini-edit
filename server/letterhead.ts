@@ -18,6 +18,10 @@ export interface TenantLetterhead {
   whatsappNumber: string;
 }
 
+/** Default Rx footer. Telemedicine Practice Guidelines, 2020. */
+export const TPG_2020_FOOTER_DISCLAIMER =
+  "Prescription issued under the Telemedicine Practice Guidelines, 2020.";
+
 export const DEMO_LETTERHEAD: TenantLetterhead = {
   clinicName: "Lumera Healthcare & Polyclinic Institute",
   tagline: "Precision AI-Powered Multi-Specialty Clinical Center",
@@ -32,7 +36,7 @@ export const DEMO_LETTERHEAD: TenantLetterhead = {
   whatsappNumber: "+91 98000 12345",
   sealText: "Authorized Medical Seal & Digital Signature Verified",
   signatureUrl: "",
-  footerDisclaimer: "Prescription issued under the Telemedicine Practice Guidelines, 2020.",
+  footerDisclaimer: TPG_2020_FOOTER_DISCLAIMER,
 };
 
 const EMPTY_LETTERHEAD: TenantLetterhead = {

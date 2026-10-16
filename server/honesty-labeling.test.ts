@@ -42,14 +42,17 @@ function readRepo(rel: string): string {
 describe("Compliance #18 honesty labeling (LandingPage / Admin Meta)", () => {
   it("LandingPage keeps #18 sandbox copy and has none of the CoS overclaims", () => {
     const landing = readRepo("src/components/LandingPage.tsx");
-    assert.match(landing, /ABDM M1–M3 · NHA sandbox path/);
+    assert.match(landing, /badgeText: "AI Healthcare OS & Voice Receptionist"/);
+    assert.match(landing, /ABDM records/);
+    assert.match(landing, /FHIR R4 Bundle output/);
+    assert.doesNotMatch(landing, /ABDM-aligned/);
+    assert.doesNotMatch(landing, /NHA sandbox/);
     assert.match(landing, /ABDM sandbox milestone path/);
     assert.match(landing, /Built for DPDP Act 2023/);
     assert.match(landing, /WhatsApp Cloud API · Meta Tech Provider path/);
     assert.match(landing, /building toward Meta Tech Provider/i);
     assert.match(landing, /Designed for ABDM M1–M3/);
     assert.match(landing, /App Review is not submitted/);
-    assert.match(landing, /ABDM-aligned records \(sandbox path\)/);
 
     assert.equal(/ABDM certified/i.test(landing), false);
     assert.equal(/HIPAA/i.test(landing), false);
@@ -282,7 +285,10 @@ describe("Compliance #44 honesty gate (clinician / admin / DHIS / CMS / ABDM sta
     const dhis = readRepo("src/components/dhis/DhisMeter.tsx");
     assert.equal(/PFMS/i.test(dhis), false);
     assert.equal(/Certified Transactions/i.test(dhis), false);
-    assert.match(dhis, /NHA sandbox/);
+    assert.match(dhis, /local stub/);
+    assert.match(dhis, /not a live incentive claim/);
+    assert.doesNotMatch(dhis, /NHA sandbox/);
+    assert.doesNotMatch(dhis, /ABDM-aligned/);
 
     const db = [
       readRepo("server/db.ts"),
@@ -292,6 +298,7 @@ describe("Compliance #44 honesty gate (clinician / admin / DHIS / CMS / ABDM sta
       readRepo("server/db-seed-meta.ts"),
     ].join("\n");
     assert.equal(/ABDM Compliant/i.test(db), false);
-    assert.match(db, /ABDM-aligned \(NHA sandbox\)/);
+    assert.match(db, /title: "ABDM records"/);
+    assert.equal(/ABDM-aligned \(NHA sandbox\)/.test(db), false);
   });
 });

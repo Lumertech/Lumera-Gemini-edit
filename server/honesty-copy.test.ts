@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
+import { RETIRED_USER_COPY, retiredUserCopyLabels, scanBuiltBundle } from "./banned-user-copy.ts";
 import { rewriteLegacyHonestyCopy } from "./db-migrate.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -15,6 +17,7 @@ const PHRASES: { re: RegExp; label: string }[] = [
   { re: /Certified Digital Rx/, label: "Certified Digital Rx" },
   { re: /\bgemini\b/i, label: "Gemini" },
   { re: /(valid|verified) under (the )?NHA/i, label: "(valid|verified) under NHA" },
+  ...RETIRED_USER_COPY,
 ];
 
 function lineOf(source: string, index: number): number {
@@ -46,9 +49,13 @@ function allowListed(content: string, lookback: string): boolean {
   return false;
 }
 
+function isConsoleCall(lookback: string): boolean {
+  return /console\.(?:error|warn|log|info|debug)\s*\(\s*$/.test(lookback.trimEnd());
+}
+
 function isUserFacingString(lookback: string): boolean {
   const tail = lookback.trimEnd();
-  if (/console\.(?:error|warn|log|info|debug)\s*\(\s*$/.test(tail)) return false;
+  if (isConsoleCall(tail)) return false;
   if (/(?:source|label|text|title|placeholder|aria-label|aria-labelledby|alt|message|footerText|footerDisclaimer)\s*:\s*$/.test(tail)) {
     return true;
   }
@@ -236,14 +243,18 @@ export function findHonestyViolations(source: string, file = "src/components/Exa
   const ui = isSrcUiFile(file);
   for (const hit of stringLiterals(source)) {
     const labels = phraseHits(hit.content);
-    if (labels.length === 0) continue;
+    const retired = retiredUserCopyLabels(hit.content);
+    if (labels.length === 0 && retired.length === 0) continue;
     const before = lookback(source, hit.index);
     if (allowListed(hit.content, before)) continue;
     const footer = isFooterDefault(before);
     const response = isResponseLabel(before);
     const instruction = isAiInstruction(before);
     const facing = ui && isUserFacingString(before);
-    if (footer || response || instruction || facing) push(hit.index, labels);
+    if (labels.length && (footer || response || instruction || facing)) push(hit.index, labels);
+    // Retired labels are banned in every shipped string, not only JSX props.
+    // Console lines stay allowed; comments never reach this parser.
+    if (retired.length && !isConsoleCall(before)) push(hit.index, retired);
   }
 
   if (ui) {
@@ -306,7 +317,28 @@ describe("honesty copy scan", () => {
       `export function Rx(){ return <p>Verified under the NHA sandbox</p>; }\n`,
       "src/components/Rx.tsx"
     );
-    assert.equal(nhaThe.length, 1);
+    assert.equal(nhaThe.length, 2);
+    assert.ok(nhaThe.some((item) => item.message.includes("(valid|verified) under NHA")));
+    assert.ok(nhaThe.some((item) => item.message.includes("NHA sandbox")));
+
+    const notice = findHonestyViolations(
+      `export const NOTICE = "NHA sandbox: local stand-in";\n`,
+      "server/clinical.ts"
+    );
+    assert.equal(notice.length, 1);
+    assert.match(notice[0].message, /NHA sandbox/);
+
+    const aligned = findHonestyViolations(
+      `export function Badge(){ return <span>ABDM-aligned records</span>; }\n`,
+      "src/components/Badge.tsx"
+    );
+    assert.ok(aligned.some((item) => item.message.includes("ABDM-aligned")));
+
+    const logLine = findHonestyViolations(
+      `console.info("NHA sandbox boot");\n`,
+      "server/clinical.ts"
+    );
+    assert.deepEqual(logLine, []);
 
     const certified = findHonestyViolations(
       `export function Badge(){ return <span>Certified Digital Rx</span>; }\n`,
@@ -418,6 +450,31 @@ describe("honesty copy scan", () => {
       [],
       violations.map((item) => `${item.file}:${item.line} ${item.message}`).join("\n")
     );
+  });
+
+  it("fails the built bundle when retired labels are emitted", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lumera-bundle-scan-"));
+    try {
+      fs.writeFileSync(path.join(dir, "app.js"), `console.log("ok");\n`);
+      fs.writeFileSync(path.join(dir, "notes.map"), "NHA sandbox in a sourcemap comment\n");
+      assert.deepEqual(scanBuiltBundle(dir), []);
+      fs.writeFileSync(path.join(dir, "chunk.js"), `p("ABDM-aligned records")`);
+      const hits = scanBuiltBundle(dir);
+      assert.equal(hits.length, 1);
+      assert.equal(hits[0].label, "ABDM-" + "aligned");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+
+    const dist = path.join(root, "dist");
+    if (fs.existsSync(dist)) {
+      const shipped = scanBuiltBundle(dist);
+      assert.deepEqual(
+        shipped,
+        [],
+        shipped.map((hit) => `${hit.file}:${hit.line} ${hit.label}`).join("\n")
+      );
+    }
   });
 });
 

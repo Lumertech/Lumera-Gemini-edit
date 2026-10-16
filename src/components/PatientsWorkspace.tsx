@@ -195,7 +195,7 @@ const PatientList: React.FC<{
                   <span className="font-mono text-[11px] text-slate-500 break-all">{patient.uhid}</span>
                   {linked ? (
                     <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                      ABHA · NHA sandbox
+                      ABHA
                     </span>
                   ) : (
                     <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-800 border border-amber-200">
@@ -299,10 +299,10 @@ const PatientDetail: React.FC<{
                 {isAbhaLinked(patient) ? (
                   <p className="text-xs text-emerald-800 mt-2 break-all">
                     ABHA {patient.abhaNumber || "linked"}
-                    {patient.abhaAddress ? ` · ${patient.abhaAddress}` : ""} · NHA sandbox
+                    {patient.abhaAddress ? ` · ${patient.abhaAddress}` : ""}
                   </p>
                 ) : (
-                  <p className="text-xs text-amber-800 mt-2">ABHA not linked · NHA sandbox</p>
+                  <p className="text-xs text-amber-800 mt-2">ABHA not linked</p>
                 )}
               </div>
               <div className="flex flex-col gap-2 w-full sm:w-auto sm:min-w-[10rem]">

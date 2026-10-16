@@ -225,7 +225,7 @@ export function getTenantPatient(tenantId: string, id: string) {
 
 /** NHA sandbox notice — Platform persists ABHA/consent for the sandbox path only. */
 export const ABHA_SANDBOX_NOTICE =
-  "NHA sandbox: ABHA link and consent artefact storage until NHA credentials are provisioned.";
+  "ABHA link and consent artefact storage until credentials are provisioned.";
 
 export function digitsOnly(value: string): string {
   return String(value || "").replace(/\D/g, "");
@@ -444,7 +444,7 @@ export function storeConsentArtefact(
     getDb(),
     actor?.id || null,
     actor?.name || "Clinician",
-    "ABHA consent stored (NHA sandbox)",
+    "ABHA consent stored",
     `patient ${patientId} consent ${consentId}`
   );
   return listTenantConsentArtefacts(tenantId, patientId);
@@ -457,7 +457,7 @@ const LINK_SOURCES = new Set(["aadhaar_otp", "abha_search", "qr"]);
 export function rejectUnlockedKyc(body: Record<string, unknown>) {
   const kyc = String(body.kycStatus || body.kyc_status || "");
   if (/^verified$/i.test(kyc) || /government|unlocked/i.test(kyc)) {
-    throw httpError(400, "NHA sandbox kycStatus must be LINKED_SANDBOX");
+    throw httpError(400, "kycStatus must be LINKED_SANDBOX");
   }
 }
 
@@ -817,7 +817,7 @@ export function linkPatientAbha(
     getDb(),
     actor?.id || null,
     actor?.name || "Clinician",
-    "ABHA linked (NHA sandbox)",
+    "ABHA linked",
     `patient ${id} ABHA ${mapped.abhaNumber} source ${source} mode ${abdmMode}`
   );
   return {
