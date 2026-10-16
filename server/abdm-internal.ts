@@ -197,7 +197,8 @@ export function recordDhisTransaction(params: {
     const txId = `dhis-tx-${crypto.randomUUID().slice(0, 10)}`;
     const now = new Date().toISOString();
     const monthYear = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
-    const tenantId = params.tenantId || "tenant-lumera-main";
+    const tenantId = String(params.tenantId || "").trim();
+    if (!tenantId) return null;
 
     // Standard DHIS incentive parameters: ₹20 per qualifying digital health transaction, 70/30 revenue split
     const incentiveAmount = 20;
