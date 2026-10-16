@@ -43,6 +43,7 @@ interface QueueBoardProps {
   onStartConsultation: (appointment: Appointment) => void;
   onOpenBill: (appointment: Appointment) => void;
   onAddNewToken: (newToken: Partial<Appointment>) => void;
+  canConsult?: boolean;
   queueDate?: string;
   onQueueDateChange?: (isoDate: string) => void;
 }
@@ -56,6 +57,7 @@ export const QueueBoard: React.FC<QueueBoardProps> = ({
   onStartConsultation,
   onOpenBill,
   onAddNewToken,
+  canConsult = true,
   queueDate,
   onQueueDateChange,
 }) => {
@@ -364,8 +366,8 @@ export const QueueBoard: React.FC<QueueBoardProps> = ({
         </div>
 
         {/* Filter Status Pills */}
-        <div className="flex items-center justify-between border-t border-slate-100 pt-2.5 overflow-x-auto text-xs">
-          <div className="flex space-x-1">
+        <div className="flex items-center justify-between border-t border-slate-100 pt-2.5 text-xs gap-2 flex-wrap">
+          <div className="flex flex-wrap gap-1">
             {['All', 'Waiting', 'Triage / Vitals', 'In Consultation', 'Completed'].map((st) => {
               const count = dayAppointments.filter((a) => (st === 'All' ? true : a.status === st)).length;
               return (
@@ -512,13 +514,23 @@ export const QueueBoard: React.FC<QueueBoardProps> = ({
                       <button
                         onClick={() => onOpenBill(apt)}
                         className="px-2.5 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-100 text-slate-700 font-medium text-xs flex items-center gap-1 transition-colors cursor-pointer"
-                        title="View consultation bill & receipt"
+                        title="Create bill"
+                        aria-label="Create bill"
                       >
                         <Receipt className="w-3.5 h-3.5 text-emerald-600" />
-                        <span className="hidden sm:inline">Bill</span>
+                        <span>Create bill</span>
                       </button>
 
-                      {/* Primary Call & Start Consultation Button */}
+                      {apt.status === 'Waiting' && (
+                        <button
+                          type="button"
+                          onClick={() => onUpdateStatus(apt.id, 'Triage / Vitals')}
+                          className="px-3 py-1.5 rounded-lg bg-slate-900 text-white font-semibold text-xs"
+                        >
+                          Ready for doctor
+                        </button>
+                      )}
+                      {canConsult && apt.status !== 'Waiting' && (
                       <button
                         onClick={() => handleCallAndStartConsultation(apt)}
                         className="px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm shadow-blue-200 transition-all cursor-pointer whitespace-nowrap"
@@ -527,6 +539,7 @@ export const QueueBoard: React.FC<QueueBoardProps> = ({
                         <Stethoscope className="w-3.5 h-3.5" />
                         <span>Start Consult</span>
                       </button>
+                      )}
                     </div>
                   </div>
                 );
@@ -608,6 +621,16 @@ export const QueueBoard: React.FC<QueueBoardProps> = ({
 
                 {/* Primary Action Button */}
                 <div className="flex items-center gap-1.5 pt-1">
+                  {apt.status === 'Waiting' && (
+                    <button
+                      type="button"
+                      onClick={() => onUpdateStatus(apt.id, 'Triage / Vitals')}
+                      className="flex-1 py-1.5 px-3 rounded-lg bg-slate-900 text-white font-semibold text-xs"
+                    >
+                      Ready for doctor
+                    </button>
+                  )}
+                  {canConsult && apt.status !== 'Waiting' && (
                   <button
                     onClick={() => handleCallAndStartConsultation(apt)}
                     className="flex-1 py-1.5 px-3 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs flex items-center justify-center gap-1 shadow-xs transition-all cursor-pointer"
@@ -615,6 +638,7 @@ export const QueueBoard: React.FC<QueueBoardProps> = ({
                     <Stethoscope className="w-3.5 h-3.5" />
                     <span>Start Consult</span>
                   </button>
+                  )}
 
                   <button
                     onClick={() => handleOpenVitalsModal(apt)}
@@ -899,6 +923,7 @@ export const QueueBoard: React.FC<QueueBoardProps> = ({
 
               {/* Drawer Footer Actions */}
               <div className="p-4 bg-slate-50 border-t border-slate-200 space-y-2 shrink-0">
+                {canConsult && drawerData.appointment.status !== 'Waiting' && (
                 <button
                   onClick={() => {
                     const apt = drawerData.appointment;
@@ -908,9 +933,10 @@ export const QueueBoard: React.FC<QueueBoardProps> = ({
                   className="w-full py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-sm shadow-blue-200 transition-all cursor-pointer"
                 >
                   <Stethoscope className="w-4 h-4" />
-                  <span>Start Consultation in Smart Rx Studio</span>
+                  <span>Start consult</span>
                   <ArrowRight className="w-4 h-4" />
                 </button>
+                )}
 
                 <div className="grid grid-cols-2 gap-2">
                   <button

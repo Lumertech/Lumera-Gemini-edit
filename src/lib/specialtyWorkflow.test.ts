@@ -104,19 +104,28 @@ describe("specialty workflow packs", () => {
     assert.equal(dermaPack.kind, "medical");
   });
 
-  it("lands role-homes: receptionist, individual GP pack, explicit polyclinic clinic-admin", () => {
+  it("lands role-homes: receptionist dashboard, GP pack home, specialty clinic admins", () => {
     const reception = fakeUser("receptionist@lumera.me", "", "receptionist");
     reception.practiceType = "individual";
-    assert.equal(clinicianHomeView(reception), "reception");
+    assert.equal(clinicianHomeView(reception), "welcome");
 
     const gp = fakeUser("doctor@lumera.me", "gp");
     gp.practiceType = "individual";
-    assert.equal(clinicianHomeView(gp), "queue");
+    assert.equal(clinicianHomeView(gp), "welcome");
     assert.equal(workflowForUser(gp).kind, "medical");
+    assert.equal(workflowForUser(gp).homeView, "welcome");
 
     const clinicAdmin = fakeUser("clinic.admin@lumera.me", "gp", "CLINIC_ADMIN");
     clinicAdmin.practiceType = "polyclinic";
     assert.equal(clinicianHomeView(clinicAdmin), "welcome");
+
+    const physioAdmin = fakeUser("physio.admin@example.test", "physio", "CLINIC_ADMIN");
+    physioAdmin.practiceType = "individual";
+    assert.equal(clinicianHomeView(physioAdmin), "physio-session");
+
+    const dentalAdmin = fakeUser("dental.admin@example.test", "dentist", "polyclinic_admin");
+    dentalAdmin.practiceType = "polyclinic";
+    assert.equal(clinicianHomeView(dentalAdmin), "dental-chart");
   });
 
   it("maps specialty strings onto existing Rx modules", () => {

@@ -15,12 +15,14 @@ import {
   X
 } from 'lucide-react';
 import { Appointment, Doctor, Patient } from '../types';
+import { formatInr } from '../lib/money';
 
 interface AppointmentsCalendarProps {
   appointments: Appointment[];
   doctors: Doctor[];
   patients: Patient[];
   onBookAppointment: (apt: Partial<Appointment>) => void;
+  onCheckIn?: (apt: Appointment) => void;
 }
 
 export const AppointmentsCalendar: React.FC<AppointmentsCalendarProps> = ({
@@ -28,6 +30,7 @@ export const AppointmentsCalendar: React.FC<AppointmentsCalendarProps> = ({
   doctors,
   patients,
   onBookAppointment,
+  onCheckIn,
 }) => {
   const [viewMode, setViewMode] = useState<'Day' | 'Week' | 'Month'>('Day');
   const [selectedDoctorId, setSelectedDoctorId] = useState<string>('All');
@@ -153,7 +156,28 @@ export const AppointmentsCalendar: React.FC<AppointmentsCalendarProps> = ({
           </span>
         </div>
 
-        <div className="overflow-x-auto">
+        <div className="md:hidden divide-y divide-slate-100">
+          {filteredAppointments.map((apt) => (
+            <div key={apt.id} className="px-4 py-3 space-y-2">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="font-semibold text-slate-900 text-sm truncate">{apt.patientName}</p>
+                  <p className="text-xs text-slate-500">{apt.timeSlot} · {apt.type}</p>
+                </div>
+                <p className="text-sm font-semibold text-slate-900 shrink-0">{formatInr(apt.consultationFee || 0)}</p>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs text-slate-500">{apt.status}</span>
+                {onCheckIn && apt.status !== 'Triage / Vitals' && apt.status !== 'In Consultation' && apt.status !== 'Completed' && apt.status !== 'Cancelled' && (
+                  <button type="button" onClick={() => onCheckIn(apt)} className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-semibold">
+                    Check in
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="hidden md:block">
           <table className="w-full text-left text-xs border-collapse">
             <thead>
               <tr className="bg-slate-50 text-slate-700 border-b border-slate-200">
@@ -203,6 +227,11 @@ export const AppointmentsCalendar: React.FC<AppointmentsCalendarProps> = ({
                   <td className="py-3 px-4">
                     <div className="flex items-center space-x-2">
                       <span className="font-semibold text-slate-900 font-mono text-xs">{formatINR(apt.consultationFee)}</span>
+                      {onCheckIn && apt.status !== 'Triage / Vitals' && apt.status !== 'In Consultation' && apt.status !== 'Completed' && apt.status !== 'Cancelled' && (
+                        <button type="button" onClick={() => onCheckIn(apt)} className="px-2 py-1 rounded-md bg-blue-600 text-white text-[11px] font-semibold">
+                          Check in
+                        </button>
+                      )}
                       <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
                         apt.isPaid ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
                       }`}>

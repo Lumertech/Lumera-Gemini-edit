@@ -107,7 +107,7 @@ function medicalPack(specialty: PolyclinicSpecialty, extra: IntakeField[] = []):
     kind: "medical",
     specialty,
     practiceLine: "Doctors & Clinics",
-    homeView: "queue",
+    homeView: "welcome",
     chartLabel: `${specialty} consult & Rx`,
     queueLabel: `${specialty} OPD queue`,
     receptionLabel: `${specialty} intake`,
@@ -532,9 +532,11 @@ export function patientsNavLabel(pack: Pick<SpecialtyWorkflowPack, "patientsLabe
 
 export function clinicianHomeView(user?: AppUser | null): WorkflowView {
   if (!user) return "queue";
-  if (user.role === "receptionist") return "reception";
+  if (user.role === "receptionist") return "welcome";
+  if (user.role === "super_admin") return "welcome";
+  // Owners and admins land on the same pack home as their clinicians.
   if (user.role === "CLINIC_ADMIN" || user.role === "polyclinic_admin") {
-    return user.practiceType === "polyclinic" ? "welcome" : "queue";
+    return workflowForUser(user).homeView;
   }
   return workflowForUser(user).homeView;
 }
