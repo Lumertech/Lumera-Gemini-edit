@@ -1,9 +1,9 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Camera, Download, Eye, FileText, Trash2, Upload, X } from "lucide-react";
 import { apiFetch, apiFetchResponse } from "../api/http";
+import { consentDialogStep } from "../lib/consentGate";
+import { countPdfPages, PATIENT_REPORT_LIMIT_LABEL, PATIENT_REPORT_MAX_BYTES, PATIENT_REPORT_MAX_PAGES } from "../lib/patientReportLimits";
 import { PatientDocumentConsentDialog, type DocumentConsentStatus } from "./PatientDocumentConsentDialog";
-
-const MAX_BYTES = 10 * 1024 * 1024;
 
 const DOC_TYPES = [
   { value: "lab_report", label: "Lab report" },
@@ -72,18 +72,23 @@ function titleFromName(name: string): string {
   return base.slice(0, 200);
 }
 
-function clientFileError(file: File): string {
-  if (file.size > MAX_BYTES) return "Each file must be 10 MB or smaller.";
+async function clientFileError(file: File): Promise<string> {
+  if (file.size > PATIENT_REPORT_MAX_BYTES) return "Each report must be 25 MB or smaller.";
   const name = file.name.toLowerCase();
-  const allowedExt = [".pdf", ".jpg", ".jpeg", ".png", ".heic", ".heif"];
-  const allowedType = ["application/pdf", "image/jpeg", "image/png", "image/heic", "image/heif", "image/jpg", ""];
+  const allowedExt = [".pdf", ".jpg", ".jpeg", ".png"];
+  const allowedType = ["application/pdf", "image/jpeg", "image/png", "image/jpg", ""];
   const extOk = allowedExt.some((ext) => name.endsWith(ext));
   const type = (file.type || "").toLowerCase();
   if (type && !allowedType.includes(type) && type !== "application/octet-stream") {
-    return "Use a PDF, JPG, PNG, or HEIC file.";
+    return "Use a PDF, JPG, or PNG file.";
   }
-  if (!extOk && type && !allowedType.includes(type)) return "Use a PDF, JPG, PNG, or HEIC file.";
-  if (!extOk && !type) return "Use a PDF, JPG, PNG, or HEIC file.";
+  if (!extOk && type && !allowedType.includes(type)) return "Use a PDF, JPG, or PNG file.";
+  if (!extOk && !type) return "Use a PDF, JPG, or PNG file.";
+  if (type === "application/pdf" || name.endsWith(".pdf")) {
+    const pages = countPdfPages(new Uint8Array(await file.arrayBuffer()));
+    if (pages == null) return "Could not count the pages in this PDF. A report can be at most 20 pages.";
+    if (pages > PATIENT_REPORT_MAX_PAGES) return "A report can be at most 20 pages.";
+  }
   return "";
 }
 
@@ -120,6 +125,8 @@ export const PatientDocuments: React.FC<{
   const [error, setError] = useState("");
   const [storageNote, setStorageNote] = useState("");
   const [consentOpen, setConsentOpen] = useState(false);
+  const [consentGateError, setConsentGateError] = useState("");
+  const [consentRetrying, setConsentRetrying] = useState(false);
   const pendingAction = useRef<(() => void) | null>(null);
   const [pending, setPending] = useState<PendingFile[]>([]);
   const [thumbs, setThumbs] = useState<Record<string, string>>({});
@@ -203,11 +210,11 @@ export const PatientDocuments: React.FC<{
     };
   }, [documents, patientId]);
 
-  function addFiles(files: File[]) {
+  async function addFiles(files: File[]) {
     const next: PendingFile[] = [];
     const problems: string[] = [];
     for (const file of files) {
-      const problem = clientFileError(file);
+      const problem = await clientFileError(file);
       if (problem) {
         problems.push(`${file.name}: ${problem}`);
         continue;
@@ -234,15 +241,36 @@ export const PatientDocuments: React.FC<{
     return !consent?.active;
   }
 
-  function withConsent(action: () => void) {
-    if (storageNote) return;
-    if (needsConsent()) {
-      if (!consent) {
-        setError("Still loading the consent notice. Try again in a moment.");
-        return;
-      }
-      pendingAction.current = action;
+  const storageUnavailable = Boolean(storageNote);
+
+  async function openConsentDialog() {
+    const step = consentDialogStep(409, "CONSENT_REQUIRED", Boolean(consent));
+    if (step === "open") {
+      setConsentGateError("");
       setConsentOpen(true);
+      return;
+    }
+    setConsentRetrying(true);
+    setConsentGateError("");
+    try {
+      const status = await apiFetch<DocumentConsentStatus>(
+        `/api/patients/${encodeURIComponent(patientId)}/document-consent`
+      );
+      onConsentChange(status);
+      setConsentOpen(true);
+    } catch (err) {
+      setConsentOpen(false);
+      setConsentGateError(err instanceof Error ? err.message : "Could not load the consent notice.");
+    } finally {
+      setConsentRetrying(false);
+    }
+  }
+
+  function withConsent(action: () => void) {
+    if (storageUnavailable) return;
+    if (needsConsent()) {
+      pendingAction.current = action;
+      void openConsentDialog();
       return;
     }
     action();
@@ -279,21 +307,14 @@ export const PatientDocuments: React.FC<{
       };
       if (!res.ok) {
         const code = String(saved.code || "");
-        if (res.status === 409 || code === "CONSENT_REQUIRED" || code === "GUARDIAN_REQUIRED") {
+        const step = consentDialogStep(res.status, code, Boolean(consent));
+        if (step === "open" || step === "fetch") {
           updatePending(item.key, { uploading: false, error: "" });
           pendingAction.current = () => {
             void uploadOne(item);
           };
-          setConsentOpen(true);
-          return;
-        }
-        // Missing consent is 409. A 403 opens this dialog only when the body carries a consent code, so a CSRF 403 does not.
-        if (res.status === 403 && (code === "CONSENT_REQUIRED" || code === "GUARDIAN_REQUIRED")) {
-          updatePending(item.key, { uploading: false, error: "" });
-          pendingAction.current = () => {
-            void uploadOne(item);
-          };
-          setConsentOpen(true);
+          if (step === "open") setConsentOpen(true);
+          else void openConsentDialog();
           return;
         }
         if (res.status === 503) {
@@ -318,6 +339,7 @@ export const PatientDocuments: React.FC<{
   }
 
   async function startWebcam() {
+    if (storageUnavailable) return;
     setWebcamError("");
     if (!navigator.mediaDevices?.getUserMedia) {
       setWebcamError("This browser has no webcam. Take a photo or choose a file instead.");
@@ -336,6 +358,7 @@ export const PatientDocuments: React.FC<{
   }
 
   function captureWebcam() {
+    if (storageUnavailable) return;
     const video = videoRef.current;
     if (!video || !video.videoWidth) {
       setWebcamError("The camera is still starting. Try again in a moment.");
@@ -352,7 +375,7 @@ export const PatientDocuments: React.FC<{
           return;
         }
         const file = new File([blob], `camera-${Date.now()}.jpg`, { type: "image/jpeg" });
-        addFiles([file]);
+        void addFiles([file]);
         stopWebcam();
       },
       "image/jpeg",
@@ -441,7 +464,7 @@ export const PatientDocuments: React.FC<{
       <div className="min-w-0">
         <h2 className="text-sm font-bold text-slate-900">Documents &amp; Reports</h2>
         <p className="text-xs text-slate-600 mt-1 break-words">
-          Attach earlier reports for this patient. Files stay private to this clinic.
+          Attach earlier reports for this patient. Files stay private to this clinic. PDF, JPG, or PNG. {PATIENT_REPORT_LIMIT_LABEL}
         </p>
       </div>
 
@@ -454,7 +477,7 @@ export const PatientDocuments: React.FC<{
       <div className="flex flex-col gap-2 w-full min-w-0 sm:flex-row sm:flex-wrap">
         <button
           type="button"
-          disabled={Boolean(storageNote)}
+          disabled={storageUnavailable}
           onClick={() => withConsent(() => cameraRef.current?.click())}
           className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm font-semibold text-slate-800 hover:bg-slate-50"
         >
@@ -464,7 +487,7 @@ export const PatientDocuments: React.FC<{
         <button
           type="button"
           data-testid="patient-document-webcam"
-          disabled={Boolean(storageNote)}
+          disabled={storageUnavailable}
           onClick={() => withConsent(() => void startWebcam())}
           className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm font-semibold text-slate-800 hover:bg-slate-50"
         >
@@ -473,7 +496,7 @@ export const PatientDocuments: React.FC<{
         </button>
         <button
           type="button"
-          disabled={Boolean(storageNote)}
+          disabled={storageUnavailable}
           onClick={() => withConsent(() => fileRef.current?.click())}
           className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700"
         >
@@ -484,29 +507,44 @@ export const PatientDocuments: React.FC<{
           ref={cameraRef}
           data-testid="patient-document-camera"
           type="file"
-          accept="image/*"
+          accept="image/jpeg,image/png,.jpg,.jpeg,.png"
           capture="environment"
           className="sr-only"
           onChange={(event) => {
             const files = filesFrom(event.target.files);
             event.target.value = "";
-            if (files.length) addFiles(files);
+            if (files.length) void addFiles(files);
           }}
         />
         <input
           ref={fileRef}
           data-testid="patient-document-file"
           type="file"
-          accept=".pdf,.jpg,.jpeg,.png,.heic,.heif,application/pdf,image/jpeg,image/png,image/heic,image/heif"
+          accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
           multiple
           className="sr-only"
           onChange={(event) => {
             const files = filesFrom(event.target.files);
             event.target.value = "";
-            if (files.length) addFiles(files);
+            if (files.length) void addFiles(files);
           }}
         />
       </div>
+
+      {consentGateError && (
+        <p className="text-sm text-rose-800 break-words" role="alert" data-testid="consent-notice-error">
+          {consentGateError}{" "}
+          <button
+            type="button"
+            data-testid="consent-notice-retry"
+            disabled={consentRetrying}
+            onClick={() => void openConsentDialog()}
+            className="font-semibold underline disabled:opacity-50"
+          >
+            {consentRetrying ? "Retrying…" : "Retry"}
+          </button>
+        </p>
+      )}
 
       {webcamError && (
         <p className="text-xs text-rose-700 break-words" role="alert">
@@ -528,6 +566,7 @@ export const PatientDocuments: React.FC<{
             <button
               type="button"
               data-testid="patient-document-webcam-capture"
+              disabled={storageUnavailable}
               onClick={captureWebcam}
               className="w-full sm:w-auto px-3 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold"
             >

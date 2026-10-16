@@ -3,7 +3,7 @@ import { isReceptionRole } from "./patient-access.ts";
 import { consentMethodLabel } from "../src/lib/healthDocumentNotice.ts";
 import { formatInr } from "../src/lib/money.ts";
 
-export type PatientTimelineType = "visit" | "prescription" | "invoice" | "upload" | "consent";
+export type PatientTimelineType = "visit" | "prescription" | "invoice" | "upload" | "consent" | "whatsapp" | "vitals";
 
 export type PatientTimelineItem = {
   id: string;
@@ -22,6 +22,37 @@ function sortKey(value: string): string {
   const raw = asText(value);
   if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return `${raw}T00:00:00.000Z`;
   return raw || "1970-01-01T00:00:00.000Z";
+}
+
+function phoneLast10(phone: string): string {
+  const digits = String(phone || "").replace(/\D/g, "");
+  return digits.length >= 10 ? digits.slice(-10) : "";
+}
+
+function samePatientPhone(left: string, right: string): boolean {
+  const a = phoneLast10(left);
+  const b = phoneLast10(right);
+  return Boolean(a) && a === b;
+}
+
+function clip(value: string, max = 140): string {
+  const text = asText(value).replace(/\s+/g, " ");
+  if (text.length <= max) return text;
+  return `${text.slice(0, max - 1)}…`;
+}
+
+function vitalsSummary(raw: unknown): string {
+  if (!raw || typeof raw !== "object") return "";
+  const vitals = raw as Record<string, unknown>;
+  const parts: string[] = [];
+  const systolic = asText(vitals.bloodPressureSystolic);
+  const diastolic = asText(vitals.bloodPressureDiastolic);
+  if (systolic && diastolic) parts.push(`BP ${systolic}/${diastolic}`);
+  if (asText(vitals.heartRate)) parts.push(`HR ${asText(vitals.heartRate)}`);
+  if (asText(vitals.spO2)) parts.push(`SpO2 ${asText(vitals.spO2)}%`);
+  if (asText(vitals.temperature)) parts.push(`${asText(vitals.temperature)}°F`);
+  if (asText(vitals.weightKg)) parts.push(`${asText(vitals.weightKg)} kg`);
+  return parts.join(" · ");
 }
 
 export function presentPrescriptionForRole(row: Record<string, unknown>, role: string) {
@@ -59,6 +90,17 @@ export function buildPatientTimeline(tenantId: string, patientId: string, role: 
       summary: [visit.date, visit.timeSlot, visit.status, visit.doctorName].filter(Boolean).join(" · "),
       linkView: "appointments",
     });
+    const vitals = vitalsSummary(visit.vitals);
+    if (vitals) {
+      items.push({
+        id: `vitals:${visit.id}`,
+        type: "vitals",
+        at,
+        title: "Vitals recorded",
+        summary: vitals,
+        linkView: "appointments",
+      });
+    }
   }
 
   const prescriptions = db
@@ -117,6 +159,46 @@ export function buildPatientTimeline(tenantId: string, patientId: string, role: 
       title: asText(row.title) || "Report",
       summary: [asText(row.doc_type).replace(/_/g, " "), asText(row.document_date)].filter(Boolean).join(" · "),
     });
+  }
+
+  const patient = db.prepare("SELECT phone FROM patients WHERE id = ? AND tenant_id = ?").get(patientId, tenantId) as
+    | { phone?: string }
+    | undefined;
+  const patientPhone = asText(patient?.phone);
+  if (patientPhone) {
+    const inbound = db
+      .prepare(
+        `SELECT id, sender, content, created_at, patient_phone FROM whatsapp_messages
+         WHERE tenant_id = ? AND sender IN ('user', 'patient')`
+      )
+      .all(tenantId) as Record<string, unknown>[];
+    for (const row of inbound) {
+      if (!samePatientPhone(patientPhone, asText(row.patient_phone))) continue;
+      items.push({
+        id: `whatsapp-in:${asText(row.id)}`,
+        type: "whatsapp",
+        at: asText(row.created_at),
+        title: "WhatsApp message received",
+        summary: clip(asText(row.content)),
+      });
+    }
+    const templates = db
+      .prepare(
+        `SELECT id, event_type, details, sent_at, patient_phone FROM whatsapp_outbound_events
+         WHERE tenant_id = ?`
+      )
+      .all(tenantId) as Record<string, unknown>[];
+    for (const row of templates) {
+      if (!samePatientPhone(patientPhone, asText(row.patient_phone))) continue;
+      const kind = asText(row.event_type).replace(/_/g, " ");
+      items.push({
+        id: `whatsapp-out:${asText(row.id)}`,
+        type: "whatsapp",
+        at: asText(row.sent_at),
+        title: "WhatsApp template sent",
+        summary: [kind, clip(asText(row.details))].filter(Boolean).join(" · "),
+      });
+    }
   }
 
   const consents = db

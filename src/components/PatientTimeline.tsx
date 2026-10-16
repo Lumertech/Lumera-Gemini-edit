@@ -5,7 +5,7 @@ export type TimelineLinkView = "appointments" | "rx" | "billing";
 
 export interface PatientTimelineItem {
   id: string;
-  type: "visit" | "prescription" | "invoice" | "upload" | "consent";
+  type: "visit" | "prescription" | "invoice" | "upload" | "consent" | "whatsapp" | "vitals";
   at: string;
   title: string;
   summary: string;
@@ -19,6 +19,8 @@ const FILTERS: Array<{ id: string; label: string }> = [
   { id: "invoice", label: "Invoices" },
   { id: "upload", label: "Uploads" },
   { id: "consent", label: "Consent" },
+  { id: "whatsapp", label: "WhatsApp" },
+  { id: "vitals", label: "Vitals" },
 ];
 
 function formatWhen(value: string): string {
@@ -66,7 +68,7 @@ export const PatientTimeline: React.FC<{
         })}
       </div>
       {visible.length === 0 ? (
-        <p className="text-sm text-slate-600">Nothing in this filter yet. Visits, prescriptions, invoices, uploads, and consent events show up here.</p>
+        <p className="text-sm text-slate-600">Nothing in this filter yet. Visits, vitals, prescriptions, invoices, uploads, WhatsApp, and consent events show up here.</p>
       ) : (
         <ul className="space-y-2">
           {visible.map((item) => {

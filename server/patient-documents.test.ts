@@ -12,14 +12,19 @@ import {
   assertOwnedStorageKey,
   detectPatientDocumentMime,
   PATIENT_DOC_MAX_BYTES,
+  PATIENT_DOC_MAX_PAGES,
   PATIENT_DOC_SIGNED_URL_TTL_MS,
   PATIENT_DOCS_UNAVAILABLE_ERROR,
+  readBytesFromSignedUrl,
   readStoredPatientDocument,
   storePatientDocumentBytes,
 } from "./patient-documents.ts";
 import { jsonRequest, startTestServer } from "./test-http.ts";
 
-function createClinicUser(label: string, role: "doctor" | "receptionist" | "CLINIC_ADMIN" = "doctor") {
+function createClinicUser(
+  label: string,
+  role: "doctor" | "receptionist" | "CLINIC_ADMIN" | "admin" | "patient" = "doctor"
+) {
   const suffix = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   const tenantId = `tenant-${label}-${suffix}`;
   const userId = `user-${label}-${suffix}`;
@@ -48,8 +53,9 @@ function createClinicUser(label: string, role: "doctor" | "receptionist" | "CLIN
   return { tenantId, userId, email, role };
 }
 
-function pdfBytes(): Buffer {
-  return Buffer.from("%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF");
+function pdfBytes(pages = 1): Buffer {
+  const body = Array.from({ length: pages }, () => "1 0 obj<</Type /Page>>endobj").join("\n");
+  return Buffer.from(`%PDF-1.4\n${body}\ntrailer<<>>\n%%EOF`);
 }
 
 function pngBytes(): Buffer {
@@ -61,21 +67,58 @@ function heicBytes(): Buffer {
 }
 
 describe("patient document bytes", () => {
-  it("accepts PDF, JPEG, PNG, and HEIC magic and rejects other types and oversize files", () => {
+  it("accepts PDF, JPEG, and PNG and rejects HEIC, SVG, and reports over 25 MB or 20 pages", () => {
     assert.equal(detectPatientDocumentMime(pdfBytes()), "application/pdf");
     assert.equal(detectPatientDocumentMime(Buffer.from([0xff, 0xd8, 0xff, 0xe0])), "image/jpeg");
     assert.equal(detectPatientDocumentMime(pngBytes()), "image/png");
-    assert.equal(detectPatientDocumentMime(heicBytes()), "image/heic");
+    assert.equal(detectPatientDocumentMime(heicBytes()), null);
     assert.equal(assertAllowedPatientDocument(pdfBytes(), "application/pdf"), "application/pdf");
     assert.equal(assertAllowedPatientDocument(Buffer.from([0xff, 0xd8, 0xff]), "image/jpg"), "image/jpeg");
-    assert.equal(assertAllowedPatientDocument(heicBytes(), ""), "image/heic");
+    assert.throws(() => assertAllowedPatientDocument(heicBytes(), "image/heic"), /not allowed/);
+    assert.throws(
+      () => assertAllowedPatientDocument(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"></svg>'), "image/svg+xml"),
+      /not allowed/
+    );
+    assert.throws(
+      () => assertAllowedPatientDocument(Buffer.from('<?xml version="1.0"?><svg></svg>'), "image/svg+xml"),
+      /not allowed/
+    );
     assert.throws(() => assertAllowedPatientDocument(Buffer.from("hello"), "text/plain"), /not allowed/);
     assert.throws(() => assertAllowedPatientDocument(pngBytes(), "application/pdf"), /do not match/);
     assert.throws(() => assertAllowedPatientDocument(Buffer.from("GIF89a"), "image/gif"), /not allowed/);
+    assert.throws(() => assertAllowedPatientDocument(pdfBytes(21), "application/pdf"), /20 pages/);
+    assert.throws(
+      () => assertAllowedPatientDocument(Buffer.from("%PDF-1.4\nno pages\n%%EOF"), "application/pdf"),
+      /pages/
+    );
     const tooBig = Buffer.alloc(PATIENT_DOC_MAX_BYTES + 1);
     tooBig.write("%PDF-");
-    assert.throws(() => assertAllowedPatientDocument(tooBig, "application/pdf"), /10 MB/);
+    assert.throws(() => assertAllowedPatientDocument(tooBig, "application/pdf"), /25 MB/);
+    assert.equal(PATIENT_DOC_MAX_BYTES, 25 * 1024 * 1024);
+    assert.equal(PATIENT_DOC_MAX_PAGES, 20);
     assert.equal(PATIENT_DOC_SIGNED_URL_TTL_MS, 5 * 60 * 1000);
+  });
+
+  it("refuses an expired signed URL and does not fetch it", async () => {
+    let called = false;
+    await assert.rejects(
+      () =>
+        readBytesFromSignedUrl("https://storage.example/object", Date.now() - 1000, async () => {
+          called = true;
+          return new Response("no");
+        }),
+      /expired/
+    );
+    assert.equal(called, false);
+    await assert.rejects(
+      () =>
+        readBytesFromSignedUrl(
+          "https://storage.example/object",
+          Date.now() + 60_000,
+          async () => new Response("denied", { status: 403 })
+        ),
+      /expired/
+    );
   });
 
   it("refuses a storage key that escapes the tenant directory", () => {
@@ -262,7 +305,7 @@ describe("patient document API", () => {
     const otherRow = ((otherList.json.documents as Array<{ id: string; canDelete: boolean }>) || []).find(
       (doc) => doc.id === pdfDoc.id
     );
-    assert.equal(otherRow?.canDelete, false);
+    assert.equal(otherRow?.canDelete, true);
 
     for (const headers of [{ Authorization: `Bearer ${tokenB}` }]) {
       const stolenList = await jsonRequest(port, "GET", `/api/patients/${patientId}/documents`, undefined, headers);
@@ -306,7 +349,7 @@ describe("patient document API", () => {
       "DELETE",
       `/api/patients/${patientId}/documents/${pdfDoc.id}`,
       undefined,
-      { Authorization: `Bearer ${tokenOther}` }
+      { Authorization: `Bearer ${tokenDesk}` }
     );
     assert.equal(deniedDelete.status, 403);
     const stillThere = getDb()
@@ -367,25 +410,65 @@ describe("patient document API", () => {
     );
     assert.equal(bearerOverridesTicket.status, 404);
 
+    const expiring = await jsonRequest(
+      port,
+      "POST",
+      `/api/patients/${patientId}/documents/${pdfDoc.id}/preview-ticket`,
+      {},
+      { Authorization: `Bearer ${tokenA}` }
+    );
+    assert.equal(expiring.status, 200);
+    const expiredHash = crypto.createHash("sha256").update(String(expiring.json.ticket)).digest("hex");
+    getDb()
+      .prepare("UPDATE patient_document_tickets SET expires_at = ? WHERE token_hash = ?")
+      .run("2000-01-01T00:00:00.000Z", expiredHash);
+    const expiredTicket = await fetch(
+      `http://127.0.0.1:${port}/api/patients/${patientId}/documents/${pdfDoc.id}/file?ticket=${expiring.json.ticket}`
+    );
+    assert.equal(expiredTicket.status, 401);
+    const unused = getDb()
+      .prepare("SELECT used_at FROM patient_document_tickets WHERE token_hash = ?")
+      .get(expiredHash) as { used_at: string | null };
+    assert.equal(unused.used_at, null);
+
     const audits = getDb()
       .prepare(
-        `SELECT action FROM audit_logs
-         WHERE user_id = ? AND action LIKE 'patient_document.%' AND details LIKE ?
+        `SELECT action, tenant_id, patient_id, actor_role FROM audit_logs
+         WHERE action LIKE 'patient_document.%' AND details LIKE ?
          ORDER BY timestamp ASC`
       )
-      .all(clinicA.userId, `%${pdfDoc.id}%`) as Array<{ action: string }>;
+      .all(`%${pdfDoc.id}%`) as Array<{
+        action: string;
+        tenant_id: string;
+        patient_id: string;
+        actor_role: string;
+      }>;
     const actions = audits.map((entry) => entry.action);
     assert.equal(actions.includes("patient_document.upload"), true);
     assert.equal(actions.includes("patient_document.view"), true);
+    for (const entry of audits.filter((row) => row.action === "patient_document.upload" || row.action === "patient_document.view")) {
+      assert.equal(entry.tenant_id, clinicA.tenantId);
+      assert.equal(entry.patient_id, patientId);
+      assert.equal(entry.actor_role, "doctor");
+    }
 
+    const imageStored = getDb()
+      .prepare("SELECT storage_key FROM patient_documents WHERE id = ?")
+      .get(imageDoc.id) as { storage_key: string };
+    const imageFull = path.join(docsDir, imageStored.storage_key);
     const removed = await jsonRequest(
       port,
       "DELETE",
       `/api/patients/${patientId}/documents/${imageDoc.id}`,
       undefined,
-      { Authorization: `Bearer ${tokenDesk}` }
+      { Authorization: `Bearer ${tokenOther}` }
     );
     assert.equal(removed.status, 200);
+    assert.equal(fs.existsSync(imageFull), true);
+    const imageDeleted = getDb()
+      .prepare("SELECT deleted_at FROM patient_documents WHERE id = ?")
+      .get(imageDoc.id) as { deleted_at: string | null };
+    assert.equal(imageDeleted.deleted_at != null && imageDeleted.deleted_at.length > 0, true);
     const adminRemoved = await jsonRequest(
       port,
       "DELETE",
@@ -394,7 +477,11 @@ describe("patient document API", () => {
       { Authorization: `Bearer ${tokenAdmin}` }
     );
     assert.equal(adminRemoved.status, 200);
-    assert.equal(fs.existsSync(full), false);
+    assert.equal(fs.existsSync(full), true);
+    const hidden = await fetch(`http://127.0.0.1:${port}/api/patients/${patientId}/documents/${pdfDoc.id}/file`, {
+      headers: { Authorization: `Bearer ${tokenA}` },
+    });
+    assert.equal(hidden.status, 404);
 
     const afterDelete = await jsonRequest(port, "GET", `/api/patients/${patientId}/documents`, undefined, {
       Authorization: `Bearer ${tokenA}`,
@@ -404,11 +491,19 @@ describe("patient document API", () => {
 
     const deleteAudit = getDb()
       .prepare(
-        `SELECT action FROM audit_logs
+        `SELECT action, tenant_id, patient_id, actor_role FROM audit_logs
          WHERE action = 'patient_document.delete' AND details LIKE ?`
       )
-      .all(`%${pdfDoc.id}%`) as Array<{ action: string }>;
+      .all(`%${pdfDoc.id}%`) as Array<{
+        action: string;
+        tenant_id: string;
+        patient_id: string;
+        actor_role: string;
+      }>;
     assert.equal(deleteAudit.length >= 1, true);
+    assert.equal(deleteAudit[0].tenant_id, clinicA.tenantId);
+    assert.equal(deleteAudit[0].patient_id, patientId);
+    assert.equal(deleteAudit[0].actor_role, "CLINIC_ADMIN");
 
     const badAudit = getDb()
       .prepare("SELECT id FROM audit_logs WHERE details LIKE ?")
@@ -498,6 +593,47 @@ describe("patient document API", () => {
       if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
       else process.env.NODE_ENV = previousNodeEnv;
       fs.rmSync(emptyDir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns 403 for admin and patient on patient, chart, document, and consent routes", async () => {
+    const doctor = createClinicUser("docs-role-doctor", "doctor");
+    const platform = createClinicUser("docs-role-admin", "admin");
+    const portal = createClinicUser("docs-role-patient", "patient");
+    const token = await login(doctor.email);
+    const created = await jsonRequest(
+      port,
+      "POST",
+      "/api/patients",
+      { name: "Role Gate Nair", phone: "+91 98111 55501", age: 40, gender: "Female" },
+      { Authorization: `Bearer ${token}` }
+    );
+    assert.equal(created.status, 201, String(created.json.error || ""));
+    const patientId = String((created.json.patient as { id: string }).id);
+    for (const email of [platform.email, portal.email]) {
+      const deniedToken = await login(email);
+      const headers = { Authorization: `Bearer ${deniedToken}` };
+      const paths = [
+        "/api/patients",
+        `/api/patients/${patientId}`,
+        `/api/patients/${patientId}/chart`,
+        `/api/patients/${patientId}/documents`,
+        `/api/patients/${patientId}/document-consent`,
+      ];
+      for (const route of paths) {
+        const res = await jsonRequest(port, "GET", route, undefined, headers);
+        assert.equal(res.status, 403, route);
+        assert.equal(JSON.stringify(res.json).includes("Role Gate Nair"), false, route);
+      }
+      const consent = await jsonRequest(
+        port,
+        "POST",
+        `/api/patients/${patientId}/document-consent`,
+        { language: "en", method: "in_app", attested: true },
+        headers
+      );
+      assert.equal(consent.status, 403);
+      assert.equal(JSON.stringify(consent.json).includes("Role Gate Nair"), false);
     }
   });
 });

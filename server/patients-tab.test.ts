@@ -266,4 +266,77 @@ describe("Patients tab API tenant isolation", () => {
       assert.equal(stolenChart.json.prescriptions, undefined);
     }
   });
+
+  it("adds vitals and WhatsApp items matched on the patient phone inside the tenant", async () => {
+    const clinic = createClinicUser("pt-timeline", "doctor");
+    const other = createClinicUser("pt-timeline-b", "doctor");
+    const token = await login(clinic.email);
+    const created = await jsonRequest(
+      port,
+      "POST",
+      "/api/patients",
+      { name: "Timeline Meera", phone: "+91 98111 66601", age: 33, gender: "Female" },
+      { Authorization: `Bearer ${token}` }
+    );
+    assert.equal(created.status, 201, String(created.json.error || ""));
+    const patient = created.json.patient as { id: string; phone: string; uhid?: string; name: string };
+    const now = new Date().toISOString();
+    const db = getDb();
+    db.prepare(
+      `INSERT INTO appointments (
+        id, tenant_id, token_number, patient_id, patient_name, patient_phone, uhid, doctor_id, doctor_name,
+        specialty, date, time_slot, type, status, source, consultation_fee, is_paid, vitals, created_at
+      ) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, 'General Medicine', '2026-10-01', '10:00', 'New Consultation', 'Completed', 'Walk-in', 600, 1, ?, ?)`
+    ).run(
+      `apt-${patient.id}`,
+      clinic.tenantId,
+      patient.id,
+      patient.name,
+      patient.phone,
+      patient.uhid || "UHID-TL",
+      clinic.doctorId,
+      "Dr Timeline",
+      JSON.stringify({ bloodPressureSystolic: 128, bloodPressureDiastolic: 82, heartRate: 76 }),
+      now
+    );
+    db.prepare(
+      `INSERT INTO whatsapp_messages (
+        id, conversation_id, patient_phone, sender, content, time_display, status, created_at, tenant_id
+      ) VALUES (?, ?, ?, 'user', ?, '10:05', 'delivered', ?, ?)`
+    ).run(`wa-in-${patient.id}`, `conv-${patient.id}`, "919811166601", "Need the report today", now, clinic.tenantId);
+    db.prepare(
+      `INSERT INTO whatsapp_messages (
+        id, conversation_id, patient_phone, sender, content, time_display, status, created_at, tenant_id
+      ) VALUES (?, ?, ?, 'bot', ?, '10:06', 'delivered', ?, ?)`
+    ).run(`wa-bot-${patient.id}`, `conv-${patient.id}`, patient.phone, "bot template not inbound", now, clinic.tenantId);
+    db.prepare(
+      `INSERT INTO whatsapp_messages (
+        id, conversation_id, patient_phone, sender, content, time_display, status, created_at, tenant_id
+      ) VALUES (?, ?, ?, 'user', ?, '10:07', 'delivered', ?, ?)`
+    ).run(`wa-other-${patient.id}`, `conv-other-${patient.id}`, patient.phone, "LEAK other clinic", now, other.tenantId);
+    db.prepare(
+      `INSERT INTO whatsapp_outbound_events (
+        id, event_type, patient_phone, patient_name, status, details, sent_at, tenant_id
+      ) VALUES (?, 'queue_token_update', ?, ?, 'delivered', ?, ?, ?)`
+    ).run(`wa-out-${patient.id}`, "+91 98111 66601", patient.name, "OPD queue template", now, clinic.tenantId);
+    db.prepare(
+      `INSERT INTO whatsapp_messages (
+        id, conversation_id, patient_phone, sender, content, time_display, status, created_at, tenant_id
+      ) VALUES (?, ?, ?, 'user', ?, '10:08', 'delivered', ?, ?)`
+    ).run(`wa-wrong-${patient.id}`, `conv-wrong-${patient.id}`, "+91 90000 00000", "wrong patient hello", now, clinic.tenantId);
+
+    const chart = await jsonRequest(port, "GET", `/api/patients/${patient.id}/chart`, undefined, {
+      Authorization: `Bearer ${token}`,
+    });
+    assert.equal(chart.status, 200);
+    const timeline = (chart.json.timeline || []) as Array<{ type: string; title: string; summary: string }>;
+    const body = JSON.stringify(timeline);
+    assert.equal(timeline.some((item) => item.type === "visit"), true);
+    assert.equal(timeline.some((item) => item.type === "vitals" && item.summary.includes("BP 128/82")), true);
+    assert.equal(timeline.some((item) => item.title === "WhatsApp message received" && item.summary.includes("Need the report")), true);
+    assert.equal(timeline.some((item) => item.title === "WhatsApp template sent" && item.summary.includes("OPD queue template")), true);
+    assert.equal(body.includes("LEAK other clinic"), false);
+    assert.equal(body.includes("bot template not inbound"), false);
+    assert.equal(body.includes("wrong patient hello"), false);
+  });
 });

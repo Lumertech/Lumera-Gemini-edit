@@ -18,7 +18,11 @@ Android and web use the same clinic session. Bytes never go to public `/uploads`
 
 `{ patient, visits, prescriptions, timeline }`
 
-`timeline` items, newest first: `visit`, `prescription`, `invoice`, `upload`, `consent`.
+`timeline` items, newest first: `visit`, `vitals`, `prescription`, `invoice`, `upload`, `whatsapp`, `consent`.
+
+A visit is the appointment. Vitals recorded on that appointment are a separate item because the visit summary does not include the readings.
+
+WhatsApp items are templates sent (`whatsapp_outbound_events`) and messages received (`whatsapp_messages` where the sender is `user` or `patient`). Both match the patient's phone on the last 10 digits inside the session tenant.
 
 A receptionist prescription item is `{ title: "Rx issued", summary: "<doctor>, <date>" }` with no diagnosis, SOAP, or medicine lines. The same redaction applies to `GET /api/prescriptions`. Reception cannot `POST /api/prescriptions` or open `/rx`.
 
@@ -50,13 +54,13 @@ The `patient_health_document_consents` table is append-only by convention: appli
 
 Types: `lab_report`, `prescription`, `discharge_summary`, `imaging`, `other`.
 
-Magic bytes: PDF, JPEG, PNG, HEIC. **10 MB per file.** Without an active v1 consent the server always returns **409** `{ "code": "CONSENT_REQUIRED" }` or `{ "code": "GUARDIAN_REQUIRED" }` and stores no bytes.
+Magic bytes: PDF, JPEG, PNG. HEIC and HEIF are rejected. Each report must be **25 MB or smaller** and **20 pages or fewer**. An image counts as one page. A PDF whose page count cannot be read is rejected. Without an active v1 consent the server always returns **409** `{ "code": "CONSENT_REQUIRED" }` or `{ "code": "GUARDIAN_REQUIRED" }` and stores no bytes.
 
 `GET /api/patients/:id/documents` returns metadata plus `storage.available`. When production has no `PATIENT_DOCS_GCS_BUCKET`, `storage.available` is false, upload and read return **503**, and nothing is written to local disk.
 
-`GET /api/patients/:id/documents/:documentId/file` is session-authenticated. A GCS V4 signed URL, when the bucket is set, is used only on the server and expires in 300 seconds. It is not returned to the client. Soft-deleted rows are omitted and are not readable.
+`GET /api/patients/:id/documents/:documentId/file` is session-authenticated. A GCS V4 signed URL, when the bucket is set, is used only on the server and expires in 300 seconds. It is not returned to the client. An expired signed URL fails and is not fetched. Preview tickets expire after 300 seconds, are single-use, and an expired or replayed ticket fails. Soft-deleted rows are omitted and are not readable.
 
-`DELETE` sets `deleted_at`. Clinic admins, or the uploader, may delete.
+`DELETE` sets `deleted_at` and leaves the object in private storage until the retention purge. Doctors and clinic admins may delete any document in the tenant. A receptionist may delete only a document they uploaded. The list, timeline, and file route hide a soft-deleted row immediately.
 
 ## Audit
 
@@ -70,4 +74,4 @@ The purge job is still open. `tenants.health_document_retention_years` defaults 
 
 ## Not in this contract
 
-Per-report 25 MB and 20-page caps are not enforced beyond the 10 MB file limit. WhatsApp messages are not on the timeline yet.
+A database trigger that rejects UPDATE and DELETE on the consent table is still a follow-up. The purge job that removes soft-deleted report bytes is still open.

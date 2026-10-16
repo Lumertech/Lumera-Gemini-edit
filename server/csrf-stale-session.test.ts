@@ -1415,7 +1415,7 @@ describe("stale anonymous __session CSRF refresh", () => {
 
   function pdfUpload(title: string): FormData {
     const form = new FormData();
-    const bytes = Buffer.from("%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF");
+    const bytes = Buffer.from("%PDF-1.4\n1 0 obj<</Type /Page>>endobj\ntrailer<<>>\n%%EOF");
     form.set("file", new File([new Uint8Array(bytes)], "cbc.pdf", { type: "application/pdf" }));
     form.set("title", title);
     form.set("docType", "lab_report");

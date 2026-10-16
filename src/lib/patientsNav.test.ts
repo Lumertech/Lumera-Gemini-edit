@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import { describe, it } from "node:test";
 import { ROLE_VISIBLE_VIEWS, sidebarShowsClinicalChrome, visibleViewsForRole } from "../components/Sidebar.tsx";
 import type { AppUser } from "../types.ts";
@@ -77,5 +79,10 @@ describe("Patients tab visibility", () => {
     );
     assert.equal(patientsNavLabel(workflowForUser(asUser({ role: "doctor", specialty: "Consulting" }))), "Clients");
     assert.equal(patientsNavLabel(workflowForUser(asUser({ role: "receptionist" }))), "Patients");
+  });
+
+  it("treats admin like super_admin in the top bar", () => {
+    const navbar = fs.readFileSync(path.join(process.cwd(), "src/components/Navbar.tsx"), "utf8");
+    assert.match(navbar, /userRole === 'super_admin' \|\| userRole === 'admin'/);
   });
 });

@@ -38,7 +38,7 @@ function createClinicUser(label: string, role: "doctor" | "receptionist" | "CLIN
 }
 
 function pdfBytes(): Buffer {
-  return Buffer.from("%PDF-1.4\nconsent\n%%EOF");
+  return Buffer.from("%PDF-1.4\n1 0 obj<</Type /Page>>endobj\n%%EOF");
 }
 
 describe("health document consent gate", () => {
