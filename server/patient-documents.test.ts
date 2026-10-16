@@ -174,6 +174,14 @@ describe("patient document API", () => {
     );
     assert.equal(created.status, 201, String(created.json.error || ""));
     const patientId = String((created.json.patient as { id: string }).id);
+    const granted = await jsonRequest(
+      port,
+      "POST",
+      `/api/patients/${patientId}/document-consent`,
+      { language: "en", method: "staff_attested_verbal", attested: true },
+      { Authorization: `Bearer ${tokenA}` }
+    );
+    assert.equal(granted.status, 201, String(granted.json.error || ""));
 
     const bad = await upload(tokenA, patientId, Buffer.from("not a report"), {
       filename: "notes.txt",
@@ -421,6 +429,14 @@ describe("patient document API", () => {
     );
     assert.equal(created.status, 201, String(created.json.error || ""));
     const patientId = String((created.json.patient as { id: string }).id);
+    const granted = await jsonRequest(
+      port,
+      "POST",
+      `/api/patients/${patientId}/document-consent`,
+      { language: "en", method: "in_app", attested: true },
+      { Authorization: `Bearer ${token}` }
+    );
+    assert.equal(granted.status, 201, String(granted.json.error || ""));
     const uploaded = await upload(token, patientId, pdfBytes(), {
       filename: "already-stored.pdf",
       mime: "application/pdf",

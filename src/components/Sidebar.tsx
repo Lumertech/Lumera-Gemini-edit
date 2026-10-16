@@ -48,6 +48,16 @@ export const ROLE_VISIBLE_VIEWS: Record<string, NavView[]> = {
   default: ['welcome', 'gp-home', 'queue', 'opd-queue', 'reception', 'appointments', 'pharmacy-hub', 'billing', 'settings']
 };
 
+/** Platform admins get no clinical sidebar views. Unknown roles keep the doctor fallback. */
+export function visibleViewsForRole(role: string | undefined | null): NavView[] {
+  if (role === "super_admin" || role === "admin") return [];
+  return ROLE_VISIBLE_VIEWS[role || "doctor"] || ROLE_VISIBLE_VIEWS.doctor;
+}
+
+export function sidebarShowsClinicalChrome(role: string | undefined | null): boolean {
+  return role !== "super_admin" && role !== "admin";
+}
+
 interface SidebarProps {
   currentView: NavView;
   onSelectView: (view: NavView) => void;
@@ -76,7 +86,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const { user, logout } = useAuth();
   const { go, workspaceSlug } = useNav();
   const userRole = user?.role || 'doctor';
-  let allowedViews = ROLE_VISIBLE_VIEWS[userRole] || ROLE_VISIBLE_VIEWS.doctor;
+  let allowedViews = visibleViewsForRole(userRole);
   const polyclinic = isPolyclinicPractice(user);
   if (!polyclinic) {
     allowedViews = allowedViews.filter(v => v !== 'team' && v !== 'polyclinic');

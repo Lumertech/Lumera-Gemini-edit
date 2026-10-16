@@ -138,8 +138,9 @@ describe("Patients tab API tenant isolation", () => {
       authA
     );
     assert.equal(created.status, 201, String(created.json.error || ""));
-    const patient = created.json.patient as { id: string; name: string };
+    const patient = created.json.patient as { id: string; name: string; uhid: string };
     assert.equal(patient.name, "OnlyAsha Menon");
+    assert.ok(patient.uhid);
 
     const abha = await jsonRequest(
       port,
@@ -193,7 +194,7 @@ describe("Patients tab API tenant isolation", () => {
     );
     assert.equal(rx.status, 201, String(rx.json.error || ""));
 
-    for (const q of ["OnlyAsha", "9811122233", "+91 98111 22233", "91424242424242", "asha.only@sbx"]) {
+    for (const q of ["OnlyAsha", "9811122233", "+91 98111 22233", "91424242424242", "asha.only@sbx", patient.uhid]) {
       const found = await jsonRequest(port, "GET", `/api/patients?q=${encodeURIComponent(q)}`, undefined, authA);
       assert.equal(found.status, 200, q);
       const names = ((found.json.patients as Array<{ name: string }>) || []).map((p) => p.name);
@@ -225,6 +226,17 @@ describe("Patients tab API tenant isolation", () => {
     const deskChart = await jsonRequest(port, "GET", `/api/patients/${patient.id}/chart`, undefined, authDesk);
     assert.equal(deskChart.status, 200);
     assert.equal((deskChart.json.patient as { name: string }).name, "OnlyAsha Menon");
+    const deskBody = JSON.stringify(deskChart.json);
+    assert.equal(deskBody.includes("Asha private diagnosis"), false);
+    assert.equal(deskBody.includes("Salbutamol"), false);
+    const deskRx = ((deskChart.json.prescriptions as Array<Record<string, unknown>>) || [])[0];
+    assert.equal(deskRx?.redacted, true);
+    assert.equal("diagnosis" in (deskRx || {}), false);
+    assert.equal("medicines" in (deskRx || {}), false);
+    const deskTimeline = JSON.stringify(deskChart.json.timeline || []);
+    assert.equal(deskTimeline.includes("Salbutamol"), false);
+    assert.equal(deskTimeline.includes("Asha private"), false);
+    assert.match(deskTimeline, /Rx issued/);
 
     const anon = await jsonRequest(port, "GET", `/api/patients/${patient.id}/chart`);
     assert.equal(anon.status, 401);

@@ -37,6 +37,7 @@ interface ReceptionProps {
   onCheckInPatient: (patient: Patient, doctor: Doctor, type: string) => void | Promise<void>;
   onSwitchToConsultation: () => void;
   onStartConsult?: (patient: Patient) => void;
+  canStartConsult?: boolean;
   firstRunHint?: boolean;
   openRxAfterSave?: boolean;
   workflow?: SpecialtyWorkflowPack;
@@ -52,6 +53,7 @@ export const Reception: React.FC<ReceptionProps> = ({
   onCheckInPatient,
   onSwitchToConsultation,
   onStartConsult,
+  canStartConsult = false,
   firstRunHint = false,
   openRxAfterSave = false,
   workflow,
@@ -279,7 +281,7 @@ export const Reception: React.FC<ReceptionProps> = ({
       const saved = (await onAddNewPatient(newPatient)) || newPatient;
       await onCheckInPatient(saved, doctor, formData.consultationType);
       onSelectPatient(saved);
-      if (openRxAfterSave && onStartConsult) {
+      if (openRxAfterSave && canStartConsult && onStartConsult) {
         onStartConsult(saved);
       }
 
@@ -681,6 +683,7 @@ export const Reception: React.FC<ReceptionProps> = ({
                       <FileText className="w-3.5 h-3.5 text-indigo-600" />
                       <span>Record & Files</span>
                     </button>
+                    {canStartConsult && (
                     <button
                       onClick={() => {
                         onSelectPatient(p);
@@ -692,6 +695,7 @@ export const Reception: React.FC<ReceptionProps> = ({
                       <span>Start Consult</span>
                       <ArrowRight className="w-3.5 h-3.5" />
                     </button>
+                    )}
                   </div>
                 </div>
               );

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Camera, Download, Eye, FileText, Trash2, Upload, X } from "lucide-react";
 import { apiFetch, apiFetchResponse } from "../api/http";
+import { PatientDocumentConsentDialog, type DocumentConsentStatus } from "./PatientDocumentConsentDialog";
 
 const MAX_BYTES = 10 * 1024 * 1024;
 
@@ -109,10 +110,17 @@ function filesFrom(list: FileList | null): File[] {
   return files;
 }
 
-export const PatientDocuments: React.FC<{ patientId: string }> = ({ patientId }) => {
+export const PatientDocuments: React.FC<{
+  patientId: string;
+  consent: DocumentConsentStatus | null;
+  onConsentChange: (status: DocumentConsentStatus) => void;
+}> = ({ patientId, consent, onConsentChange }) => {
   const [documents, setDocuments] = useState<PatientDocument[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [storageNote, setStorageNote] = useState("");
+  const [consentOpen, setConsentOpen] = useState(false);
+  const pendingAction = useRef<(() => void) | null>(null);
   const [pending, setPending] = useState<PendingFile[]>([]);
   const [thumbs, setThumbs] = useState<Record<string, string>>({});
   const [preview, setPreview] = useState<{ title: string; mime: string; url: string } | null>(null);
@@ -152,9 +160,17 @@ export const PatientDocuments: React.FC<{ patientId: string }> = ({ patientId })
     setDocuments([]);
     setPending([]);
     setConfirmDeleteId("");
-    void apiFetch<{ documents: PatientDocument[] }>(`/api/patients/${encodeURIComponent(patientId)}/documents`)
+    void apiFetch<{ documents: PatientDocument[]; storage?: { available?: boolean; reason?: string } }>(
+      `/api/patients/${encodeURIComponent(patientId)}/documents`
+    )
       .then((data) => {
-        if (!cancelled) setDocuments(data.documents || []);
+        if (cancelled) return;
+        setDocuments(data.documents || []);
+        if (data.storage && data.storage.available === false) {
+          setStorageNote(data.storage.reason || "Document storage is not configured.");
+        } else {
+          setStorageNote("");
+        }
       })
       .catch((err: unknown) => {
         if (!cancelled) setError(err instanceof Error ? err.message : "Could not load documents");
@@ -214,6 +230,32 @@ export const PatientDocuments: React.FC<{ patientId: string }> = ({ patientId })
     setPending((prev) => prev.map((item) => (item.key === key ? { ...item, ...patch } : item)));
   }
 
+  function needsConsent(): boolean {
+    return !consent?.active;
+  }
+
+  function withConsent(action: () => void) {
+    if (storageNote) return;
+    if (needsConsent()) {
+      if (!consent) {
+        setError("Still loading the consent notice. Try again in a moment.");
+        return;
+      }
+      pendingAction.current = action;
+      setConsentOpen(true);
+      return;
+    }
+    action();
+  }
+
+  function consentGranted(next: DocumentConsentStatus) {
+    onConsentChange(next);
+    setConsentOpen(false);
+    const action = pendingAction.current;
+    pendingAction.current = null;
+    if (next.active && action) action();
+  }
+
   async function uploadOne(item: PendingFile) {
     if (!item.title.trim() || !item.docType || !item.documentDate) {
       updatePending(item.key, { error: "Add a title, type, and date before uploading." });
@@ -226,13 +268,45 @@ export const PatientDocuments: React.FC<{ patientId: string }> = ({ patientId })
     body.set("docType", item.docType);
     body.set("documentDate", item.documentDate);
     try {
-      const saved = await apiFetch<{ document: PatientDocument }>(
-        `/api/patients/${encodeURIComponent(patientId)}/documents`,
-        { method: "POST", body }
-      );
+      const res = await apiFetchResponse(`/api/patients/${encodeURIComponent(patientId)}/documents`, {
+        method: "POST",
+        body,
+      });
+      const saved = (await res.json().catch(() => ({}))) as {
+        document?: PatientDocument;
+        error?: string;
+        code?: string;
+      };
+      if (!res.ok) {
+        const code = String(saved.code || "");
+        if (res.status === 409 || code === "CONSENT_REQUIRED" || code === "GUARDIAN_REQUIRED") {
+          updatePending(item.key, { uploading: false, error: "" });
+          pendingAction.current = () => {
+            void uploadOne(item);
+          };
+          setConsentOpen(true);
+          return;
+        }
+        if (res.status === 403 && (code === "CONSENT_REQUIRED" || code === "GUARDIAN_REQUIRED")) {
+          updatePending(item.key, { uploading: false, error: "" });
+          pendingAction.current = () => {
+            void uploadOne(item);
+          };
+          setConsentOpen(true);
+          return;
+        }
+        if (res.status === 503) {
+          setStorageNote(saved.error || "Document storage is not configured.");
+        }
+        updatePending(item.key, {
+          uploading: false,
+          error: saved.error || `Upload failed (${res.status})`,
+        });
+        return;
+      }
       setPending((prev) => prev.filter((row) => row.key !== item.key));
       if (saved.document?.id) {
-        setDocuments((prev) => [saved.document, ...prev.filter((row) => row.id !== saved.document.id)]);
+        setDocuments((prev) => [saved.document!, ...prev.filter((row) => row.id !== saved.document!.id)]);
       }
     } catch (err) {
       updatePending(item.key, {
@@ -359,6 +433,7 @@ export const PatientDocuments: React.FC<{ patientId: string }> = ({ patientId })
 
   return (
     <section
+      id="patient-documents"
       data-testid="patient-documents"
       className="rounded-xl border border-slate-200 bg-white p-4 space-y-3 min-w-0 max-w-full overflow-x-hidden"
     >
@@ -369,10 +444,17 @@ export const PatientDocuments: React.FC<{ patientId: string }> = ({ patientId })
         </p>
       </div>
 
+      {storageNote && (
+        <p className="text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 break-words" role="status">
+          {storageNote} Uploads stay off until storage is configured. Nothing is saved in a public folder.
+        </p>
+      )}
+
       <div className="flex flex-col gap-2 w-full min-w-0 sm:flex-row sm:flex-wrap">
         <button
           type="button"
-          onClick={() => cameraRef.current?.click()}
+          disabled={Boolean(storageNote)}
+          onClick={() => withConsent(() => cameraRef.current?.click())}
           className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm font-semibold text-slate-800 hover:bg-slate-50"
         >
           <Camera className="w-4 h-4" />
@@ -381,7 +463,8 @@ export const PatientDocuments: React.FC<{ patientId: string }> = ({ patientId })
         <button
           type="button"
           data-testid="patient-document-webcam"
-          onClick={() => void startWebcam()}
+          disabled={Boolean(storageNote)}
+          onClick={() => withConsent(() => void startWebcam())}
           className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm font-semibold text-slate-800 hover:bg-slate-50"
         >
           <Camera className="w-4 h-4" />
@@ -389,7 +472,8 @@ export const PatientDocuments: React.FC<{ patientId: string }> = ({ patientId })
         </button>
         <button
           type="button"
-          onClick={() => fileRef.current?.click()}
+          disabled={Boolean(storageNote)}
+          onClick={() => withConsent(() => fileRef.current?.click())}
           className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700"
         >
           <Upload className="w-4 h-4" />
@@ -641,6 +725,18 @@ export const PatientDocuments: React.FC<{ patientId: string }> = ({ patientId })
             </div>
           </div>
         </div>
+      )}
+
+      {consentOpen && consent && (
+        <PatientDocumentConsentDialog
+          patientId={patientId}
+          status={consent}
+          onClose={() => {
+            pendingAction.current = null;
+            setConsentOpen(false);
+          }}
+          onGranted={consentGranted}
+        />
       )}
     </section>
   );

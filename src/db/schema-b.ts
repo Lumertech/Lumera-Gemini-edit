@@ -125,6 +125,7 @@ export const tenants = pgTable("tenants", {
   ownerEmail: text("owner_email").default(""),
   ownerPhone: text("owner_phone").default(""),
   deletedAt: text("deleted_at"),
+  healthDocumentRetentionYears: integer("health_document_retention_years").notNull().default(3),
 });
 
 export const invoices = pgTable(
@@ -293,6 +294,7 @@ export const LUMERA_TABLE_NAMES = [
   "lab_reports",
   "patient_documents",
   "patient_document_tickets",
+  "patient_health_document_consents",
   "whatsapp_conversations",
   "whatsapp_messages",
   "whatsapp_outbound_events",

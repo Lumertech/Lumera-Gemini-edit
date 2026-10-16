@@ -19,6 +19,7 @@ import multer, { MulterError } from "multer";
 import { getDb, publicUser, writeAudit, type DbUser } from "./db.ts";
 import { requireAuth } from "./auth.ts";
 import { reportCaughtError } from "./error-tracker.ts";
+import { assertActiveHealthDocumentConsent } from "./patient-document-consent.ts";
 
 export const PATIENT_DOC_MAX_BYTES = 10 * 1024 * 1024;
 export const PATIENT_DOC_SIGNED_URL_TTL_MS = 5 * 60 * 1000;
@@ -284,7 +285,14 @@ function audit(req: Request, action: string, details: Record<string, string>) {
     req.user?.id || null,
     req.user?.name || "Staff",
     action,
-    JSON.stringify(details)
+    JSON.stringify(details),
+    {
+      tenantId: details.tenantId,
+      patientId: details.patientId,
+      actorRole: String(req.user?.role || ""),
+      entityType: "patient_document",
+      entityId: details.documentId || "",
+    }
   );
 }
 
@@ -422,9 +430,10 @@ const upload = multer({
 function sendKnownError(res: Response, err: unknown, fallback: string) {
   const status = errorStatus(err);
   const message = err instanceof Error ? err.message : fallback;
+  const code = typeof err === "object" && err && "code" in err ? String((err as { code?: string }).code || "") : "";
   if (status >= 500 && status !== 503) reportCaughtError(err, "patient-documents");
   const error = status === 503 ? message : status >= 500 ? fallback : message;
-  if (!res.headersSent) res.status(status || 500).json({ error });
+  if (!res.headersSent) res.status(status || 500).json(code ? { error, code } : { error });
 }
 
 export function registerPatientDocumentRoutes(api: Router) {
@@ -443,7 +452,12 @@ export function registerPatientDocumentRoutes(api: Router) {
            ORDER BY document_date DESC, created_at DESC`
         )
         .all(tenantId, req.params.id) as DocumentRow[];
-      res.json({ documents: rows.map((row) => publicDocument(row, req)) });
+      res.json({
+        documents: rows.map((row) => publicDocument(row, req)),
+        storage: patientDocumentStorageUnavailable()
+          ? { available: false, reason: PATIENT_DOCS_UNAVAILABLE_ERROR }
+          : { available: true },
+      });
     } catch (err) {
       sendKnownError(res, err, "Failed to list documents");
     }
@@ -515,6 +529,7 @@ async function handleUpload(req: Request, res: Response, tenantId: string) {
     const title = parseTitle(req.body?.title);
     const docType = parseDocType(req.body?.docType);
     const documentDate = parseDocumentDate(req.body?.documentDate);
+    assertActiveHealthDocumentConsent(tenantId, req.params.id);
     stored = await storePatientDocumentBytes(tenantId, req.params.id, file.buffer, mime);
     const id = `pdoc-${crypto.randomUUID().slice(0, 12)}`;
     const now = new Date().toISOString();

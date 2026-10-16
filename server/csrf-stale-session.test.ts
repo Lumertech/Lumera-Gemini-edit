@@ -1494,6 +1494,13 @@ describe("stale anonymous __session CSRF refresh", () => {
       const late = await lateMe;
       assert.equal(late.csrfToken, boot.csrfToken);
 
+      await apiFetch(
+        `http://127.0.0.1:${server.port}/api/patients/ind-pat-rajiv/document-consent`,
+        {
+          method: "POST",
+          body: JSON.stringify({ language: "en", method: "staff_attested_verbal", attested: true }),
+        }
+      );
       const saved = await apiFetch<{ document?: { id?: string; title?: string } }>(
         `http://127.0.0.1:${server.port}/api/patients/ind-pat-rajiv/documents`,
         { method: "POST", body: pdfUpload("CBC right after login") }

@@ -532,10 +532,39 @@ export function findDataDeletionRequest(
     .get(confirmationCode) as DataDeletionRequestRow | undefined;
 }
 
-export function writeAudit(database: SqlDatabase, userId: string | null, userName: string, action: string, details: string) {
+export function writeAudit(
+  database: SqlDatabase,
+  userId: string | null,
+  userName: string,
+  action: string,
+  details: string,
+  context?: {
+    tenantId?: string;
+    patientId?: string;
+    actorRole?: string;
+    entityType?: string;
+    entityId?: string;
+  }
+) {
+  const extra = context || {};
   database.prepare(
-    "INSERT INTO audit_logs (id, timestamp, user_id, user_name, action, details) VALUES (?, ?, ?, ?, ?, ?)"
-  ).run(crypto.randomUUID(), new Date().toISOString(), userId, userName, action, details);
+    `INSERT INTO audit_logs (
+      id, timestamp, user_id, user_name, action, details,
+      tenant_id, patient_id, actor_role, entity_type, entity_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    crypto.randomUUID(),
+    new Date().toISOString(),
+    userId,
+    userName,
+    action,
+    details,
+    extra.tenantId || "",
+    extra.patientId || "",
+    extra.actorRole || "",
+    extra.entityType || "",
+    extra.entityId || ""
+  );
 }
 
 export function parseJsonColumn(value: unknown, fallback: any): any {
@@ -579,6 +608,7 @@ export function mapPatient(row: { [key: string]: unknown }) {
     uhid: row.uhid as string,
     name: row.name as string,
     age: Number(row.age || 0),
+    dateOfBirth: (row.date_of_birth as string) || "",
     gender: (row.gender as string) || "Other",
     phone: row.phone as string,
     email: (row.email as string) || "",
