@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { appPublicUrl, isProduction, isUnsetOrPlaceholder, readSecret, sandboxSimulatorsEnabled } from "./runtime.ts";
-import { formatINR } from "../app/applet/src/lib/currency.ts";
+import { formatINR } from "../src/lib/currency.ts";
 
 export const RAZORPAY_API_BASE = "https://api.razorpay.com/v1";
 

@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { ArrowLeft, Phone, Search, UserPlus } from "lucide-react";
 import { apiFetch } from "../api/http";
 import { PatientDocuments } from "./PatientDocuments";
-import { formatINR } from "../../app/applet/src/lib/currency.ts";
+import { formatINR } from "../lib/currency.ts";
 import { isAbhaLinked, type Appointment, type Patient, type Prescription, type Vitals } from "../types";
 
 interface ChartResponse {

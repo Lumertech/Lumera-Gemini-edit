@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Camera, Edit3, CheckCircle2, ShieldCheck, Award } from "lucide-react";
 import { apiFetch } from "../../api/http";
-import { formatINR } from "../../../app/applet/src/lib/currency.ts";
+import { formatINR } from "../../lib/currency.ts";
 import { Doctor, PolyclinicSpecialty } from "../../types";
 import { DoctorProfileModal } from "../DoctorProfileModal";
 import { PRACTICE_SPECIALTIES } from "../../lib/specialtyWorkflow";

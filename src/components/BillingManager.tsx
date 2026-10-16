@@ -22,7 +22,7 @@ import { BillItem, Patient, Doctor, ClinicSettings, PharmacyBatchItem, TherapyPa
 import { MOCK_PHARMACY_BATCHES, MOCK_THERAPY_PACKAGES } from '../data/clinicalData';
 import { BLANK_CLINIC_SETTINGS } from '../lib/letterhead';
 import { apiFetch } from '../api/http';
-import { formatINR } from '../../app/applet/src/lib/currency.ts';
+import { formatINR } from '../lib/currency.ts';
 import {
   BillingPaymentMode,
   BillingSettings,

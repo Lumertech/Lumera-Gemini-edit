@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Smile, Wrench, AlertTriangle, Plus, Trash2, CheckCircle2, Shield } from 'lucide-react';
 import { DentalAssessment, DentalToothCondition } from '../../types';
-import { formatINR } from '../../../app/applet/src/lib/currency.ts';
+import { formatINR } from '../../lib/currency.ts';
 
 interface DentalSurgeryRxModuleProps {
   assessment: DentalAssessment;

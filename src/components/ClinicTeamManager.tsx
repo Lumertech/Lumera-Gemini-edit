@@ -21,7 +21,7 @@ import {
 import { apiFetch } from "../api/http";
 import { AppUser, Doctor, PolyclinicSpecialty } from "../types";
 import { DoctorProfileModal, PRESET_DOCTOR_AVATARS } from "./DoctorProfileModal";
-import { formatINR } from "../../app/applet/src/lib/currency.ts";
+import { formatINR } from "../lib/currency.ts";
 
 interface StaffRow {
   id: string;

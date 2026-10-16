@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { defaultTooltipProps } from "recharts/es6/component/Tooltip.js";
-import { formatINR } from "../../app/applet/src/lib/currency.ts";
+import { formatINR } from "./currency.ts";
 import { chartCurrencyFormatter } from "./chartCurrency.ts";
 
 describe("recharts default currency format", () => {

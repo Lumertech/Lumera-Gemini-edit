@@ -13,7 +13,7 @@ import {
   Calendar,
 } from 'lucide-react';
 import { Doctor, PolyclinicSpecialty } from '../types';
-import { formatINR } from '../../app/applet/src/lib/currency.ts';
+import { formatINR } from '../lib/currency.ts';
 import { DoctorProfileModal } from './DoctorProfileModal';
 
 interface PolyclinicManagerProps {

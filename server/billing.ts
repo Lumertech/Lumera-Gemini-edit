@@ -21,7 +21,7 @@ import { reportCaughtError } from "./error-tracker.ts";
 import { invoiceNumberToPersist } from "../src/lib/billingCollect.ts";
 import { upsertScopedConversation } from "./whatsapp-scope.ts";
 import { WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
-import { formatINR } from "../app/applet/src/lib/currency.ts";
+import { formatINR } from "../src/lib/currency.ts";
 
 function tenantIdOf(req: Request): string {
   return String(req.user?.tenantId || "").trim();
