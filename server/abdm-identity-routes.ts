@@ -5,7 +5,8 @@
 import { type Request, type Response, type Router } from "express";
 import crypto from "node:crypto";
 import { getDb, writeAudit } from "./db.ts";
-import { allowOtpEcho, requireAuth } from "./auth.ts";
+import { allowOtpEcho, CLINICIAN_ROLES, requireAuth, requireRole } from "./auth.ts";
+import { rejectProductionSimulator } from "./meta-security.ts";
 import { isAbdmPlaceholderRegistryMode, resolveAbdmMode } from "./abdm-mode.ts";
 import { formatAbdmRegistryLabel } from "../src/lib/abdmRegistryLabel.ts";
 import { formatINR } from "../app/applet/src/lib/currency.ts";
@@ -47,6 +48,51 @@ interface AadhaarOtpSession {
   address: string;
 }
 const otpSessions = new Map<string, AadhaarOtpSession>();
+
+/** Clinic staff may read the meter. Patients are 403. Anonymous is 401 via requireAuth. */
+const dhisOverviewGuards = [requireAuth, requireRole(...CLINICIAN_ROLES)] as const;
+
+/** Simulate writes a ledger row. Clinic-admin desk and super_admin only, and only outside production. */
+const DHIS_SIMULATE_ROLES = ["super_admin", "polyclinic_admin", "CLINIC_ADMIN"] as const;
+const dhisSimulateGuards = [
+  requireAuth,
+  requireRole(...DHIS_SIMULATE_ROLES),
+  rejectProductionSimulator,
+] as const;
+
+function claimStrings(value: unknown): string[] {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed ? [trimmed] : [];
+  }
+  if (Array.isArray(value)) return value.flatMap((item) => claimStrings(item));
+  return [];
+}
+
+/** DHIS reads and simulator writes use the session clinic. A foreign tenant claim is rejected. */
+function sessionDhisTenant(req: Request, res: Response): string | null {
+  const sessionTenant = tenantIdOf(req);
+  const body =
+    req.body && typeof req.body === "object" && !Array.isArray(req.body)
+      ? (req.body as Record<string, unknown>)
+      : {};
+  const claims = [
+    ...claimStrings(body.tenantId),
+    ...claimStrings(body.tenant_id),
+    ...claimStrings(req.query?.tenantId),
+    ...claimStrings(req.query?.tenant_id),
+    ...claimStrings(req.headers["x-tenant-id"]),
+  ];
+  if (claims.some((claim) => claim !== sessionTenant)) {
+    res.status(403).json({ error: "Forbidden" });
+    return null;
+  }
+  if (!sessionTenant) {
+    res.status(403).json({ error: "No clinic tenant is linked to this account." });
+    return null;
+  }
+  return sessionTenant;
+}
 
 
 export function registerAbdmIdentityRoutes(router: Router): void {
@@ -306,7 +352,9 @@ export function registerAbdmIdentityRoutes(router: Router): void {
   // -------------------------------------------------------------
   // 4. DHIS INCENTIVE TRACKER & AUDIT ENGINE
   // -------------------------------------------------------------
-  router.get("/dhis/overview", (_req, res) => {
+  router.get("/dhis/overview", ...dhisOverviewGuards, (req, res) => {
+    const tenantId = sessionDhisTenant(req, res);
+    if (!tenantId) return;
     try {
       const db = getDb();
       const currentMonth = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
@@ -315,8 +363,8 @@ export function registerAbdmIdentityRoutes(router: Router): void {
       const countRow = db.prepare(`
         SELECT COUNT(*) as count 
         FROM dhis_transactions 
-        WHERE month_year = ? AND status = 'QUALIFIED'
-      `).get(currentMonth) as { count: number };
+        WHERE month_year = ? AND status = 'QUALIFIED' AND tenant_id = ?
+      `).get(currentMonth, tenantId) as { count: number };
 
       const transactionsCount = countRow?.count || 0;
       const threshold = 100;
@@ -331,9 +379,9 @@ export function registerAbdmIdentityRoutes(router: Router): void {
       const breakdownRows = db.prepare(`
         SELECT transaction_type, COUNT(*) as c 
         FROM dhis_transactions 
-        WHERE month_year = ? AND status = 'QUALIFIED'
+        WHERE month_year = ? AND status = 'QUALIFIED' AND tenant_id = ?
         GROUP BY transaction_type
-      `).all(currentMonth) as Array<{ transaction_type: string; c: number }>;
+      `).all(currentMonth, tenantId) as Array<{ transaction_type: string; c: number }>;
 
       const breakdown: Record<string, number> = {
         OP_CONSULT: 0,
@@ -351,15 +399,15 @@ export function registerAbdmIdentityRoutes(router: Router): void {
       const recentTransactions = db.prepare(`
         SELECT id, transaction_type, abha_address, abha_number, kyc_status, fhir_bundle_id, incentive_amount, clinic_share, lumera_share, created_at
         FROM dhis_transactions
-        WHERE month_year = ?
+        WHERE month_year = ? AND tenant_id = ?
         ORDER BY created_at DESC
         LIMIT 20
-      `).all(currentMonth);
+      `).all(currentMonth, tenantId);
 
       // KYC count in patients table
       const kycRow = db.prepare(`
-        SELECT COUNT(*) as c FROM patients WHERE kyc_status = 'LINKED_SANDBOX'
-      `).get() as { c: number };
+        SELECT COUNT(*) as c FROM patients WHERE kyc_status = 'LINKED_SANDBOX' AND tenant_id = ?
+      `).get(tenantId) as { c: number };
 
       res.json({
         currentMonth,
@@ -386,10 +434,13 @@ export function registerAbdmIdentityRoutes(router: Router): void {
     }
   });
 
-  // Simulate a DHIS transaction for testing & demonstration
-  router.post("/dhis/simulate-transaction", (req, res) => {
+  // Simulate a DHIS transaction for testing & demonstration. Auth runs before the production gate
+  // so an anonymous caller is 401 even when simulators are disabled.
+  router.post("/dhis/simulate-transaction", ...dhisSimulateGuards, (req, res) => {
+    const tenantId = sessionDhisTenant(req, res);
+    if (!tenantId) return;
     try {
-      const { type = "OP_CONSULT", abhaAddress = "rajiv.saxena@abdm" } = req.body;
+      const { type = "OP_CONSULT", abhaAddress = "rajiv.saxena@abdm" } = req.body || {};
       const validTypes: Array<"OP_CONSULT" | "PRESCRIPTION" | "DIAGNOSTIC_REPORT" | "DISCHARGE_SUMMARY"> = [
         "OP_CONSULT",
         "PRESCRIPTION",
@@ -399,6 +450,7 @@ export function registerAbdmIdentityRoutes(router: Router): void {
       const selectedType = validTypes.includes(type) ? type : "OP_CONSULT";
 
       const tx = recordDhisTransaction({
+        tenantId,
         transactionType: selectedType,
         abhaAddress,
         abhaNumber: "91-4428-9102-3841",
@@ -406,6 +458,9 @@ export function registerAbdmIdentityRoutes(router: Router): void {
         recordId: `rec-${crypto.randomUUID().slice(0, 8)}`,
         fhirBundleId: `bundle-${crypto.randomUUID().slice(0, 8)}`,
       });
+      if (!tx) {
+        return res.status(500).json({ error: "Failed to simulate transaction: ledger write rejected" });
+      }
 
       res.json({
         success: true,
