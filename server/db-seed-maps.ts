@@ -775,7 +775,7 @@ function workspaceSlugForTenant(tenantId: string): string {
 /** Allowlisted account fields. `password_hash` and any other secret column stay on the server. */
 export function publicUser(user: DbUser) {
   const billing = getTenantBillingProfile(user.tenant_id || "");
-  return omitClientSecretKeys({
+  const published = omitClientSecretKeys({
     id: user.id,
     tenantId: user.tenant_id || "",
     email: user.email,
@@ -799,5 +799,9 @@ export function publicUser(user: DbUser) {
     gstin: billing.gstin,
     upiId: billing.upiId,
   });
+  if (user.role !== "patient") return published;
+  // Clinic GSTIN is KYC copied onto the account payload. Patients keep the public UPI handle.
+  const { gstin: _clinicGstin, ...patientAccount } = published;
+  return patientAccount;
 }
 

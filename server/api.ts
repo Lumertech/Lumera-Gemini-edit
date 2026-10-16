@@ -56,6 +56,7 @@ import { rejectUntrustedTenantClaim } from "./tenant-guard.ts";
 import { publicBranch, publicTenant } from "./client-serializers.ts";
 import { clinicTenantId, upsertScopedConversation } from "./whatsapp-scope.ts";
 import { WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
+import { loadPatientTenant, patientLetterhead, requestIsPatient } from "./patient-tenant.ts";
 import {
   createAdminTenant,
   ensureTenantSubscription,
@@ -1630,7 +1631,7 @@ export function createApiRouter(): Router {
       const row = getDb().prepare("SELECT * FROM tenants WHERE id = ?").get(req.user.tenantId) as
         | Record<string, unknown>
         | undefined;
-      tenant = publicTenant(row);
+      tenant = requestIsPatient(req) ? loadPatientTenant(req.user.tenantId) : publicTenant(row);
     }
     // Session credential stays in the HttpOnly cookie. Echoing getSessionId here
     // let page scripts read it. Native clients keep the JWT from the login body.
@@ -1701,6 +1702,11 @@ export function createApiRouter(): Router {
     if (!tenantId) {
       return res.status(404).json({ error: "No tenant associated with this account." });
     }
+    if (requestIsPatient(req)) {
+      const tenant = loadPatientTenant(tenantId);
+      if (!tenant) return res.status(404).json({ error: "Tenant record not found." });
+      return res.json({ tenant, letterhead: patientLetterhead(tenant) });
+    }
     const tenant = publicTenant(
       getDb().prepare("SELECT * FROM tenants WHERE id = ?").get(tenantId) as Record<string, unknown> | undefined
     );
@@ -1725,6 +1731,11 @@ export function createApiRouter(): Router {
     const tenant = getDb().prepare("SELECT id FROM tenants WHERE id = ?").get(tenantId) as { id: string } | undefined;
     if (!tenant) {
       return res.status(404).json({ error: "Tenant record not found." });
+    }
+    if (requestIsPatient(req)) {
+      const card = loadPatientTenant(tenantId);
+      if (!card) return res.status(404).json({ error: "Tenant record not found." });
+      return res.json({ tenant: card, letterhead: patientLetterhead(card) });
     }
     return res.json({
       letterhead: getTenantLetterhead(tenantId, req.user?.id),
@@ -1780,7 +1791,21 @@ export function createApiRouter(): Router {
          ORDER BY d.name`
       )
       .all(tenantId) as Record<string, unknown>[];
-    res.json({ doctors: rows.map(mapDoctor) });
+    const doctors = rows.map(mapDoctor);
+    if (requestIsPatient(req)) {
+      return res.json({
+        tenant: loadPatientTenant(tenantId),
+        doctors: doctors.map((doctor) => ({
+          id: doctor.id,
+          name: doctor.name,
+          regNumber: doctor.regNumber,
+          specialty: doctor.specialty,
+          qualification: doctor.qualification,
+          opdTiming: doctor.opdTiming,
+        })),
+      });
+    }
+    res.json({ doctors });
   });
 
   api.get("/clinic/team", requireAuth, requireRole(...CLINICIAN_ROLES), (req, res) => {

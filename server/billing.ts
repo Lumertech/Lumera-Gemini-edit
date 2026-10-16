@@ -22,9 +22,20 @@ import { invoiceNumberToPersist } from "../src/lib/billingCollect.ts";
 import { upsertScopedConversation } from "./whatsapp-scope.ts";
 import { WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
 import { formatINR } from "../src/lib/currency.ts";
+import { loadPatientTenant, patientLetterhead, requestIsPatient } from "./patient-tenant.ts";
 
 function tenantIdOf(req: Request): string {
   return String(req.user?.tenantId || "").trim();
+}
+
+function invoiceForClient(req: Request, row: Record<string, unknown>) {
+  const mapped = mapInvoice(row);
+  if (!requestIsPatient(req)) return { invoice: mapped };
+  const { gstin: _gstin, ...rest } = mapped;
+  return {
+    invoice: rest,
+    tenant: loadPatientTenant(String(row.tenant_id || tenantIdOf(req))),
+  };
 }
 
 function requireTenant(req: Request, res: Response): string | null {
@@ -420,6 +431,15 @@ export function createBillingRouter(): Router {
 
   api.get("/billing/settings", requireAuth, (req, res) => {
     const tenantId = tenantIdOf(req);
+    if (requestIsPatient(req)) {
+      const tenant = loadPatientTenant(tenantId);
+      return res.json({
+        clinicName: tenant?.name ?? null,
+        upiId: tenant?.upi_id ?? null,
+        tenant,
+        letterhead: patientLetterhead(tenant),
+      });
+    }
     const letterhead = getTenantLetterhead(tenantId, req.user?.id);
     const ids = scrubSeedBillingIds(tenantId, { gstin: letterhead.gstin, upiId: letterhead.upiId });
     res.json({
@@ -463,7 +483,13 @@ export function createBillingRouter(): Router {
       paidAmount,
       dueCount,
       dueAmount,
-      invoices: rows.map(mapInvoice),
+      invoices: requestIsPatient(req)
+        ? rows.map((row) => {
+            const { gstin: _gstin, ...rest } = mapInvoice(row);
+            return rest;
+          })
+        : rows.map(mapInvoice),
+      ...(requestIsPatient(req) ? { tenant: loadPatientTenant(tenantId) } : {}),
     });
   });
 
@@ -486,7 +512,17 @@ export function createBillingRouter(): Router {
       const rows = getDb()
         .prepare(`SELECT * FROM invoices WHERE ${clauses.join(" AND ")} ORDER BY created_at DESC`)
         .all(...params) as Record<string, unknown>[];
-      res.json({ invoices: rows.map(mapInvoice) });
+      if (!requestIsPatient(req)) {
+        res.json({ invoices: rows.map(mapInvoice) });
+        return;
+      }
+      res.json({
+        invoices: rows.map((row) => {
+          const { gstin: _gstin, ...rest } = mapInvoice(row);
+          return rest;
+        }),
+        tenant: loadPatientTenant(tenantId),
+      });
     } catch (err) {
       reportCaughtError(err, "billing.listInvoices");
       res.status(500).json({ error: "Failed to fetch invoices" });
@@ -498,7 +534,7 @@ export function createBillingRouter(): Router {
     if (!tenantId) return;
     const row = getTenantInvoice(tenantId, req.params.id);
     if (!row) return res.status(404).json({ error: "Invoice not found" });
-    res.json({ invoice: mapInvoice(row) });
+    res.json(invoiceForClient(req, row));
   });
 
   api.post("/invoices", requireAuth, (req, res) => {
@@ -513,7 +549,7 @@ export function createBillingRouter(): Router {
         "Invoice created",
         mapInvoice(row).invoiceNumber
       );
-      res.status(201).json({ invoice: mapInvoice(row) });
+      res.status(201).json(invoiceForClient(req, row));
     } catch (err: unknown) {
       const status =
         typeof err === "object" && err && "status" in err ? Number((err as { status: number }).status) : 500;
@@ -528,7 +564,7 @@ export function createBillingRouter(): Router {
     const row = getTenantInvoice(tenantId, req.params.id);
     if (!row) return res.status(404).json({ error: "Invoice not found" });
     if (String(row.status) === "Paid") {
-      return res.json({ invoice: mapInvoice(row), sandbox: false, alreadyPaid: true });
+      return res.json({ ...invoiceForClient(req, row), sandbox: false, alreadyPaid: true });
     }
 
     const mapped = mapInvoice(row);
@@ -564,9 +600,9 @@ export function createBillingRouter(): Router {
         tenantId
       );
 
-    const updated = mapInvoice(getTenantInvoice(tenantId, mapped.id)!);
+    const updatedRow = getTenantInvoice(tenantId, mapped.id)!;
     res.json({
-      invoice: updated,
+      ...invoiceForClient(req, updatedRow),
       payLink: created.payLink,
       orderId: created.orderId,
       paymentLinkId: created.paymentLinkId,
@@ -597,7 +633,7 @@ export function createBillingRouter(): Router {
       razorpayPaymentId: `pay_sandbox_${row.id}`,
     });
     res.json({
-      invoice: mapInvoice(paid),
+      ...invoiceForClient(req, paid),
       sandbox: true,
       notice: "SANDBOX / DEV-ONLY mock capture. Not a Razorpay settlement.",
     });
@@ -619,7 +655,7 @@ export function createBillingRouter(): Router {
       paymentMode: mode,
       paymentRef: String(req.body?.paymentRef || req.body?.payment_ref || `desk_${row.id}`),
     });
-    res.json({ invoice: mapInvoice(paid) });
+    res.json(invoiceForClient(req, paid));
   });
 
   api.post("/invoices/:id/receipt", requireAuth, async (req, res) => {
@@ -631,13 +667,13 @@ export function createBillingRouter(): Router {
       return res.status(409).json({ error: "Receipt can only be sent for a Paid invoice." });
     }
     const result = await dispatchInvoiceReceipt(row);
-    const updated = mapInvoice(getTenantInvoice(tenantId, String(row.id))!);
+    const updated = invoiceForClient(req, getTenantInvoice(tenantId, String(row.id))!);
     if (result.ok === false) {
       const status = cloudDispatchHttpStatus(result.error, result.status);
       return res.status(status).json({
         error: result.error,
         code: status === 402 ? "WALLET_INSUFFICIENT" : undefined,
-        invoice: updated,
+        ...updated,
         channel: result.channel,
         graphDelivered: false,
         sandbox: false,
@@ -649,7 +685,7 @@ export function createBillingRouter(): Router {
     const wamid = graphDelivered ? result.messageId || null : null;
     res.json({
       ok: true,
-      invoice: updated,
+      ...updated,
       channel: result.channel,
       sandbox: result.channel === "sandbox",
       graphDelivered,

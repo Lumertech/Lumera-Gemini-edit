@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { createApiRouter } from "./api.ts";
 import {
+  PATIENT_TENANT_KEYS,
   PUBLIC_BRANCH_KEYS,
   PUBLIC_TENANT_KEYS,
   isClientSecretKey,
+  patientTenant,
   publicBranch,
   publicTenant,
 } from "./client-serializers.ts";
@@ -227,6 +229,155 @@ describe("client row serializers", () => {
     }
     assertNoSecrets(published, "publicBranch");
     assert.equal(publicBranch(undefined), null);
+  });
+
+  it("patient tenant responses contain only the patient allowlist", () => {
+    const ownerPhone = "+91 90000 77771";
+    const ownerEmail = "owner.private@serializer-test.example";
+    const published = patientTenant({
+      id: "tenant-patient-scope",
+      name: "Published Clinic",
+      specialty: "General Medicine",
+      address: "12 Public Road",
+      city: "Pune",
+      phone: "+91 20 4000 1000",
+      email: "desk@published-clinic.example",
+      whatsapp_number: "+91 98000 42424",
+      upi_id: "publishedclinic@upi",
+      gstin: "27CANARYGSTIN1Z5",
+      reg_id: "CLINIC-REG-SECRET",
+      owner_name: "Dr Hidden Owner",
+      owner_email: ownerEmail,
+      owner_phone: ownerPhone,
+      owner_user_id: "user-owner-canary-91",
+      waba_id: "waba_hidden_canary",
+      phone_number_id: "pnid_hidden_canary",
+      meta_waba_name: "Hidden WABA",
+      meta_access_token: TOKEN,
+      trial_ends_at: "2099-01-01T00:00:00.000Z",
+      ai_scribe_minutes_limit: 500,
+      practice_settings: JSON.stringify({
+        walkInEnabled: true,
+        tokenPrefix: "QCANARY",
+        pan: "ABCDE1234F",
+        owner_user_id: "user-owner-canary-91",
+        meta_access_token: TOKEN,
+        logo_url: "https://cdn.example/logo.png",
+        opening_hours: "Mon-Sat 09:00-13:00",
+        departments: ["General Medicine", "Dermatology"],
+      }),
+    });
+    assert.ok(published);
+    assert.deepEqual(Object.keys(published).sort(), [...PATIENT_TENANT_KEYS].sort());
+    assert.equal(published.name, "Published Clinic");
+    assert.equal(published.logo_url, "https://cdn.example/logo.png");
+    assert.equal(published.address, "12 Public Road, Pune");
+    assert.equal(published.phone, "+91 20 4000 1000");
+    assert.equal(published.whatsapp_number, "+91 98000 42424");
+    assert.equal(published.email, "desk@published-clinic.example");
+    assert.equal(published.opening_hours, "Mon-Sat 09:00-13:00");
+    assert.deepEqual(published.specialties, ["General Medicine", "Dermatology"]);
+    assert.equal(published.upi_id, "publishedclinic@upi");
+    const body = JSON.stringify(published);
+    for (const forbidden of [
+      ownerPhone,
+      ownerEmail,
+      "Dr Hidden Owner",
+      "user-owner-canary-91",
+      "27CANARYGSTIN1Z5",
+      "ABCDE1234F",
+      "waba_hidden_canary",
+      "pnid_hidden_canary",
+      "Hidden WABA",
+      TOKEN,
+      "QCANARY",
+      "CLINIC-REG-SECRET",
+      "walkInEnabled",
+    ]) {
+      assert.equal(body.includes(forbidden), false, forbidden);
+    }
+    const staff = publicTenant({
+      name: "Published Clinic",
+      owner_phone: ownerPhone,
+      owner_email: ownerEmail,
+      gstin: "27CANARYGSTIN1Z5",
+      waba_id: "waba_hidden_canary",
+    });
+    assert.equal(staff?.owner_phone, ownerPhone);
+    assert.equal(staff?.gstin, "27CANARYGSTIN1Z5");
+    assert.equal(staff?.waba_id, "waba_hidden_canary");
+  });
+
+  it("returns null public contact when none is published and never falls back to the owner", () => {
+    const ownerPhone = "+91 90000 77771";
+    const ownerEmail = "owner.private@serializer-test.example";
+    const published = patientTenant({
+      name: "Quiet Clinic",
+      phone: ownerPhone,
+      email: ownerEmail,
+      whatsapp_number: "",
+      owner_name: "Dr Hidden Owner",
+      owner_phone: ownerPhone,
+      owner_email: ownerEmail,
+      owner_user_id: "user-owner-canary-91",
+      gstin: "27CANARYGSTIN1Z5",
+      upi_id: "",
+    });
+    assert.ok(published);
+    assert.deepEqual(Object.keys(published).sort(), [...PATIENT_TENANT_KEYS].sort());
+    assert.equal(published.name, "Quiet Clinic");
+    assert.equal(published.phone, null);
+    assert.equal(published.email, null);
+    assert.equal(published.whatsapp_number, null);
+    assert.equal(published.upi_id, null);
+    const body = JSON.stringify(published);
+    assert.equal(body.includes(ownerPhone), false);
+    assert.equal(body.includes(ownerEmail), false);
+    assert.equal(body.includes("Dr Hidden Owner"), false);
+    assert.equal(body.includes("user-owner-canary-91"), false);
+    assert.equal(body.includes("27CANARYGSTIN1Z5"), false);
+
+    const explicit = patientTenant({
+      name: "Chosen Clinic",
+      phone: ownerPhone,
+      email: ownerEmail,
+      owner_phone: "+91 90000 77771",
+      owner_email: ownerEmail,
+      practice_settings: {
+        public_phone: ownerPhone,
+        public_email: "desk@chosen-clinic.example",
+        public_whatsapp: "",
+      },
+    });
+    assert.equal(explicit?.phone, ownerPhone);
+    assert.equal(explicit?.email, "desk@chosen-clinic.example");
+    assert.equal(explicit?.whatsapp_number, null);
+    assert.equal(JSON.stringify(explicit).includes(ownerEmail), false);
+
+    const noFallback = patientTenant({
+      phone: "",
+      email: "",
+      whatsapp_number: "",
+      owner_phone: ownerPhone,
+      owner_email: ownerEmail,
+    });
+    assert.equal(noFallback?.phone, null);
+    assert.equal(noFallback?.email, null);
+    assert.equal(noFallback?.whatsapp_number, null);
+    const deskLine = patientTenant({
+      name: "Desk Clinic",
+      phone: "+91 20 4000 1000",
+      email: "desk@published-clinic.example",
+      whatsapp_number: "",
+      owner_phone: ownerPhone,
+      owner_email: ownerEmail,
+    });
+    assert.equal(deskLine?.phone, "+91 20 4000 1000");
+    assert.equal(deskLine?.email, "desk@published-clinic.example");
+    assert.equal(deskLine?.whatsapp_number, null);
+    assert.equal(JSON.stringify(deskLine).includes(ownerPhone), false);
+    assert.equal(JSON.stringify(deskLine).includes(ownerEmail), false);
+    assert.equal(patientTenant(null), null);
   });
 });
 
@@ -474,6 +625,189 @@ describe("tenant, user, and branch HTTP responses omit secrets", () => {
     assert.equal(published.name, "Canary");
     assertNoSecrets(published, "publicUser");
     assert.equal(JSON.stringify(published).includes(row.password_hash), false);
+  });
+
+  it("patient-scoped clinic routes return only the tenant allowlist and do not fall back to owner contact", async () => {
+    const suffix = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    const tenantId = `tenant-patient-${suffix}`;
+    const ownerPhone = "+91 90000 77771";
+    const ownerEmail = `owner.private.${suffix}@serializer-test.example`;
+    const ownerName = "Dr Hidden Owner";
+    const ownerUserId = `user-owner-${suffix}`;
+    const gstin = "27CANARYGSTIN1Z5";
+    const pan = "ABCDE1234F";
+    const doctorPhone = "+91 90000 88881";
+    const doctorEmail = `doctor.private.${suffix}@serializer-test.example`;
+    const doctorName = "Dr Rx Visible";
+    const doctorReg = "REG-RX-4242";
+    const now = new Date().toISOString();
+    const passwordHash = hashPassword("Lumera@2026");
+    const adminEmail = `admin.${suffix}@serializer-test.example`;
+    const patientEmail = `patient.${suffix}@serializer-test.example`;
+
+    getDb()
+      .prepare(
+        `INSERT INTO tenants (
+           id, name, specialty, country, timezone, phone, email, trial_ends_at,
+           ai_scribe_minutes_limit, ai_scribe_minutes_used, active_status, hfr_id,
+           waba_id, phone_number_id, meta_access_token, meta_token_expires_at, meta_waba_name,
+           meta_onboarding_status, address, city, gstin, reg_id, upi_id, whatsapp_number,
+           owner_name, owner_email, owner_phone, practice_settings, created_at, updated_at, practice_type
+         ) VALUES (
+           ?, 'Minimised Clinic', 'General Medicine', 'India', 'IST (UTC+5:30)', ?, ?, ?,
+           500, 0, 1, 'HFR-HIDDEN',
+           'waba_hidden_canary', 'pnid_hidden_canary', ?, ?, 'Hidden WABA',
+           'connected', '1 Public Lane', 'Pune', ?, 'CLINIC-REG-SECRET', 'publishedclinic@upi', '',
+           ?, ?, ?, ?, ?, ?, 'individual'
+         )`
+      )
+      .run(
+        tenantId,
+        ownerPhone,
+        ownerEmail,
+        now,
+        TOKEN,
+        EXPIRES,
+        gstin,
+        ownerName,
+        ownerEmail,
+        ownerPhone,
+        JSON.stringify({
+          walkInEnabled: true,
+          tokenPrefix: "QCANARY",
+          pan,
+          owner_user_id: ownerUserId,
+          meta_access_token: TOKEN,
+          departments: ["General Medicine"],
+        }),
+        now,
+        now
+      );
+    getDb()
+      .prepare(
+        `INSERT INTO users (
+           id, tenant_id, email, password_hash, name, role, status, phone, clinic_name,
+           onboarding_completed, practice_type, specialty, last_login, created_at
+         ) VALUES (?, ?, ?, ?, ?, 'CLINIC_ADMIN', 'active', ?, 'Minimised Clinic', 1, 'individual', 'General Medicine', ?, ?)`
+      )
+      .run(ownerUserId, tenantId, adminEmail, passwordHash, ownerName, ownerPhone, now, now);
+    getDb()
+      .prepare(
+        `INSERT INTO users (
+           id, tenant_id, email, password_hash, name, role, status, phone, clinic_name,
+           onboarding_completed, practice_type, specialty, last_login, created_at
+         ) VALUES (?, ?, ?, ?, 'Portal Patient', 'patient', 'active', '+91 98200 11111', 'Minimised Clinic', 1, 'individual', 'General Medicine', ?, ?)`
+      )
+      .run(`user-patient-${suffix}`, tenantId, patientEmail, passwordHash, now, now);
+    getDb()
+      .prepare(
+        `INSERT INTO doctors (
+           id, user_id, name, qualification, reg_number, specialty, experience_years, consultation_fee,
+           opd_room, available_days, opd_timing, phone, email, avatar_url, bio, hpr_id, signature_url, active
+         ) VALUES (?, ?, ?, '', ?, 'General Medicine', 0, 0, '', '[]', '09:00-13:00', ?, ?, '', '', '', '', 1)`
+      )
+      .run(`doc-${suffix}`, ownerUserId, doctorName, doctorReg, doctorPhone, doctorEmail);
+    getDb()
+      .prepare(
+        `INSERT INTO prescriptions (
+           id, tenant_id, rx_number, patient_id, patient_name, patient_phone, patient_uhid,
+           doctor_id, doctor_name, doctor_specialty, doctor_reg_number, date, diagnosis,
+           medicines, lab_tests, advice, follow_up_date, pdf_url, created_at, clinic_name, clinic_phone
+         ) VALUES (?, ?, ?, ?, 'Portal Patient', '+91 98200 11111', 'UHID-1', ?, ?, 'General Medicine', ?, '2026-10-16', 'Checkup', '[]', '[]', '[]', '', '', ?, 'Minimised Clinic', ?)`
+      )
+      .run(`rx-${suffix}`, tenantId, `RX-${suffix}`, `pat-${suffix}`, `doc-${suffix}`, doctorName, doctorReg, now, ownerPhone);
+    getDb()
+      .prepare(
+        `INSERT INTO invoices (
+           id, tenant_id, invoice_number, date, gstin, upi_id, total_amount, status, created_at
+         ) VALUES (?, ?, ?, '2026-10-16', ?, 'publishedclinic@upi', 500, 'Paid', ?)`
+      )
+      .run(`inv-${suffix}`, tenantId, `INV-${suffix}`, gstin, now);
+
+    const patientToken = await login(patientEmail);
+    const patientAuth = { Authorization: `Bearer ${patientToken}` };
+    const forbidden = [ownerPhone, ownerEmail, ownerName, ownerUserId, gstin, pan, TOKEN, doctorPhone, doctorEmail, "QCANARY", "waba_hidden_canary", "pnid_hidden_canary"];
+
+    function assertAllowlistedTenant(tenant: Record<string, unknown>, label: string) {
+      assert.deepEqual(Object.keys(tenant).sort(), [...PATIENT_TENANT_KEYS].sort(), label);
+      assert.equal(tenant.name, "Minimised Clinic", label);
+      assert.equal(tenant.phone, null, label);
+      assert.equal(tenant.email, null, label);
+      assert.equal(tenant.whatsapp_number, null, label);
+      assert.equal(tenant.upi_id, "publishedclinic@upi", label);
+      assert.equal(tenant.doctor_name, doctorName, label);
+      assert.equal(tenant.doctor_reg_number, doctorReg, label);
+      assert.equal(tenant.opening_hours, "09:00-13:00", label);
+      assert.deepEqual(tenant.specialties, ["General Medicine"], label);
+      assert.equal(tenant.address, "1 Public Lane, Pune", label);
+    }
+
+    const paths = ["/api/me", "/api/auth/me", "/api/tenant/current", "/api/tenant/letterhead", "/api/billing/settings", "/api/appointments", "/api/doctors", "/api/prescriptions", "/api/invoices"];
+    for (const path of paths) {
+      const res = await jsonRequest(port, "GET", path, undefined, patientAuth);
+      assert.equal(res.status, 200, `${path} ${String(res.json.error || "")}`);
+      const tenant = res.json.tenant as Record<string, unknown>;
+      assertAllowlistedTenant(tenant, path);
+      const body = JSON.stringify(res.json);
+      for (const secret of forbidden) {
+        assert.equal(body.includes(secret), false, `${path} leaked ${secret}`);
+      }
+    }
+
+    const letterhead = await jsonRequest(port, "GET", "/api/tenant/letterhead", undefined, patientAuth);
+    const card = letterhead.json.letterhead as Record<string, unknown>;
+    assert.equal(Object.prototype.hasOwnProperty.call(card, "gstin"), false);
+    assert.equal(card.phone, null);
+    assert.equal(card.email, null);
+    assert.equal(card.whatsappNumber, null);
+
+    const settings = await jsonRequest(port, "GET", "/api/billing/settings", undefined, patientAuth);
+    assert.equal(Object.prototype.hasOwnProperty.call(settings.json, "gstin"), false);
+    assert.equal(settings.json.upiId, "publishedclinic@upi");
+
+    const doctors = await jsonRequest(port, "GET", "/api/doctors", undefined, patientAuth);
+    const doctor = (doctors.json.doctors as Record<string, unknown>[])[0];
+    assert.equal(doctor.name, doctorName);
+    assert.equal(doctor.regNumber, doctorReg);
+    assert.equal(Object.prototype.hasOwnProperty.call(doctor, "phone"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(doctor, "email"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(doctor, "userId"), false);
+
+    const rxs = await jsonRequest(port, "GET", "/api/prescriptions", undefined, patientAuth);
+    const rx = (rxs.json.prescriptions as Array<{ doctorName: string; doctorRegNumber: string; clinicPhone: string }>)[0];
+    assert.equal(rx.doctorName, doctorName);
+    assert.equal(rx.doctorRegNumber, doctorReg);
+    assert.equal(rx.clinicPhone, "");
+
+    const invoices = await jsonRequest(port, "GET", "/api/invoices", undefined, patientAuth);
+    const invoice = (invoices.json.invoices as Record<string, unknown>[])[0];
+    assert.equal(Object.prototype.hasOwnProperty.call(invoice, "gstin"), false);
+    assert.equal(invoice.upiId, "publishedclinic@upi");
+
+    const me = await jsonRequest(port, "GET", "/api/auth/me", undefined, patientAuth);
+    assert.equal(Object.prototype.hasOwnProperty.call(me.json.user, "gstin"), false);
+
+    const staffToken = await login(adminEmail);
+    const staffAuth = { Authorization: `Bearer ${staffToken}` };
+    const staffMe = await jsonRequest(port, "GET", "/api/auth/me", undefined, staffAuth);
+    assert.equal(staffMe.status, 200);
+    const staffTenant = staffMe.json.tenant as Record<string, unknown>;
+    assert.equal(staffTenant.owner_phone, ownerPhone);
+    assert.equal(staffTenant.owner_email, ownerEmail);
+    assert.equal(staffTenant.gstin, gstin);
+    assert.equal(staffTenant.waba_id, "waba_hidden_canary");
+    for (const key of Object.keys(staffTenant)) {
+      assert.equal(PUBLIC_TENANT_KEYS.includes(key as (typeof PUBLIC_TENANT_KEYS)[number]), true, key);
+    }
+    const staffDoctors = await jsonRequest(port, "GET", "/api/doctors", undefined, staffAuth);
+    assert.equal(staffDoctors.json.tenant, undefined);
+    const staffDoctor = (staffDoctors.json.doctors as Array<{ phone: string; email: string; userId: string }>)[0];
+    assert.equal(staffDoctor.phone, doctorPhone);
+    assert.equal(staffDoctor.email, doctorEmail);
+    assert.equal(staffDoctor.userId, ownerUserId);
+    const staffInvoice = await jsonRequest(port, "GET", `/api/invoices/inv-${suffix}`, undefined, staffAuth);
+    assert.equal((staffInvoice.json.invoice as { gstin?: string }).gstin, gstin);
+    assert.equal(staffInvoice.json.tenant, undefined);
   });
 });
 

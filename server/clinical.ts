@@ -15,9 +15,28 @@ import { reportCaughtError } from "./error-tracker.ts";
 import { resolveAbdmMode, type AbdmMode } from "./abdm-mode.ts";
 import { registerPatientDocumentRoutes } from "./patient-documents.ts";
 import { clinicCalendarDate, parseAppointmentListDate } from "../src/lib/clinicDay.ts";
+import { loadPatientClinicPhone, loadPatientTenant, requestIsPatient } from "./patient-tenant.ts";
+import type { PatientTenantExtras } from "./client-serializers.ts";
 
 function tenantIdOf(req: Request): string {
   return String(req.user?.tenantId || "").trim();
+}
+
+function withPatientTenant<T extends Record<string, unknown>>(
+  req: Request,
+  tenantId: string,
+  body: T,
+  extras?: PatientTenantExtras
+): T & { tenant?: ReturnType<typeof loadPatientTenant> } {
+  if (!requestIsPatient(req)) return body;
+  return { ...body, tenant: loadPatientTenant(tenantId, extras) };
+}
+
+function prescriptionForClient(req: Request, tenantId: string, row: Record<string, unknown>) {
+  const mapped = mapPrescription(row);
+  if (!requestIsPatient(req)) return mapped;
+  const phone = loadPatientClinicPhone(tenantId, mapped.clinicPhone);
+  return { ...mapped, clinicPhone: phone || "" };
 }
 
 function requireTenant(req: Request, res: Response): string | null {
@@ -966,11 +985,13 @@ export function createClinicalRouter(): Router {
            ORDER BY date DESC, created_at DESC`
         )
         .all(tenantId, req.params.id) as Record<string, unknown>[];
-      res.json({
-        patient: patientWithConsents(row, tenantId),
-        visits: visits.map(mapAppointment),
-        prescriptions: prescriptions.map(mapPrescription),
-      });
+      res.json(
+        withPatientTenant(req, tenantId, {
+          patient: patientWithConsents(row, tenantId),
+          visits: visits.map(mapAppointment),
+          prescriptions: prescriptions.map((prescription) => prescriptionForClient(req, tenantId, prescription)),
+        })
+      );
     } catch (err) {
       reportCaughtError(err, "clinical.patientChart");
       res.status(500).json({ error: "Failed to fetch patient chart" });
@@ -1116,7 +1137,8 @@ export function createClinicalRouter(): Router {
       const parsed = parseAppointmentListDate(req.query.date);
       const date = parsed.kind === "all" ? null : parsed.kind === "today" ? clinicDayForTenant(tenantId) : parsed.date;
       const rows = listTenantAppointments(tenantId, date);
-      res.json(date ? { appointments: rows.map(mapAppointment), date } : { appointments: rows.map(mapAppointment) });
+      const appointments = rows.map(mapAppointment);
+      res.json(withPatientTenant(req, tenantId, date ? { appointments, date } : { appointments }));
     } catch (err) {
       const status = errorStatus(err);
       if (status >= 400 && status < 500) {
@@ -1132,7 +1154,7 @@ export function createClinicalRouter(): Router {
     if (!tenantId) return;
     const row = getTenantAppointment(tenantId, req.params.id);
     if (!row) return res.status(404).json({ error: "Appointment not found" });
-    res.json({ appointment: mapAppointment(row) });
+    res.json(withPatientTenant(req, tenantId, { appointment: mapAppointment(row) }));
   });
 
   api.post("/appointments", requireAuth, (req, res) => {
@@ -1147,7 +1169,7 @@ export function createClinicalRouter(): Router {
         "Appointment created",
         `${mapAppointment(row).patientName} token ${mapAppointment(row).tokenNumber}`
       );
-      res.status(201).json({ appointment: mapAppointment(row) });
+      res.status(201).json(withPatientTenant(req, tenantId, { appointment: mapAppointment(row) }));
     } catch (err: unknown) {
       const status = typeof err === "object" && err && "status" in err ? Number((err as { status: number }).status) : 500;
       const message = err instanceof Error ? err.message : "Failed to create appointment";
@@ -1160,7 +1182,7 @@ export function createClinicalRouter(): Router {
     if (!tenantId) return;
     try {
       const row = updateAppointment(tenantId, req.params.id, req.body || {});
-      res.json({ appointment: mapAppointment(row) });
+      res.json(withPatientTenant(req, tenantId, { appointment: mapAppointment(row) }));
     } catch (err: unknown) {
       const status = typeof err === "object" && err && "status" in err ? Number((err as { status: number }).status) : 500;
       const message = err instanceof Error ? err.message : "Failed to update appointment";
@@ -1186,7 +1208,8 @@ export function createClinicalRouter(): Router {
               .prepare("SELECT * FROM prescriptions WHERE tenant_id = ? ORDER BY created_at DESC")
               .all(tenantId)
       ) as Record<string, unknown>[];
-      res.json({ prescriptions: rows.map(mapPrescription) });
+      const prescriptions = rows.map((prescription) => prescriptionForClient(req, tenantId, prescription));
+      res.json(withPatientTenant(req, tenantId, { prescriptions }));
     } catch (err) {
       reportCaughtError(err, "clinical.listPrescriptions");
       res.status(500).json({ error: "Failed to fetch prescriptions" });
@@ -1202,7 +1225,13 @@ export function createClinicalRouter(): Router {
         .prepare("SELECT * FROM prescriptions WHERE tenant_id = ? AND rx_number = ?")
         .get(tenantId, req.params.id) as Record<string, unknown> | undefined);
     if (!row) return res.status(404).json({ error: "Prescription not found" });
-    res.json({ prescription: mapPrescription(row) });
+    const prescription = prescriptionForClient(req, tenantId, row);
+    res.json(
+      withPatientTenant(req, tenantId, { prescription }, {
+        doctorName: prescription.doctorName,
+        doctorRegNumber: prescription.doctorRegNumber,
+      })
+    );
   });
 
   api.post("/prescriptions", requireAuth, (req, res) => {
@@ -1210,7 +1239,7 @@ export function createClinicalRouter(): Router {
     if (!tenantId) return;
     try {
       const row = insertPrescription(tenantId, req.body || {});
-      const mapped = mapPrescription(row);
+      const mapped = prescriptionForClient(req, tenantId, row);
       writeAudit(
         getDb(),
         req.user?.id || null,
@@ -1225,7 +1254,12 @@ export function createClinicalRouter(): Router {
           getDb().prepare("DELETE FROM prescription_drafts WHERE tenant_id = ? AND patient_id = ?").run(tenantId, patientId);
         }
       } catch {}
-      res.status(201).json({ prescription: mapped });
+      res.status(201).json(
+        withPatientTenant(req, tenantId, { prescription: mapped }, {
+          doctorName: mapped.doctorName,
+          doctorRegNumber: mapped.doctorRegNumber,
+        })
+      );
     } catch (err: unknown) {
       const status = typeof err === "object" && err && "status" in err ? Number((err as { status: number }).status) : 500;
       const message = err instanceof Error ? err.message : "Failed to create prescription";
