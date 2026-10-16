@@ -10,6 +10,7 @@
  * so GitHub uploads stay under the MCP truncation limit. Behavior matches main + copy labels.
  */
 import { Router } from "express";
+import { attachUser } from "./auth.ts";
 import { registerAbdmIdentityRoutes } from "./abdm-identity-routes.ts";
 import { registerAbdmConsentRoutes } from "./abdm-consent-routes.ts";
 
@@ -23,6 +24,8 @@ export {
 
 export function createAbdmRouter(): Router {
   const router = Router();
+  // Load the session before bridgeSessionGuard. An admin bearer is 401 if this is skipped.
+  router.use(attachUser);
   registerAbdmIdentityRoutes(router);
   registerAbdmConsentRoutes(router);
   return router;

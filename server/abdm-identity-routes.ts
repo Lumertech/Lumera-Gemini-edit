@@ -5,7 +5,7 @@
 import { type NextFunction, type Request, type Response, type Router } from "express";
 import crypto from "node:crypto";
 import { getDb, writeAudit } from "./db.ts";
-import { allowOtpEcho, CLINICIAN_ROLES, denyUnlessPatientRecordRole as denyUnlessClinicianRole, isPlatformAdminRole, requireAuth, requireRole } from "./auth.ts";
+import { allowOtpEcho, CLINICIAN_ROLES, isPlatformAdminRole, requireAuth, requireRole } from "./auth.ts";
 import { denyUnlessPatientRecordRole, isPatientRecordRole } from "./patient-access.ts";
 import { sendOtpLimited } from "./otp-attempt.ts";
 import { consumeHashedOtpAttempt, otpSubjectKey, requestClientIp } from "./otp-rate-limit.ts";
@@ -41,7 +41,8 @@ const cachedSessions = new Map<string, AbdmSession>();
 // In-Memory Aadhaar OTP Session Cache for Sandbox Flow
 interface AadhaarOtpSession {
   txnId: string;
-  aadhaarNumber: string;
+  aadhaarHmac: string;
+  last4: string;
   otp: string;
   expiresAt: number;
   name: string;
@@ -51,6 +52,40 @@ interface AadhaarOtpSession {
   pincode: string;
   address: string;
   tenantId: string;
+  abhaNumber: string;
+}
+
+/** Fixed stub handset. Never built from Aadhaar digits. */
+const STUB_AADHAAR_MOBILE = "+91 70000 11111";
+
+function aadhaarHashSecret(): string | null {
+  const configured = String(process.env.AADHAAR_HASH_KEY || "").trim();
+  if (configured) return configured;
+  const production = process.env.NODE_ENV === "production";
+  const stub = resolveAbdmMode() === "stub";
+  if (production || !stub) return null;
+  return "stub-only-aadhaar-hash-key";
+}
+
+/** HMAC under AADHAAR_HASH_KEY. Null when the key must fail closed. */
+function aadhaarMac(message: string): string | null {
+  const secret = aadhaarHashSecret();
+  if (!secret) return null;
+  return crypto.createHmac("sha256", secret).update(message).digest("hex");
+}
+
+function stubAbhaNumber(cleanAadhaar: string): string {
+  const windows = new Set<string>();
+  for (let i = 0; i <= cleanAadhaar.length - 6; i += 1) windows.add(cleanAadhaar.slice(i, i + 6));
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    let body = "";
+    while (body.length < 12) body += crypto.randomInt(0, 1_000_000_000).toString().padStart(9, "0");
+    body = body.slice(0, 12);
+    const digits = `91${body}`;
+    if ([...windows].some((window) => digits.includes(window))) continue;
+    return `91-${body.slice(0, 4)}-${body.slice(4, 8)}-${body.slice(8, 12)}`;
+  }
+  return "91-0101-0101-0101";
 }
 const otpSessions = new Map<string, AadhaarOtpSession>();
 
@@ -90,8 +125,20 @@ const FHIR_SAMPLE_DOCTOR: DoctorContext = {
   qualification: "SAMPLE",
 };
 
-/** Patient-record staff only. Anonymous is 401 via requireAuth, before Aadhaar validation. */
-const aadhaarOtpGuards = [requireAuth, denyUnlessClinicianRole] as const;
+/** Patient-record staff only. No login is 401. Patient and super_admin are 403. */
+function requirePatientRecordRole(req: Request, res: Response, next: NextFunction) {
+  if (!req.user) {
+    res.status(401).json({ error: "Authentication required" });
+    return;
+  }
+  if (!isPatientRecordRole(req.user.role)) {
+    res.status(403).json({ error: "Insufficient permissions" });
+    return;
+  }
+  next();
+}
+
+const aadhaarOtpGuards = [requireAuth, requirePatientRecordRole] as const;
 
 /** Bridge session is server-internal: a matched ABDM HMAC, or a super/clinic admin. */
 const BRIDGE_ADMIN_ROLES = ["super_admin", "polyclinic_admin", "CLINIC_ADMIN"] as const;
@@ -106,18 +153,14 @@ function bridgeSessionGuard(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
-function aadhaarHashKey(cleanAadhaar: string): string {
-  return crypto.createHash("sha256").update(`aadhaar:${cleanAadhaar}`).digest("hex");
-}
-
-function maskedAadhaar(cleanAadhaar: string): string {
-  return `XXXX-XXXX-${cleanAadhaar.slice(-4)}`;
+function maskedLast4(last4: string): string {
+  return `XXXX-XXXX-${last4}`;
 }
 
 /** 429 when the shared OTP window is exhausted. Generate also honors the send cooldown. */
-function rejectAadhaarOtpLimit(req: Request, res: Response, cleanAadhaar: string, enforceCooldown: boolean): boolean {
+function rejectAadhaarOtpLimit(req: Request, res: Response, bucketKey: string, enforceCooldown: boolean): boolean {
   const decision = consumeHashedOtpAttempt(
-    aadhaarHashKey(cleanAadhaar),
+    bucketKey,
     requestClientIp(req),
     otpSubjectKey({ userId: req.user?.id, email: req.user?.email, phone: req.user?.phone || "" })
   );
@@ -254,7 +297,11 @@ export function registerAbdmIdentityRoutes(router: Router): void {
           error: "Invalid Aadhaar number. Must be a 12-digit number.",
         });
       }
-      if (rejectAadhaarOtpLimit(req, res, cleanAadhaar, true)) return;
+      const aadhaarHmac = aadhaarMac(cleanAadhaar);
+      if (!aadhaarHmac) {
+        return res.status(503).json({ error: "Aadhaar OTP is unavailable" });
+      }
+      if (rejectAadhaarOtpLimit(req, res, aadhaarHmac, true)) return;
 
       const txnId = `txn-abdm-${crypto.randomUUID().slice(0, 8)}`;
       const testOtp = "123456"; // Standard ABDM Sandbox OTP
@@ -272,12 +319,13 @@ export function registerAbdmIdentityRoutes(router: Router): void {
         name: "Abhinav Sharma",
         gender: "M",
         dob: "1988-08-14",
-        mobile: `+91 98${cleanAadhaar.slice(4, 12)}`,
+        mobile: STUB_AADHAAR_MOBILE,
       };
 
       otpSessions.set(txnId, {
         txnId,
-        aadhaarNumber: cleanAadhaar,
+        aadhaarHmac,
+        last4: lastFour,
         otp: testOtp,
         expiresAt: Date.now() + 10 * 60 * 1000,
         name: matched.name,
@@ -287,6 +335,7 @@ export function registerAbdmIdentityRoutes(router: Router): void {
         pincode: "560066",
         address: "E-104, Palm Meadows, Whitefield, Bengaluru, Karnataka",
         tenantId,
+        abhaNumber: stubAbhaNumber(cleanAadhaar),
       });
 
       const abdmMode = resolveAbdmMode();
@@ -295,7 +344,7 @@ export function registerAbdmIdentityRoutes(router: Router): void {
         req.user?.id || null,
         req.user?.name || "Reception Desk",
         "ABDM_AADHAAR_OTP_GENERATED",
-        `tenant: ${tenantId}; aadhaar: ${maskedAadhaar(cleanAadhaar)}`
+        `tenant: ${tenantId}; aadhaar: ${maskedLast4(lastFour)}`
       );
       res.json({
         txnId,
@@ -306,8 +355,8 @@ export function registerAbdmIdentityRoutes(router: Router): void {
         abdmMode,
         sandboxNotice: NHA_SANDBOX_NOTICE,
       });
-    } catch (err: any) {
-      res.status(500).json({ error: "Failed to generate Aadhaar OTP: " + err.message });
+    } catch {
+      res.status(500).json({ error: "Failed to generate Aadhaar OTP" });
     }
   };
 
@@ -324,9 +373,13 @@ export function registerAbdmIdentityRoutes(router: Router): void {
         return res.status(400).json({ error: "Both txnId and otp are required" });
       }
 
-      const session = otpSessions.get(txnId);
-      const aadhaarForLimit = session && session.tenantId === tenantId ? session.aadhaarNumber : "unknown";
-      if (rejectAadhaarOtpLimit(req, res, aadhaarForLimit, false)) return;
+      const session = otpSessions.get(String(txnId));
+      const bucketKey =
+        session && session.tenantId === tenantId ? session.aadhaarHmac : aadhaarMac(String(txnId));
+      if (!bucketKey) {
+        return res.status(503).json({ error: "Aadhaar OTP is unavailable" });
+      }
+      if (rejectAadhaarOtpLimit(req, res, bucketKey, false)) return;
       if (!session || session.tenantId !== tenantId) {
         return res.status(400).json({ error: "Transaction session expired or invalid. Please request a new OTP." });
       }
@@ -338,9 +391,6 @@ export function registerAbdmIdentityRoutes(router: Router): void {
         });
       }
 
-      // Generate 14-digit ABHA Number (Format: 91-XXXX-XXXX-XXXX)
-      const abhaSeed = session.aadhaarNumber.slice(2, 12) + "99";
-      const abhaNumber = `91-${abhaSeed.slice(0, 4)}-${abhaSeed.slice(4, 8)}-${abhaSeed.slice(8, 12)}`;
       const cleanName = session.name.toLowerCase().replace(/[^a-z]/g, ".");
       const abhaAddress = `${cleanName}@sbx`;
 
@@ -349,13 +399,13 @@ export function registerAbdmIdentityRoutes(router: Router): void {
         req.user?.id || null,
         req.user?.name || "Reception Desk",
         "ABHA OTP matched (NHA sandbox)",
-        `tenant: ${tenantId}; aadhaar: ${maskedAadhaar(session.aadhaarNumber)}`
+        `tenant: ${tenantId}; aadhaar: ${maskedLast4(session.last4)}`
       );
 
       res.json({
         success: true,
         abdmMode: resolveAbdmMode(),
-        abhaNumber,
+        abhaNumber: session.abhaNumber,
         abhaAddress,
         kycStatus: "LINKED_SANDBOX",
         profile: {
@@ -368,8 +418,8 @@ export function registerAbdmIdentityRoutes(router: Router): void {
         },
         sandboxNotice: NHA_SANDBOX_NOTICE,
       });
-    } catch (err: any) {
-      res.status(500).json({ error: "Failed to verify Aadhaar OTP: " + err.message });
+    } catch {
+      res.status(500).json({ error: "Failed to verify Aadhaar OTP" });
     }
   };
 

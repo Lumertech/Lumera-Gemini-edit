@@ -101,6 +101,7 @@ function purgeTenant(tenantId: string) {
     }
   };
   run("DELETE FROM audit_logs WHERE details LIKE ?", `%tenant: ${tenantId}%`);
+  run("DELETE FROM patients WHERE tenant_id = ?", tenantId);
   run("DELETE FROM users WHERE tenant_id = ?", tenantId);
   run("DELETE FROM tenants WHERE id = ?", tenantId);
 }
@@ -146,6 +147,7 @@ describe("ABDM identity AuthZ", () => {
   let close: (() => Promise<void>) | undefined;
   const realFetch = globalThis.fetch;
   const previousAbdmMode = process.env.ABDM_MODE;
+  const previousHashKey = process.env.AADHAAR_HASH_KEY;
 
   before(async () => {
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -158,6 +160,7 @@ describe("ABDM identity AuthZ", () => {
 
     if (!process.env.JWT_SECRET) process.env.JWT_SECRET = "test-jwt-secret-identity-authz";
     process.env.ABDM_MODE = "stub";
+    process.env.AADHAAR_HASH_KEY = "test-aadhaar-hash-key";
     try {
       getDb();
     } catch {
@@ -173,6 +176,8 @@ describe("ABDM identity AuthZ", () => {
     globalThis.fetch = realFetch;
     if (previousAbdmMode === undefined) delete process.env.ABDM_MODE;
     else process.env.ABDM_MODE = previousAbdmMode;
+    if (previousHashKey === undefined) delete process.env.AADHAAR_HASH_KEY;
+    else process.env.AADHAAR_HASH_KEY = previousHashKey;
     try {
       for (const tenantId of createdTenantIds) purgeTenant(tenantId);
       purgeIdentityFixtures();
@@ -446,6 +451,172 @@ describe("ABDM identity AuthZ", () => {
       );
       assert.equal(res.status, i < 3 ? 200 : 429, `${i}: ${String(res.json.error || "")}`);
     }
+  });
+
+  function assertNoAadhaarDigitRun(aadhaar: string, value: string) {
+    const digits = value.replace(/\D/g, "");
+    for (let i = 0; i <= aadhaar.length - 6; i += 1) {
+      const window = aadhaar.slice(i, i + 6);
+      assert.equal(value.includes(window), false, window);
+      assert.equal(digits.includes(window), false, `${window} in ${digits}`);
+    }
+  }
+
+  it("verify ABHA and the saved patient contain no Aadhaar digit run", async () => {
+    resetSendOtpRateLimits();
+    const clinic = seedClinic("dpdp", "doctor");
+    const token = await login(clinic.email);
+    const headers = auth(token);
+    const aadhaar = "102938475610";
+    const generated = await jsonRequest(
+      port,
+      "POST",
+      "/api/abdm/registration/aadhaar/generateOtp",
+      { aadhaar },
+      headers
+    );
+    assert.equal(generated.status, 200, String(generated.json.error || ""));
+    const verified = await jsonRequest(
+      port,
+      "POST",
+      "/api/abdm/registration/aadhaar/verifyOTP",
+      { txnId: generated.json.txnId, otp: "123456" },
+      headers
+    );
+    assert.equal(verified.status, 200, String(verified.json.error || ""));
+    const profile = verified.json.profile as { name: string; mobile: string };
+    const abhaNumber = String(verified.json.abhaNumber || "");
+    assertNoAadhaarDigitRun(aadhaar, abhaNumber);
+    assertNoAadhaarDigitRun(aadhaar, profile.mobile);
+
+    const created = await jsonRequest(
+      port,
+      "POST",
+      "/api/patients",
+      { name: profile.name, phone: profile.mobile, age: 34, gender: "Male" },
+      headers
+    );
+    assert.equal(created.status, 201, String(created.json.error || ""));
+    const patientId = String((created.json.patient as { id: string }).id);
+    const linked = await jsonRequest(
+      port,
+      "POST",
+      "/api/patients/link-abha",
+      {
+        patientId,
+        abhaNumber,
+        abhaAddress: verified.json.abhaAddress,
+        kycStatus: "LINKED_SANDBOX",
+        source: "aadhaar_otp",
+        abdmMode: "stub",
+      },
+      headers
+    );
+    assert.equal(linked.status, 200, String(linked.json.error || ""));
+    const row = getDb()
+      .prepare("SELECT abha_number, phone FROM patients WHERE id = ? AND tenant_id = ?")
+      .get(patientId, clinic.tenantId) as { abha_number: string; phone: string };
+    assertNoAadhaarDigitRun(aadhaar, String(row.abha_number || ""));
+    assertNoAadhaarDigitRun(aadhaar, String(row.phone || ""));
+  });
+
+  it("super_admin cannot run Aadhaar OTP", async () => {
+    const token = await login("admin@lumera.me");
+    const headers = auth(token);
+    const generated = await jsonRequest(
+      port,
+      "POST",
+      "/api/abdm/aadhaar/generate-otp",
+      { aadhaar: "102938475610" },
+      headers
+    );
+    assert.equal(generated.status, 403);
+    assert.equal(generated.json.error, "Insufficient permissions");
+    const verified = await jsonRequest(
+      port,
+      "POST",
+      "/api/abdm/aadhaar/verify-otp",
+      { txnId: "txn-super-admin", otp: "123456" },
+      headers
+    );
+    assert.equal(verified.status, 403);
+    assert.equal(verified.json.error, "Insufficient permissions");
+  });
+
+  it("AADHAAR_HASH_KEY fails closed outside stub and in production", async () => {
+    const previousNode = process.env.NODE_ENV;
+    const previousMode = process.env.ABDM_MODE;
+    const previousKey = process.env.AADHAAR_HASH_KEY;
+    const clinic = seedClinic("hmac", "doctor");
+    const token = await login(clinic.email);
+    try {
+      delete process.env.AADHAAR_HASH_KEY;
+      process.env.NODE_ENV = "production";
+      process.env.ABDM_MODE = "stub";
+      const production = await jsonRequest(
+        port,
+        "POST",
+        "/api/abdm/aadhaar/generate-otp",
+        { aadhaar: "102938475611" },
+        auth(token)
+      );
+      assert.equal(production.status, 503);
+      assert.equal(production.json.error, "Aadhaar OTP is unavailable");
+
+      process.env.NODE_ENV = "test";
+      process.env.ABDM_MODE = "sandbox";
+      const sandbox = await jsonRequest(
+        port,
+        "POST",
+        "/api/abdm/registration/aadhaar/verifyOTP",
+        { txnId: "txn-no-key", otp: "123456" },
+        auth(token)
+      );
+      assert.equal(sandbox.status, 503);
+      assert.equal(sandbox.json.error, "Aadhaar OTP is unavailable");
+    } finally {
+      if (previousNode === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNode;
+      if (previousMode === undefined) delete process.env.ABDM_MODE;
+      else process.env.ABDM_MODE = previousMode;
+      if (previousKey === undefined) delete process.env.AADHAAR_HASH_KEY;
+      else process.env.AADHAAR_HASH_KEY = previousKey;
+    }
+  });
+
+  it("unknown txn rate limits do not share a bucket", async () => {
+    resetSendOtpRateLimits();
+    const callerA = seedClinic("unkA", "doctor");
+    const callerB = seedClinic("unkB", "receptionist");
+    const tokenA = await login(callerA.email);
+    const tokenB = await login(callerB.email);
+    for (let i = 0; i < 4; i += 1) {
+      const res = await jsonRequest(
+        port,
+        "POST",
+        "/api/abdm/aadhaar/verify-otp",
+        { txnId: "txn-unknown-a", otp: "123456" },
+        { ...auth(tokenA), "x-forwarded-for": "203.0.113.40" }
+      );
+      assert.equal(res.status, i < 3 ? 400 : 429, `${i}: ${String(res.json.error || "")}`);
+    }
+    const other = await jsonRequest(
+      port,
+      "POST",
+      "/api/abdm/aadhaar/verify-otp",
+      { txnId: "txn-unknown-b", otp: "123456" },
+      { ...auth(tokenB), "x-forwarded-for": "203.0.113.41" }
+    );
+    assert.equal(other.status, 400, String(other.json.error || ""));
+  });
+
+  it("clinic admin bridgesession uses the session populated before the guard", async () => {
+    const token = await login("clinic.admin@lumera.me");
+    const res = await jsonRequest(port, "POST", "/api/abdm/bridgesession", {}, auth(token));
+    assert.notEqual(res.status, 401);
+    assert.equal(res.status, 200, String(res.json.error || ""));
+    assert.equal(typeof res.json.accessToken, "string");
+    assert.ok(String(res.json.accessToken).length > 0);
   });
 
   it("a matched ABDM HMAC can open bridgesession without a staff session", async () => {
