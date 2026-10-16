@@ -339,4 +339,59 @@ describe("Patients tab API tenant isolation", () => {
     assert.equal(body.includes("bot template not inbound"), false);
     assert.equal(body.includes("wrong patient hello"), false);
   });
+
+  it("keeps Rx and diagnosis text out of WhatsApp items on a receptionist chart", async () => {
+    const clinic = createClinicUser("pt-wa-rx", "doctor");
+    const desk = createClinicUser("pt-wa-desk", "receptionist");
+    getDb().prepare("UPDATE users SET tenant_id = ? WHERE id = ?").run(clinic.tenantId, desk.userId);
+    const token = await login(clinic.email);
+    const deskToken = await login(desk.email);
+    const created = await jsonRequest(
+      port,
+      "POST",
+      "/api/patients",
+      { name: "WhatsApp Desk Patient", phone: "+91 98111 77721", age: 41, gender: "Female" },
+      { Authorization: `Bearer ${token}` }
+    );
+    assert.equal(created.status, 201, String(created.json.error || ""));
+    const patient = created.json.patient as { id: string; name: string; phone: string };
+    const rx = await jsonRequest(
+      port,
+      "POST",
+      "/api/prescriptions",
+      {
+        patientId: patient.id,
+        diagnosis: "Desk private diagnosis",
+        medicines: [{ id: "m1", drugName: "Amoxicillin", dosage: "500 mg", frequency: "1-0-1", durationDays: 5 }],
+      },
+      { Authorization: `Bearer ${token}` }
+    );
+    assert.equal(rx.status, 201, String(rx.json.error || ""));
+    const now = new Date().toISOString();
+    const db = getDb();
+    db.prepare(
+      `INSERT INTO whatsapp_messages (
+        id, conversation_id, patient_phone, sender, content, time_display, status, created_at, tenant_id
+      ) VALUES (?, ?, ?, 'user', ?, '11:00', 'delivered', ?, ?)`
+    ).run(`wa-desk-in-${patient.id}`, `conv-desk-${patient.id}`, patient.phone, "When is my next visit?", now, clinic.tenantId);
+    db.prepare(
+      `INSERT INTO whatsapp_outbound_events (
+        id, event_type, patient_phone, patient_name, status, details, sent_at, tenant_id
+      ) VALUES (?, 'appointment_reminder', ?, ?, 'delivered', ?, ?, ?)`
+    ).run(`wa-desk-out-${patient.id}`, patient.phone, patient.name, "Appointment reminder for tomorrow", now, clinic.tenantId);
+
+    const chart = await jsonRequest(port, "GET", `/api/patients/${patient.id}/chart`, undefined, {
+      Authorization: `Bearer ${deskToken}`,
+    });
+    assert.equal(chart.status, 200);
+    const timeline = (chart.json.timeline || []) as Array<{ type: string; title: string; summary: string }>;
+    const whatsapp = timeline.filter((item) => item.type === "whatsapp");
+    assert.equal(whatsapp.some((item) => item.title === "WhatsApp message received"), true);
+    assert.equal(whatsapp.some((item) => item.title === "WhatsApp template sent"), true);
+    const whatsappText = JSON.stringify(whatsapp);
+    assert.equal(whatsappText.includes("Desk private diagnosis"), false);
+    assert.equal(whatsappText.includes("Amoxicillin"), false);
+    assert.equal(whatsappText.includes("Rx issued"), false);
+    assert.equal(/diagnosis/i.test(whatsappText), false);
+  });
 });

@@ -54,7 +54,7 @@ The `patient_health_document_consents` table is append-only by convention: appli
 
 Types: `lab_report`, `prescription`, `discharge_summary`, `imaging`, `other`.
 
-Magic bytes: PDF, JPEG, PNG. HEIC and HEIF are rejected. Each report must be **25 MB or smaller** and **20 pages or fewer**. An image counts as one page. A PDF whose page count cannot be read is rejected. Without an active v1 consent the server always returns **409** `{ "code": "CONSENT_REQUIRED" }` or `{ "code": "GUARDIAN_REQUIRED" }` and stores no bytes.
+Magic bytes: PDF, JPEG, PNG. HEIC and HEIF are rejected. Each file must be **10 MB or smaller**. Each report must be **25 MB or smaller** and **20 pages or fewer**. An image counts as one page. Page count uses a PDF parser. If that parser cannot read the file, the upload is still accepted and the miss is logged. Without an active v1 consent the server always returns **409** `{ "code": "CONSENT_REQUIRED" }` or `{ "code": "GUARDIAN_REQUIRED" }` and stores no bytes.
 
 `GET /api/patients/:id/documents` returns metadata plus `storage.available`. When production has no `PATIENT_DOCS_GCS_BUCKET`, `storage.available` is false, upload and read return **503**, and nothing is written to local disk.
 

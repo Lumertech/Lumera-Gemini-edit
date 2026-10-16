@@ -2,7 +2,11 @@ import React, { useEffect, useRef, useState } from "react";
 import { Camera, Download, Eye, FileText, Trash2, Upload, X } from "lucide-react";
 import { apiFetch, apiFetchResponse } from "../api/http";
 import { consentDialogStep } from "../lib/consentGate";
-import { countPdfPages, PATIENT_REPORT_LIMIT_LABEL, PATIENT_REPORT_MAX_BYTES, PATIENT_REPORT_MAX_PAGES } from "../lib/patientReportLimits";
+import {
+  PATIENT_DOC_MAX_FILE_BYTES,
+  PATIENT_DOCUMENT_LIMIT_LABEL,
+  PATIENT_REPORT_MAX_BYTES,
+} from "../lib/patientReportLimits";
 import { PatientDocumentConsentDialog, type DocumentConsentStatus } from "./PatientDocumentConsentDialog";
 
 const DOC_TYPES = [
@@ -72,7 +76,8 @@ function titleFromName(name: string): string {
   return base.slice(0, 200);
 }
 
-async function clientFileError(file: File): Promise<string> {
+function clientFileError(file: File): string {
+  if (file.size > PATIENT_DOC_MAX_FILE_BYTES) return "Each file must be 10 MB or smaller.";
   if (file.size > PATIENT_REPORT_MAX_BYTES) return "Each report must be 25 MB or smaller.";
   const name = file.name.toLowerCase();
   const allowedExt = [".pdf", ".jpg", ".jpeg", ".png"];
@@ -84,11 +89,6 @@ async function clientFileError(file: File): Promise<string> {
   }
   if (!extOk && type && !allowedType.includes(type)) return "Use a PDF, JPG, or PNG file.";
   if (!extOk && !type) return "Use a PDF, JPG, or PNG file.";
-  if (type === "application/pdf" || name.endsWith(".pdf")) {
-    const pages = countPdfPages(new Uint8Array(await file.arrayBuffer()));
-    if (pages == null) return "Could not count the pages in this PDF. A report can be at most 20 pages.";
-    if (pages > PATIENT_REPORT_MAX_PAGES) return "A report can be at most 20 pages.";
-  }
   return "";
 }
 
@@ -214,7 +214,7 @@ export const PatientDocuments: React.FC<{
     const next: PendingFile[] = [];
     const problems: string[] = [];
     for (const file of files) {
-      const problem = await clientFileError(file);
+      const problem = clientFileError(file);
       if (problem) {
         problems.push(`${file.name}: ${problem}`);
         continue;
@@ -464,7 +464,7 @@ export const PatientDocuments: React.FC<{
       <div className="min-w-0">
         <h2 className="text-sm font-bold text-slate-900">Documents &amp; Reports</h2>
         <p className="text-xs text-slate-600 mt-1 break-words">
-          Attach earlier reports for this patient. Files stay private to this clinic. PDF, JPG, or PNG. {PATIENT_REPORT_LIMIT_LABEL}
+          Attach earlier reports for this patient. Files stay private to this clinic. PDF, JPG, or PNG. {PATIENT_DOCUMENT_LIMIT_LABEL}
         </p>
       </div>
 

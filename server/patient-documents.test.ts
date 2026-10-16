@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
+import { PDFDocument } from "pdf-lib";
 import { createApiRouter } from "./api.ts";
 import { getDb, initDatabase } from "./db.ts";
 import { hashPassword } from "./password.ts";
@@ -11,8 +12,9 @@ import {
   assertAllowedPatientDocument,
   assertOwnedStorageKey,
   detectPatientDocumentMime,
-  PATIENT_DOC_MAX_BYTES,
+  PATIENT_DOC_MAX_FILE_BYTES,
   PATIENT_DOC_MAX_PAGES,
+  PATIENT_REPORT_MAX_BYTES,
   PATIENT_DOC_SIGNED_URL_TTL_MS,
   PATIENT_DOCS_UNAVAILABLE_ERROR,
   readBytesFromSignedUrl,
@@ -66,37 +68,82 @@ function heicBytes(): Buffer {
   return Buffer.concat([Buffer.from([0x00, 0x00, 0x00, 0x18]), Buffer.from("ftypheicheic")]);
 }
 
+const ONE_PIXEL_JPEG = Buffer.from(
+  "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAb/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAGf/9k=",
+  "base64"
+);
+
+/** Chrome Save-as-PDF puts page objects in a compressed object stream, so a text scan sees no /Type /Page. */
+async function chromeSaveAsPdf(pages: number): Promise<Buffer> {
+  const doc = await PDFDocument.create();
+  for (let index = 0; index < pages; index += 1) {
+    const page = doc.addPage([595.28, 841.89]);
+    page.drawText(`Lab result page ${index + 1}`, { x: 48, y: 780, size: 12 });
+  }
+  return Buffer.from(await doc.save({ useObjectStreams: true }));
+}
+
+/** A scanned report is a page of image bytes and no text operators. */
+async function scannedPdf(): Promise<Buffer> {
+  const doc = await PDFDocument.create();
+  const page = doc.addPage([595.28, 841.89]);
+  // pdf-lib reads JPEG markers from the underlying ArrayBuffer at offset 0.
+  // A Node Buffer is often a view into a pool, so copy into a fresh Uint8Array.
+  const image = await doc.embedJpg(new Uint8Array(ONE_PIXEL_JPEG));
+  page.drawImage(image, { x: 0, y: 0, width: page.getWidth(), height: page.getHeight() });
+  return Buffer.from(await doc.save({ useObjectStreams: true }));
+}
+
 describe("patient document bytes", () => {
-  it("accepts PDF, JPEG, and PNG and rejects HEIC, SVG, and reports over 25 MB or 20 pages", () => {
+  it("accepts PDF, JPEG, and PNG and rejects HEIC, SVG, an 11 MB file, and reports over 20 pages", async () => {
     assert.equal(detectPatientDocumentMime(pdfBytes()), "application/pdf");
     assert.equal(detectPatientDocumentMime(Buffer.from([0xff, 0xd8, 0xff, 0xe0])), "image/jpeg");
     assert.equal(detectPatientDocumentMime(pngBytes()), "image/png");
     assert.equal(detectPatientDocumentMime(heicBytes()), null);
-    assert.equal(assertAllowedPatientDocument(pdfBytes(), "application/pdf"), "application/pdf");
-    assert.equal(assertAllowedPatientDocument(Buffer.from([0xff, 0xd8, 0xff]), "image/jpg"), "image/jpeg");
-    assert.throws(() => assertAllowedPatientDocument(heicBytes(), "image/heic"), /not allowed/);
-    assert.throws(
+    assert.equal(await assertAllowedPatientDocument(pdfBytes(), "application/pdf"), "application/pdf");
+    assert.equal(await assertAllowedPatientDocument(Buffer.from([0xff, 0xd8, 0xff]), "image/jpg"), "image/jpeg");
+    await assert.rejects(() => assertAllowedPatientDocument(heicBytes(), "image/heic"), /not allowed/);
+    await assert.rejects(
       () => assertAllowedPatientDocument(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"></svg>'), "image/svg+xml"),
       /not allowed/
     );
-    assert.throws(
+    await assert.rejects(
       () => assertAllowedPatientDocument(Buffer.from('<?xml version="1.0"?><svg></svg>'), "image/svg+xml"),
       /not allowed/
     );
-    assert.throws(() => assertAllowedPatientDocument(Buffer.from("hello"), "text/plain"), /not allowed/);
-    assert.throws(() => assertAllowedPatientDocument(pngBytes(), "application/pdf"), /do not match/);
-    assert.throws(() => assertAllowedPatientDocument(Buffer.from("GIF89a"), "image/gif"), /not allowed/);
-    assert.throws(() => assertAllowedPatientDocument(pdfBytes(21), "application/pdf"), /20 pages/);
-    assert.throws(
-      () => assertAllowedPatientDocument(Buffer.from("%PDF-1.4\nno pages\n%%EOF"), "application/pdf"),
-      /pages/
-    );
-    const tooBig = Buffer.alloc(PATIENT_DOC_MAX_BYTES + 1);
-    tooBig.write("%PDF-");
-    assert.throws(() => assertAllowedPatientDocument(tooBig, "application/pdf"), /25 MB/);
-    assert.equal(PATIENT_DOC_MAX_BYTES, 25 * 1024 * 1024);
+    await assert.rejects(() => assertAllowedPatientDocument(Buffer.from("hello"), "text/plain"), /not allowed/);
+    await assert.rejects(() => assertAllowedPatientDocument(pngBytes(), "application/pdf"), /do not match/);
+    await assert.rejects(() => assertAllowedPatientDocument(Buffer.from("GIF89a"), "image/gif"), /not allowed/);
+    const tooManyPages = await chromeSaveAsPdf(21);
+    await assert.rejects(() => assertAllowedPatientDocument(tooManyPages, "application/pdf"), /20 pages/);
+    const elevenMb = Buffer.alloc(11 * 1024 * 1024);
+    elevenMb.write("%PDF-");
+    await assert.rejects(() => assertAllowedPatientDocument(elevenMb, "application/pdf"), /10 MB/);
+    assert.equal(PATIENT_DOC_MAX_FILE_BYTES, 10 * 1024 * 1024);
+    assert.equal(PATIENT_REPORT_MAX_BYTES, 25 * 1024 * 1024);
     assert.equal(PATIENT_DOC_MAX_PAGES, 20);
     assert.equal(PATIENT_DOC_SIGNED_URL_TTL_MS, 5 * 60 * 1000);
+  });
+
+  it("counts Chrome Save-as-PDF object streams and a scanned image-only PDF, and accepts an unreadable PDF", async () => {
+    const chrome = await chromeSaveAsPdf(2);
+    assert.equal(chrome.toString("latin1").match(/\/Type\s*\/Page(?!s)/g), null);
+    assert.equal(await assertAllowedPatientDocument(chrome, "application/pdf"), "application/pdf");
+    const scanned = await scannedPdf();
+    assert.equal(scanned.includes(Buffer.from("Lab result")), false);
+    assert.equal(await assertAllowedPatientDocument(scanned, "application/pdf"), "application/pdf");
+    const warnings: string[] = [];
+    const original = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(" "));
+    };
+    try {
+      const mime = await assertAllowedPatientDocument(Buffer.from("%PDF-1.4\nnot a real pdf\n%%EOF"), "application/pdf");
+      assert.equal(mime, "application/pdf");
+    } finally {
+      console.warn = original;
+    }
+    assert.match(warnings.join("\n"), /page count unavailable/i);
   });
 
   it("refuses an expired signed URL and does not fetch it", async () => {
@@ -635,6 +682,33 @@ describe("patient document API", () => {
       assert.equal(consent.status, 403);
       assert.equal(JSON.stringify(consent.json).includes("Role Gate Nair"), false);
     }
+  });
+
+  it("rejects an 11 MB file at the upload limit", async () => {
+    const clinic = createClinicUser("docs-11mb", "doctor");
+    const token = await login(clinic.email);
+    const created = await jsonRequest(
+      port,
+      "POST",
+      "/api/patients",
+      { name: "Eleven Mb Patient", phone: "+91 98111 55509", age: 29, gender: "Male" },
+      { Authorization: `Bearer ${token}` }
+    );
+    assert.equal(created.status, 201, String(created.json.error || ""));
+    const patientId = String((created.json.patient as { id: string }).id);
+    const bytes = Buffer.alloc(11 * 1024 * 1024);
+    bytes.write("%PDF-");
+    const saved = await upload(token, patientId, bytes, {
+      filename: "eleven.pdf",
+      mime: "application/pdf",
+      title: "Too big for one file",
+      docType: "lab_report",
+      documentDate: "2026-10-02",
+    });
+    assert.equal(saved.status, 400);
+    assert.match(String(saved.json.error), /10 MB/);
+    const rows = getDb().prepare("SELECT id FROM patient_documents WHERE patient_id = ?").all(patientId);
+    assert.equal(rows.length, 0);
   });
 });
 

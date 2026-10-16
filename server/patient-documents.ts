@@ -21,12 +21,13 @@ import { requireAuth } from "./auth.ts";
 import { reportCaughtError } from "./error-tracker.ts";
 import { assertActiveHealthDocumentConsent } from "./patient-document-consent.ts";
 import {
+  PATIENT_DOC_MAX_FILE_BYTES,
   PATIENT_REPORT_MAX_BYTES,
   PATIENT_REPORT_MAX_PAGES,
-  countPdfPages,
 } from "../src/lib/patientReportLimits.ts";
+import { countPdfPages } from "./pdf-page-count.ts";
 
-export const PATIENT_DOC_MAX_BYTES = PATIENT_REPORT_MAX_BYTES;
+export { PATIENT_DOC_MAX_FILE_BYTES, PATIENT_REPORT_MAX_BYTES };
 export const PATIENT_DOC_MAX_PAGES = PATIENT_REPORT_MAX_PAGES;
 export const PATIENT_DOC_SIGNED_URL_TTL_MS = 5 * 60 * 1000;
 const PREVIEW_TICKET_TTL_MS = 5 * 60 * 1000;
@@ -161,9 +162,12 @@ function declaredMatches(detected: string, declared: string): boolean {
   return false;
 }
 
-export function assertAllowedPatientDocument(bytes: Buffer, declaredMime: string): string {
+export async function assertAllowedPatientDocument(bytes: Buffer, declaredMime: string): Promise<string> {
   if (!bytes.length) throw httpError(400, "The file is empty.");
-  if (bytes.length > PATIENT_DOC_MAX_BYTES) {
+  if (bytes.length > PATIENT_DOC_MAX_FILE_BYTES) {
+    throw httpError(400, "Each file must be 10 MB or smaller.");
+  }
+  if (bytes.length > PATIENT_REPORT_MAX_BYTES) {
     throw httpError(400, "Each report must be 25 MB or smaller.");
   }
   const detected = detectPatientDocumentMime(bytes);
@@ -175,11 +179,8 @@ export function assertAllowedPatientDocument(bytes: Buffer, declaredMime: string
     throw httpError(400, "File contents do not match the declared type.");
   }
   if (detected === "application/pdf") {
-    const pages = countPdfPages(bytes);
-    if (pages == null) {
-      throw httpError(400, "Could not count the pages in this PDF. A report can be at most 20 pages.");
-    }
-    if (pages > PATIENT_DOC_MAX_PAGES) {
+    const pages = await countPdfPages(bytes);
+    if (pages != null && pages > PATIENT_DOC_MAX_PAGES) {
       throw httpError(400, "A report can be at most 20 pages.");
     }
   }
@@ -445,7 +446,7 @@ function userFromPreviewTicket(req: Request): void {
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: PATIENT_DOC_MAX_BYTES, files: 1 },
+  limits: { fileSize: PATIENT_DOC_MAX_FILE_BYTES, files: 1 },
 });
 
 function sendKnownError(res: Response, err: unknown, fallback: string) {
@@ -499,7 +500,7 @@ export function registerPatientDocumentRoutes(api: Router) {
       if (err) {
         const tooBig = err instanceof MulterError && err.code === "LIMIT_FILE_SIZE";
         res.status(400).json({
-          error: tooBig ? "Each report must be 25 MB or smaller." : "Could not read the uploaded file.",
+          error: tooBig ? "Each file must be 10 MB or smaller." : "Could not read the uploaded file.",
         });
         return;
       }
@@ -546,7 +547,7 @@ async function handleUpload(req: Request, res: Response, tenantId: string) {
   try {
     const file = req.file;
     if (!file?.buffer?.length) throw httpError(400, "Choose a file to upload.");
-    const mime = assertAllowedPatientDocument(file.buffer, file.mimetype);
+    const mime = await assertAllowedPatientDocument(file.buffer, file.mimetype);
     const title = parseTitle(req.body?.title);
     const docType = parseDocType(req.body?.docType);
     const documentDate = parseDocumentDate(req.body?.documentDate);
