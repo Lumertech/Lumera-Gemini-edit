@@ -141,7 +141,7 @@ describe("Gemini ambient-scribe usage meter", () => {
           transcript,
           metadata: { source: "gemini-3.7-flash", endpoint: "generate-soap" },
         });
-        return res.json({ success: true, soap, source: "gemini-3.7-flash" });
+        return res.json({ success: true, soap, source: "Pulse AI" });
       } catch (error: any) {
         return res.status(500).json({ error: "Failed to generate SOAP note", details: error.message });
       }
@@ -225,7 +225,7 @@ describe("Gemini ambient-scribe usage meter", () => {
       );
       assert.equal(soap.status, 200, String(soap.json.error || "soap"));
       assert.equal(soap.json.success, true);
-      assert.equal(soap.json.source, "gemini-3.7-flash");
+      assert.equal(soap.json.source, "Pulse AI");
       assert.ok(usageCount(tenantId) >= beforeUsage + 1);
       const event = getDb()
         .prepare(

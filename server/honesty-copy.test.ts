@@ -14,6 +14,7 @@ const PHRASES: { re: RegExp; label: string }[] = [
   { re: /digitally verified under/i, label: "digitally verified under" },
   { re: /Certified Digital Rx/, label: "Certified Digital Rx" },
   { re: /\bgemini\b/i, label: "Gemini" },
+  { re: /(valid|verified) under (the )?NHA/i, label: "(valid|verified) under NHA" },
 ];
 
 function lineOf(source: string, index: number): number {
@@ -61,9 +62,13 @@ function isUserFacingString(lookback: string): boolean {
 
 function isFooterDefault(lookback: string): boolean {
   const tail = lookback.trimEnd();
-  if (/footerDisclaimer\s*:\s*$/.test(tail)) return true;
+  if (/(?:footerDisclaimer|footerText)\s*:\s*$/.test(tail)) return true;
   if (/type:\s*["']FOOTER["']\s*,\s*text:\s*$/.test(tail)) return true;
   return false;
+}
+
+function isAiInstruction(lookback: string): boolean {
+  return /systemInstruction\s*[:=]\s*$/.test(lookback.trimEnd());
 }
 
 function isResponseLabel(lookback: string): boolean {
@@ -236,8 +241,9 @@ export function findHonestyViolations(source: string, file = "src/components/Exa
     if (allowListed(hit.content, before)) continue;
     const footer = isFooterDefault(before);
     const response = isResponseLabel(before);
+    const instruction = isAiInstruction(before);
     const facing = ui && isUserFacingString(before);
-    if (footer || response || facing) push(hit.index, labels);
+    if (footer || response || instruction || facing) push(hit.index, labels);
   }
 
   if (ui) {
@@ -286,8 +292,21 @@ describe("honesty copy scan", () => {
       `export function Rx(){ return <p>This prescription is digitally verified under NHA rules</p>; }\n`,
       "src/components/Rx.tsx"
     );
-    assert.equal(jsx.length, 1);
-    assert.match(jsx[0].message, /digitally verified under/);
+    assert.ok(jsx.some((item) => item.message.includes("digitally verified under")));
+    assert.ok(jsx.some((item) => item.message.includes("(valid|verified) under NHA")));
+
+    const nhaFooter = findHonestyViolations(
+      `footerText: "Valid under NHA Telemedicine Guidelines"\n`,
+      "src/data/clinicalData.ts"
+    );
+    assert.equal(nhaFooter.length, 1);
+    assert.match(nhaFooter[0].message, /\(valid\|verified\) under NHA/);
+
+    const nhaThe = findHonestyViolations(
+      `export function Rx(){ return <p>Verified under the NHA sandbox</p>; }\n`,
+      "src/components/Rx.tsx"
+    );
+    assert.equal(nhaThe.length, 1);
 
     const certified = findHonestyViolations(
       `export function Badge(){ return <span>Certified Digital Rx</span>; }\n`,
@@ -370,7 +389,8 @@ describe("honesty copy scan", () => {
       "const systemInstruction = `You are Pulse AI, powered by Google Gemini.`;\n",
       "server/gemini-clinical.ts"
     );
-    assert.deepEqual(prompt, []);
+    assert.equal(prompt.length, 1);
+    assert.match(prompt[0].message, /Gemini/);
 
     const log = findHonestyViolations(
       `console.error("Gemini transcribe error", err);\n`,
@@ -430,7 +450,7 @@ describe("legacy honesty copy migration", () => {
     const footer = (id: string) =>
       (db.prepare("SELECT footer_disclaimer AS v FROM tenants WHERE id = ?").get(id) as { v: string }).v;
     assert.equal(footer("exact"), NEW_FOOTER);
-    assert.equal(footer("contains"), NEW_FOOTER);
+    assert.equal(footer("contains"), "Clinic note: digitally verified under an old banner.");
     assert.equal(footer("custom"), "Digitally signed Rx — Meera Heart Clinic");
     assert.equal(footer("empty"), "");
     assert.equal(footer("already"), NEW_FOOTER);

@@ -112,7 +112,7 @@ ${AI_RUPEE_OUTPUT_RULE}`;
 
         const text = response.text?.trim() || "";
         const parsed = JSON.parse(text);
-        return res.json({ success: true, soap: parsed, source: "gemini-3.7-flash" });
+        return res.json({ success: true, soap: parsed, source: "Pulse AI" });
       } catch (geminiError: any) {
         console.error("Gemini SOAP generation error, using fallback clinical synthesis:", geminiError?.message);
       }
@@ -138,7 +138,7 @@ const handleGeminiCopilot = async (req: Request, res: Response) => {
     const ai = getGenAI();
     if (ai) {
       try {
-        const systemInstruction = `You are Pulse AI, an advanced enterprise clinical decision support copilot powered by Google Gemini.
+        const systemInstruction = `You are Pulse AI, an advanced enterprise clinical decision support copilot.
 Provide evidence-based, concise, physician-to-physician clinical decision support for doctors, clinicians, and healthcare providers.
 Include:
 1. Direct answer with sound physiological and clinical rationale

@@ -27,13 +27,12 @@ const DEMO_LETTERHEAD_SEED = {
 /** Previous seeded Rx footer. Matched only to rewrite stored rows; not a default. */
 const LEGACY_SEEDED_FOOTER_DISCLAIMER =
   "This prescription is digitally verified under National Health Authority (NHA) & Telemedicine Practice Guidelines. Please report any adverse drug reactions immediately.";
-const LEGACY_FOOTER_MARK = "digitally verified under";
 const LEGACY_WHATSAPP_RX_FOOTER = "Certified Digital Rx";
 const WHATSAPP_RX_FOOTER = "Digital Rx";
 
 /**
- * Idempotent copy fix. Rewrites a tenant footer when it is still the old seeded
- * default or still contains "digitally verified under". Custom footer text stays.
+ * Idempotent copy fix. Rewrites a tenant footer only when it still equals the
+ * old seeded default. A custom footer that merely contains the old phrase stays.
  * Seeded WhatsApp template rows lose the "Certified Digital Rx" phrase.
  */
 export function rewriteLegacyHonestyCopy(database: SqlDatabase): void {
@@ -42,10 +41,9 @@ export function rewriteLegacyHonestyCopy(database: SqlDatabase): void {
       .prepare(
         `UPDATE tenants
             SET footer_disclaimer = ?
-          WHERE footer_disclaimer = ?
-             OR lower(footer_disclaimer) LIKE '%' || ? || '%'`
+          WHERE footer_disclaimer = ?`
       )
-      .run(DEMO_LETTERHEAD_SEED.footerDisclaimer, LEGACY_SEEDED_FOOTER_DISCLAIMER, LEGACY_FOOTER_MARK);
+      .run(DEMO_LETTERHEAD_SEED.footerDisclaimer, LEGACY_SEEDED_FOOTER_DISCLAIMER);
   } catch {
     /* footer_disclaimer is added in this same migrate() pass */
   }

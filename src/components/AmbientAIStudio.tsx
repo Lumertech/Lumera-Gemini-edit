@@ -238,7 +238,7 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
           ambientRecordingDurationSec: recordingSeconds > 0 ? recordingSeconds : 145,
         };
         setGeneratedSoap(fullSoap);
-        setGenerationSource(data.source || 'gemini-3.7-flash');
+        setGenerationSource(data.source || 'Pulse AI');
       }
     } catch (err) {
       console.error('Error generating SOAP:', err);
