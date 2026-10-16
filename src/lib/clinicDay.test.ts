@@ -7,7 +7,11 @@ import {
   appointmentIdForBillContext,
   appointmentsForClinicDay,
   clinicCalendarDate,
+  clinicDateFromIso,
+  clinicToday,
+  formatClinicDateLabel,
   formatClinicDayLabel,
+  formatClinicMonthLabel,
   parseAppointmentListDate,
   shiftIsoDate,
 } from "./clinicDay";
@@ -38,6 +42,15 @@ describe("clinic day queue filter", () => {
     assert.equal(appointmentsForClinicDay(rows, "").length, 0);
     assert.equal(appointmentsForClinicDay(rows, "not-a-date").length, 0);
     assert.match(formatClinicDayLabel("2026-10-15"), /2026/);
+    const aheadOfIst = new Date("2026-10-15T19:00:00.000Z");
+    const today = clinicToday(aheadOfIst);
+    assert.equal(
+      `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`,
+      "2026-10-16"
+    );
+    assert.equal(formatClinicDateLabel("2026-10-16"), "16 Oct 2026");
+    assert.equal(formatClinicMonthLabel(2026, 9), "October 2026");
+    assert.equal(Number.isNaN(clinicDateFromIso("nope").getTime()), true);
   });
 
   it("parses the appointments list date param and rejects junk", () => {
@@ -66,6 +79,16 @@ describe("clinic day queue filter", () => {
       appointmentIdForBillContext(visits, { patientId: "p1", day: "2026-10-15" }),
       "old-paid"
     );
+  });
+});
+
+describe("follow-up picker uses the India clinic day", () => {
+  it("labels the reserved calendar date, not the browser midnight in Kolkata", () => {
+    const picker = fs.readFileSync(path.join(__dirname, "../components/FollowUpSlotPicker.tsx"), "utf8");
+    assert.match(picker, /clinicToday\(/);
+    assert.match(picker, /formatClinicDateLabel\(isoDate\(/);
+    assert.match(picker, /formatClinicMonthLabel\(/);
+    assert.doesNotMatch(picker, /toLocaleDateString/);
   });
 });
 

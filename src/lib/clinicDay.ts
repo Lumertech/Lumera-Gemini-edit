@@ -38,6 +38,18 @@ export function shiftIsoDate(isoDate: string, days: number): string {
   return `${year}-${month}-${day}`;
 }
 
+/** Local calendar date whose fields match a clinic YYYY-MM-DD. Invalid input is an invalid Date. */
+export function clinicDateFromIso(isoDate: string): Date {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(isoDate || "").trim());
+  if (!match) return new Date(Number.NaN);
+  return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+}
+
+/** Clinic "today" as a local calendar date, so slot keys match the India day. */
+export function clinicToday(now = new Date()): Date {
+  return clinicDateFromIso(clinicCalendarDate(now));
+}
+
 export function formatClinicDayLabel(isoDate: string): string {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(isoDate || "").trim());
   if (!match) return String(isoDate || "");
@@ -46,6 +58,29 @@ export function formatClinicDayLabel(isoDate: string): string {
     weekday: "long",
     day: "2-digit",
     month: "short",
+    year: "numeric",
+    timeZone: "Asia/Kolkata",
+  });
+}
+
+/** Short clinic date, for example 16 Oct 2026. Noon UTC stays on that India date. */
+export function formatClinicDateLabel(isoDate: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(isoDate || "").trim());
+  if (!match) return String(isoDate || "");
+  const utc = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12));
+  return utc.toLocaleDateString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    timeZone: "Asia/Kolkata",
+  });
+}
+
+/** Month heading for a clinic calendar. Noon UTC keeps the 1st on the India date. */
+export function formatClinicMonthLabel(year: number, monthIndex: number): string {
+  const utc = new Date(Date.UTC(year, monthIndex, 1, 12));
+  return utc.toLocaleDateString("en-IN", {
+    month: "long",
     year: "numeric",
     timeZone: "Asia/Kolkata",
   });
