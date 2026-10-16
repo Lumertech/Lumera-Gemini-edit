@@ -15,6 +15,7 @@ import { openConfiguredDatabase } from "./sql-open.ts";
 import { ensureDemoPersonaUsers } from "./demo-seed.ts";
 import { ensureDemoWorkspaceTenants } from "./demo-workspace-tenants.ts";
 import { seedPlatformTenantData } from "./platform-tenants.ts";
+import { ensureSunriseClinic, SUNRISE_LOGIN_EMAILS } from "./sunrise-seed.ts";
 import { backfillWhatsAppTenantIds } from "./whatsapp-tenant-backfill.ts";
 
 export type UserRole =
@@ -83,13 +84,11 @@ const DEMO_WORKSPACE_USER_IDS = new Set([
 ]);
 
 /**
- * Sunrise video logins. Duplicated here so this module does not import auth.ts
- * (session resolution). Keep in sync with SANDBOX_PASSWORD_SESSION_EMAILS.
+ * Sunrise video logins. Kept here (not imported from auth.ts) so session
+ * resolution does not cycle through this module. Same addresses as
+ * SANDBOX_PASSWORD_SESSION_EMAILS.
  */
-const SUNRISE_REAL_TENANT_EMAILS = new Set([
-  "ananya.sunrise@lumera.me",
-  "reception.sunrise@lumera.me",
-]);
+const SUNRISE_REAL_TENANT_EMAILS = new Set<string>(SUNRISE_LOGIN_EMAILS);
 
 function isSunriseRealTenantEmail(email: string): boolean {
   return email.endsWith("@lumera.me") && SUNRISE_REAL_TENANT_EMAILS.has(email);
@@ -184,6 +183,10 @@ export function initDatabase(): DatabaseSync {
   seedPlatformTenantData(db);
   ensureDemoWorkspaceTenants(db);
   backfillWhatsAppTenantIds(db);
+  // After clinic seed. migrate() inserts the WhatsApp quarantine tenant first.
+  // The repair itself returns immediately unless DEMO_LOGIN_ENABLED is on, so a
+  // production boot with demo login off does not move these emails or rewrite hashes.
+  ensureSunriseClinic(db);
   return db as DatabaseSync;
 }
 

@@ -284,10 +284,17 @@ describe("P0 #120 cookie session and tenant isolation", () => {
 
     const meta = getDb().prepare("SELECT name FROM tenants WHERE id = ?").get(META_REVIEW_TENANT_ID) as { name: string };
     assert.equal(meta.name, "Lumera Apex PolyClinic");
-    const sunrise = getDb().prepare("SELECT id FROM tenants WHERE id = ?").get(SUNRISE_TENANT_ID) as { id: string } | undefined;
-    assert.equal(sunrise, undefined);
+    const sunriseBefore = getDb()
+      .prepare("SELECT id, name, phone, active_status FROM tenants WHERE id = ?")
+      .get(SUNRISE_TENANT_ID) as { id: string; name: string; phone: string; active_status: number };
+    assert.equal(sunriseBefore.id, SUNRISE_TENANT_ID);
+    assert.equal(sunriseBefore.name, "Sunrise Family Clinic");
 
     ensureDemoWorkspaceTenants(getDb());
+    const sunriseAfter = getDb()
+      .prepare("SELECT id, name, phone, active_status FROM tenants WHERE id = ?")
+      .get(SUNRISE_TENANT_ID) as { id: string; name: string; phone: string; active_status: number };
+    assert.deepEqual(sunriseAfter, sunriseBefore);
     const slugs = getDb()
       .prepare("SELECT COUNT(*) AS c FROM tenants WHERE slug = ?")
       .get(INDIVIDUAL_DEMO_SLUG) as { c: number };

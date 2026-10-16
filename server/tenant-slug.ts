@@ -2,7 +2,7 @@ import type { SqlDatabase } from "./sql-engine.ts";
 
 /** Meta App Review clinic (`Lumera Apex PolyClinic`). Do not rename or rewrite it. */
 export const META_REVIEW_TENANT_ID = "tenant-lumera-main";
-/** Sunrise Family Clinic, Pune. Never insert, update, or reassign this id. */
+/** Sunrise Family Clinic, Pune. Demo workspace seeding must not update or reassign this id. */
 export const SUNRISE_TENANT_ID = "tenant-543feff7";
 
 export const PROTECTED_TENANT_IDS = new Set([META_REVIEW_TENANT_ID, SUNRISE_TENANT_ID]);

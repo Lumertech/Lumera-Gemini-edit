@@ -10,6 +10,23 @@ jobs:
     timeout-minutes: 20
     env:
       JWT_SECRET: test-jwt-secret
+      # Throwaway CI database. Not a Sunrise login secret. The suite stays on sqlite
+      # unless a test opts in with this URL.
+      SUNRISE_TEST_DATABASE_URL: postgres://lumera:ci-only-db@127.0.0.1:5432/lumera_sunrise_test
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: lumera
+          POSTGRES_PASSWORD: ci-only-db
+          POSTGRES_DB: lumera_sunrise_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U lumera -d lumera_sunrise_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - name: Checkout
         uses: actions/checkout@v4
