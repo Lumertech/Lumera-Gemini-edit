@@ -5,7 +5,11 @@ import { allowedViewsForWorkflow, clinicianHomeView, workflowForUser } from "./s
 import {
   canStartConsultRole,
   clinicNavItems,
+  clinicDateHeading,
+  greetingAddress,
   greetingClinicName,
+  homeGreetingLine,
+  timeOfDayGreeting,
   homeKpiCards,
   homeMetrics,
   homeNudge,
@@ -110,6 +114,19 @@ describe("clinic home routing and nav", () => {
   });
 
   it("uses the clinic name and real visit counts", () => {
+    const morning = new Date("2026-10-16T04:00:00.000Z");
+    const noon = new Date("2026-10-16T06:30:00.000Z");
+    const evening = new Date("2026-10-16T11:30:00.000Z");
+    assert.equal(timeOfDayGreeting(morning), "Good morning");
+    assert.equal(timeOfDayGreeting(noon), "Good afternoon");
+    assert.equal(timeOfDayGreeting(evening), "Good evening");
+    assert.equal(clinicDateHeading(morning), "Friday, 16 October 2026");
+    assert.equal(greetingAddress("Dr. Vikram Malhotra", "doctor"), "Dr. Malhotra");
+    assert.equal(greetingAddress("Dr. Siddharth Varma (PT)", "doctor"), "Dr. Varma");
+    assert.equal(greetingAddress("Ramesh Patel", "receptionist"), "Ramesh");
+    assert.equal(greetingAddress("Meera Iyer", "CLINIC_ADMIN"), "Meera");
+    assert.equal(greetingAddress("Dr. Meera Iyer", "receptionist"), "Meera");
+    assert.equal(homeGreetingLine("Dr. Vikram Malhotra", "doctor", morning), "Good morning, Dr. Malhotra");
     assert.equal(greetingClinicName("Malhotra Individual Practice"), "Malhotra Individual Practice");
     assert.equal(greetingClinicName("physio practice"), "Physio Practice");
     assert.equal(greetingClinicName("  "), "your clinic");

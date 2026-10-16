@@ -4,10 +4,12 @@ import type { Appointment, AppUser, Doctor, Patient } from "../types";
 import type { SpecialtyWorkflowPack } from "../lib/specialtyWorkflow";
 import type { NavView } from "./Navbar";
 import {
+  clinicDateHeading,
   formatHomeInr,
   formatVisitTime,
   pickNextVisit,
   greetingClinicName,
+  homeGreetingLine,
   homeKpiCards,
   homeMetrics,
   homeNudge,
@@ -18,6 +20,7 @@ import {
   whatsAppPillFromStatus,
   type VisitLite,
 } from "../lib/clinicNav";
+import { completedSessionsForPatient, DEMO_PHYSIO_PACKAGES } from "../lib/demoPhysioBook";
 import { apiFetch } from "../api/http";
 
 interface PracticeHomeProps {
@@ -85,6 +88,8 @@ export const PracticeHome: React.FC<PracticeHomeProps> = ({
   onCreateBill,
 }) => {
   const clinic = greetingClinicName(user.clinicName);
+  const greeting = homeGreetingLine(user.name, user.role);
+  const dateHeading = clinicDateHeading();
   const visits: VisitLite[] = appointments.map((row) => ({
     id: row.id,
     date: row.date,
@@ -149,23 +154,44 @@ export const PracticeHome: React.FC<PracticeHomeProps> = ({
 
   const specialtyTiles = (() => {
     if (pack.kind === "physio") {
+      const packages = DEMO_PHYSIO_PACKAGES.map((pkg) => ({
+        ...pkg,
+        completed: completedSessionsForPatient(appointments, pkg.patientId),
+      })).filter((pkg) => appointments.some((row) => row.patientId === pkg.patientId));
       return (
         <div className="space-y-3">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Tile title="Today's sessions">
-              {next ? <p className="text-slate-800">{next.patientName} · {timeLabel}</p> : <p>No session booked.</p>}
+              {todayRows.length === 0 ? <p>No session booked.</p> : todayRows.slice(0, 4).map((row) => (
+                <p key={row.id} className="text-slate-800">{row.patientName} · {formatVisitTime(row)}{row.status === "Completed" ? " · Completed" : ""}</p>
+              ))}
             </Tile>
             <Tile title="Still to collect">
               <p>Pending {formatHomeInr(metrics.todayPending)}</p>
             </Tile>
           </div>
-          <section className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-4" data-testid="physio-setup-empty">
-            <h3 className="text-sm font-semibold text-slate-900">Session packages</h3>
-            <p className="mt-1 text-sm text-slate-600">Packages, home exercise logs, and outcome retests are not set up.</p>
-            <button type="button" className="mt-3 text-sm font-semibold text-blue-700" onClick={() => onOpen("settings")}>
-              Set up session packages
-            </button>
-          </section>
+          {packages.length === 0 ? (
+            <section className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-4" data-testid="physio-setup-empty">
+              <h3 className="text-sm font-semibold text-slate-900">Session packages</h3>
+              <p className="mt-1 text-sm text-slate-600">Packages, home exercise logs, and outcome retests are not set up.</p>
+              <button type="button" className="mt-3 text-sm font-semibold text-blue-700" onClick={() => onOpen("settings")}>
+                Set up session packages
+              </button>
+            </section>
+          ) : (
+            <section className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-4" data-testid="physio-packages">
+              <h3 className="text-sm font-semibold text-slate-900">Session packages</h3>
+              <div className="mt-2 space-y-2">
+                {packages.map((pkg) => (
+                  <p key={pkg.patientId} className="text-sm text-slate-700">
+                    <span className="font-medium text-slate-900">{pkg.patientName}</span>
+                    {" · "}{pkg.packageName}
+                    <span className="block text-slate-600">{pkg.completed} of {pkg.totalSessions} sessions completed</span>
+                  </p>
+                ))}
+              </div>
+            </section>
+          )}
         </div>
       );
     }
@@ -244,8 +270,10 @@ export const PracticeHome: React.FC<PracticeHomeProps> = ({
 
   return (
     <div className="max-w-6xl mx-auto space-y-3 sm:space-y-5 min-w-0" data-testid="practice-home">
-      <div className="rounded-2xl bg-white border border-slate-200/80 px-4 py-3 sm:px-5 sm:py-4">
-        <h2 className="text-[13px] leading-5 sm:text-lg sm:leading-7 font-semibold tracking-tight text-slate-900">Welcome back to {clinic}</h2>
+      <div className="rounded-2xl bg-white border border-slate-200/80 px-4 py-3 sm:px-5 sm:py-4" data-testid="home-greeting">
+        <h2 className="text-base leading-6 sm:text-xl sm:leading-7 font-semibold tracking-tight text-slate-900">{greeting}</h2>
+        <p className="mt-0.5 text-xs sm:text-sm text-slate-500" data-testid="home-date">{dateHeading}</p>
+        <p className="text-xs sm:text-sm text-slate-600">{clinic}</p>
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">

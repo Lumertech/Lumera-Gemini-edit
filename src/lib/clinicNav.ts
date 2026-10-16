@@ -1,6 +1,6 @@
 import type { AppUser } from "../types";
 import type { NavView } from "../components/Navbar";
-import { clinicCalendarDate, shiftIsoDate } from "./clinicDay";
+import { clinicCalendarDate, IST_OFFSET_MINUTES, shiftIsoDate } from "./clinicDay";
 import { formatInr } from "./money";
 
 export interface ClinicNavItem {
@@ -220,6 +220,53 @@ export function pickNextVisit<T extends VisitLite>(rows: readonly T[], today: st
 export function greetingLine(personName?: string | null): string {
   const name = String(personName || "").trim();
   return name ? `Welcome back, ${name}` : "Welcome back";
+}
+
+function istParts(now: Date): { hour: number } {
+  const shifted = new Date(now.getTime() + IST_OFFSET_MINUTES * 60_000);
+  return { hour: shifted.getUTCHours() };
+}
+
+/** Good morning before noon IST, good afternoon until 5pm, then good evening. */
+export function timeOfDayGreeting(now = new Date()): string {
+  const { hour } = istParts(now);
+  if (hour < 12) return "Good morning";
+  if (hour < 17) return "Good afternoon";
+  return "Good evening";
+}
+
+function addressParts(name?: string | null): string[] {
+  return String(name || "")
+    .replace(/\(.*?\)/g, " ")
+    .replace(/,.*$/, " ")
+    .split(/\s+/)
+    .map((part) => part.trim())
+    .filter((part) => part && !/^dr\.?$/i.test(part));
+}
+
+/**
+ * Doctors are greeted as Dr. {surname}.
+ * Reception and every other role use a first name, with any Dr. prefix removed.
+ */
+export function greetingAddress(name?: string | null, role?: string | null): string {
+  const parts = addressParts(name);
+  if (role === "doctor") {
+    return `Dr. ${parts[parts.length - 1] || "Doctor"}`;
+  }
+  return parts[0] || "there";
+}
+
+export function homeGreetingLine(name?: string | null, role?: string | null, now = new Date()): string {
+  return `${timeOfDayGreeting(now)}, ${greetingAddress(name, role)}`;
+}
+
+/** Clinic heading such as Friday, 16 October 2026. Parts stay en-IN so the comma placement does not depend on the browser. */
+export function clinicDateHeading(now = new Date()): string {
+  const weekday = now.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", weekday: "long" });
+  const day = now.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric" });
+  const month = now.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", month: "long" });
+  const year = now.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", year: "numeric" });
+  return `${weekday}, ${day} ${month} ${year}`;
 }
 
 function inRange(date: string, start: string, end: string): boolean {

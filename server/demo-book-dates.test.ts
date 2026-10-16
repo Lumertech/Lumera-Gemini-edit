@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { homeMetrics } from "../src/lib/clinicNav.ts";
 import { clinicCalendarDate } from "../src/lib/clinicDay.ts";
+import { DEMO_PHYSIO_PACKAGES, completedSessionsForPatient } from "../src/lib/demoPhysioBook.ts";
 import { DEMO_BOOK_SIZE, demoBookDateForIndex, isDemoSeedTenantId, spreadDemoBookDates } from "./demo-book-dates.ts";
 
 const NOW = new Date("2026-10-16T04:00:00.000Z");
@@ -112,5 +113,121 @@ describe("demo book dates", () => {
     assert.equal(second, first);
     assert.equal(demoBookDateForIndex(0, today), today);
     assert.notEqual(demoBookDateForIndex(DEMO_BOOK_SIZE, today), today);
+    assert.equal(
+      (db.prepare(`SELECT COUNT(*) AS c FROM appointments WHERE tenant_id = ?`).get("tenant-demo-physio") as { c: number }).c,
+      DEMO_BOOK_SIZE
+    );
+    assert.equal(
+      (db.prepare(`SELECT COUNT(*) AS c FROM appointments WHERE tenant_id = ?`).get("tenant-demo-polyclinic") as { c: number }).c,
+      DEMO_BOOK_SIZE
+    );
+  });
+
+  it("fills physio and polyclinic demo books without touching other tenants", () => {
+    const db = memoryDb();
+    db.exec(`
+      CREATE TABLE patients (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        uhid TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        age INTEGER NOT NULL,
+        gender TEXT NOT NULL,
+        phone TEXT NOT NULL,
+        email TEXT NOT NULL DEFAULT '',
+        blood_group TEXT NOT NULL DEFAULT 'O+',
+        allergies TEXT NOT NULL DEFAULT '[]',
+        chronic_conditions TEXT NOT NULL DEFAULT '[]',
+        emergency_contact TEXT NOT NULL DEFAULT '',
+        address TEXT NOT NULL DEFAULT '',
+        last_visit TEXT,
+        created_at TEXT NOT NULL
+      )
+    `);
+    insertVisit(db, "real-1", "tenant-real-clinic", "2024-01-02", "Completed");
+    insertVisit(db, "meta-1", "tenant-lumera-main", "2026-09-03", "Waiting");
+    insertVisit(db, "sun-1", "tenant-543feff7", "2026-05-01", "Waiting");
+
+    spreadDemoBookDates(db, NOW);
+
+    const today = clinicCalendarDate(NOW);
+    const load = (tenantId: string) =>
+      db.prepare(
+        `SELECT id, patient_id AS patientId, date, status, time_slot, type, consultation_fee AS consultationFee, is_paid AS isPaid
+         FROM appointments WHERE tenant_id = ?`
+      ).all(tenantId) as Array<{
+        id: string;
+        patientId: string;
+        date: string;
+        status: string;
+        time_slot: string;
+        type: string;
+        consultationFee: number;
+        isPaid: number;
+      }>;
+
+    const physio = load("tenant-demo-physio");
+    const poly = load("tenant-demo-polyclinic");
+    assert.equal(physio.length, DEMO_BOOK_SIZE);
+    assert.equal(poly.length, DEMO_BOOK_SIZE);
+    assert.equal(physio.every((row) => row.type === "Rehab session"), true);
+    assert.equal(poly.some((row) => row.type === "Follow-up"), true);
+
+    for (const [rows, label] of [[physio, "physio"], [poly, "clinic"]] as const) {
+      const metrics = homeMetrics(
+        rows.map((row) => ({
+          id: row.id,
+          date: row.date,
+          status: row.status,
+          consultationFee: row.consultationFee,
+          isPaid: Boolean(row.isPaid),
+          type: row.type,
+        })),
+        NOW
+      );
+      assert.equal(metrics.todayAppointments, 6, label);
+      assert.equal(metrics.weekAppointments, 25, label);
+      assert.equal(metrics.monthAppointments, 80, label);
+      assert.ok(metrics.waiting > 0, label);
+      assert.ok(metrics.done > 0, label);
+      assert.ok(metrics.todayCollected > 0, label);
+    }
+
+    for (const pkg of DEMO_PHYSIO_PACKAGES) {
+      assert.ok(completedSessionsForPatient(physio, pkg.patientId) > 0, pkg.patientId);
+      assert.ok(completedSessionsForPatient(physio, pkg.patientId) <= pkg.totalSessions, pkg.patientId);
+    }
+    assert.equal(
+      (db.prepare(`SELECT COUNT(*) AS c FROM patients WHERE tenant_id = ?`).get("tenant-demo-physio") as { c: number }).c,
+      DEMO_PHYSIO_PACKAGES.length
+    );
+    assert.equal(
+      (db.prepare(`SELECT COUNT(*) AS c FROM patients WHERE tenant_id = ?`).get("tenant-demo-polyclinic") as { c: number }).c,
+      5
+    );
+    assert.equal(
+      (db.prepare(`SELECT COUNT(*) AS c FROM appointments WHERE tenant_id = ?`).get("tenant-demo-dentist") as { c: number }).c,
+      0
+    );
+
+    const real = db.prepare(`SELECT date, time_slot FROM appointments WHERE id = 'real-1'`).get() as { date: string; time_slot: string };
+    assert.equal(real.date, "2024-01-02");
+    assert.equal(real.time_slot, "12:18 AM");
+    assert.equal((db.prepare(`SELECT date FROM appointments WHERE id = 'meta-1'`).get() as { date: string }).date, "2026-09-03");
+    assert.equal((db.prepare(`SELECT date FROM appointments WHERE id = 'sun-1'`).get() as { date: string }).date, "2026-05-01");
+
+    const first = JSON.stringify(
+      db.prepare(`SELECT id, tenant_id, date, time_slot, status, is_paid, type, consultation_fee FROM appointments ORDER BY id`).all()
+    );
+    spreadDemoBookDates(db, NOW);
+    const second = JSON.stringify(
+      db.prepare(`SELECT id, tenant_id, date, time_slot, status, is_paid, type, consultation_fee FROM appointments ORDER BY id`).all()
+    );
+    assert.equal(second, first);
+    assert.equal(
+      (db.prepare(`SELECT COUNT(*) AS c FROM patients`).get() as { c: number }).c,
+      DEMO_PHYSIO_PACKAGES.length + 5
+    );
+    assert.equal(today, "2026-10-16");
   });
 });
