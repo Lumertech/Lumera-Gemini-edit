@@ -47,7 +47,8 @@ function datesFrom(start: string, endExclusive: string): string[] {
 export function demoBookDateForIndex(index: number, today: string, window: DemoBookWindow = INDIVIDUAL_DEMO_WINDOW): string {
   const monthStart = `${today.slice(0, 8)}01`;
   const weekStart = shiftIsoDate(today, -6);
-  const outside = shiftIsoDate(monthStart, -1);
+  const windowStart = monthStart < weekStart ? monthStart : weekStart;
+  const outside = shiftIsoDate(windowStart, -1);
   if (index < window.today) return today;
   if (index < window.week) {
     const weekOnly = datesFrom(weekStart, today);
@@ -70,6 +71,50 @@ function statusRank(status: string): number {
 
 function isActiveStatus(status: string): boolean {
   return status !== "Cancelled" && status !== "No-Show";
+}
+
+/** Completed visits the in-window plan assigns to each seat when rows rotate through `seats` people. */
+export function windowCompletedBySeat(window: DemoBookWindow, sessionType: string, seats: number): number[] {
+  const counts = Array.from({ length: seats }, () => 0);
+  if (seats < 1) return counts;
+  for (let index = 0; index < window.month; index += 1) {
+    if (namedDemoVisitPlan(index, sessionType, window).status === "Completed") counts[index % seats] += 1;
+  }
+  return counts;
+}
+
+function packageTargets(tenantId: string): Map<string, number> | null {
+  if (tenantId !== "tenant-demo-physio") return null;
+  return new Map(DEMO_PHYSIO_PACKAGES.map((pkg) => [pkg.patientId, pkg.seedCompleted]));
+}
+
+/**
+ * Window rows keep the shared today/week/month plan.
+ * Physio rows outside that window fill each package up to its done-session target.
+ * Those extra done visits stay dated before the week and the month.
+ */
+function planNamedDemoRow(
+  index: number,
+  patientId: string,
+  sessionType: string,
+  window: DemoBookWindow,
+  targets: Map<string, number> | null,
+  completed: Map<string, number>,
+  active: boolean
+): { status: string; isPaid: number; type: string } {
+  const inWindow = index < window.month;
+  if (inWindow || !targets || !active) {
+    const plan = namedDemoVisitPlan(index, sessionType, window);
+    if (active && plan.status === "Completed") completed.set(patientId, (completed.get(patientId) ?? 0) + 1);
+    return plan;
+  }
+  const target = targets.get(patientId) ?? 0;
+  const soFar = completed.get(patientId) ?? 0;
+  if (soFar < target) {
+    completed.set(patientId, soFar + 1);
+    return { status: "Completed", isPaid: 1, type: sessionType };
+  }
+  return { status: "Waiting", isPaid: 0, type: sessionType };
 }
 
 /** Today is only waiting and completed, so the cards and the Today trend count the same visits. */
@@ -142,6 +187,14 @@ const NAMED_DEMO_BOOKS: NamedBook[] = [
 
 function namedBookFor(tenantId: string): NamedBook | undefined {
   return NAMED_DEMO_BOOKS.find((book) => book.tenantId === tenantId);
+}
+
+function orderedNamedRows(rows: AppointmentRow[]): AppointmentRow[] {
+  const active = rows.filter((row) => isActiveStatus(String(row.status || "")));
+  const inactive = rows.filter((row) => !isActiveStatus(String(row.status || "")));
+  active.sort((a, b) => a.id.localeCompare(b.id));
+  inactive.sort((a, b) => a.id.localeCompare(b.id));
+  return [...active, ...inactive];
 }
 
 function hasTable(database: SqlDatabase, name: string): boolean {
@@ -227,6 +280,67 @@ interface AppointmentRow {
   specialty: string;
 }
 
+/** Insert the done sessions a physio package still needs. Existing tail rows count, so a second pass inserts nothing. */
+function ensurePhysioPackageHistory(
+  database: SqlDatabase,
+  book: NamedBook,
+  window: DemoBookWindow,
+  today: string,
+  now: Date,
+  list: { all: (tenantId: string) => unknown }
+): void {
+  const targets = packageTargets(book.tenantId);
+  if (!targets) return;
+  const completed = new Map<string, number>();
+  orderedNamedRows(list.all(book.tenantId) as AppointmentRow[]).forEach((row, index) => {
+    planNamedDemoRow(
+      index,
+      row.patient_id,
+      book.sessionType,
+      window,
+      targets,
+      completed,
+      isActiveStatus(String(row.status || ""))
+    );
+  });
+  const insertVisit = database.prepare(
+    `INSERT INTO appointments (
+       id, tenant_id, token_number, patient_id, patient_name, patient_phone, uhid,
+       doctor_id, doctor_name, specialty, date, time_slot, type, status, source,
+       consultation_fee, is_paid, created_at
+     )
+     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Walk-in', ?, ?, ?
+     WHERE NOT EXISTS (SELECT 1 FROM appointments WHERE id = ?)`
+  );
+  const stamp = now.toISOString();
+  for (const person of book.people) {
+    const deficit = (targets.get(person.patientId) ?? 0) - (completed.get(person.patientId) ?? 0);
+    for (let k = 0; k < deficit; k += 1) {
+      const id = `demo-book-${book.tenantId}-pkg-${person.patientId}-${String(k).padStart(2, "0")}`;
+      insertVisit.run(
+        id,
+        book.tenantId,
+        3000 + k,
+        person.patientId,
+        person.patientName,
+        person.patientPhone,
+        person.uhid,
+        person.doctorId,
+        person.doctorName,
+        person.specialty,
+        today,
+        CLINIC_SLOTS[k % CLINIC_SLOTS.length],
+        book.sessionType,
+        "Waiting",
+        book.fee,
+        0,
+        stamp,
+        id
+      );
+    }
+  }
+}
+
 /**
  * Spread active visits on demo/seed tenants across today, this week, and this month.
  * Idempotent for a given clinic day. Rows on any other tenant are left unchanged.
@@ -296,14 +410,22 @@ export function spreadDemoBookDates(database: SqlDatabase, now = new Date()): vo
     }
 
     if (book) {
+      const targets = packageTargets(book.tenantId);
+      if (targets) ensurePhysioPackageHistory(database, book, window, today, now, list);
       const refreshed = list.all(tenantId) as AppointmentRow[];
-      const activeNamed = refreshed.filter((row) => isActiveStatus(String(row.status || "")));
-      const inactiveNamed = refreshed.filter((row) => !isActiveStatus(String(row.status || "")));
-      activeNamed.sort((a, b) => a.id.localeCompare(b.id));
-      [...activeNamed, ...inactiveNamed].forEach((row, index) => {
+      const completed = new Map<string, number>();
+      orderedNamedRows(refreshed).forEach((row, index) => {
         const date = demoBookDateForIndex(index, today, window);
         const slot = CLINIC_SLOTS[index % CLINIC_SLOTS.length];
-        const plan = namedDemoVisitPlan(index, book.sessionType, window);
+        const plan = planNamedDemoRow(
+          index,
+          row.patient_id,
+          book.sessionType,
+          window,
+          targets,
+          completed,
+          isActiveStatus(String(row.status || ""))
+        );
         updateNamed.run(date, slot, plan.status, plan.isPaid, plan.type, book.fee, row.id, tenantId);
       });
       continue;

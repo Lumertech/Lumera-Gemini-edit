@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { homeKpiCards, homeMetrics, opdTrend, todayVisitCount } from "../src/lib/clinicNav.ts";
-import { clinicCalendarDate } from "../src/lib/clinicDay.ts";
+import { clinicCalendarDate, shiftIsoDate } from "../src/lib/clinicDay.ts";
 import { DEMO_PHYSIO_PACKAGES, completedSessionsForPatient } from "../src/lib/demoPhysioBook.ts";
 import {
   INDIVIDUAL_DEMO_WINDOW,
@@ -11,6 +11,7 @@ import {
   demoBookDateForIndex,
   isDemoSeedTenantId,
   spreadDemoBookDates,
+  windowCompletedBySeat,
 } from "./demo-book-dates.ts";
 
 const NOW = new Date("2026-10-16T04:00:00.000Z");
@@ -60,6 +61,18 @@ function insertVisit(
 }
 
 describe("demo book dates", () => {
+  it("counts every linked done visit, including sessions from before this month", () => {
+    const visits = [
+      { patientId: "physio-pat-anita", status: "Completed", date: "2026-09-02" },
+      { patientId: "physio-pat-anita", status: "Completed", date: "2026-10-04" },
+      { patientId: "physio-pat-anita", status: "Waiting", date: "2026-09-03" },
+      { patientId: "physio-pat-rohit", status: "Completed", date: "2026-08-01" },
+    ];
+    assert.equal(completedSessionsForPatient(visits, "physio-pat-anita"), 2);
+    assert.equal(completedSessionsForPatient(visits, "physio-pat-rohit"), 1);
+    assert.equal(completedSessionsForPatient(visits, "physio-pat-leela"), 0);
+  });
+
   it("recognises only tenant-demo workspaces", () => {
     assert.equal(isDemoSeedTenantId("tenant-demo-individual"), true);
     assert.equal(isDemoSeedTenantId("tenant-demo-physio"), true);
@@ -121,9 +134,14 @@ describe("demo book dates", () => {
     assert.equal(second, first);
     assert.equal(demoBookDateForIndex(0, today), today);
     assert.notEqual(demoBookDateForIndex(INDIVIDUAL_DEMO_WINDOW.month, today), today);
+    const physioSeats = windowCompletedBySeat(PHYSIO_DEMO_WINDOW, "Rehab session", DEMO_PHYSIO_PACKAGES.length);
+    const physioHistory = DEMO_PHYSIO_PACKAGES.reduce(
+      (sum, pkg, index) => sum + Math.max(0, pkg.seedCompleted - physioSeats[index]),
+      0
+    );
     assert.equal(
       (db.prepare(`SELECT COUNT(*) AS c FROM appointments WHERE tenant_id = ?`).get("tenant-demo-physio") as { c: number }).c,
-      PHYSIO_DEMO_WINDOW.month
+      PHYSIO_DEMO_WINDOW.month + physioHistory
     );
     assert.equal(
       (db.prepare(`SELECT COUNT(*) AS c FROM appointments WHERE tenant_id = ?`).get("tenant-demo-polyclinic") as { c: number }).c,
@@ -180,7 +198,12 @@ describe("demo book dates", () => {
     const physio = load("tenant-demo-physio");
     const poly = load("tenant-demo-polyclinic");
     const individual = load("tenant-demo-individual");
-    assert.equal(physio.length, PHYSIO_DEMO_WINDOW.month);
+    const physioSeats = windowCompletedBySeat(PHYSIO_DEMO_WINDOW, "Rehab session", DEMO_PHYSIO_PACKAGES.length);
+    const physioHistory = DEMO_PHYSIO_PACKAGES.reduce(
+      (sum, pkg, index) => sum + Math.max(0, pkg.seedCompleted - physioSeats[index]),
+      0
+    );
+    assert.equal(physio.length, PHYSIO_DEMO_WINDOW.month + physioHistory);
     assert.equal(poly.length, POLYCLINIC_DEMO_WINDOW.month);
     assert.equal(individual.length, INDIVIDUAL_DEMO_WINDOW.month);
     assert.equal(physio.every((row) => row.type === "Rehab session"), true);
@@ -230,10 +253,46 @@ describe("demo book dates", () => {
     }
     assert.equal(totals.size, 3);
 
+    const monthStart = `${today.slice(0, 8)}01`;
+    const weekStart = shiftIsoDate(today, -6);
+    const physioMetrics = homeMetrics(
+      physio.map((row) => ({
+        id: row.id,
+        date: row.date,
+        status: row.status,
+        consultationFee: row.consultationFee,
+        isPaid: Boolean(row.isPaid),
+        type: row.type,
+      })),
+      NOW
+    );
+    let packageSum = 0;
+    assert.deepEqual(
+      DEMO_PHYSIO_PACKAGES.map((pkg) => pkg.seedCompleted),
+      [7, 5, 3, 6]
+    );
     for (const pkg of DEMO_PHYSIO_PACKAGES) {
-      assert.ok(completedSessionsForPatient(physio, pkg.patientId) > 0, pkg.patientId);
-      assert.ok(completedSessionsForPatient(physio, pkg.patientId) <= pkg.totalSessions, pkg.patientId);
+      const linked = physio.filter((row) => row.patientId === pkg.patientId && row.status === "Completed");
+      const progress = completedSessionsForPatient(physio, pkg.patientId);
+      assert.equal(progress, linked.length, pkg.patientId);
+      assert.equal(progress, pkg.seedCompleted, pkg.patientId);
+      assert.ok(progress <= pkg.totalSessions, pkg.patientId);
+      assert.ok(linked.some((row) => row.date < monthStart), pkg.patientId);
+      packageSum += progress;
     }
+    const totalDone = physio.filter((row) => row.status === "Completed").length;
+    const monthDone = physio.filter(
+      (row) => row.status === "Completed" && row.date >= monthStart && row.date <= today
+    ).length;
+    const weekDone = physio.filter(
+      (row) => row.status === "Completed" && row.date >= weekStart && row.date <= today
+    ).length;
+    assert.ok(packageSum <= totalDone);
+    assert.ok(packageSum > monthDone);
+    assert.ok(monthDone <= physioMetrics.monthAppointments);
+    assert.ok(weekDone <= physioMetrics.weekAppointments);
+    assert.ok(physioMetrics.done <= physioMetrics.todayAppointments);
+    assert.equal(new Set(DEMO_PHYSIO_PACKAGES.map((pkg) => pkg.seedCompleted)).size >= 3, true);
     assert.equal(
       (db.prepare(`SELECT COUNT(*) AS c FROM patients WHERE tenant_id = ?`).get("tenant-demo-physio") as { c: number }).c,
       DEMO_PHYSIO_PACKAGES.length
