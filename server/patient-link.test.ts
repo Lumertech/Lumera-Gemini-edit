@@ -4,6 +4,7 @@ import path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { signAbdmCallback } from "./abdm-hmac.ts";
+import { callbackTenantId } from "./abdm-internal.ts";
 import { createApiRouter } from "./api.ts";
 import { getDb, initDatabase } from "./db.ts";
 import { hashPassword } from "./password.ts";
@@ -198,6 +199,9 @@ describe("patient logins bind to users.patient_id", () => {
       assert.notEqual(allowed.json.code, "ROLE_DENIED");
     }
 
+    const anonymous = await jsonRequest(port, "GET", `/api/abdm/hiu/consents?patientId=${patientId}`);
+    assert.equal(anonymous.status, 401);
+    assert.equal(anonymous.json.code, undefined);
     const deniedList = await jsonRequest(
       port,
       "GET",
@@ -265,6 +269,50 @@ describe("patient logins bind to users.patient_id", () => {
         }
       );
       assert.equal(signedOnRequest.status, 200, String(signedOnRequest.json.error || "signed on-request"));
+    } finally {
+      if (previous === undefined) delete process.env.ABDM_CALLBACK_SECRET;
+      else process.env.ABDM_CALLBACK_SECRET = previous;
+    }
+  });
+
+  it("ignores body.tenantId and uses X-HIP-ID only after the callback signature matches", async () => {
+    const { tenantId, now, suffix } = seedClinic("hipid");
+    const other = seedClinic("other");
+    const hfr = `HFR-LINK-${suffix}`;
+    const phone = localPhone("96102");
+    const patientId = `pat-hipid-${suffix}`;
+    getDb().prepare("UPDATE tenants SET hfr_id = ? WHERE id = ?").run(hfr, tenantId);
+    insertPatient(tenantId, patientId, phone, `chart.hipid.${suffix}@example.com`, now);
+    const body = { patientId, encounterId: "enc-hip", tenantId: other.tenantId, tenant_id: other.tenantId };
+    const unsigned = await jsonRequest(port, "POST", "/api/abdm/hip/link/care-context", body, {
+      "X-HIP-ID": hfr,
+    });
+    assert.equal(unsigned.status, 401, String(unsigned.json.error || "unsigned hip"));
+    assert.equal(
+      callbackTenantId({ headers: { "x-hip-id": hfr }, body: { tenantId: other.tenantId } }),
+      null
+    );
+    assert.equal(
+      callbackTenantId(
+        { headers: { "x-hip-id": hfr }, body: { tenantId: other.tenantId } },
+        { signatureMatched: true }
+      ),
+      tenantId
+    );
+    assert.equal(
+      callbackTenantId({ headers: {}, body: { tenantId: other.tenantId } }, { signatureMatched: true }),
+      null
+    );
+
+    const previous = process.env.ABDM_CALLBACK_SECRET;
+    process.env.ABDM_CALLBACK_SECRET = GATEWAY_HMAC_SECRET;
+    try {
+      const signed = await jsonRequest(port, "POST", "/api/abdm/hip/link/care-context", body, {
+        "X-HIP-ID": hfr,
+        "X-ABDM-Signature": signAbdmCallback(GATEWAY_HMAC_SECRET, JSON.stringify(body)),
+      });
+      assert.equal(signed.status, 200, String(signed.json.error || "signed hip header"));
+      assert.equal(signed.json.patientId, patientId);
     } finally {
       if (previous === undefined) delete process.env.ABDM_CALLBACK_SECRET;
       else process.env.ABDM_CALLBACK_SECRET = previous;

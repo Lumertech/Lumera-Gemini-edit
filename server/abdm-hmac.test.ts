@@ -13,11 +13,12 @@ describe("ABDM callback HMAC hook (NHA sandbox)", () => {
     assert.equal(verifyAbdmCallbackHmac(body + "x", header, secret), false);
   });
 
-  it("is sandbox-tolerant when secret is unset", () => {
+  it("is sandbox-tolerant when secret is unset outside production", () => {
     const decision = decideAbdmCallbackSignature({
       rawBody: body,
       mode: "stub",
       secret: "",
+      production: false,
     });
     assert.equal(decision.ok, true);
     if (decision.ok) {
@@ -48,6 +49,21 @@ describe("ABDM callback HMAC hook (NHA sandbox)", () => {
     assert.equal(decision.ok, false);
     if (!decision.ok) {
       assert.equal(decision.status, 401);
+    }
+  });
+
+  it("fails closed in production when the callback secret is unset or a placeholder", () => {
+    for (const mode of ["stub", "sandbox"] as const) {
+      for (const secret of ["", "lumera_abdm_sandbox_sec_99182", "SBX_LUMERA_HEALTH_2026"]) {
+        const decision = decideAbdmCallbackSignature({
+          rawBody: body,
+          mode,
+          secret,
+          production: true,
+        });
+        assert.equal(decision.ok, false, `${mode} ${secret || "(empty)"}`);
+        if (!decision.ok) assert.equal(decision.status, 401);
+      }
     }
   });
 

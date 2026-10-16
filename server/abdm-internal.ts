@@ -37,21 +37,26 @@ export function tenantIdOf(req: { user?: { tenantId?: string } }): string {
   return String(req.user?.tenantId || "").trim();
 }
 
-export function callbackTenantId(req: { user?: { tenantId?: string }; headers: Record<string, unknown>; body?: Record<string, unknown> }): string | null {
+/**
+ * Clinic for an ABDM callback. The session clinic wins. `body.tenantId` is never
+ * read. X-HIP-ID / X-HIU-ID / X-HRP-ID are used only after the callback HMAC matched.
+ */
+export function callbackTenantId(
+  req: { user?: { tenantId?: string }; headers: Record<string, unknown>; body?: Record<string, unknown> },
+  opts?: { signatureMatched?: boolean }
+): string | null {
   const sessionTenant = tenantIdOf(req);
   if (sessionTenant) return sessionTenant;
+  if (opts?.signatureMatched !== true) return null;
   const hip = String(req.headers["x-hip-id"] || req.headers["X-HIP-ID"] || "").trim();
   const hiu = String(req.headers["x-hiu-id"] || req.headers["X-HIU-ID"] || "").trim();
   const hrp = String(req.headers["x-hrp-id"] || req.headers["X-HRP-ID"] || "").trim();
   const headerId = hip || hiu || hrp;
-  if (headerId) {
-    const tenant = getDb()
-      .prepare("SELECT id FROM tenants WHERE hfr_id = ? AND TRIM(hfr_id) != ''")
-      .get(headerId) as { id: string } | undefined;
-    if (tenant?.id) return tenant.id;
-  }
-  const bodyTenant = String(req.body?.tenantId || req.body?.tenant_id || "").trim();
-  return bodyTenant || null;
+  if (!headerId) return null;
+  const tenant = getDb()
+    .prepare("SELECT id FROM tenants WHERE hfr_id = ? AND TRIM(hfr_id) != ''")
+    .get(headerId) as { id: string } | undefined;
+  return tenant?.id || null;
 }
 
 export function careContextReference(uhid: string, encounterId: string): string {
