@@ -53,12 +53,12 @@ export function registerAbdmConsentRoutes(router: Router): void {
     req: Request,
     res: Response,
     hmac: ReturnType<typeof callbackHmac>,
-    opts?: { consentArtefact?: boolean }
+    opts?: { gatewayOnly?: boolean }
   ): boolean => {
     const decision = authorizeAbdmCallbackWrite({
       role: req.user?.role,
       hmac,
-      consentArtefact: opts?.consentArtefact,
+      gatewayOnly: opts?.gatewayOnly,
     });
     if (decision.accept === false) {
       if (decision.code === "ROLE_DENIED") {
@@ -84,7 +84,7 @@ export function registerAbdmConsentRoutes(router: Router): void {
     kind: ArtefactKind
   ) => {
     const hmac = callbackHmac(req);
-    if (!allowCallbackWrite(req, res, hmac, { consentArtefact: true })) return;
+    if (!allowCallbackWrite(req, res, hmac, { gatewayOnly: true })) return;
 
     const tenantId = callbackClinicId(req, hmac);
     if (!tenantId) {
@@ -264,7 +264,7 @@ export function registerAbdmConsentRoutes(router: Router): void {
       return persistCallbackArtefact(req, res, "hip_link_confirm");
     }
     const hmac = callbackHmac(req);
-    if (!allowCallbackWrite(req, res, hmac)) return;
+    if (!allowCallbackWrite(req, res, hmac, { gatewayOnly: true })) return;
     return res.status(202).json({
       status: "ACKNOWLEDGED",
       abdmMode: resolveAbdmMode(),

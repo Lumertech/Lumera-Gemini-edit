@@ -456,8 +456,7 @@ describe("patient logins bind to users.patient_id", () => {
     };
 
     const missing = await jsonRequest(port, "POST", "/api/abdm/hiu/consent-request/on-status", granted, staffAuth);
-    assert.equal(missing.status, 403, String(missing.json.error || "missing signature"));
-    assert.equal(missing.json.code, "SIGNATURE_REQUIRED");
+    assert.equal(missing.status, 401, String(missing.json.error || "missing signature"));
     assert.equal(artefactCount(), before);
 
     const previous = process.env.ABDM_CALLBACK_SECRET;
@@ -467,8 +466,7 @@ describe("patient logins bind to users.patient_id", () => {
         ...staffAuth,
         "X-ABDM-Signature": "sha256=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       });
-      assert.equal(bad.status, 403, String(bad.json.error || "bad signature"));
-      assert.equal(bad.json.code, "SIGNATURE_REQUIRED");
+      assert.equal(bad.status, 401, String(bad.json.error || "bad signature"));
       assert.equal(artefactCount(), before);
 
       const signedBody = {

@@ -657,11 +657,18 @@ describe("#35 dual onboard — same patientId + frozen link-abha", () => {
     for (const path of [
       "/api/abdm/hiu/health-information/request",
       "/api/abdm/hip/consent/on-notify",
-      "/api/abdm/hip/link/care-context",
     ] as const) {
       const stolen = await jsonRequest(port, "POST", path, { patientId, consentId, encounterId: "x" }, authB);
-      assert.equal(stolen.status, 403, `${path} should 403 cross-tenant`);
+      assert.equal(stolen.status, 401, `${path} should 401 without a gateway signature`);
     }
+    const stolenCare = await jsonRequest(
+      port,
+      "POST",
+      "/api/abdm/hip/link/care-context",
+      { patientId, consentId, encounterId: "x" },
+      authB
+    );
+    assert.equal(stolenCare.status, 403, "care-context should 403 cross-tenant");
 
     const deniedId = `denied-${patientId}`;
     await signedGatewayRequest(

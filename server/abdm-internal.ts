@@ -75,42 +75,31 @@ export function callbackHmac(req: Request) {
 
 export type AbdmCallbackWriteAuth =
   | { accept: true }
-  | { accept: false; status: number; error: string; code?: "ROLE_DENIED" | "SIGNATURE_REQUIRED" };
+  | { accept: false; status: number; error: string; code?: "ROLE_DENIED" };
 
 /**
- * Care-context writes are allowed when the callback signature matched, or when
- * the caller is clinic staff. A patient session is never a callback caller.
- * Consent-artefact writes (`consentArtefact`) require a matched gateway
- * signature. A staff session alone must not create or update one, or a clinic
- * could store a GRANTED consent the gateway never issued.
+ * An invalid callback signature is 401 for every caller, including staff.
+ * Gateway-only routes (`gatewayOnly`) then require a matched signature.
+ * Staff may write only the routes they start: care context (this function,
+ * unsigned) and HIU consent init (session auth, not this function).
+ * A patient session is never a callback caller.
  */
 export function authorizeAbdmCallbackWrite(opts: {
   role?: string | null;
   hmac: AbdmCallbackAuth;
-  consentArtefact?: boolean;
+  gatewayOnly?: boolean;
 }): AbdmCallbackWriteAuth {
-  if (opts.role === "patient") {
-    return { accept: false, status: 403, error: "Insufficient permissions", code: "ROLE_DENIED" };
-  }
-  if (opts.hmac.ok === true && opts.hmac.matched === true) return { accept: true };
-  if (opts.consentArtefact) {
-    if (opts.role) {
-      return {
-        accept: false,
-        status: 403,
-        error: "A matching X-ABDM-Signature is required",
-        code: "SIGNATURE_REQUIRED",
-      };
-    }
-    if (opts.hmac.ok === false) {
-      return { accept: false, status: opts.hmac.status, error: opts.hmac.error };
-    }
-    return { accept: false, status: 401, error: "Authentication required" };
-  }
-  if (opts.role && isPatientRecordRole(opts.role)) return { accept: true };
   if (opts.hmac.ok === false) {
     return { accept: false, status: opts.hmac.status, error: opts.hmac.error };
   }
+  if (opts.role === "patient") {
+    return { accept: false, status: 403, error: "Insufficient permissions", code: "ROLE_DENIED" };
+  }
+  if (opts.hmac.matched === true) return { accept: true };
+  if (opts.gatewayOnly) {
+    return { accept: false, status: 401, error: "X-ABDM-Signature is required" };
+  }
+  if (opts.role && isPatientRecordRole(opts.role)) return { accept: true };
   if (!opts.role) {
     return { accept: false, status: 401, error: "Authentication required" };
   }
