@@ -1,6 +1,6 @@
 /** Client helpers for Wave 2 clinician billing UX. Consume Platform invoice APIs as-is. */
 
-import { formatINR } from "../../app/applet/src/lib/currency.ts";
+import { formatINR } from "./currency.ts";
 import { formatClinicDayLabel } from "./clinicDay";
 
 export type BillingPaymentMode = "UPI" | "Cash" | "Card" | "Insurance";

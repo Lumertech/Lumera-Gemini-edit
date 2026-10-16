@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { formatINR } from '../../app/applet/src/lib/currency.ts';
+import { formatINR } from '../lib/currency.ts';
 import { apiFetchResponse } from '../api/http';
 import { 
   FileText, 

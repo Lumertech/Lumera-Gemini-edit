@@ -6,7 +6,7 @@ import { isCloudDispatchFailure } from "./graph-whatsapp.ts";
 import { getTenantLetterhead } from "./letterhead.ts";
 import { appPublicUrl, isProduction, sandboxSimulatorsEnabled } from "./runtime.ts";
 import { WALLET_INSUFFICIENT_ERROR } from "./usage-wallet.ts";
-import { formatINR } from "../app/applet/src/lib/currency.ts";
+import { formatINR } from "../src/lib/currency.ts";
 import { resolveWhatsAppTenantId } from "./whatsapp-calendar.ts";
 import { dispatchPatientCloudText, walletDispatchStatus } from "./whatsapp-patient-dispatch.ts";
 import {

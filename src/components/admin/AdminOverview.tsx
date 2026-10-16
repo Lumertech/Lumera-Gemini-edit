@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { apiFetch } from "../../api/http";
-import { formatINR } from "../../../app/applet/src/lib/currency.ts";
+import { formatINR } from "../../lib/currency.ts";
 import { useAuth } from "../../auth/AuthContext";
 import { DhisMeter } from "../dhis/DhisMeter";
 

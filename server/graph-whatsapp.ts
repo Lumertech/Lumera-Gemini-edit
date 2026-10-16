@@ -4,7 +4,7 @@ import { isUsableGraphToken, isUsablePhoneNumberId } from "./meta-security.ts";
 import { recordWhatsAppUsageAndDebit } from "./usage-billing.ts";
 import { getTenantWabaNumber, getWhatsAppNumberSecret } from "./whatsapp-numbers-store.ts";
 import { waTokenKeyBytes } from "./wa-token-crypto.ts";
-import { formatINR } from "../app/applet/src/lib/currency.ts";
+import { formatINR } from "../src/lib/currency.ts";
 
 /**
  * Shared Meta WhatsApp Cloud API send module (Wave 1B OTP + Wave 2 utilities).

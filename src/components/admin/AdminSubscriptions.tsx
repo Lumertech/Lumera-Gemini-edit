@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { KeyRound, Search, AlertTriangle, IndianRupee, Users } from "lucide-react";
 import { apiFetch } from "../../api/http";
-import { formatINR } from "../../../app/applet/src/lib/currency.ts";
+import { formatINR } from "../../lib/currency.ts";
 import { useTenantScope } from "./TenantScopeContext";
 import { TenantSubscriptionPanel } from "./TenantSubscriptionPanel";
 import {

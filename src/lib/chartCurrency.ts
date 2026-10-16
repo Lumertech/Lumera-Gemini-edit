@@ -1,4 +1,4 @@
-import { formatINR } from "../../app/applet/src/lib/currency.ts";
+import { formatINR } from "./currency.ts";
 import { defaultTooltipProps } from "recharts/es6/component/Tooltip.js";
 
 /** Series whose tooltip values are money. Clinical measures (HbA1c, ROM, VAS) stay numeric. */

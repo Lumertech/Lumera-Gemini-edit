@@ -1,6 +1,6 @@
 /** Assignable SaaS plan catalog. Codes are SoT — never persist free-text plan names. */
 
-import { formatINR } from "../app/applet/src/lib/currency.ts";
+import { formatINR } from "../src/lib/currency.ts";
 
 export const PLAN_CODES = ["trial", "starter", "professional", "clinic", "internal"] as const;
 export type PlanCode = (typeof PLAN_CODES)[number];

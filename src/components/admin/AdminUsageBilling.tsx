@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { IndianRupee, AlertTriangle, Wallet } from "lucide-react";
 import { apiFetch } from "../../api/http";
-import { formatINR } from "../../../app/applet/src/lib/currency.ts";
+import { formatINR } from "../../lib/currency.ts";
 import { useTenantScope } from "./TenantScopeContext";
 
 type WalletState = "ok" | "low" | "empty" | "negative";

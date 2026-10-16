@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { apiFetchResponse } from '../api/http';
-import { formatINR } from '../../app/applet/src/lib/currency.ts';
+import { formatINR } from '../lib/currency.ts';
 import { 
   QrCode, 
   ShieldCheck, 

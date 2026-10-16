@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Pill, TestTube, ShieldCheck, Send, CheckCircle2, RefreshCw, Truck, Building2, UserCheck, Sparkles } from 'lucide-react';
 import { Patient, Prescription } from '../types';
 import { apiFetch } from '../api/http';
-import { formatINR } from '../../app/applet/src/lib/currency.ts';
+import { formatINR } from '../lib/currency.ts';
 
 interface PharmacyDiagnosticsHubProps {
   currentPatient: Patient;
