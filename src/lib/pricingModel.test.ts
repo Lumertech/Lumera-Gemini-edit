@@ -51,6 +51,16 @@ describe("pricing money format", () => {
     assert.match(model.extraDoctor, /ravee@lumer\.me/);
     assert.equal(model.whatsapp, WHATSAPP_BILLED_BY_META);
     assert.match(model.whatsappInr, /INR payment method/);
+    for (const card of model.cards) {
+      assert.ok(card.includes.includes("WhatsApp: connect your clinic's own number"));
+      assert.equal(
+        card.includes.some((line) => /WhatsApp:.*\(sandbox\)/.test(line)),
+        false
+      );
+      assert.ok(card.includes.includes("ABHA linking (ABDM sandbox)"));
+      assert.equal(card.includes.some((line) => line.includes("opening after Meta approval")), false);
+      assert.equal(card.includes.some((line) => line.includes("ABDM / ABHA sandbox integration")), false);
+    }
     assert.match(model.trial, /days 20, 25, 28 and 30/);
     assert.match(model.trial, /read-only on day 31/);
     assert.match(model.refund, /7-day refund window/);

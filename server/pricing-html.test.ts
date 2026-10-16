@@ -208,6 +208,17 @@ describe("public /pricing HTML", () => {
       assert.match(html, /Doctor and receptionist/);
       assert.match(html, /up to 5 doctors/);
       assert.match(html, /ravee@lumer\.me/);
+      assert.match(html, /src="\/lumera-logo\.svg"/);
+      assert.match(html, /alt="Lumera logo"/);
+      assert.match(html, /data-testid="pricing-try-free"/);
+      assert.match(html, /Try for free/);
+      assert.match(html, /text-decoration:\s*none/);
+      assert.match(html, /font-family:\s*Manrope/);
+      assert.match(html, /WhatsApp: connect your clinic&#39;s own number/);
+      assert.match(html, /ABHA linking \(ABDM sandbox\)/);
+      assert.doesNotMatch(html, /opening after Meta approval/);
+      assert.doesNotMatch(html, /ABDM \/ ABHA sandbox integration/);
+      assert.doesNotMatch(html, /WhatsApp: connect your clinic&#39;s own number \(sandbox\)/);
       assert.doesNotMatch(html, BANNED);
       assert.doesNotMatch(html, /<script/i);
       const api = await fetch(`http://127.0.0.1:${server.port}/api/public/plans`);
