@@ -1,4 +1,5 @@
 import type { SqlDatabase } from "./sql-engine.ts";
+import { tableExists } from "./sql-catalog.ts";
 import { clinicCalendarDate, shiftIsoDate } from "../src/lib/clinicDay.ts";
 import { DEMO_PHYSIO_PACKAGES } from "../src/lib/demoPhysioBook.ts";
 
@@ -198,10 +199,7 @@ function orderedNamedRows(rows: AppointmentRow[]): AppointmentRow[] {
 }
 
 function hasTable(database: SqlDatabase, name: string): boolean {
-  const row = database.prepare(`SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = ?`).get(name) as
-    | { ok: number }
-    | undefined;
-  return Boolean(row);
+  return tableExists(database, name);
 }
 
 function ensureNamedDemoBook(database: SqlDatabase, book: NamedBook, today: string, now: Date): void {

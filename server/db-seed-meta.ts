@@ -423,6 +423,9 @@ export function ensureAbdmAndDhisSeeding(database: SqlDatabase) {
     if ((existing?.count || 0) >= 10) {
       /* already seeded */
     } else {
+      // Ids are stable (dhis-init-tx-NNN). The count above is only the current
+      // month, so a later boot retries the same primary keys. ON CONFLICT keeps
+      // that retry from aborting initDatabase on dhis_transactions_pkey.
       const insertDhis = database.prepare(`
         INSERT INTO dhis_transactions (
           id, tenant_id, transaction_type, patient_id, abha_address, abha_number,
@@ -430,6 +433,7 @@ export function ensureAbdmAndDhisSeeding(database: SqlDatabase) {
           status, month_year, created_at, updated_at
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'QUALIFIED', ?, ?, ?)
+        ON CONFLICT (id) DO NOTHING
       `);
 
       const patientPool = [
