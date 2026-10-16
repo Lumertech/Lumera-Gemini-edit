@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { apiFetch } from "../../api/http";
+import { formatINR } from "../../../app/applet/src/lib/currency.ts";
 import { useAuth } from "../../auth/AuthContext";
 import { DhisMeter } from "../dhis/DhisMeter";
 
@@ -41,7 +42,7 @@ export const AdminOverview: React.FC = () => {
     ["Subscriptions", data.subscriptions],
     ["Active plans", data.activePlans],
     ["Trials", data.trials],
-    ["MRR (₹)", data.mrr],
+    ["MRR", formatINR(data.mrr)],
     ["Media", data.media],
     ["Policies", data.policies],
   ];

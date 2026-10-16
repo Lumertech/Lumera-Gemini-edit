@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { formatINR } from '../../app/applet/src/lib/currency.ts';
 import { 
   User, 
   FileText, 
@@ -185,7 +186,7 @@ export const PatientPortal: React.FC<PatientPortalProps> = ({
                   </p>
                 </div>
                 <div className="font-mono font-bold text-slate-800 text-xs">
-                  ₹{apt.consultationFee}
+                  {formatINR(apt.consultationFee)}
                 </div>
               </div>
             ))}

@@ -97,7 +97,7 @@ export function formatAdminDate(iso?: string | null): string {
   if (!iso) return "—";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleDateString("en-IN", { year: "numeric", month: "short", day: "numeric" });
+  return d.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", year: "numeric", month: "short", day: "numeric" });
 }
 
 export const TENANT_STATUS_STYLES: Record<string, string> = {

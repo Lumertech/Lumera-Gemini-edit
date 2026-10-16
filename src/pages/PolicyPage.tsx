@@ -164,7 +164,7 @@ export const PolicyPage: React.FC<{ slug: string }> = ({ slug: initialSlug }) =>
             </p>
             {updatedAt && (
               <div className="mt-3 text-xs text-slate-400">
-                Last statutory revision: {new Date(updatedAt).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}
+                Last statutory revision: {new Date(updatedAt).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", year: "numeric", month: "long", day: "numeric" })}
               </div>
             )}
           </div>

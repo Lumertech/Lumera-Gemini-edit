@@ -11,9 +11,9 @@
  * These figures are exclusive of 18% GST. Wallet raw_cost is stored in INR.
  *
  * PLACEHOLDER / FALLBACK: non-India destinations use a documented "OTHER"
- * INR estimate derived from published USD utility/marketing bands (~₹83/USD).
- * That OTHER row is not an official Meta INR card — re-verify before using
- * it for production invoicing.
+ * INR estimate derived from published per-message bands (about ₹83 for one
+ * US dollar). That OTHER row is not an official Meta INR card — re-verify
+ * before using it for production invoicing.
  *
  * Lumera is not a certified Meta Tech Provider. This table is a cost estimate
  * for platform-to-tenant usage billing, not a Meta partnership claim.
@@ -75,21 +75,21 @@ export const META_MESSAGE_RATES: MetaMessageRateRow[] = [
     countryLabel: "Other (fallback, not an official INR card)",
     category: "marketing",
     rateInr: 2.5,
-    notes: "FALLBACK ≈ USD $0.03 marketing × ₹83. Re-verify Meta's destination-country card.",
+    notes: "FALLBACK ≈ ₹2.50 per marketing message, from the published band converted at about ₹83. Re-verify Meta's destination-country card.",
   },
   {
     country: "OTHER",
     countryLabel: "Other (fallback, not an official INR card)",
     category: "utility",
     rateInr: 0.28,
-    notes: "FALLBACK ≈ USD $0.0034 utility × ₹83. Re-verify Meta's destination-country card.",
+    notes: "FALLBACK ≈ ₹0.28 per utility message, from the published band converted at about ₹83. Re-verify Meta's destination-country card.",
   },
   {
     country: "OTHER",
     countryLabel: "Other (fallback, not an official INR card)",
     category: "authentication",
     rateInr: 0.28,
-    notes: "FALLBACK ≈ USD $0.0034 authentication × ₹83.",
+    notes: "FALLBACK ≈ ₹0.28 per authentication message, from the published band converted at about ₹83.",
   },
   {
     country: "OTHER",

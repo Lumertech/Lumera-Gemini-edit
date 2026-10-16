@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from "express";
 import type { GoogleGenAI } from "@google/genai";
+import { AI_RUPEE_OUTPUT_RULE } from "./india-currency-copy.ts";
 
 export function attachGeminiSafetyVoiceAndTranslate(
   app: Express,
@@ -36,7 +37,8 @@ Return JSON with format:
       "clinicalRecommendation": "Alternative drug or dosing advice"
     }
   ]
-}`;
+}
+${AI_RUPEE_OUTPUT_RULE}`;
 
         const response = await ai.models.generateContent({
           model: "gemini-3.7-flash",
@@ -140,7 +142,8 @@ Output JSON:
   "speechText": "Natural conversational voice response",
   "intent": "BOOKING" | "REFILL" | "EMERGENCY" | "INQUIRY",
   "suggestedAction": "e.g. Scheduled token #4 for Tomorrow 10:30 AM"
-}`;
+}
+${AI_RUPEE_OUTPUT_RULE}`;
 
         const response = await ai.models.generateContent({
           model: "gemini-3.7-flash",
@@ -194,7 +197,8 @@ Return JSON:
   ],
   "translatedAdvice": ["advice item in ${targetLanguage}"],
   "formattedWhatsAppMessage": "Complete friendly WhatsApp message formatted in ${targetLanguage}"
-}`;
+}
+${AI_RUPEE_OUTPUT_RULE}`;
 
         const response = await ai.models.generateContent({
           model: "gemini-3.7-flash",

@@ -24,6 +24,7 @@ import {
   CartesianGrid, 
   Legend 
 } from 'recharts';
+import { chartCurrencyFormatter } from '../lib/chartCurrency.ts';
 import { LabReportRecord, Patient, LabResultParam } from '../types';
 import { MOCK_LAB_REPORTS } from '../data/clinicalData';
 
@@ -395,7 +396,7 @@ export const LabReportAnalyzer: React.FC<LabReportAnalyzerProps> = ({
                           <XAxis dataKey="testDate" tick={{ fontSize: 11, fill: '#64748b' }} />
                           <YAxis yAxisId="left" domain={[5, 11]} tick={{ fontSize: 11, fill: '#2563eb' }} />
                           <YAxis yAxisId="right" orientation="right" domain={[100, 220]} tick={{ fontSize: 11, fill: '#d97706' }} />
-                          <Tooltip
+                          <Tooltip formatter={chartCurrencyFormatter}
                             contentStyle={{
                               backgroundColor: '#0f172a',
                               borderRadius: '8px',
@@ -448,7 +449,7 @@ export const LabReportAnalyzer: React.FC<LabReportAnalyzerProps> = ({
                           <XAxis dataKey="testDate" tick={{ fontSize: 11, fill: '#64748b' }} />
                           <YAxis yAxisId="left" domain={[40, 100]} tick={{ fontSize: 11, fill: '#10b981' }} />
                           <YAxis yAxisId="right" orientation="right" domain={[0.5, 2.0]} tick={{ fontSize: 11, fill: '#ef4444' }} />
-                          <Tooltip
+                          <Tooltip formatter={chartCurrencyFormatter}
                             contentStyle={{
                               backgroundColor: '#0f172a',
                               borderRadius: '8px',
@@ -509,7 +510,7 @@ export const LabReportAnalyzer: React.FC<LabReportAnalyzerProps> = ({
                         <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                         <XAxis dataKey="testDate" tick={{ fontSize: 11, fill: '#64748b' }} />
                         <YAxis domain={[30, 280]} tick={{ fontSize: 11, fill: '#64748b' }} />
-                        <Tooltip
+                        <Tooltip formatter={chartCurrencyFormatter}
                           contentStyle={{
                             backgroundColor: '#0f172a',
                             borderRadius: '8px',
@@ -553,7 +554,7 @@ export const LabReportAnalyzer: React.FC<LabReportAnalyzerProps> = ({
                         <XAxis dataKey="testDate" tick={{ fontSize: 11, fill: '#64748b' }} />
                         <YAxis yAxisId="left" domain={[10, 16]} tick={{ fontSize: 11, fill: '#e11d48' }} />
                         <YAxis yAxisId="right" orientation="right" domain={[4000, 14000]} tick={{ fontSize: 11, fill: '#2563eb' }} />
-                        <Tooltip
+                        <Tooltip formatter={chartCurrencyFormatter}
                           contentStyle={{
                             backgroundColor: '#0f172a',
                             borderRadius: '8px',
@@ -594,7 +595,7 @@ export const LabReportAnalyzer: React.FC<LabReportAnalyzerProps> = ({
                         <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                         <XAxis dataKey="testDate" tick={{ fontSize: 11, fill: '#64748b' }} />
                         <YAxis domain={[10, 90]} tick={{ fontSize: 11, fill: '#64748b' }} />
-                        <Tooltip
+                        <Tooltip formatter={chartCurrencyFormatter}
                           contentStyle={{
                             backgroundColor: '#0f172a',
                             borderRadius: '8px',

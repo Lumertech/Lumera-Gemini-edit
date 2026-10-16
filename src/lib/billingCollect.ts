@@ -1,5 +1,6 @@
 /** Client helpers for Wave 2 clinician billing UX. Consume Platform invoice APIs as-is. */
 
+import { formatINR } from "../../app/applet/src/lib/currency.ts";
 import { formatClinicDayLabel } from "./clinicDay";
 
 export type BillingPaymentMode = "UPI" | "Cash" | "Card" | "Insurance";
@@ -312,6 +313,5 @@ export function receiptHonestyFromResponse(res: ReceiptDispatchResult): ReceiptH
 }
 
 export function formatRupees(amount: number): string {
-  const n = Number.isFinite(amount) ? amount : 0;
-  return `₹${n.toLocaleString("en-IN")}`;
+  return formatINR(amount);
 }

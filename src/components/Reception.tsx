@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { apiFetchResponse } from '../api/http';
+import { formatINR } from '../../app/applet/src/lib/currency.ts';
 import { 
   QrCode, 
   ShieldCheck, 
@@ -352,7 +353,7 @@ export const Reception: React.FC<ReceptionProps> = ({
                 </span>
               </div>
               <p className="text-xs text-purple-200/80 mt-0.5">
-                Instant identity validation, 14-digit ABHA issuance, and automated DHIS ₹20 incentive entitlement.
+                Instant identity validation, 14-digit ABHA issuance, and automated DHIS {formatINR(20)} incentive entitlement.
               </p>
             </div>
           </div>
@@ -526,7 +527,7 @@ export const Reception: React.FC<ReceptionProps> = ({
               >
                 {doctors.map((doc) => (
                   <option key={doc.id} value={doc.id}>
-                    {doc.name} — {doc.specialty} (₹{doc.consultationFee})
+                    {doc.name} — {doc.specialty} ({formatINR(doc.consultationFee)})
                   </option>
                 ))}
               </select>
@@ -585,7 +586,7 @@ export const Reception: React.FC<ReceptionProps> = ({
             <div className="text-xs text-slate-500">
               Consultation Fee:{' '}
               <strong className="text-slate-900 font-mono">
-                ₹{doctors.find((d) => d.id === formData.selectedDoctorId)?.consultationFee || 600}
+                {formatINR(doctors.find((d) => d.id === formData.selectedDoctorId)?.consultationFee || 600)}
               </strong>
             </div>
 

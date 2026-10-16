@@ -22,6 +22,7 @@ import {
   CartesianGrid, 
   Legend 
 } from 'recharts';
+import { chartCurrencyFormatter } from '../../lib/chartCurrency.ts';
 import { TherapyPackage, PrescribedExercise } from '../../types';
 
 interface PhysioProgressTrackerProps {
@@ -150,7 +151,7 @@ export const PhysioProgressTracker: React.FC<PhysioProgressTrackerProps> = ({
                 <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#64748b' }} />
                 <YAxis yAxisId="left" domain={[0, 10]} tick={{ fontSize: 11, fill: '#ef4444' }} />
                 <YAxis yAxisId="right" orientation="right" domain={[0, 120]} tick={{ fontSize: 11, fill: '#10b981' }} />
-                <Tooltip
+                <Tooltip formatter={chartCurrencyFormatter}
                   contentStyle={{
                     backgroundColor: '#0f172a',
                     borderRadius: '8px',

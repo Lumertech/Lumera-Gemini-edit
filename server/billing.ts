@@ -21,6 +21,7 @@ import { reportCaughtError } from "./error-tracker.ts";
 import { invoiceNumberToPersist } from "../src/lib/billingCollect.ts";
 import { upsertScopedConversation } from "./whatsapp-scope.ts";
 import { WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
+import { formatINR } from "../app/applet/src/lib/currency.ts";
 
 function tenantIdOf(req: Request): string {
   return String(req.user?.tenantId || "").trim();
@@ -198,7 +199,8 @@ function recordReceiptEvent(opts: {
   try {
     const db = getDb();
     const now = new Date().toISOString();
-    const timeDisplay = new Date().toLocaleTimeString("en-US", {
+    const timeDisplay = new Date().toLocaleTimeString("en-IN", {
+      timeZone: "Asia/Kolkata",
       hour: "numeric",
       minute: "2-digit",
       hour12: true,
@@ -255,7 +257,7 @@ function receiptBody(invoice: ReturnType<typeof mapInvoice>, sandbox: boolean): 
   const sandboxLine = sandbox
     ? "\n\nSANDBOX / DEV-ONLY — recorded locally, not sent via WhatsApp Cloud API."
     : "";
-  return `*Payment receipt*\nInvoice *${invoice.invoiceNumber}*\nPatient: ${invoice.patientName}\nAmount paid: ₹${invoice.totalAmount}\nStatus: ${invoice.paymentStatus}${gstinLine}${upiLine}${sandboxLine}`;
+  return `*Payment receipt*\nInvoice *${invoice.invoiceNumber}*\nPatient: ${invoice.patientName}\nAmount paid: ${formatINR(invoice.totalAmount)}\nStatus: ${invoice.paymentStatus}${gstinLine}${upiLine}${sandboxLine}`;
 }
 
 async function dispatchInvoiceReceipt(

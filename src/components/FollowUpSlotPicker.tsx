@@ -104,6 +104,7 @@ export const FollowUpSlotPicker: React.FC<FollowUpSlotPickerProps> = ({
         <strong className="text-slate-900 text-xs">
           In {followUpDays} Days (
           {addCalendarDays(today, followUpDays).toLocaleDateString("en-IN", {
+            timeZone: "Asia/Kolkata",
             day: "2-digit",
             month: "short",
             year: "numeric",
@@ -179,7 +180,7 @@ export const FollowUpSlotPicker: React.FC<FollowUpSlotPickerProps> = ({
                   ‹
                 </button>
                 <span className="text-[11px] font-bold text-slate-800">
-                  {viewMonth.toLocaleDateString("en-IN", { month: "long", year: "numeric" })}
+                  {viewMonth.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", month: "long", year: "numeric" })}
                 </span>
                 <button
                   type="button"

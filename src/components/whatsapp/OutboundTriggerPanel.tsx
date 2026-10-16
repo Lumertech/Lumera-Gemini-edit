@@ -278,7 +278,7 @@ export const OutboundTriggerPanel: React.FC<OutboundTriggerPanelProps> = ({
                   <p className="text-slate-600 text-[11px]">{ev.details}</p>
                 </div>
                 <div className="text-right text-[10px] text-slate-400 font-mono">
-                  {new Date(ev.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  {new Date(ev.sentAt).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: '2-digit', minute: '2-digit' })}
                 </div>
               </div>
             ))

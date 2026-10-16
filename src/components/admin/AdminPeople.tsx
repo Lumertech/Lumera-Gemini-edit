@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Camera, Edit3, CheckCircle2, ShieldCheck, Award } from "lucide-react";
 import { apiFetch } from "../../api/http";
+import { formatINR } from "../../../app/applet/src/lib/currency.ts";
 import { Doctor, PolyclinicSpecialty } from "../../types";
 import { DoctorProfileModal } from "../DoctorProfileModal";
 import { PRACTICE_SPECIALTIES } from "../../lib/specialtyWorkflow";
@@ -176,7 +177,7 @@ export const AdminPeople: React.FC = () => {
                   </span>
                 )}
                 <span className="px-2 py-0.5 rounded bg-slate-100">Room: {d.opdRoom || "OPD 101"}</span>
-                <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 font-semibold">₹{d.consultationFee} OPD</span>
+                <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 font-semibold">{formatINR(d.consultationFee)} OPD</span>
               </div>
 
               <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-100">

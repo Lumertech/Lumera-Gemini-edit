@@ -4,6 +4,7 @@ import { isUsableGraphToken, isUsablePhoneNumberId } from "./meta-security.ts";
 import { recordWhatsAppUsageAndDebit } from "./usage-billing.ts";
 import { getTenantWabaNumber, getWhatsAppNumberSecret } from "./whatsapp-numbers-store.ts";
 import { waTokenKeyBytes } from "./wa-token-crypto.ts";
+import { formatINR } from "../app/applet/src/lib/currency.ts";
 
 /**
  * Shared Meta WhatsApp Cloud API send module (Wave 1B OTP + Wave 2 utilities).
@@ -588,15 +589,14 @@ export function buildBookConfirmationText(fields: ReminderFields & { uhid?: stri
 
 export function buildReceiptText(receipt: ReceiptFields): string {
   const name = receipt.patientName || "Patient";
-  const currency = String(receipt.currency || "₹").trim() || "₹";
-  const amount = String(receipt.amount ?? "").trim() || "0";
+  const amountLabel = formatINR(receipt.amount);
   const invoice = receipt.invoiceId ? `\nInvoice: ${receipt.invoiceId}` : "";
   const date = receipt.date ? `\nDate: ${receipt.date}` : "";
   const clinic = String(receipt.clinicName || "").trim();
   return (
     `🧰 *Payment receipt${clinic ? ` — ${clinic}` : ""}*\n\n` +
     `Namaste ${name},\n` +
-    `We received *${currency}${amount}* for your consultation.${invoice}${date}\n\n` +
+    `We received *${amountLabel}* for your consultation.${invoice}${date}\n\n` +
     `Thank you.`
   );
 }

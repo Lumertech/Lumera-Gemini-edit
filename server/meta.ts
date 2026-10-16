@@ -149,7 +149,7 @@ export function recordInboundWhatsAppMessage(
   const tenantId = String(opts.tenantId || "").trim();
   if (!fromPhone || !tenantId || tenantId === WHATSAPP_QUARANTINE_TENANT_ID) return;
   const textBody = String(opts.textBody || "[Media/Attachment]");
-  const timeDisplay = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const timeDisplay = new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" });
   const existing = db
     .prepare(
       `SELECT id FROM whatsapp_conversations

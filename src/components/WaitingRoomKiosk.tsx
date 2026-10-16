@@ -35,14 +35,14 @@ export const WaitingRoomKiosk: React.FC<WaitingRoomKioskProps> = ({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [activeKioskTab, setActiveKioskTab] = useState<'display' | 'self_checkin'>('display');
-  const [currentTime, setCurrentTime] = useState(new Date().toLocaleTimeString());
+  const [currentTime, setCurrentTime] = useState(new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" }));
   const [checkinInput, setCheckinInput] = useState('');
   const [checkinSuccessMsg, setCheckinSuccessMsg] = useState<string | null>(null);
 
   // Clock tick
   useEffect(() => {
     const timer = setInterval(() => {
-      setCurrentTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+      setCurrentTime(new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: '2-digit', minute: '2-digit', second: '2-digit' }));
     }, 1000);
     return () => clearInterval(timer);
   }, []);

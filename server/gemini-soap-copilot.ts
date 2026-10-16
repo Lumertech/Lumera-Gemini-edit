@@ -1,6 +1,7 @@
 import type { Express, Request, Response } from "express";
 import type { GoogleGenAI } from "@google/genai";
 import { generateRuleBasedSoap, getPulseFallbackAnswer } from "./gemini-clinical-helpers.ts";
+import { AI_RUPEE_OUTPUT_RULE } from "./india-currency-copy.ts";
 
 export function attachGeminiSoapAndCopilot(
   app: Express,
@@ -97,7 +98,8 @@ Return STRICTLY a JSON object with this exact schema:
     "followUpDate": "YYYY-MM-DD"
   },
   "transcriptSummary": "Concise 2-sentence executive summary of the encounter"
-}`;
+}
+${AI_RUPEE_OUTPUT_RULE}`;
 
         const response = await ai.models.generateContent({
           model: "gemini-3.7-flash",
@@ -144,7 +146,8 @@ Include:
 3. Drug dosage recommendations, contraindications, and pediatric/geriatric adjustments when applicable
 4. Differential diagnoses & red flag alerts
 5. Active patient risk analysis if patient profile is provided
-Always maintain an objective, rigorous, professional medical tone.`;
+Always maintain an objective, rigorous, professional medical tone.
+${AI_RUPEE_OUTPUT_RULE}`;
 
         const contents: any[] = [];
         if (patientContext && Object.keys(patientContext).length > 0) {

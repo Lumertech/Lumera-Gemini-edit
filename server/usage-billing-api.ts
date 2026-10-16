@@ -6,6 +6,7 @@ import { isCloudDispatchFailure } from "./graph-whatsapp.ts";
 import { getTenantLetterhead } from "./letterhead.ts";
 import { appPublicUrl, isProduction, sandboxSimulatorsEnabled } from "./runtime.ts";
 import { WALLET_INSUFFICIENT_ERROR } from "./usage-wallet.ts";
+import { formatINR } from "../app/applet/src/lib/currency.ts";
 import { resolveWhatsAppTenantId } from "./whatsapp-calendar.ts";
 import { dispatchPatientCloudText, walletDispatchStatus } from "./whatsapp-patient-dispatch.ts";
 import {
@@ -92,7 +93,7 @@ export function createUsageBillingRouter(): Router {
       razorpayPaymentId: refs.paymentId || refs.orderId,
       note: `Razorpay wallet top-up ${refs.paymentId || refs.orderId}`,
     });
-    writeAudit(getDb(), null, "Razorpay webhook", "Wallet top-up", `${refs.tenantId} ₹${amount} ${refs.paymentId}`);
+    writeAudit(getDb(), null, "Razorpay webhook", "Wallet top-up", `${refs.tenantId} ${formatINR(amount)} ${refs.paymentId}`);
     return res.json({ ok: true, purpose: "wallet_topup", transaction: tx, wallet: publicWalletStatus(refs.tenantId) });
   });
 
@@ -343,7 +344,7 @@ export function createUsageBillingRouter(): Router {
     if (!tenantId) return res.status(400).json({ error: "No tenant associated with this account." });
     const amountRupees = Number((req.body || {}).amountRupees ?? (req.body || {}).amount);
     if (!Number.isFinite(amountRupees) || amountRupees < 1) {
-      return res.status(400).json({ error: "amountRupees must be at least ₹1." });
+      return res.status(400).json({ error: `amountRupees must be at least ${formatINR(1)}.` });
     }
     const created = await createRazorpayWalletTopupOrder({
       amountRupees,
@@ -377,7 +378,7 @@ export function createUsageBillingRouter(): Router {
     if (!tenantId) return res.status(400).json({ error: "No tenant associated with this account." });
     const amountRupees = Number((req.body || {}).amountRupees ?? (req.body || {}).amount);
     if (!Number.isFinite(amountRupees) || amountRupees < 1) {
-      return res.status(400).json({ error: "amountRupees must be at least ₹1." });
+      return res.status(400).json({ error: `amountRupees must be at least ${formatINR(1)}.` });
     }
     const tx = applyWalletTransaction(tenantId, "topup", amountRupees, {
       razorpayPaymentId: `pay_sandbox_wallet_${tenantId}_${Date.now()}`,

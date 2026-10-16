@@ -832,7 +832,7 @@ export default function ClinicianApp() {
                     patientId: pat.id,
                     doctorId: doc.id,
                     date: clinicCalendarDate(),
-                    timeSlot: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
+                    timeSlot: new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' }),
                     type: (type as Appointment['type']) || 'New Consultation',
                     source: 'Walk-in',
                   });
@@ -972,7 +972,7 @@ export default function ClinicianApp() {
                     patientId: newPat.id,
                     doctorId: doc.id,
                     date: clinicCalendarDate(),
-                    timeSlot: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
+                    timeSlot: new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' }),
                     type: 'New Consultation',
                     source: 'Walk-in',
                   });

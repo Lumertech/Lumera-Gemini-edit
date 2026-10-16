@@ -10,7 +10,6 @@ import {
   CheckCircle2,
   Clock,
   MapPin,
-  IndianRupee,
   Phone,
   Mail,
   Award,
@@ -22,6 +21,7 @@ import {
 import { apiFetch } from "../api/http";
 import { AppUser, Doctor, PolyclinicSpecialty } from "../types";
 import { DoctorProfileModal, PRESET_DOCTOR_AVATARS } from "./DoctorProfileModal";
+import { formatINR } from "../../app/applet/src/lib/currency.ts";
 
 interface StaffRow {
   id: string;
@@ -541,9 +541,8 @@ export const ClinicTeamManager: React.FC<ClinicTeamManagerProps> = ({
                       {d.hprLabel || d.hprId}
                     </span>
                   )}
-                  <span className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 font-semibold flex items-center gap-0.5">
-                    <IndianRupee className="w-3 h-3" />
-                    {d.consultationFee} OPD
+                  <span className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 font-semibold">
+                    {formatINR(d.consultationFee)} OPD
                   </span>
                 </div>
 
