@@ -19,6 +19,7 @@ import { denyUnlessPatientRecordRole } from "./patient-access.ts";
 import {
   ABDM_CONFIG,
   NHA_SANDBOX_NOTICE,
+  authorizeAbdmCallbackWrite,
   callbackTenantId,
   tenantIdOf,
   callbackHmac,
@@ -42,11 +43,30 @@ export function registerAbdmConsentRoutes(router: Router): void {
     | "hiu_fetch"
     | "hiu_receive";
 
-  const callbackClinicId = (req: Request, hmac: { matched?: boolean }): string | null =>
+  const callbackClinicId = (req: Request, hmac: { ok?: boolean; matched?: boolean }): string | null =>
     callbackTenantId(
       req as unknown as { user?: { tenantId?: string }; headers: Record<string, unknown>; body?: Record<string, unknown> },
       { signatureMatched: hmac.matched === true }
     );
+
+  const allowCallbackWrite = (req: Request, res: Response, hmac: ReturnType<typeof callbackHmac>): boolean => {
+    const decision = authorizeAbdmCallbackWrite({ role: req.user?.role, hmac });
+    if (decision.accept === false) {
+      if (decision.code === "ROLE_DENIED") {
+        denyUnlessPatientRecordRole(req, res);
+        return false;
+      }
+      res.status(decision.status).json({
+        error: decision.error,
+        abdmMode: resolveAbdmMode(),
+        sandboxNotice: NHA_SANDBOX_NOTICE,
+      });
+      return false;
+    }
+    const signed = hmac.ok === true && hmac.matched === true;
+    if (!signed && req.user) return denyUnlessPatientRecordRole(req, res);
+    return true;
+  };
 
   const persistCallbackArtefact = (
     req: Request,
@@ -54,9 +74,7 @@ export function registerAbdmConsentRoutes(router: Router): void {
     kind: ArtefactKind
   ) => {
     const hmac = callbackHmac(req);
-    if (hmac.ok === false) {
-      return res.status(hmac.status).json({ error: hmac.error, abdmMode: resolveAbdmMode(), sandboxNotice: NHA_SANDBOX_NOTICE });
-    }
+    if (!allowCallbackWrite(req, res, hmac)) return;
 
     const tenantId = callbackClinicId(req, hmac);
     if (!tenantId) {
@@ -141,9 +159,7 @@ export function registerAbdmConsentRoutes(router: Router): void {
 
   const handleHipCareContext = (req: Request, res: Response) => {
     const hmac = callbackHmac(req);
-    if (hmac.ok === false) {
-      return res.status(hmac.status).json({ error: hmac.error, abdmMode: resolveAbdmMode(), sandboxNotice: NHA_SANDBOX_NOTICE });
-    }
+    if (!allowCallbackWrite(req, res, hmac)) return;
     const tenantId = callbackClinicId(req, hmac);
     if (!tenantId) {
       return res.status(401).json({ error: "Authentication required", abdmMode: resolveAbdmMode(), sandboxNotice: NHA_SANDBOX_NOTICE });
@@ -238,9 +254,7 @@ export function registerAbdmConsentRoutes(router: Router): void {
       return persistCallbackArtefact(req, res, "hip_link_confirm");
     }
     const hmac = callbackHmac(req);
-    if (hmac.ok === false) {
-      return res.status(hmac.status).json({ error: hmac.error, abdmMode: resolveAbdmMode(), sandboxNotice: NHA_SANDBOX_NOTICE });
-    }
+    if (!allowCallbackWrite(req, res, hmac)) return;
     return res.status(202).json({
       status: "ACKNOWLEDGED",
       abdmMode: resolveAbdmMode(),
@@ -369,11 +383,8 @@ export function registerAbdmConsentRoutes(router: Router): void {
   };
 
   const handleHiuConsentInit = (req: Request, res: Response) => {
-    const hmac = callbackHmac(req);
-    if (hmac.ok === false) {
-      return res.status(hmac.status).json({ error: hmac.error, abdmMode: resolveAbdmMode(), sandboxNotice: NHA_SANDBOX_NOTICE });
-    }
-    const tenantId = callbackClinicId(req, hmac);
+    if (!denyUnlessPatientRecordRole(req, res)) return;
+    const tenantId = tenantIdOf(req);
     if (!tenantId) {
       return res.status(401).json({ error: "Authentication required", abdmMode: resolveAbdmMode(), sandboxNotice: NHA_SANDBOX_NOTICE });
     }
@@ -446,7 +457,7 @@ export function registerAbdmConsentRoutes(router: Router): void {
     handleHipOnRequest
   );
 
-  router.post(["/hiu/consent-request/init", "/v3/hiu/consent-request/init"], handleHiuConsentInit);
+  router.post(["/hiu/consent-request/init", "/v3/hiu/consent-request/init"], requireAuth, handleHiuConsentInit);
   router.post(
     [
       "/hiu/consent-request/on-status",

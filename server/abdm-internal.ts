@@ -11,7 +11,8 @@ import { type Request } from "express";
 import crypto from "node:crypto";
 import { getDb, mapConsentArtefact } from "./db.ts";
 import { getAbdmBridgeStatus, resolveAbdmMode } from "./abdm-mode.ts";
-import { decideAbdmCallbackSignature } from "./abdm-hmac.ts";
+import { decideAbdmCallbackSignature, type AbdmCallbackAuth } from "./abdm-hmac.ts";
+import { isPatientRecordRole } from "./patient-access.ts";
 
 // SECURITY: this module is a *local stand-in* for the real ABDM sandbox
 // gateway (no requests currently leave this server for GATEWAY_URL — see
@@ -70,6 +71,37 @@ export function callbackHmac(req: Request) {
     rawBody,
     signatureHeader: req.headers["x-abdm-signature"],
   });
+}
+
+export type AbdmCallbackWriteAuth =
+  | { accept: true }
+  | { accept: false; status: number; error: string; code?: "ROLE_DENIED" };
+
+/**
+ * Gateway writes are allowed when the callback signature matched, or when the
+ * caller is clinic staff. A patient session is never a callback caller, even
+ * with a matching signature: callbackTenantId would otherwise use that clinic
+ * and the body patientId.
+ * Staff is still accepted when the signature is absent, including production
+ * stub, so clinician screens keep working. Anonymous and failed signatures
+ * stay closed.
+ */
+export function authorizeAbdmCallbackWrite(opts: {
+  role?: string | null;
+  hmac: AbdmCallbackAuth;
+}): AbdmCallbackWriteAuth {
+  if (opts.role === "patient") {
+    return { accept: false, status: 403, error: "Insufficient permissions", code: "ROLE_DENIED" };
+  }
+  if (opts.hmac.ok === true && opts.hmac.matched === true) return { accept: true };
+  if (opts.role && isPatientRecordRole(opts.role)) return { accept: true };
+  if (opts.hmac.ok === false) {
+    return { accept: false, status: opts.hmac.status, error: opts.hmac.error };
+  }
+  if (!opts.role) {
+    return { accept: false, status: 401, error: "Authentication required" };
+  }
+  return { accept: false, status: 403, error: "Insufficient permissions", code: "ROLE_DENIED" };
 }
 
 export function findTenantArtefactByConsentId(tenantId: string, consentId: string) {
