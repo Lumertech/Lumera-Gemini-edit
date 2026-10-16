@@ -751,10 +751,10 @@ describe("tenant, user, and branch HTTP responses omit secrets", () => {
       .prepare(
         `INSERT INTO users (
            id, tenant_id, email, password_hash, name, role, status, phone, clinic_name,
-           onboarding_completed, practice_type, specialty, last_login, created_at
-         ) VALUES (?, ?, ?, ?, 'Portal Patient', 'patient', 'active', ?, 'Minimised Clinic', 1, 'individual', 'General Medicine', ?, ?)`
+           onboarding_completed, practice_type, specialty, last_login, created_at, patient_id
+         ) VALUES (?, ?, ?, ?, 'Portal Patient', 'patient', 'active', ?, 'Minimised Clinic', 1, 'individual', 'General Medicine', ?, ?, ?)`
       )
-      .run(`user-patient-${suffix}`, tenantId, patientEmail, passwordHash, patientPhone, now, now);
+      .run(`user-patient-${suffix}`, tenantId, patientEmail, passwordHash, patientPhone, now, now, patientId);
     getDb()
       .prepare(
         `INSERT INTO patients (

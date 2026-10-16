@@ -104,6 +104,12 @@ export function migrate(database: SqlDatabase) {
     database.exec("ALTER TABLE users ADD COLUMN facebook_id TEXT DEFAULT ''");
   } catch {}
   try {
+    database.exec("ALTER TABLE users ADD COLUMN patient_id TEXT DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("CREATE INDEX IF NOT EXISTS idx_users_tenant_patient ON users(tenant_id, patient_id)");
+  } catch {}
+  try {
     database.exec("ALTER TABLE doctors ADD COLUMN pack_id TEXT DEFAULT ''");
   } catch {}
   try {

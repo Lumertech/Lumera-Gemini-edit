@@ -41,6 +41,7 @@ export const users = pgTable("users", {
   specialty: text("specialty").default(""),
   packId: text("pack_id").default(""),
   facebookId: text("facebook_id").default(""),
+  patientId: text("patient_id").default(""),
 });
 
 export const sessions = pgTable(

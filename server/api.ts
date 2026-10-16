@@ -57,7 +57,7 @@ import { publicBranch, publicTenant } from "./client-serializers.ts";
 import { clinicTenantId, upsertScopedConversation } from "./whatsapp-scope.ts";
 import { WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
 import { denyUnlessPatientRecordRole } from "./patient-access.ts";
-import { loadPatientTenant, patientLetterhead, requestIsPatient } from "./patient-tenant.ts";
+import { bindUnboundPatientUser, loadPatientTenant, patientLetterhead, requestIsPatient } from "./patient-tenant.ts";
 import {
   createAdminTenant,
   ensureTenantSubscription,
@@ -971,7 +971,8 @@ export function createApiRouter(): Router {
       }
       if (rejectClinicTenantBlocked(user, res)) return;
 
-      const activePhone = updatedPhone || record.phone || user.phone;
+      const activePhone =
+        user.role === "patient" ? String(record.phone || user.phone || "") : updatedPhone || record.phone || user.phone;
       const avatarUrl = payload.avatarUrl || user.avatar_url || "";
 
       getDb().prepare(`
@@ -979,6 +980,7 @@ export function createApiRouter(): Router {
         SET last_login = ?, whatsapp_verified = 1, phone = ?, avatar_url = ?
         WHERE id = ?
       `).run(now, activePhone, avatarUrl, user.id);
+      if (user.role === "patient") bindUnboundPatientUser(user.id);
 
       const updatedUser = getDb().prepare("SELECT * FROM users WHERE id = ?").get(user.id) as unknown as DbUser;
       const jwtToken = issueLumeraSession(res, updatedUser);
@@ -1670,8 +1672,20 @@ export function createApiRouter(): Router {
     if (!existing) return res.status(404).json({ error: "User not found" });
 
     const name = req.body?.name != null ? String(req.body.name).trim() : existing.name;
-    const phone = req.body?.phone != null ? String(req.body.phone).trim() : existing.phone;
-    const email = req.body?.email ? String(req.body.email).trim().toLowerCase() : existing.email;
+    const requestedPhone = req.body?.phone != null ? String(req.body.phone).trim() : existing.phone;
+    const requestedEmail = req.body?.email ? String(req.body.email).trim().toLowerCase() : existing.email;
+    if (existing.role === "patient") {
+      const phoneChanged = requestedPhone !== String(existing.phone || "");
+      const emailChanged = requestedEmail !== String(existing.email || "").trim().toLowerCase();
+      if (phoneChanged || emailChanged) {
+        return res.status(403).json({
+          error: "Patients cannot change phone or email",
+          code: "PATIENT_CONTACT_LOCKED",
+        });
+      }
+    }
+    const phone = existing.role === "patient" ? existing.phone : requestedPhone;
+    const email = existing.role === "patient" ? existing.email : requestedEmail;
     const avatarUrl = req.body?.avatarUrl != null ? String(req.body.avatarUrl).trim() : existing.avatar_url || "";
     if (!name) return res.status(400).json({ error: "Name is required" });
     if (!email || !email.includes("@")) return res.status(400).json({ error: "A valid email is required" });

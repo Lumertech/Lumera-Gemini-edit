@@ -16,6 +16,7 @@ import { ensureDemoPersonaUsers } from "./demo-seed.ts";
 import { ensureDemoWorkspaceTenants } from "./demo-workspace-tenants.ts";
 import { seedPlatformTenantData } from "./platform-tenants.ts";
 import { backfillWhatsAppTenantIds } from "./whatsapp-tenant-backfill.ts";
+import { backfillUserPatientIdsOnce } from "./patient-tenant.ts";
 
 export type UserRole =
   | "doctor"
@@ -48,6 +49,7 @@ export interface DbUser {
   specialty?: string;
   pack_id?: string;
   facebook_id?: string;
+  patient_id?: string;
 }
 
 export const DEMO_TENANT_ID = "tenant-lumera-main";
@@ -183,6 +185,7 @@ export function initDatabase(): DatabaseSync {
   seedPlatformTenantData(db);
   ensureDemoWorkspaceTenants(db);
   backfillWhatsAppTenantIds(db);
+  backfillUserPatientIdsOnce(db);
   return db as DatabaseSync;
 }
 
