@@ -1,13 +1,9 @@
-import React from 'react';
-import { 
-  Stethoscope, 
-  Bot, 
+import React, { useState } from 'react';
+import {
   Plus,
-  UserCheck,
   Menu,
   LogOut,
   Shield,
-  Sparkles,
   Lock
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -41,6 +37,7 @@ export type NavView =
   | 'consult-practice'
   | 'physio-session'
   | 'dental-chart'
+  | 'gp-home'
   | 'patients';
 
 interface NavbarProps {
@@ -77,6 +74,9 @@ export const Navbar: React.FC<NavbarProps> = ({
   isSpecialtyLocked,
 }) => {
   const toggleCopilot = onTogglePulse || onToggleGemini || onToggleHexa || (() => {});
+  const [menuOpen, setMenuOpen] = useState(false);
+  const canConsult = userRole === "doctor";
+  const showLocked = userRole === "doctor" || Boolean(isSpecialtyLocked);
   const { logout } = useAuth();
   const { go, workspaceSlug } = useNav();
   const VIEW_TITLES: Record<NavView, string> = {
@@ -104,6 +104,7 @@ export const Navbar: React.FC<NavbarProps> = ({
     'consult-practice': 'Consulting',
     'physio-session': 'Dashboard',
     'dental-chart': 'Dashboard',
+    'gp-home': 'Dashboard',
     patients: 'Patients',
   };
 
@@ -134,118 +135,99 @@ export const Navbar: React.FC<NavbarProps> = ({
 
       </div>
 
-      {/* Right: Quick Actions & Doctor Profile */}
-      <div className="flex items-center space-x-1.5 sm:space-x-3 min-w-0 shrink">
-        {/* Doctor Profile (Locked during Doctor sessions to prevent accidental specialty switching) */}
-        {userRole === 'doctor' || isSpecialtyLocked ? (
-          <div 
-            className="hidden md:flex items-center space-x-2 bg-slate-50 border border-slate-200 px-2.5 py-1 rounded-lg text-xs"
-            title="Doctor profile and clinical workflow locked during consultation"
-          >
-            <div className="w-6 h-6 rounded-full overflow-hidden bg-blue-600/30 border border-blue-400/40 flex items-center justify-center shrink-0">
-              {currentDoctor.avatarUrl ? (
-                <img
-                  src={currentDoctor.avatarUrl}
-                  alt={currentDoctor.name}
-                  referrerPolicy="no-referrer"
-                  className="w-full h-full object-cover"
-                />
-              ) : (
-                <UserCheck className="w-3.5 h-3.5 text-blue-400" />
-              )}
-            </div>
-            <div className="flex items-center space-x-1.5">
-              <span className="text-slate-700 text-xs font-semibold max-w-[180px] truncate">
-                {currentDoctor.name} ({currentDoctor.specialty})
-              </span>
-              <span className="hidden sm:flex text-[9px] px-1.5 py-0.5 rounded bg-slate-700/80 text-amber-300 font-mono font-bold uppercase items-center gap-0.5">
-                <Lock className="w-2.5 h-2.5 text-amber-400" /> Locked
-              </span>
-            </div>
-          </div>
-        ) : (
-          <div className="hidden md:flex items-center space-x-2 bg-slate-50 border border-slate-200 px-2 py-1 rounded-lg text-xs">
-            <div className="w-6 h-6 rounded-full overflow-hidden bg-blue-600/30 border border-blue-400/40 flex items-center justify-center shrink-0">
-              {currentDoctor.avatarUrl ? (
-                <img
-                  src={currentDoctor.avatarUrl}
-                  alt={currentDoctor.name}
-                  referrerPolicy="no-referrer"
-                  className="w-full h-full object-cover"
-                />
-              ) : (
-                <UserCheck className="w-3.5 h-3.5 text-blue-400" />
-              )}
-            </div>
-            <select
-              aria-label="Doctor Profile Selector"
-              value={currentDoctor.id}
-              onChange={(e) => {
-                const doc = allDoctors.find((d) => d.id === e.target.value);
-                if (doc) onSelectDoctor(doc);
-              }}
-              className="bg-transparent text-slate-700 text-xs font-medium focus:outline-none cursor-pointer max-w-[180px] truncate"
-            >
-              {allDoctors.map((d) => (
-                <option key={d.id} value={d.id} className="bg-slate-900 text-white">
-                  {d.name} ({d.specialty})
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
-
-        {userRole === "doctor" && (
+      <div className="flex items-center gap-1.5 min-w-0 shrink-0">
+        {canConsult && (
           <Link
             to={appViewToPath('rx', workspaceSlug)}
-            className="hidden sm:flex items-center space-x-1 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold"
-            title="Open a consult"
+            data-testid="topbar-start-consult"
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold"
+            title="Start consult"
           >
             <Plus className="w-3.5 h-3.5" />
-            <span>Consult</span>
+            <span>Start consult</span>
           </Link>
         )}
-
-        {/* Pulse AI Clinical Copilot button */}
-        <button
-          onClick={toggleCopilot}
-          className="hidden sm:flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-purple-600 via-indigo-600 to-blue-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-semibold transition-all shadow-sm shadow-purple-500/30"
-          title="Open Pulse AI Clinical Decision Support"
-        >
-          <Sparkles className="w-3.5 h-3.5 text-purple-200 animate-pulse" />
-          <span className="hidden sm:inline">Pulse AI</span>
-          <span className="px-1 py-0.2 rounded text-[9px] font-mono bg-white/20 text-white">AI</span>
-        </button>
-
-        {canOpenAdmin && (
-          <Link
-            to="/admin"
-            className="hidden sm:flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-xs text-slate-200 hover:text-white"
+        <div className="relative">
+          <button
+            type="button"
+            data-testid="account-menu"
+            aria-expanded={menuOpen}
+            aria-haspopup="menu"
+            onClick={() => setMenuOpen((open) => !open)}
+            className="w-8 h-8 rounded-full bg-blue-600 text-white text-xs font-semibold flex items-center justify-center"
+            title={userName || "Account"}
           >
-            <Shield className="w-3.5 h-3.5 text-blue-300" />
-            Admin
-          </Link>
-        )}
-        <button
-          type="button"
-          onClick={() => go('landing', { explicitPublic: true })}
-          className="hidden md:inline text-[11px] text-slate-400 hover:text-slate-700"
-        >
-          Exit to site
-        </button>
-        {userName && (
-          <span className="hidden lg:inline text-[11px] text-slate-400">
-            {userName}
-            {userRole ? ` · ${userRole.replace('_', ' ')}` : ''}
-          </span>
-        )}
-        <button
-          onClick={() => logout().then(() => go('landing'))}
-          className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100"
-          title="Sign out"
-        >
-          <LogOut className="w-3.5 h-3.5" />
-        </button>
+            {(userName || currentDoctor.name || "U").charAt(0)}
+          </button>
+          {menuOpen && (
+            <div
+              role="menu"
+              data-testid="account-menu-panel"
+              className="absolute right-0 top-10 z-50 w-56 rounded-xl border border-slate-200 bg-white shadow-lg p-2 text-sm"
+            >
+              <p className="px-2 py-1 font-semibold text-slate-900 truncate">{userName || currentDoctor.name}</p>
+              <p className="px-2 pb-2 text-[11px] text-slate-500 capitalize">{userRole?.replaceAll("_", " ")}</p>
+              {showLocked && (
+                <p className="mx-2 mb-2 inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-slate-600">
+                  <Lock className="w-3 h-3" /> Locked
+                </p>
+              )}
+              {!showLocked && allDoctors.length > 1 && (
+                <label className="block px-2 pb-2 text-[11px] text-slate-500">
+                  Clinician
+                  <select
+                    aria-label="Doctor Profile Selector"
+                    value={currentDoctor.id}
+                    onChange={(e) => {
+                      const doc = allDoctors.find((d) => d.id === e.target.value);
+                      if (doc) onSelectDoctor(doc);
+                    }}
+                    className="mt-1 w-full rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800"
+                  >
+                    {allDoctors.map((d) => (
+                      <option key={d.id} value={d.id}>{d.name}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              <button
+                type="button"
+                role="menuitem"
+                className="w-full text-left px-2 py-1.5 rounded-lg hover:bg-slate-50 text-xs text-slate-700"
+                onClick={() => {
+                  setMenuOpen(false);
+                  toggleCopilot();
+                }}
+              >
+                Assistant
+              </button>
+              {canOpenAdmin && (
+                <Link to="/admin" role="menuitem" className="flex items-center gap-1 px-2 py-1.5 rounded-lg hover:bg-slate-50 text-xs text-slate-700" onClick={() => setMenuOpen(false)}>
+                  <Shield className="w-3.5 h-3.5" /> Admin
+                </Link>
+              )}
+              <button
+                type="button"
+                role="menuitem"
+                className="w-full text-left px-2 py-1.5 rounded-lg hover:bg-slate-50 text-xs text-slate-700"
+                onClick={() => {
+                  setMenuOpen(false);
+                  go("landing", { explicitPublic: true });
+                }}
+              >
+                Exit to site
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="w-full text-left px-2 py-1.5 rounded-lg hover:bg-slate-50 text-xs text-slate-700 inline-flex items-center gap-1"
+                onClick={() => logout().then(() => go("landing"))}
+              >
+                <LogOut className="w-3.5 h-3.5" /> Sign out
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </header>
   );

@@ -9,7 +9,11 @@ import {
   homeMetrics,
   homeNudge,
   labelWordCount,
+  moreNavLabels,
   navLabelsInOrder,
+  primaryNavLabels,
+  formatVisitTime,
+  pickNextVisit,
   setupChecklist,
   setupProgress,
   showsSetupChecklist,
@@ -67,15 +71,17 @@ describe("clinic home routing and nav", () => {
     assert.equal(clinicianHomeView(physio), "physio-session");
     assert.equal(clinicianHomeView(dental), "dental-chart");
     assert.equal(clinicianHomeView(gp), workflowForUser(gp).homeView);
-    assert.equal(clinicianHomeView(gp), "welcome");
+    assert.equal(clinicianHomeView(gp), "gp-home");
   });
 
   it("orders the daily flow and keeps labels to three words", () => {
     const doctor = navLabelsInOrder(navFor("doctor"));
-    assert.deepEqual(doctor.slice(0, 6), ["Dashboard", "Appointments", "OPD", "Consult", "Billing", "Payments"]);
+    assert.deepEqual(primaryNavLabels(navFor("doctor")), ["Dashboard", "Appointments", "OPD", "Consult", "Billing", "Payments", "Patients"]);
+    assert.deepEqual(moreNavLabels(navFor("doctor")).slice(0, 3), ["Intake", "Pharmacy", "Labs"]);
     const desk = navLabelsInOrder(navFor("receptionist"));
-    assert.deepEqual(desk.slice(0, 5), ["Dashboard", "Appointments", "OPD", "Billing", "Payments"]);
+    assert.deepEqual(primaryNavLabels(navFor("receptionist")), ["Dashboard", "Appointments", "OPD", "Billing", "Payments", "Patients"]);
     assert.equal(desk.includes("Consult"), false);
+    assert.ok(moreNavLabels(navFor("receptionist")).includes("Intake"));
     for (const label of [...doctor, ...desk]) {
       assert.ok(labelWordCount(label) <= 3, label);
     }
@@ -103,7 +109,27 @@ describe("clinic home routing and nav", () => {
 
   it("uses the clinic name and real visit counts", () => {
     assert.equal(greetingClinicName("Malhotra Individual Practice"), "Malhotra Individual Practice");
+    assert.equal(greetingClinicName("physio practice"), "Physio Practice");
     assert.equal(greetingClinicName("  "), "your clinic");
+    assert.equal(formatVisitTime({ timeSlot: "10:30 AM", source: "Call Desk" }), "Appointment 10:30 AM");
+    assert.equal(formatVisitTime({ timeSlot: "10:30 AM", source: "Walk-in" }), "Appointment 10:30 AM");
+    assert.equal(
+      formatVisitTime({ timeSlot: "", source: "Walk-in", createdAt: "2026-10-16T06:48:00.000Z" }),
+      "Checked in 12:18 pm"
+    );
+    assert.equal(
+      formatVisitTime({ timeSlot: "12:18 AM", source: "Walk-in", createdAt: "2026-10-16T00:18:00.000Z" }),
+      "Checked in 5:48 am"
+    );
+    const next = pickNextVisit(
+      [
+        { id: "utc", date: "2026-10-16", status: "Waiting", patientName: "Asha Menon", timeSlot: "12:18 AM", isPaid: false },
+        { id: "day", date: "2026-10-16", status: "Waiting", patientName: "Ravi Shah", timeSlot: "10:45 AM", isPaid: false },
+        { id: "harness", date: "2026-10-16", status: "Waiting", patientName: "Flow 1", timeSlot: "08:00 AM", isPaid: false, consultationFee: 500 },
+      ],
+      "2026-10-16"
+    );
+    assert.equal(next?.id, "day");
     const metrics = homeMetrics(
       [
         { id: "a", date: "2026-10-16", status: "Waiting", consultationFee: 600, isPaid: false, type: "New Consultation" },
@@ -115,6 +141,7 @@ describe("clinic home routing and nav", () => {
     assert.equal(metrics.today, "2026-10-16");
     assert.equal(metrics.todayAppointments, 2);
     assert.equal(metrics.waiting, 1);
+    assert.equal(metrics.waiting + metrics.withDoctor + metrics.done, metrics.todayAppointments);
     assert.equal(metrics.followUps, 1);
     assert.equal(metrics.totalRevenue, 1500);
     assert.match(homeNudge(metrics, 3), /waiting/);

@@ -32,20 +32,20 @@ import { useNav } from '../nav/NavigationContext';
 import { appViewToPath } from '../nav/surfaces';
 import { isPolyclinicPractice } from '../lib/sessionWorkspace';
 import { allowedViewsForWorkflow, clinicianHomeView, patientsNavLabel, workflowForUser } from '../lib/specialtyWorkflow';
-import { clinicNavItems, greetingClinicName, whatsAppPillFromStatus, type WhatsAppPillState } from '../lib/clinicNav';
+import { clinicNavItems, greetingClinicName, moreNavItems, primaryNavItems, whatsAppPillFromStatus, type WhatsAppPillState } from '../lib/clinicNav';
 import { apiFetch } from '../api/http';
 
 export const ROLE_VISIBLE_VIEWS: Record<string, NavView[]> = {
-  doctor: ['welcome', 'patients', 'queue', 'opd-queue', 'rx', 'smart-rx', 'ambient', 'reports', 'appointments', 'polyclinic', 'whatsapp', 'voicebot', 'pharmacy-hub', 'billing', 'dhis', 'team', 'reception', 'kiosk', 'settings', 'wellness', 'therapy-session', 'consult-practice', 'physio-session', 'dental-chart'],
-  receptionist: ['welcome', 'patients', 'reception', 'queue', 'opd-queue', 'appointments', 'kiosk', 'pharmacy-hub', 'billing', 'whatsapp', 'settings'],
-  polyclinic_admin: ['welcome', 'patients', 'queue', 'opd-queue', 'reception', 'appointments', 'polyclinic', 'billing', 'reports', 'whatsapp', 'voicebot', 'pharmacy-hub', 'dhis', 'team', 'kiosk', 'settings'],
-  CLINIC_ADMIN: ['welcome', 'patients', 'queue', 'opd-queue', 'reception', 'appointments', 'polyclinic', 'billing', 'reports', 'whatsapp', 'voicebot', 'pharmacy-hub', 'dhis', 'portal', 'team', 'kiosk', 'settings'],
+  doctor: ['welcome', 'gp-home', 'patients', 'queue', 'opd-queue', 'rx', 'smart-rx', 'ambient', 'reports', 'appointments', 'polyclinic', 'whatsapp', 'voicebot', 'pharmacy-hub', 'billing', 'dhis', 'team', 'reception', 'kiosk', 'settings', 'wellness', 'therapy-session', 'consult-practice', 'physio-session', 'dental-chart'],
+  receptionist: ['welcome', 'gp-home', 'patients', 'reception', 'queue', 'opd-queue', 'appointments', 'kiosk', 'pharmacy-hub', 'billing', 'whatsapp', 'settings'],
+  polyclinic_admin: ['welcome', 'gp-home', 'patients', 'queue', 'opd-queue', 'reception', 'appointments', 'polyclinic', 'billing', 'reports', 'whatsapp', 'voicebot', 'pharmacy-hub', 'dhis', 'team', 'kiosk', 'settings'],
+  CLINIC_ADMIN: ['welcome', 'gp-home', 'patients', 'queue', 'opd-queue', 'reception', 'appointments', 'polyclinic', 'billing', 'reports', 'whatsapp', 'voicebot', 'pharmacy-hub', 'dhis', 'portal', 'team', 'kiosk', 'settings'],
   super_admin: ['settings'],
   patient: ['portal'],
   nurse: ['reception', 'queue', 'opd-queue', 'reports', 'pharmacy-hub', 'settings'],
   lab_technician: ['reports', 'queue', 'opd-queue', 'pharmacy-hub', 'settings'],
   pharmacist: ['billing', 'pharmacy-hub', 'queue', 'opd-queue', 'settings'],
-  default: ['welcome', 'queue', 'opd-queue', 'reception', 'appointments', 'pharmacy-hub', 'billing', 'settings']
+  default: ['welcome', 'gp-home', 'queue', 'opd-queue', 'reception', 'appointments', 'pharmacy-hub', 'billing', 'settings']
 };
 
 interface SidebarProps {
@@ -92,6 +92,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
     homeView,
     patientsLabel: patientsNavLabel(pack),
   });
+  const primaryItems = primaryNavItems(navItems);
+  const moreItems = moreNavItems(navItems);
   const clinicLabel = greetingClinicName(user?.clinicName);
   const [waPill, setWaPill] = useState<{ label: string; state: WhatsAppPillState }>({
     label: "WhatsApp status unavailable",
@@ -156,6 +158,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const selectablePatients = allPatients.filter((p) => p.id);
   const NAV_ICONS: Partial<Record<NavView, typeof Calendar>> = {
     welcome: LayoutDashboard,
+    'gp-home': LayoutDashboard,
     appointments: Calendar,
     queue: Users,
     rx: FileText,
@@ -188,7 +191,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         isCollapsed ? 'w-16' : 'w-60'
       } h-full flex-shrink-0 bg-white border-r border-slate-200 text-slate-600 flex flex-col transition-all duration-200 select-none overflow-hidden`}
     >
-      <div className={`flex items-center gap-2 px-3 py-4 border-b border-slate-100 ${isCollapsed ? 'justify-center' : ''}`}>
+      <div className={`flex items-center gap-2 px-3 py-2.5 border-b border-slate-100 ${isCollapsed ? 'justify-center' : ''}`}>
         <div className="w-9 h-9 rounded-xl bg-teal-600 text-white flex items-center justify-center font-semibold shrink-0">
           {clinicLabel.charAt(0).toUpperCase()}
         </div>
@@ -199,8 +202,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
         )}
       </div>
-      <div className="flex-1 overflow-y-auto overflow-x-hidden p-3 space-y-1">
-        {navItems.map((item) => {
+      <div className="flex-1 min-h-0 overflow-hidden p-2 space-y-0.5">
+        {primaryItems.map((item) => {
           const Icon = NAV_ICONS[item.id] || Sparkles;
           const isActive =
             !item.payFocus &&
@@ -222,7 +225,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               title={isCollapsed ? item.label : undefined}
               className={`w-full flex items-center ${
                 isCollapsed ? 'justify-center px-2' : 'gap-2.5 px-3'
-              } py-2 rounded-xl text-sm font-medium transition-colors ${
+              } py-1.5 rounded-xl text-sm font-medium transition-colors ${
                 isActive
                   ? 'bg-blue-600 text-white'
                   : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
@@ -233,6 +236,56 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </Link>
           );
         })}
+        {moreItems.length > 0 && (
+          <details className="group" data-testid="nav-more">
+            <summary className={`cursor-pointer list-none flex items-center ${isCollapsed ? 'justify-center px-2' : 'gap-2.5 px-3'} py-1.5 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100`}>
+              <ChevronRight className="w-4 h-4 shrink-0 text-slate-400 group-open:rotate-90" />
+              {!isCollapsed && <span>More</span>}
+            </summary>
+            <div className="mt-0.5 space-y-0.5 max-h-40 overflow-y-auto">
+              {moreItems.map((item) => {
+                const Icon = NAV_ICONS[item.id] || Sparkles;
+                const isActive = !item.payFocus && currentView === item.id;
+                return (
+                  <Link
+                    key={item.testId}
+                    to={appViewToPath(item.id, workspaceSlug)}
+                    onClick={() => onNavigate?.()}
+                    data-testid={item.testId}
+                    title={isCollapsed ? item.label : undefined}
+                    className={`w-full flex items-center ${
+                      isCollapsed ? 'justify-center px-2' : 'gap-2.5 px-3'
+                    } py-1.5 rounded-xl text-sm font-medium ${
+                      isActive ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100'
+                    }`}
+                  >
+                    <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-white' : 'text-slate-400'}`} />
+                    {!isCollapsed && <span className="truncate">{item.label}</span>}
+                  </Link>
+                );
+              })}
+              {selectablePatients.length > 0 && !isCollapsed && (
+                <label className="block px-2 pt-1 text-[10px] text-slate-400">
+                  Active patient
+                  <select
+                    aria-label="Quick Select Active Patient"
+                    value={currentPatient.id}
+                    onChange={(e) => {
+                      const p = allPatients.find((pat) => pat.id === e.target.value);
+                      if (p) onSelectPatient(p);
+                    }}
+                    className="mt-1 w-full bg-white border border-slate-200 text-slate-800 text-xs rounded px-2 py-1"
+                  >
+                    {!currentPatient.id && <option value="">No patient selected</option>}
+                    {selectablePatients.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
+            </div>
+          </details>
+        )}
       </div>
 
       <div className="p-3 border-t border-slate-100 bg-white space-y-2.5 shrink-0">
@@ -263,63 +316,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
         )}
 
         {!isCollapsed ? (
-          <div className="rounded-xl p-2.5 border border-slate-200 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1">
-                <User className="w-3 h-3 text-slate-400" />
-                Patient
-              </span>
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => setIsQuickAddOpen(true)}
-                  className="text-[10px] font-semibold text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded flex items-center gap-0.5"
-                  title="Quick Add Patient (Name & Phone)"
-                >
-                  <UserPlus className="w-3 h-3" />
-                  Quick Add
-                </button>
-                <span className="text-[9px] font-mono text-slate-500 bg-slate-100 px-1.5 py-0.2 rounded">
-                  {currentPatient.uhid || "—"}
-                </span>
-              </div>
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-full bg-blue-600 text-white text-xs font-semibold flex items-center justify-center shrink-0">
+              {(user?.name || "U").charAt(0)}
             </div>
-
-            {selectablePatients.length > 0 ? (
-              <select
-                aria-label="Quick Select Active Patient"
-                value={currentPatient.id}
-                onChange={(e) => {
-                  const p = allPatients.find((pat) => pat.id === e.target.value);
-                  if (p) onSelectPatient(p);
-                }}
-                className="w-full bg-white border border-slate-200 text-slate-800 text-xs rounded px-2 py-1 focus:ring-1 focus:ring-blue-500 focus:outline-none cursor-pointer"
-              >
-                {!currentPatient.id && (
-                  <option value="" className="bg-slate-900 text-white">
-                    No patient selected
-                  </option>
-                )}
-                {selectablePatients.map((p) => (
-                  <option key={p.id} value={p.id} className="bg-slate-900 text-white">
-                    {p.name} ({p.age}y/{p.gender.charAt(0)})
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <p className="text-[11px] text-slate-400">No patients registered yet.</p>
-            )}
-
-            <div className="flex items-center gap-2 pt-1">
-              <div className="w-8 h-8 rounded-full bg-blue-600 text-white text-xs font-semibold flex items-center justify-center shrink-0">
-                {(user?.name || "U").charAt(0)}
-              </div>
-              <div className="min-w-0">
-                <p className="text-xs font-semibold text-slate-900 truncate">{user?.name || "Signed in"}</p>
-                <p className="text-[10px] text-slate-500 truncate">{user?.email}</p>
-                <span className="inline-block mt-0.5 text-[10px] rounded-full bg-slate-100 text-slate-600 px-1.5 py-0.5 capitalize">{userRole.replaceAll("_", " ")}</span>
-              </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-semibold text-slate-900 truncate">{user?.name || "Signed in"}</p>
+              <p className="text-[10px] text-slate-500 truncate">{user?.email}</p>
             </div>
+            <button
+              type="button"
+              onClick={() => setIsQuickAddOpen(true)}
+              className="text-blue-700 p-1 rounded hover:bg-blue-50"
+              title="Quick Add Patient"
+            >
+              <UserPlus className="w-4 h-4" />
+            </button>
           </div>
         ) : (
           <div className="flex flex-col items-center space-y-2">

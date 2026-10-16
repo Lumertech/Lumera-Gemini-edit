@@ -43,6 +43,7 @@ export const APP_VIEWS = [
   "consult-practice",
   "physio-session",
   "dental-chart",
+  "gp-home",
   "patients",
 ] as const;
 

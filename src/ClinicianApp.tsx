@@ -51,7 +51,7 @@ import {
   clinicianRxSpecialty,
   workflowForUser,
 } from './lib/specialtyWorkflow';
-import { canStartConsultRole } from './lib/clinicNav';
+import { canStartConsultRole, istClock } from './lib/clinicNav';
 import { SpecialtyPackBoard } from './components/specialty-packs/SpecialtyPackBoard';
 import { PatientsWorkspace } from './components/PatientsWorkspace';
 import {
@@ -621,7 +621,8 @@ export default function ClinicianApp() {
     currentView === 'therapy-session' ||
     currentView === 'consult-practice' ||
     currentView === 'physio-session' ||
-    currentView === 'dental-chart';
+    currentView === 'dental-chart' ||
+    currentView === 'gp-home';
 
   useEffect(() => {
     if (!isPolyclinicPractice(user) && (currentView === 'polyclinic' || currentView === 'team')) {
@@ -731,7 +732,7 @@ export default function ClinicianApp() {
             </div>
           ) : (
             <>
-              {(currentView === 'welcome' || currentView === 'wellness' || currentView === 'therapy-session' || currentView === 'consult-practice' || currentView === 'physio-session' || currentView === 'dental-chart') && (
+              {(currentView === 'welcome' || currentView === 'gp-home' || currentView === 'wellness' || currentView === 'therapy-session' || currentView === 'consult-practice' || currentView === 'physio-session' || currentView === 'dental-chart') && (
                 <div className="space-y-4">
                   <PracticeHome
                     user={user}
@@ -754,7 +755,7 @@ export default function ClinicianApp() {
                         patientId: patient.id,
                         doctorId: currentDoctor.id,
                         date: clinicCalendarDate(),
-                        timeSlot: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
+                        timeSlot: istClock(),
                         type: 'New Consultation',
                         source: 'Walk-in',
                         status: 'Waiting',
@@ -773,7 +774,7 @@ export default function ClinicianApp() {
                     onStartConsult={canStartConsultRole(user.role, allowedViews) ? handleStartConsultation : undefined}
                     onCreateBill={handleOpenBillForAppointment}
                   />
-                  {currentView !== 'welcome' && (
+                  {currentView !== 'welcome' && currentView !== 'gp-home' && (
                     <details className="bg-white rounded-2xl border border-slate-200">
                       <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-slate-800">Session tools</summary>
                       <div className="px-2 pb-4">
@@ -862,7 +863,7 @@ export default function ClinicianApp() {
                     patientId: pat.id,
                     doctorId: doc.id,
                     date: clinicCalendarDate(),
-                    timeSlot: new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' }),
+                    timeSlot: istClock(),
                     type: (type as Appointment['type']) || 'New Consultation',
                     source: 'Walk-in',
                   });
@@ -1003,7 +1004,7 @@ export default function ClinicianApp() {
                     patientId: newPat.id,
                     doctorId: doc.id,
                     date: clinicCalendarDate(),
-                    timeSlot: new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' }),
+                    timeSlot: istClock(),
                     type: 'New Consultation',
                     source: 'Walk-in',
                   });
@@ -1144,11 +1145,7 @@ export default function ClinicianApp() {
           </div>
         </div>
         <div className="flex items-center gap-4 text-slate-400">
-          <div className="hidden sm:block">ICD-10 · ABDM-aligned (NHA sandbox)</div>
-          <div className="text-purple-400 font-medium flex items-center gap-1">
-            <span className="w-2 h-2 rounded-full bg-purple-400 animate-pulse"></span>
-            Pulse AI (Gemini 3.8 Flash)
-          </div>
+          <div className="hidden sm:block">ABHA linking (ABDM sandbox testing; not yet live)</div>
         </div>
       </footer>
 

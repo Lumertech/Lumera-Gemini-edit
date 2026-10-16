@@ -13,6 +13,8 @@ import type { SpecialtyWorkflowPack } from "../lib/specialtyWorkflow";
 import type { NavView } from "./Navbar";
 import {
   formatHomeInr,
+  formatVisitTime,
+  pickNextVisit,
   greetingClinicName,
   greetingLine,
   homeMetrics,
@@ -54,12 +56,12 @@ function Kpi({
   tone: string;
 }) {
   return (
-    <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm px-4 py-4 min-w-0">
-      <div className="flex items-start justify-between gap-3">
-        <p className="text-[11px] font-semibold tracking-wide text-slate-500 uppercase">{label}</p>
-        <span className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${tone}`}>{icon}</span>
+    <div className="bg-white rounded-xl border border-slate-200/80 shadow-sm px-3 py-2.5 min-w-0">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[10px] font-semibold tracking-wide text-slate-500 uppercase truncate">{label}</p>
+        <span className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${tone}`}>{icon}</span>
       </div>
-      <p className="mt-3 text-2xl font-semibold text-slate-900 tabular-nums">{value}</p>
+      <p className="mt-1 text-lg font-semibold text-slate-900 tabular-nums truncate">{value}</p>
     </div>
   );
 }
@@ -79,7 +81,7 @@ function Action({ label, onClick, testId }: { label: string; onClick: () => void
       type="button"
       data-testid={testId}
       onClick={onClick}
-      className="inline-flex items-center rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700"
+      className="inline-flex items-center rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700"
     >
       {label}
     </button>
@@ -112,12 +114,16 @@ export const PracticeHome: React.FC<PracticeHomeProps> = ({
     consultationFee: row.consultationFee,
     isPaid: row.isPaid,
     type: row.type,
+    source: row.source,
+    createdAt: row.createdAt,
   }));
   const metrics = homeMetrics(visits);
   const nudge = homeNudge(metrics, patients.length);
   const todayRows = appointments.filter((row) => row.date === metrics.today && row.status !== "Cancelled" && row.status !== "No-Show");
-  const next = todayRows.find((row) => row.status === "Waiting" || row.status === "Triage / Vitals") || todayRows[0];
+  const next = pickNextVisit(appointments, metrics.today);
   const [whatsAppConnected, setWhatsAppConnected] = useState(false);
+  const [branches, setBranches] = useState<Array<{ id: string; name?: string; address?: string }>>([]);
+  const showBranches = user.role === "CLINIC_ADMIN" || user.role === "polyclinic_admin";
   const checks = setupChecklist({
     hasLogo,
     hasHoursAndFees,
@@ -142,58 +148,69 @@ export const PracticeHome: React.FC<PracticeHomeProps> = ({
     };
   }, [user.tenantId]);
 
+  useEffect(() => {
+    if (!showBranches) return;
+    let cancelled = false;
+    void apiFetch<{ branches?: Array<{ id: string; name?: string; address?: string }> }>("/api/branches")
+      .then((data) => {
+        if (!cancelled) setBranches(data.branches || []);
+      })
+      .catch(() => {
+        if (!cancelled) setBranches([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [showBranches, user.tenantId]);
+
+  const timeLabel = next ? formatVisitTime(next) : "";
+  const bucketLine = `${metrics.waiting} waiting · ${metrics.withDoctor} with doctor · ${metrics.done} done`;
+
   const specialtyTiles = (() => {
     if (pack.kind === "physio") {
       return (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <Tile title="Today's sessions">
-            <p>{metrics.todayAppointments} booked · {metrics.waiting + metrics.ready} checked in · {metrics.done} done</p>
-            {next ? (
-              <p className="text-slate-800">{next.patientName} · {next.timeSlot}</p>
-            ) : (
-              <p>No session booked.</p>
-            )}
-          </Tile>
-          <Tile title="Packages running low">
-            <p>Session packages are not tracked yet.</p>
-          </Tile>
-          <Tile title="Exercise logs">
-            <p>Home exercise logs are not tracked yet.</p>
-          </Tile>
-          <Tile title="Outcome retests">
-            <p>ODI, NDI, LEFS and PSFS are not tracked yet.</p>
-          </Tile>
-          <Tile title="Collections today">
-            <p>Collected {formatHomeInr(metrics.todayCollected)}</p>
-            <p>Pending {formatHomeInr(metrics.todayPending)}</p>
-          </Tile>
+        <div className="space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Tile title="Today's sessions">
+              <p>{metrics.todayAppointments} booked · {bucketLine}</p>
+              {next ? <p className="text-slate-800">{next.patientName} · {timeLabel}</p> : <p>No session booked.</p>}
+            </Tile>
+            <Tile title="Collections today">
+              <p>Collected {formatHomeInr(metrics.todayCollected)}</p>
+              <p>Pending {formatHomeInr(metrics.todayPending)}</p>
+            </Tile>
+          </div>
+          <section className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-4" data-testid="physio-setup-empty">
+            <h3 className="text-sm font-semibold text-slate-900">Session packages</h3>
+            <p className="mt-1 text-sm text-slate-600">Packages, home exercise logs, and outcome retests are not set up.</p>
+            <button type="button" className="mt-3 text-sm font-semibold text-blue-700" onClick={() => onOpen("settings")}>
+              Set up session packages
+            </button>
+          </section>
         </div>
       );
     }
     if (pack.kind === "dental") {
       return (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <Tile title="Chair schedule">
-            {todayRows.length === 0 ? <p>No chair booked today.</p> : todayRows.slice(0, 4).map((row) => (
-              <p key={row.id}>{row.timeSlot} · {row.patientName}</p>
-            ))}
-          </Tile>
-          <Tile title="Treatment plans">
-            <p>Quoted and accepted plans are not tracked yet.</p>
-          </Tile>
-          <Tile title="Multi-visit work">
-            <p>{todayRows.filter((row) => /rct|crown/i.test(row.type)).length} matching visits today.</p>
-          </Tile>
-          <Tile title="Lab work">
-            <p>Crowns and aligners due back are not tracked yet.</p>
-          </Tile>
-          <Tile title="Recall">
-            <p>Six-month recall is not tracked yet.</p>
-          </Tile>
-          <Tile title="Balances">
-            <p>Collected {formatHomeInr(metrics.todayCollected)}</p>
-            <p>Outstanding today {formatHomeInr(metrics.todayPending)}</p>
-          </Tile>
+        <div className="space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Tile title="Chair schedule">
+              {todayRows.length === 0 ? <p>No chair booked today.</p> : todayRows.slice(0, 4).map((row) => (
+                <p key={row.id}>{formatVisitTime(row)} · {row.patientName}</p>
+              ))}
+            </Tile>
+            <Tile title="Balances">
+              <p>Collected {formatHomeInr(metrics.todayCollected)}</p>
+              <p>Outstanding today {formatHomeInr(metrics.todayPending)}</p>
+            </Tile>
+          </div>
+          <section className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-4" data-testid="dental-setup-empty">
+            <h3 className="text-sm font-semibold text-slate-900">Treatment plans</h3>
+            <p className="mt-1 text-sm text-slate-600">Quoted plans, lab work, and six-month recall are not set up.</p>
+            <button type="button" className="mt-3 text-sm font-semibold text-blue-700" onClick={() => onOpen("settings")}>
+              Set up the chair list
+            </button>
+          </section>
         </div>
       );
     }
@@ -201,7 +218,7 @@ export const PracticeHome: React.FC<PracticeHomeProps> = ({
       return (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Tile title="OPD queue">
-            <p>Waiting {metrics.waiting} · With doctor {metrics.withDoctor} · Done {metrics.done}</p>
+            <p>{bucketLine}</p>
           </Tile>
           <Tile title="Follow-ups today">
             <p>{metrics.followUps === 0 ? "None due today." : `${metrics.followUps} follow-up${metrics.followUps === 1 ? "" : "s"} on the book.`}</p>
@@ -228,19 +245,56 @@ export const PracticeHome: React.FC<PracticeHomeProps> = ({
     );
   })();
 
+  const nextAction = (() => {
+    if (canConsult && next && onStartConsult && next.status !== "Completed") {
+      return <Action label="Start consult" testId="home-start-consult" onClick={() => onStartConsult(next)} />;
+    }
+    if (canConsult && next && !next.isPaid && onCreateBill && next.status === "Completed") {
+      return <Action label="Create bill" testId="home-create-bill" onClick={() => onCreateBill(next)} />;
+    }
+    if (!canConsult && next && onCheckIn && next.status !== "In Consultation" && next.status !== "Completed") {
+      return <Action label="Check in" testId="home-check-in" onClick={() => onCheckIn(next)} />;
+    }
+    if (!canConsult && next && next.status === "Waiting" && onReady) {
+      return <Action label="Ready for doctor" testId="home-ready" onClick={() => onReady(next)} />;
+    }
+    if (!next && !canConsult && onCheckInWalkIn && patients.length > 0) {
+      return <Action label="Check in" testId="home-check-in" onClick={onCheckInWalkIn} />;
+    }
+    return null;
+  })();
+
   return (
-    <div className="max-w-6xl mx-auto space-y-5 min-w-0" data-testid="practice-home">
-      <div className="rounded-2xl bg-gradient-to-r from-blue-600 to-teal-500 text-white px-5 py-6 sm:px-8 sm:py-7 shadow-sm">
-        <h2 className="text-xl sm:text-2xl font-semibold tracking-tight">{greetingLine(user.name)}</h2>
-        <p className="mt-1 text-sm text-white/90">Here's what's happening at {clinic} today.</p>
+    <div className="max-w-6xl mx-auto space-y-3 sm:space-y-5 min-w-0" data-testid="practice-home">
+      <div className="rounded-2xl bg-gradient-to-r from-blue-600 to-teal-500 text-white px-4 py-3.5 sm:px-8 sm:py-7 shadow-sm">
+        <h2 className="text-lg sm:text-2xl font-semibold tracking-tight">{greetingLine(user.name)}</h2>
+        <p className="mt-0.5 text-sm text-white/90">Here's what's happening at {clinic} today.</p>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-        <Kpi label="Total appointments" value={String(metrics.totalAppointments)} tone="bg-blue-50 text-blue-600" icon={<Calendar className="w-4 h-4" />} />
-        <Kpi label="Total clients" value={String(patients.length)} tone="bg-violet-50 text-violet-600" icon={<Users className="w-4 h-4" />} />
-        <Kpi label="Today's appointments" value={String(metrics.todayAppointments)} tone="bg-orange-50 text-orange-600" icon={<Clock className="w-4 h-4" />} />
-        <Kpi label="Total revenue" value={formatHomeInr(metrics.totalRevenue)} tone="bg-emerald-50 text-emerald-600" icon={<IndianRupee className="w-4 h-4" />} />
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
+        <Kpi label="Total appointments" value={String(metrics.totalAppointments)} tone="bg-blue-50 text-blue-600" icon={<Calendar className="w-3.5 h-3.5" />} />
+        <Kpi label="Patients" value={String(patients.length)} tone="bg-violet-50 text-violet-600" icon={<Users className="w-3.5 h-3.5" />} />
+        <Kpi label="Today's appointments" value={String(metrics.todayAppointments)} tone="bg-orange-50 text-orange-600" icon={<Clock className="w-3.5 h-3.5" />} />
+        <Kpi label="Total revenue" value={formatHomeInr(metrics.totalRevenue)} tone="bg-emerald-50 text-emerald-600" icon={<IndianRupee className="w-3.5 h-3.5" />} />
       </div>
+
+      <section
+        className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-3 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+        data-testid="home-next-action"
+      >
+        <div className="min-w-0">
+          <p className="text-xs text-slate-500">Next visit</p>
+          {next ? (
+            <>
+              <p className="font-semibold text-slate-900 truncate">{next.patientName}</p>
+              <p className="text-xs text-slate-500">{timeLabel}</p>
+            </>
+          ) : (
+            <p className="font-semibold text-slate-900">No visit is waiting.</p>
+          )}
+        </div>
+        {nextAction}
+      </section>
 
       <section className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-4 sm:p-5 space-y-4">
         <div className="flex items-center gap-2">
@@ -248,21 +302,21 @@ export const PracticeHome: React.FC<PracticeHomeProps> = ({
           <h3 className="text-sm font-semibold text-slate-900">OPD performance</h3>
           <span className="text-[11px] font-medium rounded-full bg-slate-100 text-slate-600 px-2 py-0.5">{pack.specialty || pack.practiceLine}</span>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-          <div className="rounded-xl bg-slate-50 px-4 py-3">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
+          <div className="rounded-xl bg-slate-50 px-3 py-2.5">
             <p className="text-xs text-slate-500">Today</p>
             <p className="text-xl font-semibold text-slate-900">{metrics.todayAppointments}</p>
-            <p className="text-xs text-slate-500">{metrics.done} done · {metrics.waiting} scheduled</p>
+            <p className="text-xs text-slate-500" data-testid="home-today-breakdown">{bucketLine}</p>
           </div>
-          <div className="rounded-xl bg-emerald-50/70 px-4 py-3">
+          <div className="rounded-xl bg-emerald-50/70 px-3 py-2.5">
             <p className="text-xs text-slate-500">This week</p>
             <p className="text-xl font-semibold text-slate-900">{metrics.weekAppointments}</p>
           </div>
-          <div className="rounded-xl bg-violet-50/70 px-4 py-3">
+          <div className="rounded-xl bg-violet-50/70 px-3 py-2.5">
             <p className="text-xs text-slate-500">This month</p>
             <p className="text-xl font-semibold text-slate-900">{metrics.monthAppointments}</p>
           </div>
-          <div className="rounded-xl bg-emerald-50 px-4 py-3">
+          <div className="rounded-xl bg-emerald-50 px-3 py-2.5">
             <p className="text-xs text-slate-500">Monthly revenue</p>
             <p className="text-xl font-semibold text-slate-900">{formatHomeInr(metrics.monthRevenue)}</p>
           </div>
@@ -272,45 +326,22 @@ export const PracticeHome: React.FC<PracticeHomeProps> = ({
         </div>
       </section>
 
-      {next && (
-        <section className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-xs text-slate-500">Next visit</p>
-            <p className="font-semibold text-slate-900 truncate">{next.patientName}</p>
-            <p className="text-xs text-slate-500">{next.timeSlot} · {next.status === "Triage / Vitals" ? "Ready for doctor" : next.status}</p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {next.status !== "Waiting" && next.status !== "Triage / Vitals" && next.status !== "In Consultation" && onCheckIn && (
-              <Action label="Check in" testId="home-check-in" onClick={() => onCheckIn(next)} />
-            )}
-            {next.status === "Waiting" && onReady && (
-              <Action label="Ready for doctor" testId="home-ready" onClick={() => onReady(next)} />
-            )}
-            {canConsult && next.status === "Triage / Vitals" && onStartConsult && (
-              <Action label="Start consult" testId="home-start-consult" onClick={() => onStartConsult(next)} />
-            )}
-            {!next.isPaid && onCreateBill && (next.status === "In Consultation" || next.status === "Completed") && (
-              <Action label="Create bill" testId="home-create-bill" onClick={() => onCreateBill(next)} />
-            )}
-          </div>
-        </section>
-      )}
-
-      {!next && onCheckInWalkIn && patients.length > 0 && (
-        <div>
-          <Action label={`Check in ${patients[0].name}`} testId="home-check-in" onClick={onCheckInWalkIn} />
-        </div>
-      )}
-
-      <div className="flex flex-wrap gap-2">
-        <button type="button" className="text-xs font-semibold text-blue-700 px-2 py-1.5" onClick={() => onOpen("appointments")}>Appointments</button>
-        <button type="button" className="text-xs font-semibold text-blue-700 px-2 py-1.5" onClick={() => onOpen("queue")}>OPD</button>
-        <button type="button" className="text-xs font-semibold text-blue-700 px-2 py-1.5" onClick={() => onOpen("billing")}>Billing</button>
-      </div>
-
       {specialtyTiles}
 
-      <p className="text-xs text-slate-400">Signed in as {doctor.name}</p>
+      {showBranches && (
+        <section className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-4" data-testid="home-branches">
+          <h3 className="text-sm font-semibold text-slate-900">Branches</h3>
+          {branches.length === 0 ? (
+            <p className="mt-1 text-sm text-slate-600">No branches are saved for this clinic.</p>
+          ) : (
+            <ul className="mt-2 space-y-1 text-sm text-slate-700">
+              {branches.map((branch) => (
+                <li key={branch.id}>{branch.name || "Unnamed branch"}{branch.address ? ` · ${branch.address}` : ""}</li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
 
       {showSetup && (
         <section className="bg-white rounded-2xl border border-slate-200/80 shadow-sm" data-testid="setup-checklist">
@@ -347,6 +378,8 @@ export const PracticeHome: React.FC<PracticeHomeProps> = ({
           )}
         </section>
       )}
+
+      <p className="text-xs text-slate-400">Signed in as {doctor.name}</p>
     </div>
   );
 };

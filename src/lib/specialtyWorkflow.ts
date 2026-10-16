@@ -17,7 +17,8 @@ export type WorkflowView =
   | "therapy-session"
   | "consult-practice"
   | "physio-session"
-  | "dental-chart";
+  | "dental-chart"
+  | "gp-home";
 
 export type NoteKind =
   | "medical-rx"
@@ -107,7 +108,7 @@ function medicalPack(specialty: PolyclinicSpecialty, extra: IntakeField[] = []):
     kind: "medical",
     specialty,
     practiceLine: "Doctors & Clinics",
-    homeView: "welcome",
+    homeView: "gp-home",
     chartLabel: `${specialty} consult & Rx`,
     queueLabel: `${specialty} OPD queue`,
     receptionLabel: `${specialty} intake`,
@@ -548,6 +549,7 @@ export function allowedViewsForWorkflow<T extends string>(base: T[], pack: Speci
   if (pack.kind === "consultant") extra.add("consult-practice");
   if (pack.kind === "physio") extra.add("physio-session");
   if (pack.kind === "dental") extra.add("dental-chart");
+  if (pack.kind === "medical") extra.add("gp-home");
   if (!pack.showMedicalRx) {
     extra.delete("rx");
     extra.delete("smart-rx");

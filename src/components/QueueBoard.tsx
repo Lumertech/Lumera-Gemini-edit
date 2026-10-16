@@ -32,6 +32,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { Appointment, Vitals, Patient, Doctor, isAbhaLinked } from '../types';
+import { istClock } from '../lib/clinicNav';
 import { appointmentsForClinicDay, clinicCalendarDate, formatClinicDayLabel } from '../lib/clinicDay';
 
 interface QueueBoardProps {
@@ -200,7 +201,7 @@ export const QueueBoard: React.FC<QueueBoardProps> = ({
       heightCm: height,
       bmi: bmiCalc,
       bloodSugarRandom: bloodSugar,
-      recordedAt: new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: '2-digit', minute: '2-digit' }),
+      recordedAt: istClock(),
       recordedBy: 'OPD Nurse',
     };
 
@@ -225,7 +226,7 @@ export const QueueBoard: React.FC<QueueBoardProps> = ({
       doctorName: doc.name,
       specialty: doc.specialty,
       date: activeQueueDate,
-      timeSlot: new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: '2-digit', minute: '2-digit' }),
+      timeSlot: istClock(),
       type: consultType,
       status: 'Triage / Vitals',
       source: 'Walk-in',

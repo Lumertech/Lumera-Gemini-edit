@@ -111,13 +111,13 @@ describe("specialty workflow packs", () => {
 
     const gp = fakeUser("doctor@lumera.me", "gp");
     gp.practiceType = "individual";
-    assert.equal(clinicianHomeView(gp), "welcome");
+    assert.equal(clinicianHomeView(gp), "gp-home");
     assert.equal(workflowForUser(gp).kind, "medical");
-    assert.equal(workflowForUser(gp).homeView, "welcome");
+    assert.equal(workflowForUser(gp).homeView, "gp-home");
 
     const clinicAdmin = fakeUser("clinic.admin@lumera.me", "gp", "CLINIC_ADMIN");
     clinicAdmin.practiceType = "polyclinic";
-    assert.equal(clinicianHomeView(clinicAdmin), "welcome");
+    assert.equal(clinicianHomeView(clinicAdmin), "gp-home");
 
     const physioAdmin = fakeUser("physio.admin@example.test", "physio", "CLINIC_ADMIN");
     physioAdmin.practiceType = "individual";

@@ -634,6 +634,7 @@ export function mapAppointment(row: { [key: string]: unknown }) {
     consultationFee: Number(row.consultation_fee || 0),
     isPaid: Boolean(row.is_paid),
     vitals: row.vitals ? parseJsonColumn(row.vitals, null) : null,
+    createdAt: String(row.created_at || ""),
   };
 }
 
