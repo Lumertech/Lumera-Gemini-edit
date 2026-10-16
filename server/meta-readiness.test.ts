@@ -12,7 +12,7 @@ import {
 import { facebookOAuthConfigured, resolveFederatedIdentity, signFacebookOAuthState, verifyFacebookOAuthState } from "./facebook-oauth.ts";
 import { resolveGraphCredentials } from "./graph-whatsapp.ts";
 import { isUnsetOrPlaceholder } from "./runtime.ts";
-import { verifyJwtToken } from "./auth.ts";
+import { signJwtToken, verifyJwtToken } from "./auth.ts";
 import { createApiRouter } from "./api.ts";
 import { getDb, initDatabase } from "./db.ts";
 import { jsonRequest, startTestServer } from "./test-http.ts";
@@ -339,22 +339,54 @@ describe("Facebook OAuth session mint (JWT parity)", () => {
 });
 
 describe("Production-gated simulate routes", () => {
-  it("POST /api/meta/simulate-embedded-signup is 403 when NODE_ENV=production", async () => {
+  it("POST /api/meta/simulate-embedded-signup is 401 anonymous and 403 for a clinic admin in production", async () => {
     const prev = process.env.NODE_ENV;
+    const prevJwt = process.env.JWT_SECRET;
     process.env.NODE_ENV = "production";
-    const server = await startTestServer((app) => {
-      app.use("/api/meta", createMetaRouter());
-    });
+    if (!process.env.JWT_SECRET) process.env.JWT_SECRET = "test-jwt-secret-meta-sim-prod";
+    let server: Awaited<ReturnType<typeof startTestServer>> | undefined;
     try {
-      const res = await jsonRequest(server.port, "POST", "/api/meta/simulate-embedded-signup", {
+      try {
+        getDb();
+      } catch {
+        initDatabase();
+      }
+      server = await startTestServer((app) => {
+        app.use("/api/meta", createMetaRouter());
+      });
+      const anon = await jsonRequest(server.port, "POST", "/api/meta/simulate-embedded-signup", {
         tenantId: "tenant-lumera-main",
       });
-      assert.equal(res.status, 403);
-      const json = res.json as { error?: string };
-      assert.match(json.error || "", /disabled in production/i);
+      assert.equal(anon.status, 401);
+      assert.equal((anon.json as { error?: string }).error, "Authentication required");
+
+      const clinic = getDb()
+        .prepare("SELECT id, tenant_id, email, role, name FROM users WHERE email = ?")
+        .get("clinic.admin@lumera.me") as
+        | { id: string; tenant_id: string; email: string; role: string; name: string }
+        | undefined;
+      assert.ok(clinic?.id);
+      const token = signJwtToken({
+        userId: clinic.id,
+        tenantId: String(clinic.tenant_id || ""),
+        email: clinic.email,
+        role: clinic.role,
+        name: clinic.name,
+      });
+      const authed = await jsonRequest(
+        server.port,
+        "POST",
+        "/api/meta/simulate-embedded-signup",
+        { tenantId: clinic.tenant_id },
+        { Authorization: `Bearer ${token}` }
+      );
+      assert.equal(authed.status, 403);
+      assert.match(String((authed.json as { error?: string }).error || ""), /disabled in production/i);
     } finally {
       process.env.NODE_ENV = prev;
-      await server.close();
+      if (prevJwt === undefined) delete process.env.JWT_SECRET;
+      else process.env.JWT_SECRET = prevJwt;
+      await server?.close();
     }
   });
 

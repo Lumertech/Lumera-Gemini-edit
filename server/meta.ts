@@ -216,6 +216,48 @@ export function requireMetaCatalog(req: Request, res: Response, next: NextFuncti
   next();
 }
 
+const metaCatalogGuards = [requireAuth, requireMetaCatalog] as const;
+
+function claimStrings(value: unknown): string[] {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed ? [trimmed] : [];
+  }
+  if (Array.isArray(value)) return value.flatMap((item) => claimStrings(item));
+  return [];
+}
+
+/**
+ * WABA and template mutations authorise one clinic from the session.
+ * A body, query, or X-Tenant-Id claim for another clinic is rejected.
+ * super_admin is not exempt here: cross-tenant WABA writes stay on the
+ * whatsapp_numbers admin and deprecated alias path (platformAdminActor).
+ * These handlers have no separate audit trail, so a foreign tenantId is denied.
+ */
+export function sessionMetaTenant(req: Request, res: Response): string | null {
+  const sessionTenant = String(req.user?.tenantId || "").trim();
+  const body =
+    req.body && typeof req.body === "object" && !Array.isArray(req.body)
+      ? (req.body as Record<string, unknown>)
+      : {};
+  const claims = [
+    ...claimStrings(body.tenantId),
+    ...claimStrings(body.tenant_id),
+    ...claimStrings(req.query?.tenantId),
+    ...claimStrings(req.query?.tenant_id),
+    ...claimStrings(req.headers["x-tenant-id"]),
+  ];
+  if (claims.some((claim) => claim !== sessionTenant)) {
+    res.status(403).json({ error: "Forbidden" });
+    return null;
+  }
+  if (!sessionTenant) {
+    res.status(403).json({ error: "No clinic tenant is linked to this account." });
+    return null;
+  }
+  return sessionTenant;
+}
+
 export function createMetaRouter(): Router {
   const router = Router();
 
@@ -472,11 +514,13 @@ export function createMetaRouter(): Router {
   });
 
   // POST /api/meta/waba-connect - Connect or update a clinic's WABA
-  router.post("/waba-connect", (req: Request, res: Response) => {
+  router.post("/waba-connect", ...metaCatalogGuards, (req: Request, res: Response) => {
     try {
-      const { tenantId, wabaId, phoneNumberId, metaAccessToken, metaWabaName } = req.body;
-      if (!tenantId || !wabaId || !phoneNumberId) {
-        return res.status(400).json({ error: "Tenant ID, WABA ID, and Phone Number ID are required" });
+      const tenantId = sessionMetaTenant(req, res);
+      if (!tenantId) return;
+      const { wabaId, phoneNumberId, metaAccessToken, metaWabaName } = req.body || {};
+      if (!wabaId || !phoneNumberId) {
+        return res.status(400).json({ error: "WABA ID and Phone Number ID are required" });
       }
 
       const db = getDb();
@@ -532,10 +576,10 @@ export function createMetaRouter(): Router {
   });
 
   // POST /api/meta/waba-disconnect - Disconnect WABA
-  router.post("/waba-disconnect", (req: Request, res: Response) => {
+  router.post("/waba-disconnect", ...metaCatalogGuards, (req: Request, res: Response) => {
     try {
-      const { tenantId } = req.body;
-      if (!tenantId) return res.status(400).json({ error: "Tenant ID is required" });
+      const tenantId = sessionMetaTenant(req, res);
+      if (!tenantId) return;
 
       const db = getDb();
       const now = new Date().toISOString();
@@ -558,15 +602,15 @@ export function createMetaRouter(): Router {
   });
 
   // POST /api/meta/simulate-embedded-signup — SANDBOX / DEV-ONLY, disabled in production
-  router.post("/simulate-embedded-signup", rejectProductionSimulator, (req: Request, res: Response) => {
+  router.post("/simulate-embedded-signup", ...metaCatalogGuards, rejectProductionSimulator, (req: Request, res: Response) => {
     try {
-      const { tenantId, clinicName } = req.body;
+      const targetTenantId = sessionMetaTenant(req, res);
+      if (!targetTenantId) return;
+      const { clinicName } = req.body || {};
       const db = getDb();
       const now = new Date().toISOString();
       const randomWaba = `waba_${Date.now().toString().slice(-9)}${Math.floor(1000 + Math.random() * 9000)}`;
       const randomPhoneId = `phone_${Date.now().toString().slice(-8)}${Math.floor(100 + Math.random() * 900)}`;
-
-      const targetTenantId = tenantId || "tenant-lumera-main";
       db.prepare(`
         UPDATE tenants
         SET waba_id = ?,
@@ -603,14 +647,15 @@ export function createMetaRouter(): Router {
   });
 
   // POST /api/meta/send-test — dual-path Cloud send in non-prod; disabled in production
-  router.post("/send-test", rejectProductionSimulator, async (req: Request, res: Response) => {
+  router.post("/send-test", ...metaCatalogGuards, rejectProductionSimulator, async (req: Request, res: Response) => {
     try {
-      const { recipientPhone, messageText, templateName, tenantId: bodyTenantId } = req.body;
+      const tenantId = sessionMetaTenant(req, res);
+      if (!tenantId) return;
+      const { recipientPhone, messageText, templateName } = req.body || {};
       if (!recipientPhone) return res.status(400).json({ error: "Recipient phone number is required" });
 
       const db = getDb();
       const now = new Date().toISOString();
-      const tenantId = String(req.user?.tenantId || bodyTenantId || "").trim();
       const content = messageText || `SANDBOX / DEV-ONLY test notification.\nTemplate: ${templateName || "appointment_reminder_v1"}\nTimestamp: ${now}`;
 
       const sent = await dispatchWhatsAppCloudMessage({
@@ -674,16 +719,19 @@ export function createMetaRouter(): Router {
   // 4. META WHATSAPP TEMPLATES MANAGEMENT
   // ----------------------------------------------------
 
-  // GET /api/meta/templates - List all templates
-  router.get("/templates", (_req: Request, res: Response) => {
+  // GET /api/meta/templates - List templates for the session clinic only
+  router.get("/templates", ...metaCatalogGuards, (req: Request, res: Response) => {
     try {
+      const tenantId = sessionMetaTenant(req, res);
+      if (!tenantId) return;
       const db = getDb();
       const rows = db.prepare(`
         SELECT t.*, ten.name as tenant_name
         FROM meta_templates t
         LEFT JOIN tenants ten ON t.tenant_id = ten.id
+        WHERE t.tenant_id = ?
         ORDER BY t.created_at DESC
-      `).all() as any[];
+      `).all(tenantId) as any[];
 
       const templates = rows.map((r) => ({
         id: r.id,
@@ -709,18 +757,19 @@ export function createMetaRouter(): Router {
   });
 
   // POST /api/meta/templates - Create new template
-  router.post("/templates", (req: Request, res: Response) => {
+  router.post("/templates", ...metaCatalogGuards, (req: Request, res: Response) => {
     try {
-      const { tenantId, name, category, language, components } = req.body;
+      const targetTenantId = sessionMetaTenant(req, res);
+      if (!targetTenantId) return;
+      const { name, category, language, components } = req.body || {};
       if (!name || !category || !language) {
         return res.status(400).json({ error: "Template name, category, and language are required" });
       }
 
       const db = getDb();
       const now = new Date().toISOString();
-      const sanitizedName = name.toLowerCase().replace(/[^a-z0-9_]/g, "_");
+      const sanitizedName = String(name).toLowerCase().replace(/[^a-z0-9_]/g, "_");
       const id = `tpl-${Date.now()}`;
-      const targetTenantId = tenantId || "tenant-lumera-main";
       const tenant = db.prepare("SELECT waba_id FROM tenants WHERE id = ?").get(targetTenantId) as any;
       const wabaId = tenant?.waba_id || "waba_398249018247019";
 
@@ -762,11 +811,16 @@ export function createMetaRouter(): Router {
   });
 
   // POST /api/meta/templates/:id/approve — SANDBOX force-approve, disabled in production
-  router.post("/templates/:id/approve", rejectProductionSimulator, (req: Request, res: Response) => {
+  router.post("/templates/:id/approve", ...metaCatalogGuards, rejectProductionSimulator, (req: Request, res: Response) => {
     try {
+      const tenantId = sessionMetaTenant(req, res);
+      if (!tenantId) return;
       const db = getDb();
       const now = new Date().toISOString();
-      db.prepare("UPDATE meta_templates SET status = 'APPROVED', updated_at = ? WHERE id = ?").run(now, req.params.id);
+      const updated = db
+        .prepare("UPDATE meta_templates SET status = 'APPROVED', updated_at = ? WHERE id = ? AND tenant_id = ?")
+        .run(now, req.params.id, tenantId);
+      if (!Number(updated.changes)) return res.status(404).json({ error: "Template not found" });
       return res.json({
         success: true,
         sandbox: true,
@@ -780,10 +834,13 @@ export function createMetaRouter(): Router {
   });
 
   // DELETE /api/meta/templates/:id - Delete template
-  router.delete("/templates/:id", (req: Request, res: Response) => {
+  router.delete("/templates/:id", ...metaCatalogGuards, (req: Request, res: Response) => {
     try {
+      const tenantId = sessionMetaTenant(req, res);
+      if (!tenantId) return;
       const db = getDb();
-      db.prepare("DELETE FROM meta_templates WHERE id = ?").run(req.params.id);
+      const updated = db.prepare("DELETE FROM meta_templates WHERE id = ? AND tenant_id = ?").run(req.params.id, tenantId);
+      if (!Number(updated.changes)) return res.status(404).json({ error: "Template not found" });
       return res.json({ success: true, message: "Template deleted successfully from Meta Cloud." });
     } catch (err: unknown) {
       console.error("[Delete Template Error]", err);

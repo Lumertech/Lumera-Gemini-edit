@@ -1,6 +1,7 @@
 import type { Router, Request, Response } from "express";
 import { getDb } from "./db.ts";
 import { isPlatformAdminRole, requireAuth } from "./auth.ts";
+import { requireMetaCatalog } from "./meta.ts";
 import {
   clinicActor,
   disconnectWhatsAppNumber,
@@ -39,9 +40,11 @@ function handleAliasError(res: Response, err: unknown, fallback: string) {
  * Deprecated aliases for POST /api/meta/waba-connect|disconnect.
  * Registered on the WhatsApp-numbers router (mounted at /api before createApiRouter)
  * so they write through whatsapp_numbers instead of the old tenants-column handler.
+ * Clinic admins are limited to the session tenant. Platform admin may still name
+ * a tenant: this is the existing platformAdminActor path (connected_via master_admin).
  */
 export function attachDeprecatedMetaWabaAliases(router: Router) {
-  router.post("/meta/waba-connect", requireAuth, (req, res) => {
+  router.post("/meta/waba-connect", requireAuth, requireMetaCatalog, (req, res) => {
     try {
       bootSchema();
       const requestedTenantId = String(req.body?.tenantId || "").trim();
@@ -78,7 +81,7 @@ export function attachDeprecatedMetaWabaAliases(router: Router) {
     }
   });
 
-  router.post("/meta/waba-disconnect", requireAuth, (req, res) => {
+  router.post("/meta/waba-disconnect", requireAuth, requireMetaCatalog, (req, res) => {
     try {
       bootSchema();
       const requestedTenantId = String(req.body?.tenantId || "").trim();
