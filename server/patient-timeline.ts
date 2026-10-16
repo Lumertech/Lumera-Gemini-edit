@@ -1,7 +1,7 @@
 import { getDb, mapAppointment, mapInvoice, mapPrescription } from "./db.ts";
 import { isReceptionRole } from "./patient-access.ts";
 import { consentMethodLabel } from "../src/lib/healthDocumentNotice.ts";
-import { formatInr } from "../src/lib/money.ts";
+import { formatINR } from "../src/lib/currency.ts";
 
 export type PatientTimelineType = "visit" | "prescription" | "invoice" | "upload" | "consent" | "whatsapp" | "vitals";
 
@@ -140,7 +140,7 @@ export function buildPatientTimeline(tenantId: string, patientId: string, role: 
       type: "invoice",
       at,
       title: invoice.invoiceNumber || "Invoice",
-      summary: [invoice.paymentStatus, formatInr(Number(invoice.totalAmount || 0)), invoice.date].filter(Boolean).join(" · "),
+      summary: [invoice.paymentStatus, formatINR(Number(invoice.totalAmount || 0)), invoice.date].filter(Boolean).join(" · "),
       linkView: "billing",
     });
   }

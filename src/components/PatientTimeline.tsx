@@ -26,7 +26,12 @@ const FILTERS: Array<{ id: string; label: string }> = [
 function formatWhen(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value || "Undated";
-  return date.toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+  return date.toLocaleString("en-IN", {
+    timeZone: "Asia/Kolkata",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
 }
 
 export const PatientTimeline: React.FC<{

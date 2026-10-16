@@ -228,7 +228,7 @@ function isClinicAdmin(role: string | undefined): boolean {
 
 function isDocumentStaff(req: Request, res: Response): boolean {
   if (!DOCUMENT_STAFF.has(String(req.user?.role || ""))) {
-    res.status(403).json({ error: "Insufficient permissions" });
+    res.status(403).json({ error: "Insufficient permissions", code: "ROLE_DENIED" });
     return false;
   }
   return true;

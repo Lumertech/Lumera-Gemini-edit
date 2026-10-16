@@ -657,31 +657,59 @@ describe("patient document API", () => {
     );
     assert.equal(created.status, 201, String(created.json.error || ""));
     const patientId = String((created.json.patient as { id: string }).id);
-    for (const email of [platform.email, portal.email]) {
-      const deniedToken = await login(email);
-      const headers = { Authorization: `Bearer ${deniedToken}` };
-      const paths = [
-        "/api/patients",
-        `/api/patients/${patientId}`,
-        `/api/patients/${patientId}/chart`,
-        `/api/patients/${patientId}/documents`,
-        `/api/patients/${patientId}/document-consent`,
-      ];
-      for (const route of paths) {
-        const res = await jsonRequest(port, "GET", route, undefined, headers);
-        assert.equal(res.status, 403, route);
-        assert.equal(JSON.stringify(res.json).includes("Role Gate Nair"), false, route);
-      }
-      const consent = await jsonRequest(
-        port,
-        "POST",
-        `/api/patients/${patientId}/document-consent`,
-        { language: "en", method: "in_app", attested: true },
-        headers
-      );
-      assert.equal(consent.status, 403);
-      assert.equal(JSON.stringify(consent.json).includes("Role Gate Nair"), false);
+    const adminToken = await login(platform.email);
+    const adminHeaders = { Authorization: `Bearer ${adminToken}` };
+    const staffOnly = [
+      "/api/patients",
+      `/api/patients/${patientId}`,
+      `/api/patients/${patientId}/chart`,
+      `/api/patients/${patientId}/documents`,
+      `/api/patients/${patientId}/document-consent`,
+    ];
+    for (const route of staffOnly) {
+      const res = await jsonRequest(port, "GET", route, undefined, adminHeaders);
+      assert.equal(res.status, 403, route);
+      assert.equal(res.json.code, "ROLE_DENIED", route);
+      assert.equal(JSON.stringify(res.json).includes("Role Gate Nair"), false, route);
     }
+    const adminConsent = await jsonRequest(
+      port,
+      "POST",
+      `/api/patients/${patientId}/document-consent`,
+      { language: "en", method: "in_app", attested: true },
+      adminHeaders
+    );
+    assert.equal(adminConsent.status, 403);
+    assert.equal(adminConsent.json.code, "ROLE_DENIED");
+    assert.equal(JSON.stringify(adminConsent.json).includes("Role Gate Nair"), false);
+
+    const portalToken = await login(portal.email);
+    const portalHeaders = { Authorization: `Bearer ${portalToken}` };
+    for (const route of [
+      "/api/patients",
+      `/api/patients/${patientId}/documents`,
+      `/api/patients/${patientId}/document-consent`,
+    ]) {
+      const res = await jsonRequest(port, "GET", route, undefined, portalHeaders);
+      assert.equal(res.status, 403, route);
+      assert.equal(res.json.code, "ROLE_DENIED", route);
+      assert.equal(JSON.stringify(res.json).includes("Role Gate Nair"), false, route);
+    }
+    for (const route of [`/api/patients/${patientId}`, `/api/patients/${patientId}/chart`]) {
+      const res = await jsonRequest(port, "GET", route, undefined, portalHeaders);
+      assert.equal(res.status, 404, route);
+      assert.equal(JSON.stringify(res.json).includes("Role Gate Nair"), false, route);
+    }
+    const portalConsent = await jsonRequest(
+      port,
+      "POST",
+      `/api/patients/${patientId}/document-consent`,
+      { language: "en", method: "in_app", attested: true },
+      portalHeaders
+    );
+    assert.equal(portalConsent.status, 403);
+    assert.equal(portalConsent.json.code, "ROLE_DENIED");
+    assert.equal(JSON.stringify(portalConsent.json).includes("Role Gate Nair"), false);
   });
 
   it("rejects an 11 MB file at the upload limit", async () => {
