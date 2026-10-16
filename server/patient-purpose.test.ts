@@ -564,4 +564,39 @@ describe("patient role sees only their own clinical and billing records", () => 
       assert.equal(res.json.code, "ROLE_DENIED", path);
     }
   });
+
+  it("returns 403 when an unlinked patient opens or pays an orphan invoice", async () => {
+    const suffix = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    const tenantId = `tenant-orphan-${suffix}`;
+    const now = new Date().toISOString();
+    const passwordHash = hashPassword("Lumera@2026");
+    const email = `unlinked.${suffix}@purpose-test.example`;
+    getDb()
+      .prepare(
+        `INSERT INTO tenants (
+           id, name, specialty, country, timezone, phone, trial_ends_at,
+           ai_scribe_minutes_limit, ai_scribe_minutes_used, active_status, hfr_id, created_at, updated_at
+         ) VALUES (?, 'Orphan Clinic', 'General Medicine', 'India', 'IST (UTC+5:30)', '+91 20 4000 1000', ?, 500, 0, 1, '', ?, ?)`
+      )
+      .run(tenantId, now, now, now);
+    getDb()
+      .prepare(
+        `INSERT INTO users (
+           id, tenant_id, email, password_hash, name, role, status, phone, last_login, created_at, patient_id
+         ) VALUES (?, ?, ?, ?, 'Unlinked', 'patient', 'active', '+91 97000 00001', ?, ?, '')`
+      )
+      .run(`user-unlinked-${suffix}`, tenantId, email, passwordHash, now, now);
+    getDb()
+      .prepare(
+        `INSERT INTO invoices (
+           id, tenant_id, invoice_number, patient_id, patient_name, date, total_amount, status, created_at
+         ) VALUES (?, ?, ?, '', 'Walk-in', '2026-10-16', 500, 'Unpaid', ?)`
+      )
+      .run(`inv-orphan-${suffix}`, tenantId, `INV-ORPHAN-${suffix}`, now);
+    const auth = { Authorization: `Bearer ${await login(email)}` };
+    const opened = await jsonRequest(port, "GET", `/api/invoices/inv-orphan-${suffix}`, undefined, auth);
+    assert.equal(opened.status, 403);
+    const pay = await jsonRequest(port, "POST", `/api/invoices/inv-orphan-${suffix}/pay-order`, {}, auth);
+    assert.equal(pay.status, 403);
+  });
 });

@@ -54,7 +54,24 @@ function invoiceForClient(req: Request, row: Record<string, unknown>) {
 }
 
 function patientOwnsInvoice(req: Request, row: Record<string, unknown>): boolean {
-  return String(row.patient_id || "") === (sessionPatientId(req) || "");
+  const ownId = String(sessionPatientId(req) || "").trim();
+  const invoicePatientId = String(row.patient_id || "").trim();
+  if (!ownId || !invoicePatientId) return false;
+  return invoicePatientId === ownId;
+}
+
+function rejectPatientInvoice(
+  req: Request,
+  res: Response,
+  row: Record<string, unknown> | undefined
+): row is undefined {
+  if (row && (!requestIsPatient(req) || patientOwnsInvoice(req, row))) return false;
+  if (row && requestIsPatient(req) && !String(sessionPatientId(req) || "").trim()) {
+    res.status(403).json({ error: "Insufficient permissions" });
+    return true;
+  }
+  res.status(404).json({ error: "Invoice not found" });
+  return true;
 }
 
 function requireTenant(req: Request, res: Response): string | null {
@@ -544,9 +561,7 @@ export function createBillingRouter(): Router {
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     const row = getTenantInvoice(tenantId, req.params.id);
-    if (!row || (requestIsPatient(req) && !patientOwnsInvoice(req, row))) {
-      return res.status(404).json({ error: "Invoice not found" });
-    }
+    if (rejectPatientInvoice(req, res, row)) return;
     res.json(invoiceForClient(req, row));
   });
 
@@ -576,9 +591,7 @@ export function createBillingRouter(): Router {
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     const row = getTenantInvoice(tenantId, req.params.id);
-    if (!row || (requestIsPatient(req) && !patientOwnsInvoice(req, row))) {
-      return res.status(404).json({ error: "Invoice not found" });
-    }
+    if (rejectPatientInvoice(req, res, row)) return;
     if (String(row.status) === "Paid") {
       return res.json({ ...invoiceForClient(req, row), sandbox: false, alreadyPaid: true });
     }
