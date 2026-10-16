@@ -12,7 +12,9 @@ import {
   ArrowRight,
 } from "lucide-react";
 import { SoapNote, Patient, Doctor } from "../types";
+import { useAuth } from "../auth/AuthContext";
 import { apiFetch } from "../api/http";
+import { ABHA_LINKING_STATUS, showsAbhaSandboxStatus } from "../lib/clinicNav";
 import { isSpeechRecognitionAvailable, micErrorMessage, startAmbientMic } from "../lib/ambientMic";
 import { extractClinicalTokens, type PulseExtractSource } from "../lib/pulseClinicalTokens";
 import { resolveRxModule } from "../lib/specialtyWorkflow";
@@ -127,6 +129,8 @@ export const CompactAmbientScribe: React.FC<CompactAmbientScribeProps> = ({
   onStatusChange,
   practiceSpecialty,
 }) => {
+  const { user } = useAuth();
+  const showAbhaStatus = showsAbhaSandboxStatus(user?.role);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [finalTranscript, setFinalTranscript] = useState("");
@@ -199,7 +203,7 @@ export const CompactAmbientScribe: React.FC<CompactAmbientScribeProps> = ({
         },
         onAudioRecorded: async (audioBlob) => {
           if (audioBlob.size > 100) {
-            // If SpeechRecognition wasn't available or transcript is brief, send audio to Gemini 3.5 transcribe API
+            // If SpeechRecognition wasn't available or the transcript is brief, send audio to the transcribe API
             if (!isSpeechRecognitionAvailable() || finalTranscript.trim().length < 15) {
               setMicError(null);
               try {
@@ -227,7 +231,7 @@ export const CompactAmbientScribe: React.FC<CompactAmbientScribeProps> = ({
       setIsRecording(true);
       if (!isSpeechRecognitionAvailable()) {
         setMicError(
-          "Mobile recording active (Gemini 3.5 Transcribe engine will process audio upon stop)."
+          "Recording on this device. The transcript is filled in when you stop."
         );
       }
     } catch (err) {
@@ -331,9 +335,14 @@ export const CompactAmbientScribe: React.FC<CompactAmbientScribeProps> = ({
                 <span className="font-mono text-[10px] font-bold text-rose-600">{formatTimer(recordingSeconds)}</span>
               )}
             </div>
-            <p className="text-[11px] text-slate-500 truncate">
+            <p className="text-[11px] text-slate-500">
               Live mic + transcript for this {resolveRxModule(practiceSpecialty || currentDoctor.specialty)} consult. Pulse AI fills the Rx — review highlighted fields before signing.
             </p>
+            {showAbhaStatus ? (
+              <p className="text-[10px] leading-snug text-slate-400" data-testid="abha-linking-status">
+                {ABHA_LINKING_STATUS}
+              </p>
+            ) : null}
           </div>
         </div>
         {onClose && (
@@ -486,7 +495,7 @@ export const CompactAmbientScribe: React.FC<CompactAmbientScribeProps> = ({
               </div>
               <span className="text-[10px] font-mono text-emerald-700 bg-white px-1.5 py-0.5 rounded border border-emerald-200">
                 ICD {generatedSoap.assessment.icd10Code}
-                {extractSource ? ` · ${extractSource}` : ""}
+                {extractSource && !/gemini|gpt|claude|flash/i.test(extractSource) ? ` · ${extractSource}` : ""}
               </span>
             </div>
             <p className="text-xs text-slate-800">

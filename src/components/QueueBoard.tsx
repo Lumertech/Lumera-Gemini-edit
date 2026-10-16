@@ -11,7 +11,7 @@ import {
   ArrowRight, 
   HeartPulse, 
   FileText, 
-  Receipt, 
+  ReceiptIndianRupee, 
   Stethoscope, 
   Search,
   X,
@@ -518,7 +518,7 @@ export const QueueBoard: React.FC<QueueBoardProps> = ({
                         title="Create bill"
                         aria-label="Create bill"
                       >
-                        <Receipt className="w-3.5 h-3.5 text-emerald-600" />
+                        <ReceiptIndianRupee className="w-3.5 h-3.5 text-emerald-600" />
                         <span>Create bill</span>
                       </button>
 
@@ -654,7 +654,7 @@ export const QueueBoard: React.FC<QueueBoardProps> = ({
                     className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-100 text-slate-600 transition-colors"
                     title="Billing"
                   >
-                    <Receipt className="w-3.5 h-3.5 text-emerald-600" />
+                    <ReceiptIndianRupee className="w-3.5 h-3.5 text-emerald-600" />
                   </button>
                 </div>
               </div>
@@ -948,7 +948,7 @@ export const QueueBoard: React.FC<QueueBoardProps> = ({
                     }}
                     className="py-2 px-3 rounded-lg border border-slate-300 hover:bg-white text-slate-700 font-semibold text-xs flex items-center justify-center gap-1.5 transition-colors"
                   >
-                    <Receipt className="w-3.5 h-3.5 text-emerald-600" />
+                    <ReceiptIndianRupee className="w-3.5 h-3.5 text-emerald-600" />
                     <span>Open Bill</span>
                   </button>
 

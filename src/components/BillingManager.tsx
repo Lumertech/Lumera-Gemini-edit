@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  Receipt,
+  ReceiptIndianRupee,
   Printer,
   CheckCircle,
   CheckCircle2,
@@ -637,7 +637,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
             onClick={() => setShowCollectPaymentModal(true)}
             className="flex items-center space-x-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs transition-all cursor-pointer"
           >
-            <Receipt className="w-3.5 h-3.5" />
+            <ReceiptIndianRupee className="w-3.5 h-3.5" />
             <span>{paid ? 'Payment Collected (Receipt)' : 'Collect Payment'}</span>
           </button>
 
@@ -823,8 +823,9 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
                       {payLink}
                     </a>
                   )}
-                  <span className={`font-semibold text-[11px] block ${paid ? 'text-emerald-700' : 'text-amber-800'}`}>
-                    {paid ? 'Paid (verified server status)' : 'Unpaid until verified Razorpay webhook'}
+                  <span className={`font-semibold text-[11px] flex items-center gap-1 ${paid ? 'text-emerald-700' : 'text-amber-800'}`}>
+                    {paid ? <Check className="w-3 h-3 shrink-0" aria-hidden /> : null}
+                    <span>{paid ? 'Paid (verified server status)' : 'Unpaid until verified Razorpay webhook'}</span>
                   </span>
                 </div>
               </div>
@@ -1005,7 +1006,11 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
           <div className="bg-white rounded-2xl max-w-lg w-full p-6 space-y-5 shadow-2xl border border-slate-200">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div className="flex items-center space-x-2 text-slate-900">
-                <Receipt className="w-5 h-5 text-teal-600" />
+                {paid ? (
+                  <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                ) : (
+                  <ReceiptIndianRupee className="w-5 h-5 text-teal-600" />
+                )}
                 <div>
                   <h3 className="font-bold text-base">
                     {paid ? 'GST Payment Receipt & Confirmation' : 'Collect Consultation & Clinical Payment'}

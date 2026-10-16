@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { Calendar, FileText, Receipt, Sparkles } from "lucide-react";
+import { Calendar, FileText, ReceiptIndianRupee, Sparkles } from "lucide-react";
 import type { Appointment, Doctor, Patient } from "../../types";
 import type { SpecialtyWorkflowPack } from "../../lib/specialtyWorkflow";
 import type { NavView } from "../Navbar";
@@ -149,7 +149,7 @@ export const SpecialtyPackBoard: React.FC<Props> = ({
               <Calendar className="w-3.5 h-3.5" /> Schedule
             </button>
             <button type="button" className="text-xs font-semibold text-blue-700 flex items-center gap-1" onClick={() => onSelectView("billing")}>
-              <Receipt className="w-3.5 h-3.5" /> Invoice
+              <ReceiptIndianRupee className="w-3.5 h-3.5" /> Invoice
             </button>
             <button type="button" className="text-xs font-semibold text-blue-700 flex items-center gap-1" onClick={() => onSelectView("reception")}>
               <FileText className="w-3.5 h-3.5" /> Intake

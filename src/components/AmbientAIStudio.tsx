@@ -20,7 +20,9 @@ import {
   ShieldCheck
 } from 'lucide-react';
 import { SoapNote, Patient, Doctor, isAbhaLinked } from '../types';
+import { useAuth } from '../auth/AuthContext';
 import { apiFetch, apiFetchResponse } from '../api/http';
+import { ABHA_LINKING_STATUS, showsAbhaSandboxStatus } from '../lib/clinicNav';
 
 interface AmbientAIStudioProps {
   currentPatient: Patient;
@@ -118,6 +120,8 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
   onSelectPatient,
   allPatients,
 }) => {
+  const { user } = useAuth();
+  const showAbhaStatus = showsAbhaSandboxStatus(user?.role);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [transcript, setTranscript] = useState(SAMPLE_CONSULTATIONS[0].text);
@@ -180,7 +184,7 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
         recorder.start();
         setMediaRecorder(recorder);
         setIsRecording(true);
-        setTranscript('[Listening via microphone... Speak consultation. Gemini 3.5 Transcribe will process upon stop.]');
+        setTranscript('[Listening via microphone... Speak the consultation. The transcript is filled in when you stop.]');
       } catch (err) {
         console.warn('Microphone permission denied or unsupported:', err);
         setIsRecording(true);
@@ -261,6 +265,11 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
             <p className="text-xs text-slate-500 mt-0.5">
               Listens to natural doctor-patient conversation, auto-extracts ICD-10 diagnoses, clinical vitals, and structured prescriptions.
             </p>
+            {showAbhaStatus ? (
+              <p className="no-print text-[10px] leading-snug text-slate-400 mt-1" data-testid="abha-linking-status">
+                {ABHA_LINKING_STATUS}
+              </p>
+            ) : null}
           </div>
         </div>
 
@@ -409,7 +418,7 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
               {isTranscribing && (
                 <div className="flex items-center gap-2 p-2 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-800 animate-pulse">
                   <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-600" />
-                  <span>Transcribing audio with Gemini 3.5 Transcribe model...</span>
+                  <span>Transcribing the consult…</span>
                 </div>
               )}
               <textarea
@@ -509,11 +518,11 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
                     <span className="text-xs text-slate-500 font-mono">
                       ICD-10: <strong className="text-slate-800">{generatedSoap.assessment.icd10Code}</strong>
                     </span>
-                    {generationSource && (
+                    {generationSource && !/gemini|gpt|claude|flash/i.test(generationSource) ? (
                       <span className="text-[10px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">
                         {generationSource}
                       </span>
-                    )}
+                    ) : null}
                   </div>
                   <h2 className="text-base font-bold text-slate-900 mt-1">
                     {generatedSoap.assessment.primaryDiagnosis}
