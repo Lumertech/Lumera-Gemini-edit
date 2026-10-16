@@ -99,16 +99,22 @@ function tenantDoctorRow(tenantId: string, doctorId: string): { id?: string; nam
 function consultingDoctorForInvoice(
   tenantId: string,
   body: Record<string, unknown>,
-  appointmentId: string
+  appointmentId: string,
+  patientId: string
 ): { id: string; name: string } {
   if (appointmentId) {
     const apt = getDb()
-      .prepare("SELECT doctor_id, doctor_name FROM appointments WHERE id = ? AND tenant_id = ?")
-      .get(appointmentId, tenantId) as { doctor_id?: string; doctor_name?: string } | undefined;
-    const id = String(apt?.doctor_id || "").trim();
-    const roster = tenantDoctorRow(tenantId, id);
+      .prepare("SELECT patient_id, doctor_id FROM appointments WHERE id = ? AND tenant_id = ?")
+      .get(appointmentId, tenantId) as { patient_id?: string; doctor_id?: string } | undefined;
+    if (!apt) {
+      throw Object.assign(new Error("Appointment not found"), { status: 404 });
+    }
+    if (String(apt.patient_id || "") !== patientId) {
+      throw Object.assign(new Error("Appointment does not belong to this patient"), { status: 400 });
+    }
+    const roster = tenantDoctorRow(tenantId, String(apt.doctor_id || "").trim());
     if (roster?.id) return { id: String(roster.id), name: String(roster.name || "") };
-    return { id, name: String(apt?.doctor_name || "").trim() };
+    return { id: "", name: "" };
   }
   const id = String(body.consultingDoctorId || body.consulting_doctor_id || "").trim();
   const suppliedName = String(body.consultingDoctorName || body.consulting_doctor_name || "").trim();
@@ -466,7 +472,7 @@ function insertInvoice(tenantId: string, body: Record<string, unknown>, actor?: 
     }
   }
 
-  const consulting = consultingDoctorForInvoice(tenantId, body, appointmentId);
+  const consulting = consultingDoctorForInvoice(tenantId, body, appointmentId, patientId);
 
   const id = shortId("inv");
   const invoiceNumber = uniqueInvoiceNumber(tenantId, String(body.invoiceNumber || body.invoice_number || ""));

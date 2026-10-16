@@ -938,5 +938,62 @@ describe("Wave 2 Razorpay UPI collect", () => {
     assert.match(String(namedOnly.json.error), /Consulting doctor/);
     const leaked = db.prepare("SELECT id FROM invoices WHERE consulting_doctor_name = ?").get("Not On The Roster");
     assert.equal(leaked, undefined);
+
+    const noDoctorAptId = `apt-nodoctor-${suffix}`;
+    db.prepare(
+      `INSERT INTO appointments (
+         id, tenant_id, token_number, patient_id, patient_name, patient_phone, uhid,
+         doctor_id, doctor_name, specialty, date, time_slot, type, status, source,
+         consultation_fee, is_paid, created_at
+       ) VALUES (?, ?, 1, ?, ?, ?, ?, '', 'Free Text Only', 'General Medicine', '2026-10-16', '12:00', 'New Consultation', 'Waiting', 'Walk-in', 0, 0, ?)`
+    ).run(noDoctorAptId, tenantId, patient.id, patient.name, patient.phone, patient.uhid, now);
+    const blankDoctor = await jsonRequest(
+      port,
+      "POST",
+      "/api/invoices",
+      {
+        appointmentId: noDoctorAptId,
+        patientId: patient.id,
+        patientName: patient.name,
+        items: [{ id: "b-consult", description: "OPD", quantity: 1, unitPrice: 500, total: 500 }],
+        consultingDoctorId: ananyaDoctorId,
+        consultingDoctorName: "Free Text Only",
+      },
+      receptionAuth
+    );
+    assert.equal(blankDoctor.status, 201, String(blankDoctor.json.error || ""));
+    const blankInvoice = blankDoctor.json.invoice as { consultingDoctorId: string; consultingDoctorName: string };
+    assert.equal(blankInvoice.consultingDoctorId, "");
+    assert.equal(blankInvoice.consultingDoctorName, "");
+
+    const otherPatientRes = await jsonRequest(
+      port,
+      "POST",
+      "/api/patients",
+      { name: "Other Billing Patient", phone: `+91 98122 ${suffix.slice(-4)}`, age: 28, gender: "Male" },
+      receptionAuth
+    );
+    assert.equal(otherPatientRes.status, 201, String(otherPatientRes.json.error || ""));
+    const otherPatient = otherPatientRes.json.patient as { id: string; name: string };
+    const mismatchedPatient = await jsonRequest(
+      port,
+      "POST",
+      "/api/invoices",
+      {
+        appointmentId: appointment.id,
+        patientId: otherPatient.id,
+        patientName: otherPatient.name,
+        items: [{ id: "b-consult", description: "OPD", quantity: 1, unitPrice: 500, total: 500 }],
+        consultingDoctorId: ananyaDoctorId,
+        consultingDoctorName: "Dr. Ananya Sen",
+      },
+      receptionAuth
+    );
+    assert.equal(mismatchedPatient.status, 400);
+    assert.match(String(mismatchedPatient.json.error), /Appointment does not belong to this patient/);
+    const wrongBill = db
+      .prepare("SELECT id FROM invoices WHERE appointment_id = ? AND patient_id = ?")
+      .get(appointment.id, otherPatient.id);
+    assert.equal(wrongBill, undefined);
   });
 });

@@ -615,4 +615,66 @@ describe("prescription draft scoping and AI review gate", () => {
       .all(clinic.tenantId, neighbour.id) as Array<{ patient_id: string }>;
     assert.equal(neighbourAfter.length, 2);
   });
+
+  it("returns a fixed draft error and keeps the database message in the log", async () => {
+    const clinic = createClinicUser("draft-err");
+    const token = await login(clinic.email);
+    const auth = { Authorization: `Bearer ${token}` };
+    const patient = await createPatient(auth, "Error Patient", `+91 98540 ${clinic.tenantId.slice(-4)}`);
+    const marker = "no such table: prescription_drafts";
+    const logged: string[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => {
+      logged.push(args.map((part) => String(part)).join(" "));
+      original.apply(console, args);
+    };
+    const hide = () => getDb().exec("ALTER TABLE prescription_drafts RENAME TO prescription_drafts__hidden");
+    const restore = () => getDb().exec("ALTER TABLE prescription_drafts__hidden RENAME TO prescription_drafts");
+    try {
+      hide();
+      const saved = await jsonRequest(
+        port,
+        "POST",
+        "/api/prescriptions/draft",
+        { ...fullDraft(patient.id), diagnosis: "SHOULD-NOT-LEAK" },
+        auth
+      );
+      assert.equal(saved.status, 500);
+      assert.equal(saved.json.error, "draft_save_failed");
+      assert.equal(JSON.stringify(saved.json).includes(marker), false);
+      assert.equal(JSON.stringify(saved.json).includes("SQLITE"), false);
+      restore();
+
+      const seeded = await jsonRequest(
+        port,
+        "POST",
+        "/api/prescriptions/draft",
+        { ...fullDraft(patient.id), diagnosis: "BEFORE-CLEANUP" },
+        auth
+      );
+      assert.equal(seeded.status, 200, String(seeded.json.error || ""));
+      hide();
+      const signed = await jsonRequest(
+        port,
+        "POST",
+        "/api/prescriptions",
+        { patientId: patient.id, diagnosis: "Signed while cleanup fails", medicines: [] },
+        auth
+      );
+      assert.equal(signed.status, 201, String(signed.json.error || ""));
+      assert.equal(signed.json.draftCleanupError, "draft_cleanup_failed");
+      const signedBody = JSON.stringify(signed.json);
+      assert.equal(signedBody.includes(marker), false);
+      assert.equal(signedBody.includes("SQLITE"), false);
+      assert.equal(signedBody.includes("prescription_drafts"), false);
+    } finally {
+      console.error = original;
+      try {
+        restore();
+      } catch {
+        /* the draft table already has its real name */
+      }
+    }
+    assert.match(logged.join("\n"), /no such table: prescription_drafts/);
+  });
 });

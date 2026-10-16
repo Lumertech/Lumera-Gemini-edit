@@ -1540,7 +1540,7 @@ export function createClinicalRouter(): Router {
         }
       } catch (err: unknown) {
         reportCaughtError(err, "clinical.deleteDraftOnSign");
-        draftCleanupError = err instanceof Error ? err.message : "Failed to clear the prescription draft";
+        draftCleanupError = "draft_cleanup_failed";
       }
       res.status(201).json(
         withPatientTenant(
@@ -1624,8 +1624,14 @@ export function createClinicalRouter(): Router {
       }
       res.json({ success: true, updatedAt: now });
     } catch (err: unknown) {
+      const status = errorStatus(err);
+      if (status >= 500) {
+        reportCaughtError(err, "clinical.saveDraft");
+        res.status(500).json({ error: "draft_save_failed" });
+        return;
+      }
       const message = err instanceof Error ? err.message : "Failed to auto-save draft";
-      res.status(errorStatus(err)).json({ error: message });
+      res.status(status).json({ error: message });
     }
   });
 
