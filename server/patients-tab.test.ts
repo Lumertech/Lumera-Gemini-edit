@@ -394,4 +394,161 @@ describe("Patients tab API tenant isolation", () => {
     assert.equal(whatsappText.includes("Rx issued"), false);
     assert.equal(/diagnosis/i.test(whatsappText), false);
   });
+
+  it("returns 404 and no timeline when patient A requests patient B", async () => {
+    const clinic = createClinicUser("pt-cross", "doctor");
+    const token = await login(clinic.email);
+    const auth = { Authorization: `Bearer ${token}` };
+    const createdA = await jsonRequest(
+      port,
+      "POST",
+      "/api/patients",
+      { name: "Patient Cross A", phone: "+91 98111 44001", age: 30, gender: "Female" },
+      auth
+    );
+    const createdB = await jsonRequest(
+      port,
+      "POST",
+      "/api/patients",
+      { name: "Patient Cross B", phone: "+91 98111 44002", age: 31, gender: "Male" },
+      auth
+    );
+    assert.equal(createdA.status, 201, String(createdA.json.error || ""));
+    assert.equal(createdB.status, 201, String(createdB.json.error || ""));
+    const patientA = createdA.json.patient as { id: string; name: string; phone: string };
+    const patientB = createdB.json.patient as { id: string; name: string; phone: string };
+    const now = new Date().toISOString();
+    const suffix = patientB.id.slice(-6);
+    const emailA = `cross.a.${suffix}@patients-tab.example`;
+    getDb()
+      .prepare(
+        `INSERT INTO users (
+          id, tenant_id, email, password_hash, name, role, status, phone, clinic_name,
+          onboarding_completed, practice_type, specialty, last_login, created_at, patient_id
+        ) VALUES (?, ?, ?, ?, 'Patient Cross A', 'patient', 'active', ?, 'Clinic pt-cross', 1, 'individual', 'General Medicine', ?, ?, ?)`
+      )
+      .run(`user-cross-a-${suffix}`, clinic.tenantId, emailA, hashPassword("Lumera@2026"), patientA.phone, now, now, patientA.id);
+    getDb()
+      .prepare(
+        `INSERT INTO prescriptions (
+          id, tenant_id, rx_number, patient_id, patient_name, patient_phone, patient_uhid,
+          doctor_id, doctor_name, doctor_specialty, doctor_reg_number, date, diagnosis,
+          medicines, lab_tests, advice, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 'UHID-B', ?, 'Dr Cross', 'General Medicine', 'REG-CROSS', '2026-10-16', ?, '[]', '[]', '[]', ?)`
+      )
+      .run(
+        `rx-b-${suffix}`,
+        clinic.tenantId,
+        `RX-B-${suffix}`,
+        patientB.id,
+        patientB.name,
+        patientB.phone,
+        clinic.doctorId,
+        "OnlyOnPatientBChart",
+        now
+      );
+
+    const tokenA = await login(emailA);
+    const authA = { Authorization: `Bearer ${tokenA}` };
+    const own = await jsonRequest(port, "GET", `/api/patients/${patientA.id}/chart`, undefined, authA);
+    assert.equal(own.status, 200);
+    assert.equal((own.json.patient as { id?: string }).id, patientA.id);
+
+    const chart = await jsonRequest(port, "GET", `/api/patients/${patientB.id}/chart`, undefined, authA);
+    assert.equal(chart.status, 404);
+    assert.equal(chart.json.timeline, undefined);
+    assert.equal(JSON.stringify(chart.json).includes("OnlyOnPatientBChart"), false);
+    assert.equal(JSON.stringify(chart.json).includes(patientB.name), false);
+
+    const record = await jsonRequest(port, "GET", `/api/patients/${patientB.id}`, undefined, authA);
+    assert.equal(record.status, 404);
+    assert.equal(record.json.timeline, undefined);
+    assert.equal(JSON.stringify(record.json).includes("OnlyOnPatientBChart"), false);
+    assert.equal(JSON.stringify(record.json).includes(patientB.name), false);
+  });
+
+  it("keeps draft Rx and WhatsApp event details out of a patient's timeline", async () => {
+    const clinic = createClinicUser("pt-portal", "doctor");
+    const token = await login(clinic.email);
+    const auth = { Authorization: `Bearer ${token}` };
+    const created = await jsonRequest(
+      port,
+      "POST",
+      "/api/patients",
+      { name: "Portal Timeline Patient", phone: "+91 98111 44009", age: 28, gender: "Female" },
+      auth
+    );
+    assert.equal(created.status, 201, String(created.json.error || ""));
+    const patient = created.json.patient as { id: string; name: string; phone: string };
+    const signed = await jsonRequest(
+      port,
+      "POST",
+      "/api/prescriptions",
+      {
+        patientId: patient.id,
+        diagnosis: "Issued signed diagnosis",
+        medicines: [{ id: "m1", drugName: "Paracetamol", dosage: "500 mg", frequency: "1-0-1", durationDays: 3 }],
+      },
+      auth
+    );
+    assert.equal(signed.status, 201, String(signed.json.error || ""));
+    const now = new Date().toISOString();
+    const db = getDb();
+    db.prepare(
+      `INSERT INTO prescription_drafts (patient_id, tenant_id, doctor_id, draft_json, updated_at)
+       VALUES (?, ?, ?, ?, ?)`
+    ).run(
+      patient.id,
+      clinic.tenantId,
+      clinic.doctorId,
+      JSON.stringify({
+        diagnosis: "DraftOnlyDiagnosisSecret",
+        medicines: [{ drugName: "SecretDraftDrug" }],
+      }),
+      now
+    );
+    db.prepare(
+      `INSERT INTO whatsapp_outbound_events (
+        id, event_type, patient_phone, patient_name, status, details, action_payload, sent_at, tenant_id
+      ) VALUES (?, 'appointment_reminder', ?, ?, 'delivered', ?, ?, ?, ?)`
+    ).run(
+      `wa-portal-${patient.id}`,
+      patient.phone,
+      patient.name,
+      "OutboundPayloadSecretToken",
+      JSON.stringify({ template: "action-payload-secret-token" }),
+      now,
+      clinic.tenantId
+    );
+    const suffix = patient.id.slice(-6);
+    const email = `portal.tl.${suffix}@patients-tab.example`;
+    db.prepare(
+      `INSERT INTO users (
+        id, tenant_id, email, password_hash, name, role, status, phone, clinic_name,
+        onboarding_completed, practice_type, specialty, last_login, created_at, patient_id
+      ) VALUES (?, ?, ?, ?, 'Portal Timeline Patient', 'patient', 'active', ?, 'Clinic pt-portal', 1, 'individual', 'General Medicine', ?, ?, ?)`
+    ).run(`user-portal-${suffix}`, clinic.tenantId, email, hashPassword("Lumera@2026"), patient.phone, now, now, patient.id);
+
+    const portal = await jsonRequest(port, "GET", `/api/patients/${patient.id}/chart`, undefined, {
+      Authorization: `Bearer ${await login(email)}`,
+    });
+    assert.equal(portal.status, 200);
+    const timeline = (portal.json.timeline || []) as Array<{ type: string; title: string; summary: string }>;
+    const body = JSON.stringify(timeline);
+    assert.equal(timeline.some((item) => item.type === "prescription" && item.summary.includes("Issued signed diagnosis")), true);
+    assert.equal(body.includes("DraftOnlyDiagnosisSecret"), false);
+    assert.equal(body.includes("SecretDraftDrug"), false);
+    assert.equal(body.includes("OutboundPayloadSecretToken"), false);
+    assert.equal(body.includes("action-payload-secret-token"), false);
+    const sent = timeline.find((item) => item.title === "WhatsApp template sent");
+    assert.ok(sent);
+    assert.equal(sent?.summary, "");
+
+    const staff = await jsonRequest(port, "GET", `/api/patients/${patient.id}/chart`, undefined, auth);
+    assert.equal(staff.status, 200);
+    const staffBody = JSON.stringify(staff.json.timeline || []);
+    assert.equal(staffBody.includes("OutboundPayloadSecretToken"), true);
+    assert.equal(staffBody.includes("Issued signed diagnosis"), true);
+    assert.equal(staffBody.includes("DraftOnlyDiagnosisSecret"), false);
+  });
 });

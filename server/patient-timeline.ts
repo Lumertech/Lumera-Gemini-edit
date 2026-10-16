@@ -73,6 +73,7 @@ export function buildPatientTimeline(tenantId: string, patientId: string, role: 
   const db = getDb();
   const items: PatientTimelineItem[] = [];
   const reception = isReceptionRole(role);
+  const patientView = role === "patient";
 
   const visits = db
     .prepare(
@@ -103,8 +104,9 @@ export function buildPatientTimeline(tenantId: string, patientId: string, role: 
     }
   }
 
+  // Issued rows only. Autosaved drafts live in prescription_drafts and are never read here.
   const prescriptions = db
-    .prepare(`SELECT * FROM prescriptions WHERE tenant_id = ? AND patient_id = ?`)
+    .prepare(`SELECT * FROM prescriptions WHERE tenant_id = ? AND patient_id = ? AND TRIM(COALESCE(rx_number, '')) != ''`)
     .all(tenantId, patientId) as Record<string, unknown>[];
   for (const row of prescriptions) {
     const rx = mapPrescription(row);
@@ -184,12 +186,22 @@ export function buildPatientTimeline(tenantId: string, patientId: string, role: 
     }
     const templates = db
       .prepare(
-        `SELECT id, event_type, details, sent_at, patient_phone FROM whatsapp_outbound_events
+        `SELECT id, event_type, details, action_payload, sent_at, patient_phone FROM whatsapp_outbound_events
          WHERE tenant_id = ?`
       )
       .all(tenantId) as Record<string, unknown>[];
     for (const row of templates) {
       if (!samePatientPhone(patientPhone, asText(row.patient_phone))) continue;
+      if (patientView) {
+        items.push({
+          id: `whatsapp-out:${asText(row.id)}`,
+          type: "whatsapp",
+          at: asText(row.sent_at),
+          title: "WhatsApp template sent",
+          summary: "",
+        });
+        continue;
+      }
       const kind = asText(row.event_type).replace(/_/g, " ");
       items.push({
         id: `whatsapp-out:${asText(row.id)}`,
