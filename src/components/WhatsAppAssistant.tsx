@@ -500,7 +500,7 @@ export const WhatsAppAssistant: React.FC<WhatsAppAssistantProps> = ({
               <Layers className="w-3 h-3" /> SQLite EMR Sync (data/lumera.db)
             </span>
             <span className="px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-purple-50 text-purple-700 border border-purple-200 flex items-center gap-1">
-              <Sparkles className="w-3 h-3 text-purple-600" /> Gemini 2.5 Flash Multilingual NLU
+              <Sparkles className="w-3 h-3 text-purple-600" /> Pulse AI
             </span>
           </div>
 
@@ -771,7 +771,7 @@ export const WhatsAppAssistant: React.FC<WhatsAppAssistantProps> = ({
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-1.5 text-xs font-bold text-purple-300">
                       <Mic className="w-3.5 h-3.5 text-purple-400 animate-pulse" />
-                      Ambient Voice & Multilingual Note Simulator (Gemini Flash)
+                      Ambient Voice & Multilingual Note Simulator (Pulse AI)
                     </div>
                     <button
                       onClick={() => setIsRecordingAudio(false)}
@@ -807,7 +807,7 @@ export const WhatsAppAssistant: React.FC<WhatsAppAssistantProps> = ({
                   {voiceProcessing && (
                     <div className="mt-3 p-2 rounded bg-purple-950/60 border border-purple-800/80 text-purple-200 text-xs flex items-center gap-2">
                       <RefreshCw className="w-3.5 h-3.5 animate-spin text-purple-400" />
-                      Gemini processing audio waveform: Transcribing Devanagari script and generating English clinical summary...
+                      Pulse AI processing audio waveform: Transcribing Devanagari script and generating English clinical summary...
                     </div>
                   )}
                 </div>

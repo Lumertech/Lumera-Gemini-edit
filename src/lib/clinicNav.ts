@@ -412,6 +412,15 @@ export function setupProgress(checks: readonly SetupCheck[]): { done: number; to
   return { done, total: checks.length, complete: checks.length > 0 && done === checks.length };
 }
 
+/** Compliance wording for ABHA. Staff-only; never a patient, print, or WhatsApp banner. */
+export const ABHA_LINKING_STATUS = "ABHA linking (ABDM sandbox testing; not yet live)";
+
+const ABHA_STATUS_ROLES = new Set(["doctor", "CLINIC_ADMIN", "polyclinic_admin", "super_admin"]);
+
+export function showsAbhaSandboxStatus(role?: string | null): boolean {
+  return ABHA_STATUS_ROLES.has(String(role || ""));
+}
+
 export function showsSetupChecklist(user?: AppUser | null): boolean {
   if (!user) return false;
   return user.role === "CLINIC_ADMIN" || user.role === "polyclinic_admin" || user.role === "doctor";

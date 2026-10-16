@@ -23,7 +23,7 @@ export function attachGeminiClinicalRest(app: Express, getGenAI: () => GoogleGen
       const ai = getGenAI();
       if (ai) {
         try {
-          const systemInstruction = `You are Pulse AI, an advanced enterprise clinical decision support copilot powered by Google Gemini.
+          const systemInstruction = `You are Pulse AI, an advanced enterprise clinical decision support copilot.
   Provide evidence-based, concise, physician-to-physician clinical decision support for doctors, clinicians, and healthcare providers.
   Include:
   1. Direct answer with sound physiological and clinical rationale
@@ -68,7 +68,7 @@ export function attachGeminiClinicalRest(app: Express, getGenAI: () => GoogleGen
             },
           });
 
-          return res.json({ response: response.text, source: "Pulse AI (Google Gemini 3.8 Flash)" });
+          return res.json({ response: response.text, source: "Pulse AI" });
         } catch (err: any) {
           console.error("Pulse AI / Gemini Copilot API error:", err?.message);
         }

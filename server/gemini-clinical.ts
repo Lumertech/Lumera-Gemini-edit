@@ -63,7 +63,7 @@ export function mountGeminiClinicalRoutes(app: Express) {
           transcript,
           metadata: { source: "gemini-3.7-flash", endpoint: "generate-soap" },
         });
-        return res.json({ success: true, soap, source: "gemini-3.7-flash" });
+        return res.json({ success: true, soap, source: "Pulse AI" });
       }
 
       const ai = getGenAI();
@@ -83,7 +83,7 @@ export function mountGeminiClinicalRoutes(app: Express) {
             transcript,
             metadata: { source: "gemini-3.7-flash", endpoint: "generate-soap" },
           });
-          return res.json({ success: true, soap: parsed, source: "gemini-3.7-flash" });
+          return res.json({ success: true, soap: parsed, source: "Pulse AI" });
         } catch (geminiError: any) {
           console.error("Gemini SOAP generation error, using fallback clinical synthesis:", geminiError?.message);
         }
@@ -103,7 +103,7 @@ export function mountGeminiClinicalRoutes(app: Express) {
       const ai = getGenAI();
       if (ai) {
         try {
-          const systemInstruction = `You are Pulse AI, an advanced enterprise clinical decision support copilot powered by Google Gemini.\n${AI_RUPEE_OUTPUT_RULE}`;
+          const systemInstruction = `You are Pulse AI, an advanced enterprise clinical decision support copilot.\n${AI_RUPEE_OUTPUT_RULE}`;
           const contents: any[] = [];
           if (patientContext && Object.keys(patientContext).length > 0) {
             contents.push({ role: "user", parts: [{ text: `Current Patient Profile: ${JSON.stringify(patientContext)}` }] });
@@ -118,7 +118,7 @@ export function mountGeminiClinicalRoutes(app: Express) {
             contents,
             config: { systemInstruction, temperature: 0.2 },
           });
-          return res.json({ response: response.text, source: "Pulse AI (Google Gemini 3.8 Flash)" });
+          return res.json({ response: response.text, source: "Pulse AI" });
         } catch (err: any) {
           console.error("Pulse AI / Gemini Copilot API error:", err?.message);
         }

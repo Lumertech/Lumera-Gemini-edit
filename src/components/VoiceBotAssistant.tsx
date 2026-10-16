@@ -169,7 +169,7 @@ export const VoiceBotAssistant: React.FC<VoiceBotAssistantProps> = ({
             <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1.5">
               <PhoneCall className="w-3.5 h-3.5 text-emerald-600" /> WhatsApp & Inbound IVR Voice Bot
             </span>
-            <span className="text-xs text-slate-400 font-mono">Gemini Multilingual Audio Core</span>
+            <span className="text-xs text-slate-400 font-mono">Pulse AI</span>
           </div>
           <h1 className="text-lg font-bold text-slate-900 mt-1">Autonomous Indian Language Voice Receptionist</h1>
           <p className="text-xs text-slate-500 mt-0.5">

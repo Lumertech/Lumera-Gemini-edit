@@ -32,8 +32,7 @@ export const DEMO_LETTERHEAD: TenantLetterhead = {
   whatsappNumber: "+91 98000 12345",
   sealText: "Authorized Medical Seal & Digital Signature Verified",
   signatureUrl: "",
-  footerDisclaimer:
-    "This prescription is digitally verified under National Health Authority (NHA) & Telemedicine Practice Guidelines. Please report any adverse drug reactions immediately.",
+  footerDisclaimer: "Prescription issued under the Telemedicine Practice Guidelines, 2020.",
 };
 
 const EMPTY_LETTERHEAD: TenantLetterhead = {

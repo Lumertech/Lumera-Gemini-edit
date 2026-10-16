@@ -74,8 +74,8 @@ export const AdminOverview: React.FC = () => {
         <div className="text-xs font-bold mb-2 text-purple-700">Platform</div>
         <p className="text-sm">
           {data.geminiConfigured
-            ? "Gemini API is configured for clinician AI features."
-            : "Gemini API is not configured. Clinician AI will use local synthesis."}
+            ? "Pulse AI is configured for clinician AI features."
+            : "Pulse AI is not configured. Clinician AI will use local synthesis."}
         </p>
       </div>
       <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">

@@ -212,7 +212,7 @@ export function findIndiaOnlyViolations(source: string, file = "fixture.ts"): In
   const lucideRe = /import\s+(?:type\s+)?[\s\S]*?\sfrom\s*['"]lucide-react['"]/g;
   let lucide: RegExpExecArray | null;
   while ((lucide = lucideRe.exec(source))) {
-    if (/\b(?:Dollar\w*|HandCoins)\b/.test(lucide[0])) {
+    if (/\b(?:\w*Dollar\w*|HandCoins)\b/.test(lucide[0])) {
       violations.push({
         file,
         line: lineOf(source, lucide.index),
@@ -253,6 +253,134 @@ export function findIndiaOnlyViolations(source: string, file = "fixture.ts"): In
   }
 
   violations.push(...localeViolations(source, file));
+  violations.push(...jsxDollarViolations(source, file));
+  return violations;
+}
+
+function isSrcUiFile(file: string): boolean {
+  return /(^|\/)src\/.+\.(tsx|jsx)$/.test(file.replace(/\\/g, "/"));
+}
+
+/** Hide comments and string/template bodies so JSX text can be scanned in place. */
+function maskNonJsxText(source: string): string {
+  let out = "";
+  let i = 0;
+  const space = (ch: string) => (ch === "\n" ? "\n" : " ");
+  while (i < source.length) {
+    const ch = source[i];
+    const next = source[i + 1];
+    if (ch === "/" && next === "/") {
+      out += "  ";
+      i += 2;
+      while (i < source.length && source[i] !== "\n") {
+        out += " ";
+        i++;
+      }
+      continue;
+    }
+    if (ch === "/" && next === "*") {
+      out += "  ";
+      i += 2;
+      while (i < source.length && !(source[i] === "*" && source[i + 1] === "/")) {
+        out += space(source[i]);
+        i++;
+      }
+      if (i < source.length) {
+        out += "  ";
+        i += 2;
+      }
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      const quote = ch;
+      out += " ";
+      i++;
+      while (i < source.length && source[i] !== quote) {
+        if (source[i] === "\\") {
+          out += "  ";
+          i += 2;
+          continue;
+        }
+        out += space(source[i]);
+        i++;
+      }
+      out += " ";
+      i++;
+      continue;
+    }
+    if (ch === "`") {
+      out += " ";
+      i++;
+      while (i < source.length && source[i] !== "`") {
+        if (source[i] === "\\") {
+          out += "  ";
+          i += 2;
+          continue;
+        }
+        if (source[i] === "$" && source[i + 1] === "{") {
+          out += "  ";
+          i += 2;
+          let depth = 1;
+          while (i < source.length && depth > 0) {
+            if (source[i] === "{") depth++;
+            else if (source[i] === "}") depth--;
+            out += space(source[i]);
+            i++;
+          }
+          continue;
+        }
+        out += space(source[i]);
+        i++;
+      }
+      out += " ";
+      i++;
+      continue;
+    }
+    out += ch;
+    i++;
+  }
+  return out;
+}
+
+function dollarGlyph(content: string): string | null {
+  const spaced = content.match(/\$\s+\S+/);
+  if (spaced) return spaced[0].trim();
+  const digit = content.match(/\$\d+/);
+  return digit ? digit[0] : null;
+}
+
+/**
+ * src JSX only: a literal "$ " or "$<digit>" in text nodes or in
+ * label / title / aria-label / placeholder. Template ${...} is ignored.
+ */
+function jsxDollarViolations(source: string, file: string): IndiaOnlyViolation[] {
+  if (!isSrcUiFile(file)) return [];
+  const violations: IndiaOnlyViolation[] = [];
+  const seen = new Set<string>();
+  const push = (index: number, sample: string) => {
+    const key = `${lineOf(source, index)}:${sample}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    violations.push({
+      file,
+      line: lineOf(source, index),
+      message: `JSX shows ${sample}`,
+    });
+  };
+
+  for (const hit of stringLiterals(source)) {
+    if (!/(?:label|title|placeholder|aria-label)\s*=\s*(?:\{\s*)?$/.test(hit.before.trimEnd())) continue;
+    const sample = dollarGlyph(hit.content);
+    if (sample) push(hit.index, sample);
+  }
+
+  const masked = maskNonJsxText(source);
+  const textRe = />([^<>{}]*)</g;
+  let text: RegExpExecArray | null;
+  while ((text = textRe.exec(masked))) {
+    const sample = dollarGlyph(text[1]);
+    if (sample) push(text.index + 1, sample);
+  }
   return violations;
 }
 
@@ -301,6 +429,43 @@ describe("India-only currency and locale scan", () => {
       new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "numeric" });
     `;
     assert.deepEqual(findIndiaOnlyViolations(allowed), []);
+  });
+
+  it("flags CircleDollarSign imports and a dollar glyph in JSX text or string props", () => {
+    const icon = findIndiaOnlyViolations(
+      `import { CircleDollarSign } from "lucide-react";\n`,
+      "src/components/Pay.tsx"
+    );
+    assert.equal(icon.length, 1);
+    assert.match(icon[0].message, /Dollar/);
+
+    const text = findIndiaOnlyViolations(
+      `export function Pay(){ return <p>$ Paid (verified server status)</p>; }\n`,
+      "src/components/Pay.tsx"
+    );
+    assert.equal(text.length, 1);
+    assert.match(text[0].message, /\$ Paid/);
+
+    const props = findIndiaOnlyViolations(
+      `export function Pay(){ return <input aria-label="$ 20 due" placeholder="$5" title="ok" />; }\n`,
+      "src/components/Pay.tsx"
+    );
+    assert.ok(props.some((item) => item.message.includes("$ 20")));
+    assert.ok(props.some((item) => item.message.includes("$5")));
+  });
+
+  it("ignores template interpolation and non-UI dollar text", () => {
+    const serverNote = findIndiaOnlyViolations(
+      `const note = "$ Paid in a log";\nconst fee = \`₹\${amount}\`;\n`,
+      "server/notes.ts"
+    );
+    assert.deepEqual(serverNote, []);
+
+    const nonUiInComponent = findIndiaOnlyViolations(
+      `const note = "$ Paid internally";\nexport function Pay(){ return <span>{\`₹\${amount}\`}</span>; }\n`,
+      "src/components/Pay.tsx"
+    );
+    assert.deepEqual(nonUiInComponent, []);
   });
 
   it("scans src, server, and app/applet/src", () => {

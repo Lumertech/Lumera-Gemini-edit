@@ -50,9 +50,9 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
     {
       id: 'm1',
       sender: 'gemini',
-      text: `Hello Dr. ${currentDoctor?.name?.split(' ')[1] || 'Doctor'}. I am **Pulse AI**, an advanced enterprise clinical decision support copilot powered by Google Gemini.\n\nI provide real-time clinical decision support: cross-checking drug-drug interactions, pediatric/geriatric dosage adjustments, ICMR/ADA clinical guidelines, and patient-specific risk reviews.`,
+      text: `Hello Dr. ${currentDoctor?.name?.split(' ')[1] || 'Doctor'}. I am **Pulse AI**, an advanced enterprise clinical decision support copilot.\n\nI provide real-time clinical decision support: cross-checking drug-drug interactions, pediatric/geriatric dosage adjustments, ICMR/ADA clinical guidelines, and patient-specific risk reviews.`,
       timestamp: new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: '2-digit', minute: '2-digit' }),
-      source: 'Pulse AI (Gemini 3.8 Flash)',
+      source: 'Pulse AI',
     },
   ]);
   const [inputQuery, setInputQuery] = useState('');
@@ -99,7 +99,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
         sender: 'gemini',
         text: data.response || 'Clinical response generated.',
         timestamp: new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: '2-digit', minute: '2-digit' }),
-        source: data.source || 'Gemini 3.8 Flash',
+        source: data.source || 'Pulse AI',
       };
       setMessages((prev) => [...prev, geminiMsg]);
     } catch (err) {
@@ -134,11 +134,11 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
             <div className="flex items-center space-x-2">
               <h3 className="font-bold text-xs text-white">Pulse AI — Clinical Decision Support</h3>
               <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-gradient-to-r from-purple-500/20 to-indigo-500/20 text-purple-300 border border-purple-500/30">
-                Gemini 3.8 Flash
+                Pulse AI
               </span>
             </div>
             <p className="text-[10px] text-slate-400">
-              Evidence-based Clinical Decision Support powered by Google Gemini
+              Evidence-based clinical decision support
             </p>
           </div>
         </div>
@@ -206,7 +206,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
         {isLoading && (
           <div className="flex items-center space-x-2 text-xs text-purple-300 bg-slate-800/60 p-2.5 rounded-lg border border-slate-700 w-fit">
             <RefreshCw className="w-3.5 h-3.5 animate-spin text-purple-400" />
-            <span>Consulting Pulse AI & Google Gemini clinical knowledge base...</span>
+            <span>Consulting Pulse AI clinical knowledge base...</span>
           </div>
         )}
       </div>

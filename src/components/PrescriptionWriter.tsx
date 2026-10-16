@@ -31,7 +31,7 @@ import {
   Bone,
   Baby,
   Mic,
-  Receipt,
+  ReceiptIndianRupee,
   ArrowRight,
   Share2,
   Phone
@@ -1093,7 +1093,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
               className="px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center space-x-1.5 shadow-xs transition-colors cursor-pointer"
               title="Proceed to Billing & Collect Payment"
             >
-              <Receipt className="w-3.5 h-3.5" />
+              <ReceiptIndianRupee className="w-3.5 h-3.5" />
               <span>Create bill</span>
               <ArrowRight className="w-3 h-3" />
             </button>
@@ -2397,7 +2397,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
               className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center space-x-1.5 shadow-sm shadow-blue-200 transition-all cursor-pointer"
               title="Forward prescription to Billing & Cashier"
             >
-              <Receipt className="w-4 h-4" />
+              <ReceiptIndianRupee className="w-4 h-4" />
               <span>Collect Payment &amp; Bill</span>
               <ArrowRight className="w-3.5 h-3.5" />
             </button>
@@ -2529,7 +2529,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
                     }}
                     className="w-full sm:w-auto px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center justify-center space-x-1.5 shadow-sm shadow-blue-200 transition-all cursor-pointer"
                   >
-                    <Receipt className="w-3.5 h-3.5" />
+                    <ReceiptIndianRupee className="w-3.5 h-3.5" />
                     <span>Proceed to Billing</span>
                     <ArrowRight className="w-3 h-3" />
                   </button>
@@ -2591,7 +2591,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
             <div className="space-y-1">
               <div className="flex items-center justify-between text-xs">
                 <label className="font-bold text-slate-700 text-[11px]">WhatsApp Message Content:</label>
-                {isTranslating && <span className="text-blue-600 font-semibold animate-pulse text-[11px]">Translating via Gemini AI...</span>}
+                {isTranslating && <span className="text-blue-600 font-semibold animate-pulse text-[11px]">Translating via Pulse AI...</span>}
               </div>
               <textarea
                 value={translatedWhatsAppText}

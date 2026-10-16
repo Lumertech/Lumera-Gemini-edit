@@ -1335,7 +1335,7 @@ export const DEFAULT_CLINIC_SETTINGS: ClinicSettings = {
   showLogo: true,
   showQrCode: true,
   sealText: 'Authorized Medical Seal & Digital Signature Verified',
-  footerDisclaimer: 'This prescription is digitally verified under National Health Authority (NHA) & Telemedicine Practice Guidelines. Please report any adverse drug reactions immediately.'
+  footerDisclaimer: 'Prescription issued under the Telemedicine Practice Guidelines, 2020.'
 };
 
 export const DEFAULT_WHATSAPP_TEMPLATES: WhatsAppTemplate[] = [
@@ -1360,7 +1360,7 @@ export const DEFAULT_WHATSAPP_TEMPLATES: WhatsAppTemplate[] = [
     language: 'English (en_IN)',
     headerText: '📄 Digital Rx Ready - Lumera Health',
     bodyText: 'Dear {{1}},\n\nYour digital prescription from {{2}} has been generated successfully.\n\n📋 Rx No: *{{3}}*\n💊 Medications: {{4}} items\n🗓️ Follow-up: *{{5}}*\n\nTap the button below to view or print your digital prescription anytime.',
-    footerText: 'Valid under NHA Telemedicine Guidelines',
+    footerText: 'Issued under the Telemedicine Practice Guidelines, 2020',
     buttons: [
       { type: 'URL', text: 'View Digital Rx PDF', payload: 'https://lumera.health/rx/{{3}}' },
       { type: 'QUICK_REPLY', text: 'Order Medicines', payload: 'ORDER_MEDS' }
