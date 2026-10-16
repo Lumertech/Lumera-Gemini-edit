@@ -168,7 +168,7 @@ export function quoteFor(plans: PublicPlans, code: BillingPlanCode, cycle: Billi
 
 export function trialIntro(planName: string, cycle: BillingCycle, trialEndLabel: string): string {
   const cycleWord = cycle === "monthly" ? "monthly" : "annual";
-  return `${TRIAL_LEAD} Your trial of the ${planName} ${cycleWord} plan ends at 11:59 pm IST on ${trialEndLabel}. We won't charge you anything unless you add a payment method. We'll remind you in the app, on WhatsApp and by email on days 20, 25, 28 and 30. If you don't add one, your account becomes read-only on day 31: your records stay safe and exportable, and nothing is charged.`;
+  return `${TRIAL_LEAD} Your trial of the ${planName} ${cycleWord} plan ends at 11:59 pm IST on ${trialEndLabel}. We won't charge you anything unless you add a payment method. We'll remind you in the app, on WhatsApp and by email on days 20, 25, 28 and 30. If you don't add one, your account becomes read-only on day 31: your records stay safe and exportable, and nothing is charged. Read-only clinics can still reply to patients on WhatsApp manually within Meta's 24-hour window.`;
 }
 
 export function planAfterTrial(quote: MoneyQuote): string {
@@ -254,13 +254,13 @@ export function buildPricingPageModel(plans: PublicPlans): PricingPageModel {
     whatsapp: plans.whatsappCopy,
     whatsappInr: plans.whatsappInrCopy,
     trademark: plans.trademarkCopy,
-    trial: `${TRIAL_LEAD} Optional AutoPay. We'll remind you in the app, on WhatsApp and by email on days 20, 25, 28 and 30. If you don't add a payment method, your account becomes read-only on day 31: your records stay safe and exportable, and nothing is charged.`,
+    trial: `${TRIAL_LEAD} Optional AutoPay. We'll remind you in the app, on WhatsApp and by email on days 20, 25, 28 and 30. If you don't add a payment method, your account becomes read-only on day 31: your records stay safe and exportable, and nothing is charged. Read-only clinics can still reply to patients on WhatsApp manually within Meta's 24-hour window.`,
     refund: `${ANNUAL_REFUND} ${MONTHLY_REFUND} ${TRIAL_REFUND}`,
     contactEmail: plans.contactEmail,
     faqs: [
       {
         q: "How does the free trial work?",
-        a: `${TRIAL_LEAD} Optional AutoPay. We'll remind you in the app, on WhatsApp and by email on days 20, 25, 28 and 30. If you don't add a payment method, your account becomes read-only on day 31: your records stay safe and exportable, and nothing is charged.`,
+        a: `${TRIAL_LEAD} Optional AutoPay. We'll remind you in the app, on WhatsApp and by email on days 20, 25, 28 and 30. If you don't add a payment method, your account becomes read-only on day 31: your records stay safe and exportable, and nothing is charged. Read-only clinics can still reply to patients on WhatsApp manually within Meta's 24-hour window.`,
       },
       {
         q: "How do I cancel?",
@@ -275,12 +275,16 @@ export function buildPricingPageModel(plans: PublicPlans): PricingPageModel {
         a: "Messages fail, and we alert the clinic immediately. Lumera does not pay Meta's charges on the clinic's behalf.",
       },
       {
+        q: "Does Lumera collect patient payments?",
+        a: "No. Patients pay your clinic directly. Lumera never collects or holds patient money.",
+      },
+      {
         q: "What is the refund window?",
         a: `${ANNUAL_REFUND} ${MONTHLY_REFUND} ${TRIAL_REFUND}`,
       },
       {
         q: "What happens to clinic records?",
-        a: "Clinical records stay locked and exportable. Billing records are kept for 8 years. Contact us to transfer or delete records.",
+        a: "Clinical records stay locked and exportable for 90 days after cancellation, then are deleted. Billing records are kept for 8 years as tax law requires. Contact ravee@lumer.me to transfer or delete records.",
       },
       {
         q: "Do prices include GST?",

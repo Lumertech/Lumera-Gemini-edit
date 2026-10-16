@@ -20,6 +20,7 @@ describe("try-for-free trial terms before AutoPay", () => {
     assert.match(intro, /days 20, 25, 28 and 30/);
     assert.match(intro, /read-only on day 31/);
     assert.match(intro, /nothing is charged/);
+    assert.match(intro, /Read-only clinics can still reply to patients on WhatsApp manually within Meta's 24-hour window/);
     assert.match(monthlyAutopayCopy("Individual", monthly, "14 November 2026"), /Set up AutoPay now \(₹0 today\)/);
     assert.match(monthlyAutopayCopy("Individual", monthly, "14 November 2026"), /₹2,358\.82/);
     assert.doesNotMatch(monthlyAutopayCopy("Individual", monthly, "14 November 2026"), /auto-debited/);

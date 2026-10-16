@@ -202,7 +202,10 @@ describe("public /pricing HTML", () => {
       const whatsappHtml = WHATSAPP_BILLED_BY_META.replace(/&/g, "&amp;").replace(/'/g, "&#39;");
       assert.ok(html.includes(whatsappHtml), "exact WhatsApp copy missing");
       assert.match(html, /INR payment method/);
-      assert.match(html, /trademarks of their respective owners/);
+      assert.match(
+        html,
+        /WhatsApp and Meta are trademarks of Meta Platforms, Inc\. Lumera uses these names only to describe its integration with the WhatsApp Business Platform and is not endorsed by Meta\./
+      );
       assert.match(html, /href="\/signup\?plan=individual&amp;cycle=annual"/);
       assert.match(html, /href="\/signup\?plan=polyclinic&amp;cycle=monthly"/);
       assert.match(html, /Doctor and receptionist/);
@@ -215,7 +218,14 @@ describe("public /pricing HTML", () => {
       assert.match(html, /text-decoration:\s*none/);
       assert.match(html, /font-family:\s*Manrope/);
       assert.match(html, /WhatsApp: connect your clinic&#39;s own number/);
-      assert.match(html, /ABHA linking \(ABDM sandbox\)/);
+      assert.match(html, /ABHA linking \(in ABDM sandbox testing; not yet live\)/);
+      assert.match(html, /Read-only clinics can still reply to patients on WhatsApp manually within Meta&#39;s 24-hour window/);
+      assert.match(html, /Does Lumera collect patient payments\?/);
+      assert.match(html, /Patients pay your clinic directly\. Lumera never collects or holds patient money\./);
+      assert.match(html, /locked and exportable for 90 days after cancellation/);
+      assert.match(html, /Security and privacy statement/);
+      assert.match(html, /ambient scribing \(coming soon\)/);
+      assert.match(html, /ABDM integration is in sandbox testing and not yet live/);
       assert.doesNotMatch(html, /opening after Meta approval/);
       assert.doesNotMatch(html, /ABDM \/ ABHA sandbox integration/);
       assert.doesNotMatch(html, /WhatsApp: connect your clinic&#39;s own number \(sandbox\)/);

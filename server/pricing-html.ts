@@ -249,16 +249,16 @@ function renderSiteFooter(): string {
           <span class="wordmark wordmark-sm">${escapeHtml(PRODUCT_NAME)}</span>
         </a>
       </div>
-      <p class="mission">Empowering Indian healthcare with multilingual ambient scribing, automated WhatsApp patient self-service, and ABDM-aligned interoperability (sandbox path).</p>
+      <p class="mission">Empowering Indian healthcare with multilingual ambient scribing (coming soon), automated WhatsApp patient self-service, and ABHA linking (in ABDM sandbox testing; not yet live).</p>
       <nav class="footer-links" aria-label="Policies">
         <a href="/pricing">Pricing</a>
         <a href="/terms-of-service">Terms of Service</a>
         <a href="/privacy-policy">Privacy Policy</a>
         <a href="/data-deletion-instructions">Meta Data Deletion Callback</a>
-        <a href="/security">ABDM &amp; DPDP Security Statement</a>
+        <a href="/security">Security and privacy statement</a>
       </nav>
       <div class="fineprint">
-        <p>Designed for ABDM M1–M3 &amp; DPDP (sandbox path).</p>
+        <p>ABDM integration is in sandbox testing and not yet live. We follow India's DPDP Act in how we handle data.</p>
         <p>Contact <a href="mailto:${escapeHtml(CONTACT_EMAIL)}">${escapeHtml(CONTACT_EMAIL)}</a></p>
         <p class="copy">© ${year} ${escapeHtml(LEGAL_ENTITY_NAME)}. All rights reserved.</p>
       </div>

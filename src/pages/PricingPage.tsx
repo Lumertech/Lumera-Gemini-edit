@@ -182,17 +182,17 @@ export function PricingPage() {
             <BrandMark size="sm" wordmarkClassName="font-manrope text-lg font-bold text-white" />
           </div>
           <p className="mx-auto max-w-2xl text-xs text-slate-400">
-            Empowering Indian healthcare with multilingual ambient scribing, automated WhatsApp patient self-service, and ABDM-aligned interoperability (sandbox path).
+            Empowering Indian healthcare with multilingual ambient scribing (coming soon), automated WhatsApp patient self-service, and ABHA linking (in ABDM sandbox testing; not yet live).
           </p>
           <div className="flex flex-wrap justify-center gap-4 border-t border-slate-900 pt-4 text-xs font-medium text-slate-300 sm:gap-6">
             <a href="/pricing" className="no-underline hover:text-blue-400">Pricing</a>
             <a href="/terms-of-service" className="no-underline hover:text-blue-400">Terms of Service</a>
             <a href="/privacy-policy" className="no-underline hover:text-blue-400">Privacy Policy</a>
             <a href="/data-deletion-instructions" className="no-underline hover:text-blue-400">Meta Data Deletion Callback</a>
-            <a href="/security" className="no-underline hover:text-blue-400">ABDM &amp; DPDP Security Statement</a>
+            <a href="/security" className="no-underline hover:text-blue-400">Security and privacy statement</a>
           </div>
           <div className="space-y-1 text-[11px] text-slate-500">
-            <p>Designed for ABDM M1–M3 &amp; DPDP (sandbox path).</p>
+            <p>ABDM integration is in sandbox testing and not yet live. We follow India's DPDP Act in how we handle data.</p>
             <p>
               Contact <a className="no-underline hover:text-blue-400" href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>
             </p>

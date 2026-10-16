@@ -935,7 +935,7 @@ export const LandingPage: React.FC = () => {
             Ready to Experience the AI Clinical Operating System?
           </h3>
           <p className="text-slate-300 text-xs sm:text-sm max-w-xl mx-auto">
-            Get instant sandbox access in 30 seconds. No credit card required. Designed for ABDM M1–M3 &amp; DPDP (sandbox path).
+            Start a 30-day free trial. No card needed. ABDM integration is in sandbox testing and not yet live. We follow India's DPDP Act in how we handle data.
           </p>
           <div className="pt-2">
             <a

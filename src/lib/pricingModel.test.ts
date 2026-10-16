@@ -57,12 +57,21 @@ describe("pricing money format", () => {
         card.includes.some((line) => /WhatsApp:.*\(sandbox\)/.test(line)),
         false
       );
-      assert.ok(card.includes.includes("ABHA linking (ABDM sandbox)"));
+      assert.ok(card.includes.includes("ABHA linking (in ABDM sandbox testing; not yet live)"));
       assert.equal(card.includes.some((line) => line.includes("opening after Meta approval")), false);
       assert.equal(card.includes.some((line) => line.includes("ABDM / ABHA sandbox integration")), false);
     }
     assert.match(model.trial, /days 20, 25, 28 and 30/);
     assert.match(model.trial, /read-only on day 31/);
+    assert.match(model.trial, /Read-only clinics can still reply to patients on WhatsApp manually within Meta's 24-hour window/);
+    assert.equal(model.trademark, "WhatsApp and Meta are trademarks of Meta Platforms, Inc. Lumera uses these names only to describe its integration with the WhatsApp Business Platform and is not endorsed by Meta.");
+    const payments = model.faqs.find((item) => item.q === "Does Lumera collect patient payments?");
+    assert.equal(payments?.a, "No. Patients pay your clinic directly. Lumera never collects or holds patient money.");
+    const records = model.faqs.find((item) => item.q === "What happens to clinic records?");
+    assert.equal(
+      records?.a,
+      "Clinical records stay locked and exportable for 90 days after cancellation, then are deleted. Billing records are kept for 8 years as tax law requires. Contact ravee@lumer.me to transfer or delete records."
+    );
     assert.match(model.refund, /7-day refund window/);
     assert.match(model.refund, /15 business days/);
     assert.doesNotMatch(JSON.stringify(model), /wallet|top-up|messaging credit|launch offer|pilot funding|HIPAA/i);
