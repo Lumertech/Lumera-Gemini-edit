@@ -29,6 +29,7 @@ export default function PatientPortalApp() {
         prescriptions={[]}
         appointments={appointments}
         onBookNewSlot={() => undefined}
+        unlinked={user?.role === "patient" && !user.chartLinked}
       />
     </div>
   );

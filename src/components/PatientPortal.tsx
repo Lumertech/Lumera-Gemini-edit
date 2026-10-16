@@ -21,6 +21,7 @@ interface PatientPortalProps {
   prescriptions: Prescription[];
   appointments: Appointment[];
   onBookNewSlot: () => void;
+  unlinked?: boolean;
 }
 
 export const PatientPortal: React.FC<PatientPortalProps> = ({
@@ -28,8 +29,19 @@ export const PatientPortal: React.FC<PatientPortalProps> = ({
   prescriptions,
   appointments,
   onBookNewSlot,
+  unlinked = false,
 }) => {
   const [activeTab, setActiveTab] = useState<'Prescriptions' | 'Appointments' | 'Vitals' | 'LabReports'>('Prescriptions');
+
+  if (unlinked) {
+    return (
+      <div className="max-w-6xl mx-auto px-4 py-16">
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-8 text-center">
+          <p className="text-sm font-medium text-slate-800">Verify via WhatsApp OTP to see your records</p>
+        </div>
+      </div>
+    );
+  }
 
   const patientRxList = prescriptions.filter((p) => p.patientId === currentPatient.id);
   const patientAptList = appointments.filter((a) => a.patientId === currentPatient.id);

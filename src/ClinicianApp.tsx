@@ -1068,6 +1068,7 @@ export default function ClinicianApp() {
               prescriptions={prescriptions}
               appointments={appointments}
               onBookNewSlot={() => setCurrentView('appointments')}
+              unlinked={user?.role === 'patient' && !user.chartLinked}
             />
           )}
 

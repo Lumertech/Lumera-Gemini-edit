@@ -6,10 +6,11 @@ import { type Request, type Response, type Router } from "express";
 import crypto from "node:crypto";
 import { getDb, writeAudit } from "./db.ts";
 import { allowOtpEcho, CLINICIAN_ROLES, requireAuth, requireRole } from "./auth.ts";
+import { denyUnlessPatientRecordRole } from "./patient-access.ts";
 import { rejectProductionSimulator } from "./meta-security.ts";
 import { isAbdmPlaceholderRegistryMode, resolveAbdmMode } from "./abdm-mode.ts";
 import { formatAbdmRegistryLabel } from "../src/lib/abdmRegistryLabel.ts";
-import { formatINR } from "../app/applet/src/lib/currency.ts";
+import { formatINR } from "../src/lib/currency.ts";
 import {
   createPrescriptionBundle,
   createOPConsultBundle,
@@ -278,6 +279,7 @@ export function registerAbdmIdentityRoutes(router: Router): void {
 
   // Search by ABHA — tenant-scoped; do not invent a profile when missing.
   router.post(["/v3/search/searchByAbha", "/search/searchByAbha", "/v3/search/searchByMobile", "/search/searchByMobile"], requireAuth, (req, res) => {
+    if (!denyUnlessPatientRecordRole(req, res)) return;
     const tenantId = tenantIdOf(req);
     const needle = String(req.body?.abhaAddress || req.body?.abhaNumber || req.body?.mobile || "").trim();
     if (!tenantId || !needle) {

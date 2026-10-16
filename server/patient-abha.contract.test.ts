@@ -6,10 +6,13 @@ import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import express from "express";
 import { attachUser } from "./auth.ts";
+import { signAbdmCallback } from "./abdm-hmac.ts";
 import { createApiRouter } from "./api.ts";
 import { getDb, initDatabase, presentPatientKyc } from "./db.ts";
 import { getAbdmBridgeStatus } from "./abdm-mode.ts";
 import { hashPassword } from "./password.ts";
+
+const GATEWAY_HMAC_SECRET = "test-abdm-callback-hmac-secret";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, "..");
@@ -66,6 +69,25 @@ function uniquePhone(tag: string): string {
   return `+91 98${n.slice(0, 3)} ${n.slice(3)}`;
 }
 
+async function signedGatewayRequest(
+  port: number,
+  urlPath: string,
+  body: unknown,
+  headers: Record<string, string> = {}
+) {
+  const previous = process.env.ABDM_CALLBACK_SECRET;
+  process.env.ABDM_CALLBACK_SECRET = GATEWAY_HMAC_SECRET;
+  try {
+    return await jsonRequest(port, "POST", urlPath, body, {
+      ...headers,
+      "X-ABDM-Signature": signAbdmCallback(GATEWAY_HMAC_SECRET, JSON.stringify(body)),
+    });
+  } finally {
+    if (previous === undefined) delete process.env.ABDM_CALLBACK_SECRET;
+    else process.env.ABDM_CALLBACK_SECRET = previous;
+  }
+}
+
 function uniqueAbha(tag: string): string {
   const n = `${Date.now().toString().slice(-8)}${Math.floor(Math.random() * 9000 + 1000)}`.slice(0, 12);
   return `91-${n.slice(0, 4)}-${n.slice(4, 8)}-${n.slice(8, 12)}`;
@@ -87,7 +109,13 @@ describe("#35 dual onboard — same patientId + frozen link-abha", () => {
     }
 
     const app = express();
-    app.use(express.json());
+    app.use(
+      express.json({
+        verify: (req, _res, buf) => {
+          (req as express.Request & { rawBody?: Buffer }).rawBody = buf;
+        },
+      })
+    );
     app.use(attachUser);
     app.use("/api", createApiRouter());
 
@@ -509,13 +537,7 @@ describe("#35 dual onboard — same patientId + frozen link-abha", () => {
     assert.equal(ctx.json.careContextReference, `CARE-CTX-${patient.uhid}-enc-1`);
     assert.equal(ctx.json.abdmMode, "stub");
 
-    const discover = await jsonRequest(
-      port,
-      "POST",
-      "/api/abdm/hip/patient-discover",
-      { abhaNumber },
-      auth
-    );
+    const discover = await signedGatewayRequest(port, "/api/abdm/hip/patient-discover", { abhaNumber }, auth);
     assert.equal(discover.status, 200, String(discover.json.error || ""));
     assert.equal(discover.json.abdmMode, "stub");
     assert.equal((discover.json.patient as { patientId: string }).patientId, patientId);
@@ -604,9 +626,8 @@ describe("#35 dual onboard — same patientId + frozen link-abha", () => {
     assert.equal(received.status, 200, String(received.json.error || ""));
     assert.equal(received.json.kind, "hiu_receive");
 
-    const onRequest = await jsonRequest(
+    const onRequest = await signedGatewayRequest(
       port,
-      "POST",
       "/api/abdm/hip/health-information/on-request",
       { patientId, consentId, encounterId: "enc-1", transactionId: "tx-1" },
       auth
@@ -616,9 +637,8 @@ describe("#35 dual onboard — same patientId + frozen link-abha", () => {
     assert.equal(onRequest.json.careContextReference, `CARE-CTX-${patient.uhid}-enc-1`);
     assert.ok(Array.isArray(onRequest.json.entries));
 
-    const alias = await jsonRequest(
+    const alias = await signedGatewayRequest(
       port,
-      "POST",
       "/api/abdm/hip/data-notification",
       { patientId, consentId, encounterId: "enc-1" },
       auth

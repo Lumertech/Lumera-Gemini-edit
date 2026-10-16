@@ -802,6 +802,9 @@ export function publicUser(user: DbUser) {
   if (user.role !== "patient") return published;
   // Clinic GSTIN is KYC copied onto the account payload. Patients keep the public UPI handle.
   const { gstin: _clinicGstin, ...patientAccount } = published;
-  return patientAccount;
+  return {
+    ...patientAccount,
+    chartLinked: Boolean(String(user.patient_id || "").trim()),
+  };
 }
 

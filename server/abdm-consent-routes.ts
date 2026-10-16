@@ -14,6 +14,7 @@ import {
   listTenantConsentArtefacts,
   storeConsentArtefact,
 } from "./clinical.ts";
+import { denyUnlessPatientRecordRole } from "./patient-access.ts";
 import {
   ABDM_CONFIG,
   NHA_SANDBOX_NOTICE,
@@ -183,11 +184,17 @@ export function registerAbdmConsentRoutes(router: Router): void {
     });
   };
 
-  const handleHipPatientDiscover = (req: Request, res: Response) => {
+  const requireMatchedGatewaySignature = (req: Request, res: Response): boolean => {
     const hmac = callbackHmac(req);
-    if (hmac.ok === false) {
-      return res.status(hmac.status).json({ error: hmac.error, abdmMode: resolveAbdmMode(), sandboxNotice: NHA_SANDBOX_NOTICE });
-    }
+    if (hmac.ok === true && hmac.matched === true) return true;
+    const status = hmac.ok === false ? hmac.status : 401;
+    const error = hmac.ok === false ? hmac.error : "X-ABDM-Signature is required";
+    res.status(status).json({ error, abdmMode: resolveAbdmMode(), sandboxNotice: NHA_SANDBOX_NOTICE });
+    return false;
+  };
+
+  const handleHipPatientDiscover = (req: Request, res: Response) => {
+    if (!requireMatchedGatewaySignature(req, res)) return;
     const tenantId = callbackTenantId(
       req as unknown as { user?: { tenantId?: string }; headers: Record<string, unknown>; body?: Record<string, unknown> }
     );
@@ -240,10 +247,7 @@ export function registerAbdmConsentRoutes(router: Router): void {
   };
 
   const handleHipOnRequest = (req: Request, res: Response) => {
-    const hmac = callbackHmac(req);
-    if (hmac.ok === false) {
-      return res.status(hmac.status).json({ error: hmac.error, abdmMode: resolveAbdmMode(), sandboxNotice: NHA_SANDBOX_NOTICE });
-    }
+    if (!requireMatchedGatewaySignature(req, res)) return;
     const tenantId = callbackTenantId(
       req as unknown as { user?: { tenantId?: string }; headers: Record<string, unknown>; body?: Record<string, unknown> }
     );
@@ -406,6 +410,7 @@ export function registerAbdmConsentRoutes(router: Router): void {
   };
 
   const handleHiuListConsents = (req: Request, res: Response) => {
+    if (!denyUnlessPatientRecordRole(req, res)) return;
     const tenantId = callbackTenantId(
       req as unknown as { user?: { tenantId?: string }; headers: Record<string, unknown>; body?: Record<string, unknown> }
     );

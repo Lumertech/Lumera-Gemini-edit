@@ -5,9 +5,7 @@ import {
   type PatientTenantExtras,
 } from "./client-serializers.ts";
 import { getDb } from "./db.ts";
-import type { SqlDatabase } from "./sql-engine.ts";
 
-const PATIENT_ID_BACKFILL_KEY = "users.patient_id.backfill.v1";
 const sessionPatientCache = new WeakMap<Request, string | null>();
 
 export function requestIsPatient(req: Request): boolean {
@@ -26,27 +24,23 @@ function phonesMatch(left: string, right: string): boolean {
   return a.length >= 8 && a === b;
 }
 
-type ContactRow = { id?: string; phone?: string; email?: string };
+type ContactRow = { id?: string; phone?: string };
 
 /**
- * Exactly one chart in this clinic. Phone wins. Zero or several matches
- * return null so a login cannot choose a neighbour.
+ * Exactly one chart in this clinic for the OTP-verified phone.
+ * Email is not a link key. Zero or several phone matches return null.
  */
-export function matchUniquePatientId(tenantId: string, phone: unknown, email: unknown): string | null {
+export function matchUniquePatientId(tenantId: string, phone: unknown): string | null {
   const id = String(tenantId || "").trim();
   if (!id) return null;
-  const rows = getDb()
-    .prepare("SELECT id, phone, email FROM patients WHERE tenant_id = ?")
-    .all(id) as ContactRow[];
   const digits = contactDigits(phone);
-  const byPhone = digits ? rows.filter((row) => phonesMatch(digits, contactDigits(row.phone))) : [];
-  if (byPhone.length === 1) return String(byPhone[0].id || "") || null;
-  if (byPhone.length > 1) return null;
-  const normalized = String(email || "").trim().toLowerCase();
-  if (!normalized) return null;
-  const byEmail = rows.filter((row) => String(row.email || "").trim().toLowerCase() === normalized);
-  if (byEmail.length === 1) return String(byEmail[0].id || "") || null;
-  return null;
+  if (!digits) return null;
+  const rows = getDb()
+    .prepare("SELECT id, phone FROM patients WHERE tenant_id = ?")
+    .all(id) as ContactRow[];
+  const byPhone = rows.filter((row) => phonesMatch(digits, contactDigits(row.phone)));
+  if (byPhone.length !== 1) return null;
+  return String(byPhone[0].id || "") || null;
 }
 
 function boundPatientId(value: unknown): string {
@@ -70,7 +64,7 @@ export function bindUnboundPatientUser(userId: string): string | null {
   if (current) return current;
   const tenantId = String(user.tenant_id || "").trim();
   if (!tenantId) return null;
-  const match = matchUniquePatientId(tenantId, user.phone, user.email);
+  const match = matchUniquePatientId(tenantId, user.phone);
   if (!match) return null;
   const taken = getDb()
     .prepare("SELECT id FROM users WHERE tenant_id = ? AND patient_id = ? AND id <> ?")
@@ -83,33 +77,6 @@ export function bindUnboundPatientUser(userId: string): string | null {
     )
     .run(match, id);
   return Number(updated.changes) === 1 ? match : null;
-}
-
-/** Fill empty patient_id values. Does not move a login that is already bound. */
-export function backfillUnboundPatientUsers(database: SqlDatabase = getDb()): number {
-  const rows = database
-    .prepare(
-      `SELECT id FROM users
-       WHERE role = 'patient' AND (patient_id IS NULL OR TRIM(patient_id) = '')`
-    )
-    .all() as { id?: string }[];
-  let bound = 0;
-  for (const row of rows) {
-    if (bindUnboundPatientUser(String(row.id || ""))) bound += 1;
-  }
-  return bound;
-}
-
-/** One-time backfill. Later startups leave unbound logins unbound. */
-export function backfillUserPatientIdsOnce(database: SqlDatabase = getDb()): void {
-  const done = database.prepare("SELECT key FROM cms_settings WHERE key = ?").get(PATIENT_ID_BACKFILL_KEY) as
-    | { key?: string }
-    | undefined;
-  if (done?.key) return;
-  backfillUnboundPatientUsers(database);
-  database
-    .prepare("INSERT INTO cms_settings (key, value) VALUES (?, '1')")
-    .run(PATIENT_ID_BACKFILL_KEY);
 }
 
 /**
