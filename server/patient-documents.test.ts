@@ -796,7 +796,7 @@ describe("patient document API", () => {
       undefined,
       { Authorization: `Bearer ${await login(otherAdmin.email)}` }
     );
-    assert.ok(foreign.status === 404 || foreign.status === 403);
+    assert.equal(foreign.status, 404);
     assert.equal(JSON.stringify(foreign.json).includes("Delete gate report"), false);
     const stillThere = getDb()
       .prepare("SELECT deleted_at FROM patient_documents WHERE id = ?")
