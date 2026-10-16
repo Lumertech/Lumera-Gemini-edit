@@ -1,6 +1,7 @@
 import type { SqlDatabase } from "./sql-engine.ts";
 import { DEMO_LOGIN_MATRIX } from "../src/lib/demoAccounts.ts";
 import { META_REVIEW_TENANT_ID, SUNRISE_TENANT_ID, ensureUniqueTenantSlugs, slugifyTenant } from "./tenant-slug.ts";
+import { spreadDemoBookDates } from "./demo-book-dates.ts";
 
 export const INDIVIDUAL_DEMO_TENANT_ID = "tenant-demo-individual";
 export const INDIVIDUAL_DEMO_SLUG = "malhotra-individual-practice";
@@ -259,4 +260,5 @@ export function ensureDemoWorkspaceTenants(database: SqlDatabase) {
   }
 
   seedIndividualChart(database, now);
+  spreadDemoBookDates(database);
 }
