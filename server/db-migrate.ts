@@ -1,3 +1,4 @@
+import { ensureAmbientWalkInUniqueIndex } from "./ambient-walkin.ts";
 import { type SqlDatabase } from "./sql-engine.ts";
 import { ensurePlatformTenantSchema } from "./platform-tenants.ts";
 import { BOOTSTRAP_DDL } from "./db-bootstrap-ddl.ts";
@@ -383,6 +384,7 @@ export function migrate(database: SqlDatabase) {
   try {
     database.exec("CREATE INDEX IF NOT EXISTS idx_appointments_tenant ON appointments(tenant_id)");
   } catch {}
+  ensureAmbientWalkInUniqueIndex(database);
   try {
     database.exec("CREATE INDEX IF NOT EXISTS idx_prescriptions_tenant ON prescriptions(tenant_id)");
   } catch {}

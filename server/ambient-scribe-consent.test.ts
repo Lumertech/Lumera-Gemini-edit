@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { clinicCalendarDate, shiftIsoDate } from "../src/lib/clinicDay.ts";
 import { createApiRouter } from "./api.ts";
+import { openVisitStatusSql, visitStatusIsOpen } from "./ambient-walkin.ts";
 import {
   AMBIENT_SCRIBE_CONSENT_TEXT,
   AMBIENT_WALKIN_SOURCE,
+  closeStaleAmbientWalkIns,
   hasAmbientScribeConsent,
   istClinicDay,
   mountAmbientScribeConsentRoutes,
@@ -536,5 +538,108 @@ describe("ambient scribe per-visit consent", () => {
       .prepare("SELECT COUNT(*) AS c FROM appointments WHERE tenant_id = ? AND patient_id = ? AND source = ?")
       .get(doctor.tenantId, patientId, AMBIENT_WALKIN_SOURCE) as { c: number };
     assert.equal(Number(copies.c), 1);
+  });
+
+  it("agrees the open-status allowlist in SQL and JS, and closes a previous day's hidden walk-in", async () => {
+    assert.equal(visitStatusIsOpen(null), false);
+    assert.equal(visitStatusIsOpen(""), false);
+    assert.equal(visitStatusIsOpen("   "), false);
+    assert.equal(visitStatusIsOpen("Waiting"), true);
+    assert.equal(visitStatusIsOpen("TRIAGE / VITALS"), true);
+    assert.equal(visitStatusIsOpen("Checked-in"), true);
+    const doctor = seedDoctor("allow");
+    const token = await login(doctor.email);
+    const auth = { Authorization: `Bearer ${token}` };
+    const created = await jsonRequest(
+      port,
+      "POST",
+      "/api/patients",
+      { name: "Allow List", phone: `+91 93${String(Date.now()).slice(-8)}`, age: 40, gender: "Female" },
+      auth
+    );
+    assert.equal(created.status, 201, String(created.json.error || ""));
+    const patientId = String((created.json.patient as { id: string }).id);
+    const today = istClinicDay();
+    const statuses = ["Waiting", "Open", "Scheduled", "Confirmed", "Checked-in", "Triage / Vitals", "In Consultation", "", "Completed", "No-Show", "Archived"];
+    for (const status of statuses) {
+      const id = `apt-st-${status.replace(/[^A-Za-z0-9]+/g, "") || "empty"}-${patientId}`.slice(0, 80);
+      insertVisit({
+        id,
+        tenantId: doctor.tenantId,
+        patientId,
+        doctorId: doctor.userId,
+        date: today,
+        status: status || "Waiting",
+      });
+      if (!status) getDb().prepare("UPDATE appointments SET status = '' WHERE id = ?").run(id);
+      const sqlOpen = getDb()
+        .prepare(`SELECT id FROM appointments WHERE id = ? AND ${openVisitStatusSql("status")}`)
+        .get(id);
+      assert.equal(Boolean(sqlOpen), visitStatusIsOpen(status), status || "(empty)");
+    }
+
+    const yesterday = shiftIsoDate(today, -1);
+    const staleId = `apt-stale-${patientId}`;
+    const realId = `apt-real-yest-${patientId}`;
+    const todayHidden = `apt-today-hidden-${patientId}`;
+    insertVisit({
+      id: staleId,
+      tenantId: doctor.tenantId,
+      patientId,
+      doctorId: doctor.userId,
+      date: yesterday,
+      status: "Open",
+      source: AMBIENT_WALKIN_SOURCE,
+      tokenNumber: 0,
+    });
+    insertVisit({
+      id: realId,
+      tenantId: doctor.tenantId,
+      patientId,
+      doctorId: doctor.userId,
+      date: yesterday,
+      status: "Waiting",
+      source: "Walk-in",
+    });
+    insertVisit({
+      id: todayHidden,
+      tenantId: doctor.tenantId,
+      patientId,
+      doctorId: doctor.userId,
+      date: today,
+      status: "Open",
+      source: AMBIENT_WALKIN_SOURCE,
+      tokenNumber: 0,
+    });
+    const closed = closeStaleAmbientWalkIns();
+    assert.ok(closed >= 1);
+    const statusOf = (id: string) =>
+      (getDb().prepare("SELECT status FROM appointments WHERE id = ?").get(id) as { status: string }).status;
+    assert.equal(statusOf(staleId), "Completed");
+    assert.equal(statusOf(realId), "Waiting");
+    assert.equal(statusOf(todayHidden), "Open");
+
+    const duplicateId = `apt-dup-${patientId}`;
+    assert.throws(() =>
+      insertVisit({
+        id: duplicateId,
+        tenantId: doctor.tenantId,
+        patientId,
+        doctorId: doctor.userId,
+        date: today,
+        status: "Open",
+        source: AMBIENT_WALKIN_SOURCE,
+        tokenNumber: 0,
+      })
+    );
+    const kept = await jsonRequest(
+      port,
+      "POST",
+      "/api/ambient-scribe/consent",
+      { patientId, attested: true, statement: AMBIENT_SCRIBE_CONSENT_TEXT },
+      auth
+    );
+    assert.equal(kept.status, 201, String(kept.json.error || ""));
+    assert.equal(kept.json.appointmentId, todayHidden);
   });
 });

@@ -1,3 +1,5 @@
+import { AMBIENT_WALKIN_SOURCE } from "./ambient-walkin.ts";
+import { closeStaleAmbientWalkIns } from "./ambient-scribe-consent.ts";
 import { getDb, mapAppointment } from "./db.ts";
 import {
   isCloudDispatchFailure,
@@ -7,7 +9,7 @@ import {
   type CloudDispatchResult,
 } from "./graph-whatsapp.ts";
 
-const ACTIVE_APPOINTMENT_SQL = `status NOT IN ('Completed', 'Cancelled', 'No-Show')`;
+const ACTIVE_APPOINTMENT_SQL = `status NOT IN ('Completed', 'Cancelled', 'No-Show') AND COALESCE(source, '') != ?`;
 const REMINDABLE_STATUSES = new Set(["Waiting", "Confirmed"]);
 const REMINDER_WINDOWS = ["24h", "2h"] as const;
 export type ReminderWindow = (typeof REMINDER_WINDOWS)[number];
@@ -329,13 +331,14 @@ export async function runAppointmentReminders(opts?: {
   appointmentId?: string;
 }): Promise<{ sent: ReminderRunItem[]; skipped: number; failed: ReminderRunItem[] }> {
   const now = opts?.now || new Date();
+  closeStaleAmbientWalkIns(now);
   const db = getDb();
   const rows = (
     opts?.appointmentId
       ? [
           db
-            .prepare("SELECT * FROM appointments WHERE id = ?")
-            .get(opts.appointmentId) as Record<string, unknown> | undefined,
+            .prepare("SELECT * FROM appointments WHERE id = ? AND COALESCE(source, '') != ?")
+            .get(opts.appointmentId, AMBIENT_WALKIN_SOURCE) as Record<string, unknown> | undefined,
         ].filter(Boolean)
       : db
           .prepare(
@@ -343,7 +346,7 @@ export async function runAppointmentReminders(opts?: {
              WHERE ${ACTIVE_APPOINTMENT_SQL}
              ${opts?.tenantId ? "AND tenant_id = ?" : ""}`
           )
-          .all(...(opts?.tenantId ? [opts.tenantId] : []))
+          .all(...(opts?.tenantId ? [AMBIENT_WALKIN_SOURCE, opts.tenantId] : [AMBIENT_WALKIN_SOURCE]))
   ) as Record<string, unknown>[];
 
   const sent: ReminderRunItem[] = [];

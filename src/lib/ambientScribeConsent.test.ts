@@ -8,6 +8,7 @@ import {
   AMBIENT_SCRIBE_CONSENT_TEXT,
   ambientMicStartDecision,
   ambientVisitKey,
+  closedVisitNeedsFreshConsent,
   consentWriteNextStep,
 } from "./ambientScribeConsent.ts";
 
@@ -54,10 +55,17 @@ describe("per-visit ambient scribe consent", () => {
   it("awaits the audit write and leaves the microphone for a second tap", () => {
     assert.equal(consentWriteNextStep(true), "second-tap");
     assert.equal(consentWriteNextStep(false), "blocked");
+    assert.equal(closedVisitNeedsFreshConsent({ code: "visit_closed", status: 409 }), true);
+    assert.equal(closedVisitNeedsFreshConsent({ code: "visit_closed", status: 400 }), false);
+    assert.equal(closedVisitNeedsFreshConsent({ code: "consent_required", status: 409 }), false);
+    assert.equal(closedVisitNeedsFreshConsent(null), false);
     const hook = fs.readFileSync(path.join(root, "src/lib/useAmbientScribeConsent.ts"), "utf8");
     assert.match(hook, /await saveAmbientScribeConsent/);
     assert.match(hook, /consentWriteNextStep\(true\)/);
     assert.match(hook, /consentWriteNextStep\(false\)/);
+    assert.match(hook, /closedVisitNeedsFreshConsent\(err\)/);
+    assert.match(hook, /visitRef\.current = ""/);
+    assert.match(hook, /grantedRef\.current = false/);
     assert.doesNotMatch(hook, /getUserMedia|beginAmbientMicGesture/);
     for (const rel of ["src/components/CompactAmbientScribe.tsx", "src/components/AmbientAIStudio.tsx"]) {
       const source = fs.readFileSync(path.join(root, rel), "utf8");

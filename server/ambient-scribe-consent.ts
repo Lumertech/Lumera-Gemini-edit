@@ -1,11 +1,15 @@
 import { randomUUID } from "node:crypto";
 import type { Express, NextFunction, Request, Response } from "express";
 import { clinicCalendarDate } from "../src/lib/clinicDay.ts";
+import { AMBIENT_WALKIN_SOURCE, openVisitStatusSql, visitStatusIsOpen } from "./ambient-walkin.ts";
 import { requireAuth } from "./auth.ts";
 import { writeAudit } from "./db-seed-maps.ts";
 import { getDb } from "./db.ts";
 import { denyUnlessPrescriber } from "./patient-access.ts";
 import { rejectUntrustedTenantClaim } from "./tenant-guard.ts";
+import { withSqliteTransaction } from "./usage-wallet.ts";
+
+export { AMBIENT_WALKIN_SOURCE };
 
 /**
  * Per-visit attestation that the patient agreed to this recording.
@@ -15,11 +19,6 @@ export const AMBIENT_SCRIBE_CONSENT_TEXT =
   "I have told the patient that this consult will be recorded and transcribed by an AI service to draft notes, and the patient agreed. Audio is not stored.";
 
 export const AMBIENT_SCRIBE_CONSENT_ACTION = "ambient_scribe_consent";
-
-/** Not a queue visit. Token sequencing and the appointment list ignore this source. */
-export const AMBIENT_WALKIN_SOURCE = "ambient_walkin";
-
-const CLOSED_VISIT_STATUSES = new Set(["completed", "cancelled", "canceled", "no-show"]);
 
 const AUDIT_DETAILS =
   "Clinician confirmed the patient agreed this consult may be recorded and transcribed to draft notes. Audio is not stored.";
@@ -73,11 +72,29 @@ export function istClinicDay(now = new Date()): string {
 export function visitIsOpenToday(visit: { date?: string; status?: string } | undefined, now = new Date()): boolean {
   if (!visit) return false;
   if (String(visit.date || "") !== istClinicDay(now)) return false;
-  const status = String(visit.status || "").trim().toLowerCase();
-  return !CLOSED_VISIT_STATUSES.has(status);
+  return visitStatusIsOpen(visit.status);
+}
+
+/** Yesterday's hidden walk-ins are not still open. A real booking is left as it is. */
+export function closeStaleAmbientWalkIns(now = new Date()): number {
+  const day = istClinicDay(now);
+  const result = getDb()
+    .prepare(
+      `UPDATE appointments
+       SET status = 'Completed'
+       WHERE source = ? AND date < ? AND ${openVisitStatusSql("status")}`
+    )
+    .run(AMBIENT_WALKIN_SOURCE, day);
+  return Number(result.changes || 0);
+}
+
+function isUniqueViolation(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err || "");
+  return /unique constraint|duplicate key/i.test(message);
 }
 
 export function hasAmbientScribeConsent(tenantId: string, appointmentId: string, now = new Date()): boolean {
+  closeStaleAmbientWalkIns(now);
   if (!consentRow(tenantId, appointmentId)) return false;
   return visitIsOpenToday(findAppointment(tenantId, appointmentId), now);
 }
@@ -107,7 +124,7 @@ function reusableWalkIn(user: NonNullable<Request["user"]>, patientId: string, d
     .prepare(
       `SELECT id FROM appointments
        WHERE tenant_id = ? AND patient_id = ? AND doctor_id = ? AND date = ? AND source = ?
-         AND lower(status) NOT IN ('completed', 'cancelled', 'canceled', 'no-show')
+         AND ${openVisitStatusSql("status")}
        ORDER BY created_at DESC LIMIT 1`
     )
     .get(user.tenantId, patientId, user.id, day, AMBIENT_WALKIN_SOURCE) as { id: string } | undefined;
@@ -120,39 +137,47 @@ function mintWalkInAppointment(user: NonNullable<Request["user"]>, patientId: st
     .get(patientId, user.tenantId) as { name: string; phone: string; uhid: string } | undefined;
   if (!patient) return null;
   const day = istClinicDay();
-  const existing = reusableWalkIn(user, patientId, day);
-  if (existing) return existing;
-  const id = `apt-${randomUUID().replace(/-/g, "")}`;
-  const now = new Date().toISOString();
-  getDb()
-    .prepare(
-      `INSERT INTO appointments (
-        id, tenant_id, token_number, patient_id, patient_name, patient_phone, uhid,
-        doctor_id, doctor_name, specialty, date, time_slot, type, status, source,
-        consultation_fee, is_paid, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-    .run(
-      id,
-      user.tenantId,
-      0,
-      patientId,
-      patient.name,
-      patient.phone,
-      patient.uhid,
-      user.id,
-      user.name || "Clinician",
-      visitSpecialty(user),
-      day,
-      "",
-      "Ambient scribe",
-      "Open",
-      AMBIENT_WALKIN_SOURCE,
-      0,
-      0,
-      now
-    );
-  return id;
+  const insert = () => {
+    const existing = reusableWalkIn(user, patientId, day);
+    if (existing) return existing;
+    const id = `apt-${randomUUID().replace(/-/g, "")}`;
+    const now = new Date().toISOString();
+    getDb()
+      .prepare(
+        `INSERT INTO appointments (
+          id, tenant_id, token_number, patient_id, patient_name, patient_phone, uhid,
+          doctor_id, doctor_name, specialty, date, time_slot, type, status, source,
+          consultation_fee, is_paid, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        id,
+        user.tenantId,
+        0,
+        patientId,
+        patient.name,
+        patient.phone,
+        patient.uhid,
+        user.id,
+        user.name || "Clinician",
+        visitSpecialty(user),
+        day,
+        "",
+        "Ambient scribe",
+        "Open",
+        AMBIENT_WALKIN_SOURCE,
+        0,
+        0,
+        now
+      );
+    return id;
+  };
+  try {
+    return withSqliteTransaction(getDb(), insert);
+  } catch (err) {
+    if (!isUniqueViolation(err)) throw err;
+    return reusableWalkIn(user, patientId, day) || null;
+  }
 }
 
 function latestOpenConsentForPatient(tenantId: string, patientId: string, now = new Date()): ConsentRow | undefined {
@@ -164,7 +189,7 @@ function latestOpenConsentForPatient(tenantId: string, patientId: string, now = 
        INNER JOIN appointments apt ON apt.id = audit.entity_id AND apt.tenant_id = audit.tenant_id
        WHERE audit.action = ? AND audit.tenant_id = ? AND audit.patient_id = ?
          AND audit.entity_type = 'appointment' AND apt.patient_id = ? AND apt.date = ?
-         AND lower(apt.status) NOT IN ('completed', 'cancelled', 'canceled', 'no-show')
+         AND ${openVisitStatusSql("apt.status")}
        ORDER BY audit.timestamp DESC LIMIT 1`
     )
     .get(AMBIENT_SCRIBE_CONSENT_ACTION, tenantId, patientId, patientId, day) as ConsentRow | undefined;
@@ -183,6 +208,7 @@ export function mountAmbientScribeConsentRoutes(app: Express): void {
   app.get("/api/ambient-scribe/consent", requireAuth, prescriberOnly, (req: Request, res: Response) => {
     const tenantId = String(req.user?.tenantId || "").trim();
     if (!tenantId) return res.status(401).json({ error: "Sign in required", code: "AUTH_REQUIRED" });
+    closeStaleAmbientWalkIns();
     const rawAppointment = req.query.appointmentId;
     const patientId = cleanVisitId(req.query.patientId);
     if (rawAppointment !== undefined && String(rawAppointment).trim() !== "") {
@@ -214,6 +240,7 @@ export function mountAmbientScribeConsentRoutes(app: Express): void {
     (req: Request, res: Response) => {
       const tenantId = String(req.user?.tenantId || "").trim();
       if (!tenantId) return res.status(401).json({ error: "Sign in required", code: "AUTH_REQUIRED" });
+      closeStaleAmbientWalkIns();
       const body = (req.body || {}) as Record<string, unknown>;
       const patientId = cleanVisitId(body.patientId);
       if (!patientId) return res.status(400).json({ error: "patientId is required" });

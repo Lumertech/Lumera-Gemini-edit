@@ -19,7 +19,7 @@ import { registerPatientDocumentConsentRoutes } from "./patient-document-consent
 import { buildPatientTimeline, presentPrescriptionForRole } from "./patient-timeline.ts";
 import { denyUnlessPatientRecordRole, denyUnlessPrescriber, isReceptionRole } from "./patient-access.ts";
 import { clinicCalendarDate, parseAppointmentListDate } from "../src/lib/clinicDay.ts";
-import { AMBIENT_WALKIN_SOURCE } from "./ambient-scribe-consent.ts";
+import { AMBIENT_WALKIN_SOURCE } from "./ambient-walkin.ts";
 import {
   loadPatientClinicPhone,
   loadPatientTenant,
@@ -1221,10 +1221,10 @@ export function createClinicalRouter(): Router {
       const visits = getDb()
         .prepare(
           `SELECT * FROM appointments
-           WHERE tenant_id = ? AND patient_id = ?
+           WHERE tenant_id = ? AND patient_id = ? AND COALESCE(source, '') != ?
            ORDER BY date DESC, time_slot DESC`
         )
-        .all(tenantId, req.params.id) as Record<string, unknown>[];
+        .all(tenantId, req.params.id, AMBIENT_WALKIN_SOURCE) as Record<string, unknown>[];
       const prescriptions = getDb()
         .prepare(
           `SELECT * FROM prescriptions
@@ -1376,9 +1376,10 @@ export function createClinicalRouter(): Router {
       getDb()
         .prepare(
           `UPDATE appointments SET patient_phone = ?
-           WHERE tenant_id = ? AND patient_id = ? AND status NOT IN ${CLOSED_APPOINTMENT_STATUSES}`
+           WHERE tenant_id = ? AND patient_id = ? AND status NOT IN ${CLOSED_APPOINTMENT_STATUSES}
+             AND COALESCE(source, '') != ?`
         )
-        .run(syncedPhone, tenantId, req.params.id);
+        .run(syncedPhone, tenantId, req.params.id, AMBIENT_WALKIN_SOURCE);
     }
     res.json({ patient: mapPatient(getTenantPatient(tenantId, req.params.id)!) });
   });
@@ -1411,6 +1412,9 @@ export function createClinicalRouter(): Router {
     if (!tenantId) return;
     const row = getTenantAppointment(tenantId, req.params.id);
     if (!row || !patientCanRead(req, row.patient_id)) return res.status(404).json({ error: "Appointment not found" });
+    if (requestIsPatient(req) && String(row.source || "") === AMBIENT_WALKIN_SOURCE) {
+      return res.status(404).json({ error: "Appointment not found" });
+    }
     res.json(
       withPatientTenant(req, tenantId, { appointment: mapAppointment(row) }, appointmentDoctorExtras(row))
     );

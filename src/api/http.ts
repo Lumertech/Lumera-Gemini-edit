@@ -198,7 +198,8 @@ export async function apiFetch<T = unknown>(path: string, init: RequestInit = {}
   const parsed = await res.json().catch(() => ({}));
   const data = withoutSessionCredential((parsed && typeof parsed === "object" ? parsed : {}) as ApiErrorBody);
   if (!res.ok) {
-    const err = new Error(data.error || `Request failed (${res.status})`) as Error & { code?: string };
+    const err = new Error(data.error || `Request failed (${res.status})`) as Error & { code?: string; status?: number };
+    err.status = res.status;
     if (data.code) err.code = data.code;
     throw err;
   }

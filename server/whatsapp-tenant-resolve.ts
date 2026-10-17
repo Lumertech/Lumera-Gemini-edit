@@ -1,3 +1,4 @@
+import { AMBIENT_WALKIN_SOURCE } from "./ambient-walkin.ts";
 import { DEMO_TENANT_ID, getDb } from "./db.ts";
 import { isProduction } from "./runtime.ts";
 import {
@@ -81,9 +82,10 @@ function resolveDoctorOwnedNumber(opts: {
         .prepare(
           `SELECT id FROM appointments
            WHERE tenant_id = ? AND doctor_id = ? AND (patient_id = ? OR patient_phone = ?)
+             AND COALESCE(source, '') != ?
            LIMIT 1`
         )
-        .get(affiliation.tenantId, affiliation.doctorId, patientId, phone) as { id?: string } | undefined;
+        .get(affiliation.tenantId, affiliation.doctorId, patientId, phone, AMBIENT_WALKIN_SOURCE) as { id?: string } | undefined;
       const patientOnly = !history
         ? getDb()
             .prepare("SELECT id FROM patients WHERE tenant_id = ? AND id = ? LIMIT 1")

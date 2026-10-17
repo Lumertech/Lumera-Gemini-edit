@@ -9,6 +9,7 @@
 
 import { type Request } from "express";
 import crypto from "node:crypto";
+import { AMBIENT_WALKIN_SOURCE } from "./ambient-walkin.ts";
 import { getDb, mapConsentArtefact } from "./db.ts";
 import { getAbdmBridgeStatus, resolveAbdmMode } from "./abdm-mode.ts";
 import { decideAbdmCallbackSignature, type AbdmCallbackAuth } from "./abdm-hmac.ts";
@@ -180,9 +181,9 @@ export function findTenantEncounterDoctor(
               d.hpr_id AS hpr_id, d.qualification AS qualification
        FROM appointments a
        INNER JOIN doctors d ON d.id = a.doctor_id
-       WHERE a.tenant_id = ? AND a.patient_id = ? AND a.id = ?`
+       WHERE a.tenant_id = ? AND a.patient_id = ? AND a.id = ? AND COALESCE(a.source, '') != ?`
     )
-    .get(tenantId, patientId, encounter) as TenantEncounterDoctor | undefined;
+    .get(tenantId, patientId, encounter, AMBIENT_WALKIN_SOURCE) as TenantEncounterDoctor | undefined;
   if (!row?.id) return undefined;
   return row;
 }

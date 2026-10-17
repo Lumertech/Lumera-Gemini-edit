@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   ambientVisitKey,
+  closedVisitNeedsFreshConsent,
   consentWriteNextStep,
   fetchAmbientScribeConsent,
   saveAmbientScribeConsent,
@@ -95,7 +96,15 @@ export function useAmbientScribeConsent(opts: {
         grantedRef.current = Boolean(visitRef.current);
         setOpen(false);
         setNotice("Agreement recorded. Tap Start listening.");
-      } catch {
+      } catch (err) {
+        if (closedVisitNeedsFreshConsent(err)) {
+          visitRef.current = "";
+          grantedRef.current = false;
+          setNotice("");
+          setError("");
+          setOpen(true);
+          return;
+        }
         if (consentWriteNextStep(false) !== "blocked") return;
         grantedRef.current = false;
         setNotice("");

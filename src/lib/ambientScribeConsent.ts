@@ -40,6 +40,13 @@ export function consentWriteNextStep(writeSucceeded: boolean): ConsentWriteNextS
   return writeSucceeded ? "second-tap" : "blocked";
 }
 
+/** A closed visit must be confirmed again. The old visit id is not reused. */
+export function closedVisitNeedsFreshConsent(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const body = err as { code?: unknown; status?: unknown };
+  return body.code === "visit_closed" && body.status === 409;
+}
+
 /** A queue appointment id only. Walk-in ids are minted by the server. */
 export function ambientVisitKey(appointmentId: string | undefined, _patientId?: string, _day = clinicCalendarDate()): string {
   return String(appointmentId || "").trim();

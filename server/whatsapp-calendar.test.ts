@@ -20,10 +20,13 @@ import {
   dispatchAppointmentReminder,
   dispatchWhatsAppBookConfirmation,
   findActiveAppointment,
+  getWhatsAppQueue,
   parseTimeSlot,
+  patchWhatsAppAppointment,
   runAppointmentReminders,
   tenantUtcOffsetMinutes,
 } from "./whatsapp-calendar.ts";
+import { AMBIENT_WALKIN_SOURCE } from "./ambient-walkin.ts";
 import { platformAdminActor, upsertWhatsAppNumber } from "./whatsapp-numbers.ts";
 
 async function jsonRequest(
@@ -885,5 +888,90 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
     assert.match(src, /tenantId: opts.tenantId/);
     assert.equal(src.includes("sendWhatsAppGraphCloudMessage"), false);
     assert.equal(src.includes("graph.facebook.com"), false);
+  });
+
+  it("uses the real waiting visit and skips a hidden ambient walk-in", async () => {
+    const prevToken = process.env.META_ACCESS_TOKEN;
+    const prevPhone = process.env.META_PHONE_NUMBER_ID;
+    delete process.env.META_ACCESS_TOKEN;
+    delete process.env.META_PHONE_NUMBER_ID;
+    try {
+      const clinic = createClinicUser("ambientHide");
+      const phone = uniquePhone();
+      const date = "2026-11-20";
+      const booked = bookWhatsAppAppointment({
+        tenantId: clinic.tenantId,
+        patientPhone: phone,
+        patientName: "Hidden Walk In",
+        doctorId: clinic.doctorId,
+        date,
+        timeSlot: "10:30 AM",
+      });
+      const realId = booked.appointment.id;
+      const patientId = booked.patient.id;
+      const ambientId = `apt-hidden-${patientId}`.slice(0, 80);
+      getDb()
+        .prepare(
+          `INSERT INTO appointments (
+            id, tenant_id, token_number, patient_id, patient_name, patient_phone, uhid, doctor_id, doctor_name,
+            specialty, date, time_slot, type, status, source, consultation_fee, is_paid, created_at
+          ) VALUES (?, ?, 0, ?, 'Hidden Walk In', ?, ?, ?, 'Dr', 'General Medicine', ?, '10:30 AM', 'Ambient scribe', 'Open', ?, 0, 0, ?)`
+        )
+        .run(
+          ambientId,
+          clinic.tenantId,
+          patientId,
+          booked.appointment.patientPhone,
+          booked.appointment.uhid,
+          clinic.doctorId,
+          date,
+          AMBIENT_WALKIN_SOURCE,
+          "2099-01-01T00:00:00.000Z"
+        );
+
+      const queue = getWhatsAppQueue({ tenantId: clinic.tenantId, patientPhone: phone });
+      assert.equal(queue.hasAppointment, true);
+      assert.equal(queue.appointment?.id, realId);
+      assert.equal(
+        findActiveAppointment({ tenantId: clinic.tenantId, appointmentId: ambientId }),
+        undefined
+      );
+
+      const patched = patchWhatsAppAppointment({
+        tenantId: clinic.tenantId,
+        patientPhone: phone,
+        body: { status: "Confirmed" },
+      });
+      assert.equal(patched.id, realId);
+      const hidden = getDb().prepare("SELECT status FROM appointments WHERE id = ?").get(ambientId) as { status: string };
+      assert.equal(hidden.status, "Open");
+
+      const again = bookWhatsAppAppointment({
+        tenantId: clinic.tenantId,
+        patientPhone: phone,
+        patientName: "Hidden Walk In",
+        doctorId: clinic.doctorId,
+        date,
+        timeSlot: "11:00 AM",
+      });
+      assert.equal(again.reused, true);
+      assert.equal(again.appointment.id, realId);
+
+      getDb()
+        .prepare("UPDATE appointments SET status = 'Waiting', time_slot = '10:30 AM', date = ? WHERE id = ?")
+        .run(date, ambientId);
+      const run = await runAppointmentReminders({
+        tenantId: clinic.tenantId,
+        now: new Date("2026-11-19T05:00:00.000Z"),
+      });
+      const sentIds = run.sent.map((item) => item.appointmentId);
+      assert.equal(sentIds.includes(ambientId), false);
+      assert.equal(sentIds.includes(realId), true);
+    } finally {
+      if (prevToken === undefined) delete process.env.META_ACCESS_TOKEN;
+      else process.env.META_ACCESS_TOKEN = prevToken;
+      if (prevPhone === undefined) delete process.env.META_PHONE_NUMBER_ID;
+      else process.env.META_PHONE_NUMBER_ID = prevPhone;
+    }
   });
 });
