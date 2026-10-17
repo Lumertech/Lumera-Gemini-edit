@@ -99,4 +99,58 @@ describe("safety check gate", () => {
     const writer = fs.readFileSync(path.join(root, "src/components/PrescriptionWriter.tsx"), "utf8");
     assert.match(writer, /safetyResult\.source/);
   });
+
+  it("blocks Print, Sign, and WhatsApp on a Gemini high-risk flag until the override is acknowledged", () => {
+    const alert = {
+      type: "ALLERGY",
+      severity: "Severe",
+      drugsInvolved: ["Amoxicillin"],
+      description: "Penicillin allergy",
+      clinicalRecommendation: "Stop the drug",
+    };
+    const high = interpretSafetyCheckResponse(200, { hasHighRiskAlert: true, alerts: [alert] });
+    assert.equal(high.accepted, true);
+    if (!high.accepted) return;
+    assert.equal(high.result.safetyStatus, "HIGH_RISK");
+    assert.equal(high.result.hasHighRiskAlert, true);
+    const open = {
+      medicineCount: 1,
+      checkedSignature: signature,
+      medicinesSignature: signature,
+      safetyStatus: high.result.safetyStatus,
+      hasHighRiskAlert: high.result.hasHighRiskAlert,
+    };
+    assert.equal(safetyGateBlocksActions({ ...open, overrideSignature: null }), true);
+    assert.equal(safetyGateBlocksActions({ ...open, overrideSignature: signature }), false);
+
+    const failed = interpretSafetyCheckResponse(500, { code: "safety_check_failed" });
+    assert.equal(failed.accepted, false);
+    assert.equal(stillBlocked(), true);
+
+    const review = interpretSafetyCheckResponse(200, {
+      safetyStatus: "REVIEW",
+      source: "gemini",
+      hasHighRiskAlert: false,
+      alerts: [],
+    });
+    assert.equal(review.accepted, true);
+    if (review.accepted) {
+      assert.equal(review.result.safetyStatus, "REVIEW");
+      assert.equal(
+        safetyGateBlocksActions({
+          medicineCount: 1,
+          checkedSignature: signature,
+          medicinesSignature: signature,
+          safetyStatus: review.result.safetyStatus,
+          hasHighRiskAlert: false,
+          overrideSignature: null,
+        }),
+        false
+      );
+    }
+
+    const writer = fs.readFileSync(path.join(root, "src/components/PrescriptionWriter.tsx"), "utf8");
+    assert.match(writer, /hasHighRiskAlert === true/);
+    assert.match(writer, /safetyResult\.source/);
+  });
 });

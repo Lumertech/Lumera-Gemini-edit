@@ -320,6 +320,45 @@ describe("clinical Gemini route auth", () => {
     resetClinicalGeminiRateLimits();
   });
 
+  it("normalizes Gemini safety output and fails closed when it is malformed", async () => {
+    resetClinicalGeminiRateLimits();
+    const token = await login(doctor.email);
+    const headers = auth(token);
+    const alert = {
+      type: "ALLERGY",
+      severity: "Severe",
+      drugsInvolved: ["Amoxicillin"],
+      description: "Penicillin allergy",
+      clinicalRecommendation: "Stop the drug",
+    };
+    setGeminiSafetyCheckGeneratorForTests(async () => ({ hasHighRiskAlert: true, alerts: [alert] }));
+    const high = await jsonRequest(port, "POST", "/api/gemini/safety-check", { medicines: [{ drugName: "Amoxicillin" }] }, headers);
+    assert.equal(high.status, 200, JSON.stringify(high.json));
+    assert.equal(high.json.safetyStatus, "HIGH_RISK");
+    assert.equal(high.json.source, "gemini");
+    assert.equal(high.json.hasHighRiskAlert, true);
+    assert.equal(Array.isArray(high.json.alerts), true);
+    assert.equal((high.json.alerts as unknown[]).length, 1);
+
+    setGeminiSafetyCheckGeneratorForTests(async () => ({ hasHighRiskAlert: false, alerts: [] }));
+    const low = await jsonRequest(port, "POST", "/api/gemini/safety-check", { medicines: [{ drugName: "Paracetamol" }] }, headers);
+    assert.equal(low.status, 200, JSON.stringify(low.json));
+    assert.equal(low.json.safetyStatus, "REVIEW");
+    assert.equal(low.json.source, "gemini");
+    assert.equal(low.json.hasHighRiskAlert, false);
+
+    setGeminiSafetyCheckGeneratorForTests(async () => ({ hasHighRiskAlert: true, alerts: ["not-an-object"] }));
+    const malformed = await jsonRequest(port, "POST", "/api/gemini/safety-check", { medicines: [{ drugName: "Amoxicillin" }] }, headers);
+    assert.equal(malformed.status, 500);
+    assert.equal(malformed.json.code, "safety_check_failed");
+    assert.equal(malformed.json.safetyStatus, undefined);
+    assert.equal(malformed.json.alerts, undefined);
+    assert.equal(JSON.stringify(malformed.json).includes("not-an-object"), false);
+
+    setGeminiSafetyCheckGeneratorForTests(undefined);
+    resetClinicalGeminiRateLimits();
+  });
+
   it("returns 429 when generate-soap exceeds the shared clinical limit", async () => {
     resetClinicalGeminiRateLimits();
     setClinicalGeminiRateLimitForTests({ userMax: 1, tenantMax: 20 });

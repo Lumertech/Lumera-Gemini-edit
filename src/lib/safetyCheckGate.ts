@@ -22,7 +22,9 @@ export function interpretSafetyCheckResponse(
   if (status < 200 || status >= 300 || !hasSafetyPayload(body)) {
     return { accepted: false, message: safetyCheckFailureCopy(status) };
   }
-  return { accepted: true, result: body };
+  const result: SafetyCheckResult = { ...body };
+  if (result.hasHighRiskAlert === true) result.safetyStatus = "HIGH_RISK";
+  return { accepted: true, result };
 }
 
 /** Print, Sign, and WhatsApp stay disabled until this is false. */
@@ -31,10 +33,13 @@ export function safetyGateBlocksActions(opts: {
   checkedSignature: string | null;
   medicinesSignature: string;
   safetyStatus?: string | null;
+  hasHighRiskAlert?: boolean | null;
   overrideSignature: string | null;
 }): boolean {
   if (opts.medicineCount <= 0) return false;
   const stale = opts.checkedSignature !== opts.medicinesSignature;
-  const highRisk = opts.safetyStatus === "HIGH_RISK" && opts.overrideSignature !== opts.medicinesSignature;
+  const highRisk =
+    (opts.safetyStatus === "HIGH_RISK" || opts.hasHighRiskAlert === true) &&
+    opts.overrideSignature !== opts.medicinesSignature;
   return stale || highRisk;
 }

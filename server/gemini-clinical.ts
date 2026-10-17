@@ -30,6 +30,36 @@ export function setGeminiSafetyCheckGeneratorForTests(fn?: (() => Promise<unknow
   testSafetyCheckGenerator = fn;
 }
 
+type GeminiSafetyBody = {
+  safetyStatus: "HIGH_RISK" | "REVIEW";
+  source: "gemini";
+  hasHighRiskAlert: boolean;
+  alerts: Record<string, unknown>[];
+};
+
+/** Gemini's raw { hasHighRiskAlert, alerts } shape. A bad payload is a failed check, not a pass. */
+export function normalizeGeminiSafetyOutput(raw: unknown): { ok: true; body: GeminiSafetyBody } | { ok: false } {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { ok: false };
+  const record = raw as { hasHighRiskAlert?: unknown; alerts?: unknown };
+  if ("hasHighRiskAlert" in record && typeof record.hasHighRiskAlert !== "boolean") return { ok: false };
+  if (!Array.isArray(record.alerts)) return { ok: false };
+  const alerts: Record<string, unknown>[] = [];
+  for (const item of record.alerts) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return { ok: false };
+    alerts.push(item as Record<string, unknown>);
+  }
+  const hasHighRiskAlert = record.hasHighRiskAlert === true;
+  return {
+    ok: true,
+    body: {
+      safetyStatus: hasHighRiskAlert ? "HIGH_RISK" : "REVIEW",
+      source: "gemini",
+      hasHighRiskAlert,
+      alerts,
+    },
+  };
+}
+
 /** Prescriber or clinic clinical staff. Patient, reception, and super_admin are denied. */
 function prescriberOnly(req: Request, res: Response, next: NextFunction): void {
   if (!denyUnlessPrescriber(req, res)) return;
@@ -188,7 +218,12 @@ export function mountGeminiClinicalRoutes(app: Express) {
   app.post("/api/gemini/safety-check", requireAuth, prescriberOnly, safetyCheckRateLimit, rejectUntrustedTenantClaim, async (req: Request, res: Response) => {
     try {
       if (testSafetyCheckGenerator) {
-        return res.json(await testSafetyCheckGenerator());
+        const normalized = normalizeGeminiSafetyOutput(await testSafetyCheckGenerator());
+        if (!normalized.ok) {
+          console.error("Safety check model output was malformed");
+          return res.status(500).json({ code: "safety_check_failed" });
+        }
+        return res.json(normalized.body);
       }
       const { patientAllergies = [], chronicConditions = [], medicines = [], patientAge, patientGender } = req.body;
       const ai = getGenAI();
@@ -200,7 +235,19 @@ export function mountGeminiClinicalRoutes(app: Express) {
             contents: prompt,
             config: { responseMimeType: "application/json", temperature: 0.1 },
           });
-          return res.json(JSON.parse(response.text?.trim() || "{}"));
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(response.text?.trim() || "");
+          } catch {
+            console.error("Safety check model output was not JSON");
+            return res.status(500).json({ code: "safety_check_failed" });
+          }
+          const normalized = normalizeGeminiSafetyOutput(parsed);
+          if (!normalized.ok) {
+            console.error("Safety check model output was malformed");
+            return res.status(500).json({ code: "safety_check_failed" });
+          }
+          return res.json(normalized.body);
         } catch {
           console.error("Safety check model call failed");
         }

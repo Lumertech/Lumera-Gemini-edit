@@ -346,7 +346,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     .map((m) => `${m.id}:${m.drugName}:${m.dosage}:${m.frequency}:${m.durationDays}`)
     .join('|');
   const isSafetyCheckStale = medicines.length > 0 && safetyCheckedSignature !== medicinesSignature;
-  const isSafetyHighRisk = safetyResult?.safetyStatus === 'HIGH_RISK';
+  const isSafetyHighRisk = safetyResult?.safetyStatus === 'HIGH_RISK' || safetyResult?.hasHighRiskAlert === true;
   const isSafetyOverridden = safetyOverrideSignature === medicinesSignature;
   // Blocks Print / WhatsApp Dispatch / Finalize & Sign until the doctor has
   // run the AI Safety Audit against the *current* medicine list, and — if it
@@ -1125,11 +1125,11 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
                 <span className="text-[11px] font-medium text-slate-500">{safetyResult.source}</span>
               )}
               <span className={`px-2 py-0.5 text-[11px] font-bold rounded-full uppercase tracking-wider ${
+                isSafetyHighRisk ? 'bg-rose-100 text-rose-800' :
                 safetyResult.safetyStatus === 'SAFE' ? 'bg-emerald-100 text-emerald-800' :
-                safetyResult.safetyStatus === 'MODERATE_RISK' || safetyResult.safetyStatus === 'REVIEW' ? 'bg-amber-100 text-amber-800' :
-                'bg-rose-100 text-rose-800'
+                'bg-amber-100 text-amber-800'
               }`}>
-                {safetyResult.safetyStatus}
+                {isSafetyHighRisk ? 'HIGH_RISK' : safetyResult.safetyStatus}
               </span>
             </span>
           </div>
