@@ -147,8 +147,8 @@ describe("clinical Gemini route auth", () => {
     assert.equal(JSON.stringify(soap.json).includes(PATIENT_MARKER), false);
   });
 
-  it("returns 403 for patient, reception, and super_admin", async () => {
-    for (const role of ["patient", "receptionist", "super_admin"]) {
+  it("returns 403 for patient, reception, super_admin, and admin", async () => {
+    for (const role of ["patient", "receptionist", "super_admin", "admin"]) {
       const staff = seedUser(role, role);
       const token = await login(staff.email);
       for (const route of ROUTES) {
@@ -320,40 +320,43 @@ describe("clinical Gemini route auth", () => {
     resetClinicalGeminiRateLimits();
   });
 
-  it("normalizes Gemini safety output and fails closed when it is malformed", async () => {
+  it("normalizes Pulse AI safety output and falls back when alerts is not an array", async () => {
     resetClinicalGeminiRateLimits();
     const token = await login(doctor.email);
     const headers = auth(token);
-    const alert = {
-      type: "ALLERGY",
-      severity: "Severe",
-      drugsInvolved: ["Amoxicillin"],
-      description: "Penicillin allergy",
-      clinicalRecommendation: "Stop the drug",
-    };
-    setGeminiSafetyCheckGeneratorForTests(async () => ({ hasHighRiskAlert: true, alerts: [alert] }));
-    const high = await jsonRequest(port, "POST", "/api/gemini/safety-check", { medicines: [{ drugName: "Amoxicillin" }] }, headers);
-    assert.equal(high.status, 200, JSON.stringify(high.json));
-    assert.equal(high.json.safetyStatus, "HIGH_RISK");
-    assert.equal(high.json.source, "gemini");
-    assert.equal(high.json.hasHighRiskAlert, true);
-    assert.equal(Array.isArray(high.json.alerts), true);
-    assert.equal((high.json.alerts as unknown[]).length, 1);
+    setGeminiSafetyCheckGeneratorForTests(async () => ({
+      hasHighRiskAlert: true,
+      alerts: [{ severity: "Mild", description: "Dose check" }],
+    }));
+    const flagged = await jsonRequest(port, "POST", "/api/gemini/safety-check", { medicines: [{ drugName: "Amoxicillin" }] }, headers);
+    assert.equal(flagged.status, 200, JSON.stringify(flagged.json));
+    assert.equal(flagged.json.safetyStatus, "HIGH_RISK");
+    assert.equal(flagged.json.source, "Pulse AI");
+    assert.equal(flagged.json.hasHighRiskAlert, true);
+
+    setGeminiSafetyCheckGeneratorForTests(async () => ({
+      hasHighRiskAlert: false,
+      alerts: [{ severity: "severe", description: "Interaction" }],
+    }));
+    const severe = await jsonRequest(port, "POST", "/api/gemini/safety-check", { medicines: [{ drugName: "Amoxicillin" }] }, headers);
+    assert.equal(severe.status, 200, JSON.stringify(severe.json));
+    assert.equal(severe.json.safetyStatus, "HIGH_RISK");
+    assert.equal(severe.json.source, "Pulse AI");
+    assert.equal(severe.json.hasHighRiskAlert, true);
 
     setGeminiSafetyCheckGeneratorForTests(async () => ({ hasHighRiskAlert: false, alerts: [] }));
     const low = await jsonRequest(port, "POST", "/api/gemini/safety-check", { medicines: [{ drugName: "Paracetamol" }] }, headers);
     assert.equal(low.status, 200, JSON.stringify(low.json));
     assert.equal(low.json.safetyStatus, "REVIEW");
-    assert.equal(low.json.source, "gemini");
+    assert.equal(low.json.source, "Pulse AI");
     assert.equal(low.json.hasHighRiskAlert, false);
 
-    setGeminiSafetyCheckGeneratorForTests(async () => ({ hasHighRiskAlert: true, alerts: ["not-an-object"] }));
-    const malformed = await jsonRequest(port, "POST", "/api/gemini/safety-check", { medicines: [{ drugName: "Amoxicillin" }] }, headers);
-    assert.equal(malformed.status, 500);
-    assert.equal(malformed.json.code, "safety_check_failed");
-    assert.equal(malformed.json.safetyStatus, undefined);
-    assert.equal(malformed.json.alerts, undefined);
-    assert.equal(JSON.stringify(malformed.json).includes("not-an-object"), false);
+    setGeminiSafetyCheckGeneratorForTests(async () => ({ hasHighRiskAlert: true, alerts: "not-an-array" }));
+    const fallback = await jsonRequest(port, "POST", "/api/gemini/safety-check", { medicines: [{ drugName: "Paracetamol" }], patientAllergies: [] }, headers);
+    assert.equal(fallback.status, 200, JSON.stringify(fallback.json));
+    assert.equal(fallback.json.safetyStatus, "REVIEW");
+    assert.equal(fallback.json.source, "rule-based fallback");
+    assert.equal(JSON.stringify(fallback.json).includes("not-an-array"), false);
 
     setGeminiSafetyCheckGeneratorForTests(undefined);
     resetClinicalGeminiRateLimits();

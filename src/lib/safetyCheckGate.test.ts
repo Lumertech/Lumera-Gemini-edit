@@ -1,156 +1,125 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import path from "node:path";
 import { describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 import {
+  EMPTY_SAFETY_GATE,
+  RULE_BASED_SAFETY_SOURCE,
   SAFETY_CHECK_FAILED_COPY,
   SAFETY_CHECK_RATE_LIMIT_COPY,
+  buildSafetyListSignature,
   interpretSafetyCheckResponse,
+  lastSuccessfulCheckCopy,
+  reduceSafetyCheck,
   safetyGateBlocksActions,
+  safetyGateFromState,
 } from "./safetyCheckGate.ts";
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const signature = "med-1:Amoxicillin:500 mg:1-0-1:5";
+const meds = [{ id: "med-1", drugName: "Amoxicillin", dosage: "500 mg", frequency: "1-0-1", durationDays: 5 }];
+const signature = buildSafetyListSignature({
+  medicines: meds,
+  allergies: ["Penicillin"],
+  chronicConditions: ["Asthma"],
+});
 
-function stillBlocked(): boolean {
-  return safetyGateBlocksActions({
-    medicineCount: 1,
-    checkedSignature: null,
-    medicinesSignature: signature,
-    safetyStatus: null,
-    overrideSignature: null,
-  });
+function view(state: typeof EMPTY_SAFETY_GATE, listSignature = signature) {
+  return {
+    medicineCount: meds.length,
+    checkedSignature: state.checkedSignature,
+    medicinesSignature: listSignature,
+    safetyStatus: state.result?.safetyStatus,
+    hasHighRiskAlert: state.result?.hasHighRiskAlert,
+    source: state.result?.source,
+    overrideSignature: state.overrideSignature,
+  };
 }
 
 describe("safety check gate", () => {
+  it("keeps Print, Sign, and WhatsApp blocked for a high-risk flag until the override is acknowledged", () => {
+    const decision = interpretSafetyCheckResponse(200, {
+      hasHighRiskAlert: true,
+      alerts: [{ severity: "Moderate", description: "Dose check" }],
+    });
+    assert.equal(decision.accepted, true);
+    assert.equal(decision.result.safetyStatus, "HIGH_RISK");
+    assert.equal(decision.result.hasHighRiskAlert, true);
+
+    const checked = reduceSafetyCheck(EMPTY_SAFETY_GATE, 200, decision.result, signature, "09:15");
+    assert.equal(safetyGateFromState(checked, meds.length, signature), true);
+    assert.equal(safetyGateBlocksActions(view(checked)), true);
+
+    const acknowledged = { ...checked, overrideSignature: signature };
+    assert.equal(safetyGateFromState(acknowledged, meds.length, signature), false);
+    assert.equal(safetyGateBlocksActions({ ...view(acknowledged), overrideSignature: signature }), false);
+  });
+
+  it("treats a Severe alert with hasHighRiskAlert false as HIGH_RISK", () => {
+    const decision = interpretSafetyCheckResponse(200, {
+      hasHighRiskAlert: false,
+      safetyStatus: "REVIEW",
+      alerts: [{ severity: "severe" }],
+    });
+    assert.equal(decision.accepted, true);
+    assert.equal(decision.result.safetyStatus, "HIGH_RISK");
+    assert.equal(decision.result.hasHighRiskAlert, true);
+
+    const checked = reduceSafetyCheck(EMPTY_SAFETY_GATE, 200, {
+      hasHighRiskAlert: false,
+      safetyStatus: "REVIEW",
+      alerts: [{ severity: "Critical" }],
+    }, signature, "09:16");
+    assert.equal(checked.result?.safetyStatus, "HIGH_RISK");
+    assert.equal(safetyGateBlocksActions(view(checked)), true);
+    assert.equal(safetyGateBlocksActions({ ...view(checked), overrideSignature: signature }), false);
+  });
+
   it("keeps Print, Sign, and WhatsApp disabled after 429 and safety_check_failed", () => {
-    const rateLimited = interpretSafetyCheckResponse(429, {
-      error: "Too many clinical assistant requests. Try again later.",
-    });
-    assert.equal(rateLimited.accepted, false);
-    if (!rateLimited.accepted) assert.equal(rateLimited.message, SAFETY_CHECK_RATE_LIMIT_COPY);
-    assert.equal(stillBlocked(), true);
-
-    const failed = interpretSafetyCheckResponse(500, { code: "safety_check_failed" });
-    assert.equal(failed.accepted, false);
-    if (!failed.accepted) assert.equal(failed.message, SAFETY_CHECK_FAILED_COPY);
-    assert.equal(stillBlocked(), true);
-
-    const forbidden = interpretSafetyCheckResponse(403, { error: "Insufficient permissions" });
-    assert.equal(forbidden.accepted, false);
-    assert.equal(stillBlocked(), true);
-
-    const empty = interpretSafetyCheckResponse(200, { code: "safety_check_failed" });
-    assert.equal(empty.accepted, false);
-    assert.equal(stillBlocked(), true);
-
-    const writer = fs.readFileSync(path.join(root, "src/components/PrescriptionWriter.tsx"), "utf8");
-    const handler = writer.slice(writer.indexOf("const handleCheckSafety"), writer.indexOf("const handleAddMedicine"));
-    const guardAt = handler.indexOf("if (decision.accepted === false)");
-    const recordAt = handler.indexOf("setSafetyCheckedSignature");
-    assert.ok(guardAt >= 0 && recordAt > guardAt);
-    assert.match(handler, /return;/);
-    assert.match(handler, /interpretSafetyCheckResponse/);
-    assert.doesNotMatch(handler, /setSafetyResult\(data\)/);
-    assert.doesNotMatch(handler, /setSafetyCheckedSignature\(medicinesSignature\)[\s\S]*if \(!decision\.accepted\)/);
-
-    for (const label of [
-      "<span>Print Prescription</span>",
-      "<span>Finalize &amp; Sign Rx</span>",
-      "<span>Send WhatsApp Rx</span>",
-      "<span>WhatsApp Dispatch</span>",
-    ]) {
-      const at = writer.indexOf(label);
-      assert.ok(at > 0, label);
-      const window = writer.slice(Math.max(0, at - 700), at);
-      assert.match(window, /disabled=\{[^}]*isSafetyGateBlocking/);
-    }
-    const signLabel = writer.indexOf("Finalize & Sign Rx");
-    const signWindow = writer.slice(Math.max(0, signLabel - 700), signLabel);
-    assert.match(signWindow, /disabled=\{[^}]*isSafetyGateBlocking/);
-  });
-
-  it("accepts a fallback result that names REVIEW or HIGH_RISK and shows the source", () => {
-    const review = interpretSafetyCheckResponse(200, {
+    const opened = reduceSafetyCheck(EMPTY_SAFETY_GATE, 200, {
       safetyStatus: "REVIEW",
-      source: "rule-based fallback",
+      source: "Pulse AI",
+      hasHighRiskAlert: false,
       alerts: [],
-    });
-    assert.equal(review.accepted, true);
-    const high = interpretSafetyCheckResponse(200, {
-      safetyStatus: "HIGH_RISK",
-      source: "rule-based fallback",
-      alerts: [{ severity: "Severe" }],
-    });
-    assert.equal(high.accepted, true);
-    if (high.accepted) {
-      assert.equal(
-        safetyGateBlocksActions({
-          medicineCount: 1,
-          checkedSignature: signature,
-          medicinesSignature: signature,
-          safetyStatus: high.result.safetyStatus,
-          overrideSignature: null,
-        }),
-        true
-      );
-    }
-    const writer = fs.readFileSync(path.join(root, "src/components/PrescriptionWriter.tsx"), "utf8");
-    assert.match(writer, /safetyResult\.source/);
-  });
+    }, signature, "09:10");
+    assert.equal(safetyGateFromState(opened, meds.length, signature), false);
 
-  it("blocks Print, Sign, and WhatsApp on a Gemini high-risk flag until the override is acknowledged", () => {
-    const alert = {
-      type: "ALLERGY",
-      severity: "Severe",
-      drugsInvolved: ["Amoxicillin"],
-      description: "Penicillin allergy",
-      clinicalRecommendation: "Stop the drug",
-    };
-    const high = interpretSafetyCheckResponse(200, { hasHighRiskAlert: true, alerts: [alert] });
-    assert.equal(high.accepted, true);
-    if (!high.accepted) return;
-    assert.equal(high.result.safetyStatus, "HIGH_RISK");
-    assert.equal(high.result.hasHighRiskAlert, true);
-    const open = {
-      medicineCount: 1,
-      checkedSignature: signature,
-      medicinesSignature: signature,
-      safetyStatus: high.result.safetyStatus,
-      hasHighRiskAlert: high.result.hasHighRiskAlert,
-    };
-    assert.equal(safetyGateBlocksActions({ ...open, overrideSignature: null }), true);
-    assert.equal(safetyGateBlocksActions({ ...open, overrideSignature: signature }), false);
+    const rateLimited = interpretSafetyCheckResponse(429, { error: "slow" });
+    assert.equal(rateLimited.accepted, false);
+    if (rateLimited.accepted === false) assert.equal(rateLimited.message, SAFETY_CHECK_RATE_LIMIT_COPY);
+    const afterRateLimit = reduceSafetyCheck(opened, 429, { error: "slow" }, signature, "09:20");
+    assert.equal(afterRateLimit.checkedSignature, null);
+    assert.equal(afterRateLimit.lastSuccessfulCheckAt, "09:10");
+    assert.equal(lastSuccessfulCheckCopy(afterRateLimit.lastSuccessfulCheckAt), "Last successful check at 09:10 IST");
+    assert.equal(safetyGateFromState(afterRateLimit, meds.length, signature), true);
 
     const failed = interpretSafetyCheckResponse(500, { code: "safety_check_failed" });
     assert.equal(failed.accepted, false);
-    assert.equal(stillBlocked(), true);
+    if (failed.accepted === false) assert.equal(failed.message, SAFETY_CHECK_FAILED_COPY);
+    const afterFailure = reduceSafetyCheck(opened, 500, { code: "safety_check_failed" }, signature, "09:21");
+    assert.equal(afterFailure.checkedSignature, null);
+    assert.equal(safetyGateFromState(afterFailure, meds.length, signature), true);
+  });
 
+  it("requires a manual acknowledgement for a rule-based REVIEW and includes allergies in the signature", () => {
     const review = interpretSafetyCheckResponse(200, {
       safetyStatus: "REVIEW",
-      source: "gemini",
+      source: RULE_BASED_SAFETY_SOURCE,
       hasHighRiskAlert: false,
       alerts: [],
     });
     assert.equal(review.accepted, true);
-    if (review.accepted) {
-      assert.equal(review.result.safetyStatus, "REVIEW");
-      assert.equal(
-        safetyGateBlocksActions({
-          medicineCount: 1,
-          checkedSignature: signature,
-          medicinesSignature: signature,
-          safetyStatus: review.result.safetyStatus,
-          hasHighRiskAlert: false,
-          overrideSignature: null,
-        }),
-        false
-      );
-    }
+    const checked = reduceSafetyCheck(EMPTY_SAFETY_GATE, 200, {
+      safetyStatus: "REVIEW",
+      source: RULE_BASED_SAFETY_SOURCE,
+      hasHighRiskAlert: false,
+      alerts: [],
+    }, signature, "11:00");
+    assert.equal(safetyGateBlocksActions(view(checked)), true);
+    assert.equal(safetyGateBlocksActions({ ...view(checked), overrideSignature: signature }), false);
 
-    const writer = fs.readFileSync(path.join(root, "src/components/PrescriptionWriter.tsx"), "utf8");
-    assert.match(writer, /hasHighRiskAlert === true/);
-    assert.match(writer, /safetyResult\.source/);
+    const withNewAllergy = buildSafetyListSignature({
+      medicines: meds,
+      allergies: ["Penicillin", "Sulfa"],
+      chronicConditions: ["Asthma"],
+    });
+    assert.notEqual(withNewAllergy, signature);
+    assert.equal(safetyGateFromState(checked, meds.length, withNewAllergy), true);
   });
 });

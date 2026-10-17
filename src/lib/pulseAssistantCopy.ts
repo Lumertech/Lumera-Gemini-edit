@@ -1,3 +1,5 @@
+import { isPrescriberRole } from "./prescriberRoles.ts";
+
 export const PULSE_ASSISTANT_HEADER = "Clinical reference assistant";
 export const PULSE_ASSISTANT_DISCLAIMER =
   "Pulse AI suggestions can be wrong. Verify against current guidelines before acting.";
@@ -11,14 +13,7 @@ export function pulseAssistantErrorCopy(status: number): string {
   return PULSE_GENERIC_ERROR_COPY;
 }
 
-/** Reception and every other non-prescriber stay out. Admins may open it. */
+/** Same prescriber roles the safety-check route allows. */
 export function canOpenClinicalAssistant(role: string | undefined | null): boolean {
-  const value = String(role || "");
-  return (
-    value === "doctor" ||
-    value === "polyclinic_admin" ||
-    value === "CLINIC_ADMIN" ||
-    value === "super_admin" ||
-    value === "admin"
-  );
+  return isPrescriberRole(role);
 }

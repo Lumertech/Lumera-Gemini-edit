@@ -46,8 +46,6 @@ function allowListed(content: string, lookback: string): boolean {
   if (/\bGEMINI_[A-Z0-9_]+\b/.test(content)) return true;
   if (/process\.env(?:\s*\.\s*GEMINI_|\s*\[\s*['"]GEMINI_)/.test(`${tail}${content}`)) return true;
   if (/^(?:models\/)?gemini-[\d.]+(?:-[a-z0-9]+)*$/i.test(trimmed)) return true;
-  // Safety-check provenance token. Marketing names such as "Google Gemini" stay blocked.
-  if (trimmed === "gemini" && /source\s*:\s*$/.test(tail)) return true;
   return false;
 }
 
@@ -760,12 +758,6 @@ describe("honesty copy scan", () => {
       "server/gemini-clinical.ts"
     );
     assert.deepEqual(modelId, []);
-
-    const safetySource = findHonestyViolations(
-      `return res.json({ safetyStatus: "HIGH_RISK", source: "gemini", alerts: [] });\n`,
-      "server/gemini-clinical.ts"
-    );
-    assert.deepEqual(safetySource, []);
 
     const jsxModel = findHonestyViolations(
       `export function Model(){ return <option value="models/gemini-3.7-flash">gemini-3.7-flash</option>; }\n`,

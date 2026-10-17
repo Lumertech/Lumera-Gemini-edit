@@ -30,33 +30,35 @@ export function setGeminiSafetyCheckGeneratorForTests(fn?: (() => Promise<unknow
   testSafetyCheckGenerator = fn;
 }
 
-type GeminiSafetyBody = {
-  safetyStatus: "HIGH_RISK" | "REVIEW";
-  source: "gemini";
-  hasHighRiskAlert: boolean;
-  alerts: Record<string, unknown>[];
-};
-
-/** Gemini's raw { hasHighRiskAlert, alerts } shape. A bad payload is a failed check, not a pass. */
-export function normalizeGeminiSafetyOutput(raw: unknown): { ok: true; body: GeminiSafetyBody } | { ok: false } {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { ok: false };
-  const record = raw as { hasHighRiskAlert?: unknown; alerts?: unknown };
-  if ("hasHighRiskAlert" in record && typeof record.hasHighRiskAlert !== "boolean") return { ok: false };
-  if (!Array.isArray(record.alerts)) return { ok: false };
-  const alerts: Record<string, unknown>[] = [];
-  for (const item of record.alerts) {
-    if (!item || typeof item !== "object" || Array.isArray(item)) return { ok: false };
-    alerts.push(item as Record<string, unknown>);
+class SafetyAlertsMissing extends Error {
+  constructor() {
+    super("safety alerts were not an array");
   }
-  const hasHighRiskAlert = record.hasHighRiskAlert === true;
+}
+
+/** Model JSON with an alerts array. Anything else throws so the caller can use the rule-based fallback. */
+export function pulseSafetyFromModel(raw: unknown): {
+  safetyStatus: "HIGH_RISK" | "REVIEW";
+  source: "Pulse AI";
+  hasHighRiskAlert: boolean;
+  alerts: unknown[];
+} {
+  const record =
+    raw && typeof raw === "object" && !Array.isArray(raw)
+      ? (raw as { hasHighRiskAlert?: unknown; alerts?: unknown })
+      : null;
+  if (!record || !Array.isArray(record.alerts)) throw new SafetyAlertsMissing();
+  const severe = record.alerts.some((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+    const severity = String((item as { severity?: unknown }).severity || "").trim().toLowerCase();
+    return severity === "severe" || severity === "critical";
+  });
+  const high = record.hasHighRiskAlert === true || severe;
   return {
-    ok: true,
-    body: {
-      safetyStatus: hasHighRiskAlert ? "HIGH_RISK" : "REVIEW",
-      source: "gemini",
-      hasHighRiskAlert,
-      alerts,
-    },
+    safetyStatus: high ? "HIGH_RISK" : "REVIEW",
+    source: "Pulse AI",
+    hasHighRiskAlert: high,
+    alerts: record.alerts,
   };
 }
 
@@ -217,39 +219,31 @@ export function mountGeminiClinicalRoutes(app: Express) {
 
   app.post("/api/gemini/safety-check", requireAuth, prescriberOnly, safetyCheckRateLimit, rejectUntrustedTenantClaim, async (req: Request, res: Response) => {
     try {
-      if (testSafetyCheckGenerator) {
-        const normalized = normalizeGeminiSafetyOutput(await testSafetyCheckGenerator());
-        if (!normalized.ok) {
-          console.error("Safety check model output was malformed");
-          return res.status(500).json({ code: "safety_check_failed" });
-        }
-        return res.json(normalized.body);
-      }
       const { patientAllergies = [], chronicConditions = [], medicines = [], patientAge, patientGender } = req.body;
-      const ai = getGenAI();
-      if (ai && medicines.length > 0) {
+      if (testSafetyCheckGenerator) {
         try {
-          const prompt = `Analyze clinical safety for Age ${patientAge || 40}, ${patientGender || "Adult"}, Allergies: ${(patientAllergies || []).join(", ") || "None"}, Conditions: ${(chronicConditions || []).join(", ") || "None"}, Medicines: ${JSON.stringify(medicines)}. Return JSON { hasHighRiskAlert, alerts }.`;
-          const response = await ai.models.generateContent({
-            model: "gemini-3.7-flash",
-            contents: prompt,
-            config: { responseMimeType: "application/json", temperature: 0.1 },
-          });
-          let parsed: unknown;
-          try {
-            parsed = JSON.parse(response.text?.trim() || "");
-          } catch {
-            console.error("Safety check model output was not JSON");
+          return res.json(pulseSafetyFromModel(await testSafetyCheckGenerator()));
+        } catch (err) {
+          if (!(err instanceof SafetyAlertsMissing)) {
+            console.error("Safety check failed");
             return res.status(500).json({ code: "safety_check_failed" });
           }
-          const normalized = normalizeGeminiSafetyOutput(parsed);
-          if (!normalized.ok) {
-            console.error("Safety check model output was malformed");
-            return res.status(500).json({ code: "safety_check_failed" });
-          }
-          return res.json(normalized.body);
-        } catch {
           console.error("Safety check model call failed");
+        }
+      } else {
+        const ai = getGenAI();
+        if (ai && medicines.length > 0) {
+          try {
+            const prompt = `Analyze clinical safety for Age ${patientAge || 40}, ${patientGender || "Adult"}, Allergies: ${(patientAllergies || []).join(", ") || "None"}, Conditions: ${(chronicConditions || []).join(", ") || "None"}, Medicines: ${JSON.stringify(medicines)}. Return JSON { hasHighRiskAlert, alerts }.`;
+            const response = await ai.models.generateContent({
+              model: "gemini-3.7-flash",
+              contents: prompt,
+              config: { responseMimeType: "application/json", temperature: 0.1 },
+            });
+            return res.json(pulseSafetyFromModel(JSON.parse(response.text?.trim() || "")));
+          } catch {
+            console.error("Safety check model call failed");
+          }
         }
       }
       const alerts: any[] = [];

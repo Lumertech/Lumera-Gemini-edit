@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import { PRESCRIBER_ROLES } from "./prescriberRoles.ts";
 import {
   PULSE_ASSISTANT_DISCLAIMER,
   PULSE_ASSISTANT_HEADER,
@@ -20,11 +21,9 @@ describe("Pulse assistant errors and menu", () => {
     assert.equal(pulseAssistantErrorCopy(403), PULSE_PRESCRIBER_ONLY_COPY);
     assert.equal(pulseAssistantErrorCopy(429), PULSE_RATE_LIMIT_COPY);
     assert.equal(pulseAssistantErrorCopy(500), PULSE_GENERIC_ERROR_COPY);
-    assert.equal(canOpenClinicalAssistant("doctor"), true);
-    assert.equal(canOpenClinicalAssistant("polyclinic_admin"), true);
-    assert.equal(canOpenClinicalAssistant("CLINIC_ADMIN"), true);
-    assert.equal(canOpenClinicalAssistant("super_admin"), true);
-    assert.equal(canOpenClinicalAssistant("admin"), true);
+    for (const role of PRESCRIBER_ROLES) assert.equal(canOpenClinicalAssistant(role), true);
+    assert.equal(canOpenClinicalAssistant("super_admin"), false);
+    assert.equal(canOpenClinicalAssistant("admin"), false);
     assert.equal(canOpenClinicalAssistant("receptionist"), false);
     assert.equal(canOpenClinicalAssistant("patient"), false);
     assert.equal(canOpenClinicalAssistant(""), false);
