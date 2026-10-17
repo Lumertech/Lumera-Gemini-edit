@@ -28,8 +28,7 @@ import { CLINICIAN_ROLES, requireAuth, requireRole } from "./auth.ts";
 import { rejectUntrustedTenantClaim } from "./tenant-guard.ts";
 import { authenticatedLabReportPath, authorizeLabReport, labOwnerTenantId, sendLabReportDenied } from "./lab-report-access.ts";
 import { WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
-import { appPublicUrl } from "./runtime.ts";
-import { resolveSignedRxWhatsAppSend, RX_SEND_FAILED } from "./whatsapp-rx-bind.ts";
+import { handleSignedRxWhatsAppSend } from "./whatsapp-rx-bind.ts";
 import { formatINR } from "../src/lib/currency.ts";
 import { AI_RUPEE_OUTPUT_RULE } from "./india-currency-copy.ts";
 import {
@@ -1179,74 +1178,7 @@ ${AI_RUPEE_OUTPUT_RULE}`;
   // Dispatch Prescription via WhatsApp Graph API
   // ----------------------------------------------------
   router.post("/send-rx", async (req: Request, res: Response) => {
-    try {
-      const tenantId = String((req as Request).user?.tenantId || "");
-      const portalUrl = appPublicUrl(req.get("host") || undefined, req.protocol);
-      const resolved = resolveSignedRxWhatsAppSend(getDb(), tenantId, req.body, portalUrl);
-      if (resolved.ok === false) return res.status(resolved.status).json({ code: resolved.code });
-      const language = String(req.body?.language || "en");
-      const rxNumber = resolved.rxNumber;
-      const patientName = resolved.patientName;
-      const doctorName = resolved.doctorName;
-      const rxFacing = resolveClinicFacingNames(getDb(), tenantId, doctorName);
-      const rxCopy = clinicOutboundCopy(rxFacing);
-
-      const db = getDb();
-      const now = new Date().toISOString();
-      const timeDisplay = getDisplayTime();
-      const cleanPhone = resolved.phone;
-      const preferredId = `conv-${cleanPhone.replace(/\D/g, "").slice(-8) || "pt"}`;
-
-      const convId = upsertScopedConversation({
-        preferredId,
-        tenantId,
-        patientPhone: cleanPhone,
-        patientName,
-        assignedStaff: rxCopy.rxDispatcher,
-        tags: '["Prescription", "Digital EMR"]',
-        preferredLanguage: language || "en",
-        lastMessage: `Digital Rx: ${rxNumber}`,
-        lastMessageTime: timeDisplay,
-        now,
-      });
-
-      const pdfUrl = resolved.pdfUrl;
-      const content = resolved.text;
-
-      const msgId = `msg-rx-${crypto.randomUUID().slice(0, 8)}`;
-      db.prepare(`
-        INSERT INTO whatsapp_messages (id, conversation_id, patient_phone, sender, staff_name, content, translated_content, detected_language, time_display, buttons, media, status, created_at, tenant_id)
-        VALUES (?, ?, ?, 'agent', ?, ?, null, ?, ?, ?, ?, 'delivered', ?, ?)
-      `).run(
-        msgId,
-        convId,
-        cleanPhone,
-        doctorName,
-        content,
-        language,
-        timeDisplay,
-        JSON.stringify([
-          { type: 'URL', text: '📥 View / Download PDF Rx', url: pdfUrl },
-          { type: 'QUICK_REPLY', text: '📅 Book Follow-Up', payload: 'book_followup' }
-        ]),
-        JSON.stringify({ type: 'document', url: pdfUrl, title: `Prescription-${rxNumber}.pdf` }),
-        now,
-        tenantId || WHATSAPP_QUARANTINE_TENANT_ID
-      );
-
-      return res.json({
-        success: true,
-        messageId: msgId,
-        rxNumber,
-        pdfUrl,
-        deliveredTo: cleanPhone,
-        status: 'delivered',
-        message: 'Prescription PDF dispatched successfully via WhatsApp Graph API'
-      });
-    } catch {
-      console.error("WhatsApp Rx dispatch failed");
-      return res.status(500).json({ code: RX_SEND_FAILED });
-    }
+    await handleSignedRxWhatsAppSend(req, res);
   });
 
   // ----------------------------------------------------

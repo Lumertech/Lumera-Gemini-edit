@@ -1,4 +1,20 @@
+import type { Request, Response } from "express";
+import { getDb, writeAudit } from "./db.ts";
+import { reportCaughtError } from "./error-tracker.ts";
+import {
+  CLINIC_DOCTOR_NAME_REQUIRED,
+  CLINIC_WHATSAPP_NOT_CONNECTED,
+  READ_ONLY_WHATSAPP_SEND_ERROR,
+  WA_TOKEN_KEY_UNSET_ERROR,
+  WHATSAPP_WINDOW_CLOSED_ERROR,
+  cloudDispatchHttpStatus,
+  isCloudDispatchFailure,
+} from "./graph-whatsapp.ts";
 import { getTenantLetterhead } from "./letterhead.ts";
+import { appPublicUrl } from "./runtime.ts";
+import { WALLET_INSUFFICIENT_ERROR } from "./usage-wallet.ts";
+import { dispatchPatientCloudText } from "./whatsapp-patient-dispatch.ts";
+import { upsertScopedConversation } from "./whatsapp-scope.ts";
 
 export const RX_NUMBER_REQUIRED = "RX_NUMBER_REQUIRED";
 export const RX_NOT_FOUND = "RX_NOT_FOUND";
@@ -135,4 +151,154 @@ export function resolveSignedRxWhatsAppSend(
     text,
     pdfUrl,
   };
+}
+
+const META_MESSAGE_ID = /^wamid\.\S+$/;
+
+function rxFailureCode(error: string): string {
+  const text = String(error || "");
+  if (text === WALLET_INSUFFICIENT_ERROR || text.includes("Top up now")) return "WALLET_INSUFFICIENT";
+  if (
+    text === CLINIC_WHATSAPP_NOT_CONNECTED ||
+    text === WA_TOKEN_KEY_UNSET_ERROR ||
+    /Clinic WhatsApp not connected/i.test(text) ||
+    /WA_TOKEN_KEY is unset/i.test(text) ||
+    /Cloud API is not configured/i.test(text)
+  ) {
+    return "WHATSAPP_NOT_CONNECTED";
+  }
+  if (
+    text === READ_ONLY_WHATSAPP_SEND_ERROR ||
+    text === WHATSAPP_WINDOW_CLOSED_ERROR ||
+    text === CLINIC_DOCTOR_NAME_REQUIRED ||
+    /not permitted|24 hours after the patient/i.test(text)
+  ) {
+    return "WHATSAPP_POLICY_BLOCKED";
+  }
+  return RX_SEND_FAILED;
+}
+
+function auditRxSend(req: Request, tenantId: string, rxNumber: string, outcome: "sent" | "failed", code: string) {
+  const actorId = String(req.user?.id || "").trim();
+  const rx = String(rxNumber || "").trim();
+  writeAudit(
+    getDb(),
+    actorId || null,
+    String(req.user?.name || "Staff"),
+    "whatsapp_rx_send",
+    `tenant ${tenantId} actor ${actorId} rxNumber ${rx} outcome ${outcome} code ${code}`,
+    {
+      tenantId,
+      actorRole: String(req.user?.role || ""),
+      entityType: "prescription",
+      entityId: rx,
+    }
+  );
+}
+
+function recordGraphRxSend(tenantId: string, resolved: Extract<SignedRxSend, { ok: true }>, messageId: string) {
+  const db = getDb();
+  const now = new Date().toISOString();
+  const timeDisplay = new Date().toLocaleTimeString("en-IN", {
+    timeZone: "Asia/Kolkata",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+  const preferredId = `conv-${resolved.phone.replace(/\D/g, "").slice(-8) || "pt"}`;
+  const convId = upsertScopedConversation({
+    preferredId,
+    tenantId,
+    patientPhone: resolved.phone,
+    patientName: resolved.patientName,
+    assignedStaff: resolved.doctorName || "Clinic",
+    tags: '["Prescription"]',
+    preferredLanguage: "en",
+    lastMessage: `Prescription ${resolved.rxNumber}`,
+    lastMessageTime: timeDisplay,
+    now,
+  });
+  db.prepare(
+    `INSERT INTO whatsapp_messages (id, conversation_id, patient_phone, sender, staff_name, content, translated_content, detected_language, time_display, buttons, media, status, created_at, tenant_id)
+     VALUES (?, ?, ?, 'agent', ?, ?, null, 'en', ?, ?, ?, 'sent', ?, ?)`
+  ).run(
+    messageId,
+    convId,
+    resolved.phone,
+    resolved.doctorName || "Clinic",
+    resolved.text,
+    timeDisplay,
+    JSON.stringify([{ type: "URL", text: "View prescription", url: resolved.pdfUrl }]),
+    JSON.stringify({ type: "document", url: resolved.pdfUrl }),
+    now,
+    tenantId
+  );
+  db.prepare(
+    `INSERT INTO whatsapp_outbound_events (id, event_type, patient_phone, patient_name, status, details, action_payload, sent_at, tenant_id)
+     VALUES (?, 'whatsapp_rx_send', ?, ?, 'sent', ?, ?, ?, ?)`
+  ).run(
+    messageId,
+    resolved.phone,
+    resolved.patientName,
+    `rxNumber ${resolved.rxNumber}`,
+    JSON.stringify({ messageId, rxNumber: resolved.rxNumber, channel: "graph" }),
+    now,
+    tenantId
+  );
+  db.prepare(
+    `UPDATE prescriptions SET whatsapp_sent_status = 'sent' WHERE rx_number = ? AND tenant_id = ?`
+  ).run(resolved.rxNumber, tenantId);
+}
+
+/**
+ * One send for the billing route and the inbox route.
+ * Sandbox writes no message and does not mark the Rx sent. A Graph accept stores Meta's wamid as sent.
+ */
+export async function handleSignedRxWhatsAppSend(req: Request, res: Response): Promise<void> {
+  const body = (req.body || {}) as Record<string, unknown>;
+  const rxNumber = String(body.rxNumber || body.rx_number || "").trim();
+  try {
+    const tenantId = String(req.user?.tenantId || "").trim();
+    if (!tenantId) {
+      auditRxSend(req, "", rxNumber, "failed", RX_NOT_FOUND);
+      res.status(404).json({ code: RX_NOT_FOUND });
+      return;
+    }
+    const portalUrl = appPublicUrl(req.get("host") || undefined, req.protocol);
+    const resolved = resolveSignedRxWhatsAppSend(getDb(), tenantId, req.body, portalUrl);
+    if (resolved.ok === false) {
+      auditRxSend(req, tenantId, rxNumber, "failed", resolved.code);
+      res.status(resolved.status).json({ code: resolved.code });
+      return;
+    }
+    const sent = await dispatchPatientCloudText({
+      tenantId,
+      to: resolved.phone,
+      textBody: resolved.text,
+      previewUrl: true,
+    });
+    if (isCloudDispatchFailure(sent)) {
+      const code = rxFailureCode(sent.error);
+      auditRxSend(req, tenantId, resolved.rxNumber, "failed", code);
+      res.status(cloudDispatchHttpStatus(sent.error, sent.status)).json({ code });
+      return;
+    }
+    const messageId = String(sent.messageId || "").trim();
+    if (sent.channel !== "graph" || !META_MESSAGE_ID.test(messageId)) {
+      auditRxSend(req, tenantId, resolved.rxNumber, "failed", "SANDBOX_NOT_SENT");
+      res.status(200).json({ success: false, channel: "sandbox", status: "sandbox" });
+      return;
+    }
+    recordGraphRxSend(tenantId, resolved, messageId);
+    auditRxSend(req, tenantId, resolved.rxNumber, "sent", "SENT");
+    res.status(200).json({ success: true, status: "sent", messageId, channel: "graph" });
+  } catch (err) {
+    reportCaughtError(err, "whatsapp.send-rx");
+    try {
+      auditRxSend(req, String(req.user?.tenantId || ""), rxNumber, "failed", RX_SEND_FAILED);
+    } catch {
+      /* audit table may be missing in a partial boot */
+    }
+    if (!res.headersSent) res.status(500).json({ code: RX_SEND_FAILED });
+  }
 }

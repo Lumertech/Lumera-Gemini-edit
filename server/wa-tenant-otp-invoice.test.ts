@@ -760,12 +760,17 @@ describe("WhatsApp tenant scope, send validation, OTP limit, invoice UHID", () =
       },
       authA
     );
-    assert.equal(rx.status, 200, String(rx.json.error || ""));
+    assert.equal(rx.status, 200, JSON.stringify(rx.json));
+    assert.deepEqual(rx.json, { success: false, channel: "sandbox", status: "sandbox" });
     assertForeign(rxId);
-    const rxMessage = db
-      .prepare("SELECT tenant_id FROM whatsapp_messages WHERE patient_phone = ? AND tenant_id = ? LIMIT 1")
-      .get(rxPhone, clinicA.tenantId) as { tenant_id: string } | undefined;
-    assert.equal(rxMessage?.tenant_id, clinicA.tenantId);
+    const rxMessage = db.prepare("SELECT id FROM whatsapp_messages WHERE patient_phone = ?").get(rxPhone) as
+      | { id?: string }
+      | undefined;
+    assert.equal(rxMessage, undefined);
+    const foreignMessage = db
+      .prepare("SELECT id FROM whatsapp_messages WHERE conversation_id = ?")
+      .get(rxId) as { id?: string } | undefined;
+    assert.equal(foreignMessage, undefined);
     resetSendOtpRateLimits();
   });
 

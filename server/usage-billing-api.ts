@@ -8,7 +8,8 @@ import { WALLET_INSUFFICIENT_ERROR } from "./usage-wallet.ts";
 import { formatINR } from "../src/lib/currency.ts";
 import { resolveWhatsAppTenantId } from "./whatsapp-calendar.ts";
 import { dispatchPatientCloudText, walletDispatchStatus } from "./whatsapp-patient-dispatch.ts";
-import { resolveSignedRxWhatsAppSend } from "./whatsapp-rx-bind.ts";
+import { handleSignedRxWhatsAppSend } from "./whatsapp-rx-bind.ts";
+import { requireClinicWhatsApp } from "./whatsapp-scope.ts";
 import {
   createRazorpayWalletTopupOrder,
   decideRazorpayWebhookSignature,
@@ -155,21 +156,8 @@ export function createUsageBillingRouter(): Router {
     next();
   });
 
-  api.post("/whatsapp/send-rx", async (req: Request, res: Response, next: NextFunction) => {
-    const tenantId = tenantIdOf(req);
-    const portalUrl = appPublicUrl(req.get("host") || undefined, req.protocol);
-    const resolved = resolveSignedRxWhatsAppSend(getDb(), tenantId, req.body, portalUrl);
-    if (resolved.ok === false) return res.status(resolved.status).json({ code: resolved.code });
-    const language = String((req.body || {}).language || "en");
-    req.body = { rxNumber: resolved.rxNumber, language };
-    const sent = await dispatchPatientCloudText({
-      tenantId: tenantId || undefined,
-      to: resolved.phone,
-      textBody: resolved.text,
-      previewUrl: true,
-    });
-    if (isCloudDispatchFailure(sent)) return walletBlockedJson(res, sent);
-    next();
+  api.post("/whatsapp/send-rx", ...requireClinicWhatsApp, async (req: Request, res: Response) => {
+    await handleSignedRxWhatsAppSend(req, res);
   });
 
   async function meterCustomOutbound(req: Request, res: Response, next: NextFunction) {
