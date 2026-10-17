@@ -25,14 +25,11 @@ import { apiFetchResponse } from '../api/http';
 import { ABHA_LINKING_STATUS, showsAbhaSandboxStatus } from '../lib/clinicNav';
 import { AmbientRecordingDisclosure, AmbientScribeConsentDialog } from './AmbientScribeConsentDialog';
 import {
-  ambientWebSpeechEnabled,
   beginAmbientMicGesture,
-  isSpeechRecognitionAvailable,
   micErrorMessage,
   microphoneStatusLabel,
   resetAmbientMicrophoneSession,
   shouldUploadAmbientRecording,
-  SPEECH_UNSUPPORTED_NOTICE,
   startAmbientMic,
   transcriptBadge,
   transcribeRecordedAudio,
@@ -154,10 +151,7 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
   const [audioLevel, setAudioLevel] = useState(0);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [micError, setMicError] = useState<string | null>(null);
-  const [speechNotice, setSpeechNotice] = useState<string | null>(null);
   const sessionRef = React.useRef<{ stop: () => void } | null>(null);
-  const speechSawTextRef = React.useRef(false);
-  const speechFallbackRef = React.useRef(false);
   const uploadLockRef = React.useRef(false);
   const finalTranscriptRef = React.useRef('');
   const cancelStartRef = React.useRef(false);
@@ -195,12 +189,7 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
   const shownTranscript = [transcript, interimTranscript].filter(Boolean).join(interimTranscript ? ' ' : '');
 
   const uploadFallback = async (audioBlob: Blob) => {
-    const upload = shouldUploadAmbientRecording({
-      webSpeechEnabled: ambientWebSpeechEnabled(),
-      speechSawText: speechSawTextRef.current,
-      speechFallback: speechFallbackRef.current,
-    });
-    if (!upload) return;
+    if (!shouldUploadAmbientRecording()) return;
     if (uploadLockRef.current) return;
     if (audioBlob.size < 100) {
       setMicError('No audio was captured to transcribe. Allow the microphone and speak, or type the consult.');
@@ -210,15 +199,13 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
     setIsTranscribing(true);
     try {
       const elapsed = captureStartedAtRef.current > 0 ? Date.now() - captureStartedAtRef.current : 0;
-      const text = await transcribeRecordedAudio(audioBlob, undefined, elapsed);
+      const text = await transcribeRecordedAudio(audioBlob, undefined, elapsed, consent.appointmentId());
       finalTranscriptRef.current = text;
       setTranscript(text);
       setInterimTranscript('');
       setTranscriptOrigin('server');
       setMicError(null);
-      setSpeechNotice(null);
     } catch (err) {
-      speechFallbackRef.current = false;
       setMicError(err instanceof Error ? err.message : 'Server transcription failed.');
     } finally {
       uploadLockRef.current = false;
@@ -245,8 +232,6 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
     setTranscriptOrigin('sample');
     setGeneratedSoap(null);
     setMicError(null);
-    setSpeechNotice(null);
-    speechSawTextRef.current = false;
   };
 
   stopMicRef.current = () => {
@@ -272,6 +257,7 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
       return;
     }
     if (decision !== 'start') return;
+    consent.acknowledgeSecondTap();
     startingRef.current = true;
     let gesture: AmbientMicGesture;
     try {
@@ -284,10 +270,7 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
     }
     cancelStartRef.current = false;
     setMicError(null);
-    setSpeechNotice(null);
     setIsRequesting(true);
-    speechSawTextRef.current = false;
-    speechFallbackRef.current = !ambientWebSpeechEnabled() || !isSpeechRecognitionAvailable();
     if (transcriptOrigin === 'sample') {
       finalTranscriptRef.current = '';
       setTranscript('');
@@ -304,35 +287,11 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
         lang: 'en-IN',
         onLevel: setAudioLevel,
         onError: (message) => {
-          speechFallbackRef.current = true;
           setMicError(message);
-        },
-        onSpeechNotice: (message) => {
-          speechFallbackRef.current = true;
-          setSpeechNotice(message);
         },
         onInterrupted: (message) => {
           skipUploadRef.current = true;
-          speechFallbackRef.current = false;
-          setSpeechNotice(null);
           setMicError(message);
-        },
-        onTranscript: ({ finalChunk, interim }) => {
-          if (finalChunk || interim) {
-            speechSawTextRef.current = true;
-            speechFallbackRef.current = false;
-            setTranscriptOrigin('live');
-            setMicError(null);
-            setSpeechNotice(null);
-          }
-          if (finalChunk) {
-            setTranscript((prev) => {
-              const next = prev ? `${prev.trim()} ${finalChunk}` : finalChunk;
-              finalTranscriptRef.current = next;
-              return next;
-            });
-          }
-          setInterimTranscript(interim);
         },
         onAudioRecorded: (blob) => {
           setIsRecording(false);
@@ -358,7 +317,6 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
       captureStartedAtRef.current = Date.now();
       setIsRequesting(false);
       setIsRecording(true);
-      if (ambientWebSpeechEnabled() && !isSpeechRecognitionAvailable()) setSpeechNotice(SPEECH_UNSUPPORTED_NOTICE);
     } catch (err) {
       const mapped = micErrorMessage(err);
       setMicError(mapped.message);
@@ -505,10 +463,10 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
               )}
             </div>
 
-            {(isRequesting || speechNotice || micError) && (
+            {(isRequesting || consent.notice || micError) && (
               <div
                 role={micError ? 'alert' : 'status'}
-                data-testid="studio-mic-error"
+                data-testid={micError ? 'studio-mic-error' : 'ambient-consent-ready'}
                 className={`px-3 py-2 rounded-lg border text-xs flex items-start gap-2 ${
                   micError ? 'border-rose-200 bg-rose-50 text-rose-800' : 'border-amber-200 bg-amber-50 text-amber-900'
                 }`}
@@ -516,7 +474,7 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
                 <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
                 <span>
                   {micError ||
-                    speechNotice ||
+                    consent.notice ||
                     'Waiting for the browser microphone prompt. If none appears, allow the microphone in the address bar and try again.'}
                 </span>
               </div>
@@ -525,8 +483,11 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
             <AmbientScribeConsentDialog
               open={consent.open}
               error={consent.error}
+              saving={consent.saving}
               onCancel={() => consent.close()}
-              onConfirm={() => consent.confirm(() => handleStartStopRecording('start'))}
+              onConfirm={() => {
+                void consent.confirm();
+              }}
             />
 
             {/* Mic Button & real level meter */}

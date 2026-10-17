@@ -1,7 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { GoogleGenAI } from "@google/genai";
 import { requireAuth } from "./auth.ts";
-import { mountAmbientScribeConsentRoutes } from "./ambient-scribe-consent.ts";
+import { hasAmbientScribeConsent, mountAmbientScribeConsentRoutes, transcribeAppointmentId } from "./ambient-scribe-consent.ts";
 import { maxTranscribeBase64Chars, transcribeJsonParser } from "./json-body.ts";
 import { denyUnlessPrescriber } from "./patient-access.ts";
 import { rejectUntrustedTenantClaim } from "./tenant-guard.ts";
@@ -52,7 +52,7 @@ export function mountGeminiClinicalRoutes(app: Express) {
     return genAIClient;
   }
 
-  app.post("/api/gemini/generate-soap", async (req: Request, res: Response) => {
+  app.post("/api/gemini/generate-soap", requireAuth, async (req: Request, res: Response) => {
     try {
       const {
         patientName = "Patient",
@@ -109,9 +109,9 @@ export function mountGeminiClinicalRoutes(app: Express) {
       }
       const fallbackSoap = generateRuleBasedSoap(patientName, patientAge, patientGender, transcript, vitals);
       return res.json({ success: true, soap: fallbackSoap, source: "clinical-synthesis-engine" });
-    } catch (error: any) {
-      console.error("SOAP endpoint error:", error);
-      res.status(500).json({ error: "Failed to generate SOAP note", details: error.message });
+    } catch {
+      console.error("SOAP endpoint error");
+      res.status(500).json({ error: "Could not generate the note", code: "soap_failed" });
     }
   });
 
@@ -211,6 +211,13 @@ export function mountGeminiClinicalRoutes(app: Express) {
         const audioBytes = base64DecodedBytes(cleanBase64);
         if (transcribeDurationTooLong(audioBytes, durationMs)) {
           return res.status(413).json({ error: "Recording is too long to transcribe." });
+        }
+        const appointmentId = transcribeAppointmentId((req.body ?? {}).appointmentId);
+        if (!appointmentId) {
+          return res.status(400).json({ error: "appointmentId is required", code: "appointment_required" });
+        }
+        if (!hasAmbientScribeConsent(tenantId, appointmentId)) {
+          return res.status(409).json({ error: "Patient consent required", code: "consent_required" });
         }
         const duration = resolveTranscribeDurationMs(audioBytes, durationMs);
         let transcription = "";

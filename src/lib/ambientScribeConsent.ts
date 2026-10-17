@@ -29,26 +29,41 @@ export function ambientMicStartDecision(input: {
   return "start";
 }
 
-/** Real appointment id, or a same-day visit key when the consult is not on the queue yet. */
-export function ambientVisitKey(appointmentId: string | undefined, patientId: string, day = clinicCalendarDate()): string {
-  const appointment = String(appointmentId || "").trim();
-  if (appointment) return appointment;
-  const patient = String(patientId || "").trim();
-  if (!patient || !day) return "";
-  return `unscheduled:${patient}:${day}`;
+export type ConsentWriteNextStep = "second-tap" | "blocked";
+
+/**
+ * A successful audit write does not open the microphone.
+ * iOS drops the user activation across that await, so the next Start listening tap opens it.
+ * A failed write blocks the microphone.
+ */
+export function consentWriteNextStep(writeSucceeded: boolean): ConsentWriteNextStep {
+  return writeSucceeded ? "second-tap" : "blocked";
 }
 
-export async function fetchAmbientScribeConsent(appointmentId: string): Promise<{ confirmed: boolean; recordedAt?: string | null }> {
-  const query = encodeURIComponent(appointmentId);
-  return apiFetch(`/api/ambient-scribe/consent?appointmentId=${query}`);
+/** A queue appointment id only. Walk-in ids are minted by the server. */
+export function ambientVisitKey(appointmentId: string | undefined, _patientId?: string, _day = clinicCalendarDate()): string {
+  return String(appointmentId || "").trim();
 }
 
-export async function saveAmbientScribeConsent(appointmentId: string, patientId: string): Promise<{ confirmed: boolean }> {
+export async function fetchAmbientScribeConsent(query: {
+  appointmentId?: string;
+  patientId?: string;
+}): Promise<{ confirmed: boolean; appointmentId?: string | null; recordedAt?: string | null }> {
+  const params = new URLSearchParams();
+  if (query.appointmentId) params.set("appointmentId", query.appointmentId);
+  else if (query.patientId) params.set("patientId", query.patientId);
+  return apiFetch(`/api/ambient-scribe/consent?${params.toString()}`);
+}
+
+export async function saveAmbientScribeConsent(
+  patientId: string,
+  appointmentId?: string
+): Promise<{ confirmed: boolean; appointmentId: string }> {
   return apiFetch("/api/ambient-scribe/consent", {
     method: "POST",
     body: JSON.stringify({
-      appointmentId,
       patientId,
+      ...(appointmentId ? { appointmentId } : {}),
       attested: true,
       statement: AMBIENT_SCRIBE_CONSENT_TEXT,
     }),

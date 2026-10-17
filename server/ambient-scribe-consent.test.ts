@@ -75,7 +75,28 @@ describe("ambient scribe per-visit consent", () => {
     );
     assert.equal(created.status, 201, String(created.json.error || ""));
     const patientId = String((created.json.patient as { id: string }).id);
+    const patientRow = getDb()
+      .prepare("SELECT name, phone, uhid FROM patients WHERE id = ?")
+      .get(patientId) as { name: string; phone: string; uhid: string };
     const appointmentId = `apt-${patientId}`;
+    getDb()
+      .prepare(
+        `INSERT INTO appointments (
+          id, tenant_id, token_number, patient_id, patient_name, patient_phone, uhid, doctor_id, doctor_name,
+          specialty, date, time_slot, type, status, source, consultation_fee, is_paid, created_at
+        ) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, 'General Medicine', '2026-10-17', '10:00', 'New Consultation', 'Waiting', 'Walk-in', 0, 0, ?)`
+      )
+      .run(
+        appointmentId,
+        doctor.tenantId,
+        patientId,
+        patientRow.name,
+        patientRow.phone,
+        patientRow.uhid,
+        doctor.userId,
+        "Dr doc",
+        new Date().toISOString()
+      );
 
     const before = await jsonRequest(
       port,
@@ -170,5 +191,122 @@ describe("ambient scribe per-visit consent", () => {
       { Authorization: `Bearer ${deskToken}` }
     );
     assert.equal(denied.status, 403);
+  });
+
+  it("rejects an appointment that is missing or belongs to another patient, and mints a walk-in id", async () => {
+    const doctor = seedDoctor("own");
+    const token = await login(doctor.email);
+    const auth = { Authorization: `Bearer ${token}` };
+    const created = await jsonRequest(
+      port,
+      "POST",
+      "/api/patients",
+      { name: "Arun Shah", phone: `+91 97${String(Date.now()).slice(-8)}`, age: 41, gender: "Male" },
+      auth
+    );
+    assert.equal(created.status, 201, String(created.json.error || ""));
+    const patientId = String((created.json.patient as { id: string }).id);
+    const other = await jsonRequest(
+      port,
+      "POST",
+      "/api/patients",
+      { name: "Lata Shah", phone: `+91 96${String(Date.now()).slice(-8)}`, age: 38, gender: "Female" },
+      auth
+    );
+    assert.equal(other.status, 201, String(other.json.error || ""));
+    const otherPatientId = String((other.json.patient as { id: string }).id);
+    const patientRow = getDb()
+      .prepare("SELECT name, phone, uhid FROM patients WHERE id = ?")
+      .get(patientId) as { name: string; phone: string; uhid: string };
+    const appointmentId = `apt-owned-${patientId}`;
+    const now = new Date().toISOString();
+    getDb()
+      .prepare(
+        `INSERT INTO appointments (
+          id, tenant_id, token_number, patient_id, patient_name, patient_phone, uhid, doctor_id, doctor_name,
+          specialty, date, time_slot, type, status, source, consultation_fee, is_paid, created_at
+        ) VALUES (?, ?, 2, ?, ?, ?, ?, ?, ?, 'General Medicine', '2026-10-17', '11:00', 'New Consultation', 'Waiting', 'Walk-in', 0, 0, ?)`
+      )
+      .run(
+        appointmentId,
+        doctor.tenantId,
+        patientId,
+        patientRow.name,
+        patientRow.phone,
+        patientRow.uhid,
+        doctor.userId,
+        "Dr own",
+        now
+      );
+
+    const invented = "client-made-visit-key";
+    const unknown = await jsonRequest(
+      port,
+      "POST",
+      "/api/ambient-scribe/consent",
+      { appointmentId: invented, patientId, attested: true, statement: AMBIENT_SCRIBE_CONSENT_TEXT },
+      auth
+    );
+    assert.equal(unknown.status, 404);
+    const inventedRow = getDb().prepare("SELECT id FROM appointments WHERE id = ?").get(invented);
+    assert.equal(inventedRow, undefined);
+
+    const mismatch = await jsonRequest(
+      port,
+      "POST",
+      "/api/ambient-scribe/consent",
+      { appointmentId, patientId: otherPatientId, attested: true, statement: AMBIENT_SCRIBE_CONSENT_TEXT },
+      auth
+    );
+    assert.equal(mismatch.status, 403);
+    const mismatchAudit = getDb()
+      .prepare("SELECT id FROM audit_logs WHERE action = 'ambient_scribe_consent' AND entity_id = ? AND patient_id = ?")
+      .get(appointmentId, otherPatientId);
+    assert.equal(mismatchAudit, undefined);
+
+    const minted = await jsonRequest(
+      port,
+      "POST",
+      "/api/ambient-scribe/consent",
+      { patientId, attested: true, statement: AMBIENT_SCRIBE_CONSENT_TEXT },
+      auth
+    );
+    assert.equal(minted.status, 201, String(minted.json.error || ""));
+    const mintedId = String(minted.json.appointmentId || "");
+    assert.match(mintedId, /^apt-[a-f0-9]{32}$/);
+    assert.notEqual(mintedId, invented);
+    const stored = getDb()
+      .prepare("SELECT patient_id, tenant_id FROM appointments WHERE id = ?")
+      .get(mintedId) as { patient_id: string; tenant_id: string };
+    assert.equal(stored.patient_id, patientId);
+    assert.equal(stored.tenant_id, doctor.tenantId);
+    const audit = getDb()
+      .prepare("SELECT entity_id FROM audit_logs WHERE action = 'ambient_scribe_consent' AND tenant_id = ? AND entity_id = ?")
+      .get(doctor.tenantId, mintedId) as { entity_id: string };
+    assert.equal(audit.entity_id, mintedId);
+
+    const byPatient = await jsonRequest(
+      port,
+      "GET",
+      `/api/ambient-scribe/consent?patientId=${encodeURIComponent(patientId)}`,
+      undefined,
+      auth
+    );
+    assert.equal(byPatient.status, 200);
+    assert.equal(byPatient.json.confirmed, true);
+    assert.equal(byPatient.json.appointmentId, mintedId);
+
+    const sentinel = await jsonRequest(
+      port,
+      "POST",
+      "/api/ambient-scribe/consent",
+      { appointmentId: "unscheduled", patientId: otherPatientId, attested: true, statement: AMBIENT_SCRIBE_CONSENT_TEXT },
+      auth
+    );
+    assert.equal(sentinel.status, 201, String(sentinel.json.error || ""));
+    assert.match(String(sentinel.json.appointmentId || ""), /^apt-[a-f0-9]{32}$/);
+    assert.notEqual(sentinel.json.appointmentId, "unscheduled");
+    const sentinelStored = getDb().prepare("SELECT id FROM appointments WHERE id = 'unscheduled'").get();
+    assert.equal(sentinelStored, undefined);
   });
 });

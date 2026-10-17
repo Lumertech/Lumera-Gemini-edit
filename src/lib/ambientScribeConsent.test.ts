@@ -8,6 +8,7 @@ import {
   AMBIENT_SCRIBE_CONSENT_TEXT,
   ambientMicStartDecision,
   ambientVisitKey,
+  consentWriteNextStep,
 } from "./ambientScribeConsent.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -44,10 +45,26 @@ describe("per-visit ambient scribe consent", () => {
     );
   });
 
-  it("keeps one visit key for an appointment and a same-day unscheduled consult", () => {
+  it("uses a queue appointment id and does not invent a walk-in id", () => {
     assert.equal(ambientVisitKey("apt-1", "pat-1", "2026-10-17"), "apt-1");
-    assert.equal(ambientVisitKey("", "pat-1", "2026-10-17"), "unscheduled:pat-1:2026-10-17");
+    assert.equal(ambientVisitKey("", "pat-1", "2026-10-17"), "");
     assert.equal(ambientVisitKey(undefined, "", "2026-10-17"), "");
+  });
+
+  it("awaits the audit write and leaves the microphone for a second tap", () => {
+    assert.equal(consentWriteNextStep(true), "second-tap");
+    assert.equal(consentWriteNextStep(false), "blocked");
+    const hook = fs.readFileSync(path.join(root, "src/lib/useAmbientScribeConsent.ts"), "utf8");
+    assert.match(hook, /await saveAmbientScribeConsent/);
+    assert.match(hook, /consentWriteNextStep\(true\)/);
+    assert.match(hook, /consentWriteNextStep\(false\)/);
+    assert.doesNotMatch(hook, /getUserMedia|beginAmbientMicGesture/);
+    for (const rel of ["src/components/CompactAmbientScribe.tsx", "src/components/AmbientAIStudio.tsx"]) {
+      const source = fs.readFileSync(path.join(root, rel), "utf8");
+      assert.match(source, /void consent\.confirm\(\)/);
+      assert.match(source, /beginAmbientMicGesture\(\)/);
+      assert.doesNotMatch(source, /confirm\(\(\) =>[\s\S]{0,120}beginAmbientMicGesture/);
+    }
   });
 
   it("uses the exact consent sentence and the disclosure under the mic", () => {

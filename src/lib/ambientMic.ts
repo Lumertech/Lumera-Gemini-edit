@@ -5,7 +5,6 @@ export type AmbientMicErrorCode =
   | "no-microphone"
   | "mic-busy"
   | "insecure-context"
-  | "speech-unsupported"
   | "unknown";
 
 export class AmbientMicError extends Error {
@@ -83,8 +82,7 @@ export function describeMicrophoneRecovery(input: {
 
 export type AmbientCaptureFailure =
   | { kind: "exception"; name?: string; message?: string }
-  | { kind: "insecure-context" }
-  | { kind: "speech-recognition-missing" };
+  | { kind: "insecure-context" };
 
 /**
  * Pure mapping from a capture failure to the in-app message.
@@ -96,15 +94,6 @@ export function mapAmbientCaptureFailure(failure: AmbientCaptureFailure): { code
       code: "insecure-context",
       message:
         "Microphone requires a secure page (HTTPS or localhost). Open this clinic in Chrome or Safari, then allow the microphone. " +
-        MIC_UNBLOCK_STEPS,
-    };
-  }
-  if (failure.kind === "speech-recognition-missing") {
-    return {
-      code: "speech-unsupported",
-      message:
-        "This browser has no live speech-to-text (Web Speech API). The microphone level is still live. Lumera will send the recording for transcription, or you can type the consult. " +
-        "In-app browsers such as WhatsApp and Instagram usually have no SpeechRecognition — open this page in Chrome or Safari. " +
         MIC_UNBLOCK_STEPS,
     };
   }
@@ -148,71 +137,12 @@ export function mapAmbientCaptureFailure(failure: AmbientCaptureFailure): { code
   return { code: "unknown", message: msg };
 }
 
-export const SPEECH_UNSUPPORTED_NOTICE = mapAmbientCaptureFailure({ kind: "speech-recognition-missing" }).message;
-
-export const SPEECH_STOPPED_NOTICE =
-  "Live transcription stopped immediately. This browser's speech service is unavailable. The microphone level is still live; Lumera will send the recording for transcription, or you can type the consult. " +
-  MIC_UNBLOCK_STEPS;
-
-/** Fatal Web Speech errors become a visible message. no-speech and aborted are normal. */
-export function speechRecognitionFailureMessage(code: string | undefined): string | null {
-  switch (code) {
-    case "not-allowed":
-    case "service-not-allowed":
-      return "Speech recognition was blocked. " + MIC_UNBLOCK_STEPS;
-    case "audio-capture":
-      return "No microphone was found. Plug in a mic or check system sound settings.";
-    case "network":
-      return "Live speech recognition could not reach its network service. The microphone level is still live; Lumera will send the recording for transcription, or you can type the consult.";
-    case "language-not-supported":
-      return "This browser does not support live transcription for en-IN. Lumera will send the recording for transcription, or you can type the consult.";
-    case "aborted":
-    case "no-speech":
-    case undefined:
-    case "":
-      return null;
-    default:
-      return `Live transcription failed (${code}). The microphone level is still live; Lumera will send the recording for transcription, or you can type the consult.`;
-  }
-}
-
-export function isFatalSpeechError(code: string | undefined): boolean {
-  return speechRecognitionFailureMessage(code) !== null;
-}
-
 /** Prefer Opus in WebM, then MP4 (iOS Safari MediaRecorder). */
 export const RECORDER_MIME_CANDIDATES = ["audio/webm;codecs=opus", "audio/mp4"] as const;
 
-export type CapturePath = "web-speech" | "media-recorder";
-
-/**
- * Chrome Web Speech sends audio to a third-party speech service outside our contract.
- * Off unless a test or a future founder flag sets `__LUMERA_AMBIENT_WEB_SPEECH__` to true.
- * The scribe path records with MediaRecorder and POSTs /api/gemini/transcribe.
- */
-export function ambientWebSpeechEnabled(): boolean {
-  try {
-    return (globalThis as { __LUMERA_AMBIENT_WEB_SPEECH__?: unknown }).__LUMERA_AMBIENT_WEB_SPEECH__ === true;
-  } catch {
-    return false;
-  }
-}
-
-/** Web Speech is off by default, even when the browser exposes it. */
-export function selectCapturePath(speechRecognitionAvailable: boolean): CapturePath {
-  if (!ambientWebSpeechEnabled()) return "media-recorder";
-  return speechRecognitionAvailable ? "web-speech" : "media-recorder";
-}
-
-/** Server transcription is the default. Live captions upload only when that flag is on and they produced no text. */
-export function shouldUploadAmbientRecording(input: {
-  webSpeechEnabled: boolean;
-  speechSawText: boolean;
-  speechFallback: boolean;
-}): boolean {
-  if (!input.webSpeechEnabled) return true;
-  if (input.speechSawText) return false;
-  return input.speechFallback;
+/** The scribe always uploads the MediaRecorder clip. There is no live-caption path. */
+export function shouldUploadAmbientRecording(): boolean {
+  return true;
 }
 
 export function selectRecorderMimeType(isTypeSupported: (mime: string) => boolean): string {
@@ -267,7 +197,8 @@ export function micErrorMessage(err: unknown): { code: AmbientMicErrorCode; mess
 export async function transcribeRecordedAudio(
   blob: Blob,
   fetchImpl?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>,
-  durationMs?: number
+  durationMs?: number,
+  appointmentId?: string
 ): Promise<string> {
   if (blob.size < 100) {
     throw new Error("The recording was too short to transcribe. Speak for a few seconds, then stop listening.");
@@ -284,6 +215,7 @@ export async function transcribeRecordedAudio(
       audioBase64: dataUrl,
       mimeType,
       ...(Number.isFinite(claimedDuration) && claimedDuration > 0 ? { durationMs: Math.round(claimedDuration) } : {}),
+      ...(appointmentId ? { appointmentId } : {}),
     }),
   };
   const res = fetchImpl
@@ -313,6 +245,12 @@ export async function transcribeRecordedAudio(
   if (res.status === 404) {
     throw new Error("Server transcription is unavailable. Type the consult.");
   }
+  if (res.status === 409 || data.code === "consent_required") {
+    throw new Error("Record the patient agreement for this visit, then tap Start listening.");
+  }
+  if (res.status === 400 && data.code === "appointment_required") {
+    throw new Error("This visit needs a recorded patient agreement before transcription.");
+  }
   if (res.status === 401 || res.status === 403) {
     throw new Error("Transcription was refused. Sign in again, then retry the microphone.");
   }
@@ -328,37 +266,6 @@ async function blobToDataUrl(blob: Blob, mimeType: string): Promise<string> {
   }
   // Bare type so the server's `data:audio/<type>;base64,` strip matches (codec suffixes would not).
   return `data:${mimeType};base64,${btoa(binary)}`;
-}
-
-type SpeechRecCtor = new () => SpeechRecognitionLike;
-
-interface SpeechRecognitionLike {
-  continuous: boolean;
-  interimResults: boolean;
-  lang: string;
-  onresult: ((ev: SpeechRecognitionEventLike) => void) | null;
-  onerror: ((ev: { error?: string }) => void) | null;
-  onend: (() => void) | null;
-  start: () => void;
-  stop: () => void;
-}
-
-interface SpeechRecognitionEventLike {
-  resultIndex: number;
-  results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }>;
-}
-
-function speechRecognitionCtor(): SpeechRecCtor | null {
-  if (typeof window === "undefined") return null;
-  const w = window as Window & {
-    SpeechRecognition?: SpeechRecCtor;
-    webkitSpeechRecognition?: SpeechRecCtor;
-  };
-  return w.SpeechRecognition || w.webkitSpeechRecognition || null;
-}
-
-export function isSpeechRecognitionAvailable(): boolean {
-  return Boolean(speechRecognitionCtor());
 }
 
 export interface AmbientMicSession {
@@ -539,12 +446,9 @@ export interface StartAmbientMicOptions {
   lang?: string;
   /** Created synchronously inside the tap via beginAmbientMicGesture. */
   gesture?: AmbientMicGesture;
-  onTranscript: (payload: { finalChunk: string; interim: string }) => void;
+  onTranscript?: (payload: { finalChunk: string; interim: string }) => void;
   onLevel: (level: number) => void;
-  onSpeechEnded?: () => void;
   onError?: (message: string) => void;
-  /** Non-fatal: mic capture is up, but live speech-to-text is not. */
-  onSpeechNotice?: (message: string) => void;
   onAudioRecorded?: (blob: Blob) => void;
   /** Fired when the session stops itself (length cap) or the caller stops it. */
   onStopped?: () => void;
@@ -595,8 +499,8 @@ export function attachMicrophoneRecovery(
 }
 
 /**
- * Opens the gesture's MediaStream, drives an AnalyserNode level meter on both
- * the Web Speech and MediaRecorder paths, and records when live speech-to-text is missing.
+ * Opens the gesture's MediaStream, drives an AnalyserNode level meter,
+ * and records with MediaRecorder for the server transcription route.
  */
 export async function startAmbientMic(options: StartAmbientMicOptions): Promise<AmbientMicSession> {
   const gesture = options.gesture ?? beginAmbientMicGesture();
@@ -661,13 +565,7 @@ export async function startAmbientMic(options: StartAmbientMicOptions): Promise<
 
   let mediaRecorder: MediaRecorder | null = null;
   const audioChunks: Blob[] = [];
-  const Ctor = speechRecognitionCtor();
-  const capturePath = selectCapturePath(Boolean(Ctor));
-  let recognition: SpeechRecognitionLike | null = null;
   let intentionalStop = false;
-  let fatalSpeech = false;
-  let startedAt = 0;
-  let rapidEnds = 0;
   let capTimer: ReturnType<typeof setTimeout> | null = null;
   let detachRecovery: () => void = () => {};
 
@@ -677,11 +575,6 @@ export async function startAmbientMic(options: StartAmbientMicOptions): Promise<
     detachRecovery();
     if (capTimer) clearTimeout(capTimer);
     cancelAnimationFrame(raf);
-    try {
-      recognition?.stop();
-    } catch {
-      /* ignore */
-    }
 
     const finalizeAudio = () => {
       const recordedType = mimeType || "audio/webm";
@@ -726,62 +619,6 @@ export async function startAmbientMic(options: StartAmbientMicOptions): Promise<
     mediaRecorder.start(1000);
   } catch (err) {
     console.warn("MediaRecorder start warning:", err);
-  }
-
-  const armRecognition = () => {
-    if (!recognition || intentionalStop || fatalSpeech) return;
-    startedAt = Date.now();
-    try {
-      recognition.start();
-    } catch {
-      /* already started */
-    }
-  };
-
-  if (capturePath === "media-recorder") {
-    if (ambientWebSpeechEnabled()) options.onSpeechNotice?.(SPEECH_UNSUPPORTED_NOTICE);
-  } else if (Ctor) {
-    recognition = new Ctor();
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = options.lang || "en-IN";
-    recognition.onresult = (event) => {
-      rapidEnds = 0;
-      let finalChunk = "";
-      let interim = "";
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const piece = event.results[i][0]?.transcript || "";
-        if (event.results[i].isFinal) finalChunk += piece;
-        else interim += piece;
-      }
-      options.onTranscript({
-        finalChunk: finalChunk.trim(),
-        interim: interim.trim(),
-      });
-    };
-    recognition.onerror = (ev) => {
-      const message = speechRecognitionFailureMessage(ev.error);
-      if (!message) return;
-      fatalSpeech = true;
-      options.onError?.(message);
-    };
-    recognition.onend = () => {
-      if (intentionalStop || fatalSpeech) {
-        options.onSpeechEnded?.();
-        return;
-      }
-      const lived = Date.now() - startedAt;
-      if (lived < 800) rapidEnds += 1;
-      else rapidEnds = 0;
-      if (rapidEnds >= 2) {
-        fatalSpeech = true;
-        options.onError?.(SPEECH_STOPPED_NOTICE);
-        options.onSpeechEnded?.();
-        return;
-      }
-      armRecognition();
-    };
-    armRecognition();
   }
 
   capTimer = setTimeout(() => stop(), MAX_AMBIENT_RECORDING_MS);

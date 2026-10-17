@@ -12,11 +12,13 @@ export function AmbientRecordingDisclosure() {
 export function AmbientScribeConsentDialog({
   open,
   error,
+  saving = false,
   onCancel,
   onConfirm,
 }: {
   open: boolean;
   error?: string;
+  saving?: boolean;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
@@ -54,14 +56,14 @@ export function AmbientScribeConsentDialog({
         <button
           type="button"
           data-testid="ambient-scribe-consent-confirm"
-          disabled={!checked}
+          disabled={!checked || saving}
           onClick={() => {
-            if (!checked) return;
+            if (!checked || saving) return;
             onConfirm();
           }}
           className="px-3 py-1.5 rounded-lg bg-violet-700 text-white text-xs font-bold disabled:opacity-40"
         >
-          Start listening
+          {saving ? "Recording agreement…" : "Record agreement"}
         </button>
         <button
           type="button"

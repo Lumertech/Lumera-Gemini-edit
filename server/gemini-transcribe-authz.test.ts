@@ -4,7 +4,9 @@ import path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { createApiRouter } from "./api.ts";
+import { AMBIENT_SCRIBE_CONSENT_ACTION } from "./ambient-scribe-consent.ts";
 import { getDb, initDatabase } from "./db.ts";
+import { writeAudit } from "./db-seed-maps.ts";
 import { mountGeminiClinicalRoutes, setGeminiTranscribeGeneratorForTests } from "./gemini-clinical.ts";
 import {
   GLOBAL_JSON_BODY_LIMIT,
@@ -43,8 +45,8 @@ describe("POST /api/gemini/transcribe auth and body limit", () => {
   let port = 0;
   let close: (() => Promise<void>) | undefined;
   let echoHits = 0;
-  let clinicA: { tenantId: string; email: string };
-  let clinicB: { tenantId: string; email: string };
+  let clinicA: { tenantId: string; email: string; userId: string };
+  let clinicB: { tenantId: string; email: string; userId: string };
   const previousKey = process.env.GEMINI_API_KEY;
 
   before(async () => {
@@ -93,6 +95,23 @@ describe("POST /api/gemini/transcribe auth and body limit", () => {
     return String(res.json.token || "");
   }
 
+  function grantConsent(tenantId: string, userId: string, appointmentId: string) {
+    writeAudit(getDb(), userId, "Dr", AMBIENT_SCRIBE_CONSENT_ACTION, "Patient agreed to this recording.", {
+      tenantId,
+      patientId: "pat-transcribe-check",
+      actorRole: "doctor",
+      entityType: "appointment",
+      entityId: appointmentId,
+    });
+  }
+
+  function usageCount(tenantId: string) {
+    const row = getDb()
+      .prepare("SELECT COUNT(*) AS c FROM usage_events WHERE tenant_id = ? AND resource = 'ai_scribe_minutes'")
+      .get(tenantId) as { c: number };
+    return Number(row.c);
+  }
+
   it("returns 401 for an anonymous post", async () => {
     const res = await jsonRequest(port, "POST", "/api/gemini/transcribe", {
       audioBase64: "AAAA",
@@ -115,11 +134,12 @@ describe("POST /api/gemini/transcribe auth and body limit", () => {
     assert.equal(forged.json.success, undefined);
     assert.equal(forged.json.transcription, undefined);
 
+    grantConsent(clinicA.tenantId, clinicA.userId, "apt-own-visit");
     const own = await jsonRequest(
       port,
       "POST",
       "/api/gemini/transcribe",
-      { audioBase64: "AAAA", mimeType: "audio/webm", tenantId: clinicA.tenantId },
+      { audioBase64: "AAAA", mimeType: "audio/webm", tenantId: clinicA.tenantId, appointmentId: "apt-own-visit" },
       { Authorization: `Bearer ${token}` }
     );
     assert.equal(own.status, 503, String(own.json.error || JSON.stringify(own.json)));
@@ -154,6 +174,21 @@ describe("POST /api/gemini/transcribe auth and body limit", () => {
     assert.equal(overGlobal.status, 413);
     assert.equal(overGlobal.json.error, undefined);
     assert.equal(echoHits, 0);
+  });
+
+  it("accepts an authenticated body above the global 10mb parser on the transcribe route", async () => {
+    const token = await login(clinicA.email);
+    const audioBase64 = "A".repeat(Math.floor(10.5 * 1024 * 1024));
+    const res = await jsonRequest(
+      port,
+      "POST",
+      "/api/gemini/transcribe",
+      { audioBase64, mimeType: "audio/webm", durationMs: 1000, appointmentId: "apt-parser-check" },
+      { Authorization: `Bearer ${token}` }
+    );
+    assert.notEqual(res.json.type, "entity.too.large");
+    assert.equal(res.status, 413);
+    assert.match(String(res.json.error || ""), /too long to transcribe/i);
   });
 
   it("returns 403 for patient, reception, and super_admin", async () => {
@@ -192,11 +227,11 @@ describe("POST /api/gemini/transcribe auth and body limit", () => {
         port,
         "POST",
         "/api/gemini/transcribe",
-        { audioBase64: "AAAA", mimeType, durationMs: 1000 },
+        { audioBase64: "AAAA", mimeType, durationMs: 1000, appointmentId: "apt-mime-no-consent" },
         auth
       );
-      assert.equal(allowed.status, 503, mimeType);
-      assert.equal(allowed.json.code, "transcribe_unavailable");
+      assert.equal(allowed.status, 409, mimeType);
+      assert.equal(allowed.json.code, "consent_required");
     }
 
     const tooLong = await jsonRequest(
@@ -222,13 +257,58 @@ describe("POST /api/gemini/transcribe auth and body limit", () => {
     assert.doesNotMatch(route, /err\.message/);
     assert.doesNotMatch(route, /transcript\s*:/);
 
-    setGeminiTranscribeGeneratorForTests(async () => "phi-transcript-marker-not-stored");
     const token = await login(clinicA.email);
+    const beforeUsage = usageCount(clinicA.tenantId);
+    const missingVisit = await jsonRequest(
+      port,
+      "POST",
+      "/api/gemini/transcribe",
+      { audioBase64: "AAAA", mimeType: "audio/webm", durationMs: 1000 },
+      { Authorization: `Bearer ${token}` }
+    );
+    assert.equal(missingVisit.status, 400);
+    assert.equal(missingVisit.json.code, "appointment_required");
+
+    const invalidVisit = await jsonRequest(
+      port,
+      "POST",
+      "/api/gemini/transcribe",
+      { audioBase64: "AAAA", mimeType: "audio/webm", durationMs: 1000, appointmentId: "bad id" },
+      { Authorization: `Bearer ${token}` }
+    );
+    assert.equal(invalidVisit.status, 400);
+    assert.equal(invalidVisit.json.code, "appointment_required");
+
+    const noRow = await jsonRequest(
+      port,
+      "POST",
+      "/api/gemini/transcribe",
+      { audioBase64: "AAAA", mimeType: "audio/webm", durationMs: 1000, appointmentId: "apt-no-consent-row" },
+      { Authorization: `Bearer ${token}` }
+    );
+    assert.equal(noRow.status, 409);
+    assert.equal(noRow.json.code, "consent_required");
+    assert.doesNotMatch(JSON.stringify(noRow.json), /gemini/i);
+
+    grantConsent(clinicB.tenantId, clinicB.userId, "apt-other-tenant-visit");
+    const otherTenant = await jsonRequest(
+      port,
+      "POST",
+      "/api/gemini/transcribe",
+      { audioBase64: "AAAA", mimeType: "audio/webm", durationMs: 1000, appointmentId: "apt-other-tenant-visit" },
+      { Authorization: `Bearer ${token}` }
+    );
+    assert.equal(otherTenant.status, 409);
+    assert.equal(otherTenant.json.code, "consent_required");
+    assert.equal(usageCount(clinicA.tenantId), beforeUsage);
+
+    grantConsent(clinicA.tenantId, clinicA.userId, "apt-metered-visit");
+    setGeminiTranscribeGeneratorForTests(async () => "phi-transcript-marker-not-stored");
     const metered = await jsonRequest(
       port,
       "POST",
       "/api/gemini/transcribe",
-      { audioBase64: "AAAA", mimeType: "audio/webm", durationMs: 4000 },
+      { audioBase64: "AAAA", mimeType: "audio/webm", durationMs: 4000, appointmentId: "apt-metered-visit" },
       { Authorization: `Bearer ${token}` }
     );
     assert.equal(metered.status, 200, JSON.stringify(metered.json));
@@ -250,8 +330,8 @@ describe("POST /api/gemini/transcribe auth and body limit", () => {
     const first = await jsonRequest(port, "POST", "/api/gemini/transcribe", { audioBase64: "AAAA", mimeType: "audio/webm" }, auth);
     const second = await jsonRequest(port, "POST", "/api/gemini/transcribe", { audioBase64: "AAAA", mimeType: "audio/webm" }, auth);
     const third = await jsonRequest(port, "POST", "/api/gemini/transcribe", { audioBase64: "AAAA", mimeType: "audio/webm" }, auth);
-    assert.equal(first.status, 503);
-    assert.equal(second.status, 503);
+    assert.equal(first.status, 400);
+    assert.equal(second.status, 400);
     assert.equal(third.status, 429);
 
     const colleague = seedDoctor("colleague", "doctor", clinicA.tenantId);
@@ -263,7 +343,7 @@ describe("POST /api/gemini/transcribe auth and body limit", () => {
       { audioBase64: "AAAA", mimeType: "audio/webm" },
       { Authorization: `Bearer ${colleagueToken}` }
     );
-    assert.equal(colleagueHit.status, 503);
+    assert.equal(colleagueHit.status, 400);
 
     setTranscribeRateLimitForTests({ userMax: 5, tenantMax: 1 });
     const tenantFirst = await jsonRequest(
@@ -280,7 +360,7 @@ describe("POST /api/gemini/transcribe auth and body limit", () => {
       { audioBase64: "AAAA", mimeType: "audio/webm" },
       { Authorization: `Bearer ${colleagueToken}` }
     );
-    assert.equal(tenantFirst.status, 503);
+    assert.equal(tenantFirst.status, 400);
     assert.equal(tenantSecond.status, 429);
     resetTranscribeRateLimits();
   });

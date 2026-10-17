@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import { beforeEach, describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
 import {
   AmbientMicError,
   attachMicrophoneRecovery,
   beginAmbientMicGesture,
   describeMicrophoneRecovery,
-  isFatalSpeechError,
   mapAmbientCaptureFailure,
   MAX_AMBIENT_RECORDING_MS,
   MIC_PROMPT_TIMEOUT_MS,
@@ -15,17 +17,15 @@ import {
   queryMicrophonePermission,
   RECORDER_MIME_CANDIDATES,
   resetAmbientMicrophoneSession,
-  ambientWebSpeechEnabled,
-  selectCapturePath,
   shouldUploadAmbientRecording,
   selectRecorderMimeType,
-  speechRecognitionFailureMessage,
-  SPEECH_UNSUPPORTED_NOTICE,
   startAmbientMic,
   transcriptBadge,
   transcribeRecordedAudio,
   transcriptionMimeType,
 } from "./ambientMic.ts";
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
 beforeEach(() => {
   resetAmbientMicrophoneSession();
@@ -117,37 +117,22 @@ describe("mapAmbientCaptureFailure", () => {
     assert.match(insecure.message, steps);
   });
 
-  it("maps missing SpeechRecognition to the server-transcription fallback notice", () => {
-    const mapped = mapAmbientCaptureFailure({ kind: "speech-recognition-missing" });
-    assert.equal(mapped.code, "speech-unsupported");
-    assert.match(mapped.message, /no live speech-to-text/i);
-    assert.match(mapped.message, /WhatsApp and Instagram/i);
-    assert.match(mapped.message, steps);
-    assert.equal(SPEECH_UNSUPPORTED_NOTICE, mapped.message);
-  });
 });
 
-describe("MediaRecorder is the default capture path", () => {
-  it("records on every platform unless the off-by-default speech flag is on", () => {
-    assert.equal(ambientWebSpeechEnabled(), false);
-    assert.equal(selectCapturePath(false), "media-recorder");
-    assert.equal(selectCapturePath(true), "media-recorder");
-    assert.equal(
-      shouldUploadAmbientRecording({ webSpeechEnabled: false, speechSawText: false, speechFallback: false }),
-      true
-    );
-    const flag = globalThis as { __LUMERA_AMBIENT_WEB_SPEECH__?: boolean };
-    flag.__LUMERA_AMBIENT_WEB_SPEECH__ = true;
-    try {
-      assert.equal(ambientWebSpeechEnabled(), true);
-      assert.equal(selectCapturePath(true), "web-speech");
-      assert.equal(selectCapturePath(false), "media-recorder");
-      assert.equal(
-        shouldUploadAmbientRecording({ webSpeechEnabled: true, speechSawText: true, speechFallback: false }),
-        false
-      );
-    } finally {
-      delete flag.__LUMERA_AMBIENT_WEB_SPEECH__;
+describe("MediaRecorder is the capture path", () => {
+  it("always uploads the recording and does not reference the browser speech engine", () => {
+    assert.equal(shouldUploadAmbientRecording(), true);
+    const files = [
+      "src/lib/ambientMic.ts",
+      "src/lib/ambientScribeConsent.ts",
+      "src/lib/useAmbientScribeConsent.ts",
+      "src/components/CompactAmbientScribe.tsx",
+      "src/components/AmbientAIStudio.tsx",
+      "src/components/AmbientScribeConsentDialog.tsx",
+    ];
+    for (const rel of files) {
+      const text = fs.readFileSync(path.join(root, rel), "utf8");
+      assert.equal(/SpeechRecognition|webkitSpeechRecognition/.test(text), false, rel);
     }
     assert.deepEqual([...RECORDER_MIME_CANDIDATES], ["audio/webm;codecs=opus", "audio/mp4"]);
     assert.equal(
@@ -378,18 +363,6 @@ describe("WebView microphone timeout", () => {
   });
 });
 
-describe("speech recognition failures stay visible", () => {
-  it("maps network and permission failures and ignores no-speech", () => {
-    assert.match(speechRecognitionFailureMessage("network") || "", /network service/i);
-    assert.match(speechRecognitionFailureMessage("not-allowed") || "", /blocked/i);
-    assert.equal(speechRecognitionFailureMessage("no-speech"), null);
-    assert.equal(speechRecognitionFailureMessage("aborted"), null);
-    assert.equal(isFatalSpeechError("network"), true);
-    assert.equal(isFatalSpeechError("no-speech"), false);
-    assert.match(SPEECH_UNSUPPORTED_NOTICE, /no live speech-to-text/i);
-  });
-});
-
 describe("server transcription fallback", () => {
   it("surfaces a missing transcription service without naming a vendor", async () => {
     const blob = new Blob([new Uint8Array(200)], { type: "audio/webm" });
@@ -426,6 +399,23 @@ describe("server transcription fallback", () => {
         return true;
       }
     );
+  });
+
+  it("asks for the patient agreement when the server has no consent row", async () => {
+    const blob = new Blob([new Uint8Array(200)], { type: "audio/webm" });
+    let sentAppointment = "";
+    const fakeFetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+      sentAppointment = String((JSON.parse(String(init?.body)) as { appointmentId?: string }).appointmentId || "");
+      return new Response(JSON.stringify({ code: "consent_required", error: "Patient consent required" }), {
+        status: 409,
+        headers: { "Content-Type": "application/json" },
+      });
+    };
+    await assert.rejects(
+      () => transcribeRecordedAudio(blob, fakeFetch as typeof fetch, 1000, "apt-visit-1"),
+      /record the patient agreement/i
+    );
+    assert.equal(sentAppointment, "apt-visit-1");
   });
 
   it("rejects a recording that is too short to transcribe", async () => {

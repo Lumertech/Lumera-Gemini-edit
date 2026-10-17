@@ -16,14 +16,11 @@ import { useAuth } from "../auth/AuthContext";
 import { ABHA_LINKING_STATUS, showsAbhaSandboxStatus } from "../lib/clinicNav";
 import { AmbientRecordingDisclosure, AmbientScribeConsentDialog } from "./AmbientScribeConsentDialog";
 import {
-  ambientWebSpeechEnabled,
   beginAmbientMicGesture,
-  isSpeechRecognitionAvailable,
   micErrorMessage,
   microphoneStatusLabel,
   resetAmbientMicrophoneSession,
   shouldUploadAmbientRecording,
-  SPEECH_UNSUPPORTED_NOTICE,
   startAmbientMic,
   transcriptBadge,
   transcribeRecordedAudio,
@@ -167,14 +164,11 @@ export const CompactAmbientScribe = React.forwardRef<CompactAmbientScribeHandle,
   const [extractSource, setExtractSource] = useState<PulseExtractSource | null>(null);
   const [appliedSuccess, setAppliedSuccess] = useState(false);
   const [micError, setMicError] = useState<string | null>(null);
-  const [speechNotice, setSpeechNotice] = useState<string | null>(null);
   const [audioLevel, setAudioLevel] = useState(0);
   const sessionRef = useRef<{ stop: () => void } | null>(null);
   const transcriptRef = useRef("");
   const recordingRef = useRef(false);
   const requestingRef = useRef(false);
-  const speechSawTextRef = useRef(false);
-  const speechFallbackRef = useRef(false);
   const uploadLockRef = useRef(false);
   const cancelStartRef = useRef(false);
   const skipUploadRef = useRef(false);
@@ -243,12 +237,7 @@ export const CompactAmbientScribe = React.forwardRef<CompactAmbientScribeHandle,
   };
 
   const uploadFallback = async (audioBlob: Blob) => {
-    const upload = shouldUploadAmbientRecording({
-      webSpeechEnabled: ambientWebSpeechEnabled(),
-      speechSawText: speechSawTextRef.current,
-      speechFallback: speechFallbackRef.current,
-    });
-    if (!upload) return;
+    if (!shouldUploadAmbientRecording()) return;
     if (uploadLockRef.current) return;
     if (audioBlob.size < 100) {
       setMicError("No audio was captured to transcribe. Allow the microphone and speak, or type the consult.");
@@ -258,14 +247,12 @@ export const CompactAmbientScribe = React.forwardRef<CompactAmbientScribeHandle,
     setIsTranscribing(true);
     try {
       const elapsed = captureStartedAtRef.current > 0 ? Date.now() - captureStartedAtRef.current : 0;
-      const text = await transcribeRecordedAudio(audioBlob, undefined, elapsed);
+      const text = await transcribeRecordedAudio(audioBlob, undefined, elapsed, consent.appointmentId());
       setFinalTranscript(text);
       setInterimTranscript("");
       setTextSource("server");
       setMicError(null);
-      setSpeechNotice(null);
     } catch (err) {
-      speechFallbackRef.current = false;
       setMicError(err instanceof Error ? err.message : "Server transcription failed.");
     } finally {
       uploadLockRef.current = false;
@@ -290,6 +277,7 @@ export const CompactAmbientScribe = React.forwardRef<CompactAmbientScribeHandle,
       return;
     }
     if (decision !== "start") return;
+    consent.acknowledgeSecondTap();
     // Microphone and AudioContext.resume must run in this turn, before any await.
     let gesture: AmbientMicGesture;
     try {
@@ -303,11 +291,8 @@ export const CompactAmbientScribe = React.forwardRef<CompactAmbientScribeHandle,
     requestingRef.current = true;
     setIsRequesting(true);
     setMicError(null);
-    setSpeechNotice(null);
     setGeneratedSoap(null);
     setAppliedSuccess(false);
-    speechSawTextRef.current = false;
-    speechFallbackRef.current = !ambientWebSpeechEnabled() || !isSpeechRecognitionAvailable();
     if (textSource === "sample") {
       setFinalTranscript("");
       setInterimTranscript("");
@@ -323,31 +308,11 @@ export const CompactAmbientScribe = React.forwardRef<CompactAmbientScribeHandle,
         lang: "en-IN",
         onLevel: setAudioLevel,
         onError: (message) => {
-          speechFallbackRef.current = true;
           setMicError(message);
-        },
-        onSpeechNotice: (message) => {
-          speechFallbackRef.current = true;
-          setSpeechNotice(message);
         },
         onInterrupted: (message) => {
           skipUploadRef.current = true;
-          speechFallbackRef.current = false;
-          setSpeechNotice(null);
           setMicError(message);
-        },
-        onTranscript: ({ finalChunk, interim }) => {
-          if (finalChunk || interim) {
-            speechSawTextRef.current = true;
-            speechFallbackRef.current = false;
-            setTextSource("live");
-            setMicError(null);
-            setSpeechNotice(null);
-          }
-          if (finalChunk) {
-            setFinalTranscript((prev) => (prev ? `${prev.trim()} ${finalChunk}` : finalChunk));
-          }
-          setInterimTranscript(interim);
         },
         onAudioRecorded: (blob) => {
           recordingRef.current = false;
@@ -378,9 +343,6 @@ export const CompactAmbientScribe = React.forwardRef<CompactAmbientScribeHandle,
       captureStartedAtRef.current = Date.now();
       setIsRequesting(false);
       setIsRecording(true);
-      if (ambientWebSpeechEnabled() && !isSpeechRecognitionAvailable()) {
-        setSpeechNotice(SPEECH_UNSUPPORTED_NOTICE);
-      }
     } catch (err) {
       const mapped = micErrorMessage(err);
       setMicError(mapped.message);
@@ -414,7 +376,6 @@ export const CompactAmbientScribe = React.forwardRef<CompactAmbientScribeHandle,
     setGeneratedSoap(null);
     setAppliedSuccess(false);
     setExtractSource(null);
-    speechSawTextRef.current = false;
   };
 
   const handleGenerateAndMaybeApply = async (apply: boolean) => {
@@ -549,13 +510,14 @@ export const CompactAmbientScribe = React.forwardRef<CompactAmbientScribeHandle,
         </div>
       )}
 
-      {speechNotice && (
+      {consent.notice && (
         <div
           role="status"
+          data-testid="ambient-consent-ready"
           className="mx-4 mt-3 px-3 py-2 rounded-lg border border-amber-200 bg-amber-50 text-amber-900 text-xs flex items-start gap-2"
         >
           <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-          <span>{speechNotice}</span>
+          <span>{consent.notice}</span>
         </div>
       )}
 
@@ -573,8 +535,11 @@ export const CompactAmbientScribe = React.forwardRef<CompactAmbientScribeHandle,
       <AmbientScribeConsentDialog
         open={consent.open}
         error={consent.error}
+        saving={consent.saving}
         onCancel={() => consent.close()}
-        onConfirm={() => consent.confirm(() => handleToggleRecording("start"))}
+        onConfirm={() => {
+          void consent.confirm();
+        }}
       />
 
       <div className="p-4 grid grid-cols-1 lg:grid-cols-2 gap-3">
@@ -663,8 +628,6 @@ export const CompactAmbientScribe = React.forwardRef<CompactAmbientScribeHandle,
                     setGeneratedSoap(null);
                     setAppliedSuccess(false);
                     setMicError(null);
-                    setSpeechNotice(null);
-                    speechSawTextRef.current = false;
                   }}
                   className="px-2 py-1 rounded bg-amber-50 hover:bg-amber-100 border border-amber-200 text-[10px] text-amber-900"
                 >

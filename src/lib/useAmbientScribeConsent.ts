@@ -1,10 +1,15 @@
 import { useEffect, useRef, useState } from "react";
-import { ambientVisitKey, fetchAmbientScribeConsent, saveAmbientScribeConsent } from "./ambientScribeConsent";
+import {
+  ambientVisitKey,
+  consentWriteNextStep,
+  fetchAmbientScribeConsent,
+  saveAmbientScribeConsent,
+} from "./ambientScribeConsent";
 
 /**
- * Loads the per-appointment attestation and keeps it for the page session.
- * confirm() sets the grant and starts the mic in the same turn, then writes the audit.
- * A failed audit clears the grant so the next tap asks again.
+ * Loads the per-appointment attestation.
+ * confirm() awaits the audit write. That turn does not open the microphone.
+ * After a successful write the clinician taps Start listening, which opens the microphone in that turn.
  */
 export function useAmbientScribeConsent(opts: {
   appointmentId?: string;
@@ -19,20 +24,29 @@ export function useAmbientScribeConsent(opts: {
   patientRef.current = opts.patientId;
   const [open, setOpen] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    const visitId = ambientVisitKey(opts.appointmentId, opts.patientId);
-    visitRef.current = visitId;
+    const known = ambientVisitKey(opts.appointmentId, opts.patientId);
+    visitRef.current = known;
     grantedRef.current = false;
     setOpen(false);
     setError("");
-    if (!visitId || !opts.patientId) return;
+    setNotice("");
+    if (!opts.patientId) return;
     let cancelled = false;
-    void fetchAmbientScribeConsent(visitId)
+    const load = known
+      ? fetchAmbientScribeConsent({ appointmentId: known })
+      : fetchAmbientScribeConsent({ patientId: opts.patientId });
+    void load
       .then((row) => {
-        if (cancelled) return;
-        grantedRef.current = row.confirmed === true;
-        if (row.confirmed) setOpen(false);
+        if (cancelled || row.confirmed !== true) return;
+        const appointmentId = String(row.appointmentId || known || "").trim();
+        if (!appointmentId) return;
+        visitRef.current = appointmentId;
+        grantedRef.current = true;
+        setOpen(false);
       })
       .catch(() => {
         if (!cancelled) grantedRef.current = false;
@@ -45,34 +59,52 @@ export function useAmbientScribeConsent(opts: {
   return {
     open,
     error,
+    notice,
+    saving,
     allowsStart() {
-      return grantedRef.current;
+      return grantedRef.current && !saving;
+    },
+    appointmentId() {
+      return visitRef.current;
     },
     ask() {
+      if (saving) return;
       setError("");
       setOpen(true);
     },
     close() {
+      if (saving) return;
       setOpen(false);
     },
-    confirm(startMic: () => void) {
-      const visitId = visitRef.current;
+    acknowledgeSecondTap() {
+      setNotice("");
+    },
+    async confirm() {
       const patientId = patientRef.current;
-      if (!visitId || !patientId) {
+      if (!patientId || saving) {
         setError("Choose a patient before recording this consult.");
         setOpen(true);
         return;
       }
-      grantedRef.current = true;
-      setOpen(false);
+      setSaving(true);
       setError("");
-      startMic();
-      void saveAmbientScribeConsent(visitId, patientId).catch(() => {
+      try {
+        const saved = await saveAmbientScribeConsent(patientId, visitRef.current || undefined);
+        if (consentWriteNextStep(true) !== "second-tap") return;
+        visitRef.current = String(saved.appointmentId || "").trim();
+        grantedRef.current = Boolean(visitRef.current);
+        setOpen(false);
+        setNotice("Agreement recorded. Tap Start listening.");
+      } catch {
+        if (consentWriteNextStep(false) !== "blocked") return;
         grantedRef.current = false;
-        setError("Could not record consent. The microphone was stopped.");
+        setNotice("");
+        setError("Could not record the patient agreement. The microphone was not started.");
         setOpen(true);
         failedRef.current();
-      });
+      } finally {
+        setSaving(false);
+      }
     },
   };
 }
