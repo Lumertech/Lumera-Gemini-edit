@@ -384,7 +384,6 @@ export function migrate(database: SqlDatabase) {
   try {
     database.exec("CREATE INDEX IF NOT EXISTS idx_appointments_tenant ON appointments(tenant_id)");
   } catch {}
-  ensureAmbientWalkInUniqueIndex(database);
   try {
     database.exec("CREATE INDEX IF NOT EXISTS idx_prescriptions_tenant ON prescriptions(tenant_id)");
   } catch {}
@@ -499,6 +498,7 @@ export function migrate(database: SqlDatabase) {
       "CREATE INDEX IF NOT EXISTS idx_audit_logs_tenant_patient ON audit_logs(tenant_id, patient_id)"
     );
   } catch {}
+  ensureAmbientWalkInUniqueIndex(database);
 
   backfillLabReportAndBranchTenants(database);
   try {

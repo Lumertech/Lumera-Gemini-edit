@@ -77,7 +77,7 @@ export function visitIsOpenToday(visit: { date?: string; status?: string } | und
 
 /**
  * Yesterday's hidden walk-ins are not still open. A real booking is left as it is.
- * Request paths pass tenantId. Omitting it is the optional global sweep.
+ * Request paths pass tenantId. The daily sweep is the only caller that omits it.
  */
 export function closeStaleAmbientWalkIns(now = new Date(), tenantId?: string): number {
   const day = istClinicDay(now);
@@ -98,6 +98,23 @@ export function closeStaleAmbientWalkIns(now = new Date(), tenantId?: string): n
         )
         .run(AMBIENT_WALKIN_SOURCE, day);
   return Number(result.changes || 0);
+}
+
+export type StaleWalkInSweepState = { day: string };
+
+const ambientSweepState: StaleWalkInSweepState = { day: "" };
+
+/**
+ * At most once per clinic day. Logs the closed count and nothing else.
+ * Request paths do not call this; they pass their own tenant into closeStaleAmbientWalkIns.
+ */
+export function sweepStaleAmbientWalkIns(now = new Date(), state: StaleWalkInSweepState = ambientSweepState): number {
+  const day = istClinicDay(now);
+  if (state.day === day) return 0;
+  const closed = closeStaleAmbientWalkIns(now);
+  state.day = day;
+  console.info(`ambient walk-in daily sweep closed ${closed}`);
+  return closed;
 }
 
 export function hasAmbientScribeConsent(tenantId: string, appointmentId: string, now = new Date()): boolean {

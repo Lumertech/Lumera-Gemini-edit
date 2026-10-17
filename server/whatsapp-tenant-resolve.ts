@@ -1,4 +1,4 @@
-import { HIDDEN_AMBIENT_SOURCES, hiddenAmbientSourceSql } from "./ambient-walkin.ts";
+import { HIDDEN_AMBIENT_SOURCES, hiddenVisitSourceSql } from "./ambient-walkin.ts";
 import { DEMO_TENANT_ID, getDb } from "./db.ts";
 import { isProduction } from "./runtime.ts";
 import {
@@ -82,7 +82,7 @@ function resolveDoctorOwnedNumber(opts: {
         .prepare(
           `SELECT id FROM appointments
            WHERE tenant_id = ? AND doctor_id = ? AND (patient_id = ? OR patient_phone = ?)
-             AND ${hiddenAmbientSourceSql()}
+             AND ${hiddenVisitSourceSql()}
            LIMIT 1`
         )
         .get(affiliation.tenantId, affiliation.doctorId, patientId, phone, ...HIDDEN_AMBIENT_SOURCES) as {

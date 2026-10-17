@@ -1,5 +1,5 @@
-import { HIDDEN_AMBIENT_SOURCES, hiddenAmbientSourceSql } from "./ambient-walkin.ts";
-import { closeStaleAmbientWalkIns } from "./ambient-scribe-consent.ts";
+import { HIDDEN_AMBIENT_SOURCES, hiddenVisitSourceSql } from "./ambient-walkin.ts";
+import { closeStaleAmbientWalkIns, sweepStaleAmbientWalkIns } from "./ambient-scribe-consent.ts";
 import { getDb, mapAppointment } from "./db.ts";
 import {
   isCloudDispatchFailure,
@@ -9,7 +9,7 @@ import {
   type CloudDispatchResult,
 } from "./graph-whatsapp.ts";
 
-const ACTIVE_APPOINTMENT_SQL = `status NOT IN ('Completed', 'Cancelled', 'No-Show') AND ${hiddenAmbientSourceSql()}`;
+const ACTIVE_APPOINTMENT_SQL = `status NOT IN ('Completed', 'Cancelled', 'No-Show') AND ${hiddenVisitSourceSql()}`;
 const REMINDABLE_STATUSES = new Set(["Waiting", "Confirmed"]);
 const REMINDER_WINDOWS = ["24h", "2h"] as const;
 export type ReminderWindow = (typeof REMINDER_WINDOWS)[number];
@@ -331,13 +331,13 @@ export async function runAppointmentReminders(opts?: {
   appointmentId?: string;
 }): Promise<{ sent: ReminderRunItem[]; skipped: number; failed: ReminderRunItem[] }> {
   const now = opts?.now || new Date();
-  closeStaleAmbientWalkIns(now, opts?.tenantId);
+  if (opts?.tenantId) closeStaleAmbientWalkIns(now, opts.tenantId);
   const db = getDb();
   const rows = (
     opts?.appointmentId
       ? [
           db
-            .prepare(`SELECT * FROM appointments WHERE id = ? AND ${hiddenAmbientSourceSql()}`)
+            .prepare(`SELECT * FROM appointments WHERE id = ? AND ${hiddenVisitSourceSql()}`)
             .get(opts.appointmentId, ...HIDDEN_AMBIENT_SOURCES) as Record<string, unknown> | undefined,
         ].filter(Boolean)
       : db
@@ -399,6 +399,11 @@ export function startAppointmentReminderScheduler(): void {
   const ms = Number(process.env.APPOINTMENT_REMINDER_INTERVAL_MS || 15 * 60 * 1000);
   const intervalMs = Number.isFinite(ms) && ms >= 30_000 ? ms : 15 * 60 * 1000;
   const tick = () => {
+    try {
+      sweepStaleAmbientWalkIns();
+    } catch (err) {
+      console.error("Ambient walk-in daily sweep failed:", err);
+    }
     runAppointmentReminders().catch((err) => {
       console.error("Appointment reminder scheduler failed:", err);
     });

@@ -1,4 +1,4 @@
-import { HIDDEN_AMBIENT_SOURCES, hiddenAmbientSourceSql } from "./ambient-walkin.ts";
+import { HIDDEN_AMBIENT_SOURCES, hiddenVisitSourceSql } from "./ambient-walkin.ts";
 import type { SqlDatabase } from "./sql-engine.ts";
 import { tableExists } from "./sql-catalog.ts";
 import { clinicCalendarDate, shiftIsoDate } from "../src/lib/clinicDay.ts";
@@ -358,7 +358,7 @@ export function spreadDemoBookDates(database: SqlDatabase, now = new Date()): vo
 
   const list = database.prepare(
     `SELECT id, status, patient_id, patient_name, patient_phone, uhid, doctor_id, doctor_name, specialty
-     FROM appointments WHERE tenant_id = ? AND ${hiddenAmbientSourceSql()}`
+     FROM appointments WHERE tenant_id = ? AND ${hiddenVisitSourceSql()}`
   );
   const insert = database.prepare(
     `INSERT INTO appointments (

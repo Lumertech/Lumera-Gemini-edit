@@ -1,4 +1,4 @@
-import { HIDDEN_AMBIENT_SOURCES, hiddenAmbientSourceSql, isHiddenAmbientSource } from "./ambient-walkin.ts";
+import { HIDDEN_AMBIENT_SOURCES, hiddenVisitSourceSql, isHiddenVisitSource } from "./ambient-walkin.ts";
 import { getDb, mapAppointment, mapPatient, writeAudit } from "./db.ts";
 import {
   appointmentPhoneFromPatient,
@@ -64,7 +64,7 @@ export function findOrCreateWhatsAppPatient(opts: {
   });
 }
 
-const ACTIVE_APPOINTMENT_SQL = `status NOT IN ('Completed', 'Cancelled', 'No-Show') AND ${hiddenAmbientSourceSql()}`;
+const ACTIVE_APPOINTMENT_SQL = `status NOT IN ('Completed', 'Cancelled', 'No-Show') AND ${hiddenVisitSourceSql()}`;
 
 function withLivePatientPhone(
   tenantId: string,
@@ -95,7 +95,7 @@ export function findActiveAppointment(opts: {
 }): Record<string, unknown> | undefined {
   if (opts.appointmentId) {
     const named = getTenantAppointment(opts.tenantId, opts.appointmentId);
-    if (!named || isHiddenAmbientSource(named.source)) return undefined;
+    if (!named || isHiddenVisitSource(named.source)) return undefined;
     return withLivePatientPhone(opts.tenantId, named);
   }
 
@@ -269,7 +269,7 @@ export function getWhatsAppQueue(opts: {
     .prepare(
       `SELECT COUNT(*) as count FROM appointments
        WHERE tenant_id = ? AND doctor_id = ? AND date = ? AND status = 'Waiting' AND token_number < ?
-         AND ${hiddenAmbientSourceSql()}`
+         AND ${hiddenVisitSourceSql()}`
     )
     .get(opts.tenantId, mapped.doctorId, mapped.date, mapped.tokenNumber, ...HIDDEN_AMBIENT_SOURCES) as { count: number };
   const patientsAhead = Number(ahead?.count || 0);
