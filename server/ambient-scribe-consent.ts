@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Express, NextFunction, Request, Response } from "express";
+import { clinicCalendarDate } from "../src/lib/clinicDay.ts";
 import { requireAuth } from "./auth.ts";
 import { writeAudit } from "./db-seed-maps.ts";
 import { getDb } from "./db.ts";
@@ -14,6 +15,11 @@ export const AMBIENT_SCRIBE_CONSENT_TEXT =
   "I have told the patient that this consult will be recorded and transcribed by an AI service to draft notes, and the patient agreed. Audio is not stored.";
 
 export const AMBIENT_SCRIBE_CONSENT_ACTION = "ambient_scribe_consent";
+
+/** Not a queue visit. Token sequencing and the appointment list ignore this source. */
+export const AMBIENT_WALKIN_SOURCE = "ambient_walkin";
+
+const CLOSED_VISIT_STATUSES = new Set(["completed", "cancelled", "canceled", "no-show"]);
 
 const AUDIT_DETAILS =
   "Clinician confirmed the patient agreed this consult may be recorded and transcribed to draft notes. Audio is not stored.";
@@ -59,20 +65,53 @@ function patientInTenant(tenantId: string, patientId: string): boolean {
   return Boolean(row?.id);
 }
 
-export function hasAmbientScribeConsent(tenantId: string, appointmentId: string): boolean {
-  return Boolean(consentRow(tenantId, appointmentId));
+/** Calendar day in Asia/Kolkata. Consent never uses the client clock or UTC date. */
+export function istClinicDay(now = new Date()): string {
+  return clinicCalendarDate(now, "Asia/Kolkata");
 }
 
-type AppointmentOwner = { id: string; patient_id: string };
+export function visitIsOpenToday(visit: { date?: string; status?: string } | undefined, now = new Date()): boolean {
+  if (!visit) return false;
+  if (String(visit.date || "") !== istClinicDay(now)) return false;
+  const status = String(visit.status || "").trim().toLowerCase();
+  return !CLOSED_VISIT_STATUSES.has(status);
+}
+
+export function hasAmbientScribeConsent(tenantId: string, appointmentId: string, now = new Date()): boolean {
+  if (!consentRow(tenantId, appointmentId)) return false;
+  return visitIsOpenToday(findAppointment(tenantId, appointmentId), now);
+}
+
+type AppointmentOwner = { id: string; patient_id: string; date: string; status: string; doctor_id: string; source: string };
 
 function findAppointment(tenantId: string, appointmentId: string): AppointmentOwner | undefined {
   return getDb()
-    .prepare("SELECT id, patient_id FROM appointments WHERE id = ? AND tenant_id = ?")
+    .prepare(
+      "SELECT id, patient_id, date, status, doctor_id, source FROM appointments WHERE id = ? AND tenant_id = ?"
+    )
     .get(appointmentId, tenantId) as AppointmentOwner | undefined;
 }
 
-function clinicDayIso(): string {
-  return new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
+function visitSpecialty(user: NonNullable<Request["user"]>): string {
+  const doctor = getDb().prepare("SELECT specialty FROM users WHERE id = ?").get(user.id) as { specialty?: string } | undefined;
+  const fromDoctor = String(doctor?.specialty || "").trim();
+  if (fromDoctor) return fromDoctor;
+  const tenant = getDb().prepare("SELECT specialty FROM tenants WHERE id = ?").get(user.tenantId) as
+    | { specialty?: string }
+    | undefined;
+  return String(tenant?.specialty || "").trim();
+}
+
+function reusableWalkIn(user: NonNullable<Request["user"]>, patientId: string, day: string): string {
+  const row = getDb()
+    .prepare(
+      `SELECT id FROM appointments
+       WHERE tenant_id = ? AND patient_id = ? AND doctor_id = ? AND date = ? AND source = ?
+         AND lower(status) NOT IN ('completed', 'cancelled', 'canceled', 'no-show')
+       ORDER BY created_at DESC LIMIT 1`
+    )
+    .get(user.tenantId, patientId, user.id, day, AMBIENT_WALKIN_SOURCE) as { id: string } | undefined;
+  return String(row?.id || "");
 }
 
 function mintWalkInAppointment(user: NonNullable<Request["user"]>, patientId: string): string | null {
@@ -80,11 +119,10 @@ function mintWalkInAppointment(user: NonNullable<Request["user"]>, patientId: st
     .prepare("SELECT name, phone, uhid FROM patients WHERE id = ? AND tenant_id = ?")
     .get(patientId, user.tenantId) as { name: string; phone: string; uhid: string } | undefined;
   if (!patient) return null;
+  const day = istClinicDay();
+  const existing = reusableWalkIn(user, patientId, day);
+  if (existing) return existing;
   const id = `apt-${randomUUID().replace(/-/g, "")}`;
-  const day = clinicDayIso();
-  const token = getDb()
-    .prepare("SELECT COALESCE(MAX(token_number), 0) + 1 AS n FROM appointments WHERE tenant_id = ? AND date = ?")
-    .get(user.tenantId, day) as { n: number } | undefined;
   const now = new Date().toISOString();
   getDb()
     .prepare(
@@ -97,19 +135,19 @@ function mintWalkInAppointment(user: NonNullable<Request["user"]>, patientId: st
     .run(
       id,
       user.tenantId,
-      Number(token?.n) || 1,
+      0,
       patientId,
       patient.name,
       patient.phone,
       patient.uhid,
       user.id,
       user.name || "Clinician",
-      "General Medicine",
+      visitSpecialty(user),
       day,
-      "Walk-in",
-      "New Consultation",
-      "In Consultation",
-      "Walk-in",
+      "",
+      "Ambient scribe",
+      "Open",
+      AMBIENT_WALKIN_SOURCE,
       0,
       0,
       now
@@ -117,14 +155,19 @@ function mintWalkInAppointment(user: NonNullable<Request["user"]>, patientId: st
   return id;
 }
 
-function latestConsentForPatient(tenantId: string, patientId: string): ConsentRow | undefined {
+function latestOpenConsentForPatient(tenantId: string, patientId: string, now = new Date()): ConsentRow | undefined {
+  const day = istClinicDay(now);
   return getDb()
     .prepare(
-      `SELECT timestamp, user_id, tenant_id, entity_id FROM audit_logs
-       WHERE action = ? AND tenant_id = ? AND patient_id = ? AND entity_type = 'appointment'
-       ORDER BY timestamp DESC LIMIT 1`
+      `SELECT audit.timestamp, audit.user_id, audit.tenant_id, audit.entity_id
+       FROM audit_logs audit
+       INNER JOIN appointments apt ON apt.id = audit.entity_id AND apt.tenant_id = audit.tenant_id
+       WHERE audit.action = ? AND audit.tenant_id = ? AND audit.patient_id = ?
+         AND audit.entity_type = 'appointment' AND apt.patient_id = ? AND apt.date = ?
+         AND lower(apt.status) NOT IN ('completed', 'cancelled', 'canceled', 'no-show')
+       ORDER BY audit.timestamp DESC LIMIT 1`
     )
-    .get(AMBIENT_SCRIBE_CONSENT_ACTION, tenantId, patientId) as ConsentRow | undefined;
+    .get(AMBIENT_SCRIBE_CONSENT_ACTION, tenantId, patientId, patientId, day) as ConsentRow | undefined;
 }
 
 /**
@@ -146,21 +189,20 @@ export function mountAmbientScribeConsentRoutes(app: Express): void {
       const appointmentId = cleanVisitId(rawAppointment);
       if (!appointmentId) return res.status(400).json({ error: "appointmentId is invalid" });
       const row = consentRow(tenantId, appointmentId);
+      const open = visitIsOpenToday(findAppointment(tenantId, appointmentId));
       return res.json({
-        confirmed: Boolean(row),
+        confirmed: Boolean(row && open),
         appointmentId,
-        recordedAt: row?.timestamp || null,
+        recordedAt: row && open ? row.timestamp : null,
       });
     }
     if (!patientId) return res.status(400).json({ error: "appointmentId or patientId is required" });
     if (!patientInTenant(tenantId, patientId)) return res.status(404).json({ error: "Patient not found" });
-    const row = latestConsentForPatient(tenantId, patientId);
-    const appointment = row ? findAppointment(tenantId, row.entity_id) : undefined;
-    const owned = appointment && appointment.patient_id === patientId ? appointment.id : "";
+    const row = latestOpenConsentForPatient(tenantId, patientId);
     return res.json({
-      confirmed: Boolean(owned),
-      appointmentId: owned || null,
-      recordedAt: owned ? row?.timestamp || null : null,
+      confirmed: Boolean(row),
+      appointmentId: row?.entity_id || null,
+      recordedAt: row?.timestamp || null,
     });
   });
 
@@ -193,6 +235,9 @@ export function mountAmbientScribeConsentRoutes(app: Express): void {
         if (!appointment) return res.status(404).json({ error: "Appointment not found" });
         if (appointment.patient_id !== patientId) {
           return res.status(403).json({ error: "Appointment does not belong to this patient" });
+        }
+        if (!visitIsOpenToday(appointment)) {
+          return res.status(409).json({ error: "This visit is not open today", code: "visit_closed" });
         }
       }
       const existing = consentRow(tenantId, appointmentId);

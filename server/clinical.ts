@@ -19,6 +19,7 @@ import { registerPatientDocumentConsentRoutes } from "./patient-document-consent
 import { buildPatientTimeline, presentPrescriptionForRole } from "./patient-timeline.ts";
 import { denyUnlessPatientRecordRole, denyUnlessPrescriber, isReceptionRole } from "./patient-access.ts";
 import { clinicCalendarDate, parseAppointmentListDate } from "../src/lib/clinicDay.ts";
+import { AMBIENT_WALKIN_SOURCE } from "./ambient-scribe-consent.ts";
 import {
   loadPatientClinicPhone,
   loadPatientTenant,
@@ -209,21 +210,30 @@ function clinicDayForTenant(tenantId: string, now = new Date()): string {
 export function listTenantAppointments(tenantId: string, date?: string | null): Record<string, unknown>[] {
   if (date) {
     return getDb()
-      .prepare("SELECT * FROM appointments WHERE tenant_id = ? AND date = ? ORDER BY token_number ASC")
-      .all(tenantId, date) as Record<string, unknown>[];
+      .prepare(
+        `SELECT * FROM appointments
+         WHERE tenant_id = ? AND date = ? AND COALESCE(source, '') != ?
+         ORDER BY token_number ASC`
+      )
+      .all(tenantId, date, AMBIENT_WALKIN_SOURCE) as Record<string, unknown>[];
   }
   return getDb()
-    .prepare("SELECT * FROM appointments WHERE tenant_id = ? ORDER BY token_number ASC")
-    .all(tenantId) as Record<string, unknown>[];
+    .prepare(
+      `SELECT * FROM appointments
+       WHERE tenant_id = ? AND COALESCE(source, '') != ?
+       ORDER BY token_number ASC`
+    )
+    .all(tenantId, AMBIENT_WALKIN_SOURCE) as Record<string, unknown>[];
 }
 
 export function nextTokenNumber(tenantId: string, date: string): number {
   const row = getDb()
     .prepare(
       `SELECT COALESCE(MAX(token_number), 0) AS max_token
-       FROM appointments WHERE tenant_id = ? AND date = ?`
+       FROM appointments
+       WHERE tenant_id = ? AND date = ? AND COALESCE(source, '') != ?`
     )
-    .get(tenantId, date) as { max_token: number };
+    .get(tenantId, date, AMBIENT_WALKIN_SOURCE) as { max_token: number };
   return Number(row?.max_token || 0) + 1;
 }
 

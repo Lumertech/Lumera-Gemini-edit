@@ -4,7 +4,8 @@ import path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { createApiRouter } from "./api.ts";
-import { AMBIENT_SCRIBE_CONSENT_ACTION } from "./ambient-scribe-consent.ts";
+import { shiftIsoDate } from "../src/lib/clinicDay.ts";
+import { AMBIENT_SCRIBE_CONSENT_ACTION, istClinicDay } from "./ambient-scribe-consent.ts";
 import { getDb, initDatabase } from "./db.ts";
 import { writeAudit } from "./db-seed-maps.ts";
 import { mountGeminiClinicalRoutes, setGeminiTranscribeGeneratorForTests } from "./gemini-clinical.ts";
@@ -95,7 +96,23 @@ describe("POST /api/gemini/transcribe auth and body limit", () => {
     return String(res.json.token || "");
   }
 
-  function grantConsent(tenantId: string, userId: string, appointmentId: string) {
+  function grantConsent(
+    tenantId: string,
+    userId: string,
+    appointmentId: string,
+    visit: { date?: string; status?: string } = {}
+  ) {
+    const date = visit.date || istClinicDay();
+    const status = visit.status || "Waiting";
+    getDb().prepare("DELETE FROM appointments WHERE id = ?").run(appointmentId);
+    getDb()
+      .prepare(
+        `INSERT INTO appointments (
+          id, tenant_id, token_number, patient_id, patient_name, patient_phone, uhid, doctor_id, doctor_name,
+          specialty, date, time_slot, type, status, source, consultation_fee, is_paid, created_at
+        ) VALUES (?, ?, 1, 'pat-transcribe-check', 'Test', '+910000000099', 'UHID-TX', ?, 'Dr', 'General Medicine', ?, '10:00', 'New Consultation', ?, 'Walk-in', 0, 0, ?)`
+      )
+      .run(appointmentId, tenantId, userId, date, status, new Date().toISOString());
     writeAudit(getDb(), userId, "Dr", AMBIENT_SCRIBE_CONSENT_ACTION, "Patient agreed to this recording.", {
       tenantId,
       patientId: "pat-transcribe-check",
@@ -363,5 +380,48 @@ describe("POST /api/gemini/transcribe auth and body limit", () => {
     assert.equal(tenantFirst.status, 400);
     assert.equal(tenantSecond.status, 429);
     resetTranscribeRateLimits();
+  });
+
+  it("accepts consent only for a visit that is open today", async () => {
+    resetTranscribeRateLimits();
+    const token = await login(clinicA.email);
+    const auth = { Authorization: `Bearer ${token}` };
+    const today = istClinicDay();
+    const before = usageCount(clinicA.tenantId);
+    const body = { audioBase64: "AAAA", mimeType: "audio/webm", durationMs: 1000 };
+
+    grantConsent(clinicA.tenantId, clinicA.userId, "apt-yesterday-visit", {
+      date: shiftIsoDate(today, -1),
+      status: "Open",
+    });
+    const yesterday = await jsonRequest(
+      port,
+      "POST",
+      "/api/gemini/transcribe",
+      { ...body, appointmentId: "apt-yesterday-visit" },
+      auth
+    );
+    assert.equal(yesterday.status, 409);
+    assert.equal(yesterday.json.code, "consent_required");
+
+    for (const status of ["Completed", "Cancelled"]) {
+      const appointmentId = `apt-${status.toLowerCase()}-visit`;
+      grantConsent(clinicA.tenantId, clinicA.userId, appointmentId, { date: today, status });
+      const closed = await jsonRequest(port, "POST", "/api/gemini/transcribe", { ...body, appointmentId }, auth);
+      assert.equal(closed.status, 409, status);
+      assert.equal(closed.json.code, "consent_required");
+    }
+
+    grantConsent(clinicA.tenantId, clinicA.userId, "apt-open-today-visit", { date: today, status: "Waiting" });
+    const open = await jsonRequest(
+      port,
+      "POST",
+      "/api/gemini/transcribe",
+      { ...body, appointmentId: "apt-open-today-visit" },
+      auth
+    );
+    assert.equal(open.status, 503);
+    assert.equal(open.json.code, "transcribe_unavailable");
+    assert.equal(usageCount(clinicA.tenantId), before);
   });
 });

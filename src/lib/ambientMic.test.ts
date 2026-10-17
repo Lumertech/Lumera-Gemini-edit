@@ -122,17 +122,29 @@ describe("mapAmbientCaptureFailure", () => {
 describe("MediaRecorder is the capture path", () => {
   it("always uploads the recording and does not reference the browser speech engine", () => {
     assert.equal(shouldUploadAmbientRecording(), true);
-    const files = [
-      "src/lib/ambientMic.ts",
-      "src/lib/ambientScribeConsent.ts",
-      "src/lib/useAmbientScribeConsent.ts",
-      "src/components/CompactAmbientScribe.tsx",
-      "src/components/AmbientAIStudio.tsx",
-      "src/components/AmbientScribeConsentDialog.tsx",
-    ];
-    for (const rel of files) {
-      const text = fs.readFileSync(path.join(root, rel), "utf8");
-      assert.equal(/SpeechRecognition|webkitSpeechRecognition/.test(text), false, rel);
+    const needles = ["Speech" + "Recognition", "webkit" + "Speech" + "Recognition", "__LUMERA_" + "AMBIENT_" + "WEB_" + "SPEECH__"];
+    const allowlist = new Set<string>([]);
+    const files: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          if (entry.name === "node_modules") continue;
+          walk(full);
+          continue;
+        }
+        if (/\.(ts|tsx|js|jsx)$/.test(entry.name)) files.push(full);
+      }
+    };
+    walk(path.join(root, "src"));
+    assert.ok(files.length > 6);
+    for (const full of files) {
+      const rel = path.relative(root, full);
+      if (allowlist.has(rel)) continue;
+      const text = fs.readFileSync(full, "utf8");
+      for (const needle of needles) {
+        assert.equal(text.includes(needle), false, `${rel} contains ${needle}`);
+      }
     }
     assert.deepEqual([...RECORDER_MIME_CANDIDATES], ["audio/webm;codecs=opus", "audio/mp4"]);
     assert.equal(
