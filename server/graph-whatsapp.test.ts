@@ -391,6 +391,55 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
     );
   });
 
+  it("orders catalog template parameters by name and fills only a server URL suffix", async () => {
+    const captured: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const sent = await sendWhatsAppGraphTemplate({
+      credentials: { token: LIVE_TOKEN, phoneNumberId: LIVE_PHONE_ID, source: "env" },
+      to: "+919823455667",
+      name: "post_consultation_rx",
+      language: "en",
+      namedBodyParameters: {
+        rx_number: "RX-2026-0101",
+        clinic_name: "Sunrise Family Clinic",
+        doctor_name: "Dr Meera Shah",
+      },
+      urlButtonParameter: "RX-2026-0101",
+      fetchImpl: mockGraphFetch(captured, "wamid.RX_URL"),
+    });
+    assert.equal(sent.ok, true);
+    const template = captured[0].body.template as {
+      components?: Array<{ type?: string; sub_type?: string; parameters?: Array<{ text?: string }> }>;
+    };
+    assert.deepEqual(
+      template.components?.find((component) => component.type === "body")?.parameters?.map((parameter) => parameter.text),
+      ["Dr Meera Shah", "Sunrise Family Clinic", "RX-2026-0101"]
+    );
+    const button = template.components?.find((component) => component.type === "button");
+    assert.equal(button?.sub_type, "url");
+    assert.equal(button?.parameters?.[0]?.text, "RX-2026-0101");
+    assert.equal(JSON.stringify(template).includes("https://"), false);
+
+    let fetchCalled = false;
+    const rejected = await sendWhatsAppGraphTemplate({
+      credentials: { token: LIVE_TOKEN, phoneNumberId: LIVE_PHONE_ID, source: "env" },
+      to: "+919823455667",
+      name: "post_consultation_rx",
+      namedBodyParameters: {
+        doctor_name: "Dr Meera Shah",
+        clinic_name: "Sunrise Family Clinic",
+        rx_number: "RX-2026-0101",
+      },
+      urlButtonParameter: "https://evil.example/rx/RX-2026-0101",
+      fetchImpl: async () => {
+        fetchCalled = true;
+        return new Response("{}", { status: 200 });
+      },
+    });
+    assert.equal(rejected.ok, false);
+    if (rejected.ok === false) assert.equal(rejected.error, "URL_BUTTON_SUFFIX_INVALID");
+    assert.equal(fetchCalled, false);
+  });
+
   it("Graph path uses lumera_appointment_reminder with Manager body order when META_REMINDER_TEMPLATE_NAME is set", async () => {
     const prevLang = process.env.META_UTILITY_TEMPLATE_LANGUAGE;
     process.env.META_ACCESS_TOKEN = LIVE_TOKEN;

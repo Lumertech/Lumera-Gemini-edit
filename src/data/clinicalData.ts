@@ -22,6 +22,7 @@ import {
   PharmacyBatchItem,
   PolyclinicSpecialty
 } from '../types';
+import { uiWhatsAppTemplates } from '../lib/whatsappMetaTemplates';
 
 export const PHYSIO_EXERCISE_DATABASE: PrescribedExercise[] = [
   // Spine & Neck
@@ -1338,63 +1339,7 @@ export const DEFAULT_CLINIC_SETTINGS: ClinicSettings = {
   footerDisclaimer: 'Prescription issued under the Telemedicine Practice Guidelines, 2020.'
 };
 
-export const DEFAULT_WHATSAPP_TEMPLATES: WhatsAppTemplate[] = [
-  {
-    id: 'tmpl-1',
-    name: 'appointment_confirmation_v2',
-    category: 'APPOINTMENT_REMINDER',
-    language: 'English (en_IN)',
-    headerText: '🏥 Lumera Polyclinic - Appointment Confirmed',
-    bodyText: 'Hello {{1}},\n\nYour appointment with {{2}} ({{3}}) has been confirmed for *{{4}} at {{5}}*.\n\n📍 Token No: *{{6}}*\n🏥 Room: {{7}}\n\nPlease arrive 10 minutes prior for vitals check.',
-    footerText: 'Reply CANCEL to cancel or RESCHEDULE to change time',
-    buttons: [
-      { type: 'QUICK_REPLY', text: 'Confirm Arrival', payload: 'CONFIRM_ARRIVAL' },
-      { type: 'QUICK_REPLY', text: 'Reschedule Slot', payload: 'RESCHEDULE' }
-    ],
-    status: 'APPROVED'
-  },
-  {
-    id: 'tmpl-2',
-    name: 'digital_prescription_ready',
-    category: 'PRESCRIPTION_DELIVERY',
-    language: 'English (en_IN)',
-    headerText: '📄 Digital Rx Ready - Lumera Health',
-    bodyText: 'Dear {{1}},\n\nYour digital prescription from {{2}} has been generated successfully.\n\n📋 Rx No: *{{3}}*\n💊 Medications: {{4}} items\n🗓️ Follow-up: *{{5}}*\n\nTap the button below to view or print your digital prescription anytime.',
-    footerText: 'Issued under the Telemedicine Practice Guidelines, 2020',
-    buttons: [
-      { type: 'URL', text: 'View Digital Rx PDF', payload: 'https://lumera.health/rx/{{3}}' },
-      { type: 'QUICK_REPLY', text: 'Order Medicines', payload: 'ORDER_MEDS' }
-    ],
-    status: 'APPROVED'
-  },
-  {
-    id: 'tmpl-3',
-    name: 'invoice_payment_link',
-    category: 'INVOICE_PAY_LINK',
-    language: 'English (en_IN)',
-    headerText: '💳 Bill & Payment Request',
-    bodyText: 'Dear {{1}},\n\nInvoice *{{2}}* for {{3}} has been generated for total amount *₹{{4}}*.\n\nYou can pay securely via UPI, Cards, or NetBanking using the link below.',
-    footerText: 'Instant GST Receipt provided on payment',
-    buttons: [
-      { type: 'URL', text: 'Pay ₹{{4}} via UPI/Card', payload: 'https://lumera.health/pay/{{2}}' }
-    ],
-    status: 'APPROVED'
-  },
-  {
-    id: 'tmpl-4',
-    name: 'medication_adherence_checkin',
-    category: 'FOLLOWUP_CHECK',
-    language: 'English (en_IN)',
-    headerText: '💊 Daily Medication Check-in',
-    bodyText: 'Hi {{1}},\n\nThis is your automated health buddy from Lumera Clinic. Did you take your prescribed medicines today?\n\n1. Morning dose\n2. Afternoon dose\n3. Night dose',
-    footerText: 'Lumera Patient Adherence Program',
-    buttons: [
-      { type: 'QUICK_REPLY', text: '✅ All Taken', payload: 'MEDS_TAKEN' },
-      { type: 'QUICK_REPLY', text: '⚠️ Experiencing Side Effect', payload: 'SIDE_EFFECT' }
-    ],
-    status: 'APPROVED'
-  }
-];
+export const DEFAULT_WHATSAPP_TEMPLATES: WhatsAppTemplate[] = uiWhatsAppTemplates();
 
 export const MOCK_DOCTORS = DEFAULT_DOCTORS;
 export const MOCK_PATIENTS = DEFAULT_PATIENTS;

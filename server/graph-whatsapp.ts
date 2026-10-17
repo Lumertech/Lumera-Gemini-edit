@@ -6,6 +6,7 @@ import { getTenantWabaNumber, getWhatsAppNumberSecret } from "./whatsapp-numbers
 import { waTokenKeyBytes } from "./wa-token-crypto.ts";
 import { formatINR } from "../src/lib/currency.ts";
 import { isSampleTaxInvoice, sampleTaxInvoiceReceiptText } from "../src/lib/sampleTaxInvoice.ts";
+import { bodyParametersFor, serverUrlButtonSuffix } from "../src/lib/whatsappMetaTemplates.ts";
 
 /**
  * Shared Meta WhatsApp Cloud API send module (Wave 1B OTP + Wave 2 utilities).
@@ -351,6 +352,13 @@ export async function sendWhatsAppGraphTemplate(opts: {
   name: string;
   language?: string;
   bodyParameters?: string[];
+  /**
+   * Semantic names for a catalog template. Ordered with the name-to-index map
+   * into the body parameters. Ignored for AUTHENTICATION copy-code sends.
+   */
+  namedBodyParameters?: Record<string, string>;
+  /** Trailing path segment for a URL button. A full URL is rejected. */
+  urlButtonParameter?: string;
   /** AUTHENTICATION copy-code OTP. Same value as the body OTP. Not a coupon. */
   authOtpButtonParameter?: string;
   /** Marketing/utility coupon COPY_CODE button. Not used for AUTH OTP. */
@@ -366,9 +374,28 @@ export async function sendWhatsAppGraphTemplate(opts: {
   // lumera_login_otp: exactly one body text parameter (the OTP). Drop any extra
   // body values such as clinic_name. Footer expiry is rendered by the approved
   // template — do not add a footer component.
-  const bodyTexts = opts.authOtpButtonParameter
+  let bodyTexts = opts.authOtpButtonParameter
     ? [String(opts.bodyParameters?.[0] ?? opts.authOtpButtonParameter)]
     : opts.bodyParameters || [];
+  if (!opts.authOtpButtonParameter && opts.namedBodyParameters) {
+    try {
+      bodyTexts = bodyParametersFor(opts.name, opts.namedBodyParameters);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "TEMPLATE_PARAMETER_MISSING";
+      if (message === "TEMPLATE_UNKNOWN" || message === "TEMPLATE_PARAMETER_MISSING") {
+        return { ok: false, error: message };
+      }
+      return { ok: false, error: "TEMPLATE_PARAMETER_MISSING" };
+    }
+  }
+  let urlSuffix = "";
+  if (opts.urlButtonParameter && !opts.authOtpButtonParameter) {
+    try {
+      urlSuffix = serverUrlButtonSuffix(opts.urlButtonParameter);
+    } catch {
+      return { ok: false, error: "URL_BUTTON_SUFFIX_INVALID" };
+    }
+  }
   const parameters = bodyTexts.map((text) => ({ type: "text", text: String(text) }));
   const components: Array<Record<string, unknown>> = [];
   if (parameters.length > 0) {
@@ -384,6 +411,14 @@ export async function sendWhatsAppGraphTemplate(opts: {
       sub_type: "url",
       index: "0",
       parameters: [{ type: "text", text: String(opts.authOtpButtonParameter) }],
+    });
+  }
+  if (urlSuffix) {
+    components.push({
+      type: "button",
+      sub_type: "url",
+      index: "0",
+      parameters: [{ type: "text", text: urlSuffix }],
     });
   }
   if (opts.couponCodeButtonParameter) {

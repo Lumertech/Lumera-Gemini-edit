@@ -29,11 +29,14 @@ const DEMO_LETTERHEAD_SEED = {
 const LEGACY_SEEDED_FOOTER_DISCLAIMER =
   "This prescription is digitally verified under National Health Authority (NHA) & Telemedicine Practice Guidelines. Please report any adverse drug reactions immediately.";
 /** Full seeded FOOTER text. A row changes only when that component text matches exactly. */
-const LEGACY_SEEDED_RX_TEMPLATE_FOOTER = "Lumera Health EMR System • Certified Digital Rx";
-const SEEDED_RX_TEMPLATE_FOOTER = "Lumera Health EMR System • Digital Rx";
+const LEGACY_SEEDED_RX_TEMPLATE_FOOTERS = new Set([
+  "Lumera Health EMR System • Certified Digital Rx",
+  "Lumera Health EMR System • Digital Rx",
+]);
+const SEEDED_RX_TEMPLATE_FOOTER = "Digital prescription";
 /**
  * Seeded template whose footer was that sentence. lab_report_ready does not apply:
- * its seeded footer is "Lumera Central Diagnostics".
+ * its footer was never this exact sentence.
  */
 const SEEDED_RX_TEMPLATE_NAMES = ["post_consultation_rx"] as const;
 
@@ -89,7 +92,7 @@ function rewriteExactSeededFooter(components: unknown): string | null {
   const next = parsed.map((part) => {
     if (!part || typeof part !== "object") return part;
     const component = part as TemplateComponent;
-    if (component.type === "FOOTER" && component.text === LEGACY_SEEDED_RX_TEMPLATE_FOOTER) {
+    if (component.type === "FOOTER" && LEGACY_SEEDED_RX_TEMPLATE_FOOTERS.has(String(component.text || ""))) {
       changed = true;
       return { ...component, text: SEEDED_RX_TEMPLATE_FOOTER };
     }
