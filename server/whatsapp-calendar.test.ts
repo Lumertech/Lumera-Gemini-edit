@@ -26,7 +26,7 @@ import {
   runAppointmentReminders,
   tenantUtcOffsetMinutes,
 } from "./whatsapp-calendar.ts";
-import { AMBIENT_WALKIN_SOURCE } from "./ambient-walkin.ts";
+import { AMBIENT_WALKIN_DUP_SOURCE, AMBIENT_WALKIN_SOURCE } from "./ambient-walkin.ts";
 import { platformAdminActor, upsertWhatsAppNumber } from "./whatsapp-numbers.ts";
 
 async function jsonRequest(
@@ -928,6 +928,25 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
           AMBIENT_WALKIN_SOURCE,
           "2099-01-01T00:00:00.000Z"
         );
+      const dupId = `apt-dup-${patientId}`.slice(0, 80);
+      getDb()
+        .prepare(
+          `INSERT INTO appointments (
+            id, tenant_id, token_number, patient_id, patient_name, patient_phone, uhid, doctor_id, doctor_name,
+            specialty, date, time_slot, type, status, source, consultation_fee, is_paid, created_at
+          ) VALUES (?, ?, 9, ?, 'Hidden Walk In', ?, ?, ?, 'Dr', 'General Medicine', ?, '10:30 AM', 'Ambient scribe', 'Waiting', ?, 0, 0, ?)`
+        )
+        .run(
+          dupId,
+          clinic.tenantId,
+          patientId,
+          booked.appointment.patientPhone,
+          booked.appointment.uhid,
+          clinic.doctorId,
+          date,
+          AMBIENT_WALKIN_DUP_SOURCE,
+          "2099-01-02T00:00:00.000Z"
+        );
 
       const queue = getWhatsAppQueue({ tenantId: clinic.tenantId, patientPhone: phone });
       assert.equal(queue.hasAppointment, true);
@@ -936,6 +955,7 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
         findActiveAppointment({ tenantId: clinic.tenantId, appointmentId: ambientId }),
         undefined
       );
+      assert.equal(findActiveAppointment({ tenantId: clinic.tenantId, appointmentId: dupId }), undefined);
 
       const patched = patchWhatsAppAppointment({
         tenantId: clinic.tenantId,
@@ -966,6 +986,7 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
       });
       const sentIds = run.sent.map((item) => item.appointmentId);
       assert.equal(sentIds.includes(ambientId), false);
+      assert.equal(sentIds.includes(dupId), false);
       assert.equal(sentIds.includes(realId), true);
     } finally {
       if (prevToken === undefined) delete process.env.META_ACCESS_TOKEN;

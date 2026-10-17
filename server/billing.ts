@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from "express";
-import { AMBIENT_WALKIN_SOURCE } from "./ambient-walkin.ts";
+import { HIDDEN_AMBIENT_SOURCES, hiddenAmbientSourceSql } from "./ambient-walkin.ts";
 import { requireAuth } from "./auth.ts";
 import {
   getDb,
@@ -106,9 +106,9 @@ function consultingDoctorForInvoice(
   if (appointmentId) {
     const apt = getDb()
       .prepare(
-        "SELECT patient_id, doctor_id FROM appointments WHERE id = ? AND tenant_id = ? AND COALESCE(source, '') != ?"
+        `SELECT patient_id, doctor_id FROM appointments WHERE id = ? AND tenant_id = ? AND ${hiddenAmbientSourceSql()}`
       )
-      .get(appointmentId, tenantId, AMBIENT_WALKIN_SOURCE) as { patient_id?: string; doctor_id?: string } | undefined;
+      .get(appointmentId, tenantId, ...HIDDEN_AMBIENT_SOURCES) as { patient_id?: string; doctor_id?: string } | undefined;
     if (!apt) {
       throw Object.assign(new Error("Appointment not found"), { status: 404 });
     }
@@ -469,8 +469,8 @@ function insertInvoice(tenantId: string, body: Record<string, unknown>, actor?: 
   const appointmentId = String(body.appointmentId || body.appointment_id || "").trim();
   if (appointmentId) {
     const apt = getDb()
-      .prepare("SELECT id FROM appointments WHERE id = ? AND tenant_id = ? AND COALESCE(source, '') != ?")
-      .get(appointmentId, tenantId, AMBIENT_WALKIN_SOURCE);
+      .prepare(`SELECT id FROM appointments WHERE id = ? AND tenant_id = ? AND ${hiddenAmbientSourceSql()}`)
+      .get(appointmentId, tenantId, ...HIDDEN_AMBIENT_SOURCES);
     if (!apt) {
       throw Object.assign(new Error("Appointment not found"), { status: 404 });
     }

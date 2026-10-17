@@ -1,4 +1,4 @@
-import { AMBIENT_WALKIN_SOURCE } from "./ambient-walkin.ts";
+import { HIDDEN_AMBIENT_SOURCES, hiddenAmbientSourceSql } from "./ambient-walkin.ts";
 import type { SqlDatabase } from "./sql-engine.ts";
 import { tableExists } from "./sql-catalog.ts";
 import { clinicCalendarDate, shiftIsoDate } from "../src/lib/clinicDay.ts";
@@ -286,12 +286,12 @@ function ensurePhysioPackageHistory(
   window: DemoBookWindow,
   today: string,
   now: Date,
-  list: { all: (tenantId: string, source: string) => unknown }
+  list: { all: (tenantId: string, walkIn: string, duplicate: string) => unknown }
 ): void {
   const targets = packageTargets(book.tenantId);
   if (!targets) return;
   const completed = new Map<string, number>();
-  orderedNamedRows(list.all(book.tenantId, AMBIENT_WALKIN_SOURCE) as AppointmentRow[]).forEach((row, index) => {
+  orderedNamedRows(list.all(book.tenantId, ...HIDDEN_AMBIENT_SOURCES) as AppointmentRow[]).forEach((row, index) => {
     planNamedDemoRow(
       index,
       row.patient_id,
@@ -358,7 +358,7 @@ export function spreadDemoBookDates(database: SqlDatabase, now = new Date()): vo
 
   const list = database.prepare(
     `SELECT id, status, patient_id, patient_name, patient_phone, uhid, doctor_id, doctor_name, specialty
-     FROM appointments WHERE tenant_id = ? AND COALESCE(source, '') != ?`
+     FROM appointments WHERE tenant_id = ? AND ${hiddenAmbientSourceSql()}`
   );
   const insert = database.prepare(
     `INSERT INTO appointments (
@@ -380,7 +380,7 @@ export function spreadDemoBookDates(database: SqlDatabase, now = new Date()): vo
     const book = namedBookFor(tenantId);
     if (book) ensureNamedDemoBook(database, book, today, now);
     const window = demoBookWindowFor(tenantId);
-    const rows = list.all(tenantId, AMBIENT_WALKIN_SOURCE) as AppointmentRow[];
+    const rows = list.all(tenantId, ...HIDDEN_AMBIENT_SOURCES) as AppointmentRow[];
     const active = rows.filter((row) => isActiveStatus(String(row.status || "")));
     const sample = rows[0];
     if (!book && sample && active.length < window.month) {
@@ -411,7 +411,7 @@ export function spreadDemoBookDates(database: SqlDatabase, now = new Date()): vo
     if (book) {
       const targets = packageTargets(book.tenantId);
       if (targets) ensurePhysioPackageHistory(database, book, window, today, now, list);
-      const refreshed = list.all(tenantId, AMBIENT_WALKIN_SOURCE) as AppointmentRow[];
+      const refreshed = list.all(tenantId, ...HIDDEN_AMBIENT_SOURCES) as AppointmentRow[];
       const completed = new Map<string, number>();
       orderedNamedRows(refreshed).forEach((row, index) => {
         const date = demoBookDateForIndex(index, today, window);

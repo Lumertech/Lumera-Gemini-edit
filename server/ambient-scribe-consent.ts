@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Express, NextFunction, Request, Response } from "express";
 import { clinicCalendarDate } from "../src/lib/clinicDay.ts";
-import { AMBIENT_WALKIN_SOURCE, openVisitStatusSql, visitStatusIsOpen } from "./ambient-walkin.ts";
+import { AMBIENT_WALKIN_SOURCE, isUniqueViolation, openVisitStatusSql, visitStatusIsOpen } from "./ambient-walkin.ts";
 import { requireAuth } from "./auth.ts";
 import { writeAudit } from "./db-seed-maps.ts";
 import { getDb } from "./db.ts";
@@ -75,26 +75,33 @@ export function visitIsOpenToday(visit: { date?: string; status?: string } | und
   return visitStatusIsOpen(visit.status);
 }
 
-/** Yesterday's hidden walk-ins are not still open. A real booking is left as it is. */
-export function closeStaleAmbientWalkIns(now = new Date()): number {
+/**
+ * Yesterday's hidden walk-ins are not still open. A real booking is left as it is.
+ * Request paths pass tenantId. Omitting it is the optional global sweep.
+ */
+export function closeStaleAmbientWalkIns(now = new Date(), tenantId?: string): number {
   const day = istClinicDay(now);
-  const result = getDb()
-    .prepare(
-      `UPDATE appointments
-       SET status = 'Completed'
-       WHERE source = ? AND date < ? AND ${openVisitStatusSql("status")}`
-    )
-    .run(AMBIENT_WALKIN_SOURCE, day);
+  const tenant = String(tenantId || "").trim();
+  const result = tenant
+    ? getDb()
+        .prepare(
+          `UPDATE appointments
+           SET status = 'Completed'
+           WHERE source = ? AND tenant_id = ? AND date < ? AND ${openVisitStatusSql("status")}`
+        )
+        .run(AMBIENT_WALKIN_SOURCE, tenant, day)
+    : getDb()
+        .prepare(
+          `UPDATE appointments
+           SET status = 'Completed'
+           WHERE source = ? AND date < ? AND ${openVisitStatusSql("status")}`
+        )
+        .run(AMBIENT_WALKIN_SOURCE, day);
   return Number(result.changes || 0);
 }
 
-function isUniqueViolation(err: unknown): boolean {
-  const message = err instanceof Error ? err.message : String(err || "");
-  return /unique constraint|duplicate key/i.test(message);
-}
-
 export function hasAmbientScribeConsent(tenantId: string, appointmentId: string, now = new Date()): boolean {
-  closeStaleAmbientWalkIns(now);
+  closeStaleAmbientWalkIns(now, tenantId);
   if (!consentRow(tenantId, appointmentId)) return false;
   return visitIsOpenToday(findAppointment(tenantId, appointmentId), now);
 }
@@ -208,7 +215,7 @@ export function mountAmbientScribeConsentRoutes(app: Express): void {
   app.get("/api/ambient-scribe/consent", requireAuth, prescriberOnly, (req: Request, res: Response) => {
     const tenantId = String(req.user?.tenantId || "").trim();
     if (!tenantId) return res.status(401).json({ error: "Sign in required", code: "AUTH_REQUIRED" });
-    closeStaleAmbientWalkIns();
+    closeStaleAmbientWalkIns(new Date(), tenantId);
     const rawAppointment = req.query.appointmentId;
     const patientId = cleanVisitId(req.query.patientId);
     if (rawAppointment !== undefined && String(rawAppointment).trim() !== "") {
@@ -240,7 +247,7 @@ export function mountAmbientScribeConsentRoutes(app: Express): void {
     (req: Request, res: Response) => {
       const tenantId = String(req.user?.tenantId || "").trim();
       if (!tenantId) return res.status(401).json({ error: "Sign in required", code: "AUTH_REQUIRED" });
-      closeStaleAmbientWalkIns();
+      closeStaleAmbientWalkIns(new Date(), tenantId);
       const body = (req.body || {}) as Record<string, unknown>;
       const patientId = cleanVisitId(body.patientId);
       if (!patientId) return res.status(400).json({ error: "patientId is required" });

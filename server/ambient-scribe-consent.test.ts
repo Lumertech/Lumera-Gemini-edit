@@ -1,8 +1,20 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import { after, before, describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
 import { clinicCalendarDate, shiftIsoDate } from "../src/lib/clinicDay.ts";
 import { createApiRouter } from "./api.ts";
-import { openVisitStatusSql, visitStatusIsOpen } from "./ambient-walkin.ts";
+import {
+  AMBIENT_WALKIN_DUP_SOURCE,
+  ensureAmbientWalkInUniqueIndex,
+  HIDDEN_AMBIENT_SOURCES,
+  hiddenAmbientSourceSql,
+  isUniqueViolation,
+  SQLITE_CONSTRAINT_UNIQUE,
+  visitStatusIsOpen,
+  openVisitStatusSql,
+} from "./ambient-walkin.ts";
 import {
   AMBIENT_SCRIBE_CONSENT_TEXT,
   AMBIENT_WALKIN_SOURCE,
@@ -11,6 +23,7 @@ import {
   istClinicDay,
   mountAmbientScribeConsentRoutes,
 } from "./ambient-scribe-consent.ts";
+import { BOOTSTRAP_DDL } from "./db-bootstrap-ddl.ts";
 import { listTenantAppointments, nextTokenNumber } from "./clinical.ts";
 import { getDb, initDatabase } from "./db.ts";
 import { hashPassword } from "./password.ts";
@@ -641,5 +654,125 @@ describe("ambient scribe per-visit consent", () => {
     );
     assert.equal(kept.status, 201, String(kept.json.error || ""));
     assert.equal(kept.json.appointmentId, todayHidden);
+  });
+
+  it("recognizes a unique violation by driver code", () => {
+    assert.equal(isUniqueViolation({ code: "23505" }), true);
+    assert.equal(isUniqueViolation({ code: "SQLITE_CONSTRAINT_UNIQUE" }), true);
+    assert.equal(isUniqueViolation({ code: "ERR_SQLITE_ERROR", errcode: SQLITE_CONSTRAINT_UNIQUE }), true);
+    assert.equal(isUniqueViolation({ code: "23503", message: "unique constraint failed" }), false);
+    assert.equal(isUniqueViolation({ message: "UNIQUE constraint failed: appointments.source" }), false);
+  });
+
+  it("closes stale hidden walk-ins for one tenant", () => {
+    const here = seedDoctor("staleHere");
+    const other = seedDoctor("staleOther");
+    const yesterday = shiftIsoDate(istClinicDay(), -1);
+    const hereId = `apt-stale-here-${here.userId}`;
+    const otherId = `apt-stale-other-${other.userId}`;
+    insertVisit({
+      id: hereId,
+      tenantId: here.tenantId,
+      patientId: `pat-${here.userId}`,
+      doctorId: here.userId,
+      date: yesterday,
+      status: "Open",
+      source: AMBIENT_WALKIN_SOURCE,
+      tokenNumber: 0,
+    });
+    insertVisit({
+      id: otherId,
+      tenantId: other.tenantId,
+      patientId: `pat-${other.userId}`,
+      doctorId: other.userId,
+      date: yesterday,
+      status: "Open",
+      source: AMBIENT_WALKIN_SOURCE,
+      tokenNumber: 0,
+    });
+    const closed = closeStaleAmbientWalkIns(new Date(), here.tenantId);
+    assert.ok(closed >= 1);
+    const statusOf = (id: string) =>
+      (getDb().prepare("SELECT status FROM appointments WHERE id = ?").get(id) as { status: string }).status;
+    assert.equal(statusOf(hereId), "Completed");
+    assert.equal(statusOf(otherId), "Open");
+  });
+
+  it("keeps the consent audit joined when a duplicate hidden walk-in is closed in place", () => {
+    const source = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "ambient-walkin.ts"), "utf8");
+    const migration = source.slice(source.indexOf("export function ensureAmbientWalkInUniqueIndex"));
+    assert.doesNotMatch(migration, /DELETE\s+FROM\s+appointments/i);
+    const auditDdl = BOOTSTRAP_DDL.split("CREATE TABLE IF NOT EXISTS audit_logs")[1]?.split("CREATE TABLE")[0] || "";
+    assert.match(auditDdl, /user_id/);
+    assert.doesNotMatch(auditDdl, /REFERENCES\s+appointments/i);
+    const dialect = (getDb() as { dialect?: string }).dialect;
+    if (dialect !== "postgres") {
+      const keys = getDb().prepare("PRAGMA foreign_key_list(audit_logs)").all() as Array<{ table?: string }>;
+      assert.equal(
+        keys.some((row) => String(row.table || "").toLowerCase() === "appointments"),
+        false
+      );
+    }
+
+    const doctor = seedDoctor("dupkeep");
+    const patientId = `pat-${doctor.userId}`;
+    const day = istClinicDay();
+    const older = `old-${doctor.userId}`;
+    const newer = `new-${doctor.userId}`;
+    const insert = getDb().prepare(
+      `INSERT INTO appointments (
+        id, tenant_id, token_number, patient_id, patient_name, patient_phone, uhid, doctor_id, doctor_name,
+        specialty, date, time_slot, type, status, source, consultation_fee, is_paid, created_at
+      ) VALUES (?, ?, ?, ?, 'Visit', '+910000000000', 'UHID', ?, 'Dr', 'General Medicine', ?, '', 'Ambient scribe', 'Open', ?, 0, 0, ?)`
+    );
+    getDb().exec("DROP INDEX IF EXISTS idx_appointments_ambient_walkin");
+    try {
+      insert.run(older, doctor.tenantId, 50, patientId, doctor.userId, day, AMBIENT_WALKIN_SOURCE, "2020-01-01T00:00:00.000Z");
+      insert.run(newer, doctor.tenantId, 0, patientId, doctor.userId, day, AMBIENT_WALKIN_SOURCE, "2020-01-02T00:00:00.000Z");
+      recordConsent(doctor.tenantId, doctor.userId, patientId, older);
+      ensureAmbientWalkInUniqueIndex(getDb());
+
+      const olderRow = getDb()
+        .prepare("SELECT status, source FROM appointments WHERE id = ?")
+        .get(older) as { status: string; source: string };
+      const newerRow = getDb()
+        .prepare("SELECT status, source FROM appointments WHERE id = ?")
+        .get(newer) as { status: string; source: string };
+      assert.equal(olderRow.status, "Completed");
+      assert.equal(olderRow.source, AMBIENT_WALKIN_DUP_SOURCE);
+      assert.equal(newerRow.status, "Open");
+      assert.equal(newerRow.source, AMBIENT_WALKIN_SOURCE);
+      const joined = getDb()
+        .prepare(
+          `SELECT apt.id AS id, apt.source AS source
+           FROM audit_logs audit
+           INNER JOIN appointments apt ON apt.id = audit.entity_id AND apt.tenant_id = audit.tenant_id
+           WHERE audit.action = 'ambient_scribe_consent' AND audit.entity_id = ?`
+        )
+        .get(older) as { id: string; source: string };
+      assert.equal(joined.id, older);
+      assert.equal(joined.source, AMBIENT_WALKIN_DUP_SOURCE);
+      const hidden = getDb()
+        .prepare(`SELECT id FROM appointments WHERE id = ? AND ${hiddenAmbientSourceSql()}`)
+        .get(older, ...HIDDEN_AMBIENT_SOURCES);
+      assert.equal(hidden, undefined);
+      insertVisit({
+        id: `real-${doctor.userId}`,
+        tenantId: doctor.tenantId,
+        patientId,
+        doctorId: doctor.userId,
+        date: day,
+        status: "Waiting",
+        source: "Walk-in",
+        tokenNumber: 2,
+      });
+      assert.equal(nextTokenNumber(doctor.tenantId, day), 3);
+      const queued = listTenantAppointments(doctor.tenantId, day).map((row) => String(row.id));
+      assert.equal(queued.includes(older), false);
+      assert.equal(queued.includes(newer), false);
+      assert.equal(queued.includes(`real-${doctor.userId}`), true);
+    } finally {
+      ensureAmbientWalkInUniqueIndex(getDb());
+    }
   });
 });

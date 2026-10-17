@@ -3,6 +3,37 @@ import type { SqlDatabase } from "./sql-engine.ts";
 /** Hidden scribe visit. Queue, tokens, reminders, and patient booking flows skip this source. */
 export const AMBIENT_WALKIN_SOURCE = "ambient_walkin";
 
+/** Older duplicate of a hidden walk-in. Closed in place so the consent audit still has its appointment. */
+export const AMBIENT_WALKIN_DUP_SOURCE = "ambient_walkin_dup";
+
+export const HIDDEN_AMBIENT_SOURCES = [AMBIENT_WALKIN_SOURCE, AMBIENT_WALKIN_DUP_SOURCE] as const;
+
+/** SQLite extended result code for a UNIQUE constraint. */
+export const SQLITE_CONSTRAINT_UNIQUE = 2067;
+
+/** Postgres unique_violation. */
+export const POSTGRES_UNIQUE_VIOLATION = "23505";
+
+export function isHiddenAmbientSource(source: unknown): boolean {
+  const value = String(source ?? "");
+  return (HIDDEN_AMBIENT_SOURCES as readonly string[]).includes(value);
+}
+
+/** Two bound parameters: ambient_walkin, then ambient_walkin_dup. Column is a fixed identifier. */
+export function hiddenAmbientSourceSql(column = "source"): string {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$/.test(column)) {
+    throw new Error("Invalid source column");
+  }
+  return `COALESCE(${column}, '') NOT IN (?, ?)`;
+}
+
+export function isUniqueViolation(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const coded = err as { code?: unknown; errcode?: unknown };
+  if (coded.code === POSTGRES_UNIQUE_VIOLATION || coded.code === "SQLITE_CONSTRAINT_UNIQUE") return true;
+  return coded.errcode === SQLITE_CONSTRAINT_UNIQUE;
+}
+
 /**
  * Statuses that still count as an open visit.
  * Empty and null do not. "Triage / Vitals" is the schema's checked-in state.
@@ -39,8 +70,9 @@ export function openVisitStatusSql(column = "status"): string {
 }
 
 /**
- * One hidden walk-in per clinic, patient, doctor, and clinic day.
- * Drops older duplicates first so the index can be created on a database that already has rows.
+ * One open hidden walk-in per clinic, patient, doctor, and clinic day.
+ * Older copies stay in the table: status Completed and source ambient_walkin_dup.
+ * The partial unique index is created only after those copies are closed.
  */
 export function ensureAmbientWalkInUniqueIndex(database: SqlDatabase): void {
   const groups = database
@@ -62,7 +94,9 @@ export function ensureAmbientWalkInUniqueIndex(database: SqlDatabase): void {
      WHERE source = ? AND tenant_id = ? AND patient_id = ? AND doctor_id = ? AND date = ?
      ORDER BY created_at DESC, id DESC`
   );
-  const remove = database.prepare("DELETE FROM appointments WHERE id = ?");
+  const closeExtra = database.prepare(
+    "UPDATE appointments SET status = 'Completed', source = ? WHERE id = ?"
+  );
   for (const group of groups) {
     const rows = ids.all(
       AMBIENT_WALKIN_SOURCE,
@@ -71,7 +105,7 @@ export function ensureAmbientWalkInUniqueIndex(database: SqlDatabase): void {
       group.doctor_id,
       group.date
     ) as Array<{ id: string }>;
-    for (const extra of rows.slice(1)) remove.run(extra.id);
+    for (const extra of rows.slice(1)) closeExtra.run(AMBIENT_WALKIN_DUP_SOURCE, extra.id);
   }
   database.exec(
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_appointments_ambient_walkin

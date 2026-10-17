@@ -1,4 +1,4 @@
-import { AMBIENT_WALKIN_SOURCE } from "./ambient-walkin.ts";
+import { HIDDEN_AMBIENT_SOURCES, hiddenAmbientSourceSql, isHiddenAmbientSource } from "./ambient-walkin.ts";
 import { type SqlDatabase } from "./sql-engine.ts";
 import { DEMO_TENANT_ID } from "./db.ts";
 import { ensureDemoTenantLetterhead } from "./db-migrate.ts";
@@ -911,7 +911,7 @@ function ensureClipAReminderFixture(database: SqlDatabase, now: string) {
     "SELECT * FROM appointments WHERE id = ? OR (tenant_id = ? AND patient_id = ?)"
   ).all(CLIP_A_APPT_ID, DEMO_TENANT_ID, patientId) as Record<string, unknown>[];
   const realBooking = (row: Record<string, unknown> | undefined) =>
-    Boolean(row) && String(row?.source || "") !== AMBIENT_WALKIN_SOURCE;
+    Boolean(row) && !isHiddenAmbientSource(row?.source);
   const appointment =
     appointments.find((row) => String(row.id) === CLIP_A_APPT_ID) ||
     appointments.find(
@@ -933,8 +933,8 @@ function ensureClipAReminderFixture(database: SqlDatabase, now: string) {
 
   if (!appointment) {
     const tokenRow = database.prepare(
-      "SELECT COALESCE(MAX(token_number), 0) AS max_token FROM appointments WHERE tenant_id = ? AND date = ? AND COALESCE(source, '') != ?"
-    ).get(DEMO_TENANT_ID, slot.date, AMBIENT_WALKIN_SOURCE) as { max_token: number };
+      `SELECT COALESCE(MAX(token_number), 0) AS max_token FROM appointments WHERE tenant_id = ? AND date = ? AND ${hiddenAmbientSourceSql()}`
+    ).get(DEMO_TENANT_ID, slot.date, ...HIDDEN_AMBIENT_SOURCES) as { max_token: number };
     database.prepare(`
       INSERT INTO appointments (id, tenant_id, token_number, patient_id, patient_name, patient_phone, uhid, doctor_id, doctor_name, specialty, date, time_slot, type, status, source, consultation_fee, is_paid, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Waiting', 'Demo seed', ?, 1, ?)
