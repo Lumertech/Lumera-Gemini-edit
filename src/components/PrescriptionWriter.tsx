@@ -1,6 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { formatINR } from '../lib/currency.ts';
 import { apiFetchResponse } from '../api/http';
+import {
+  buildSafetyListSignature,
+  formatSafetyCheckTime,
+  lastSuccessfulCheckCopy,
+  reduceSafetyCheck,
+  RULE_BASED_SAFETY_SOURCE,
+  safetyGateBlocksActions,
+  type SafetyGateState,
+} from '../lib/safetyCheckGate';
 import { 
   FileText, 
   Plus, 
@@ -330,6 +339,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
   // Safety checker state
   const [isCheckingSafety, setIsCheckingSafety] = useState(false);
   const [safetyResult, setSafetyResult] = useState<SafetyCheckResult | null>(null);
+  const [safetyCheckError, setSafetyCheckError] = useState<string | null>(null);
   // Tracks which exact medicine list the last safety check ran against, and
   // which exact list a HIGH_RISK override was acknowledged for. Both are
   // compared against the *current* medicine list signature below, so any
@@ -337,27 +347,40 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
   // and re-blocks Print/Send/Finalize until the doctor re-runs the audit.
   const [safetyCheckedSignature, setSafetyCheckedSignature] = useState<string | null>(null);
   const [safetyOverrideSignature, setSafetyOverrideSignature] = useState<string | null>(null);
+  const [lastSuccessfulCheckAt, setLastSuccessfulCheckAt] = useState<string | null>(null);
 
-  // Fingerprint of the current medicine list — used purely to detect whether
-  // the medicine list has changed since the last safety audit ran.
-  const medicinesSignature = medicines
-    .map((m) => `${m.id}:${m.drugName}:${m.dosage}:${m.frequency}:${m.durationDays}`)
-    .join('|');
+  // Fingerprint of the current medicine list, allergies, and conditions.
+  const medicinesSignature = buildSafetyListSignature({
+    medicines,
+    allergies: currentPatient.allergies,
+    chronicConditions: currentPatient.chronicConditions,
+  });
   const isSafetyCheckStale = medicines.length > 0 && safetyCheckedSignature !== medicinesSignature;
-  const isSafetyHighRisk = safetyResult?.safetyStatus === 'HIGH_RISK';
+  const isSafetyHighRisk = safetyResult?.safetyStatus === 'HIGH_RISK' || safetyResult?.hasHighRiskAlert === true;
+  const needsManualReview =
+    !isSafetyCheckStale &&
+    safetyResult?.source === RULE_BASED_SAFETY_SOURCE &&
+    safetyResult?.safetyStatus === 'REVIEW' &&
+    !isSafetyHighRisk;
   const isSafetyOverridden = safetyOverrideSignature === medicinesSignature;
-  // Blocks Print / WhatsApp Dispatch / Finalize & Sign until the doctor has
-  // run the AI Safety Audit against the *current* medicine list, and — if it
-  // came back HIGH_RISK — explicitly acknowledged the override. This is the
-  // safety gate: a prescription must not leave the app unaudited.
-  const isSafetyGateBlocking =
-    medicines.length > 0 && (isSafetyCheckStale || (isSafetyHighRisk && !isSafetyOverridden));
+  // Blocks Print / WhatsApp Dispatch / Finalize & Sign until the shared gate opens.
+  const isSafetyGateBlocking = safetyGateBlocksActions({
+    medicineCount: medicines.length,
+    checkedSignature: safetyCheckedSignature,
+    medicinesSignature,
+    safetyStatus: safetyResult?.safetyStatus,
+    hasHighRiskAlert: safetyResult?.hasHighRiskAlert,
+    source: safetyResult?.source,
+    overrideSignature: safetyOverrideSignature,
+  });
   const safetyGateMessage = !medicines.length
     ? ''
     : isSafetyCheckStale
     ? 'Run the AI Safety Audit before printing, sending, or signing this prescription — the medicine list has changed since the last check.'
     : isSafetyHighRisk && !isSafetyOverridden
     ? 'This prescription was flagged HIGH_RISK by the AI Safety Audit. Review the contraindications above and acknowledge the override before proceeding.'
+    : needsManualReview && !isSafetyOverridden
+    ? 'This result came from the rule-based fallback. Acknowledge that you reviewed it manually before printing, sending, or signing.'
     : '';
 
   // WhatsApp Translation modal
@@ -417,9 +440,25 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     if (preset.gynecologyAssessment) setGynecologyAssessment(preset.gynecologyAssessment);
   };
 
+  const safetyGateSnapshot = (): SafetyGateState => ({
+    result: safetyResult,
+    checkedSignature: safetyCheckedSignature,
+    overrideSignature: safetyOverrideSignature,
+    error: safetyCheckError,
+    lastSuccessfulCheckAt,
+  });
+  const applySafetyGate = (next: SafetyGateState) => {
+    setSafetyResult(next.result);
+    setSafetyCheckedSignature(next.checkedSignature);
+    setSafetyOverrideSignature(next.overrideSignature);
+    setSafetyCheckError(next.error);
+    setLastSuccessfulCheckAt(next.lastSuccessfulCheckAt);
+  };
+
   // Run safety check when medicines change
   const handleCheckSafety = async () => {
     setIsCheckingSafety(true);
+    setSafetyCheckError(null);
     try {
       const response = await apiFetchResponse('/api/gemini/safety-check', {
         method: 'POST',
@@ -432,16 +471,10 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
           patientGender: currentPatient.gender,
         }),
       });
-      const data = await response.json();
-      setSafetyResult(data);
-      setSafetyCheckedSignature(medicinesSignature);
-      // A fresh check invalidates any previous override — the doctor must
-      // re-acknowledge if this new result is still HIGH_RISK.
-      setSafetyOverrideSignature(null);
-    } catch (err) {
-      console.error('Safety check failed:', err);
-      // On a failed check we deliberately do NOT record a checked signature,
-      // so the gate stays closed rather than silently passing.
+      const data = await response.json().catch(() => null);
+      applySafetyGate(reduceSafetyCheck(safetyGateSnapshot(), response.status, data, medicinesSignature, formatSafetyCheckTime(new Date())));
+    } catch {
+      applySafetyGate(reduceSafetyCheck(safetyGateSnapshot(), 0, null, medicinesSignature, formatSafetyCheckTime(new Date())));
     } finally {
       setIsCheckingSafety(false);
     }
@@ -1063,6 +1096,12 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
             )}
             <span>AI Safety Audit</span>
           </button>
+          {safetyCheckError && (
+            <p role="alert" className="w-full text-[11px] font-medium text-rose-800">
+              {safetyCheckError}
+              {lastSuccessfulCheckCopy(lastSuccessfulCheckAt) ? ` ${lastSuccessfulCheckCopy(lastSuccessfulCheckAt)}` : ''}
+            </p>
+          )}
 
           {/* WhatsApp dispatch button */}
           <button
@@ -1109,12 +1148,17 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
               <AlertTriangle className="w-5 h-5 text-amber-600" />
               <h3 className="font-bold text-sm">AI Clinical Drug Safety Audit</h3>
             </div>
-            <span className={`px-2 py-0.5 text-[11px] font-bold rounded-full uppercase tracking-wider ${
-              safetyResult.safetyStatus === 'SAFE' ? 'bg-emerald-100 text-emerald-800' :
-              safetyResult.safetyStatus === 'MODERATE_RISK' ? 'bg-amber-100 text-amber-800' :
-              'bg-rose-100 text-rose-800'
-            }`}>
-              {safetyResult.safetyStatus}
+            <span className="flex items-center gap-2">
+              {safetyResult.source && (
+                <span className="text-[11px] font-medium text-slate-500">{safetyResult.source}</span>
+              )}
+              <span className={`px-2 py-0.5 text-[11px] font-bold rounded-full uppercase tracking-wider ${
+                isSafetyHighRisk ? 'bg-rose-100 text-rose-800' :
+                safetyResult.safetyStatus === 'SAFE' ? 'bg-emerald-100 text-emerald-800' :
+                'bg-amber-100 text-amber-800'
+              }`}>
+                {isSafetyHighRisk ? 'HIGH_RISK' : safetyResult.safetyStatus}
+              </span>
             </span>
           </div>
 
@@ -1154,6 +1198,17 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
                 I have reviewed the contraindications above and, using my clinical judgment, choose to proceed
                 with this prescription as written.
               </span>
+            </label>
+          )}
+          {needsManualReview && (
+            <label className="flex items-start gap-2 pt-2 border-t border-amber-200 text-xs text-amber-950 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={isSafetyOverridden}
+                onChange={(e) => setSafetyOverrideSignature(e.target.checked ? medicinesSignature : null)}
+                className="mt-0.5"
+              />
+              <span>I reviewed this manually</span>
             </label>
           )}
         </div>
@@ -2507,7 +2562,8 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
             <div className="flex flex-col sm:flex-row items-center justify-between gap-2 pt-2 border-t border-slate-100">
               <button
                 onClick={handlePrintRx}
-                className="w-full sm:w-auto px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs flex items-center justify-center space-x-1.5 transition-colors cursor-pointer"
+                disabled={isSafetyGateBlocking}
+                className="w-full sm:w-auto px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs flex items-center justify-center space-x-1.5 transition-colors cursor-pointer disabled:opacity-40"
               >
                 <Printer className="w-3.5 h-3.5" />
                 <span>Print Paper Rx</span>

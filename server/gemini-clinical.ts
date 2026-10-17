@@ -1,18 +1,71 @@
-import type { Express, Request, Response } from "express";
+import type { Express, NextFunction, Request, Response } from "express";
 import { GoogleGenAI } from "@google/genai";
 import { requireAuth } from "./auth.ts";
+import { clinicalGeminiRateLimit, safetyCheckRateLimit } from "./gemini-clinical-rate-limit.ts";
 import { mountGeminiVoiceRoutes } from "./gemini-voice.ts";
 import { generateRuleBasedSoap, getPulseFallbackAnswer } from "./gemini-fallbacks.ts";
 import { aiScribeTenantIdFromRequest, blockedAiScribeResponse, meterSuccessfulGeminiScribe } from "./gemini-scribe-meter.ts";
 import { AI_RUPEE_OUTPUT_RULE } from "./india-currency-copy.ts";
+import { denyUnlessPrescriber } from "./patient-access.ts";
+import { rejectUntrustedTenantClaim } from "./tenant-guard.ts";
 
 let testSoapGenerator: ((body: Record<string, unknown>) => Promise<unknown>) | undefined;
+let testCopilotGenerator: (() => Promise<unknown>) | undefined;
+let testSafetyCheckGenerator: (() => Promise<unknown>) | undefined;
 
 /** Test-only Gemini mock so HTTP tests do not need live API keys. */
 export function setGeminiSoapGeneratorForTests(
   fn?: ((body: Record<string, unknown>) => Promise<unknown>) | undefined
 ) {
   testSoapGenerator = fn;
+}
+
+/** Test-only copilot stand-in. It does not receive the prompt or patientContext. */
+export function setGeminiCopilotGeneratorForTests(fn?: (() => Promise<unknown>) | undefined) {
+  testCopilotGenerator = fn;
+}
+
+/** Test-only safety-check stand-in. It does not receive medicines or allergies. */
+export function setGeminiSafetyCheckGeneratorForTests(fn?: (() => Promise<unknown>) | undefined) {
+  testSafetyCheckGenerator = fn;
+}
+
+class SafetyAlertsMissing extends Error {
+  constructor() {
+    super("safety alerts were not an array");
+  }
+}
+
+/** Model JSON with an alerts array. Anything else throws so the caller can use the rule-based fallback. */
+export function pulseSafetyFromModel(raw: unknown): {
+  safetyStatus: "HIGH_RISK" | "REVIEW";
+  source: "Pulse AI";
+  hasHighRiskAlert: boolean;
+  alerts: unknown[];
+} {
+  const record =
+    raw && typeof raw === "object" && !Array.isArray(raw)
+      ? (raw as { hasHighRiskAlert?: unknown; alerts?: unknown })
+      : null;
+  if (!record || !Array.isArray(record.alerts)) throw new SafetyAlertsMissing();
+  const severe = record.alerts.some((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+    const severity = String((item as { severity?: unknown }).severity || "").trim().toLowerCase();
+    return severity === "severe" || severity === "critical";
+  });
+  const high = record.hasHighRiskAlert === true || severe;
+  return {
+    safetyStatus: high ? "HIGH_RISK" : "REVIEW",
+    source: "Pulse AI",
+    hasHighRiskAlert: high,
+    alerts: record.alerts,
+  };
+}
+
+/** Prescriber or clinic clinical staff. Patient, reception, and super_admin are denied. */
+function prescriberOnly(req: Request, res: Response, next: NextFunction): void {
+  if (!denyUnlessPrescriber(req, res)) return;
+  next();
 }
 
 /** Clinical Gemini HTTP routes. Split from server.ts so MCP can upload both files intact. */
@@ -33,7 +86,13 @@ export function mountGeminiClinicalRoutes(app: Express) {
     return genAIClient;
   }
 
-  app.post("/api/gemini/generate-soap", async (req: Request, res: Response) => {
+  app.post(
+    "/api/gemini/generate-soap",
+    requireAuth,
+    prescriberOnly,
+    clinicalGeminiRateLimit,
+    rejectUntrustedTenantClaim,
+    async (req: Request, res: Response) => {
     try {
       const {
         patientName = "Patient",
@@ -84,20 +143,23 @@ export function mountGeminiClinicalRoutes(app: Express) {
             metadata: { source: "gemini-3.7-flash", endpoint: "generate-soap" },
           });
           return res.json({ success: true, soap: parsed, source: "Pulse AI" });
-        } catch (geminiError: any) {
-          console.error("Gemini SOAP generation error, using fallback clinical synthesis:", geminiError?.message);
+        } catch {
+          console.error("SOAP model call failed");
         }
       }
       const fallbackSoap = generateRuleBasedSoap(patientName, patientAge, patientGender, transcript, vitals);
       return res.json({ success: true, soap: fallbackSoap, source: "clinical-synthesis-engine" });
-    } catch (error: any) {
-      console.error("SOAP endpoint error:", error);
-      res.status(500).json({ error: "Failed to generate SOAP note", details: error.message });
+    } catch {
+      console.error("SOAP generation failed");
+      res.status(500).json({ code: "soap_failed" });
     }
   });
 
   const handleGeminiCopilot = async (req: Request, res: Response) => {
     try {
+      if (testCopilotGenerator) {
+        return res.json(await testCopilotGenerator());
+      }
       const { query, patientContext = {}, history = [] } = req.body;
       if (!query) return res.status(400).json({ error: "Query is required" });
       const ai = getGenAI();
@@ -119,35 +181,69 @@ export function mountGeminiClinicalRoutes(app: Express) {
             config: { systemInstruction, temperature: 0.2 },
           });
           return res.json({ response: response.text, source: "Pulse AI" });
-        } catch (err: any) {
-          console.error("Pulse AI / Gemini Copilot API error:", err?.message);
+        } catch {
+          console.error("Pulse copilot model call failed");
         }
       }
       return res.json({ response: getPulseFallbackAnswer(query, patientContext), source: "Pulse AI Knowledge Base (Offline Fallback)" });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
+    } catch {
+      console.error("Pulse copilot failed");
+      res.status(500).json({ code: "copilot_failed" });
     }
   };
 
-  app.post("/api/gemini/copilot", handleGeminiCopilot);
-  app.post("/api/gemini/pulse-assistant", handleGeminiCopilot);
-  app.post("/api/gemini/hexa-assistant", handleGeminiCopilot);
+  app.post(
+    "/api/gemini/copilot",
+    requireAuth,
+    prescriberOnly,
+    clinicalGeminiRateLimit,
+    rejectUntrustedTenantClaim,
+    handleGeminiCopilot
+  );
+  app.post(
+    "/api/gemini/pulse-assistant",
+    requireAuth,
+    prescriberOnly,
+    clinicalGeminiRateLimit,
+    rejectUntrustedTenantClaim,
+    handleGeminiCopilot
+  );
+  app.post(
+    "/api/gemini/hexa-assistant",
+    requireAuth,
+    prescriberOnly,
+    clinicalGeminiRateLimit,
+    rejectUntrustedTenantClaim,
+    handleGeminiCopilot
+  );
 
-  app.post("/api/gemini/safety-check", async (req: Request, res: Response) => {
+  app.post("/api/gemini/safety-check", requireAuth, prescriberOnly, safetyCheckRateLimit, rejectUntrustedTenantClaim, async (req: Request, res: Response) => {
     try {
       const { patientAllergies = [], chronicConditions = [], medicines = [], patientAge, patientGender } = req.body;
-      const ai = getGenAI();
-      if (ai && medicines.length > 0) {
+      if (testSafetyCheckGenerator) {
         try {
-          const prompt = `Analyze clinical safety for Age ${patientAge || 40}, ${patientGender || "Adult"}, Allergies: ${(patientAllergies || []).join(", ") || "None"}, Conditions: ${(chronicConditions || []).join(", ") || "None"}, Medicines: ${JSON.stringify(medicines)}. Return JSON { hasHighRiskAlert, alerts }.`;
-          const response = await ai.models.generateContent({
-            model: "gemini-3.7-flash",
-            contents: prompt,
-            config: { responseMimeType: "application/json", temperature: 0.1 },
-          });
-          return res.json(JSON.parse(response.text?.trim() || "{}"));
-        } catch (err: any) {
-          console.error("Safety check Gemini error:", err?.message);
+          return res.json(pulseSafetyFromModel(await testSafetyCheckGenerator()));
+        } catch (err) {
+          if (!(err instanceof SafetyAlertsMissing)) {
+            console.error("Safety check failed");
+            return res.status(500).json({ code: "safety_check_failed" });
+          }
+          console.error("Safety check model call failed");
+        }
+      } else {
+        const ai = getGenAI();
+        if (ai && medicines.length > 0) {
+          try {
+            const prompt = `Analyze clinical safety for Age ${patientAge || 40}, ${patientGender || "Adult"}, Allergies: ${(patientAllergies || []).join(", ") || "None"}, Conditions: ${(chronicConditions || []).join(", ") || "None"}, Medicines: ${JSON.stringify(medicines)}. Return JSON { hasHighRiskAlert, alerts }.`;
+            const response = await ai.models.generateContent({
+              model: "gemini-3.7-flash",
+              contents: prompt,
+              config: { responseMimeType: "application/json", temperature: 0.1 },
+            });
+            return res.json(pulseSafetyFromModel(JSON.parse(response.text?.trim() || "")));
+          } catch {
+            console.error("Safety check model call failed");
+          }
         }
       }
       const alerts: any[] = [];
@@ -158,9 +254,16 @@ export function mountGeminiClinicalRoutes(app: Express) {
           alerts.push({ type: "ALLERGY", severity: "Severe", drugsInvolved: ["Amoxicillin/Clavulanate"], description: "Patient is allergic to Penicillin.", clinicalRecommendation: "Switch to a Macrolide." });
         }
       }
-      return res.json({ hasHighRiskAlert: alerts.some((a) => a.severity === "Severe" || a.severity === "Critical"), alerts });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      const highRisk = alerts.some((a) => a.severity === "Severe" || a.severity === "Critical");
+      return res.json({
+        safetyStatus: highRisk ? "HIGH_RISK" : "REVIEW",
+        source: "rule-based fallback",
+        hasHighRiskAlert: highRisk,
+        alerts,
+      });
+    } catch {
+      console.error("Safety check failed");
+      res.status(500).json({ code: "safety_check_failed" });
     }
   });
   app.post("/api/gemini/transcribe", requireAuth, async (req: Request, res: Response) => {

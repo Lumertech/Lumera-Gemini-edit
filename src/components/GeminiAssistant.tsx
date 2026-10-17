@@ -14,6 +14,11 @@ import {
   Info
 } from 'lucide-react';
 import { apiFetchResponse } from '../api/http';
+import {
+  PULSE_ASSISTANT_DISCLAIMER,
+  PULSE_ASSISTANT_HEADER,
+  pulseAssistantErrorCopy,
+} from '../lib/pulseAssistantCopy';
 import { Patient, Doctor } from '../types';
 
 export interface GeminiAssistantProps {
@@ -29,6 +34,7 @@ interface ChatMessage {
   text: string;
   timestamp: string;
   source?: string;
+  error?: boolean;
 }
 
 const QUICK_CLINICAL_PROMPTS = [
@@ -50,7 +56,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
     {
       id: 'm1',
       sender: 'gemini',
-      text: `Hello Dr. ${currentDoctor?.name?.split(' ')[1] || 'Doctor'}. I am **Pulse AI**, an advanced enterprise clinical decision support copilot.\n\nI provide real-time clinical decision support: cross-checking drug-drug interactions, pediatric/geriatric dosage adjustments, ICMR/ADA clinical guidelines, and patient-specific risk reviews.`,
+      text: `Hello Dr. ${currentDoctor?.name?.split(' ')[1] || 'Doctor'}. Ask a clinical reference question.\n\n${PULSE_ASSISTANT_DISCLAIMER}`,
       timestamp: new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: '2-digit', minute: '2-digit' }),
       source: 'Pulse AI',
     },
@@ -93,22 +99,35 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
         }),
       });
 
-      const data = await response.json();
+      const data = await response.json().catch(() => null);
+      if (!response.ok) {
+        const errorMsg: ChatMessage = {
+          id: 'g-' + Date.now(),
+          sender: 'gemini',
+          text: pulseAssistantErrorCopy(response.status),
+          timestamp: new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: '2-digit', minute: '2-digit' }),
+          error: true,
+        };
+        setMessages((prev) => [...prev, errorMsg]);
+        return;
+      }
+      const answer = data && typeof data === 'object' ? String((data as { response?: unknown }).response || '') : '';
       const geminiMsg: ChatMessage = {
         id: 'g-' + Date.now(),
         sender: 'gemini',
-        text: data.response || 'Clinical response generated.',
+        text: answer || pulseAssistantErrorCopy(response.status),
         timestamp: new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: '2-digit', minute: '2-digit' }),
-        source: data.source || 'Pulse AI',
+        source: answer ? String((data as { source?: unknown }).source || 'Pulse AI') : undefined,
+        error: !answer,
       };
       setMessages((prev) => [...prev, geminiMsg]);
-    } catch (err) {
-      console.error('Pulse AI copilot query error:', err);
+    } catch {
       const errorMsg: ChatMessage = {
         id: 'g-' + Date.now(),
         sender: 'gemini',
-        text: '⚠️ Unable to connect to Pulse AI Clinical Copilot. Please check your network connection and retry.',
+        text: pulseAssistantErrorCopy(0),
         timestamp: new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: '2-digit', minute: '2-digit' }),
+        error: true,
       };
       setMessages((prev) => [...prev, errorMsg]);
     } finally {
@@ -132,13 +151,13 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
           </div>
           <div>
             <div className="flex items-center space-x-2">
-              <h3 className="font-bold text-xs text-white">Pulse AI — Clinical Decision Support</h3>
+              <h3 className="font-bold text-xs text-white">{PULSE_ASSISTANT_HEADER}</h3>
               <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-gradient-to-r from-purple-500/20 to-indigo-500/20 text-purple-300 border border-purple-500/30">
                 Pulse AI
               </span>
             </div>
             <p className="text-[10px] text-slate-400">
-              Evidence-based clinical decision support
+              {PULSE_ASSISTANT_DISCLAIMER}
             </p>
           </div>
         </div>
@@ -175,7 +194,9 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
               className={`max-w-[92%] rounded-lg p-3 text-xs leading-relaxed ${
                 m.sender === 'user'
                   ? 'bg-blue-600 text-white rounded-br-none shadow-xs'
-                  : 'bg-slate-800/90 text-slate-200 border border-slate-700/80 rounded-bl-none shadow-xs'
+                  : m.error
+                    ? 'bg-rose-950/80 text-rose-100 border border-rose-800 rounded-bl-none shadow-xs'
+                    : 'bg-slate-800/90 text-slate-200 border border-slate-700/80 rounded-bl-none shadow-xs'
               }`}
             >
               <div className="whitespace-pre-wrap font-sans">{m.text}</div>
