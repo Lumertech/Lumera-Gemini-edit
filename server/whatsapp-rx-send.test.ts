@@ -214,7 +214,7 @@ describe("usage-billing Rx WhatsApp send is bound to the signed prescription", (
     });
     connectClinicLine(clinic.tenantId, rx.rxNumber);
     const attackerPhone = `+91 92222 ${String(Date.now()).slice(-5)}`;
-    const wamid = "wamid.RX_SIGNED_OK";
+    const wamid = `wamid.RX_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
     const original = globalThis.fetch;
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
