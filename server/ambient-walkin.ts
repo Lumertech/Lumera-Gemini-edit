@@ -75,9 +75,21 @@ export function openVisitStatusSql(column = "status"): string {
 
 const SQL_TEXT = /^[A-Za-z0-9:_./+-]{1,120}$/;
 
-function sqlText(value: string): string {
-  if (!SQL_TEXT.test(value)) throw new Error("Refusing to close a walk-in with an unsafe id");
+function quotedSqlText(value: string): string | null {
+  if (!SQL_TEXT.test(value)) return null;
   return `'${value}'`;
+}
+
+/** True when an existing index already matches the open-walk-in predicate. */
+export function openWalkInIndexDefinitionMatches(sql: string): boolean {
+  const normalized = sql.toLowerCase();
+  if (!/\bunique\b/.test(normalized)) return false;
+  if (!/source\s*=\s*'ambient_walkin'(?!_)/.test(normalized)) return false;
+  if (!normalized.includes("tenant_id") || !normalized.includes("patient_id") || !normalized.includes("doctor_id")) {
+    return false;
+  }
+  if (!/\bdate\b/.test(normalized)) return false;
+  return OPEN_VISIT_STATUSES.every((status) => normalized.includes(status));
 }
 
 /** Open hidden walk-ins only. A completed visit from earlier today must not block a new one. */
@@ -89,23 +101,47 @@ function openAmbientWalkInIndexSql(): string {
       AND lower(trim(COALESCE(status, ''))) IN (${statuses})`;
 }
 
-function closureAuditSql(appointmentId: string, tenantId: string): string {
-  return `INSERT INTO audit_logs (
+function postgresCloseAndAuditSql(appointmentId: string, tenantId: string): string | null {
+  const id = quotedSqlText(appointmentId);
+  const tenant = quotedSqlText(tenantId);
+  const dupSource = quotedSqlText(AMBIENT_WALKIN_DUP_SOURCE);
+  const walkIn = quotedSqlText(AMBIENT_WALKIN_SOURCE);
+  const action = quotedSqlText(AMBIENT_WALKIN_CLOSED_DUP_ACTION);
+  const auditId = quotedSqlText(randomUUID());
+  const timestamp = quotedSqlText(new Date().toISOString());
+  if (!id || !tenant || !dupSource || !walkIn || !action || !auditId || !timestamp) return null;
+  return `WITH closed AS (
+      UPDATE appointments
+      SET status = 'Completed', source = ${dupSource}
+      WHERE id = ${id} AND source = ${walkIn}
+      RETURNING id
+    )
+    INSERT INTO audit_logs (
       id, timestamp, user_id, user_name, action, details,
       tenant_id, patient_id, actor_role, entity_type, entity_id
-    ) VALUES (
-      ${sqlText(randomUUID())},
-      ${sqlText(new Date().toISOString())},
-      NULL,
-      'System',
-      ${sqlText(AMBIENT_WALKIN_CLOSED_DUP_ACTION)},
-      '',
-      ${sqlText(tenantId)},
-      '',
-      '',
-      'appointment',
-      ${sqlText(appointmentId)}
-    )`;
+    )
+    SELECT ${auditId}, ${timestamp}, NULL, 'System', ${action}, '', ${tenant}, '', '', 'appointment', closed.id
+    FROM closed`;
+}
+
+function existingAmbientWalkInIndexSql(database: SqlDatabase): string {
+  if (database.dialect === "postgres") {
+    const row = database
+      .prepare(
+        `SELECT pg_get_indexdef(c.oid) AS sql
+         FROM pg_class c
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE c.relkind = 'i'
+           AND c.relname = 'idx_appointments_ambient_walkin'
+           AND n.nspname = current_schema()`
+      )
+      .get() as { sql?: string } | undefined;
+    return String(row?.sql || "");
+  }
+  const row = database
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_appointments_ambient_walkin'")
+    .get() as { sql?: string } | undefined;
+  return String(row?.sql || "");
 }
 
 /**
@@ -132,33 +168,38 @@ function execTransactional(database: SqlDatabase, statements: string[]): void {
   }
 }
 
+type WalkInKey = { tenant_id: string; patient_id: string; doctor_id: string; date: string };
+type WalkInId = { id: string; tenant_id: string };
+
+function logSkippedWalkInGroup(): void {
+  console.error("ambient walk-in duplicate close skipped a group with an unsafe id");
+}
+
 /**
  * One open hidden walk-in per clinic, patient, doctor, and clinic day.
- * Older copies stay in the table: status Completed and source ambient_walkin_dup.
- * Each closure writes one audit row (ids and action only). The partial unique index
- * then covers open statuses only, so a visit already closed today can be followed by another.
+ * A walk-in already closed earlier that day is a real visit, so only open rows are grouped.
+ * Older open copies stay in the table: status Completed and source ambient_walkin_dup.
+ * The audit row is written only when that update changes a row. The partial unique index
+ * is left in place when it already covers open statuses.
  */
 export function ensureAmbientWalkInUniqueIndex(database: SqlDatabase): void {
+  const open = openVisitStatusSql("status");
   const groups = database
     .prepare(
       `SELECT tenant_id, patient_id, doctor_id, date
        FROM appointments
-       WHERE source = ?
+       WHERE source = ? AND ${open}
        GROUP BY tenant_id, patient_id, doctor_id, date
        HAVING COUNT(*) > 1`
     )
-    .all(AMBIENT_WALKIN_SOURCE) as Array<{
-    tenant_id: string;
-    patient_id: string;
-    doctor_id: string;
-    date: string;
-  }>;
+    .all(AMBIENT_WALKIN_SOURCE) as WalkInKey[];
   const ids = database.prepare(
     `SELECT id, tenant_id FROM appointments
      WHERE source = ? AND tenant_id = ? AND patient_id = ? AND doctor_id = ? AND date = ?
+       AND ${open}
      ORDER BY created_at DESC, id DESC`
   );
-  const statements: string[] = [];
+  const closures: WalkInId[] = [];
   for (const group of groups) {
     const rows = ids.all(
       AMBIENT_WALKIN_SOURCE,
@@ -166,15 +207,63 @@ export function ensureAmbientWalkInUniqueIndex(database: SqlDatabase): void {
       group.patient_id,
       group.doctor_id,
       group.date
-    ) as Array<{ id: string; tenant_id: string }>;
-    for (const extra of rows.slice(1)) {
-      statements.push(
-        `UPDATE appointments SET status = 'Completed', source = ${sqlText(AMBIENT_WALKIN_DUP_SOURCE)} WHERE id = ${sqlText(extra.id)}`
-      );
-      statements.push(closureAuditSql(extra.id, extra.tenant_id));
+    ) as WalkInId[];
+    const extras = rows.slice(1);
+    if (extras.some((row) => !SQL_TEXT.test(row.id) || !SQL_TEXT.test(String(row.tenant_id || "")))) {
+      logSkippedWalkInGroup();
+      continue;
     }
+    closures.push(...extras);
   }
-  statements.push("DROP INDEX IF EXISTS idx_appointments_ambient_walkin");
-  statements.push(openAmbientWalkInIndexSql());
-  execTransactional(database, statements);
+
+  const rebuildIndex = !openWalkInIndexDefinitionMatches(existingAmbientWalkInIndexSql(database));
+  if (!closures.length && !rebuildIndex) return;
+
+  if (database.dialect === "postgres") {
+    const statements: string[] = [];
+    for (const extra of closures) {
+      const statement = postgresCloseAndAuditSql(extra.id, extra.tenant_id);
+      if (!statement) {
+        logSkippedWalkInGroup();
+        continue;
+      }
+      statements.push(statement);
+    }
+    if (rebuildIndex) {
+      statements.push("DROP INDEX IF EXISTS idx_appointments_ambient_walkin");
+      statements.push(openAmbientWalkInIndexSql());
+    }
+    execTransactional(database, statements);
+    return;
+  }
+
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    const update = database.prepare(
+      "UPDATE appointments SET status = 'Completed', source = ? WHERE id = ? AND source = ?"
+    );
+    const audit = database.prepare(
+      `INSERT INTO audit_logs (
+        id, timestamp, user_id, user_name, action, details,
+        tenant_id, patient_id, actor_role, entity_type, entity_id
+      ) VALUES (?, ?, ?, 'System', ?, '', ?, '', '', 'appointment', ?)`
+    );
+    for (const extra of closures) {
+      const result = update.run(AMBIENT_WALKIN_DUP_SOURCE, extra.id, AMBIENT_WALKIN_SOURCE);
+      if (Number(result.changes || 0) < 1) continue;
+      audit.run(randomUUID(), new Date().toISOString(), null, AMBIENT_WALKIN_CLOSED_DUP_ACTION, extra.tenant_id, extra.id);
+    }
+    if (rebuildIndex) {
+      database.exec("DROP INDEX IF EXISTS idx_appointments_ambient_walkin");
+      database.exec(openAmbientWalkInIndexSql());
+    }
+    database.exec("COMMIT");
+  } catch (err) {
+    try {
+      database.exec("ROLLBACK");
+    } catch {
+      /* the failed statement already left the transaction aborted */
+    }
+    throw err;
+  }
 }

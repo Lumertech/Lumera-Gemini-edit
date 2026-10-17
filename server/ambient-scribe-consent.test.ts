@@ -13,6 +13,7 @@ import {
   HIDDEN_AMBIENT_SOURCES,
   hiddenVisitSourceSql,
   isHiddenVisitSource,
+  openWalkInIndexDefinitionMatches,
   isUniqueViolation,
   SQLITE_CONSTRAINT_UNIQUE,
   visitStatusIsOpen,
@@ -1033,4 +1034,134 @@ describe("ambient scribe per-visit consent", () => {
       console.info = original;
     }
   });
+
+  it("does not relabel a completed same-day walk-in when another one is open", () => {
+    ensureAmbientWalkInUniqueIndex(getDb());
+    const doctor = seedDoctor("closedopen");
+    const patientId = `pat-${doctor.userId}`;
+    const day = istClinicDay();
+    const closedId = `closed-${doctor.userId}`;
+    const openId = `open-${doctor.userId}`;
+    const insert = getDb().prepare(
+      `INSERT INTO appointments (
+        id, tenant_id, token_number, patient_id, patient_name, patient_phone, uhid, doctor_id, doctor_name,
+        specialty, date, time_slot, type, status, source, consultation_fee, is_paid, created_at
+      ) VALUES (?, ?, 0, ?, 'Visit', '+910000000000', 'UHID', ?, 'Dr', 'General Medicine', ?, '', 'Ambient scribe', ?, ?, 0, 0, ?)`
+    );
+    insert.run(closedId, doctor.tenantId, patientId, doctor.userId, day, "Completed", AMBIENT_WALKIN_SOURCE, "2020-01-01T00:00:00.000Z");
+    insert.run(openId, doctor.tenantId, patientId, doctor.userId, day, "Open", AMBIENT_WALKIN_SOURCE, "2020-01-02T00:00:00.000Z");
+    ensureAmbientWalkInUniqueIndex(getDb());
+    const rowOf = (id: string) =>
+      getDb().prepare("SELECT status, source FROM appointments WHERE id = ?").get(id) as { status: string; source: string };
+    assert.equal(rowOf(closedId).status, "Completed");
+    assert.equal(rowOf(closedId).source, AMBIENT_WALKIN_SOURCE);
+    assert.equal(rowOf(openId).status, "Open");
+    assert.equal(rowOf(openId).source, AMBIENT_WALKIN_SOURCE);
+    const audits = getDb()
+      .prepare(`SELECT COUNT(*) AS n FROM audit_logs WHERE action = ? AND entity_id IN (?, ?)`)
+      .get(AMBIENT_WALKIN_CLOSED_DUP_ACTION, closedId, openId) as { n: number };
+    assert.equal(Number(audits.n), 0);
+    const db = getDb();
+    const calls: string[] = [];
+    const originalExec = db.exec.bind(db);
+    db.exec = (sql: string) => {
+      calls.push(sql);
+      return originalExec(sql);
+    };
+    try {
+      ensureAmbientWalkInUniqueIndex(db);
+    } finally {
+      db.exec = originalExec;
+    }
+    assert.equal(calls.some((sql) => /DROP INDEX/i.test(sql)), false);
+    assert.equal(rowOf(closedId).source, AMBIENT_WALKIN_SOURCE);
+    assert.equal(rowOf(openId).source, AMBIENT_WALKIN_SOURCE);
+    const auditsAgain = getDb()
+      .prepare(`SELECT COUNT(*) AS n FROM audit_logs WHERE action = ? AND entity_id IN (?, ?)`)
+      .get(AMBIENT_WALKIN_CLOSED_DUP_ACTION, closedId, openId) as { n: number };
+    assert.equal(Number(auditsAgain.n), 0);
+    assert.equal(
+      openWalkInIndexDefinitionMatches(
+        "CREATE UNIQUE INDEX idx_appointments_ambient_walkin ON appointments (tenant_id, patient_id, doctor_id, date) WHERE source = 'ambient_walkin'"
+      ),
+      false
+    );
+    assert.equal(
+      openWalkInIndexDefinitionMatches(
+        `CREATE UNIQUE INDEX idx_appointments_ambient_walkin ON public.appointments USING btree (tenant_id, patient_id, doctor_id, date) WHERE ((source = 'ambient_walkin'::text) AND (lower(btrim(COALESCE(status, ''::text))) IN (${[
+          "waiting",
+          "open",
+          "in consultation",
+          "scheduled",
+          "confirmed",
+          "checked-in",
+          "checked in",
+          "triage / vitals",
+          "in progress",
+        ]
+          .map((status) => `'${status}'::text`)
+          .join(", ")})))`
+      ),
+      true
+    );
+  });
+
+  it("request handlers pass a tenant when closing stale walk-ins", () => {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const files = fs.readdirSync(here).filter((name) => name.endsWith(".ts") && !name.endsWith(".test.ts"));
+    const calls: string[] = [];
+    for (const file of files) {
+      let text = fs.readFileSync(path.join(here, file), "utf8");
+      text = omitFunction(text, "sweepStaleAmbientWalkIns");
+      for (const args of callArguments(text, "closeStaleAmbientWalkIns")) {
+        calls.push(`${file}: ${args}`);
+        assert.match(args, /tenantId/, `${file} calls closeStaleAmbientWalkIns without a tenant`);
+      }
+    }
+    assert.ok(calls.length >= 1);
+  });
 });
+
+function omitFunction(source: string, name: string): string {
+  const start = source.indexOf(`function ${name}`);
+  if (start < 0) return source;
+  const brace = source.indexOf("{", start);
+  if (brace < 0) return source;
+  let depth = 0;
+  for (let i = brace; i < source.length; i++) {
+    if (source[i] === "{") depth += 1;
+    else if (source[i] === "}") {
+      depth -= 1;
+      if (depth === 0) return source.slice(0, start) + source.slice(i + 1);
+    }
+  }
+  return source;
+}
+
+function callArguments(source: string, name: string): string[] {
+  const found: string[] = [];
+  let from = 0;
+  while (from < source.length) {
+    const at = source.indexOf(name, from);
+    if (at < 0) break;
+    const prefix = source.slice(Math.max(0, at - 24), at);
+    let cursor = at + name.length;
+    while (source[cursor] === " " || source[cursor] === "\n") cursor += 1;
+    if (source[cursor] !== "(" || /function\s+$/.test(prefix)) {
+      from = cursor + 1;
+      continue;
+    }
+    let depth = 0;
+    let end = cursor;
+    for (; end < source.length; end++) {
+      if (source[end] === "(") depth += 1;
+      else if (source[end] === ")") {
+        depth -= 1;
+        if (depth === 0) break;
+      }
+    }
+    found.push(source.slice(cursor + 1, end));
+    from = end + 1;
+  }
+  return found;
+}
