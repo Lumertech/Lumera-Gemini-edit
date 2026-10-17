@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { apiFetchResponse } from '../api/http';
+import { SEEDED_DEMO_PATIENT_PHONE } from '../lib/seededDemoPhone';
 import { formatINR } from '../lib/currency.ts';
 import { 
   QrCode, 
@@ -481,7 +482,7 @@ export const Reception: React.FC<ReceptionProps> = ({
                 type="text"
                 value={formData.phone}
                 onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                placeholder="+91 98234 55667"
+                placeholder="Patient mobile"
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-purple-500"
               />
             </div>
@@ -748,7 +749,7 @@ export const Reception: React.FC<ReceptionProps> = ({
                       name: 'Rajiv Saxena',
                       abhaNumber: '91-4428-9102-3841',
                       abhaAddress: 'rajiv.saxena@abdm',
-                      phone: '+91 98234 55667',
+                      phone: SEEDED_DEMO_PATIENT_PHONE,
                       gender: 'Male',
                       age: 44,
                       address: 'A-502, Orchid Woods, Whitefield, Bengaluru',

@@ -628,7 +628,14 @@ const RX_NOTE_KEYS = [
   "pendingAiFields",
 ] as const;
 
-function specialtyModulesFromBody(body: Record<string, unknown>): string {
+function clientRequestedReview(body: Record<string, unknown>): boolean {
+  if (String(body.reviewedBy || "").trim()) return true;
+  const nested = body.specialtyModules;
+  if (!nested || typeof nested !== "object") return false;
+  return Boolean(String((nested as { reviewedBy?: unknown }).reviewedBy || "").trim());
+}
+
+function specialtyModulesFromBody(body: Record<string, unknown>, actorId: string): string {
   const modules: Record<string, unknown> = {};
   for (const key of PRESCRIPTION_SPECIALTY_KEYS) {
     if (body[key] !== undefined) modules[key] = body[key];
@@ -637,8 +644,12 @@ function specialtyModulesFromBody(body: Record<string, unknown>): string {
     if (body[key] !== undefined) modules[key] = body[key];
   }
   if (body.specialtyModules && typeof body.specialtyModules === "object") {
-    Object.assign(modules, body.specialtyModules as Record<string, unknown>);
+    const extra = { ...(body.specialtyModules as Record<string, unknown>) };
+    delete extra.reviewedBy;
+    Object.assign(modules, extra);
   }
+  delete modules.reviewedBy;
+  if (clientRequestedReview(body)) modules.reviewedBy = actorId;
   return JSON.stringify(modules);
 }
 
@@ -1086,8 +1097,11 @@ function deletePrescriptionDraft(input: {
   );
 }
 
-function insertPrescription(tenantId: string, body: Record<string, unknown>) {
+function insertPrescription(tenantId: string, body: Record<string, unknown>, actorId: string) {
   assertReviewedAiPrescription(body);
+  if (clientRequestedReview(body) && !String(actorId || "").trim()) {
+    throw Object.assign(new Error("Sign in to review this prescription"), { status: 401 });
+  }
   const patientId = String(body.patientId || body.patient_id || "").trim();
   const diagnosis = String(body.diagnosis || "").trim();
   if (!patientId) {
@@ -1148,9 +1162,9 @@ function insertPrescription(tenantId: string, body: Record<string, unknown>) {
       String(body.clinicAddress || body.clinic_address || stamped.address || ""),
       String(body.clinicPhone || body.clinic_phone || stamped.phone || ""),
       String(body.qrVerificationUrl || body.qr_verification_url || `https://lumera.health/rx/${rxNumber}`),
-      String(body.whatsappSentStatus || body.whatsapp_sent_status || "unsent"),
+      "unsent",
       String(body.specialtyType || body.specialty_type || ""),
-      specialtyModulesFromBody(body)
+      specialtyModulesFromBody(body, String(actorId || "").trim())
     );
   return getTenantPrescription(tenantId, id)!;
 }
@@ -1532,7 +1546,7 @@ export function createClinicalRouter(): Router {
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     try {
-      const row = insertPrescription(tenantId, req.body || {});
+      const row = insertPrescription(tenantId, req.body || {}, String(req.user?.id || ""));
       const mapped = prescriptionForClient(req, tenantId, row);
       writeAudit(
         getDb(),

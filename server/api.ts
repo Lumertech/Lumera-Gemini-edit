@@ -79,6 +79,7 @@ import { rejectWrongOtp, reserveOtpSend, sendOtpLimited } from "./otp-attempt.ts
 import { parseSpecialtyPackInput, resolveSpecialtyPack } from "./specialty-packs.ts";
 import { appPublicUrl, demoLoginEnabled, isProduction } from "./runtime.ts";
 import { DEMO_PASSWORD } from "../src/lib/demoAccounts.ts";
+import { PATIENT_PHONE_MISSING } from "../src/lib/signedRxWhatsAppSend.ts";
 import { dispatchWhatsAppCloudMessage, isCloudDispatchFailure, resolveGraphCredentials } from "./graph-whatsapp.ts";
 import { toE164Phone } from "./clinical.ts";
 import { inboundTenantIdFromPhoneNumberId } from "./meta.ts";
@@ -298,7 +299,8 @@ function recordWhatsAppOtpEvent(opts: {
     const db = getDb();
     const now = new Date().toISOString();
     const timeDisplay = new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "numeric", minute: "2-digit", hour12: true });
-    const cleanPhone = opts.phone.trim() || "+91 98234 55667";
+    const cleanPhone = opts.phone.trim();
+    if (!cleanPhone) return;
     const preferredId = `conv-otp-${cleanPhone.replace(/\D/g, "").slice(-8) || "user"}`;
     const userName = opts.name.trim() || "Healthcare Clinician";
     const conversationTenantId = uniqueOtpClinicId(cleanPhone) || WHATSAPP_QUARANTINE_TENANT_ID;
@@ -499,7 +501,8 @@ export function createApiRouter(): Router {
     }
 
     // Mandatory WhatsApp Business Phone Binding & Verification
-    const phone = user.phone || "+91 98234 55667";
+    const phone = String(user.phone || "").trim();
+    if (!phone) return res.status(422).json({ code: PATIENT_PHONE_MISSING });
     const slot = reserveOtpSend(req, phone, "login", { userId: user.id, email: user.email }, true);
     if (slot.limited === true) return sendOtpLimited(res, slot.retryAfterSec);
     if (slot.pending) {
@@ -795,7 +798,8 @@ export function createApiRouter(): Router {
       }, jwtToken));
     }
 
-    const phone = user.phone || "+91 98234 55667";
+    const phone = String(user.phone || "").trim();
+    if (!phone) return res.status(422).json({ code: PATIENT_PHONE_MISSING });
     const slot = reserveOtpSend(req, phone, "login", { userId: user.id, email: user.email }, true);
     if (slot.limited === true) return sendOtpLimited(res, slot.retryAfterSec);
     if (slot.pending) {
@@ -1521,7 +1525,8 @@ export function createApiRouter(): Router {
     }
 
     const user = getDb().prepare("SELECT * FROM users WHERE email = ?").get(email) as unknown as DbUser | undefined;
-    const phone = user?.phone || "+91 98234 55667";
+    const phone = String(user?.phone || "").trim();
+    if (!phone) return res.status(422).json({ code: PATIENT_PHONE_MISSING });
     const name = user?.name || "Clinician";
     const slot = reserveOtpSend(req, phone, "password_reset", { userId: user?.id, email }, true);
     if (slot.limited === true) return sendOtpLimited(res, slot.retryAfterSec);

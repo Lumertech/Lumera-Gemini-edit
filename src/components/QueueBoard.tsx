@@ -107,7 +107,7 @@ export const QueueBoard: React.FC<QueueBoardProps> = ({
       uhid: apt.uhid || `LUM-2026-0${100 + apt.tokenNumber}`,
       age: apt.age || 44,
       gender: (apt.gender as any) || 'Male',
-      phone: apt.patientPhone || '+91 98234 55667',
+      phone: apt.patientPhone || '',
       email: `${apt.patientName.toLowerCase().replace(/[^a-z0-9]/g, '.')}@gmail.com`,
       bloodGroup: 'B+',
       abhaAddress: apt.abhaAddress || `${apt.patientName.toLowerCase().replace(/[^a-z0-9]/g, '.')}@abdm`,

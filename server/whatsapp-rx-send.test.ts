@@ -7,7 +7,7 @@ import { appPublicUrl } from "./runtime.ts";
 import { jsonRequest, startTestServer } from "./test-http.ts";
 import { createUsageBillingRouter } from "./usage-billing-api.ts";
 import { ensureWhatsAppOwnershipSchema } from "./whatsapp-numbers-store.ts";
-import { resolveSignedRxWhatsAppSend, RX_NOT_FOUND, RX_NOT_SIGNED, RX_SEND_FAILED } from "./whatsapp-rx-bind.ts";
+import { resolveSignedRxWhatsAppSend, PATIENT_PHONE_MISSING, RX_NOT_FOUND, RX_NOT_SIGNED, RX_SEND_FAILED } from "./whatsapp-rx-bind.ts";
 
 const GRAPH_TOKEN = "EAAGraphTokenWithoutEllipsis0123456789abcdef";
 const META_REJECT = "Meta rejected the recipient because it is not on the allow-list";
@@ -156,6 +156,11 @@ describe("usage-billing Rx WhatsApp send is bound to the signed prescription", (
   }
 
   function assertComposedText(content: string, attackerPhone: string, portal: string) {
+    assert.match(content, /Prescription from /);
+    assert.equal(content.includes("Official"), false);
+    assert.equal(content.includes("Download"), false);
+    assert.equal(/lumera/i.test(content), false);
+    assert.equal(content.includes("/api/whatsapp/prescription"), false);
     assert.match(content, /Asha Rao/);
     assert.match(content, /Viral fever/);
     assert.match(content, /Paracetamol/);
@@ -309,6 +314,57 @@ describe("usage-billing Rx WhatsApp send is bound to the signed prescription", (
       assert.equal(audit.details.includes(phone.replace(/\D/g, "")), false);
     } finally {
       globalThis.fetch = original;
+    }
+  });
+
+  it("returns 422 when the saved patient has no phone and does not send", async () => {
+    const clinic = createClinic("nophone");
+    const auth = await login(clinic.email);
+    const phone = `+91 98215 ${String(Date.now()).slice(-5)}`;
+    const patient = await createPatient(auth, "No Phone", phone);
+    const rx = await createRx(auth, patient.id, { diagnosis: "Needs a phone", reviewedBy: clinic.userId });
+    getDb().prepare("UPDATE patients SET phone = '' WHERE id = ? AND tenant_id = ?").run(patient.id, clinic.tenantId);
+    const sent = await jsonRequest(port, "POST", "/api/whatsapp/send-rx", { rxNumber: rx.rxNumber }, auth);
+    assert.equal(sent.status, 422);
+    assert.deepEqual(sent.json, { code: PATIENT_PHONE_MISSING });
+    const row = getDb().prepare("SELECT id FROM whatsapp_messages WHERE patient_phone = ?").get(phone);
+    assert.equal(row, undefined);
+    const stored = getDb()
+      .prepare("SELECT whatsapp_sent_status FROM prescriptions WHERE rx_number = ? AND tenant_id = ?")
+      .get(rx.rxNumber, clinic.tenantId) as { whatsapp_sent_status: string };
+    assert.notEqual(stored.whatsapp_sent_status, "sent");
+    assert.notEqual(stored.whatsapp_sent_status, "delivered");
+  });
+
+  it("does not send when production has no APP_URL", async () => {
+    const clinic = createClinic("appurl");
+    const auth = await login(clinic.email);
+    const phone = `+91 98216 ${String(Date.now()).slice(-5)}`;
+    const patient = await createPatient(auth, "Portal Patient", phone);
+    const rx = await createRx(auth, patient.id, { diagnosis: "Portal", reviewedBy: clinic.userId });
+    const previousEnv = process.env.NODE_ENV;
+    const previousUrl = process.env.APP_URL;
+    process.env.NODE_ENV = "production";
+    delete process.env.APP_URL;
+    try {
+      const sent = await jsonRequest(
+        port,
+        "POST",
+        "/api/whatsapp/send-rx",
+        { rxNumber: rx.rxNumber, portal_url: "https://evil.example/phish" },
+        auth
+      );
+      assert.equal(sent.status, 500);
+      assert.deepEqual(sent.json, { code: RX_SEND_FAILED });
+      assert.equal(JSON.stringify(sent.json).includes("evil.example"), false);
+      assert.equal(JSON.stringify(sent.json).includes("host"), false);
+      const row = getDb().prepare("SELECT id FROM whatsapp_messages WHERE patient_phone = ?").get(phone);
+      assert.equal(row, undefined);
+    } finally {
+      if (previousEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousEnv;
+      if (previousUrl === undefined) delete process.env.APP_URL;
+      else process.env.APP_URL = previousUrl;
     }
   });
 

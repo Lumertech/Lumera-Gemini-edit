@@ -978,6 +978,12 @@ export default function ClinicianApp() {
                     initialDraft={draftSession.draft}
                     initialSoapData={null}
                     onSavePrescription={handleSavePrescription}
+                    onPrescriptionLoaded={(loaded) => {
+                      setPrescriptions((prev) => [
+                        loaded,
+                        ...prev.filter((item) => item.rxNumber !== loaded.rxNumber && item.id !== loaded.id),
+                      ]);
+                    }}
                     clinicSettings={clinicSettings}
                     isSpecialtyLocked={isSpecialtyLocked}
                     lockedSpecialty={lockedSpecialty}

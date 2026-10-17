@@ -427,7 +427,7 @@ export const LoginPage: React.FC = () => {
 
       if (res.requiresOtp && res.verificationId) {
         setOtpVerificationId(res.verificationId);
-        setOtpPhone(res.phone || "+91 98234 55667");
+        setOtpPhone(res.phone || "");
         setOtpEmail(res.email || email);
         setDemoOtpCode(res.demoOtp || "");
         setOtpPurpose("login");
@@ -564,7 +564,7 @@ export const LoginPage: React.FC = () => {
         );
       } else if (res.requiresOtp && res.verificationId) {
         setOtpVerificationId(res.verificationId);
-        setOtpPhone(res.phone || "+91 98234 55667");
+        setOtpPhone(res.phone || "");
         setOtpEmail(res.email || targetEmail);
         setDemoOtpCode(res.demoOtp || "");
         setOtpPurpose("login");
@@ -1559,7 +1559,7 @@ export const LoginPage: React.FC = () => {
                       onCountryChange={setSelectedCountry}
                       value={adminPhone}
                       onValueChange={setAdminPhone}
-                      placeholder="98234 55667"
+                      placeholder="10-digit mobile"
                       accent="purple"
                     />
                   </div>

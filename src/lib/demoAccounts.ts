@@ -1,4 +1,5 @@
 import type { UserRole } from "../types";
+import { SEEDED_DEMO_PATIENT_PHONE } from "./seededDemoPhone";
 import type { SpecialtyPackId } from "./specialtyPack";
 
 /** Shared sandbox password for every seeded @lumera.me demo login. */
@@ -93,7 +94,7 @@ export const DEMO_ACCOUNTS: DemoAccount[] = [
     name: "Rajiv Saxena",
     role: "patient",
     specialty: "",
-    phone: "+91 98234 55667",
+    phone: SEEDED_DEMO_PATIENT_PHONE,
     practiceLine: "Patient",
     practiceType: "individual",
   },

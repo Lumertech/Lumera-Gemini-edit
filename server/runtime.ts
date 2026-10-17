@@ -45,9 +45,19 @@ export function graphApiVersion(): string {
   return version.startsWith("v") ? version : `v${version}`;
 }
 
+export class AppPublicUrlError extends Error {
+  constructor() {
+    super("APP_URL is unset");
+    this.name = "AppPublicUrlError";
+  }
+}
+
 export function appPublicUrl(reqHost?: string, reqProto?: string): string {
   const fromEnv = String(process.env.APP_URL || "").trim().replace(/\/$/, "");
-  if (fromEnv) return fromEnv;
+  if (fromEnv && !isUnsetOrPlaceholder(fromEnv)) return fromEnv;
+  if (isProduction()) {
+    throw new AppPublicUrlError();
+  }
   if (reqHost) {
     const first = String(reqProto || "").split(",")[0].trim().toLowerCase();
     const proto = first === "https" ? "https" : "http";

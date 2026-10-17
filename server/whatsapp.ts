@@ -28,7 +28,7 @@ import { CLINICIAN_ROLES, requireAuth, requireRole } from "./auth.ts";
 import { rejectUntrustedTenantClaim } from "./tenant-guard.ts";
 import { authenticatedLabReportPath, authorizeLabReport, labOwnerTenantId, sendLabReportDenied } from "./lab-report-access.ts";
 import { WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
-import { handleSignedRxWhatsAppSend } from "./whatsapp-rx-bind.ts";
+import { handleSignedRxWhatsAppSend, PATIENT_PHONE_MISSING } from "./whatsapp-rx-bind.ts";
 import { formatINR } from "../src/lib/currency.ts";
 import { AI_RUPEE_OUTPUT_RULE } from "./india-currency-copy.ts";
 import {
@@ -622,7 +622,9 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
   // ----------------------------------------------------
   router.post("/emr-action", async (req: Request, res: Response) => {
     try {
-      const { action, patientPhone = "+91 98234 55667", payload = {}, tenantId: bodyTenantId, phoneNumberId, wabaId } = req.body;
+      const { action, payload = {}, tenantId: bodyTenantId, phoneNumberId, wabaId } = req.body;
+      const patientPhone = String(req.body?.patientPhone || "").trim();
+      if (!patientPhone) return res.status(422).json({ code: PATIENT_PHONE_MISSING });
       const db = getDb();
       const sessionTenantId = String(req.user?.tenantId || "").trim();
       const tenantId = resolveWhatsAppTenantId({
@@ -1050,7 +1052,6 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
         audioBase64,
         mimeType = "audio/webm",
         presetPrompt,
-        patientPhone = "+91 98234 55667",
       } = req.body;
 
       const ai = getGenAI();

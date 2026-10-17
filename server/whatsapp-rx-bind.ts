@@ -11,7 +11,8 @@ import {
   isCloudDispatchFailure,
 } from "./graph-whatsapp.ts";
 import { getTenantLetterhead } from "./letterhead.ts";
-import { appPublicUrl } from "./runtime.ts";
+import { appPublicUrl, AppPublicUrlError } from "./runtime.ts";
+import { PATIENT_PHONE_MISSING, RX_SEND_FAILED } from "../src/lib/signedRxWhatsAppSend.ts";
 import { WALLET_INSUFFICIENT_ERROR } from "./usage-wallet.ts";
 import { dispatchPatientCloudText } from "./whatsapp-patient-dispatch.ts";
 import { upsertScopedConversation } from "./whatsapp-scope.ts";
@@ -19,7 +20,7 @@ import { upsertScopedConversation } from "./whatsapp-scope.ts";
 export const RX_NUMBER_REQUIRED = "RX_NUMBER_REQUIRED";
 export const RX_NOT_FOUND = "RX_NOT_FOUND";
 export const RX_NOT_SIGNED = "RX_NOT_SIGNED";
-export const RX_SEND_FAILED = "RX_SEND_FAILED";
+export { PATIENT_PHONE_MISSING, RX_SEND_FAILED };
 
 type Sql = {
   prepare: (sql: string) => { get: (...args: unknown[]) => unknown };
@@ -84,14 +85,13 @@ export function signedRxWhatsAppText(input: {
   diagnosis: string;
   medicineLines: string;
   medicineCount: number;
-  pdfUrl: string;
   portalUrl: string;
 }): string {
   const clinicName = input.clinicName.trim() || "your clinic";
   const doctorName = input.doctorName.trim() || "your doctor";
   const specialty = input.doctorSpecialty.trim() || "General Medicine";
   const portalUrl = String(input.portalUrl || "").trim().replace(/\/$/, "");
-  const template = `🩺 *${clinicName}*\n*Official Digital Prescription*\n\nNamaste *${input.patientName}* (UHID: ${input.uhid}),\nYour consultation prescription has been finalized and signed by *${doctorName}* (${specialty}).\n\n📋 *Diagnosis:* ${input.diagnosis}\n💊 *Prescribed Medications (${input.medicineCount}):*\n${input.medicineLines}\n\n📄 *Download Official PDF Prescription:*\n${input.pdfUrl}\n\nPatient portal: {{portal_url}}\n\n_Please follow the dosage schedule strictly. For emergency follow-up, reply to this chat._`;
+  const template = `🩺 *Prescription from ${clinicName}*\n\nNamaste *${input.patientName}* (UHID: ${input.uhid}),\nYour consultation prescription has been finalized and signed by *${doctorName}* (${specialty}).\n\n📋 *Diagnosis:* ${input.diagnosis}\n💊 *Prescribed Medications (${input.medicineCount}):*\n${input.medicineLines}\n\nPatient portal: {{portal_url}}\n\n_Please follow the dosage schedule strictly. For emergency follow-up, reply to this chat._`;
   return template.replaceAll("{{portal_url}}", portalUrl);
 }
 
@@ -124,7 +124,8 @@ export function resolveSignedRxWhatsAppSend(
         | undefined)
     : undefined;
   const phone = String(patient?.phone || "").trim();
-  if (!patient || !phone) return fail(404, RX_NOT_FOUND);
+  if (!patient) return fail(404, RX_NOT_FOUND);
+  if (!phone) return fail(422, PATIENT_PHONE_MISSING);
 
   const storedRxNumber = String(rx.rx_number || rxNumber);
   const pdfUrl = `/api/whatsapp/prescription/${storedRxNumber}/pdf`;
@@ -139,7 +140,6 @@ export function resolveSignedRxWhatsAppSend(
     diagnosis: String(rx.diagnosis || ""),
     medicineLines: meds.lines,
     medicineCount: meds.count,
-    pdfUrl,
     portalUrl,
   });
   return {
@@ -228,8 +228,8 @@ function recordGraphRxSend(tenantId: string, resolved: Extract<SignedRxSend, { o
     resolved.doctorName || "Clinic",
     resolved.text,
     timeDisplay,
-    JSON.stringify([{ type: "URL", text: "View prescription", url: resolved.pdfUrl }]),
-    JSON.stringify({ type: "document", url: resolved.pdfUrl }),
+    null,
+    null,
     now,
     tenantId
   );
@@ -264,7 +264,17 @@ export async function handleSignedRxWhatsAppSend(req: Request, res: Response): P
       res.status(404).json({ code: RX_NOT_FOUND });
       return;
     }
-    const portalUrl = appPublicUrl(req.get("host") || undefined, req.protocol);
+    let portalUrl = "";
+    try {
+      portalUrl = appPublicUrl(req.get("host") || undefined, req.protocol);
+    } catch (err) {
+      if (err instanceof AppPublicUrlError) {
+        auditRxSend(req, tenantId, rxNumber, "failed", RX_SEND_FAILED);
+        res.status(500).json({ code: RX_SEND_FAILED });
+        return;
+      }
+      throw err;
+    }
     const resolved = resolveSignedRxWhatsAppSend(getDb(), tenantId, req.body, portalUrl);
     if (resolved.ok === false) {
       auditRxSend(req, tenantId, rxNumber, "failed", resolved.code);

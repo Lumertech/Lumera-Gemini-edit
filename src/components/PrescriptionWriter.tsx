@@ -1,6 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { formatINR } from '../lib/currency.ts';
-import { apiFetchResponse } from '../api/http';
+import { apiFetch, apiFetchResponse } from '../api/http';
+import {
+  interpretSignedRxWhatsAppResponse,
+  patientPhoneBlocksWhatsAppSend,
+  shouldPersistWhatsAppSent,
+  signedRxWhatsAppRequestBody,
+  whatsAppDispatchNotice,
+} from '../lib/signedRxWhatsAppSend';
 import { 
   FileText, 
   Plus, 
@@ -108,6 +115,8 @@ interface PrescriptionWriterProps {
   appointments?: Appointment[];
   onBookFollowUp?: (input: Partial<Appointment>) => Promise<Appointment | void>;
   onAutoSave?: (prescription: Prescription, options?: { immediate?: boolean }) => void;
+  /** Replace a saved Rx from GET. Does not insert another row. */
+  onPrescriptionLoaded?: (prescription: Prescription) => void;
 }
 
 export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
@@ -123,6 +132,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
   appointments = [],
   onBookFollowUp,
   onAutoSave,
+  onPrescriptionLoaded,
 }) => {
   // Determine initial specialty from current doctor
   const getInitialSpecialty = (doctorSpec: string): PolyclinicSpecialty =>
@@ -365,13 +375,12 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
   const [targetLanguage, setTargetLanguage] = useState('Hindi');
   const [isTranslating, setIsTranslating] = useState(false);
   const [translatedWhatsAppText, setTranslatedWhatsAppText] = useState('');
-  const [whatsappSentSuccess, setWhatsappSentSuccess] = useState(false);
+  const [whatsappNotice, setWhatsappNotice] = useState('');
 
   // Finalize & Sign states
   const [isFinalized, setIsFinalized] = useState(false);
   const [showFinalizeModal, setShowFinalizeModal] = useState(false);
   const [isSendingWhatsAppDirect, setIsSendingWhatsAppDirect] = useState(false);
-  const [whatsAppDirectSuccess, setWhatsAppDirectSuccess] = useState(false);
 
   // When active doctor changes, adapt specialty
   useEffect(() => {
@@ -512,7 +521,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
       return;
     }
     setShowWhatsAppModal(true);
-    setWhatsappSentSuccess(false);
+    setWhatsappNotice('');
     await translateRxForWhatsApp(targetLanguage);
   };
 
@@ -561,7 +570,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
   const keepModule = (key: string, active: boolean) =>
     savedModuleKeys.includes(key) || (active && !aiSource);
 
-  const buildCurrentRx = (statusOverride?: 'unsent' | 'delivered'): Prescription => ({
+  const buildCurrentRx = (): Prescription => ({
     id: 'rx-' + Date.now(),
     rxNumber: rxNumber,
     patientId: currentPatient.id,
@@ -599,7 +608,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     clinicAddress: clinicSettings.address,
     clinicPhone: clinicSettings.phone,
     qrVerificationUrl: `https://lumera.health/rx/${rxNumber}`,
-    whatsappSentStatus: statusOverride || (whatsAppDirectSuccess || whatsappSentSuccess ? 'delivered' : 'unsent'),
+    whatsappSentStatus: 'unsent',
     specialtyType: activeSpecialty,
     physiotherapyAssessment: keepModule('physiotherapyAssessment', activeSpecialty === 'Physiotherapy & Rehabilitation') ? physioAssessment : undefined,
     performedTherapies: performedProcedures,
@@ -860,37 +869,42 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
       window.alert(safetyGateMessage || 'Run the AI Safety Audit before sending this prescription.');
       return;
     }
+    const phoneBlock = patientPhoneBlocksWhatsAppSend(currentPatient.phone);
+    if (phoneBlock) {
+      setWhatsappNotice(phoneBlock);
+      return;
+    }
     setIsSendingWhatsAppDirect(true);
+    setWhatsappNotice('');
     try {
       const response = await apiFetchResponse('/api/whatsapp/send-rx', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          patientPhone: currentPatient.phone,
-          patientName: currentPatient.name,
-          uhid: currentPatient.uhid,
-          rxNumber: rxNumber,
-          doctorName: currentDoctor.name,
-          doctorSpecialty: activeSpecialty,
-          diagnosis: diagnosis,
-          medicines: medicines,
-          advice: adviceList,
-          clinicName: clinicSettings.name,
-          language: targetLanguage,
-        }),
+        body: JSON.stringify(signedRxWhatsAppRequestBody(rxNumber)),
       });
-      setWhatsAppDirectSuccess(true);
-      setWhatsappSentSuccess(true);
-      const updatedRx = stampReviewed(buildCurrentRx('delivered'));
-      if (updatedRx.reviewedBy) setReviewedBy(updatedRx.reviewedBy);
-      onSavePrescription(updatedRx);
+      const payload = await response.json().catch(() => ({}));
+      const decision = interpretSignedRxWhatsAppResponse(response.status, payload);
+      if (!shouldPersistWhatsAppSent(decision)) {
+        setWhatsappNotice(whatsAppDispatchNotice(decision, currentPatient.phone));
+        return;
+      }
+      let phone = currentPatient.phone;
+      try {
+        const refreshed = await apiFetch<{ prescription: Prescription }>(
+          `/api/prescriptions/${encodeURIComponent(rxNumber)}`
+        );
+        if (refreshed.prescription) {
+          onPrescriptionLoaded?.(refreshed.prescription);
+          phone = refreshed.prescription.patientPhone || phone;
+        }
+      } catch (err) {
+        console.error('WhatsApp send succeeded but the prescription refresh failed', err);
+      }
+      setWhatsappNotice(whatsAppDispatchNotice(decision, phone));
     } catch (err) {
-      console.error('WhatsApp dispatch failed, falling back:', err);
-      setWhatsAppDirectSuccess(true);
-      setWhatsappSentSuccess(true);
-      const updatedRx = stampReviewed(buildCurrentRx('delivered'));
-      if (updatedRx.reviewedBy) setReviewedBy(updatedRx.reviewedBy);
-      onSavePrescription(updatedRx);
+      console.error('WhatsApp dispatch failed', err);
+      const decision = interpretSignedRxWhatsAppResponse(0, {});
+      setWhatsappNotice(whatsAppDispatchNotice(decision, ''));
     } finally {
       setIsSendingWhatsAppDirect(false);
     }
@@ -2482,25 +2496,25 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
                 <span className="text-[11px] text-slate-500">{currentPatient.phone}</span>
               </div>
 
-              {whatsAppDirectSuccess ? (
-                <div className="bg-white p-2.5 rounded-lg border border-emerald-200 text-emerald-800 text-[11px] font-medium flex items-center gap-2">
+              {whatsappNotice ? (
+                <div role="status" className="bg-white p-2.5 rounded-lg border border-emerald-200 text-emerald-800 text-[11px] font-medium flex items-center gap-2">
                   <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span>Prescription PDF download link &amp; dosage guide delivered to {currentPatient.phone}!</span>
+                  <span>{whatsappNotice}</span>
                 </div>
-              ) : (
-                <button
-                  onClick={handleDirectWhatsAppDispatch}
-                  disabled={isSendingWhatsAppDirect || aiReviewOpen}
-                  className="w-full py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-xs transition-colors cursor-pointer disabled:opacity-50"
-                >
-                  {isSendingWhatsAppDirect ? (
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <Send className="w-3.5 h-3.5" />
-                  )}
-                  <span>{isSendingWhatsAppDirect ? 'Dispatching via Meta API...' : '1-Click Send via WhatsApp'}</span>
-                </button>
-              )}
+              ) : null}
+              <button
+                onClick={handleDirectWhatsAppDispatch}
+                disabled={isSendingWhatsAppDirect || aiReviewOpen || Boolean(patientPhoneBlocksWhatsAppSend(currentPatient.phone))}
+                title={patientPhoneBlocksWhatsAppSend(currentPatient.phone) || undefined}
+                className="w-full py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+              >
+                {isSendingWhatsAppDirect ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Send className="w-3.5 h-3.5" />
+                )}
+                <span>{isSendingWhatsAppDirect ? 'Dispatching via Meta API...' : '1-Click Send via WhatsApp'}</span>
+              </button>
             </div>
 
             {/* Bottom Actions */}
@@ -2601,28 +2615,29 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
               />
             </div>
 
-            {whatsappSentSuccess ? (
-              <div className="p-3 bg-emerald-100 text-emerald-800 rounded-lg text-xs font-bold flex items-center justify-center gap-2">
+            {whatsappNotice ? (
+              <div role="status" className="p-3 bg-emerald-100 text-emerald-800 rounded-lg text-xs font-bold flex items-center justify-center gap-2">
                 <CheckCircle className="w-4 h-4 text-emerald-700" />
-                Prescription & Protocol Delivered to {currentPatient.phone} on WhatsApp!
+                {whatsappNotice}
               </div>
-            ) : (
-              <div className="flex items-center justify-end space-x-2 pt-2">
-                <button
-                  onClick={() => setShowWhatsAppModal(false)}
-                  className="px-3.5 py-1.5 rounded-md text-xs font-semibold text-slate-600 hover:bg-slate-100"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleSaveAndDispatch}
-                  className="px-4 py-1.5 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs shadow-sm flex items-center space-x-1.5"
-                >
-                  <Send className="w-3.5 h-3.5" />
-                  <span>Send WhatsApp</span>
-                </button>
-              </div>
-            )}
+            ) : null}
+            <div className="flex items-center justify-end space-x-2 pt-2">
+              <button
+                onClick={() => setShowWhatsAppModal(false)}
+                className="px-3.5 py-1.5 rounded-md text-xs font-semibold text-slate-600 hover:bg-slate-100"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveAndDispatch}
+                disabled={isSendingWhatsAppDirect || Boolean(patientPhoneBlocksWhatsAppSend(currentPatient.phone))}
+                title={patientPhoneBlocksWhatsAppSend(currentPatient.phone) || undefined}
+                className="px-4 py-1.5 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs shadow-sm flex items-center space-x-1.5 disabled:opacity-50"
+              >
+                <Send className="w-3.5 h-3.5" />
+                <span>Send WhatsApp</span>
+              </button>
+            </div>
           </div>
         </div>
       )}
