@@ -15,8 +15,10 @@ import { reportCaughtError } from "./error-tracker.ts";
 import { resolveAbdmMode, type AbdmMode } from "./abdm-mode.ts";
 import { maskedLast4 } from "./mask-last4.ts";
 import { registerPatientDocumentRoutes } from "./patient-documents.ts";
+import { registerPatientDocumentConsentRoutes } from "./patient-document-consent.ts";
+import { buildPatientTimeline, presentPrescriptionForRole } from "./patient-timeline.ts";
+import { denyUnlessPatientRecordRole, denyUnlessPrescriber, isReceptionRole } from "./patient-access.ts";
 import { clinicCalendarDate, parseAppointmentListDate } from "../src/lib/clinicDay.ts";
-import { denyUnlessPatientRecordRole } from "./patient-access.ts";
 import {
   loadPatientClinicPhone,
   loadPatientTenant,
@@ -44,6 +46,13 @@ function prescriptionForClient(req: Request, tenantId: string, row: Record<strin
   if (!requestIsPatient(req)) return mapped;
   const phone = loadPatientClinicPhone(tenantId, mapped.clinicPhone);
   return { ...mapped, clinicPhone: phone || "" };
+}
+
+/** Reception sees a redacted chart row. Everyone else keeps main's patient allowlist. */
+function prescriptionForViewer(req: Request, tenantId: string, row: Record<string, unknown>) {
+  const role = String(req.user?.role || "");
+  if (isReceptionRole(role)) return presentPrescriptionForRole(row, role);
+  return prescriptionForClient(req, tenantId, row);
 }
 
 function patientCanRead(req: Request, recordPatientId: unknown): boolean {
@@ -1192,11 +1201,13 @@ export function createClinicalRouter(): Router {
   });
 
   api.get("/patients/:id/chart", requireAuth, (req, res) => {
+    if (!requestIsPatient(req) && !denyUnlessPatientRecordRole(req, res)) return;
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     try {
       const row = getTenantPatient(tenantId, req.params.id);
       if (!row || !patientCanRead(req, row.id)) return res.status(404).json({ error: "Patient not found" });
+      const role = String(req.user?.role || "");
       const visits = getDb()
         .prepare(
           `SELECT * FROM appointments
@@ -1215,7 +1226,8 @@ export function createClinicalRouter(): Router {
         withPatientTenant(req, tenantId, {
           patient: patientWithConsents(row, tenantId),
           visits: visits.map(mapAppointment),
-          prescriptions: prescriptions.map((prescription) => prescriptionForClient(req, tenantId, prescription)),
+          prescriptions: prescriptions.map((prescription) => prescriptionForViewer(req, tenantId, prescription)),
+          timeline: buildPatientTimeline(tenantId, req.params.id, role),
         })
       );
     } catch (err) {
@@ -1225,6 +1237,7 @@ export function createClinicalRouter(): Router {
   });
 
   api.get("/patients/:id", requireAuth, (req, res) => {
+    if (!requestIsPatient(req) && !denyUnlessPatientRecordRole(req, res)) return;
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     const row = getTenantPatient(tenantId, req.params.id);
@@ -1486,7 +1499,7 @@ export function createClinicalRouter(): Router {
               .prepare("SELECT * FROM prescriptions WHERE tenant_id = ? ORDER BY created_at DESC")
               .all(tenantId)
       ) as Record<string, unknown>[];
-      const prescriptions = rows.map((prescription) => prescriptionForClient(req, tenantId, prescription));
+      const prescriptions = rows.map((prescription) => prescriptionForViewer(req, tenantId, prescription));
       res.json(withPatientTenant(req, tenantId, { prescriptions }));
     } catch (err) {
       reportCaughtError(err, "clinical.listPrescriptions");
@@ -1503,17 +1516,19 @@ export function createClinicalRouter(): Router {
         .prepare("SELECT * FROM prescriptions WHERE tenant_id = ? AND rx_number = ?")
         .get(tenantId, req.params.id) as Record<string, unknown> | undefined);
     if (!row || !patientCanRead(req, row.patient_id)) return res.status(404).json({ error: "Prescription not found" });
-    const prescription = prescriptionForClient(req, tenantId, row);
+    const prescription = prescriptionForViewer(req, tenantId, row);
+    const doctorName = "doctorName" in prescription ? String(prescription.doctorName || "") : "";
+    const doctorRegNumber = "doctorRegNumber" in prescription ? String(prescription.doctorRegNumber || "") : "";
     res.json(
       withPatientTenant(req, tenantId, { prescription }, {
-        doctorName: prescription.doctorName,
-        doctorRegNumber: prescription.doctorRegNumber,
+        doctorName,
+        doctorRegNumber,
       })
     );
   });
 
   api.post("/prescriptions", requireAuth, (req, res) => {
-    if (!denyUnlessPatientRecordRole(req, res)) return;
+    if (!denyUnlessPrescriber(req, res)) return;
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     try {
@@ -1565,7 +1580,7 @@ export function createClinicalRouter(): Router {
   });
 
   api.get("/prescriptions/draft/:patientId", requireAuth, (req, res) => {
-    if (!denyUnlessPatientRecordRole(req, res)) return;
+    if (!denyUnlessPrescriber(req, res)) return;
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     const patientId = req.params.patientId;
@@ -1593,7 +1608,7 @@ export function createClinicalRouter(): Router {
   });
 
   api.post("/prescriptions/draft", requireAuth, (req, res) => {
-    if (!denyUnlessPatientRecordRole(req, res)) return;
+    if (!denyUnlessPrescriber(req, res)) return;
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     try {
@@ -1694,6 +1709,7 @@ export function createClinicalRouter(): Router {
   });
 
   registerPatientDocumentRoutes(api);
+  registerPatientDocumentConsentRoutes(api);
 
   return api;
 }

@@ -183,6 +183,11 @@ export const auditLogs = pgTable("audit_logs", {
   userName: text("user_name").notNull(),
   action: text("action").notNull(),
   details: text("details").notNull().default(""),
+  tenantId: text("tenant_id").notNull().default(""),
+  patientId: text("patient_id").notNull().default(""),
+  actorRole: text("actor_role").notNull().default(""),
+  entityType: text("entity_type").notNull().default(""),
+  entityId: text("entity_id").notNull().default(""),
 });
 
 export const subscriptions = pgTable(
@@ -218,6 +223,7 @@ export const patients = pgTable(
     uhid: text("uhid").notNull().unique(),
     name: text("name").notNull(),
     age: integer("age").notNull().default(30),
+    dateOfBirth: text("date_of_birth").notNull().default(""),
     gender: text("gender").notNull().default("Male"),
     phone: text("phone").notNull().unique(),
     email: text("email").notNull().default(""),
@@ -346,6 +352,28 @@ export const patientDocuments = pgTable(
     deletedAt: text("deleted_at"),
   },
   (t) => [index("idx_patient_documents_tenant_patient").on(t.tenantId, t.patientId)]
+);
+
+/** Append-only health-document consent. Withdrawal is a new row, never an update. */
+export const patientHealthDocumentConsents = pgTable(
+  "patient_health_document_consents",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull(),
+    patientId: text("patient_id").notNull(),
+    purpose: text("purpose").notNull(),
+    noticeVersion: text("notice_version").notNull(),
+    language: text("language").notNull(),
+    method: text("method").notNull().default(""),
+    capturedById: text("captured_by_id").notNull().default(""),
+    capturedByName: text("captured_by_name").notNull().default(""),
+    capturedByRole: text("captured_by_role").notNull().default(""),
+    capturedAt: text("captured_at").notNull(),
+    guardianName: text("guardian_name").notNull().default(""),
+    guardianRelation: text("guardian_relation").notNull().default(""),
+    event: text("event").notNull(),
+  },
+  (t) => [index("idx_patient_doc_consent_tenant_patient").on(t.tenantId, t.patientId)]
 );
 
 /** Single-use preview grants. The raw token is never stored, only its hash. */

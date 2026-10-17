@@ -1,8 +1,13 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Camera, Download, Eye, FileText, Trash2, Upload, X } from "lucide-react";
 import { apiFetch, apiFetchResponse } from "../api/http";
-
-const MAX_BYTES = 10 * 1024 * 1024;
+import { consentDialogStep } from "../lib/consentGate";
+import {
+  PATIENT_DOC_MAX_FILE_BYTES,
+  PATIENT_DOCUMENT_LIMIT_LABEL,
+  PATIENT_REPORT_MAX_BYTES,
+} from "../lib/patientReportLimits";
+import { PatientDocumentConsentDialog, type DocumentConsentStatus } from "./PatientDocumentConsentDialog";
 
 const DOC_TYPES = [
   { value: "lab_report", label: "Lab report" },
@@ -72,17 +77,18 @@ function titleFromName(name: string): string {
 }
 
 function clientFileError(file: File): string {
-  if (file.size > MAX_BYTES) return "Each file must be 10 MB or smaller.";
+  if (file.size > PATIENT_DOC_MAX_FILE_BYTES) return "Each file must be 10 MB or smaller.";
+  if (file.size > PATIENT_REPORT_MAX_BYTES) return "Each report must be 25 MB or smaller.";
   const name = file.name.toLowerCase();
-  const allowedExt = [".pdf", ".jpg", ".jpeg", ".png", ".heic", ".heif"];
-  const allowedType = ["application/pdf", "image/jpeg", "image/png", "image/heic", "image/heif", "image/jpg", ""];
+  const allowedExt = [".pdf", ".jpg", ".jpeg", ".png"];
+  const allowedType = ["application/pdf", "image/jpeg", "image/png", "image/jpg", ""];
   const extOk = allowedExt.some((ext) => name.endsWith(ext));
   const type = (file.type || "").toLowerCase();
   if (type && !allowedType.includes(type) && type !== "application/octet-stream") {
-    return "Use a PDF, JPG, PNG, or HEIC file.";
+    return "Use a PDF, JPG, or PNG file.";
   }
-  if (!extOk && type && !allowedType.includes(type)) return "Use a PDF, JPG, PNG, or HEIC file.";
-  if (!extOk && !type) return "Use a PDF, JPG, PNG, or HEIC file.";
+  if (!extOk && type && !allowedType.includes(type)) return "Use a PDF, JPG, or PNG file.";
+  if (!extOk && !type) return "Use a PDF, JPG, or PNG file.";
   return "";
 }
 
@@ -109,10 +115,19 @@ function filesFrom(list: FileList | null): File[] {
   return files;
 }
 
-export const PatientDocuments: React.FC<{ patientId: string }> = ({ patientId }) => {
+export const PatientDocuments: React.FC<{
+  patientId: string;
+  consent: DocumentConsentStatus | null;
+  onConsentChange: (status: DocumentConsentStatus) => void;
+}> = ({ patientId, consent, onConsentChange }) => {
   const [documents, setDocuments] = useState<PatientDocument[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [storageNote, setStorageNote] = useState("");
+  const [consentOpen, setConsentOpen] = useState(false);
+  const [consentGateError, setConsentGateError] = useState("");
+  const [consentRetrying, setConsentRetrying] = useState(false);
+  const pendingAction = useRef<(() => void) | null>(null);
   const [pending, setPending] = useState<PendingFile[]>([]);
   const [thumbs, setThumbs] = useState<Record<string, string>>({});
   const [preview, setPreview] = useState<{ title: string; mime: string; url: string } | null>(null);
@@ -152,9 +167,17 @@ export const PatientDocuments: React.FC<{ patientId: string }> = ({ patientId })
     setDocuments([]);
     setPending([]);
     setConfirmDeleteId("");
-    void apiFetch<{ documents: PatientDocument[] }>(`/api/patients/${encodeURIComponent(patientId)}/documents`)
+    void apiFetch<{ documents: PatientDocument[]; storage?: { available?: boolean; reason?: string } }>(
+      `/api/patients/${encodeURIComponent(patientId)}/documents`
+    )
       .then((data) => {
-        if (!cancelled) setDocuments(data.documents || []);
+        if (cancelled) return;
+        setDocuments(data.documents || []);
+        if (data.storage && data.storage.available === false) {
+          setStorageNote(data.storage.reason || "Document storage is not configured.");
+        } else {
+          setStorageNote("");
+        }
       })
       .catch((err: unknown) => {
         if (!cancelled) setError(err instanceof Error ? err.message : "Could not load documents");
@@ -187,7 +210,7 @@ export const PatientDocuments: React.FC<{ patientId: string }> = ({ patientId })
     };
   }, [documents, patientId]);
 
-  function addFiles(files: File[]) {
+  async function addFiles(files: File[]) {
     const next: PendingFile[] = [];
     const problems: string[] = [];
     for (const file of files) {
@@ -214,6 +237,53 @@ export const PatientDocuments: React.FC<{ patientId: string }> = ({ patientId })
     setPending((prev) => prev.map((item) => (item.key === key ? { ...item, ...patch } : item)));
   }
 
+  function needsConsent(): boolean {
+    return !consent?.active;
+  }
+
+  const storageUnavailable = Boolean(storageNote);
+
+  async function openConsentDialog() {
+    const step = consentDialogStep(409, "CONSENT_REQUIRED", Boolean(consent));
+    if (step === "open") {
+      setConsentGateError("");
+      setConsentOpen(true);
+      return;
+    }
+    setConsentRetrying(true);
+    setConsentGateError("");
+    try {
+      const status = await apiFetch<DocumentConsentStatus>(
+        `/api/patients/${encodeURIComponent(patientId)}/document-consent`
+      );
+      onConsentChange(status);
+      setConsentOpen(true);
+    } catch (err) {
+      setConsentOpen(false);
+      setConsentGateError(err instanceof Error ? err.message : "Could not load the consent notice.");
+    } finally {
+      setConsentRetrying(false);
+    }
+  }
+
+  function withConsent(action: () => void) {
+    if (storageUnavailable) return;
+    if (needsConsent()) {
+      pendingAction.current = action;
+      void openConsentDialog();
+      return;
+    }
+    action();
+  }
+
+  function consentGranted(next: DocumentConsentStatus) {
+    onConsentChange(next);
+    setConsentOpen(false);
+    const action = pendingAction.current;
+    pendingAction.current = null;
+    if (next.active && action) action();
+  }
+
   async function uploadOne(item: PendingFile) {
     if (!item.title.trim() || !item.docType || !item.documentDate) {
       updatePending(item.key, { error: "Add a title, type, and date before uploading." });
@@ -226,13 +296,39 @@ export const PatientDocuments: React.FC<{ patientId: string }> = ({ patientId })
     body.set("docType", item.docType);
     body.set("documentDate", item.documentDate);
     try {
-      const saved = await apiFetch<{ document: PatientDocument }>(
-        `/api/patients/${encodeURIComponent(patientId)}/documents`,
-        { method: "POST", body }
-      );
+      const res = await apiFetchResponse(`/api/patients/${encodeURIComponent(patientId)}/documents`, {
+        method: "POST",
+        body,
+      });
+      const saved = (await res.json().catch(() => ({}))) as {
+        document?: PatientDocument;
+        error?: string;
+        code?: string;
+      };
+      if (!res.ok) {
+        const code = String(saved.code || "");
+        const step = consentDialogStep(res.status, code, Boolean(consent));
+        if (step === "open" || step === "fetch") {
+          updatePending(item.key, { uploading: false, error: "" });
+          pendingAction.current = () => {
+            void uploadOne(item);
+          };
+          if (step === "open") setConsentOpen(true);
+          else void openConsentDialog();
+          return;
+        }
+        if (res.status === 503) {
+          setStorageNote(saved.error || "Document storage is not configured.");
+        }
+        updatePending(item.key, {
+          uploading: false,
+          error: saved.error || `Upload failed (${res.status})`,
+        });
+        return;
+      }
       setPending((prev) => prev.filter((row) => row.key !== item.key));
       if (saved.document?.id) {
-        setDocuments((prev) => [saved.document, ...prev.filter((row) => row.id !== saved.document.id)]);
+        setDocuments((prev) => [saved.document!, ...prev.filter((row) => row.id !== saved.document!.id)]);
       }
     } catch (err) {
       updatePending(item.key, {
@@ -243,6 +339,7 @@ export const PatientDocuments: React.FC<{ patientId: string }> = ({ patientId })
   }
 
   async function startWebcam() {
+    if (storageUnavailable) return;
     setWebcamError("");
     if (!navigator.mediaDevices?.getUserMedia) {
       setWebcamError("This browser has no webcam. Take a photo or choose a file instead.");
@@ -261,6 +358,7 @@ export const PatientDocuments: React.FC<{ patientId: string }> = ({ patientId })
   }
 
   function captureWebcam() {
+    if (storageUnavailable) return;
     const video = videoRef.current;
     if (!video || !video.videoWidth) {
       setWebcamError("The camera is still starting. Try again in a moment.");
@@ -277,7 +375,7 @@ export const PatientDocuments: React.FC<{ patientId: string }> = ({ patientId })
           return;
         }
         const file = new File([blob], `camera-${Date.now()}.jpg`, { type: "image/jpeg" });
-        addFiles([file]);
+        void addFiles([file]);
         stopWebcam();
       },
       "image/jpeg",
@@ -359,20 +457,28 @@ export const PatientDocuments: React.FC<{ patientId: string }> = ({ patientId })
 
   return (
     <section
+      id="patient-documents"
       data-testid="patient-documents"
       className="rounded-xl border border-slate-200 bg-white p-4 space-y-3 min-w-0 max-w-full overflow-x-hidden"
     >
       <div className="min-w-0">
         <h2 className="text-sm font-bold text-slate-900">Documents &amp; Reports</h2>
         <p className="text-xs text-slate-600 mt-1 break-words">
-          Attach earlier reports for this patient. Files stay private to this clinic.
+          Attach earlier reports for this patient. Files stay private to this clinic. PDF, JPG, or PNG. {PATIENT_DOCUMENT_LIMIT_LABEL}
         </p>
       </div>
+
+      {storageNote && (
+        <p className="text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 break-words" role="status">
+          {storageNote} Uploads stay off until storage is configured. Nothing is saved in a public folder.
+        </p>
+      )}
 
       <div className="flex flex-col gap-2 w-full min-w-0 sm:flex-row sm:flex-wrap">
         <button
           type="button"
-          onClick={() => cameraRef.current?.click()}
+          disabled={storageUnavailable}
+          onClick={() => withConsent(() => cameraRef.current?.click())}
           className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm font-semibold text-slate-800 hover:bg-slate-50"
         >
           <Camera className="w-4 h-4" />
@@ -381,7 +487,8 @@ export const PatientDocuments: React.FC<{ patientId: string }> = ({ patientId })
         <button
           type="button"
           data-testid="patient-document-webcam"
-          onClick={() => void startWebcam()}
+          disabled={storageUnavailable}
+          onClick={() => withConsent(() => void startWebcam())}
           className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm font-semibold text-slate-800 hover:bg-slate-50"
         >
           <Camera className="w-4 h-4" />
@@ -389,7 +496,8 @@ export const PatientDocuments: React.FC<{ patientId: string }> = ({ patientId })
         </button>
         <button
           type="button"
-          onClick={() => fileRef.current?.click()}
+          disabled={storageUnavailable}
+          onClick={() => withConsent(() => fileRef.current?.click())}
           className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700"
         >
           <Upload className="w-4 h-4" />
@@ -399,29 +507,44 @@ export const PatientDocuments: React.FC<{ patientId: string }> = ({ patientId })
           ref={cameraRef}
           data-testid="patient-document-camera"
           type="file"
-          accept="image/*"
+          accept="image/jpeg,image/png,.jpg,.jpeg,.png"
           capture="environment"
           className="sr-only"
           onChange={(event) => {
             const files = filesFrom(event.target.files);
             event.target.value = "";
-            if (files.length) addFiles(files);
+            if (files.length) void addFiles(files);
           }}
         />
         <input
           ref={fileRef}
           data-testid="patient-document-file"
           type="file"
-          accept=".pdf,.jpg,.jpeg,.png,.heic,.heif,application/pdf,image/jpeg,image/png,image/heic,image/heif"
+          accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
           multiple
           className="sr-only"
           onChange={(event) => {
             const files = filesFrom(event.target.files);
             event.target.value = "";
-            if (files.length) addFiles(files);
+            if (files.length) void addFiles(files);
           }}
         />
       </div>
+
+      {consentGateError && (
+        <p className="text-sm text-rose-800 break-words" role="alert" data-testid="consent-notice-error">
+          {consentGateError}{" "}
+          <button
+            type="button"
+            data-testid="consent-notice-retry"
+            disabled={consentRetrying}
+            onClick={() => void openConsentDialog()}
+            className="font-semibold underline disabled:opacity-50"
+          >
+            {consentRetrying ? "Retrying…" : "Retry"}
+          </button>
+        </p>
+      )}
 
       {webcamError && (
         <p className="text-xs text-rose-700 break-words" role="alert">
@@ -443,6 +566,7 @@ export const PatientDocuments: React.FC<{ patientId: string }> = ({ patientId })
             <button
               type="button"
               data-testid="patient-document-webcam-capture"
+              disabled={storageUnavailable}
               onClick={captureWebcam}
               className="w-full sm:w-auto px-3 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold"
             >
@@ -641,6 +765,18 @@ export const PatientDocuments: React.FC<{ patientId: string }> = ({ patientId })
             </div>
           </div>
         </div>
+      )}
+
+      {consentOpen && consent && (
+        <PatientDocumentConsentDialog
+          patientId={patientId}
+          status={consent}
+          onClose={() => {
+            pendingAction.current = null;
+            setConsentOpen(false);
+          }}
+          onGranted={consentGranted}
+        />
       )}
     </section>
   );

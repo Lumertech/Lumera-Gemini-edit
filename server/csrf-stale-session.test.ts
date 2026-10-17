@@ -1415,7 +1415,7 @@ describe("stale anonymous __session CSRF refresh", () => {
 
   function pdfUpload(title: string): FormData {
     const form = new FormData();
-    const bytes = Buffer.from("%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF");
+    const bytes = Buffer.from("%PDF-1.4\n1 0 obj<</Type /Page>>endobj\ntrailer<<>>\n%%EOF");
     form.set("file", new File([new Uint8Array(bytes)], "cbc.pdf", { type: "application/pdf" }));
     form.set("title", title);
     form.set("docType", "lab_report");
@@ -1494,6 +1494,13 @@ describe("stale anonymous __session CSRF refresh", () => {
       const late = await lateMe;
       assert.equal(late.csrfToken, boot.csrfToken);
 
+      await apiFetch(
+        `http://127.0.0.1:${server.port}/api/patients/ind-pat-rajiv/document-consent`,
+        {
+          method: "POST",
+          body: JSON.stringify({ language: "en", method: "staff_attested_verbal", attested: true }),
+        }
+      );
       const saved = await apiFetch<{ document?: { id?: string; title?: string } }>(
         `http://127.0.0.1:${server.port}/api/patients/ind-pat-rajiv/documents`,
         { method: "POST", body: pdfUpload("CBC right after login") }

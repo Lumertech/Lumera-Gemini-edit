@@ -2,13 +2,16 @@ import React, { useEffect, useRef, useState } from "react";
 import { ArrowLeft, Phone, Search, UserPlus } from "lucide-react";
 import { apiFetch } from "../api/http";
 import { PatientDocuments } from "./PatientDocuments";
-import { formatINR } from "../lib/currency.ts";
-import { isAbhaLinked, type Appointment, type Patient, type Prescription, type Vitals } from "../types";
+import { type DocumentConsentStatus } from "./PatientDocumentConsentDialog";
+import { PatientTimeline, type PatientTimelineItem, type TimelineLinkView } from "./PatientTimeline";
+import { CLINIC_NAME_REQUIRED_MESSAGE } from "../lib/healthDocumentNotice";
+import { isAbhaLinked, type Appointment, type Patient, type Prescription } from "../types";
 
 interface ChartResponse {
   patient: Patient;
   visits: Appointment[];
   prescriptions: Prescription[];
+  timeline?: PatientTimelineItem[];
 }
 
 interface PatientsWorkspaceProps {
@@ -20,18 +23,7 @@ interface PatientsWorkspaceProps {
   onSelectPatient: (patient: Patient) => void;
   onOpenPrescription: (patient: Patient) => void;
   onCheckIn: (patient: Patient) => void;
-}
-
-function vitalsLine(vitals?: Vitals | null): string {
-  if (!vitals) return "";
-  const parts: string[] = [];
-  if (vitals.bloodPressureSystolic && vitals.bloodPressureDiastolic) {
-    parts.push(`BP ${vitals.bloodPressureSystolic}/${vitals.bloodPressureDiastolic}`);
-  }
-  if (vitals.heartRate) parts.push(`Pulse ${vitals.heartRate}`);
-  if (vitals.temperature) parts.push(`Temp ${vitals.temperature}`);
-  if (vitals.spO2) parts.push(`SpO2 ${vitals.spO2}%`);
-  return parts.join(" · ");
+  onOpenLinked: (patient: Patient, view: TimelineLinkView) => void;
 }
 
 export const PatientsWorkspace: React.FC<PatientsWorkspaceProps> = ({
@@ -43,6 +35,7 @@ export const PatientsWorkspace: React.FC<PatientsWorkspaceProps> = ({
   onSelectPatient,
   onOpenPrescription,
   onCheckIn,
+  onOpenLinked,
 }) => {
   if (recordId) {
     return (
@@ -53,6 +46,7 @@ export const PatientsWorkspace: React.FC<PatientsWorkspaceProps> = ({
         onSelectPatient={onSelectPatient}
         onOpenPrescription={onOpenPrescription}
         onCheckIn={onCheckIn}
+        onOpenLinked={onOpenLinked}
       />
     );
   }
@@ -118,7 +112,7 @@ const PatientList: React.FC<{
         <h1 className="text-lg sm:text-xl font-bold text-slate-900">Patients</h1>
         {/* honesty-allow: search copy names ABHA as an id to match, not a live-link badge */}
         <p className="text-sm text-slate-600 mt-1 break-words">
-          Find a patient in this clinic by name, phone, or ABHA, then open their chart.
+          Find a patient in this clinic by name, phone, UHID, or ABHA, then open their chart.
         </p>
       </div>
 
@@ -137,8 +131,8 @@ const PatientList: React.FC<{
           type="search"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Name, phone, or ABHA"
-          aria-label="Search patients by name, phone, or ABHA"
+          placeholder="Name, phone, UHID, or ABHA"
+          aria-label="Search patients by name, phone, UHID, or ABHA"
           className="w-full min-w-0 pl-9 pr-3 py-2.5 bg-white border border-slate-300 rounded-xl text-sm text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
         />
       </form>
@@ -188,7 +182,7 @@ const PatientList: React.FC<{
             <button
               key={patient.id}
               type="button"
-              data-testid={`patient-row-${patient.id}`}
+              data-testid={`patient-card-${patient.id}`}
               onClick={() => onOpenPatient(patient.id)}
               className="w-full min-w-0 text-left rounded-xl border border-slate-200 bg-white px-3 py-3 hover:border-blue-300 hover:bg-blue-50/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
             >
@@ -230,10 +224,15 @@ const PatientDetail: React.FC<{
   onSelectPatient: (patient: Patient) => void;
   onOpenPrescription: (patient: Patient) => void;
   onCheckIn: (patient: Patient) => void;
-}> = ({ patientId, canPrescribe, onBack, onSelectPatient, onOpenPrescription, onCheckIn }) => {
+  onOpenLinked: (patient: Patient, view: TimelineLinkView) => void;
+}> = ({ patientId, canPrescribe, onBack, onSelectPatient, onOpenPrescription, onCheckIn, onOpenLinked }) => {
   const [chart, setChart] = useState<ChartResponse | null>(null);
+  const [consent, setConsent] = useState<DocumentConsentStatus | null>(null);
+  const [consentError, setConsentError] = useState("");
+  const [withdrawing, setWithdrawing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -258,7 +257,39 @@ const PatientDetail: React.FC<{
     };
     // onSelectPatient is stable enough for a one-shot load; identity changes must not refetch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [patientId]);
+  }, [patientId, reloadKey]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setConsent(null);
+    void apiFetch<DocumentConsentStatus>(`/api/patients/${encodeURIComponent(patientId)}/document-consent`)
+      .then((data) => {
+        if (!cancelled) setConsent(data);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setConsentError(err instanceof Error ? err.message : "Could not load consent");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [patientId, reloadKey]);
+
+  async function withdrawConsent() {
+    setWithdrawing(true);
+    setConsentError("");
+    try {
+      const saved = await apiFetch<{ status: DocumentConsentStatus }>(
+        `/api/patients/${encodeURIComponent(patientId)}/document-consent/withdraw`,
+        { method: "POST", body: "{}" }
+      );
+      setConsent(saved.status);
+      setReloadKey((value) => value + 1);
+    } catch (err) {
+      setConsentError(err instanceof Error ? err.message : "Could not record withdrawal");
+    } finally {
+      setWithdrawing(false);
+    }
+  }
 
   const patient = chart?.patient;
 
@@ -312,10 +343,11 @@ const PatientDetail: React.FC<{
                 {canPrescribe && (
                   <button
                     type="button"
+                    data-testid="patient-start-consult"
                     onClick={() => onOpenPrescription(patient)}
                     className="w-full px-3 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                   >
-                    Open prescription
+                    Start consult
                   </button>
                 )}
                 <button
@@ -325,8 +357,41 @@ const PatientDetail: React.FC<{
                 >
                   Book / check in
                 </button>
+                <button
+                  type="button"
+                  onClick={() => onOpenLinked(patient, "billing")}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm font-semibold text-slate-800 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                >
+                  Collect payment
+                </button>
+                {consent?.active && (
+                  <button
+                    type="button"
+                    data-testid="withdraw-document-consent"
+                    disabled={withdrawing}
+                    onClick={() => void withdrawConsent()}
+                    className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    {withdrawing ? "Recording…" : "Withdraw consent"}
+                  </button>
+                )}
               </div>
             </div>
+            {consent && !consent.active && consent.latest?.event === "withdrawn" && (
+              <p className="text-xs text-slate-700 break-words" data-testid="consent-withdrawn-note">
+                Consent withdrawn. Existing reports stay for the retention period ({consent.retentionYears} years, pending confirmation). New reports will not be stored.
+              </p>
+            )}
+            {consent && consent.clinicNameSet === false && (
+              <p className="text-xs text-rose-800 break-words" role="alert" data-testid="clinic-name-required">
+                {CLINIC_NAME_REQUIRED_MESSAGE}
+              </p>
+            )}
+            {consentError && (
+              <p className="text-xs text-rose-700 break-words" role="alert">
+                {consentError}
+              </p>
+            )}
             <div className="grid grid-cols-1 gap-3 text-sm">
               <div>
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Allergies</p>
@@ -366,100 +431,23 @@ const PatientDetail: React.FC<{
             </dl>
           </section>
 
-          <section data-testid="patient-visits" className="rounded-xl border border-slate-200 bg-white p-4 space-y-3 min-w-0">
-            <h2 className="text-sm font-bold text-slate-900">Visit history</h2>
-            {(chart?.visits || []).length === 0 ? (
-              <div>
-                <p className="text-sm text-slate-600">No visits recorded for this patient yet.</p>
-                <button
-                  type="button"
-                  onClick={() => onCheckIn(patient)}
-                  className="mt-2 text-sm font-semibold text-blue-700 hover:text-blue-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded"
-                >
-                  Book / check in
-                </button>
-              </div>
-            ) : (
-              <ul className="space-y-2">
-                {chart?.visits.map((visit) => {
-                  const vitals = vitalsLine(visit.vitals);
-                  return (
-                    <li key={visit.id} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 min-w-0">
-                      <p className="text-sm font-semibold text-slate-900 break-words">
-                        {visit.date || "Undated"} · {visit.timeSlot || "Time not set"}
-                      </p>
-                      <p className="text-xs text-slate-600 break-words mt-0.5">
-                        {visit.type || "Visit"} · {visit.status || "—"}
-                        {visit.doctorName ? ` · ${visit.doctorName}` : ""}
-                      </p>
-                      <p className="text-xs text-slate-800 mt-1">
-                        Fee {formatINR(Number(visit.consultationFee || 0))}
-                        {visit.isPaid ? " · Paid" : " · Unpaid"}
-                      </p>
-                      {vitals && <p className="text-xs text-slate-600 mt-1 break-words">{vitals}</p>}
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </section>
+          <PatientTimeline
+            items={chart?.timeline || []}
+            canPrescribe={canPrescribe}
+            onOpen={(item) => {
+              if (item.type === "prescription" && canPrescribe) onOpenPrescription(patient);
+              else if (item.linkView) onOpenLinked(patient, item.linkView);
+            }}
+          />
 
-          <section data-testid="patient-prescriptions" className="rounded-xl border border-slate-200 bg-white p-4 space-y-3 min-w-0">
-            <h2 className="text-sm font-bold text-slate-900">Prescriptions</h2>
-            {(chart?.prescriptions || []).length === 0 ? (
-              <div>
-                <p className="text-sm text-slate-600">No prescriptions issued for this patient yet.</p>
-                {canPrescribe && (
-                  <button
-                    type="button"
-                    onClick={() => onOpenPrescription(patient)}
-                    className="mt-2 text-sm font-semibold text-blue-700 hover:text-blue-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded"
-                  >
-                    Open prescription
-                  </button>
-                )}
-              </div>
-            ) : (
-              <ul className="space-y-3">
-                {chart?.prescriptions.map((rx) => (
-                  <li key={rx.id} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 min-w-0">
-                    <p className="text-sm font-semibold text-slate-900 break-words">
-                      {rx.rxNumber || "Prescription"} · {rx.date || "Undated"}
-                    </p>
-                    <p className="text-xs text-slate-600 break-words">
-                      {rx.doctorName || "Clinician"}
-                      {rx.diagnosis ? ` · ${rx.diagnosis}` : ""}
-                    </p>
-                    {(rx.medicines || []).length > 0 && (
-                      <ul className="mt-2 space-y-1">
-                        {rx.medicines.map((medicine) => (
-                          <li key={medicine.id || medicine.drugName} className="text-xs text-slate-800 break-words">
-                            {medicine.drugName}
-                            {medicine.dosage ? ` ${medicine.dosage}` : ""}
-                            {medicine.frequency ? ` · ${medicine.frequency}` : ""}
-                            {medicine.durationDays ? ` · ${medicine.durationDays} days` : ""}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                    {(rx.labTests || []).some((test) => typeof test.price === "number") && (
-                      <ul className="mt-2 space-y-1">
-                        {rx.labTests
-                          .filter((test) => typeof test.price === "number")
-                          .map((test) => (
-                            <li key={test.id || test.testName} className="text-xs text-slate-700 break-words">
-                              {test.testName} · {formatINR(Number(test.price))}
-                            </li>
-                          ))}
-                      </ul>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-
-          <PatientDocuments patientId={patient.id} />
+          <PatientDocuments
+            patientId={patient.id}
+            consent={consent}
+            onConsentChange={(next) => {
+              setConsent(next);
+              setReloadKey((value) => value + 1);
+            }}
+          />
         </>
       )}
     </div>

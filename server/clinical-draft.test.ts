@@ -449,15 +449,32 @@ describe("prescription draft scoping and AI review gate", () => {
          ) VALUES (?, ?, 'Dr Foreign', '', 'REG-F', 'General Medicine', 1, 0, '', '[]', '', '', '', '', '', '', 1)`
       )
       .run(foreignDoctorId, other.userId);
-    const token = await login(receptionEmail);
-    const auth = { Authorization: `Bearer ${token}` };
-    const patient = await createPatient(auth, "Desk Patient", `+91 98520 ${clinic.tenantId.slice(-4)}`);
+    const adminId = `user-admin-${clinic.tenantId.slice(-6)}`;
+    const adminEmail = `admin.${clinic.tenantId.slice(-6)}@opd-test.example`;
+    getDb()
+      .prepare(
+        `INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, clinic_name, onboarding_completed, practice_type, specialty, last_login, created_at)
+         VALUES (?, ?, ?, ?, 'Clinic Admin', 'CLINIC_ADMIN', 'active', '+91 90000 55556', 'Clinic draft-doc', 1, 'individual', 'General Medicine', ?, ?)`
+      )
+      .run(adminId, clinic.tenantId, adminEmail, hashPassword("Lumera@2026"), now, now);
+    const deskAuth = { Authorization: `Bearer ${await login(receptionEmail)}` };
+    const adminAuth = { Authorization: `Bearer ${await login(adminEmail)}` };
+    const patient = await createPatient(adminAuth, "Desk Patient", `+91 98520 ${clinic.tenantId.slice(-4)}`);
+    const denied = await jsonRequest(
+      port,
+      "POST",
+      "/api/prescriptions/draft",
+      { ...fullDraft(patient.id), doctorId: foreignDoctorId, diagnosis: "FOREIGN-DOC" },
+      deskAuth
+    );
+    assert.equal(denied.status, 403);
+    assert.equal(denied.json.code, "ROLE_DENIED");
     const saved = await jsonRequest(
       port,
       "POST",
       "/api/prescriptions/draft",
       { ...fullDraft(patient.id), doctorId: foreignDoctorId, diagnosis: "FOREIGN-DOC" },
-      auth
+      adminAuth
     );
     assert.equal(saved.status, 400);
     assert.match(String(saved.json.error), /Consulting doctor/);

@@ -19,8 +19,16 @@ import multer, { MulterError } from "multer";
 import { getDb, publicUser, writeAudit, type DbUser } from "./db.ts";
 import { requireAuth } from "./auth.ts";
 import { reportCaughtError } from "./error-tracker.ts";
+import { assertActiveHealthDocumentConsent } from "./patient-document-consent.ts";
+import {
+  PATIENT_DOC_MAX_FILE_BYTES,
+  PATIENT_REPORT_MAX_BYTES,
+  PATIENT_REPORT_MAX_PAGES,
+} from "../src/lib/patientReportLimits.ts";
+import { countPdfPages } from "./pdf-page-count.ts";
 
-export const PATIENT_DOC_MAX_BYTES = 10 * 1024 * 1024;
+export { PATIENT_DOC_MAX_FILE_BYTES, PATIENT_REPORT_MAX_BYTES };
+export const PATIENT_DOC_MAX_PAGES = PATIENT_REPORT_MAX_PAGES;
 export const PATIENT_DOC_SIGNED_URL_TTL_MS = 5 * 60 * 1000;
 const PREVIEW_TICKET_TTL_MS = 5 * 60 * 1000;
 
@@ -39,7 +47,7 @@ export type PatientDocType = (typeof PATIENT_DOC_TYPES)[number];
 
 const DOCUMENT_STAFF = new Set(["doctor", "receptionist", "CLINIC_ADMIN", "polyclinic_admin"]);
 
-const ALLOWED_MIME = new Set(["application/pdf", "image/jpeg", "image/png", "image/heic", "image/heif"]);
+const ALLOWED_MIME = new Set(["application/pdf", "image/jpeg", "image/png"]);
 
 type DocumentRow = {
   id: string;
@@ -144,17 +152,6 @@ export function detectPatientDocumentMime(bytes: Buffer): string | null {
   ) {
     return "image/png";
   }
-  return detectHeifMime(bytes);
-}
-
-function detectHeifMime(bytes: Buffer): "image/heic" | "image/heif" | null {
-  if (bytes.length < 12) return null;
-  if (bytes.subarray(4, 8).toString("latin1") !== "ftyp") return null;
-  const brand = bytes.subarray(8, 12).toString("latin1").toLowerCase();
-  if (brand === "heic" || brand === "heix" || brand === "hevc" || brand === "hevx") return "image/heic";
-  if (brand === "heif" || brand === "mif1" || brand === "msf1" || brand === "heim" || brand === "heis") {
-    return "image/heif";
-  }
   return null;
 }
 
@@ -162,25 +159,30 @@ function declaredMatches(detected: string, declared: string): boolean {
   if (!declared || declared === "application/octet-stream") return true;
   if (declared === detected) return true;
   if (detected === "image/jpeg" && (declared === "image/jpg" || declared === "image/pjpeg")) return true;
-  if (
-    (detected === "image/heic" || detected === "image/heif") &&
-    (declared === "image/heic" || declared === "image/heif")
-  ) {
-    return true;
-  }
   return false;
 }
 
-export function assertAllowedPatientDocument(bytes: Buffer, declaredMime: string): string {
+export async function assertAllowedPatientDocument(bytes: Buffer, declaredMime: string): Promise<string> {
   if (!bytes.length) throw httpError(400, "The file is empty.");
-  if (bytes.length > PATIENT_DOC_MAX_BYTES) throw httpError(400, "Each file must be 10 MB or smaller.");
+  if (bytes.length > PATIENT_DOC_MAX_FILE_BYTES) {
+    throw httpError(400, "Each file must be 10 MB or smaller.");
+  }
+  if (bytes.length > PATIENT_REPORT_MAX_BYTES) {
+    throw httpError(400, "Each report must be 25 MB or smaller.");
+  }
   const detected = detectPatientDocumentMime(bytes);
   if (!detected || !ALLOWED_MIME.has(detected)) {
-    throw httpError(400, "File type is not allowed. Use PDF, JPG, PNG, or HEIC.");
+    throw httpError(400, "File type is not allowed. Use PDF, JPG, or PNG.");
   }
   const declared = String(declaredMime || "").toLowerCase().split(";")[0].trim();
   if (!declaredMatches(detected, declared)) {
     throw httpError(400, "File contents do not match the declared type.");
+  }
+  if (detected === "application/pdf") {
+    const pages = await countPdfPages(bytes);
+    if (pages != null && pages > PATIENT_DOC_MAX_PAGES) {
+      throw httpError(400, "A report can be at most 20 pages.");
+    }
   }
   return detected;
 }
@@ -220,13 +222,9 @@ function contentDisposition(download: boolean, filename: string): string {
   return `${download ? "attachment" : "inline"}; filename="${ascii}"`;
 }
 
-function isClinicAdmin(role: string | undefined): boolean {
-  return role === "CLINIC_ADMIN" || role === "polyclinic_admin";
-}
-
 function isDocumentStaff(req: Request, res: Response): boolean {
   if (!DOCUMENT_STAFF.has(String(req.user?.role || ""))) {
-    res.status(403).json({ error: "Insufficient permissions" });
+    res.status(403).json({ error: "Insufficient permissions", code: "ROLE_DENIED" });
     return false;
   }
   return true;
@@ -257,8 +255,11 @@ function loadDocument(tenantId: string, patientId: string, documentId: string): 
     .get(documentId, tenantId, patientId) as DocumentRow | undefined;
 }
 
+/** Only the clinic admin of the document's tenant. Doctors, uploaders, and other staff cannot. */
 function canDelete(req: Request, row: DocumentRow): boolean {
-  return isClinicAdmin(req.user?.role) || req.user?.id === row.uploaded_by_id;
+  if (String(req.user?.role || "") !== "CLINIC_ADMIN") return false;
+  const tenantId = String(req.user?.tenantId || "").trim();
+  return Boolean(tenantId) && tenantId === String(row.tenant_id || "");
 }
 
 function publicDocument(row: DocumentRow, req: Request) {
@@ -284,7 +285,14 @@ function audit(req: Request, action: string, details: Record<string, string>) {
     req.user?.id || null,
     req.user?.name || "Staff",
     action,
-    JSON.stringify(details)
+    JSON.stringify(details),
+    {
+      tenantId: details.tenantId,
+      patientId: details.patientId,
+      actorRole: String(req.user?.role || ""),
+      entityType: "patient_document",
+      entityId: details.documentId || "",
+    }
   );
 }
 
@@ -297,17 +305,36 @@ async function writeGcsObject(bucketName: string, storageKey: string, bytes: Buf
   });
 }
 
+/** Refuses a signed URL that is already past its expiry, including a GCS 403 on a stale URL. */
+export async function readBytesFromSignedUrl(
+  url: string,
+  expiresAtMs: number,
+  fetchImpl: typeof fetch = fetch,
+  now = Date.now()
+): Promise<Buffer> {
+  if (!Number.isFinite(expiresAtMs) || expiresAtMs <= now) {
+    throw httpError(410, "This document link has expired.");
+  }
+  const response = await fetchImpl(url);
+  if (!response.ok) {
+    if (response.status === 400 || response.status === 403) {
+      throw httpError(410, "This document link has expired.");
+    }
+    throw httpError(404, "Document not found");
+  }
+  return Buffer.from(await response.arrayBuffer());
+}
+
 async function readGcsObject(bucketName: string, storageKey: string): Promise<Buffer> {
   const { Storage } = await import("@google-cloud/storage");
   const file = new Storage().bucket(bucketName).file(storageKey);
+  const expires = Date.now() + PATIENT_DOC_SIGNED_URL_TTL_MS;
   const [url] = await file.getSignedUrl({
     version: "v4",
     action: "read",
-    expires: Date.now() + PATIENT_DOC_SIGNED_URL_TTL_MS,
+    expires,
   });
-  const response = await fetch(url);
-  if (!response.ok) throw httpError(404, "Document not found");
-  return Buffer.from(await response.arrayBuffer());
+  return readBytesFromSignedUrl(url, expires);
 }
 
 async function deleteGcsObject(bucketName: string, storageKey: string) {
@@ -416,15 +443,16 @@ function userFromPreviewTicket(req: Request): void {
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: PATIENT_DOC_MAX_BYTES, files: 1 },
+  limits: { fileSize: PATIENT_DOC_MAX_FILE_BYTES, files: 1 },
 });
 
 function sendKnownError(res: Response, err: unknown, fallback: string) {
   const status = errorStatus(err);
   const message = err instanceof Error ? err.message : fallback;
+  const code = typeof err === "object" && err && "code" in err ? String((err as { code?: string }).code || "") : "";
   if (status >= 500 && status !== 503) reportCaughtError(err, "patient-documents");
   const error = status === 503 ? message : status >= 500 ? fallback : message;
-  if (!res.headersSent) res.status(status || 500).json({ error });
+  if (!res.headersSent) res.status(status || 500).json(code ? { error, code } : { error });
 }
 
 export function registerPatientDocumentRoutes(api: Router) {
@@ -443,7 +471,12 @@ export function registerPatientDocumentRoutes(api: Router) {
            ORDER BY document_date DESC, created_at DESC`
         )
         .all(tenantId, req.params.id) as DocumentRow[];
-      res.json({ documents: rows.map((row) => publicDocument(row, req)) });
+      res.json({
+        documents: rows.map((row) => publicDocument(row, req)),
+        storage: patientDocumentStorageUnavailable()
+          ? { available: false, reason: PATIENT_DOCS_UNAVAILABLE_ERROR }
+          : { available: true },
+      });
     } catch (err) {
       sendKnownError(res, err, "Failed to list documents");
     }
@@ -511,10 +544,11 @@ async function handleUpload(req: Request, res: Response, tenantId: string) {
   try {
     const file = req.file;
     if (!file?.buffer?.length) throw httpError(400, "Choose a file to upload.");
-    const mime = assertAllowedPatientDocument(file.buffer, file.mimetype);
+    const mime = await assertAllowedPatientDocument(file.buffer, file.mimetype);
     const title = parseTitle(req.body?.title);
     const docType = parseDocType(req.body?.docType);
     const documentDate = parseDocumentDate(req.body?.documentDate);
+    assertActiveHealthDocumentConsent(tenantId, req.params.id);
     stored = await storePatientDocumentBytes(tenantId, req.params.id, file.buffer, mime);
     const id = `pdoc-${crypto.randomUUID().slice(0, 12)}`;
     const now = new Date().toISOString();
@@ -615,7 +649,7 @@ async function handleDelete(req: Request, res: Response) {
     const row = loadDocument(tenantId, req.params.id, req.params.documentId);
     if (!row) return res.status(404).json({ error: "Document not found" });
     if (!canDelete(req, row)) {
-      return res.status(403).json({ error: "Only the uploader or a clinic admin can delete this document." });
+      return res.status(403).json({ error: "Only a clinic admin can delete this document." });
     }
     const now = new Date().toISOString();
     getDb()
@@ -624,7 +658,6 @@ async function handleDelete(req: Request, res: Response) {
          WHERE id = ? AND tenant_id = ? AND patient_id = ? AND deleted_at IS NULL`
       )
       .run(now, row.id, tenantId, req.params.id);
-    await removeStoredPatientDocument(tenantId, row.storage_key, row.storage_backend);
     audit(req, "patient_document.delete", {
       tenantId,
       patientId: req.params.id,

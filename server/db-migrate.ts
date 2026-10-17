@@ -450,6 +450,54 @@ export function migrate(database: SqlDatabase) {
     );
   } catch {}
 
+  try {
+    database.exec(
+      `CREATE TABLE IF NOT EXISTS patient_health_document_consents (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        patient_id TEXT NOT NULL,
+        purpose TEXT NOT NULL,
+        notice_version TEXT NOT NULL,
+        language TEXT NOT NULL,
+        method TEXT NOT NULL DEFAULT '',
+        captured_by_id TEXT NOT NULL DEFAULT '',
+        captured_by_name TEXT NOT NULL DEFAULT '',
+        captured_by_role TEXT NOT NULL DEFAULT '',
+        captured_at TEXT NOT NULL,
+        guardian_name TEXT NOT NULL DEFAULT '',
+        guardian_relation TEXT NOT NULL DEFAULT '',
+        event TEXT NOT NULL
+      )`
+    );
+  } catch {}
+  try {
+    database.exec(
+      "CREATE INDEX IF NOT EXISTS idx_patient_doc_consent_tenant_patient ON patient_health_document_consents(tenant_id, patient_id)"
+    );
+  } catch {}
+  try {
+    database.exec("ALTER TABLE patients ADD COLUMN date_of_birth TEXT NOT NULL DEFAULT ''");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE tenants ADD COLUMN health_document_retention_years INTEGER NOT NULL DEFAULT 3");
+  } catch {}
+  for (const column of [
+    "tenant_id TEXT NOT NULL DEFAULT ''",
+    "patient_id TEXT NOT NULL DEFAULT ''",
+    "actor_role TEXT NOT NULL DEFAULT ''",
+    "entity_type TEXT NOT NULL DEFAULT ''",
+    "entity_id TEXT NOT NULL DEFAULT ''",
+  ]) {
+    try {
+      database.exec(`ALTER TABLE audit_logs ADD COLUMN ${column}`);
+    } catch {}
+  }
+  try {
+    database.exec(
+      "CREATE INDEX IF NOT EXISTS idx_audit_logs_tenant_patient ON audit_logs(tenant_id, patient_id)"
+    );
+  } catch {}
+
   backfillLabReportAndBranchTenants(database);
   try {
     database.exec("ALTER TABLE otp_verifications ADD COLUMN failed_attempts INTEGER NOT NULL DEFAULT 0");

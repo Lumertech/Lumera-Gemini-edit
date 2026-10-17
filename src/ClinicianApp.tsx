@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Navbar, NavView } from './components/Navbar';
-import { Sidebar, ROLE_VISIBLE_VIEWS } from './components/Sidebar';
+import { Sidebar, visibleViewsForRole } from './components/Sidebar';
 import { ShieldCheck, UserPlus } from 'lucide-react';
 import { AmbientAIStudio } from './components/AmbientAIStudio';
 import { PrescriptionWriter } from './components/PrescriptionWriter';
@@ -625,12 +625,12 @@ export default function ClinicianApp() {
   };
 
   const userRole = user?.role || 'doctor';
-  let allowedViews = ROLE_VISIBLE_VIEWS[userRole] || ROLE_VISIBLE_VIEWS.doctor;
+  let allowedViews = visibleViewsForRole(userRole);
   if (!isPolyclinicPractice(user)) {
     allowedViews = allowedViews.filter((v) => v !== 'team' && v !== 'polyclinic');
   }
   allowedViews = allowedViewsForWorkflow(allowedViews, pack);
-  const isViewAllowed =
+  const clinicalViewAllowed =
     allowedViews.includes(currentView) ||
     currentView === 'opd-queue' ||
     currentView === 'smart-rx' ||
@@ -642,6 +642,12 @@ export default function ClinicianApp() {
     currentView === 'physio-session' ||
     currentView === 'dental-chart' ||
     currentView === 'gp-home';
+  const isViewAllowed =
+    userRole === 'super_admin'
+      ? currentView === 'settings'
+      : userRole === 'admin'
+        ? false
+        : clinicalViewAllowed;
 
   useEffect(() => {
     if (!isPolyclinicPractice(user) && (currentView === 'polyclinic' || currentView === 'team')) {
@@ -847,6 +853,7 @@ export default function ClinicianApp() {
                   }}
                   onSelectPatient={handleSelectPatient}
                   onOpenPrescription={(patient) => {
+                    if (!(allowedViews.includes('rx') || allowedViews.includes('smart-rx'))) return;
                     handleSelectPatient(patient);
                     setCurrentView('rx');
                   }}
@@ -854,6 +861,11 @@ export default function ClinicianApp() {
                     handleSelectPatient(patient);
                     setIntakeIntent('register');
                     setCurrentView('reception');
+                  }}
+                  onOpenLinked={(patient, view) => {
+                    handleSelectPatient(patient);
+                    if (view === 'rx' && !(allowedViews.includes('rx') || allowedViews.includes('smart-rx'))) return;
+                    setCurrentView(view);
                   }}
                 />
               )}
@@ -865,7 +877,8 @@ export default function ClinicianApp() {
               appointments={appointments}
               workflow={pack}
               firstRunHint={intakeIntent !== 'none' || patients.length === 0}
-              openRxAfterSave={intakeIntent === 'start-consult'}
+              canStartConsult={allowedViews.includes('rx') || allowedViews.includes('smart-rx')}
+              openRxAfterSave={intakeIntent === 'start-consult' && (allowedViews.includes('rx') || allowedViews.includes('smart-rx'))}
               intakeName={intakeName}
               onSelectPatient={setCurrentPatient}
               onAddNewPatient={async (newPat) => {
@@ -891,12 +904,18 @@ export default function ClinicianApp() {
                   throw err instanceof Error ? err : new Error('Could not issue OPD token');
                 }
               }}
-              onSwitchToConsultation={() => setCurrentView('rx')}
-              onStartConsult={(pat) => {
-                setCurrentPatient(pat);
-                setIntakeIntent('none');
-                setCurrentView('rx');
+              onSwitchToConsultation={() => {
+                if (allowedViews.includes('rx') || allowedViews.includes('smart-rx')) setCurrentView('rx');
               }}
+              onStartConsult={
+                allowedViews.includes('rx') || allowedViews.includes('smart-rx')
+                  ? (pat) => {
+                      setCurrentPatient(pat);
+                      setIntakeIntent('none');
+                      setCurrentView('rx');
+                    }
+                  : undefined
+              }
             />
           )}
 
