@@ -49,6 +49,7 @@ import {
   issueLumeraSession,
   isPlatformAdminRole,
   otpEchoPayload,
+  USER_PHONE_MISSING,
   requireAuth,
   requirePlatformAdmin,
   requireRole,
@@ -79,7 +80,6 @@ import { rejectWrongOtp, reserveOtpSend, sendOtpLimited } from "./otp-attempt.ts
 import { parseSpecialtyPackInput, resolveSpecialtyPack } from "./specialty-packs.ts";
 import { appPublicUrl, demoLoginEnabled, isProduction } from "./runtime.ts";
 import { DEMO_PASSWORD } from "../src/lib/demoAccounts.ts";
-import { PATIENT_PHONE_MISSING } from "../src/lib/signedRxWhatsAppSend.ts";
 import { dispatchWhatsAppCloudMessage, isCloudDispatchFailure, resolveGraphCredentials } from "./graph-whatsapp.ts";
 import { toE164Phone } from "./clinical.ts";
 import { inboundTenantIdFromPhoneNumberId } from "./meta.ts";
@@ -500,9 +500,10 @@ export function createApiRouter(): Router {
       return issuePasswordSession(reason);
     }
 
-    // Mandatory WhatsApp Business Phone Binding & Verification
+    // Phone is checked only after the password matched. A missing number cannot
+    // tell a caller which emails exist: unknown emails already returned 401.
     const phone = String(user.phone || "").trim();
-    if (!phone) return res.status(422).json({ code: PATIENT_PHONE_MISSING });
+    if (!phone) return res.status(422).json({ code: USER_PHONE_MISSING });
     const slot = reserveOtpSend(req, phone, "login", { userId: user.id, email: user.email }, true);
     if (slot.limited === true) return sendOtpLimited(res, slot.retryAfterSec);
     if (slot.pending) {
@@ -798,8 +799,9 @@ export function createApiRouter(): Router {
       }, jwtToken));
     }
 
+    // Phone is checked only after the provider identity resolved to this account.
     const phone = String(user.phone || "").trim();
-    if (!phone) return res.status(422).json({ code: PATIENT_PHONE_MISSING });
+    if (!phone) return res.status(422).json({ code: USER_PHONE_MISSING });
     const slot = reserveOtpSend(req, phone, "login", { userId: user.id, email: user.email }, true);
     if (slot.limited === true) return sendOtpLimited(res, slot.retryAfterSec);
     if (slot.pending) {
@@ -1517,7 +1519,22 @@ export function createApiRouter(): Router {
     }, jwtToken));
   });
 
-  // Password Recovery / Forgot Password
+  // Same body for unknown emails, accounts with no phone, and real accounts.
+  // Nothing in this JSON identifies whether the address is registered.
+  const FORGOT_PASSWORD_BODY = {
+    ok: true,
+    message: "If this email is registered, we've sent a code.",
+  } as const;
+
+  function auditPasswordResetAttempt(outcome: "sent" | "not_sent") {
+    writeAudit(getDb(), null, "password-reset", "password_reset_requested", `outcome ${outcome}`, {
+      entityType: "auth",
+      entityId: "password_reset",
+    });
+  }
+
+  // Password Recovery / Forgot Password. No login, so the response cannot
+  // reveal who is registered or include a phone number.
   api.post("/auth/forgot-password", async (req: Request, res: Response) => {
     const email = String(req.body?.email || "").trim().toLowerCase();
     if (!email) {
@@ -1526,69 +1543,61 @@ export function createApiRouter(): Router {
 
     const user = getDb().prepare("SELECT * FROM users WHERE email = ?").get(email) as unknown as DbUser | undefined;
     const phone = String(user?.phone || "").trim();
-    if (!phone) return res.status(422).json({ code: PATIENT_PHONE_MISSING });
-    const name = user?.name || "Clinician";
-    const slot = reserveOtpSend(req, phone, "password_reset", { userId: user?.id, email }, true);
-    if (slot.limited === true) return sendOtpLimited(res, slot.retryAfterSec);
-    if (slot.pending) {
-      return res.json({
-        ok: true,
-        verificationId: slot.pending.id,
-        phone,
-        ...otpEchoPayload(slot.pending.otp),
-        reused: true,
-        message: "Pending verification reused.",
-      });
+    if (!user || !phone) {
+      auditPasswordResetAttempt("not_sent");
+      return res.status(200).json(FORGOT_PASSWORD_BODY);
     }
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const verificationId = crypto.randomUUID();
-    const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
-
-    getDb().prepare(`
-      INSERT INTO otp_verifications (id, phone, email, otp, purpose, payload, created_at, expires_at)
-      VALUES (?, ?, ?, ?, 'password_reset', ?, ?, ?)
-    `).run(
-      verificationId,
-      phone,
-      email,
-      otp,
-      JSON.stringify({ userId: user?.id, email }),
-      new Date().toISOString(),
-      expiresAt
-    );
+    const name = user.name || "Clinician";
+    const slot = reserveOtpSend(req, phone, "password_reset", { userId: user.id, email }, true);
+    if (slot.limited === true) return sendOtpLimited(res, slot.retryAfterSec);
+    const otp = slot.pending?.otp || Math.floor(100000 + Math.random() * 900000).toString();
+    const verificationId = slot.pending?.id || crypto.randomUUID();
+    if (!slot.pending) {
+      const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+      getDb().prepare(`
+        INSERT INTO otp_verifications (id, phone, email, otp, purpose, payload, created_at, expires_at)
+        VALUES (?, ?, ?, ?, 'password_reset', ?, ?, ?)
+      `).run(
+        verificationId,
+        phone,
+        email,
+        otp,
+        JSON.stringify({ userId: user.id }),
+        new Date().toISOString(),
+        expiresAt
+      );
+    }
 
     const sent = await dispatchWhatsAppOtpMessage(phone, name, otp, "password_reset");
-    if (otpDispatchFailure(res, sent)) return;
-
-    return res.json({
-      ok: true,
-      verificationId,
-      phone,
-      ...otpEchoPayload(otp),
-      otpChannel: sent.ok ? sent.channel : undefined,
-      message:
-        sent.ok && sent.channel === "graph"
-          ? `Password reset code sent via WhatsApp Cloud API to ${phone}.`
-          : `SANDBOX / DEV-ONLY: password reset code recorded locally for ${phone} (not sent via Graph).`,
-    });
+    auditPasswordResetAttempt(sent.ok ? "sent" : "not_sent");
+    return res.status(200).json(FORGOT_PASSWORD_BODY);
   });
 
   // Password Reset Finalization
   api.post("/auth/reset-password", (req: Request, res: Response) => {
     const verificationId = String(req.body?.verificationId || "").trim();
+    const email = String(req.body?.email || "").trim().toLowerCase();
     const otp = String(req.body?.otp || "").trim();
     const newPassword = String(req.body?.newPassword || "");
 
-    if (!verificationId || !otp || !newPassword) {
-      return res.status(400).json({ error: "Verification ID, 6-digit OTP, and new password are required." });
+    if ((!verificationId && !email) || !otp || !newPassword) {
+      return res.status(400).json({ error: "Email, 6-digit OTP, and new password are required." });
     }
     if (newPassword.length < 6) {
       return res.status(400).json({ error: "Password must be at least 6 characters long." });
     }
 
-    const record = getDb()
-      .prepare("SELECT * FROM otp_verifications WHERE id = ?")
-      .get(verificationId) as {
+    const record = (
+      verificationId
+        ? getDb().prepare("SELECT * FROM otp_verifications WHERE id = ?").get(verificationId)
+        : getDb()
+            .prepare(
+              `SELECT * FROM otp_verifications
+               WHERE purpose = 'password_reset' AND lower(email) = ? AND verified_at IS NULL AND expires_at > ?
+               ORDER BY created_at DESC LIMIT 1`
+            )
+            .get(email, new Date().toISOString())
+    ) as {
         id: string;
         email: string;
         otp: string;
@@ -1618,7 +1627,7 @@ export function createApiRouter(): Router {
 
     const newHash = hashPassword(newPassword);
     getDb().prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(newHash, user.id);
-    getDb().prepare("UPDATE otp_verifications SET verified_at = ? WHERE id = ?").run(new Date().toISOString(), verificationId);
+    getDb().prepare("UPDATE otp_verifications SET verified_at = ? WHERE id = ?").run(new Date().toISOString(), record.id);
 
     writeAudit(getDb(), user.id, user.name, "Password Reset", `Password reset via WhatsApp OTP for ${user.email}`);
 

@@ -40,7 +40,7 @@ describe("public login form defaults", () => {
     assert.equal(stripSeededPublicLoginValue("email", "doc@clinic-a.example"), "doc@clinic-a.example");
     assert.equal(stripSeededPublicLoginValue("password", "Lumera@2026"), "");
     assert.equal(stripSeededPublicLoginValue("password", "user-chosen-secret"), "user-chosen-secret");
-    assert.equal(stripSeededPublicLoginValue("phone", "+91 98234 55667"), "");
+    assert.equal(stripSeededPublicLoginValue("phone", "+91 90000 11111"), "+91 90000 11111");
   });
 
   it("keeps WhatsApp/tel input digits-only with an optional leading plus", () => {

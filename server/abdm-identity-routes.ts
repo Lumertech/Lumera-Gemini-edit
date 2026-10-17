@@ -13,7 +13,6 @@ import { rejectProductionSimulator } from "./meta-security.ts";
 import { isAbdmPlaceholderRegistryMode, resolveAbdmMode } from "./abdm-mode.ts";
 import { maskedLast4 } from "./mask-last4.ts";
 import { formatAbdmRegistryLabel } from "../src/lib/abdmRegistryLabel.ts";
-import { SEEDED_DEMO_PATIENT_PHONE } from "../src/lib/seededDemoPhone.ts";
 import { formatINR } from "../src/lib/currency.ts";
 import {
   createPrescriptionBundle,
@@ -332,7 +331,7 @@ export function registerAbdmIdentityRoutes(router: Router): void {
 
       // Deterministic demo name based on last digits for testing variety
       const demoNames: Record<string, { name: string; gender: string; dob: string; mobile: string }> = {
-        "5678": { name: "Rajiv Saxena", gender: "M", dob: "1982-04-12", mobile: SEEDED_DEMO_PATIENT_PHONE },
+        "5678": { name: "Rajiv Saxena", gender: "M", dob: "1982-04-12", mobile: STUB_AADHAAR_MOBILE },
         "4456": { name: "Priyanka Mukherjee", gender: "F", dob: "1974-09-21", mobile: "+91 98311 44556" },
         "3456": { name: "Sunita Roy", gender: "F", dob: "1978-06-18", mobile: "+91 98301 23456" },
         "5432": { name: "Rohan Deshmukh", gender: "M", dob: "1994-11-05", mobile: "+91 98200 45678" },

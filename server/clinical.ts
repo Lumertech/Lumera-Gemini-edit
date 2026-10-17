@@ -635,7 +635,7 @@ function clientRequestedReview(body: Record<string, unknown>): boolean {
   return Boolean(String((nested as { reviewedBy?: unknown }).reviewedBy || "").trim());
 }
 
-function specialtyModulesFromBody(body: Record<string, unknown>, actorId: string): string {
+function specialtyModulesFromBody(body: Record<string, unknown>, signerId: string): string {
   const modules: Record<string, unknown> = {};
   for (const key of PRESCRIPTION_SPECIALTY_KEYS) {
     if (body[key] !== undefined) modules[key] = body[key];
@@ -649,8 +649,28 @@ function specialtyModulesFromBody(body: Record<string, unknown>, actorId: string
     Object.assign(modules, extra);
   }
   delete modules.reviewedBy;
-  if (clientRequestedReview(body)) modules.reviewedBy = actorId;
+  if (signerId) modules.reviewedBy = signerId;
   return JSON.stringify(modules);
+}
+
+/**
+ * reviewedBy is the Rx's doctor_id, and only when this session is that doctor.
+ * A clinic admin or receptionist who is not the treating doctor does not sign.
+ */
+function treatingDoctorId(tenantId: string, sessionUserId: string, doctorId: string): string {
+  const actor = String(sessionUserId || "").trim();
+  const id = String(doctorId || "").trim();
+  if (!actor || !id) return "";
+  if (actor === id) return id;
+  const linked = getDb()
+    .prepare(
+      `SELECT d.id
+       FROM doctors d
+       INNER JOIN users u ON u.id = d.user_id
+       WHERE d.id = ? AND u.id = ? AND u.tenant_id = ?`
+    )
+    .get(id, actor, tenantId) as { id?: string } | undefined;
+  return linked?.id ? String(linked.id) : "";
 }
 
 /** AI drafts cannot be finalized until a clinician records reviewedBy. Nothing is auto-signed. */
@@ -1099,9 +1119,12 @@ function deletePrescriptionDraft(input: {
 
 function insertPrescription(tenantId: string, body: Record<string, unknown>, actorId: string) {
   assertReviewedAiPrescription(body);
-  if (clientRequestedReview(body) && !String(actorId || "").trim()) {
+  const sessionUserId = String(actorId || "").trim();
+  if (clientRequestedReview(body) && !sessionUserId) {
     throw Object.assign(new Error("Sign in to review this prescription"), { status: 401 });
   }
+  const doctorId = String(body.doctorId || body.doctor_id || "").trim();
+  const signerId = clientRequestedReview(body) ? treatingDoctorId(tenantId, sessionUserId, doctorId) : "";
   const patientId = String(body.patientId || body.patient_id || "").trim();
   const diagnosis = String(body.diagnosis || "").trim();
   if (!patientId) {
@@ -1164,7 +1187,7 @@ function insertPrescription(tenantId: string, body: Record<string, unknown>, act
       String(body.qrVerificationUrl || body.qr_verification_url || `https://lumera.health/rx/${rxNumber}`),
       "unsent",
       String(body.specialtyType || body.specialty_type || ""),
-      specialtyModulesFromBody(body, String(actorId || "").trim())
+      specialtyModulesFromBody(body, signerId)
     );
   return getTenantPrescription(tenantId, id)!;
 }
@@ -1542,17 +1565,18 @@ export function createClinicalRouter(): Router {
   });
 
   api.post("/prescriptions", requireAuth, (req, res) => {
-    if (!denyUnlessPrescriber(req, res)) return;
+    if (!denyUnlessPatientRecordRole(req, res)) return;
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     try {
       const row = insertPrescription(tenantId, req.body || {}, String(req.user?.id || ""));
       const mapped = prescriptionForClient(req, tenantId, row);
+      const signed = Boolean(String((mapped as { reviewedBy?: string }).reviewedBy || "").trim());
       writeAudit(
         getDb(),
         req.user?.id || null,
         req.user?.name || "Clinician",
-        "Prescription signed",
+        signed ? "Prescription signed" : "Prescription saved",
         `${mapped.rxNumber} for ${mapped.patientName}`
       );
       const patientId = String(req.body.patientId || req.body.patient_id || "").trim();

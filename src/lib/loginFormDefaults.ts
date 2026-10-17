@@ -1,5 +1,3 @@
-import { SEEDED_DEMO_PATIENT_PHONE, SEEDED_DEMO_PATIENT_PHONE_COMPACT } from "./seededDemoPhone";
-
 /** Hint copy only — never used as a controlled `value` on the public login/signup form. */
 export const LOGIN_EMAIL_PLACEHOLDER = "Work email";
 export const LOGIN_PASSWORD_PLACEHOLDER = "Password";
@@ -14,7 +12,6 @@ const SEEDED_DEMO_EMAILS = new Set([
 ]);
 
 const SEEDED_DEMO_PASSWORDS = new Set(["Lumera@2026"]);
-const SEEDED_DEMO_PHONES = new Set([SEEDED_DEMO_PATIENT_PHONE, SEEDED_DEMO_PATIENT_PHONE_COMPACT]);
 
 export type PublicLoginFields = {
   email: string;
@@ -45,10 +42,6 @@ export function isSeededDemoPassword(value: string): boolean {
   return SEEDED_DEMO_PASSWORDS.has(value);
 }
 
-export function isSeededDemoPhone(value: string): boolean {
-  return SEEDED_DEMO_PHONES.has(value.trim());
-}
-
 /**
  * Drop values we used to seed the public form. Call only for our own initial
  * state — not after the user or the browser password manager has written.
@@ -59,7 +52,6 @@ export function stripSeededPublicLoginValue(
 ): string {
   if (kind === "email" && isSeededDemoEmail(value)) return "";
   if (kind === "password" && isSeededDemoPassword(value)) return "";
-  if (kind === "phone" && isSeededDemoPhone(value)) return "";
   return value;
 }
 

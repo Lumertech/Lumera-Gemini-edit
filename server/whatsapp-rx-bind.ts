@@ -51,6 +51,24 @@ function reviewedBy(row: Record<string, unknown>): string {
   }
 }
 
+/** Name of the user or doctor row identified by reviewedBy. Never the free-text doctor_name. */
+function treatingDoctorName(db: Sql, tenantId: string, signerId: string): string {
+  const user = db.prepare("SELECT name FROM users WHERE id = ? AND tenant_id = ?").get(signerId, tenantId) as
+    | { name?: string }
+    | undefined;
+  const userName = String(user?.name || "").trim();
+  if (userName) return userName;
+  const doctor = db
+    .prepare(
+      `SELECT d.name
+       FROM doctors d
+       INNER JOIN users u ON u.id = d.user_id
+       WHERE d.id = ? AND u.tenant_id = ?`
+    )
+    .get(signerId, tenantId) as { name?: string } | undefined;
+  return String(doctor?.name || "").trim();
+}
+
 function medicineLines(raw: unknown): { lines: string; count: number } {
   let medicines: Array<{ drugName?: unknown; dosage?: unknown; frequency?: unknown }> = [];
   if (Array.isArray(raw)) medicines = raw;
@@ -115,7 +133,10 @@ export function resolveSignedRxWhatsAppSend(
     .prepare("SELECT * FROM prescriptions WHERE rx_number = ? AND tenant_id = ?")
     .get(rxNumber, tenant) as Record<string, unknown> | undefined;
   if (!rx) return fail(404, RX_NOT_FOUND);
-  if (!reviewedBy(rx)) return fail(409, RX_NOT_SIGNED);
+  const signerId = reviewedBy(rx);
+  const doctorId = String(rx.doctor_id || "").trim();
+  if (!signerId || signerId !== doctorId) return fail(409, RX_NOT_SIGNED);
+  const signerName = treatingDoctorName(db, tenant, signerId);
 
   const patientId = String(rx.patient_id || "").trim();
   const patient = patientId
@@ -133,7 +154,7 @@ export function resolveSignedRxWhatsAppSend(
   const clinicName = getTenantLetterhead(tenant).clinicName;
   const text = signedRxWhatsAppText({
     clinicName,
-    doctorName: String(rx.doctor_name || ""),
+    doctorName: signerName,
     doctorSpecialty: String(rx.doctor_specialty || ""),
     patientName: String(patient.name || "").trim() || "Patient",
     uhid: String(patient.uhid || ""),
@@ -147,7 +168,7 @@ export function resolveSignedRxWhatsAppSend(
     rxNumber: storedRxNumber,
     phone,
     patientName: String(patient.name || "").trim() || "Patient",
-    doctorName: String(rx.doctor_name || "").trim() || "your doctor",
+    doctorName: signerName || "your doctor",
     text,
     pdfUrl,
   };

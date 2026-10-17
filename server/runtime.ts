@@ -92,6 +92,13 @@ export const DATABASE_URL_REQUIRED_MESSAGE =
   "DATABASE_URL is required in production (Cloud Run is stateless; node:sqlite files are discarded on deploy/scale). Set DATABASE_URL to the Cloud SQL unix-socket URI (postgres://user:pass@/dbname?host=/cloudsql/PROJECT:asia-south1:INSTANCE) or INSTANCE_CONNECTION_NAME + SQL_USER + SQL_PASSWORD + SQL_DB_NAME, plus Cloud Run --add-cloudsql-instances. This process exits before listen(0.0.0.0, PORT); Cloud Run will report a PORT timeout even though bind is not the bug.";
 
 /**
+ * A missing public origin must fail the revision at boot. Cloud Run then keeps
+ * the previous revision serving, instead of accepting traffic that 500s later.
+ */
+export const APP_URL_REQUIRED_MESSAGE =
+  "APP_URL is required in production (no placeholder). Set APP_URL=https://www.mylumera.in. This process exits before listen(0.0.0.0, PORT); Cloud Run keeps the previous revision.";
+
+/**
  * Cloud Run / `npm start` entry is `dist/server.cjs` and may omit NODE_ENV.
  * Treat a bundled server start as production unless NODE_ENV is already set.
  */
@@ -131,10 +138,8 @@ export function assertRequiredProductionEnv(env: NodeJS.ProcessEnv = process.env
     throw new Error(DATABASE_URL_REQUIRED_MESSAGE);
   }
   const appUrl = String(env.APP_URL || "").trim().replace(/\/$/, "");
-  if (!appUrl) {
-    console.warn(
-      "[Lumera] APP_URL is unset. Set APP_URL=https://www.mylumera.in for Google/Meta OAuth and policy links."
-    );
+  if (!appUrl || isUnsetOrPlaceholder(appUrl)) {
+    throw new Error(APP_URL_REQUIRED_MESSAGE);
   }
 }
 

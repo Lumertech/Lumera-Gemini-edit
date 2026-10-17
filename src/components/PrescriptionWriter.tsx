@@ -7,6 +7,7 @@ import {
   shouldPersistWhatsAppSent,
   signedRxWhatsAppRequestBody,
   whatsAppDispatchNotice,
+  type SignedRxWhatsAppUi,
 } from '../lib/signedRxWhatsAppSend';
 import { 
   FileText, 
@@ -117,6 +118,26 @@ interface PrescriptionWriterProps {
   onAutoSave?: (prescription: Prescription, options?: { immediate?: boolean }) => void;
   /** Replace a saved Rx from GET. Does not insert another row. */
   onPrescriptionLoaded?: (prescription: Prescription) => void;
+}
+
+function WhatsAppDispatchNotice({ kind, text }: { kind: SignedRxWhatsAppUi['kind']; text: string }) {
+  const tone =
+    kind === 'sent'
+      ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+      : kind === 'sandbox'
+        ? 'border-slate-200 bg-slate-50 text-slate-700'
+        : 'border-rose-200 bg-rose-50 text-rose-800';
+  const iconClass = kind === 'sent' ? 'text-emerald-600' : kind === 'sandbox' ? 'text-slate-500' : 'text-rose-600';
+  return (
+    <div role="status" className={`p-2.5 rounded-lg border text-[11px] font-medium flex items-center gap-2 ${tone}`}>
+      {kind === 'sent' ? (
+        <CheckCircle className={`w-4 h-4 shrink-0 ${iconClass}`} />
+      ) : (
+        <AlertTriangle className={`w-4 h-4 shrink-0 ${iconClass}`} />
+      )}
+      <span>{text}</span>
+    </div>
+  );
 }
 
 export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
@@ -376,6 +397,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
   const [isTranslating, setIsTranslating] = useState(false);
   const [translatedWhatsAppText, setTranslatedWhatsAppText] = useState('');
   const [whatsappNotice, setWhatsappNotice] = useState('');
+  const [whatsappNoticeKind, setWhatsappNoticeKind] = useState<SignedRxWhatsAppUi['kind']>('failed');
 
   // Finalize & Sign states
   const [isFinalized, setIsFinalized] = useState(false);
@@ -522,6 +544,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     }
     setShowWhatsAppModal(true);
     setWhatsappNotice('');
+    setWhatsappNoticeKind('failed');
     await translateRxForWhatsApp(targetLanguage);
   };
 
@@ -871,6 +894,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     }
     const phoneBlock = patientPhoneBlocksWhatsAppSend(currentPatient.phone);
     if (phoneBlock) {
+      setWhatsappNoticeKind('failed');
       setWhatsappNotice(phoneBlock);
       return;
     }
@@ -884,8 +908,12 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
       });
       const payload = await response.json().catch(() => ({}));
       const decision = interpretSignedRxWhatsAppResponse(response.status, payload);
+      const publish = (phone: string) => {
+        setWhatsappNoticeKind(decision.kind);
+        setWhatsappNotice(whatsAppDispatchNotice(decision, phone));
+      };
       if (!shouldPersistWhatsAppSent(decision)) {
-        setWhatsappNotice(whatsAppDispatchNotice(decision, currentPatient.phone));
+        publish(currentPatient.phone);
         return;
       }
       let phone = currentPatient.phone;
@@ -900,10 +928,11 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
       } catch (err) {
         console.error('WhatsApp send succeeded but the prescription refresh failed', err);
       }
-      setWhatsappNotice(whatsAppDispatchNotice(decision, phone));
+      publish(phone);
     } catch (err) {
       console.error('WhatsApp dispatch failed', err);
       const decision = interpretSignedRxWhatsAppResponse(0, {});
+      setWhatsappNoticeKind(decision.kind);
       setWhatsappNotice(whatsAppDispatchNotice(decision, ''));
     } finally {
       setIsSendingWhatsAppDirect(false);
@@ -2497,10 +2526,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
               </div>
 
               {whatsappNotice ? (
-                <div role="status" className="bg-white p-2.5 rounded-lg border border-emerald-200 text-emerald-800 text-[11px] font-medium flex items-center gap-2">
-                  <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span>{whatsappNotice}</span>
-                </div>
+                <WhatsAppDispatchNotice kind={whatsappNoticeKind} text={whatsappNotice} />
               ) : null}
               <button
                 onClick={handleDirectWhatsAppDispatch}
@@ -2616,10 +2642,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
             </div>
 
             {whatsappNotice ? (
-              <div role="status" className="p-3 bg-emerald-100 text-emerald-800 rounded-lg text-xs font-bold flex items-center justify-center gap-2">
-                <CheckCircle className="w-4 h-4 text-emerald-700" />
-                {whatsappNotice}
-              </div>
+              <WhatsAppDispatchNotice kind={whatsappNoticeKind} text={whatsappNotice} />
             ) : null}
             <div className="flex items-center justify-end space-x-2 pt-2">
               <button

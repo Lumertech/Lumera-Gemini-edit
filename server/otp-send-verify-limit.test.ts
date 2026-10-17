@@ -56,14 +56,18 @@ describe("OTP send and verify limits", () => {
   it("forgot-password reuses a pending code and returns 429 on the 4th request", async () => {
     resetSendOtpRateLimits();
     const doctor = insertDoctor("forgot");
-    const ids: string[] = [];
     for (let i = 0; i < 3; i += 1) {
       const res = await jsonRequest(server.port, "POST", "/api/auth/forgot-password", { email: doctor.email });
       assert.notEqual(res.status, 429, String(res.json.error || res.status));
       assert.equal(res.status, 200);
-      ids.push(String(res.json.verificationId || ""));
+      assert.equal(res.json.phone, undefined);
+      assert.equal(res.json.verificationId, undefined);
+      assert.equal(res.json.message, "If this email is registered, we've sent a code.");
     }
-    assert.equal(new Set(ids).size, 1);
+    const stored = getDb()
+      .prepare("SELECT id FROM otp_verifications WHERE lower(email) = ? AND purpose = 'password_reset'")
+      .all(doctor.email.toLowerCase()) as { id: string }[];
+    assert.equal(stored.length, 1);
     const blocked = await jsonRequest(server.port, "POST", "/api/auth/forgot-password", { email: doctor.email });
     assert.equal(blocked.status, 429);
     assert.ok(blocked.headers.get("retry-after"));

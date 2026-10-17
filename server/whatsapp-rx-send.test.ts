@@ -84,7 +84,7 @@ describe("usage-billing Rx WhatsApp send is bound to the signed prescription", (
         medicines: [{ drugName: opts.drugName || "Paracetamol", dosage: "650 mg", frequency: "1-0-1" }],
         doctorName: "Dr Meera Shah",
         doctorSpecialty: "General Medicine",
-        ...(opts.reviewedBy ? { reviewedBy: opts.reviewedBy } : {}),
+        ...(opts.reviewedBy ? { reviewedBy: opts.reviewedBy, doctorId: opts.reviewedBy } : {}),
       },
       auth
     );
@@ -387,5 +387,107 @@ describe("usage-billing Rx WhatsApp send is bound to the signed prescription", (
     assert.equal(JSON.stringify(res.json).includes("LEAK_UNSIGNED"), false);
     const sent = getDb().prepare("SELECT id FROM whatsapp_messages WHERE patient_phone = ?").get(phone);
     assert.equal(sent, undefined);
+  });
+
+  it("lets only the treating doctor sign, and the WhatsApp line names that doctor", async () => {
+    const clinic = createClinic("signer");
+    const now = new Date().toISOString();
+    const adminEmail = `admin.${clinic.userId}@rx-bind.example`;
+    const deskEmail = `desk.${clinic.userId}@rx-bind.example`;
+    getDb()
+      .prepare(
+        `INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, clinic_name, onboarding_completed, practice_type, specialty, last_login, created_at)
+         VALUES (?, ?, ?, ?, 'Clinic Admin', 'CLINIC_ADMIN', 'active', ?, ?, 1, 'polyclinic', 'General Medicine', ?, ?)`
+      )
+      .run(
+        `admin-${clinic.userId}`,
+        clinic.tenantId,
+        adminEmail,
+        hashPassword("Lumera@2026"),
+        "+91 98111 00001",
+        `Clinic signer`,
+        now,
+        now
+      );
+    getDb()
+      .prepare(
+        `INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, clinic_name, onboarding_completed, practice_type, specialty, last_login, created_at)
+         VALUES (?, ?, ?, ?, 'Front Desk', 'receptionist', 'active', ?, ?, 1, 'individual', 'General Medicine', ?, ?)`
+      )
+      .run(
+        `desk-${clinic.userId}`,
+        clinic.tenantId,
+        deskEmail,
+        hashPassword("Lumera@2026"),
+        "+91 98111 00002",
+        `Clinic signer`,
+        now,
+        now
+      );
+    const doctorAuth = await login(clinic.email);
+    const adminAuth = await login(adminEmail);
+    const deskAuth = await login(deskEmail);
+    const phone = `+91 98217 ${String(Date.now()).slice(-5)}`;
+    const patient = await createPatient(doctorAuth, "Signed Patient", phone);
+
+    const signed = await jsonRequest(
+      port,
+      "POST",
+      "/api/prescriptions",
+      {
+        patientId: patient.id,
+        diagnosis: "Treating doctor note",
+        medicines: [{ drugName: "Paracetamol", dosage: "650 mg", frequency: "1-0-1" }],
+        doctorId: clinic.userId,
+        doctorName: "Impostor Name",
+        reviewedBy: "not-the-session",
+      },
+      doctorAuth
+    );
+    assert.equal(signed.status, 201, String(signed.json.error || ""));
+    const signedRx = signed.json.prescription as { rxNumber: string; reviewedBy?: string; doctorId?: string };
+    assert.equal(signedRx.reviewedBy, clinic.userId);
+    assert.equal(signedRx.doctorId, clinic.userId);
+    const portal = appPublicUrl(`127.0.0.1:${port}`, "http").replace(/\/$/, "");
+    const resolved = resolveSignedRxWhatsAppSend(getDb(), clinic.tenantId, { rxNumber: signedRx.rxNumber }, portal);
+    assert.equal(resolved.ok, true);
+    if (resolved.ok) {
+      assert.match(resolved.text, /signed by \*Dr signer\*/);
+      assert.equal(resolved.text.includes("Impostor Name"), false);
+    }
+    const sent = await jsonRequest(port, "POST", "/api/whatsapp/send-rx", { rxNumber: signedRx.rxNumber }, doctorAuth);
+    assert.equal(sent.status, 200, JSON.stringify(sent.json));
+    assert.deepEqual(sent.json, { success: false, channel: "sandbox", status: "sandbox" });
+
+    for (const [label, auth] of [
+      ["admin", adminAuth],
+      ["receptionist", deskAuth],
+    ] as const) {
+      const saved = await jsonRequest(
+        port,
+        "POST",
+        "/api/prescriptions",
+        {
+          patientId: patient.id,
+          diagnosis: `${label} unsigned note`,
+          medicines: [],
+          doctorId: clinic.userId,
+          doctorName: "Impostor Name",
+          reviewedBy: clinic.userId,
+        },
+        auth
+      );
+      assert.equal(saved.status, 201, `${label} ${String(saved.json.error || "")}`);
+      const rx = saved.json.prescription as { rxNumber: string; reviewedBy?: string };
+      assert.equal(rx.reviewedBy || "", "");
+      const stored = getDb()
+        .prepare("SELECT doctor_id, specialty_modules FROM prescriptions WHERE rx_number = ? AND tenant_id = ?")
+        .get(rx.rxNumber, clinic.tenantId) as { doctor_id: string; specialty_modules: string };
+      assert.equal(stored.doctor_id, clinic.userId);
+      assert.equal(JSON.parse(stored.specialty_modules).reviewedBy || "", "");
+      const refused = await jsonRequest(port, "POST", "/api/whatsapp/send-rx", { rxNumber: rx.rxNumber }, auth);
+      assert.equal(refused.status, 409, label);
+      assert.equal(refused.json.code, RX_NOT_SIGNED);
+    }
   });
 });

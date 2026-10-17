@@ -268,6 +268,7 @@ describe("Usage wallet billing dispatch paths", () => {
         diagnosis: "Usage wallet check",
         medicines: [{ drugName: "Paracetamol", dosage: "650 mg", frequency: "1-0-1" }],
         doctorName: "Dr Meter",
+        doctorId,
         reviewedBy: doctorId,
       },
       clinicAuth

@@ -202,6 +202,7 @@ describe("prescription draft scoping and AI review gate", () => {
         diagnosis: "DX-UNIQUE",
         aiSource: "pulse-local-parser",
         aiGeneratedAt: "2026-10-15T02:00:00.000Z",
+        doctorId: clinic.userId,
         reviewedBy: clinic.userId,
         historyOfPresentIllness: "HPI-UNIQUE",
         redFlags: ["syncope"],
@@ -228,6 +229,7 @@ describe("prescription draft scoping and AI review gate", () => {
       {
         patientId: patient.id,
         diagnosis: "Forged reviewer",
+        doctorId: clinic.userId,
         reviewedBy: "not-the-session",
         whatsappSentStatus: "delivered",
         medicines: [],

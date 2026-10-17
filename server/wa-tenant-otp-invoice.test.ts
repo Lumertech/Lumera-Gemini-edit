@@ -741,6 +741,7 @@ describe("WhatsApp tenant scope, send validation, OTP limit, invoice UHID", () =
         diagnosis: "Isolation consult",
         medicines: [],
         doctorName: "Dr Iso",
+        doctorId: clinicA.userId,
         reviewedBy: clinicA.userId,
       },
       authA

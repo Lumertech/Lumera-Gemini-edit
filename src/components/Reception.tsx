@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { apiFetchResponse } from '../api/http';
-import { SEEDED_DEMO_PATIENT_PHONE } from '../lib/seededDemoPhone';
 import { formatINR } from '../lib/currency.ts';
 import { 
   QrCode, 
@@ -749,7 +748,7 @@ export const Reception: React.FC<ReceptionProps> = ({
                       name: 'Rajiv Saxena',
                       abhaNumber: '91-4428-9102-3841',
                       abhaAddress: 'rajiv.saxena@abdm',
-                      phone: SEEDED_DEMO_PATIENT_PHONE,
+                      phone: '',
                       gender: 'Male',
                       age: 44,
                       address: 'A-502, Orchid Woods, Whitefield, Bengaluru',
