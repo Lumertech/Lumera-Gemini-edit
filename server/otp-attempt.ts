@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import type { Request, Response } from "express";
 import { toE164Phone } from "./clinical.ts";
 import { getDb } from "./db.ts";
@@ -7,6 +8,11 @@ import { consumeSendOtpAttempt, otpSubjectKey, requestClientIp } from "./otp-rat
 export const OTP_SEND_LIMIT_ERROR = "Too many OTP requests. Try again later.";
 export const OTP_VERIFY_LOCK_ERROR = "Too many incorrect codes. This code is no longer valid. Request a new OTP.";
 export const VERIFY_OTP_MAX_FAILURES = 5;
+
+/** Six-digit OTP. crypto.randomInt is exclusive of the upper bound. */
+export function generateNumericOtp(): string {
+  return crypto.randomInt(100000, 1000000).toString();
+}
 
 export type PendingOtp = { id: string; otp: string; expires_at: string };
 
@@ -58,7 +64,7 @@ function e164DigitForms(e164: string): string[] {
   return [...forms];
 }
 
-function findPendingOtp(phone: string, purpose: string, email: string): PendingOtp | null {
+export function findPendingOtp(phone: string, purpose: string, email: string): PendingOtp | null {
   const phoneKey = toE164Phone(phone);
   if (!phoneKey) return null;
   const forms = e164DigitForms(phoneKey);

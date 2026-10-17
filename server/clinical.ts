@@ -19,6 +19,7 @@ import { registerPatientDocumentConsentRoutes } from "./patient-document-consent
 import { buildPatientTimeline, presentPrescriptionForRole } from "./patient-timeline.ts";
 import { denyUnlessPatientRecordRole, denyUnlessPrescriber, isReceptionRole } from "./patient-access.ts";
 import { clinicCalendarDate, parseAppointmentListDate } from "../src/lib/clinicDay.ts";
+import { isPrescriberRole } from "../src/lib/prescriberRoles.ts";
 import {
   loadPatientClinicPhone,
   loadPatientTenant,
@@ -628,7 +629,14 @@ const RX_NOTE_KEYS = [
   "pendingAiFields",
 ] as const;
 
-function specialtyModulesFromBody(body: Record<string, unknown>): string {
+function clientRequestedReview(body: Record<string, unknown>): boolean {
+  if (String(body.reviewedBy || "").trim()) return true;
+  const nested = body.specialtyModules;
+  if (!nested || typeof nested !== "object") return false;
+  return Boolean(String((nested as { reviewedBy?: unknown }).reviewedBy || "").trim());
+}
+
+function specialtyModulesFromBody(body: Record<string, unknown>, signerId: string): string {
   const modules: Record<string, unknown> = {};
   for (const key of PRESCRIPTION_SPECIALTY_KEYS) {
     if (body[key] !== undefined) modules[key] = body[key];
@@ -637,9 +645,41 @@ function specialtyModulesFromBody(body: Record<string, unknown>): string {
     if (body[key] !== undefined) modules[key] = body[key];
   }
   if (body.specialtyModules && typeof body.specialtyModules === "object") {
-    Object.assign(modules, body.specialtyModules as Record<string, unknown>);
+    const extra = { ...(body.specialtyModules as Record<string, unknown>) };
+    delete extra.reviewedBy;
+    Object.assign(modules, extra);
   }
+  delete modules.reviewedBy;
+  if (signerId) modules.reviewedBy = signerId;
   return JSON.stringify(modules);
+}
+
+/**
+ * reviewedBy is the Rx's doctor_id only when this session may prescribe and is
+ * that doctor. A direct user-id match signs only for the doctor role.
+ * Owner-doctors sign as polyclinic_admin through their doctors row.
+ * A receptionist never signs, even when a doctors row links them.
+ */
+export function treatingDoctorId(
+  tenantId: string,
+  sessionUserId: string,
+  role: string | undefined,
+  doctorId: string
+): string {
+  if (!isPrescriberRole(role)) return "";
+  const actor = String(sessionUserId || "").trim();
+  const id = String(doctorId || "").trim();
+  if (!actor || !id) return "";
+  if (actor === id) return role === "doctor" ? id : "";
+  const linked = getDb()
+    .prepare(
+      `SELECT d.id
+       FROM doctors d
+       INNER JOIN users u ON u.id = d.user_id
+       WHERE d.id = ? AND u.id = ? AND u.tenant_id = ?`
+    )
+    .get(id, actor, tenantId) as { id?: string } | undefined;
+  return linked?.id ? String(linked.id) : "";
 }
 
 /** AI drafts cannot be finalized until a clinician records reviewedBy. Nothing is auto-signed. */
@@ -1086,8 +1126,16 @@ function deletePrescriptionDraft(input: {
   );
 }
 
-function insertPrescription(tenantId: string, body: Record<string, unknown>) {
+function insertPrescription(tenantId: string, body: Record<string, unknown>, actorId: string, actorRole?: string) {
   assertReviewedAiPrescription(body);
+  const sessionUserId = String(actorId || "").trim();
+  if (clientRequestedReview(body) && !sessionUserId) {
+    throw Object.assign(new Error("Sign in to review this prescription"), { status: 401 });
+  }
+  const doctorId = String(body.doctorId || body.doctor_id || "").trim();
+  const signerId = clientRequestedReview(body)
+    ? treatingDoctorId(tenantId, sessionUserId, actorRole, doctorId)
+    : "";
   const patientId = String(body.patientId || body.patient_id || "").trim();
   const diagnosis = String(body.diagnosis || "").trim();
   if (!patientId) {
@@ -1148,9 +1196,9 @@ function insertPrescription(tenantId: string, body: Record<string, unknown>) {
       String(body.clinicAddress || body.clinic_address || stamped.address || ""),
       String(body.clinicPhone || body.clinic_phone || stamped.phone || ""),
       String(body.qrVerificationUrl || body.qr_verification_url || `https://lumera.health/rx/${rxNumber}`),
-      String(body.whatsappSentStatus || body.whatsapp_sent_status || "unsent"),
+      "unsent",
       String(body.specialtyType || body.specialty_type || ""),
-      specialtyModulesFromBody(body)
+      specialtyModulesFromBody(body, signerId)
     );
   return getTenantPrescription(tenantId, id)!;
 }
@@ -1532,13 +1580,19 @@ export function createClinicalRouter(): Router {
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     try {
-      const row = insertPrescription(tenantId, req.body || {});
+      const row = insertPrescription(
+        tenantId,
+        req.body || {},
+        String(req.user?.id || ""),
+        String(req.user?.role || "")
+      );
       const mapped = prescriptionForClient(req, tenantId, row);
+      const signed = Boolean(String((mapped as { reviewedBy?: string }).reviewedBy || "").trim());
       writeAudit(
         getDb(),
         req.user?.id || null,
         req.user?.name || "Clinician",
-        "Prescription signed",
+        signed ? "Prescription signed" : "Prescription saved",
         `${mapped.rxNumber} for ${mapped.patientName}`
       );
       const patientId = String(req.body.patientId || req.body.patient_id || "").trim();

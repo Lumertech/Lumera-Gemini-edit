@@ -250,6 +250,30 @@ describe("Usage wallet billing dispatch paths", () => {
     assert.ok(agentAfter.c >= agentBefore.c + 1, "staff /whatsapp/send must insert usage_events");
 
     const rxBefore = agentAfter.c;
+    const meteredPatient = await jsonRequest(
+      port,
+      "POST",
+      "/api/patients",
+      { name: "Metered Patient", phone: patientPhone, age: 40, gender: "Female" },
+      clinicAuth
+    );
+    assert.ok(meteredPatient.status === 200 || meteredPatient.status === 201, String(meteredPatient.json.error || "patient"));
+    const meteredPatientId = String((meteredPatient.json.patient as { id: string }).id);
+    const meteredRx = await jsonRequest(
+      port,
+      "POST",
+      "/api/prescriptions",
+      {
+        patientId: meteredPatientId,
+        diagnosis: "Usage wallet check",
+        medicines: [{ drugName: "Paracetamol", dosage: "650 mg", frequency: "1-0-1" }],
+        doctorName: "Dr Meter",
+        doctorId,
+        reviewedBy: doctorId,
+      },
+      clinicAuth
+    );
+    assert.equal(meteredRx.status, 201, String(meteredRx.json.error || "rx"));
     const rxSend = await jsonRequest(
       port,
       "POST",
@@ -258,7 +282,7 @@ describe("Usage wallet billing dispatch paths", () => {
         patientPhone,
         patientName: "Metered Patient",
         uhid: "LUM-METER-1",
-        rxNumber: `RX-METER-${Date.now()}`,
+        rxNumber: String((meteredRx.json.prescription as { rxNumber: string }).rxNumber),
         doctorName: "Dr Meter",
         diagnosis: "Usage wallet check",
         medicines: [{ drugName: "Paracetamol", dosage: "650 mg", frequency: "1-0-1" }],

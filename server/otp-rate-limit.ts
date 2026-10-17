@@ -103,6 +103,17 @@ export function consumeSendOtpAttempt(
  * Same windows as send-otp. targetKey is stored as given so a caller can pass
  * a hash instead of a phone. Do not pass a raw Aadhaar number.
  */
+/** Forgot-password window. Keyed by normalised email and by client IP, before any user lookup. */
+export function consumeForgotPasswordAttempt(
+  email: string,
+  ip: string,
+  now = Date.now()
+): { ok: true; withinCooldown: boolean; targetCooldown: boolean; retryAfterSec: number } | { ok: false; retryAfterSec: number } {
+  const normalised = String(email || "").trim().toLowerCase();
+  const key = `forgot-email:${normalised}`;
+  return consumeHashedOtpAttempt(key, ip, key, now);
+}
+
 export function consumeHashedOtpAttempt(
   targetKey: string,
   ip: string,

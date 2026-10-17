@@ -107,7 +107,7 @@ export const QueueBoard: React.FC<QueueBoardProps> = ({
       uhid: apt.uhid || `LUM-2026-0${100 + apt.tokenNumber}`,
       age: apt.age || 44,
       gender: (apt.gender as any) || 'Male',
-      phone: apt.patientPhone || '+91 98234 55667',
+      phone: apt.patientPhone || '',
       email: `${apt.patientName.toLowerCase().replace(/[^a-z0-9]/g, '.')}@gmail.com`,
       bloodGroup: 'B+',
       abhaAddress: apt.abhaAddress || `${apt.patientName.toLowerCase().replace(/[^a-z0-9]/g, '.')}@abdm`,
@@ -115,7 +115,7 @@ export const QueueBoard: React.FC<QueueBoardProps> = ({
       kycStatus: 'LINKED_SANDBOX',
       allergies: ['No known drug allergies (NKDA)'],
       chronicConditions: ['Hypertension (Stage 1)'],
-      emergencyContact: '+91 98112 33445',
+      emergencyContact: '',
       address: '74, Indiranagar 100 Feet Rd, Bengaluru, KA',
       vitals: apt.vitals,
     };
@@ -796,7 +796,7 @@ export const QueueBoard: React.FC<QueueBoardProps> = ({
                     <div className="flex items-center justify-between">
                       <span className="text-slate-500 font-medium">Emergency Contact:</span>
                       <span className="text-slate-700 font-medium">
-                        {drawerData.patient.emergencyContact || '+91 98112 33445'}
+                        {drawerData.patient.emergencyContact || '—'}
                       </span>
                     </div>
 

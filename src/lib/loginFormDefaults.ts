@@ -12,7 +12,6 @@ const SEEDED_DEMO_EMAILS = new Set([
 ]);
 
 const SEEDED_DEMO_PASSWORDS = new Set(["Lumera@2026"]);
-const SEEDED_DEMO_PHONES = new Set(["+91 98234 55667", "+919823455667"]);
 
 export type PublicLoginFields = {
   email: string;
@@ -43,10 +42,6 @@ export function isSeededDemoPassword(value: string): boolean {
   return SEEDED_DEMO_PASSWORDS.has(value);
 }
 
-export function isSeededDemoPhone(value: string): boolean {
-  return SEEDED_DEMO_PHONES.has(value.trim());
-}
-
 /**
  * Drop values we used to seed the public form. Call only for our own initial
  * state — not after the user or the browser password manager has written.
@@ -57,7 +52,6 @@ export function stripSeededPublicLoginValue(
 ): string {
   if (kind === "email" && isSeededDemoEmail(value)) return "";
   if (kind === "password" && isSeededDemoPassword(value)) return "";
-  if (kind === "phone" && isSeededDemoPhone(value)) return "";
   return value;
 }
 

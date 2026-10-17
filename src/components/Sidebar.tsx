@@ -407,7 +407,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <input
                     type="tel"
                     required
-                    placeholder="e.g. +91 98234 55667"
+                    placeholder="Patient mobile"
                     value={quickPhone}
                     onChange={(e) => setQuickPhone(e.target.value)}
                     className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none"

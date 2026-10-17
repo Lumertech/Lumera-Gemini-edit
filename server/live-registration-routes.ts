@@ -2,7 +2,7 @@ import { Router, type NextFunction, type Request, type Response } from "express"
 import { persistSpecialtyPackId } from "../src/lib/specialtyPack.ts";
 import { assignedRoleForPracticeType, getDb, normalizePracticeType } from "./db.ts";
 import { otpEchoPayload } from "./auth.ts";
-import { reserveOtpSend, sendOtpLimited } from "./otp-attempt.ts";
+import { generateNumericOtp, reserveOtpSend, sendOtpLimited } from "./otp-attempt.ts";
 import { liveRegistrationPasswordHash } from "./live-registration-password.ts";
 import { ensureTenantSubscription } from "./platform-tenants.ts";
 import { dispatchWhatsAppCloudMessage, isCloudDispatchFailure } from "./graph-whatsapp.ts";
@@ -132,7 +132,7 @@ async function handleRegisterPractice(req: Request, res: Response) {
     );
   ensureTenantSubscription(getDb(), tenantId, { planCode: "trial", status: "trial", billingSource: "sandbox" });
 
-  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  const otp = generateNumericOtp();
   const verificationId = crypto.randomUUID();
   const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
   const otpPayload = {

@@ -227,10 +227,8 @@ export const LoginPage: React.FC = () => {
   const [showForgot, setShowForgot] = useState(false);
   const [forgotStep, setForgotStep] = useState<"request" | "reset">("request");
   const [forgotEmail, setForgotEmail] = useState("");
-  const [forgotVerificationId, setForgotVerificationId] = useState("");
   const [forgotOtp, setForgotOtp] = useState("");
   const [forgotNewPassword, setForgotNewPassword] = useState("");
-  const [forgotDemoOtp, setForgotDemoOtp] = useState("");
   const [forgotBusy, setForgotBusy] = useState(false);
   const [forgotError, setForgotError] = useState("");
   const [forgotSuccess, setForgotSuccess] = useState("");
@@ -427,7 +425,7 @@ export const LoginPage: React.FC = () => {
 
       if (res.requiresOtp && res.verificationId) {
         setOtpVerificationId(res.verificationId);
-        setOtpPhone(res.phone || "+91 98234 55667");
+        setOtpPhone(res.phone || "");
         setOtpEmail(res.email || email);
         setDemoOtpCode(res.demoOtp || "");
         setOtpPurpose("login");
@@ -564,7 +562,7 @@ export const LoginPage: React.FC = () => {
         );
       } else if (res.requiresOtp && res.verificationId) {
         setOtpVerificationId(res.verificationId);
-        setOtpPhone(res.phone || "+91 98234 55667");
+        setOtpPhone(res.phone || "");
         setOtpEmail(res.email || targetEmail);
         setDemoOtpCode(res.demoOtp || "");
         setOtpPurpose("login");
@@ -754,10 +752,8 @@ export const LoginPage: React.FC = () => {
 
     try {
       const res = await requestPasswordReset(forgotEmail.trim().toLowerCase());
-      setForgotVerificationId(res.verificationId);
-      setForgotDemoOtp(res.demoOtp || "");
       setForgotStep("reset");
-      setForgotSuccess("Verification OTP dispatched to your registered WhatsApp.");
+      setForgotSuccess(res.message || "If this email is registered, we've sent a code.");
     } catch (err) {
       setForgotError(err instanceof Error ? err.message : "Failed to initiate password recovery.");
     } finally {
@@ -773,7 +769,7 @@ export const LoginPage: React.FC = () => {
     setForgotSuccess("");
 
     try {
-      const res = await resetPassword(forgotVerificationId, forgotOtp.trim(), forgotNewPassword);
+      const res = await resetPassword(forgotEmail.trim().toLowerCase(), forgotOtp.trim(), forgotNewPassword);
       setForgotSuccess(res.message || "Password successfully reset!");
       setTimeout(() => {
         setShowForgot(false);
@@ -1016,11 +1012,6 @@ export const LoginPage: React.FC = () => {
               </form>
             ) : (
               <form onSubmit={handleForgotReset} className="space-y-3">
-                {forgotDemoOtp && (
-                  <div className="p-2 rounded bg-purple-500/10 border border-purple-500/30 text-xs text-purple-300">
-                    OTP Code: <strong>{forgotDemoOtp}</strong>
-                  </div>
-                )}
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1">6-Digit Code</label>
                   <input
@@ -1559,7 +1550,7 @@ export const LoginPage: React.FC = () => {
                       onCountryChange={setSelectedCountry}
                       value={adminPhone}
                       onValueChange={setAdminPhone}
-                      placeholder="98234 55667"
+                      placeholder="10-digit mobile"
                       accent="purple"
                     />
                   </div>
