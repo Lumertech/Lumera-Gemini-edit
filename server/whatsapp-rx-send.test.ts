@@ -486,6 +486,34 @@ describe("usage-billing Rx WhatsApp send is bound to the signed prescription", (
     assert.equal(refused.status, 409);
     assert.equal(refused.json.code, RX_NOT_SIGNED);
 
+    const adminId = `admin-${clinic.userId}`;
+    assert.equal(treatingDoctorId(clinic.tenantId, adminId, "CLINIC_ADMIN", adminId), "");
+    const selfSaved = await jsonRequest(
+      port,
+      "POST",
+      "/api/prescriptions",
+      {
+        patientId: patient.id,
+        diagnosis: "admin own id stays unsigned",
+        medicines: [],
+        doctorId: adminId,
+        reviewedBy: adminId,
+      },
+      adminAuth
+    );
+    assert.equal(selfSaved.status, 201, String(selfSaved.json.error || ""));
+    const selfRx = selfSaved.json.prescription as { rxNumber: string; reviewedBy?: string; doctorId?: string };
+    assert.equal(selfRx.reviewedBy || "", "");
+    assert.equal(selfRx.doctorId, adminId);
+    const selfStored = getDb()
+      .prepare("SELECT doctor_id, specialty_modules FROM prescriptions WHERE rx_number = ? AND tenant_id = ?")
+      .get(selfRx.rxNumber, clinic.tenantId) as { doctor_id: string; specialty_modules: string };
+    assert.equal(selfStored.doctor_id, adminId);
+    assert.equal(JSON.parse(selfStored.specialty_modules).reviewedBy || "", "");
+    const selfRefused = await jsonRequest(port, "POST", "/api/whatsapp/send-rx", { rxNumber: selfRx.rxNumber }, adminAuth);
+    assert.equal(selfRefused.status, 409);
+    assert.equal(selfRefused.json.code, RX_NOT_SIGNED);
+
     const deskId = `desk-${clinic.userId}`;
     const linkedDeskDoctor = `doc-desk-${clinic.userId}`;
     getDb()
@@ -534,6 +562,7 @@ describe("usage-billing Rx WhatsApp send is bound to the signed prescription", (
          VALUES (?, ?, 'Owner Doctor', 'MBBS', ?, 'General Medicine', 12, 500, 'OPD-1', '[]', '', '', '', '', '', '', 1)`
       )
       .run(ownerDoctorId, ownerId, `REG-${ownerId}`);
+    assert.equal(treatingDoctorId(clinic.tenantId, ownerId, "polyclinic_admin", ownerId), "");
     assert.equal(treatingDoctorId(clinic.tenantId, ownerId, "polyclinic_admin", ownerDoctorId), ownerDoctorId);
     const ownerAuth = await login(ownerEmail);
     const ownerSigned = await jsonRequest(

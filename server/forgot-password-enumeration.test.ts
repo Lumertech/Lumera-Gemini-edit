@@ -222,14 +222,26 @@ describe("forgot-password does not enumerate accounts", () => {
       ip
     );
     const freshReal = insertUser("ip-blocked-real", `+91 94${String(Date.now()).slice(-8)}`);
+    const noPhone = insertUser("ip-blocked-nophone", "");
     const blockedReal = await jsonRequest(server.port, "POST", "/api/auth/forgot-password", { email: freshReal.email }, ip);
+    const blockedNoPhone = await jsonRequest(server.port, "POST", "/api/auth/forgot-password", { email: noPhone.email }, ip);
     assert.equal(blockedUnknown.status, 200);
     assert.equal(blockedReal.status, 200);
+    assert.equal(blockedNoPhone.status, 200);
     assert.deepEqual(blockedUnknown.json, PUBLIC_BODY);
     assert.deepEqual(blockedReal.json, blockedUnknown.json);
+    assert.deepEqual(blockedNoPhone.json, blockedUnknown.json);
     assert.deepEqual(comparableHeaders(blockedUnknown.headers), comparableHeaders(blockedReal.headers));
+    assert.deepEqual(comparableHeaders(blockedUnknown.headers), comparableHeaders(blockedNoPhone.headers));
     assert.equal(blockedUnknown.headers.get("retry-after"), null);
     assert.equal(blockedReal.headers.get("retry-after"), null);
+    assert.equal(blockedNoPhone.headers.get("retry-after"), null);
+    const noPhoneCount = (
+      getDb()
+        .prepare("SELECT COUNT(*) AS c FROM otp_verifications WHERE lower(email) = ?")
+        .get(noPhone.email.toLowerCase()) as { c: number }
+    ).c;
+    assert.equal(noPhoneCount, 0);
     const freshCount = (
       getDb()
         .prepare("SELECT COUNT(*) AS c FROM otp_verifications WHERE lower(email) = ?")

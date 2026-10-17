@@ -656,8 +656,9 @@ function specialtyModulesFromBody(body: Record<string, unknown>, signerId: strin
 
 /**
  * reviewedBy is the Rx's doctor_id only when this session may prescribe and is
- * that doctor. Owner-doctors sign as polyclinic_admin through their doctors
- * row. A receptionist never signs, even when a doctors row links them.
+ * that doctor. A direct user-id match signs only for the doctor role.
+ * Owner-doctors sign as polyclinic_admin through their doctors row.
+ * A receptionist never signs, even when a doctors row links them.
  */
 export function treatingDoctorId(
   tenantId: string,
@@ -669,7 +670,7 @@ export function treatingDoctorId(
   const actor = String(sessionUserId || "").trim();
   const id = String(doctorId || "").trim();
   if (!actor || !id) return "";
-  if (actor === id) return id;
+  if (actor === id) return role === "doctor" ? id : "";
   const linked = getDb()
     .prepare(
       `SELECT d.id
