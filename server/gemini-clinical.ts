@@ -178,6 +178,11 @@ export function mountGeminiClinicalRoutes(app: Express) {
         return res.status(503).json({ error: "Gemini AI API key not configured" });
       }
       const cleanBase64 = audioBase64.replace(/^data:audio\/[a-z0-9]+;base64,/, "");
+      // About 8MB of decoded audio. The client also stops at 90s / 8MB. The clip is not stored.
+      const maxBase64Chars = Math.ceil((8 * 1024 * 1024) / 3) * 4;
+      if (cleanBase64.length > maxBase64Chars) {
+        return res.status(413).json({ error: "Recording is too long to transcribe." });
+      }
       const response = await ai.models.generateContent({
         model: "gemini-3.5-transcribe",
         contents: [
