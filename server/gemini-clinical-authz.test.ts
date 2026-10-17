@@ -11,7 +11,11 @@ import {
   setGeminiSafetyCheckGeneratorForTests,
   setGeminiSoapGeneratorForTests,
 } from "./gemini-clinical.ts";
-import { resetClinicalGeminiRateLimits, setClinicalGeminiRateLimitForTests } from "./gemini-clinical-rate-limit.ts";
+import {
+  resetClinicalGeminiRateLimits,
+  setClinicalGeminiRateLimitForTests,
+  setSafetyCheckRateLimitForTests,
+} from "./gemini-clinical-rate-limit.ts";
 import { hashPassword } from "./password.ts";
 import { jsonRequest, startTestServer } from "./test-http.ts";
 
@@ -238,7 +242,8 @@ describe("clinical Gemini route auth", () => {
     for (const route of ROUTES) assert.match(mounted, new RegExp(route.replaceAll("/", "\\/")));
     assert.equal((mounted.match(/requireAuth/g) || []).length, 4);
     assert.equal((mounted.match(/prescriberOnly/g) || []).length, 4);
-    assert.equal((mounted.match(/clinicalGeminiRateLimit/g) || []).length, 4);
+    assert.equal((mounted.match(/clinicalGeminiRateLimit/g) || []).length, 3);
+    assert.equal((mounted.match(/safetyCheckRateLimit/g) || []).length, 1);
     assert.equal((mounted.match(/rejectUntrustedTenantClaim/g) || []).length, 4);
     const handlers = clinical.slice(clinical.indexOf("const handleGeminiCopilot"), clinical.indexOf('"/api/gemini/transcribe"'));
     assert.match(handlers, /copilot_failed/);
@@ -274,7 +279,7 @@ describe("clinical Gemini route auth", () => {
 
     const colleague = seedUser("colleague", "doctor", doctor.tenantId);
     const colleagueToken = await login(colleague.email);
-    setClinicalGeminiRateLimitForTests({ userMax: 5, tenantMax: 1 });
+    setSafetyCheckRateLimitForTests({ userMax: 5, tenantMax: 1 });
     const tenantFirst = await jsonRequest(port, "POST", "/api/gemini/safety-check", body, headers);
     const tenantSecond = await jsonRequest(
       port,
@@ -286,6 +291,32 @@ describe("clinical Gemini route auth", () => {
     assert.equal(tenantFirst.status, 200);
     assert.equal(tenantSecond.status, 429);
     assert.equal(JSON.stringify(tenantSecond.json).includes("Error"), false);
+    resetClinicalGeminiRateLimits();
+  });
+
+  it("keeps the safety-check budget separate from copilot and SOAP", async () => {
+    resetClinicalGeminiRateLimits();
+    setClinicalGeminiRateLimitForTests({ userMax: 1, tenantMax: 20 });
+    setSafetyCheckRateLimitForTests({ userMax: 1, tenantMax: 20 });
+    const token = await login(doctor.email);
+    const headers = auth(token);
+    const copilot = await jsonRequest(port, "POST", "/api/gemini/copilot", { query: "dose" }, headers);
+    const safety = await jsonRequest(port, "POST", "/api/gemini/safety-check", { medicines: [] }, headers);
+    const soap = await jsonRequest(
+      port,
+      "POST",
+      "/api/gemini/generate-soap",
+      { transcript: "Patient has fever and a dry cough today." },
+      headers
+    );
+    const safetyAgain = await jsonRequest(port, "POST", "/api/gemini/safety-check", { medicines: [] }, headers);
+    assert.equal(copilot.status, 200);
+    assert.equal(safety.status, 200);
+    assert.equal(safety.json.safetyStatus, "REVIEW");
+    assert.equal(safety.json.source, "rule-based fallback");
+    assert.equal(soap.status, 429);
+    assert.equal(safetyAgain.status, 429);
+    assert.match(String(safetyAgain.json.error || ""), /too many safety checks/i);
     resetClinicalGeminiRateLimits();
   });
 

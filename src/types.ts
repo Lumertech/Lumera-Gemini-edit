@@ -669,8 +669,13 @@ export interface ClinicSettings {
 }
 
 export interface SafetyCheckResult {
-  hasHighRiskAlert: boolean;
-  alerts: {
+  hasHighRiskAlert?: boolean;
+  safetyStatus?: string;
+  source?: string;
+  summary?: string;
+  contraindications?: string[];
+  recommendations?: string[];
+  alerts?: {
     type: 'INTERACTION' | 'ALLERGY' | 'CONTRAINDICATION' | 'DOSAGE_WARNING' | 'PREGNANCY_LACTATION';
     severity: 'Mild' | 'Moderate' | 'Severe' | 'Critical';
     drugsInvolved: string[];

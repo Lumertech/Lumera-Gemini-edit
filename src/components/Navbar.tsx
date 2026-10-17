@@ -11,6 +11,7 @@ import { Doctor, UserRole } from '../types';
 import { useAuth } from '../auth/AuthContext';
 import { useNav } from '../nav/NavigationContext';
 import { appViewToPath } from '../nav/surfaces';
+import { canOpenClinicalAssistant } from '../lib/pulseAssistantCopy';
 
 export type NavView = 
   | 'welcome'
@@ -191,17 +192,19 @@ export const Navbar: React.FC<NavbarProps> = ({
                   </select>
                 </label>
               )}
-              <button
-                type="button"
-                role="menuitem"
-                className="w-full text-left px-2 py-1.5 rounded-lg hover:bg-slate-50 text-xs text-slate-700"
-                onClick={() => {
-                  setMenuOpen(false);
-                  toggleCopilot();
-                }}
-              >
-                Assistant
-              </button>
+              {canOpenClinicalAssistant(userRole) && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="w-full text-left px-2 py-1.5 rounded-lg hover:bg-slate-50 text-xs text-slate-700"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    toggleCopilot();
+                  }}
+                >
+                  Assistant
+                </button>
+              )}
               {canOpenAdmin && (
                 <Link to="/admin" role="menuitem" className="flex items-center gap-1 px-2 py-1.5 rounded-lg hover:bg-slate-50 text-xs text-slate-700" onClick={() => setMenuOpen(false)}>
                   <Shield className="w-3.5 h-3.5" /> Admin

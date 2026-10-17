@@ -1,7 +1,7 @@
 import type { Express, NextFunction, Request, Response } from "express";
 import { GoogleGenAI } from "@google/genai";
 import { requireAuth } from "./auth.ts";
-import { clinicalGeminiRateLimit } from "./gemini-clinical-rate-limit.ts";
+import { clinicalGeminiRateLimit, safetyCheckRateLimit } from "./gemini-clinical-rate-limit.ts";
 import { mountGeminiVoiceRoutes } from "./gemini-voice.ts";
 import { generateRuleBasedSoap, getPulseFallbackAnswer } from "./gemini-fallbacks.ts";
 import { aiScribeTenantIdFromRequest, blockedAiScribeResponse, meterSuccessfulGeminiScribe } from "./gemini-scribe-meter.ts";
@@ -185,7 +185,7 @@ export function mountGeminiClinicalRoutes(app: Express) {
     handleGeminiCopilot
   );
 
-  app.post("/api/gemini/safety-check", requireAuth, prescriberOnly, clinicalGeminiRateLimit, rejectUntrustedTenantClaim, async (req: Request, res: Response) => {
+  app.post("/api/gemini/safety-check", requireAuth, prescriberOnly, safetyCheckRateLimit, rejectUntrustedTenantClaim, async (req: Request, res: Response) => {
     try {
       if (testSafetyCheckGenerator) {
         return res.json(await testSafetyCheckGenerator());
@@ -213,7 +213,13 @@ export function mountGeminiClinicalRoutes(app: Express) {
           alerts.push({ type: "ALLERGY", severity: "Severe", drugsInvolved: ["Amoxicillin/Clavulanate"], description: "Patient is allergic to Penicillin.", clinicalRecommendation: "Switch to a Macrolide." });
         }
       }
-      return res.json({ hasHighRiskAlert: alerts.some((a) => a.severity === "Severe" || a.severity === "Critical"), alerts });
+      const highRisk = alerts.some((a) => a.severity === "Severe" || a.severity === "Critical");
+      return res.json({
+        safetyStatus: highRisk ? "HIGH_RISK" : "REVIEW",
+        source: "rule-based fallback",
+        hasHighRiskAlert: highRisk,
+        alerts,
+      });
     } catch {
       console.error("Safety check failed");
       res.status(500).json({ code: "safety_check_failed" });
