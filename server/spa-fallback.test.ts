@@ -247,6 +247,8 @@ describe("production SPA history fallback", () => {
       assert.equal(home.headers.get("x-content-type-options"), "nosniff");
       assert.equal(home.headers.get("x-frame-options"), "DENY");
       assert.match(home.headers.get("permissions-policy") || "", /microphone=\(self\)/);
+      assert.match(home.headers.get("permissions-policy") || "", /camera=\(self\)/);
+      assert.equal(home.headers.get("cache-control"), "private, no-cache");
       assert.match(home.headers.get("referrer-policy") || "", /strict-origin-when-cross-origin/);
       for (const p of ["/app/rx", "/admin/users", "/signup", "/login", "/w/lumera-apex-polyclinic/queue"]) {
         const res = await fetch(`${origin}${p}`);
@@ -262,6 +264,9 @@ describe("production SPA history fallback", () => {
         const res = await fetch(`${origin}${p}`);
         assert.equal(res.status, 404, `${p} must not fall through to an empty SPA shell`);
       }
+      const indexHtml = await fetch(`${origin}/index.html`);
+      assert.equal(indexHtml.status, 200);
+      assert.equal(indexHtml.headers.get("cache-control"), "private, no-cache");
       const asset = await fetch(`${origin}/ok.txt`);
       assert.equal(asset.status, 200);
       assert.equal(await asset.text(), "static-ok");

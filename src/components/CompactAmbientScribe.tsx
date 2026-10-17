@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useImperativeHandle, useRef, useState } from "react";
 import {
   Mic,
   MicOff,
@@ -13,14 +13,32 @@ import {
 } from "lucide-react";
 import { SoapNote, Patient, Doctor } from "../types";
 import { useAuth } from "../auth/AuthContext";
-import { apiFetch } from "../api/http";
 import { ABHA_LINKING_STATUS, showsAbhaSandboxStatus } from "../lib/clinicNav";
-import { isSpeechRecognitionAvailable, micErrorMessage, startAmbientMic } from "../lib/ambientMic";
+import { AmbientRecordingDisclosure, AmbientScribeConsentDialog } from "./AmbientScribeConsentDialog";
+import {
+  beginAmbientMicGesture,
+  micErrorMessage,
+  microphoneStatusLabel,
+  resetAmbientMicrophoneSession,
+  shouldUploadAmbientRecording,
+  startAmbientMic,
+  transcriptBadge,
+  transcribeRecordedAudio,
+  type AmbientMicGesture,
+  type TranscriptOrigin,
+} from "../lib/ambientMic";
+import { ambientMicStartDecision } from "../lib/ambientScribeConsent";
+import { useAmbientScribeConsent } from "../lib/useAmbientScribeConsent";
 import { extractClinicalTokens, type PulseExtractSource } from "../lib/pulseClinicalTokens";
 import { resolveRxModule } from "../lib/specialtyWorkflow";
 import { flashPopulatedRxFields } from "../lib/flashPopulatedRxFields";
 
-export type AmbientScribeStatus = "idle" | "listening" | "processing";
+export type AmbientScribeStatus = "idle" | "requesting" | "listening" | "transcribing" | "processing";
+
+export interface CompactAmbientScribeHandle {
+  startListening: () => void;
+  stopListening: () => void;
+}
 
 interface CompactAmbientScribeProps {
   currentPatient: Patient;
@@ -31,6 +49,8 @@ interface CompactAmbientScribeProps {
   onStatusChange?: (status: AmbientScribeStatus) => void;
   /** Active Rx module — GP, cardiology, physio, etc. Independent of demo pack-id `gp`. */
   practiceSpecialty?: string;
+  /** Visit this recording belongs to. Empty uses a same-day key for this patient. */
+  appointmentId?: string;
 }
 
 const DEMO_BY_MODULE: Record<string, Array<{ id: string; label: string; text: string }>> = {
@@ -120,7 +140,7 @@ function demoConsultsFor(specialty?: string) {
   return DEMO_BY_MODULE[module] || DEMO_BY_MODULE["General Medicine"];
 }
 
-export const CompactAmbientScribe: React.FC<CompactAmbientScribeProps> = ({
+export const CompactAmbientScribe = React.forwardRef<CompactAmbientScribeHandle, CompactAmbientScribeProps>(function CompactAmbientScribe({
   currentPatient,
   currentDoctor,
   onApplyToRx,
@@ -128,13 +148,17 @@ export const CompactAmbientScribe: React.FC<CompactAmbientScribeProps> = ({
   onClose,
   onStatusChange,
   practiceSpecialty,
-}) => {
+  appointmentId,
+}, ref) {
   const { user } = useAuth();
   const showAbhaStatus = showsAbhaSandboxStatus(user?.role);
   const [isRecording, setIsRecording] = useState(false);
+  const [isRequesting, setIsRequesting] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [finalTranscript, setFinalTranscript] = useState("");
   const [interimTranscript, setInterimTranscript] = useState("");
+  const [textSource, setTextSource] = useState<TranscriptOrigin>("empty");
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedSoap, setGeneratedSoap] = useState<SoapNote | null>(null);
   const [extractSource, setExtractSource] = useState<PulseExtractSource | null>(null);
@@ -143,9 +167,35 @@ export const CompactAmbientScribe: React.FC<CompactAmbientScribeProps> = ({
   const [audioLevel, setAudioLevel] = useState(0);
   const sessionRef = useRef<{ stop: () => void } | null>(null);
   const transcriptRef = useRef("");
+  const recordingRef = useRef(false);
+  const requestingRef = useRef(false);
+  const uploadLockRef = useRef(false);
+  const cancelStartRef = useRef(false);
+  const skipUploadRef = useRef(false);
+  const captureStartedAtRef = useRef(0);
+  const stopMicRef = useRef<() => void>(() => {});
+  const consent = useAmbientScribeConsent({
+    appointmentId,
+    patientId: currentPatient.id,
+    onAuditFailed: () => stopMicRef.current(),
+  });
 
   const transcript = [finalTranscript, interimTranscript].filter(Boolean).join(interimTranscript ? " " : "");
-  const status: AmbientScribeStatus = isGenerating ? "processing" : isRecording ? "listening" : "idle";
+  const status: AmbientScribeStatus = isTranscribing
+    ? "transcribing"
+    : isGenerating
+      ? "processing"
+      : isRequesting
+        ? "requesting"
+        : isRecording
+          ? "listening"
+          : "idle";
+  const micLabel = microphoneStatusLabel({
+    requesting: isRequesting,
+    recording: isRecording,
+    transcriptOrigin: textSource,
+    transcribing: isTranscribing,
+  });
 
   useEffect(() => {
     transcriptRef.current = finalTranscript;
@@ -175,75 +225,154 @@ export const CompactAmbientScribe: React.FC<CompactAmbientScribeProps> = ({
   }, []);
 
   const stopMic = () => {
+    cancelStartRef.current = true;
     sessionRef.current?.stop();
     sessionRef.current = null;
+    recordingRef.current = false;
+    requestingRef.current = false;
     setIsRecording(false);
+    setIsRequesting(false);
     setInterimTranscript("");
     setAudioLevel(0);
   };
 
-  const handleToggleRecording = async () => {
-    if (isRecording) {
+  const uploadFallback = async (audioBlob: Blob) => {
+    if (!shouldUploadAmbientRecording()) return;
+    if (uploadLockRef.current) return;
+    if (audioBlob.size < 100) {
+      setMicError("No audio was captured to transcribe. Allow the microphone and speak, or type the consult.");
+      return;
+    }
+    uploadLockRef.current = true;
+    setIsTranscribing(true);
+    try {
+      const elapsed = captureStartedAtRef.current > 0 ? Date.now() - captureStartedAtRef.current : 0;
+      const text = await transcribeRecordedAudio(audioBlob, undefined, elapsed, consent.appointmentId());
+      setFinalTranscript(text);
+      setInterimTranscript("");
+      setTextSource("server");
+      setMicError(null);
+    } catch (err) {
+      setMicError(err instanceof Error ? err.message : "Server transcription failed.");
+    } finally {
+      uploadLockRef.current = false;
+      setIsTranscribing(false);
+    }
+  };
+
+  const handleToggleRecording = (force?: "start" | "stop") => {
+    const decision = ambientMicStartDecision({
+      force,
+      listening: recordingRef.current,
+      requesting: requestingRef.current,
+      busy: uploadLockRef.current,
+      consentGranted: consent.allowsStart(),
+    });
+    if (decision === "stop") {
       stopMic();
       return;
     }
-    setMicError(null);
-    setGeneratedSoap(null);
-    setAppliedSuccess(false);
+    if (decision === "ask-consent") {
+      consent.ask();
+      return;
+    }
+    if (decision !== "start") return;
+    consent.acknowledgeSecondTap();
+    // Microphone and AudioContext.resume must run in this turn, before any await.
+    let gesture: AmbientMicGesture;
     try {
-      const session = await startAmbientMic({
-        lang: "en-IN",
-        onLevel: setAudioLevel,
-        onError: (message) => setMicError(message),
-        onTranscript: ({ finalChunk, interim }) => {
-          if (finalChunk) {
-            setFinalTranscript((prev) => (prev ? `${prev.trim()} ${finalChunk}` : finalChunk));
-          }
-          setInterimTranscript(interim);
-        },
-        onAudioRecorded: async (audioBlob) => {
-          if (audioBlob.size > 100) {
-            // If SpeechRecognition wasn't available or the transcript is brief, send audio to the transcribe API
-            if (!isSpeechRecognitionAvailable() || finalTranscript.trim().length < 15) {
-              setMicError(null);
-              try {
-                const reader = new FileReader();
-                reader.readAsDataURL(audioBlob);
-                reader.onloadend = async () => {
-                  const base64Audio = reader.result as string;
-                  const mimeType = audioBlob.type || "audio/webm";
-                  const data = await apiFetch<{ success?: boolean; transcription?: string }>("/api/gemini/transcribe", {
-                    method: "POST",
-                    body: JSON.stringify({ audioBase64: base64Audio, mimeType }),
-                  });
-                  if (data.success && data.transcription) {
-                    setFinalTranscript((prev) => (prev ? `${prev} ${data.transcription}` : data.transcription));
-                  }
-                };
-              } catch (err) {
-                console.error("Gemini transcribe error on mobile:", err);
-              }
-            }
-          }
-        },
-      });
-      sessionRef.current = session;
-      setIsRecording(true);
-      if (!isSpeechRecognitionAvailable()) {
-        setMicError(
-          "Recording on this device. The transcript is filled in when you stop."
-        );
-      }
+      gesture = beginAmbientMicGesture();
     } catch (err) {
       const mapped = micErrorMessage(err);
       setMicError(mapped.message);
+      return;
+    }
+    cancelStartRef.current = false;
+    requestingRef.current = true;
+    setIsRequesting(true);
+    setMicError(null);
+    setGeneratedSoap(null);
+    setAppliedSuccess(false);
+    if (textSource === "sample") {
+      setFinalTranscript("");
+      setInterimTranscript("");
+      setTextSource("empty");
+    }
+    void openMicSession(gesture);
+  };
+
+  const openMicSession = async (gesture: AmbientMicGesture) => {
+    try {
+      const session = await startAmbientMic({
+        gesture,
+        lang: "en-IN",
+        onLevel: setAudioLevel,
+        onError: (message) => {
+          setMicError(message);
+        },
+        onInterrupted: (message) => {
+          skipUploadRef.current = true;
+          setMicError(message);
+        },
+        onAudioRecorded: (blob) => {
+          recordingRef.current = false;
+          requestingRef.current = false;
+          setIsRecording(false);
+          setIsRequesting(false);
+          setAudioLevel(0);
+          if (skipUploadRef.current) {
+            skipUploadRef.current = false;
+            return;
+          }
+          void uploadFallback(blob);
+        },
+        onStopped: () => {
+          recordingRef.current = false;
+          requestingRef.current = false;
+          setIsRecording(false);
+          setIsRequesting(false);
+        },
+      });
+      if (cancelStartRef.current) {
+        session.stop();
+        return;
+      }
+      sessionRef.current = session;
+      recordingRef.current = true;
+      requestingRef.current = false;
+      captureStartedAtRef.current = Date.now();
+      setIsRequesting(false);
+      setIsRecording(true);
+    } catch (err) {
+      const mapped = micErrorMessage(err);
+      setMicError(mapped.message);
+      recordingRef.current = false;
+      requestingRef.current = false;
       setIsRecording(false);
+      setIsRequesting(false);
     }
   };
+
+  stopMicRef.current = () => {
+    skipUploadRef.current = true;
+    stopMic();
+    resetAmbientMicrophoneSession();
+  };
+  const toggleRef = useRef(handleToggleRecording);
+  toggleRef.current = handleToggleRecording;
+  useImperativeHandle(ref, () => ({
+    startListening: () => {
+      void toggleRef.current("start");
+    },
+    stopListening: () => {
+      void toggleRef.current("stop");
+    },
+  }), []);
 
   const handleClearTranscript = () => {
     setFinalTranscript("");
     setInterimTranscript("");
+    setTextSource("empty");
     setGeneratedSoap(null);
     setAppliedSuccess(false);
     setExtractSource(null);
@@ -291,32 +420,47 @@ export const CompactAmbientScribe: React.FC<CompactAmbientScribeProps> = ({
     return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
   };
 
-  const statusLabel = status === "listening" ? "Listening" : status === "processing" ? "Processing" : "Idle";
+  const statusLabel =
+    status === "listening"
+      ? "Listening"
+      : status === "requesting"
+        ? "Allow mic"
+        : status === "transcribing"
+          ? "Transcribing…"
+          : status === "processing"
+            ? "Processing"
+            : "Idle";
+  const badge = transcriptBadge(textSource);
   const bars = Array.from({ length: 16 }, (_, i) => {
-    const wave = ((i % 5) + 1) * 12;
-    const live = Math.max(12, Math.round((audioLevel / 100) * wave + (i % 3) * 8));
-    return isRecording ? live : 14;
+    const scale = 0.55 + (i % 5) * 0.12;
+    const shaped = Math.sqrt(Math.max(audioLevel, 0) / 100);
+    return isRecording ? Math.max(4, Math.round(shaped * 28 * scale)) : 4;
   });
 
   return (
     <section
       id="ambient-scribe-top"
       aria-label="Ambient AI Scribe"
-      className="no-print w-full min-w-0 max-w-full bg-white rounded-xl border border-violet-200 shadow-sm overflow-hidden"
+      className="no-print w-full min-w-0 max-w-full bg-white rounded-xl border border-violet-200 shadow-sm overflow-x-hidden"
     >
       <div className="px-4 py-3 bg-gradient-to-r from-violet-50 to-slate-50 border-b border-violet-100 flex items-center justify-between gap-3">
         <div className="flex items-center gap-2 min-w-0">
-          <div
-            className={`w-9 h-9 rounded-lg flex items-center justify-center border ${
+          <button
+            type="button"
+            data-testid="ambient-header-mic"
+            onClick={() => handleToggleRecording()}
+            aria-label={isRecording ? "Stop listening" : "Start listening"}
+            title={isRecording ? "Stop the microphone" : "Start the microphone"}
+            className={`w-9 h-9 rounded-lg flex items-center justify-center border cursor-pointer ${
               status === "listening"
                 ? "bg-rose-50 border-rose-200 text-rose-600"
-                : status === "processing"
+                : status === "requesting" || status === "processing" || status === "transcribing"
                   ? "bg-amber-50 border-amber-200 text-amber-700"
                   : "bg-violet-50 border-violet-200 text-violet-700"
             }`}
           >
-            <Mic className={`w-4 h-4 ${status === "listening" ? "animate-pulse" : ""}`} />
-          </div>
+            <Mic className={`w-4 h-4 ${status === "listening" || status === "requesting" ? "animate-pulse" : ""}`} />
+          </button>
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-sm font-bold text-slate-900">Ambient AI Scribe</span>
@@ -324,7 +468,7 @@ export const CompactAmbientScribe: React.FC<CompactAmbientScribeProps> = ({
                 className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${
                   status === "listening"
                     ? "bg-rose-100 text-rose-800 border-rose-200"
-                    : status === "processing"
+                    : status === "processing" || status === "requesting" || status === "transcribing"
                       ? "bg-amber-100 text-amber-800 border-amber-200"
                       : "bg-slate-100 text-slate-600 border-slate-200"
                 }`}
@@ -336,7 +480,7 @@ export const CompactAmbientScribe: React.FC<CompactAmbientScribeProps> = ({
               )}
             </div>
             <p className="text-[11px] text-slate-500">
-              Live mic + transcript for this {resolveRxModule(practiceSpecialty || currentDoctor.specialty)} consult. Pulse AI fills the Rx — review highlighted fields before signing.
+              Microphone for this {resolveRxModule(practiceSpecialty || currentDoctor.specialty)} consult. Notes stay suggestions until you apply them — nothing is printed or sent on WhatsApp from here.
             </p>
             {showAbhaStatus ? (
               <p className="no-print text-[10px] leading-snug text-slate-400" data-testid="abha-linking-status">
@@ -357,9 +501,30 @@ export const CompactAmbientScribe: React.FC<CompactAmbientScribeProps> = ({
         )}
       </div>
 
+      {isRequesting && (
+        <div
+          role="status"
+          className="mx-4 mt-3 px-3 py-2 rounded-lg border border-amber-200 bg-amber-50 text-amber-900 text-xs"
+        >
+          Waiting for the browser microphone prompt. If none appears, allow the microphone in the address bar, then tap Start listening again.
+        </div>
+      )}
+
+      {consent.notice && (
+        <div
+          role="status"
+          data-testid="ambient-consent-ready"
+          className="mx-4 mt-3 px-3 py-2 rounded-lg border border-amber-200 bg-amber-50 text-amber-900 text-xs flex items-start gap-2"
+        >
+          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+          <span>{consent.notice}</span>
+        </div>
+      )}
+
       {micError && (
         <div
           role="alert"
+          data-testid="ambient-mic-error"
           className="mx-4 mt-3 px-3 py-2 rounded-lg border border-rose-200 bg-rose-50 text-rose-800 text-xs flex items-start gap-2"
         >
           <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
@@ -367,39 +532,66 @@ export const CompactAmbientScribe: React.FC<CompactAmbientScribeProps> = ({
         </div>
       )}
 
+      <AmbientScribeConsentDialog
+        open={consent.open}
+        error={consent.error}
+        saving={consent.saving}
+        onCancel={() => consent.close()}
+        onConfirm={() => {
+          void consent.confirm();
+        }}
+      />
+
       <div className="p-4 grid grid-cols-1 lg:grid-cols-2 gap-3">
         <div className="space-y-2">
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between min-w-0">
             <div className="flex items-center gap-2">
-              <div className={`w-2.5 h-2.5 rounded-full ${isRecording ? "bg-rose-500 animate-ping" : "bg-slate-300"}`} />
-              <span className="text-[11px] font-semibold text-slate-600">
-                {isRecording ? "Live mic + visualizer" : "Microphone idle"}
+              <div className={`w-2.5 h-2.5 rounded-full ${isRecording ? "bg-rose-500 animate-ping" : isRequesting ? "bg-amber-500 animate-pulse" : "bg-slate-300"}`} />
+              <span className="text-[11px] font-semibold text-slate-600" data-testid="ambient-mic-status">
+                {micLabel}
               </span>
             </div>
-            <div className="flex items-end gap-0.5 h-6 px-2 py-0.5 bg-slate-50 rounded border border-slate-200" aria-hidden>
+            <div
+              className="flex items-end gap-0.5 h-8 px-2 py-1 bg-slate-50 rounded border border-slate-200"
+              data-testid="ambient-mic-level"
+              role="meter"
+              aria-label="Microphone level"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={isRecording ? audioLevel : 0}
+            >
               {bars.map((h, i) => (
                 <div
                   key={i}
                   className={`w-1 rounded-full ${isRecording ? "bg-rose-500" : "bg-slate-300"}`}
-                  style={{ height: `${h}%` }}
+                  style={{ height: `${h}px` }}
                 />
               ))}
+              <span className="ml-1 text-[10px] font-mono text-slate-500 self-center">{isRecording ? `${audioLevel}%` : "0%"}</span>
             </div>
           </div>
 
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              onClick={() => void handleToggleRecording()}
-              aria-label={isRecording ? "Stop listening" : "Start listening / Live mic"}
-              title={isRecording ? "Stop the live microphone" : "Request microphone access and start live transcription"}
+              data-testid="ambient-start-listening"
+              onClick={() => handleToggleRecording()}
+              aria-label={isRecording ? "Stop listening" : isRequesting ? "Waiting for microphone permission" : "Start listening"}
+              title={isRecording ? "Stop the microphone" : "Request microphone access and start transcription"}
               className={`px-3 py-1.5 rounded-lg font-semibold text-xs flex items-center gap-1.5 ${
-                isRecording ? "bg-rose-600 text-white" : "bg-violet-600 text-white hover:bg-violet-700"
+                isRecording ? "bg-rose-600 text-white" : isRequesting ? "bg-amber-600 text-white" : "bg-violet-600 text-white hover:bg-violet-700"
               }`}
             >
               {isRecording ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
-              <span>{isRecording ? "Stop listening" : "Start listening"}</span>
-              {!isRecording && <span className="opacity-80 font-medium">/ Live mic</span>}
+              <span>
+                {isTranscribing
+                  ? "Transcribing…"
+                  : isRecording
+                    ? "Stop listening"
+                    : isRequesting
+                      ? "Waiting for microphone…"
+                      : "Start listening"}
+              </span>
             </button>
             <button
               type="button"
@@ -419,30 +611,36 @@ export const CompactAmbientScribe: React.FC<CompactAmbientScribeProps> = ({
               <span>{isGenerating ? "Extracting tokens…" : "Extract clinical tokens"}</span>
             </button>
           </div>
+          <AmbientRecordingDisclosure />
 
-          <div className="flex flex-wrap gap-1">
-            {demoConsultsFor(practiceSpecialty || currentDoctor.specialty).map((sample) => (
-              <button
-                key={sample.id}
-                type="button"
-                onClick={() => {
-                  setFinalTranscript(sample.text);
-                  setInterimTranscript("");
-                  setGeneratedSoap(null);
-                  setAppliedSuccess(false);
-                  setMicError(null);
-                }}
-                className="px-2 py-1 rounded bg-slate-50 hover:bg-slate-100 border border-slate-200 text-[10px] text-slate-600"
-              >
-                {sample.label}
-              </button>
-            ))}
+          <div className="space-y-1">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Sample/Demo dialogues — not a live recording</p>
+            <div className="flex flex-wrap gap-1">
+              {demoConsultsFor(practiceSpecialty || currentDoctor.specialty).map((sample) => (
+                <button
+                  key={sample.id}
+                  type="button"
+                  onClick={() => {
+                    stopMic();
+                    setFinalTranscript(sample.text);
+                    setInterimTranscript("");
+                    setTextSource("sample");
+                    setGeneratedSoap(null);
+                    setAppliedSuccess(false);
+                    setMicError(null);
+                  }}
+                  className="px-2 py-1 rounded bg-amber-50 hover:bg-amber-100 border border-amber-200 text-[10px] text-amber-900"
+                >
+                  Sample/Demo: {sample.label.replace(/^Demo:\s*/i, "")}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
         <div className="space-y-1">
           <div className="flex items-center justify-between text-[10px] text-slate-500 uppercase font-bold tracking-wider">
-            <span>Captured consult text</span>
+            <span>{badge || "Consult text"}</span>
             <span className="normal-case font-medium">{transcript.length} chars</span>
           </div>
           <textarea
@@ -450,9 +648,10 @@ export const CompactAmbientScribe: React.FC<CompactAmbientScribeProps> = ({
             onChange={(e) => {
               setFinalTranscript(e.target.value);
               setInterimTranscript("");
+              setTextSource(e.target.value.trim() ? "typed" : "empty");
             }}
             rows={6}
-            placeholder="Transcript is empty until you start the live mic or type the consult here…"
+            placeholder="Transcript stays empty until you start the microphone or type the consult. Sample/Demo dialogues are labeled and are not a live recording."
             className="w-full min-h-[140px] bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 text-xs font-mono focus:border-violet-400 focus:outline-none resize-y leading-relaxed"
           />
         </div>
@@ -475,16 +674,19 @@ export const CompactAmbientScribe: React.FC<CompactAmbientScribeProps> = ({
           ) : appliedSuccess ? (
             <>
               <CheckCircle2 className="w-4 h-4" />
-              Rx fields auto-populated
+              Suggestions applied — review before sign, print, or WhatsApp
             </>
           ) : (
             <>
               <Sparkles className="w-4 h-4" />
-              Continue to Rx (Auto-populate Fields)
+              Apply suggestions to Rx draft
               <ArrowRight className="w-4 h-4" />
             </>
           )}
         </button>
+        <p className="text-[11px] text-slate-500">
+          Extracted notes, diagnosis, and medicines stay suggestions until you apply them. Applying fills this draft only. It does not print or send WhatsApp.
+        </p>
 
         {generatedSoap && (
           <div className="p-3 bg-violet-50 rounded-lg border border-violet-200 space-y-2">
@@ -534,4 +736,4 @@ export const CompactAmbientScribe: React.FC<CompactAmbientScribeProps> = ({
       </div>
     </section>
   );
-};
+});

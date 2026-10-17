@@ -1,3 +1,4 @@
+import { HIDDEN_AMBIENT_SOURCES, hiddenVisitSourceSql, isHiddenVisitSource } from "./ambient-walkin.ts";
 import { getDb, mapAppointment, mapPatient, writeAudit } from "./db.ts";
 import {
   appointmentPhoneFromPatient,
@@ -63,7 +64,7 @@ export function findOrCreateWhatsAppPatient(opts: {
   });
 }
 
-const ACTIVE_APPOINTMENT_SQL = `status NOT IN ('Completed', 'Cancelled', 'No-Show')`;
+const ACTIVE_APPOINTMENT_SQL = `status NOT IN ('Completed', 'Cancelled', 'No-Show') AND ${hiddenVisitSourceSql()}`;
 
 function withLivePatientPhone(
   tenantId: string,
@@ -93,7 +94,9 @@ export function findActiveAppointment(opts: {
   appointmentId?: string;
 }): Record<string, unknown> | undefined {
   if (opts.appointmentId) {
-    return withLivePatientPhone(opts.tenantId, getTenantAppointment(opts.tenantId, opts.appointmentId));
+    const named = getTenantAppointment(opts.tenantId, opts.appointmentId);
+    if (!named || isHiddenVisitSource(named.source)) return undefined;
+    return withLivePatientPhone(opts.tenantId, named);
   }
 
   const db = getDb();
@@ -105,14 +108,14 @@ export function findActiveAppointment(opts: {
              WHERE tenant_id = ? AND patient_id = ? AND date = ? AND doctor_id = ? AND ${ACTIVE_APPOINTMENT_SQL}
              ORDER BY created_at DESC LIMIT 1`
           )
-          .get(opts.tenantId, opts.patientId, opts.date, opts.doctorId) as Record<string, unknown> | undefined)
+          .get(opts.tenantId, opts.patientId, opts.date, opts.doctorId, ...HIDDEN_AMBIENT_SOURCES) as Record<string, unknown> | undefined)
       : (db
           .prepare(
             `SELECT * FROM appointments
              WHERE tenant_id = ? AND patient_id = ? AND date = ? AND ${ACTIVE_APPOINTMENT_SQL}
              ORDER BY created_at DESC LIMIT 1`
           )
-          .get(opts.tenantId, opts.patientId, opts.date) as Record<string, unknown> | undefined);
+          .get(opts.tenantId, opts.patientId, opts.date, ...HIDDEN_AMBIENT_SOURCES) as Record<string, unknown> | undefined);
     if (row) return withLivePatientPhone(opts.tenantId, row);
   }
 
@@ -123,7 +126,7 @@ export function findActiveAppointment(opts: {
          WHERE tenant_id = ? AND patient_id = ? AND ${ACTIVE_APPOINTMENT_SQL}
          ORDER BY date ASC, created_at DESC LIMIT 1`
       )
-      .get(opts.tenantId, opts.patientId) as Record<string, unknown> | undefined;
+      .get(opts.tenantId, opts.patientId, ...HIDDEN_AMBIENT_SOURCES) as Record<string, unknown> | undefined;
     return withLivePatientPhone(opts.tenantId, row);
   }
 
@@ -134,7 +137,7 @@ export function findActiveAppointment(opts: {
          WHERE tenant_id = ? AND ${ACTIVE_APPOINTMENT_SQL}
          ORDER BY date ASC, created_at DESC`
       )
-      .all(opts.tenantId) as Record<string, unknown>[];
+      .all(opts.tenantId, ...HIDDEN_AMBIENT_SOURCES) as Record<string, unknown>[];
     const bySnapshot = rows.find((row) => phonesMatch(String(row.patient_phone || ""), opts.patientPhone || ""));
     if (bySnapshot) return withLivePatientPhone(opts.tenantId, bySnapshot);
     const patient = findPatientByPhoneInTenant(opts.tenantId, opts.patientPhone);
@@ -265,9 +268,10 @@ export function getWhatsAppQueue(opts: {
   const ahead = getDb()
     .prepare(
       `SELECT COUNT(*) as count FROM appointments
-       WHERE tenant_id = ? AND doctor_id = ? AND date = ? AND status = 'Waiting' AND token_number < ?`
+       WHERE tenant_id = ? AND doctor_id = ? AND date = ? AND status = 'Waiting' AND token_number < ?
+         AND ${hiddenVisitSourceSql()}`
     )
-    .get(opts.tenantId, mapped.doctorId, mapped.date, mapped.tokenNumber) as { count: number };
+    .get(opts.tenantId, mapped.doctorId, mapped.date, mapped.tokenNumber, ...HIDDEN_AMBIENT_SOURCES) as { count: number };
   const patientsAhead = Number(ahead?.count || 0);
   return {
     hasAppointment: true,

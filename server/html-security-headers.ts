@@ -60,6 +60,13 @@ export const HTML_CONTENT_SECURITY_POLICY = htmlContentSecurityPolicy({} as Node
 /** Same-origin camera for patient document photos. Ambient scribe needs same-origin microphone. */
 export const HTML_PERMISSIONS_POLICY = "camera=(self), geolocation=(), microphone=(self), payment=()";
 
+/**
+ * HTML shells must revalidate. There is no service worker; a cached index.html
+ * is how a phone keeps running the previous bundle after a deploy.
+ * `private` keeps the logged-in shell out of shared caches.
+ */
+export const HTML_DOCUMENT_CACHE_CONTROL = "private, no-cache";
+
 function isProductionFromEnv(env: NodeJS.ProcessEnv): boolean {
   return String(env.NODE_ENV || "") === "production";
 }
@@ -73,6 +80,7 @@ export function applyHtmlDocumentSecurityHeaders(res: Response, env: NodeJS.Proc
     res.setHeader("X-Frame-Options", "DENY");
   }
   res.setHeader("Permissions-Policy", HTML_PERMISSIONS_POLICY);
+  res.setHeader("Cache-Control", HTML_DOCUMENT_CACHE_CONTROL);
   if (isProductionFromEnv(env)) {
     res.setHeader("Strict-Transport-Security", "max-age=15552000; includeSubDomains");
   }

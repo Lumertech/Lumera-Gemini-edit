@@ -1,4 +1,4 @@
-import express, { Request } from "express";
+import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
@@ -26,6 +26,7 @@ import { attachPublicPolicyHtml } from "./server/policy-html.ts";
 import { attachPublicPricingHtml } from "./server/pricing-html.ts";
 import { isDedicatedPublicHtmlPath } from "./server/spa-fallback.ts";
 import { mountGeminiClinicalRoutes } from "./server/gemini-clinical.ts";
+import { globalJsonParser } from "./server/json-body.ts";
 import { installWhatsAppRouterPatch, protectWhatsAppDashboard } from "./server/whatsapp-dashboard-guard.ts";
 import { createLiveRegistrationRouter } from "./server/live-registration-routes.ts";
 import { ensureUsageWalletSchema, seedDemoUsageWallet } from "./server/usage-billing.ts";
@@ -46,14 +47,7 @@ app.disable("x-powered-by");
 app.set("trust proxy", 1);
 attachHttpSecurity(app);
 
-app.use(
-  express.json({
-    limit: "10mb",
-    verify: (req, _res, buf) => {
-      (req as Request).rawBody = buf;
-    },
-  })
-);
+app.use(globalJsonParser());
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.get("/healthz", (_req, res) => {
   res.type("text/plain").send("ok");

@@ -930,6 +930,7 @@ export default function ClinicianApp() {
               onTransferToRx={handleTransferToRx}
               onSelectPatient={handleSelectPatient}
               allPatients={patients}
+              appointmentId={draftAppointmentId}
             />
           )}
 
@@ -961,7 +962,7 @@ export default function ClinicianApp() {
                   {autoSaveStatus === 'saving' && 'Saving draft...'}
                   {autoSaveStatus === 'unsaved' && 'Unsaved changes (auto-saving soon...)'}
                 </span>
-                <span className="text-slate-400">SOAP Notes & Prescription Auto-Sync Active</span>
+                <span className="text-slate-400">Rx draft only — not signed, printed, or sent</span>
               </div>
               <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden flex flex-col">
                 {draftSession.phase === 'loading' && (
@@ -975,6 +976,7 @@ export default function ClinicianApp() {
                     key={writerKey(draftSession) || currentPatient.id}
                     currentPatient={currentPatient}
                     currentDoctor={currentDoctor}
+                    appointmentId={draftAppointmentId}
                     initialDraft={draftSession.draft}
                     initialSoapData={null}
                     onSavePrescription={handleSavePrescription}

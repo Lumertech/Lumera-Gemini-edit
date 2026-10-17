@@ -19,6 +19,7 @@ import { registerPatientDocumentConsentRoutes } from "./patient-document-consent
 import { buildPatientTimeline, presentPrescriptionForRole } from "./patient-timeline.ts";
 import { denyUnlessPatientRecordRole, denyUnlessPrescriber, isReceptionRole } from "./patient-access.ts";
 import { clinicCalendarDate, parseAppointmentListDate } from "../src/lib/clinicDay.ts";
+import { HIDDEN_AMBIENT_SOURCES, hiddenVisitSourceSql, isHiddenVisitSource } from "./ambient-walkin.ts";
 import {
   loadPatientClinicPhone,
   loadPatientTenant,
@@ -209,21 +210,30 @@ function clinicDayForTenant(tenantId: string, now = new Date()): string {
 export function listTenantAppointments(tenantId: string, date?: string | null): Record<string, unknown>[] {
   if (date) {
     return getDb()
-      .prepare("SELECT * FROM appointments WHERE tenant_id = ? AND date = ? ORDER BY token_number ASC")
-      .all(tenantId, date) as Record<string, unknown>[];
+      .prepare(
+        `SELECT * FROM appointments
+         WHERE tenant_id = ? AND date = ? AND ${hiddenVisitSourceSql()}
+         ORDER BY token_number ASC`
+      )
+      .all(tenantId, date, ...HIDDEN_AMBIENT_SOURCES) as Record<string, unknown>[];
   }
   return getDb()
-    .prepare("SELECT * FROM appointments WHERE tenant_id = ? ORDER BY token_number ASC")
-    .all(tenantId) as Record<string, unknown>[];
+    .prepare(
+      `SELECT * FROM appointments
+       WHERE tenant_id = ? AND ${hiddenVisitSourceSql()}
+       ORDER BY token_number ASC`
+    )
+    .all(tenantId, ...HIDDEN_AMBIENT_SOURCES) as Record<string, unknown>[];
 }
 
 export function nextTokenNumber(tenantId: string, date: string): number {
   const row = getDb()
     .prepare(
       `SELECT COALESCE(MAX(token_number), 0) AS max_token
-       FROM appointments WHERE tenant_id = ? AND date = ?`
+       FROM appointments
+       WHERE tenant_id = ? AND date = ? AND ${hiddenVisitSourceSql()}`
     )
-    .get(tenantId, date) as { max_token: number };
+    .get(tenantId, date, ...HIDDEN_AMBIENT_SOURCES) as { max_token: number };
   return Number(row?.max_token || 0) + 1;
 }
 
@@ -1211,10 +1221,10 @@ export function createClinicalRouter(): Router {
       const visits = getDb()
         .prepare(
           `SELECT * FROM appointments
-           WHERE tenant_id = ? AND patient_id = ?
+           WHERE tenant_id = ? AND patient_id = ? AND ${hiddenVisitSourceSql()}
            ORDER BY date DESC, time_slot DESC`
         )
-        .all(tenantId, req.params.id) as Record<string, unknown>[];
+        .all(tenantId, req.params.id, ...HIDDEN_AMBIENT_SOURCES) as Record<string, unknown>[];
       const prescriptions = getDb()
         .prepare(
           `SELECT * FROM prescriptions
@@ -1366,9 +1376,10 @@ export function createClinicalRouter(): Router {
       getDb()
         .prepare(
           `UPDATE appointments SET patient_phone = ?
-           WHERE tenant_id = ? AND patient_id = ? AND status NOT IN ${CLOSED_APPOINTMENT_STATUSES}`
+           WHERE tenant_id = ? AND patient_id = ? AND status NOT IN ${CLOSED_APPOINTMENT_STATUSES}
+             AND ${hiddenVisitSourceSql()}`
         )
-        .run(syncedPhone, tenantId, req.params.id);
+        .run(syncedPhone, tenantId, req.params.id, ...HIDDEN_AMBIENT_SOURCES);
     }
     res.json({ patient: mapPatient(getTenantPatient(tenantId, req.params.id)!) });
   });
@@ -1401,6 +1412,9 @@ export function createClinicalRouter(): Router {
     if (!tenantId) return;
     const row = getTenantAppointment(tenantId, req.params.id);
     if (!row || !patientCanRead(req, row.patient_id)) return res.status(404).json({ error: "Appointment not found" });
+    if (requestIsPatient(req) && isHiddenVisitSource(row.source)) {
+      return res.status(404).json({ error: "Appointment not found" });
+    }
     res.json(
       withPatientTenant(req, tenantId, { appointment: mapAppointment(row) }, appointmentDoctorExtras(row))
     );
