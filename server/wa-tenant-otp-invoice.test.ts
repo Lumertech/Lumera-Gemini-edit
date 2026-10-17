@@ -724,6 +724,28 @@ describe("WhatsApp tenant scope, send validation, OTP limit, invoice UHID", () =
     const rxPhone = `+91 95${String(Date.now()).slice(-8)}`;
     const rxId = `conv-${tailOf(rxPhone)}`;
     plant(rxPhone, rxId);
+    const rxPatient = await jsonRequest(
+      server.port,
+      "POST",
+      "/api/patients",
+      { name: "Rx Patient", phone: rxPhone, age: 40, gender: "Female" },
+      authA
+    );
+    assert.equal(rxPatient.status, 201, String(rxPatient.json.error || "rx patient"));
+    const signedRx = await jsonRequest(
+      server.port,
+      "POST",
+      "/api/prescriptions",
+      {
+        patientId: String((rxPatient.json.patient as { id: string }).id),
+        diagnosis: "Isolation consult",
+        medicines: [],
+        doctorName: "Dr Iso",
+        reviewedBy: clinicA.userId,
+      },
+      authA
+    );
+    assert.equal(signedRx.status, 201, String(signedRx.json.error || "signed rx"));
     const rx = await jsonRequest(
       server.port,
       "POST",
@@ -732,7 +754,7 @@ describe("WhatsApp tenant scope, send validation, OTP limit, invoice UHID", () =
         patientPhone: rxPhone,
         patientName: "Rx Patient",
         uhid: "UHID-ISO",
-        rxNumber: `RX-ISO-${tailOf(rxPhone)}`,
+        rxNumber: String((signedRx.json.prescription as { rxNumber: string }).rxNumber),
         doctorName: "Dr Iso",
         medicines: [],
       },
