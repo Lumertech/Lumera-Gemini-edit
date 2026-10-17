@@ -249,28 +249,61 @@ describe("Usage wallet billing dispatch paths", () => {
       .get(tenantId) as { c: number };
     assert.ok(agentAfter.c >= agentBefore.c + 1, "staff /whatsapp/send must insert usage_events");
 
+    const rxPatient = await jsonRequest(
+      port,
+      "POST",
+      "/api/patients",
+      { name: "Metered Patient", phone: patientPhone, age: 41, gender: "Male" },
+      clinicAuth
+    );
+    assert.ok(rxPatient.status === 200 || rxPatient.status === 201, String(rxPatient.json.error || "rx patient"));
+    const rxPatientId = String((rxPatient.json.patient as { id: string }).id);
+    const rxCreated = await jsonRequest(
+      port,
+      "POST",
+      "/api/prescriptions",
+      {
+        patientId: rxPatientId,
+        diagnosis: "Usage wallet check",
+        doctorId,
+        doctorName: "Dr Meter",
+        medicines: [{ drugName: "Paracetamol", dosage: "650 mg", frequency: "1-0-1" }],
+      },
+      clinicAuth
+    );
+    assert.equal(rxCreated.status, 201, String(rxCreated.json.error || "rx create"));
+    const rxNumber = String((rxCreated.json.prescription as { rxNumber: string }).rxNumber);
     const rxBefore = agentAfter.c;
     const rxSend = await jsonRequest(
       port,
       "POST",
       "/api/whatsapp/send-rx",
       {
-        patientPhone,
-        patientName: "Metered Patient",
-        uhid: "LUM-METER-1",
-        rxNumber: `RX-METER-${Date.now()}`,
-        doctorName: "Dr Meter",
-        diagnosis: "Usage wallet check",
-        medicines: [{ drugName: "Paracetamol", dosage: "650 mg", frequency: "1-0-1" }],
+        patientPhone: "+91 98234 55667",
+        rxNumber,
+        diagnosis: "client diagnosis must not be sent",
         tenantId,
       },
       clinicAuth
     );
-    assert.ok(rxSend.status === 200 || rxSend.status === 201, String(rxSend.json.error || "send-rx"));
+    assert.equal(rxSend.status, 200, String(rxSend.json.code || rxSend.json.error || "send-rx"));
+    assert.equal(rxSend.json.channel, "sandbox");
+    assert.notEqual(rxSend.json.success, true);
     const rxAfter = getDb()
       .prepare("SELECT COUNT(*) AS c FROM usage_events WHERE tenant_id = ? AND resource = 'whatsapp_message'")
       .get(tenantId) as { c: number };
     assert.ok(rxAfter.c >= rxBefore + 1, "send-rx must insert usage_events");
+    const phoneDigits = patientPhone.replace(/\D/g, "");
+    const leakedPhone = events
+      .concat(
+        getDb()
+          .prepare(
+            `SELECT metadata FROM usage_events WHERE tenant_id = ? AND resource = 'whatsapp_message' ORDER BY created_at DESC LIMIT 4`
+          )
+          .all(tenantId) as { metadata: string }[]
+      )
+      .some((row) => String(row.metadata || "").includes(phoneDigits));
+    assert.equal(leakedPhone, false);
 
     const calendarSrc =
       fs.readFileSync(path.join(__dirname, "whatsapp-calendar.ts"), "utf8") +

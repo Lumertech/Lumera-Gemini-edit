@@ -535,7 +535,7 @@ export interface Prescription {
   clinicAddress: string;
   clinicPhone: string;
   qrVerificationUrl?: string;
-  whatsappSentStatus?: 'unsent' | 'queued' | 'delivered' | 'read';
+  whatsappSentStatus?: 'unsent' | 'queued' | 'sent' | 'delivered' | 'read';
   
   // Dynamic specialty modules
   specialtyType?: PolyclinicSpecialty;

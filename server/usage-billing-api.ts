@@ -3,13 +3,11 @@ import { getDb, writeAudit } from "./db.ts";
 import { requireAuth, requirePlatformAdmin } from "./auth.ts";
 import { rejectUntrustedTenantClaim } from "./tenant-guard.ts";
 import { isCloudDispatchFailure } from "./graph-whatsapp.ts";
-import { getTenantLetterhead } from "./letterhead.ts";
 import { appPublicUrl, isProduction, sandboxSimulatorsEnabled } from "./runtime.ts";
-import { WALLET_INSUFFICIENT_ERROR } from "./usage-wallet.ts";
 import { formatINR } from "../src/lib/currency.ts";
-import { buildRxWhatsAppText } from "../src/lib/whatsappRxDispatch.ts";
 import { resolveWhatsAppTenantId } from "./whatsapp-calendar.ts";
 import { dispatchPatientCloudText, walletDispatchStatus } from "./whatsapp-patient-dispatch.ts";
+import { handleWhatsAppRxSend, mapWhatsAppFailureCode } from "./whatsapp-rx-send.ts";
 import {
   createRazorpayWalletTopupOrder,
   decideRazorpayWebhookSignature,
@@ -104,11 +102,9 @@ export function createUsageBillingRouter(): Router {
   // Do not intercept here — a finish-hook would double-count and would meter
   // the clinical-synthesis fallback / failed Gemini calls.
 
-  function walletBlockedJson(res: Response, sent: { error: string; channel: "none" | "graph" }) {
-    return res.status(walletDispatchStatus(sent.error)).json({
-      error: sent.error,
-      code: sent.error === WALLET_INSUFFICIENT_ERROR ? "WALLET_INSUFFICIENT" : undefined,
-      channel: sent.channel,
+  function walletBlockedJson(res: Response, sent: { error: string; channel: "none" | "graph"; status?: number }) {
+    return res.status(walletDispatchStatus(sent.error, sent.status)).json({
+      code: mapWhatsAppFailureCode(sent.error),
     });
   }
 
@@ -156,40 +152,8 @@ export function createUsageBillingRouter(): Router {
     next();
   });
 
-  api.post("/whatsapp/send-rx", async (req: Request, res: Response, next: NextFunction) => {
-    const body = (req.body || {}) as Record<string, unknown>;
-    const patientPhone = String(body.patientPhone || "+91 98234 55667").trim();
-    const tenantId = requestTenantId(req, patientPhone);
-    const clinicName =
-      String(body.clinicName || "").trim() ||
-      (tenantId ? getTenantLetterhead(tenantId).clinicName : "") ||
-      "your clinic";
-    const patientName = String(body.patientName || "Patient");
-    const uhid = String(body.uhid || "LUM-2026-0001");
-    const rxNumber = String(body.rxNumber || "RX-2026-0001");
-    const doctorName = String(body.doctorName || "");
-    const doctorSpecialty = String(body.doctorSpecialty || "");
-    const diagnosis = String(body.diagnosis || "Clinical Consultation");
-    const medicines = Array.isArray(body.medicines) ? body.medicines : [];
-    const pdfUrl = `/api/whatsapp/prescription/${rxNumber}/pdf`;
-    const content = buildRxWhatsAppText({
-      clinicName,
-      doctorName,
-      doctorSpecialty,
-      patientName,
-      uhid,
-      diagnosis,
-      medicines,
-      pdfUrl,
-    });
-    const sent = await dispatchPatientCloudText({
-      tenantId: tenantId || undefined,
-      to: patientPhone,
-      textBody: content,
-      previewUrl: true,
-    });
-    if (isCloudDispatchFailure(sent)) return walletBlockedJson(res, sent);
-    next();
+  api.post("/whatsapp/send-rx", async (req: Request, res: Response) => {
+    await handleWhatsAppRxSend(req, res);
   });
 
   async function meterCustomOutbound(req: Request, res: Response, next: NextFunction) {

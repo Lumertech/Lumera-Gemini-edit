@@ -177,12 +177,12 @@ export function ensureMetaTechProviderAndPolicies(database: SqlDatabase) {
     `);
 
     const standardTemplateRows = [
-      { id: "tpl-1", name: "appointment_reminder_v1", status: "APPROVED", meta_template_id: "meta_tpl_983102948102" },
-      { id: "tpl-2", name: "post_consultation_rx", status: "APPROVED", meta_template_id: "meta_tpl_983102948103" },
-      { id: "tpl-3", name: "lab_report_ready", status: "APPROVED", meta_template_id: "meta_tpl_983102948104" },
-      { id: "tpl-4", name: "opd_queue_token_alert", status: "APPROVED", meta_template_id: "meta_tpl_983102948105" },
-      { id: "tpl-5", name: "otp_login_verification", status: "APPROVED", meta_template_id: "meta_tpl_983102948106" },
-      { id: "tpl-6", name: "preventive_cardiac_camp", status: "PENDING", meta_template_id: "meta_tpl_983102948107" },
+      { id: "tpl-1", name: "appointment_reminder_v1", status: "DRAFT", meta_template_id: "meta_tpl_983102948102" },
+      { id: "tpl-2", name: "post_consultation_rx", status: "DRAFT", meta_template_id: "meta_tpl_983102948103" },
+      { id: "tpl-3", name: "lab_report_ready", status: "DRAFT", meta_template_id: "meta_tpl_983102948104" },
+      { id: "tpl-4", name: "opd_queue_token_alert", status: "DRAFT", meta_template_id: "meta_tpl_983102948105" },
+      { id: "tpl-5", name: "otp_login_verification", status: "DRAFT", meta_template_id: "meta_tpl_983102948106" },
+      { id: "tpl-6", name: "preventive_cardiac_camp", status: "DRAFT", meta_template_id: "meta_tpl_983102948107" },
     ];
 
     for (const row of standardTemplateRows) {
@@ -204,6 +204,14 @@ export function ensureMetaTechProviderAndPolicies(database: SqlDatabase) {
       );
     }
   }
+  database
+    .prepare(
+      `UPDATE meta_templates SET status = 'DRAFT', updated_at = ?
+       WHERE id IN ('tpl-1', 'tpl-2', 'tpl-3', 'tpl-4', 'tpl-5', 'tpl-6')
+         AND meta_template_id LIKE 'meta_tpl_%'
+         AND UPPER(status) IN ('APPROVED', 'PENDING')`
+    )
+    .run(now);
 }
 
 /**

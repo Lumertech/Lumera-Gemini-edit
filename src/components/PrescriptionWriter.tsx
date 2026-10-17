@@ -381,6 +381,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
   const [whatsAppDirectSuccess, setWhatsAppDirectSuccess] = useState(false);
   const [whatsAppDispatchError, setWhatsAppDispatchError] = useState<string | null>(null);
   const [whatsappSentStatus, setWhatsappSentStatus] = useState<WhatsAppDeliveryStatus>('unsent');
+  const [whatsAppSandboxNotice, setWhatsAppSandboxNotice] = useState(false);
 
   // When active doctor changes, adapt specialty
   useEffect(() => {
@@ -574,7 +575,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
   const keepModule = (key: string, active: boolean) =>
     savedModuleKeys.includes(key) || (active && !aiSource);
 
-  const buildCurrentRx = (statusOverride?: 'unsent' | 'delivered'): Prescription => ({
+  const buildCurrentRx = (statusOverride?: 'unsent' | 'sent' | 'delivered'): Prescription => ({
     id: 'rx-' + Date.now(),
     rxNumber: rxNumber,
     patientId: currentPatient.id,
@@ -611,7 +612,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     clinicName: clinicSettings.name,
     clinicAddress: clinicSettings.address,
     clinicPhone: clinicSettings.phone,
-    qrVerificationUrl: `https://lumera.health/rx/${rxNumber}`,
+    qrVerificationUrl: `https://www.mylumera.in/rx/${rxNumber}`,
     whatsappSentStatus: statusOverride || whatsappSentStatus,
     specialtyType: activeSpecialty,
     physiotherapyAssessment: keepModule('physiotherapyAssessment', activeSpecialty === 'Physiotherapy & Rehabilitation') ? physioAssessment : undefined,
@@ -879,6 +880,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     }
     setIsSendingWhatsAppDirect(true);
     setWhatsAppDispatchError(null);
+    setWhatsAppSandboxNotice(false);
     try {
       const response = await apiFetchResponse('/api/whatsapp/send-rx', {
         method: 'POST',
@@ -900,17 +902,26 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
       const body = await response.json().catch(() => null);
       const decision = interpretWhatsAppSendResponse(response.status, body);
       const recorded = recordWhatsAppDispatch(whatsappSentStatus, decision);
+      if (recorded.sandbox) {
+        setWhatsAppDirectSuccess(false);
+        setWhatsappSentSuccess(false);
+        setWhatsAppDispatchError(null);
+        setWhatsAppSandboxNotice(true);
+        return;
+      }
       if (!recorded.showSuccess) {
         setWhatsAppDirectSuccess(false);
         setWhatsappSentSuccess(false);
+        setWhatsAppSandboxNotice(false);
         setWhatsAppDispatchError(recorded.failureCode);
         return;
       }
       setWhatsAppDirectSuccess(true);
       setWhatsappSentSuccess(true);
-      setWhatsappSentStatus('delivered');
+      setWhatsappSentStatus('sent');
+      setWhatsAppSandboxNotice(false);
       setWhatsAppDispatchError(null);
-      const updatedRx = stampReviewed(buildCurrentRx('delivered'));
+      const updatedRx = stampReviewed(buildCurrentRx('sent'));
       if (updatedRx.reviewedBy) setReviewedBy(updatedRx.reviewedBy);
       onSavePrescription(updatedRx);
     } catch {
@@ -2321,7 +2332,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
             </div>
             <div className="text-[10px] text-slate-500 space-y-0.5">
               <p className="font-bold text-slate-800">Scan to Verify Digital Rx</p>
-              <p>URL: https://lumera.health/rx/{rxNumber}</p>
+              <p>URL: https://www.mylumera.in/rx/{rxNumber}</p>
               <p className="text-slate-400">Designed for ABDM records (sandbox — not yet live)</p>
             </div>
           </div>
@@ -2514,7 +2525,11 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
               {whatsAppDirectSuccess && !whatsAppDispatchError ? (
                 <div className="bg-white p-2.5 rounded-lg border border-emerald-200 text-emerald-800 text-[11px] font-medium flex items-center gap-2">
                   <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span>Prescription PDF download link &amp; dosage guide delivered to {currentPatient.phone}!</span>
+                  <span>Sent on WhatsApp to the patient's number</span>
+                </div>
+              ) : whatsAppSandboxNotice ? (
+                <div role="status" className="bg-white p-2.5 rounded-lg border border-amber-200 text-amber-900 text-[11px] font-medium">
+                  SANDBOX — not sent
                 </div>
               ) : (
                 <div className="space-y-2">
@@ -2648,7 +2663,11 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
             {whatsappSentSuccess && !whatsAppDispatchError ? (
               <div className="p-3 bg-emerald-100 text-emerald-800 rounded-lg text-xs font-bold flex items-center justify-center gap-2">
                 <CheckCircle className="w-4 h-4 text-emerald-700" />
-                Prescription & Protocol Delivered to {currentPatient.phone} on WhatsApp!
+                Sent on WhatsApp to the patient's number
+              </div>
+            ) : whatsAppSandboxNotice ? (
+              <div role="status" className="p-3 bg-amber-50 text-amber-900 rounded-lg text-xs font-bold border border-amber-200">
+                SANDBOX — not sent
               </div>
             ) : (
               <div className="space-y-2 pt-2">

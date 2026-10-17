@@ -29,13 +29,35 @@ const rxText = buildRxWhatsAppText({
 });
 
 describe("WhatsApp Rx dispatch honesty", () => {
-  it("marks the prescription delivered only after the send API confirms success", () => {
-    const decision = interpretWhatsAppSendResponse(200, { success: true, status: "delivered" });
+  it("marks the prescription sent only when Graph returns a Meta message id", () => {
+    const decision = interpretWhatsAppSendResponse(200, {
+      success: true,
+      status: "sent",
+      channel: "graph",
+      messageId: "wamid.ABC123",
+    });
     const recorded = recordWhatsAppDispatch("unsent", decision);
-    assert.equal(decision.outcome, "delivered");
+    assert.equal(decision.outcome, "sent");
     assert.equal(recorded.showSuccess, true);
-    assert.equal(recorded.whatsappSentStatus, "delivered");
+    assert.equal(recorded.whatsappSentStatus, "sent");
     assert.equal(recorded.failureCode, null);
+    assert.equal(recorded.sandbox, false);
+
+    const localId = interpretWhatsAppSendResponse(200, {
+      success: true,
+      status: "delivered",
+      channel: "graph",
+      messageId: "msg-rx-abc",
+    });
+    assert.equal(localId.outcome, "failed");
+
+    const sandbox = interpretWhatsAppSendResponse(200, { success: false, channel: "sandbox", status: "sandbox" });
+    const sandboxRecord = recordWhatsAppDispatch("queued", sandbox);
+    assert.equal(sandbox.outcome, "sandbox");
+    assert.equal(sandboxRecord.showSuccess, false);
+    assert.equal(sandboxRecord.sandbox, true);
+    assert.equal(sandboxRecord.whatsappSentStatus, "queued");
+    assert.equal(sandboxRecord.failureCode, null);
   });
 
   it("keeps the delivery status and records a fixed code when the send API fails", () => {
@@ -101,11 +123,19 @@ describe("WhatsApp Rx dispatch honesty", () => {
 
     const whatsappRoute = fs.readFileSync(path.join(root, "server/whatsapp.ts"), "utf8");
     const sendRx = whatsappRoute.slice(whatsappRoute.indexOf('router.post("/send-rx"'), whatsappRoute.indexOf("router.get(\"/prescription/:id/pdf\""));
-    assert.match(sendRx, /buildRxWhatsAppText/);
-    assert.match(sendRx, /WHATSAPP_SEND_FAILED/);
+    assert.match(sendRx, /handleWhatsAppRxSend/);
+    assert.doesNotMatch(sendRx, /98234 55667/);
     assert.doesNotMatch(sendRx, /err\.message/);
+    assert.doesNotMatch(sendRx, /'delivered'/);
+    const helper = fs.readFileSync(path.join(root, "server/whatsapp-rx-send.ts"), "utf8");
+    assert.match(helper, /buildRxWhatsAppText/);
+    assert.match(helper, /WHATSAPP_SEND_FAILED/);
+    assert.doesNotMatch(helper, /98234 55667/);
+    assert.doesNotMatch(helper, /ON CONFLICT\(rx_number\)/);
     const billing = fs.readFileSync(path.join(root, "server/usage-billing-api.ts"), "utf8");
-    assert.match(billing, /buildRxWhatsAppText/);
+    assert.match(billing, /handleWhatsAppRxSend/);
+    assert.match(billing, /code: mapWhatsAppFailureCode/);
+    assert.doesNotMatch(billing, /98234 55667/);
   });
 
   it("sends only after an explicit click on a signed prescription and does not mark failure as delivered", () => {
@@ -127,5 +157,12 @@ describe("WhatsApp Rx dispatch honesty", () => {
     assert.doesNotMatch(catchBlock, /onSavePrescription/);
     assert.match(writer, /data-testid="whatsapp-dispatch-retry"/);
     assert.match(writer, /whatsAppDispatchErrorCopy/);
+    assert.match(writer, /Sent on WhatsApp to the patient's number/);
+    assert.match(writer, /SANDBOX — not sent/);
+    assert.match(handler, /setWhatsappSentStatus\('sent'\)/);
+    assert.doesNotMatch(handler, /setWhatsappSentStatus\('delivered'\)/);
+    assert.doesNotMatch(handler, /buildCurrentRx\('delivered'\)/);
+    assert.match(writer, /www\.mylumera\.in\/rx\//);
+    assert.doesNotMatch(writer, /lumera\.health\/rx\//);
   });
 });

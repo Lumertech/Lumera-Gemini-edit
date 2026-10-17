@@ -705,6 +705,7 @@ export function mapPrescription(row: { [key: string]: unknown }) {
     whatsappSentStatus: ((row.whatsapp_sent_status as string) || "unsent") as
       | "unsent"
       | "queued"
+      | "sent"
       | "delivered"
       | "read",
     specialtyType: (row.specialty_type as string) || undefined,

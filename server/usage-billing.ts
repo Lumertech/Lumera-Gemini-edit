@@ -175,20 +175,24 @@ export function recordWhatsAppUsageAndDebit(opts: {
     inCustomerServiceWindow: opts.inCustomerServiceWindow,
     now: opts.now,
   });
+  const metadata: Record<string, unknown> = {
+    kind: opts.kind || "text",
+    category: estimate.category,
+    country: estimate.country,
+    windowFree: estimate.windowFree,
+    inCustomerServiceWindow: Boolean(opts.inCustomerServiceWindow),
+    serviceWindowBilled: isMetaServiceWindowBilled(opts.now),
+    ...opts.metadata,
+  };
+  for (const key of ["to", "phone", "patientPhone", "patient_phone", "recipient", "recipientPhone"]) {
+    delete metadata[key];
+  }
   const usage = insertUsageEvent({
     tenantId,
     resource: "whatsapp_message",
     quantity: 1,
     rawCost: estimate.rawCost,
-    metadata: {
-      kind: opts.kind || "text",
-      category: estimate.category,
-      country: estimate.country,
-      windowFree: estimate.windowFree,
-      inCustomerServiceWindow: Boolean(opts.inCustomerServiceWindow),
-      serviceWindowBilled: isMetaServiceWindowBilled(opts.now),
-      ...opts.metadata,
-    },
+    metadata,
     database: db,
   });
   return { usageEventId: usage.id, rawCost: estimate.rawCost, billedAmount: 0, markupPercent: 0 };

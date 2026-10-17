@@ -28,7 +28,7 @@ import { CLINICIAN_ROLES, requireAuth, requireRole } from "./auth.ts";
 import { rejectUntrustedTenantClaim } from "./tenant-guard.ts";
 import { authenticatedLabReportPath, authorizeLabReport, labOwnerTenantId, sendLabReportDenied } from "./lab-report-access.ts";
 import { WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
-import { buildRxWhatsAppText, WHATSAPP_SEND_FAILED } from "../src/lib/whatsappRxDispatch.ts";
+import { handleWhatsAppRxSend } from "./whatsapp-rx-send.ts";
 import { formatINR } from "../src/lib/currency.ts";
 import { AI_RUPEE_OUTPUT_RULE } from "./india-currency-copy.ts";
 import {
@@ -38,7 +38,6 @@ import {
   listTenantOutboundEvents,
   requireClinicWhatsApp,
   serializeOutboundEvent,
-  upsertScopedConversation,
 } from "./whatsapp-scope.ts";
 
 /** Patient names, notes, WhatsApp text, and Rx/lab fields before HTML interpolation. */
@@ -1178,116 +1177,7 @@ ${AI_RUPEE_OUTPUT_RULE}`;
   // Dispatch Prescription via WhatsApp Graph API
   // ----------------------------------------------------
   router.post("/send-rx", async (req: Request, res: Response) => {
-    try {
-      const {
-        patientPhone = "+91 98234 55667",
-        patientName = "Patient",
-        uhid = "LUM-2026-0001",
-        rxNumber = "RX-2026-0001",
-        doctorName = "Doctor",
-        doctorSpecialty = "General Medicine",
-        diagnosis = "Clinical Consultation",
-        medicines = [],
-        advice = [],
-        language = "en",
-      } = req.body;
-      const tenantId = String((req as Request).user?.tenantId || "");
-      const rxFacing = resolveClinicFacingNames(getDb(), tenantId, String(req.body?.doctorName || doctorName || ""));
-      const rxCopy = clinicOutboundCopy(rxFacing);
-      const clinicName = String(req.body?.clinicName || "").trim() || rxFacing.clinicName;
-
-      const db = getDb();
-      const now = new Date().toISOString();
-      const timeDisplay = getDisplayTime();
-      const cleanPhone = (patientPhone || "+91 98234 55667").trim();
-      const preferredId = `conv-${cleanPhone.replace(/\D/g, "").slice(-8) || "pt"}`;
-
-      // Insert or update prescription record in DB
-      try {
-        db.prepare(`
-          INSERT INTO prescriptions (id, rx_number, patient_name, patient_phone, uhid, doctor_name, specialty, diagnosis, medicines, lab_tests, advice, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT(rx_number) DO UPDATE SET
-            diagnosis = excluded.diagnosis,
-            medicines = excluded.medicines,
-            advice = excluded.advice
-        `).run(
-          `rx-${crypto.randomUUID().slice(0, 8)}`,
-          rxNumber,
-          patientName,
-          cleanPhone,
-          uhid,
-          doctorName,
-          doctorSpecialty,
-          diagnosis,
-          JSON.stringify(medicines || []),
-          JSON.stringify([]),
-          JSON.stringify(advice || []),
-          now
-        );
-      } catch {
-        // Table fallback
-      }
-
-      const convId = upsertScopedConversation({
-        preferredId,
-        tenantId,
-        patientPhone: cleanPhone,
-        patientName,
-        assignedStaff: rxCopy.rxDispatcher,
-        tags: '["Prescription", "Digital EMR"]',
-        preferredLanguage: language || "en",
-        lastMessage: `Digital Rx: ${rxNumber}`,
-        lastMessageTime: timeDisplay,
-        now,
-      });
-
-      const pdfUrl = `/api/whatsapp/prescription/${rxNumber}/pdf`;
-      const content = buildRxWhatsAppText({
-        clinicName,
-        doctorName,
-        doctorSpecialty,
-        patientName,
-        uhid,
-        diagnosis,
-        medicines: Array.isArray(medicines) ? medicines : [],
-        pdfUrl,
-      });
-
-      const msgId = `msg-rx-${crypto.randomUUID().slice(0, 8)}`;
-      db.prepare(`
-        INSERT INTO whatsapp_messages (id, conversation_id, patient_phone, sender, staff_name, content, translated_content, detected_language, time_display, buttons, media, status, created_at, tenant_id)
-        VALUES (?, ?, ?, 'agent', ?, ?, null, ?, ?, ?, ?, 'delivered', ?, ?)
-      `).run(
-        msgId,
-        convId,
-        cleanPhone,
-        doctorName,
-        content,
-        language,
-        timeDisplay,
-        JSON.stringify([
-          { type: 'URL', text: '📥 View / Download PDF Rx', url: pdfUrl },
-          { type: 'QUICK_REPLY', text: '📅 Book Follow-Up', payload: 'book_followup' }
-        ]),
-        JSON.stringify({ type: 'document', url: pdfUrl, title: `Prescription-${rxNumber}.pdf` }),
-        now,
-        tenantId || WHATSAPP_QUARANTINE_TENANT_ID
-      );
-
-      return res.json({
-        success: true,
-        messageId: msgId,
-        rxNumber,
-        pdfUrl,
-        deliveredTo: cleanPhone,
-        status: 'delivered',
-        message: 'Prescription PDF dispatched successfully via WhatsApp Graph API'
-      });
-    } catch {
-      console.error("WhatsApp Rx dispatch failed");
-      return res.status(500).json({ code: WHATSAPP_SEND_FAILED });
-    }
+    await handleWhatsAppRxSend(req, res);
   });
 
   // ----------------------------------------------------
