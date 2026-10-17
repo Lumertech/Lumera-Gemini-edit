@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { createApiRouter } from "./api.ts";
+import { treatingDoctorId } from "./clinical.ts";
 import { getDb, initDatabase } from "./db.ts";
 import { hashPassword } from "./password.ts";
 import { appPublicUrl } from "./runtime.ts";
@@ -459,35 +460,98 @@ describe("usage-billing Rx WhatsApp send is bound to the signed prescription", (
     assert.equal(sent.status, 200, JSON.stringify(sent.json));
     assert.deepEqual(sent.json, { success: false, channel: "sandbox", status: "sandbox" });
 
-    for (const [label, auth] of [
-      ["admin", adminAuth],
-      ["receptionist", deskAuth],
-    ] as const) {
-      const saved = await jsonRequest(
-        port,
-        "POST",
-        "/api/prescriptions",
-        {
-          patientId: patient.id,
-          diagnosis: `${label} unsigned note`,
-          medicines: [],
-          doctorId: clinic.userId,
-          doctorName: "Impostor Name",
-          reviewedBy: clinic.userId,
-        },
-        auth
-      );
-      assert.equal(saved.status, 201, `${label} ${String(saved.json.error || "")}`);
-      const rx = saved.json.prescription as { rxNumber: string; reviewedBy?: string };
-      assert.equal(rx.reviewedBy || "", "");
-      const stored = getDb()
-        .prepare("SELECT doctor_id, specialty_modules FROM prescriptions WHERE rx_number = ? AND tenant_id = ?")
-        .get(rx.rxNumber, clinic.tenantId) as { doctor_id: string; specialty_modules: string };
-      assert.equal(stored.doctor_id, clinic.userId);
-      assert.equal(JSON.parse(stored.specialty_modules).reviewedBy || "", "");
-      const refused = await jsonRequest(port, "POST", "/api/whatsapp/send-rx", { rxNumber: rx.rxNumber }, auth);
-      assert.equal(refused.status, 409, label);
-      assert.equal(refused.json.code, RX_NOT_SIGNED);
-    }
+    const saved = await jsonRequest(
+      port,
+      "POST",
+      "/api/prescriptions",
+      {
+        patientId: patient.id,
+        diagnosis: "admin unsigned note",
+        medicines: [],
+        doctorId: clinic.userId,
+        doctorName: "Impostor Name",
+        reviewedBy: clinic.userId,
+      },
+      adminAuth
+    );
+    assert.equal(saved.status, 201, String(saved.json.error || ""));
+    const rx = saved.json.prescription as { rxNumber: string; reviewedBy?: string };
+    assert.equal(rx.reviewedBy || "", "");
+    const stored = getDb()
+      .prepare("SELECT doctor_id, specialty_modules FROM prescriptions WHERE rx_number = ? AND tenant_id = ?")
+      .get(rx.rxNumber, clinic.tenantId) as { doctor_id: string; specialty_modules: string };
+    assert.equal(stored.doctor_id, clinic.userId);
+    assert.equal(JSON.parse(stored.specialty_modules).reviewedBy || "", "");
+    const refused = await jsonRequest(port, "POST", "/api/whatsapp/send-rx", { rxNumber: rx.rxNumber }, adminAuth);
+    assert.equal(refused.status, 409);
+    assert.equal(refused.json.code, RX_NOT_SIGNED);
+
+    const deskId = `desk-${clinic.userId}`;
+    const linkedDeskDoctor = `doc-desk-${clinic.userId}`;
+    getDb()
+      .prepare(
+        `INSERT INTO doctors (id, user_id, name, qualification, reg_number, specialty, experience_years, consultation_fee, opd_room, available_days, opd_timing, phone, email, avatar_url, bio, hpr_id, active)
+         VALUES (?, ?, 'Front Desk', 'MBBS', ?, 'General Medicine', 1, 0, '', '[]', '', '', '', '', '', '', 1)`
+      )
+      .run(linkedDeskDoctor, deskId, `REG-${deskId}`);
+    const beforeDesk = (
+      getDb().prepare("SELECT COUNT(*) AS c FROM prescriptions WHERE tenant_id = ?").get(clinic.tenantId) as { c: number }
+    ).c;
+    const denied = await jsonRequest(
+      port,
+      "POST",
+      "/api/prescriptions",
+      {
+        patientId: patient.id,
+        diagnosis: "receptionist must not write",
+        medicines: [],
+        doctorId: linkedDeskDoctor,
+        reviewedBy: linkedDeskDoctor,
+      },
+      deskAuth
+    );
+    assert.equal(denied.status, 403);
+    assert.equal(denied.json.code, "ROLE_DENIED");
+    const afterDesk = (
+      getDb().prepare("SELECT COUNT(*) AS c FROM prescriptions WHERE tenant_id = ?").get(clinic.tenantId) as { c: number }
+    ).c;
+    assert.equal(afterDesk, beforeDesk);
+    assert.equal(treatingDoctorId(clinic.tenantId, deskId, "receptionist", linkedDeskDoctor), "");
+    assert.equal(treatingDoctorId(clinic.tenantId, deskId, "receptionist", deskId), "");
+
+    const ownerId = `owner-${clinic.userId}`;
+    const ownerDoctorId = `doc-owner-${clinic.userId}`;
+    const ownerEmail = `owner.${clinic.userId}@rx-bind.example`;
+    getDb()
+      .prepare(
+        `INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, clinic_name, onboarding_completed, practice_type, specialty, last_login, created_at)
+         VALUES (?, ?, ?, ?, 'Owner Doctor', 'polyclinic_admin', 'active', ?, ?, 1, 'polyclinic', 'General Medicine', ?, ?)`
+      )
+      .run(ownerId, clinic.tenantId, ownerEmail, hashPassword("Lumera@2026"), "+91 98111 00003", "Clinic signer", now, now);
+    getDb()
+      .prepare(
+        `INSERT INTO doctors (id, user_id, name, qualification, reg_number, specialty, experience_years, consultation_fee, opd_room, available_days, opd_timing, phone, email, avatar_url, bio, hpr_id, active)
+         VALUES (?, ?, 'Owner Doctor', 'MBBS', ?, 'General Medicine', 12, 500, 'OPD-1', '[]', '', '', '', '', '', '', 1)`
+      )
+      .run(ownerDoctorId, ownerId, `REG-${ownerId}`);
+    assert.equal(treatingDoctorId(clinic.tenantId, ownerId, "polyclinic_admin", ownerDoctorId), ownerDoctorId);
+    const ownerAuth = await login(ownerEmail);
+    const ownerSigned = await jsonRequest(
+      port,
+      "POST",
+      "/api/prescriptions",
+      {
+        patientId: patient.id,
+        diagnosis: "Owner doctor note",
+        medicines: [{ drugName: "Paracetamol", dosage: "650 mg", frequency: "1-0-1" }],
+        doctorId: ownerDoctorId,
+        reviewedBy: "not-the-session",
+      },
+      ownerAuth
+    );
+    assert.equal(ownerSigned.status, 201, String(ownerSigned.json.error || ""));
+    const ownerRx = ownerSigned.json.prescription as { reviewedBy?: string; doctorId?: string };
+    assert.equal(ownerRx.reviewedBy, ownerDoctorId);
+    assert.equal(ownerRx.doctorId, ownerDoctorId);
   });
 });

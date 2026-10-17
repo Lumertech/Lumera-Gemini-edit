@@ -53,7 +53,7 @@ describe("OTP send and verify limits", () => {
     assert.equal(blocked.ok, false);
   });
 
-  it("forgot-password reuses a pending code and returns 429 on the 4th request", async () => {
+  it("forgot-password reuses a pending code and keeps the public body on the 4th request", async () => {
     resetSendOtpRateLimits();
     const doctor = insertDoctor("forgot");
     for (let i = 0; i < 3; i += 1) {
@@ -63,14 +63,20 @@ describe("OTP send and verify limits", () => {
       assert.equal(res.json.phone, undefined);
       assert.equal(res.json.verificationId, undefined);
       assert.equal(res.json.message, "If this email is registered, we've sent a code.");
+      assert.equal(res.headers.get("retry-after"), null);
     }
     const stored = getDb()
       .prepare("SELECT id FROM otp_verifications WHERE lower(email) = ? AND purpose = 'password_reset'")
       .all(doctor.email.toLowerCase()) as { id: string }[];
     assert.equal(stored.length, 1);
     const blocked = await jsonRequest(server.port, "POST", "/api/auth/forgot-password", { email: doctor.email });
-    assert.equal(blocked.status, 429);
-    assert.ok(blocked.headers.get("retry-after"));
+    assert.equal(blocked.status, 200);
+    assert.deepEqual(blocked.json, { ok: true, message: "If this email is registered, we've sent a code." });
+    assert.equal(blocked.headers.get("retry-after"), null);
+    const storedAfter = getDb()
+      .prepare("SELECT id FROM otp_verifications WHERE lower(email) = ? AND purpose = 'password_reset'")
+      .all(doctor.email.toLowerCase()) as { id: string }[];
+    assert.equal(storedAfter.length, 1);
   });
 
   it("login OTP step reuses a pending code and returns 429 on the 4th request", async () => {

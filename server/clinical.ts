@@ -19,6 +19,7 @@ import { registerPatientDocumentConsentRoutes } from "./patient-document-consent
 import { buildPatientTimeline, presentPrescriptionForRole } from "./patient-timeline.ts";
 import { denyUnlessPatientRecordRole, denyUnlessPrescriber, isReceptionRole } from "./patient-access.ts";
 import { clinicCalendarDate, parseAppointmentListDate } from "../src/lib/clinicDay.ts";
+import { isPrescriberRole } from "../src/lib/prescriberRoles.ts";
 import {
   loadPatientClinicPhone,
   loadPatientTenant,
@@ -654,10 +655,17 @@ function specialtyModulesFromBody(body: Record<string, unknown>, signerId: strin
 }
 
 /**
- * reviewedBy is the Rx's doctor_id, and only when this session is that doctor.
- * A clinic admin or receptionist who is not the treating doctor does not sign.
+ * reviewedBy is the Rx's doctor_id only when this session may prescribe and is
+ * that doctor. Owner-doctors sign as polyclinic_admin through their doctors
+ * row. A receptionist never signs, even when a doctors row links them.
  */
-function treatingDoctorId(tenantId: string, sessionUserId: string, doctorId: string): string {
+export function treatingDoctorId(
+  tenantId: string,
+  sessionUserId: string,
+  role: string | undefined,
+  doctorId: string
+): string {
+  if (!isPrescriberRole(role)) return "";
   const actor = String(sessionUserId || "").trim();
   const id = String(doctorId || "").trim();
   if (!actor || !id) return "";
@@ -1117,14 +1125,16 @@ function deletePrescriptionDraft(input: {
   );
 }
 
-function insertPrescription(tenantId: string, body: Record<string, unknown>, actorId: string) {
+function insertPrescription(tenantId: string, body: Record<string, unknown>, actorId: string, actorRole?: string) {
   assertReviewedAiPrescription(body);
   const sessionUserId = String(actorId || "").trim();
   if (clientRequestedReview(body) && !sessionUserId) {
     throw Object.assign(new Error("Sign in to review this prescription"), { status: 401 });
   }
   const doctorId = String(body.doctorId || body.doctor_id || "").trim();
-  const signerId = clientRequestedReview(body) ? treatingDoctorId(tenantId, sessionUserId, doctorId) : "";
+  const signerId = clientRequestedReview(body)
+    ? treatingDoctorId(tenantId, sessionUserId, actorRole, doctorId)
+    : "";
   const patientId = String(body.patientId || body.patient_id || "").trim();
   const diagnosis = String(body.diagnosis || "").trim();
   if (!patientId) {
@@ -1565,11 +1575,16 @@ export function createClinicalRouter(): Router {
   });
 
   api.post("/prescriptions", requireAuth, (req, res) => {
-    if (!denyUnlessPatientRecordRole(req, res)) return;
+    if (!denyUnlessPrescriber(req, res)) return;
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     try {
-      const row = insertPrescription(tenantId, req.body || {}, String(req.user?.id || ""));
+      const row = insertPrescription(
+        tenantId,
+        req.body || {},
+        String(req.user?.id || ""),
+        String(req.user?.role || "")
+      );
       const mapped = prescriptionForClient(req, tenantId, row);
       const signed = Boolean(String((mapped as { reviewedBy?: string }).reviewedBy || "").trim());
       writeAudit(

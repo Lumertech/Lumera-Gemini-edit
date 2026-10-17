@@ -76,7 +76,8 @@ import {
   upsertTenantSubscription,
 } from "./platform-tenants.ts";
 import { generateTemporaryPassword, hashPassword, passwordRuleError, verifyPassword } from "./password.ts";
-import { rejectWrongOtp, reserveOtpSend, sendOtpLimited } from "./otp-attempt.ts";
+import { findPendingOtp, generateNumericOtp, rejectWrongOtp, reserveOtpSend, sendOtpLimited } from "./otp-attempt.ts";
+import { consumeForgotPasswordAttempt, requestClientIp } from "./otp-rate-limit.ts";
 import { parseSpecialtyPackInput, resolveSpecialtyPack } from "./specialty-packs.ts";
 import { appPublicUrl, demoLoginEnabled, isProduction } from "./runtime.ts";
 import { DEMO_PASSWORD } from "../src/lib/demoAccounts.ts";
@@ -519,7 +520,7 @@ export function createApiRouter(): Router {
         message: "Pending verification reused.",
       });
     }
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otp = generateNumericOtp();
     const verificationId = crypto.randomUUID();
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
 
@@ -818,7 +819,7 @@ export function createApiRouter(): Router {
         message: "Pending verification reused.",
       });
     }
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otp = generateNumericOtp();
     const verificationId = crypto.randomUUID();
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
 
@@ -880,7 +881,7 @@ export function createApiRouter(): Router {
       });
     }
 
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otp = generateNumericOtp();
     const verificationId = crypto.randomUUID();
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
 
@@ -1273,7 +1274,7 @@ export function createApiRouter(): Router {
     ensureTenantSubscription(getDb(), tenantId, { planCode: "trial", status: "trial", billingSource: "sandbox" });
 
     // 6. WHATSAPP OTP TRIGGER:
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otp = generateNumericOtp();
     const verificationId = crypto.randomUUID();
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
 
@@ -1534,25 +1535,55 @@ export function createApiRouter(): Router {
   }
 
   // Password Recovery / Forgot Password. No login, so the response cannot
-  // reveal who is registered or include a phone number.
-  api.post("/auth/forgot-password", async (req: Request, res: Response) => {
+  // reveal who is registered or include a phone number. The public reply is
+  // sent before WhatsApp dispatch and the audit, including when the email or
+  // the client IP is already over the send window.
+  const RESET_CODE_FAILURE = {
+    error: "Invalid or expired reset code. Please request a fresh OTP.",
+  } as const;
+
+  function finishPasswordReset(res: Response, after?: () => Promise<void> | void) {
+    res.status(200).json(FORGOT_PASSWORD_BODY);
+    setImmediate(() => {
+      void Promise.resolve()
+        .then(() => (after ? after() : undefined))
+        .then(() => {
+          if (!after) auditPasswordResetAttempt("not_sent");
+        })
+        .catch((err) => {
+          try {
+            auditPasswordResetAttempt("not_sent");
+          } catch {
+            /* the public reply is already on the wire */
+          }
+          reportCaughtError(err, "POST /api/auth/forgot-password");
+        });
+    });
+  }
+
+  api.post("/auth/forgot-password", (req: Request, res: Response) => {
     const email = String(req.body?.email || "").trim().toLowerCase();
     if (!email) {
       return res.status(400).json({ error: "Please provide your registered email address." });
     }
 
+    const allowance = consumeForgotPasswordAttempt(email, requestClientIp(req));
+    if (!allowance.ok) {
+      finishPasswordReset(res);
+      return;
+    }
+
     const user = getDb().prepare("SELECT * FROM users WHERE email = ?").get(email) as unknown as DbUser | undefined;
     const phone = String(user?.phone || "").trim();
     if (!user || !phone) {
-      auditPasswordResetAttempt("not_sent");
-      return res.status(200).json(FORGOT_PASSWORD_BODY);
+      finishPasswordReset(res);
+      return;
     }
     const name = user.name || "Clinician";
-    const slot = reserveOtpSend(req, phone, "password_reset", { userId: user.id, email }, true);
-    if (slot.limited === true) return sendOtpLimited(res, slot.retryAfterSec);
-    const otp = slot.pending?.otp || Math.floor(100000 + Math.random() * 900000).toString();
-    const verificationId = slot.pending?.id || crypto.randomUUID();
-    if (!slot.pending) {
+    const pending = findPendingOtp(phone, "password_reset", email);
+    const otp = pending?.otp || generateNumericOtp();
+    const verificationId = pending?.id || crypto.randomUUID();
+    if (!pending) {
       const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
       getDb().prepare(`
         INSERT INTO otp_verifications (id, phone, email, otp, purpose, payload, created_at, expires_at)
@@ -1568,12 +1599,14 @@ export function createApiRouter(): Router {
       );
     }
 
-    const sent = await dispatchWhatsAppOtpMessage(phone, name, otp, "password_reset");
-    auditPasswordResetAttempt(sent.ok ? "sent" : "not_sent");
-    return res.status(200).json(FORGOT_PASSWORD_BODY);
+    finishPasswordReset(res, async () => {
+      const sent = await dispatchWhatsAppOtpMessage(phone, name, otp, "password_reset");
+      auditPasswordResetAttempt(sent.ok ? "sent" : "not_sent");
+    });
   });
 
-  // Password Reset Finalization
+  // Password Reset Finalization. Unknown, expired, wrong, and locked codes
+  // share one 400 body so a lockout cannot be told apart from a bad address.
   api.post("/auth/reset-password", (req: Request, res: Response) => {
     const verificationId = String(req.body?.verificationId || "").trim();
     const email = String(req.body?.email || "").trim().toLowerCase();
@@ -1589,7 +1622,7 @@ export function createApiRouter(): Router {
 
     const record = (
       verificationId
-        ? getDb().prepare("SELECT * FROM otp_verifications WHERE id = ?").get(verificationId)
+        ? getDb().prepare("SELECT * FROM otp_verifications WHERE id = ? AND purpose = 'password_reset'").get(verificationId)
         : getDb()
             .prepare(
               `SELECT * FROM otp_verifications
@@ -1603,13 +1636,15 @@ export function createApiRouter(): Router {
         otp: string;
         payload: string;
         expires_at: string;
+        verified_at?: string | null;
+        failed_attempts?: number;
       } | undefined;
 
-    if (!record || new Date(record.expires_at).getTime() < Date.now()) {
-      return res.status(400).json({ error: "Invalid or expired reset code. Please request a fresh OTP." });
+    if (!record || record.verified_at || new Date(record.expires_at).getTime() < Date.now()) {
+      return res.status(400).json(RESET_CODE_FAILURE);
     }
-    const resetVerdict = rejectWrongOtp(record, otp, "Invalid or expired reset code. Please request a fresh OTP.");
-    if (resetVerdict.ok === false) return res.status(resetVerdict.status).json({ error: resetVerdict.error });
+    const resetVerdict = rejectWrongOtp(record, otp, RESET_CODE_FAILURE.error);
+    if (resetVerdict.ok === false) return res.status(400).json(RESET_CODE_FAILURE);
 
     let payload: Record<string, any> = {};
     try {
@@ -1622,7 +1657,7 @@ export function createApiRouter(): Router {
     const user = getDb().prepare("SELECT * FROM users WHERE email = ?").get(userEmail) as unknown as DbUser | undefined;
 
     if (!user) {
-      return res.status(404).json({ error: "User account not found." });
+      return res.status(400).json(RESET_CODE_FAILURE);
     }
 
     const newHash = hashPassword(newPassword);
