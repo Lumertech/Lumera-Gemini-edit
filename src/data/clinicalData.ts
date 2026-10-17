@@ -1344,8 +1344,8 @@ export const DEFAULT_WHATSAPP_TEMPLATES: WhatsAppTemplate[] = [
     name: 'appointment_confirmation_v2',
     category: 'APPOINTMENT_REMINDER',
     language: 'English (en_IN)',
-    headerText: '🏥 Lumera Polyclinic - Appointment Confirmed',
-    bodyText: 'Hello {{1}},\n\nYour appointment with {{2}} ({{3}}) has been confirmed for *{{4}} at {{5}}*.\n\n📍 Token No: *{{6}}*\n🏥 Room: {{7}}\n\nPlease arrive 10 minutes prior for vitals check.',
+    headerText: '🏥 {{clinic_name}} - Appointment Confirmed',
+    bodyText: 'Hello {{1}},\n\nYour appointment with {{doctor_name}} ({{3}}) at {{clinic_name}} has been confirmed for *{{4}} at {{5}}*.\n\n📍 Token No: *{{6}}*\n🏥 Room: {{7}}\n\nPlease arrive 10 minutes prior for vitals check.',
     footerText: 'Reply CANCEL to cancel or RESCHEDULE to change time',
     buttons: [
       { type: 'QUICK_REPLY', text: 'Confirm Arrival', payload: 'CONFIRM_ARRIVAL' },
@@ -1358,11 +1358,11 @@ export const DEFAULT_WHATSAPP_TEMPLATES: WhatsAppTemplate[] = [
     name: 'digital_prescription_ready',
     category: 'PRESCRIPTION_DELIVERY',
     language: 'English (en_IN)',
-    headerText: '📄 Digital Rx Ready - Lumera Health',
-    bodyText: 'Dear {{1}},\n\nYour digital prescription from {{2}} has been generated successfully.\n\n📋 Rx No: *{{3}}*\n💊 Medications: {{4}} items\n🗓️ Follow-up: *{{5}}*\n\nTap the button below to view or print your digital prescription anytime.',
+    headerText: '📄 Digital Rx Ready - {{clinic_name}}',
+    bodyText: 'Dear {{1}},\n\nYour digital prescription from {{doctor_name}} at {{clinic_name}} has been generated successfully.\n\n📋 Rx No: *{{3}}*\n💊 Medications: {{4}} items\n🗓️ Follow-up: *{{5}}*\n\nTap the button below to view or print your digital prescription anytime.',
     footerText: 'Issued under the Telemedicine Practice Guidelines, 2020',
     buttons: [
-      { type: 'URL', text: 'View Digital Rx PDF', payload: 'https://lumera.health/rx/{{3}}' },
+      { type: 'URL', text: 'View Digital Rx PDF', payload: '{{rx_url}}' },
       { type: 'QUICK_REPLY', text: 'Order Medicines', payload: 'ORDER_MEDS' }
     ],
     status: 'APPROVED'
@@ -1376,7 +1376,7 @@ export const DEFAULT_WHATSAPP_TEMPLATES: WhatsAppTemplate[] = [
     bodyText: 'Dear {{1}},\n\nInvoice *{{2}}* for {{3}} has been generated for total amount *₹{{4}}*.\n\nYou can pay securely via UPI, Cards, or NetBanking using the link below.',
     footerText: 'Instant GST Receipt provided on payment',
     buttons: [
-      { type: 'URL', text: 'Pay ₹{{4}} via UPI/Card', payload: 'https://lumera.health/pay/{{2}}' }
+      { type: 'URL', text: 'Pay ₹{{4}} via UPI/Card', payload: '{{pay_url}}' }
     ],
     status: 'APPROVED'
   },
@@ -1386,8 +1386,8 @@ export const DEFAULT_WHATSAPP_TEMPLATES: WhatsAppTemplate[] = [
     category: 'FOLLOWUP_CHECK',
     language: 'English (en_IN)',
     headerText: '💊 Daily Medication Check-in',
-    bodyText: 'Hi {{1}},\n\nThis is your automated health buddy from Lumera Clinic. Did you take your prescribed medicines today?\n\n1. Morning dose\n2. Afternoon dose\n3. Night dose',
-    footerText: 'Lumera Patient Adherence Program',
+    bodyText: 'Hi {{1}},\n\nThis is your automated health buddy from {{clinic_name}}. {{doctor_name}} asked whether you took your prescribed medicines today.\n\n1. Morning dose\n2. Afternoon dose\n3. Night dose',
+    footerText: '{{clinic_name}} patient adherence program',
     buttons: [
       { type: 'QUICK_REPLY', text: '✅ All Taken', payload: 'MEDS_TAKEN' },
       { type: 'QUICK_REPLY', text: '⚠️ Experiencing Side Effect', payload: 'SIDE_EFFECT' }

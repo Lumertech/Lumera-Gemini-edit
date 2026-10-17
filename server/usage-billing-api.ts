@@ -7,6 +7,7 @@ import { getTenantLetterhead } from "./letterhead.ts";
 import { appPublicUrl, isProduction, sandboxSimulatorsEnabled } from "./runtime.ts";
 import { WALLET_INSUFFICIENT_ERROR } from "./usage-wallet.ts";
 import { formatINR } from "../src/lib/currency.ts";
+import { buildRxWhatsAppText } from "../src/lib/whatsappRxDispatch.ts";
 import { resolveWhatsAppTenantId } from "./whatsapp-calendar.ts";
 import { dispatchPatientCloudText, walletDispatchStatus } from "./whatsapp-patient-dispatch.ts";
 import {
@@ -166,19 +167,21 @@ export function createUsageBillingRouter(): Router {
     const patientName = String(body.patientName || "Patient");
     const uhid = String(body.uhid || "LUM-2026-0001");
     const rxNumber = String(body.rxNumber || "RX-2026-0001");
-    const doctorName = String(body.doctorName || "Doctor");
-    const doctorSpecialty = String(body.doctorSpecialty || "General Medicine");
+    const doctorName = String(body.doctorName || "");
+    const doctorSpecialty = String(body.doctorSpecialty || "");
     const diagnosis = String(body.diagnosis || "Clinical Consultation");
     const medicines = Array.isArray(body.medicines) ? body.medicines : [];
-    const medsText = medicines
-      .slice(0, 3)
-      .map((m: { drugName?: string; dosage?: string; frequency?: string }, i: number) => {
-        return `  ${i + 1}. *${m.drugName || "Medicine"}* (${m.dosage || ""} - ${m.frequency || ""})`;
-      })
-      .join("\n");
-    const moreMeds = medicines.length > 3 ? `\n  _...and ${medicines.length - 3} more medications_` : "";
     const pdfUrl = `/api/whatsapp/prescription/${rxNumber}/pdf`;
-    const content = `🩺 *${clinicName}*\n*Official Digital Prescription*\n\nNamaste *${patientName}* (UHID: ${uhid}),\nYour consultation prescription has been finalized and signed by *${doctorName}* (${doctorSpecialty}).\n\n📋 *Diagnosis:* ${diagnosis}\n💊 *Prescribed Medications (${medicines.length}):*\n${medsText}${moreMeds}\n\n📄 *Download Official PDF Prescription:*\n${pdfUrl}\n\n_Please follow the dosage schedule strictly. For emergency follow-up, reply to this chat._`;
+    const content = buildRxWhatsAppText({
+      clinicName,
+      doctorName,
+      doctorSpecialty,
+      patientName,
+      uhid,
+      diagnosis,
+      medicines,
+      pdfUrl,
+    });
     const sent = await dispatchPatientCloudText({
       tenantId: tenantId || undefined,
       to: patientPhone,

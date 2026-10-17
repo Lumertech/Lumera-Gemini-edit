@@ -185,13 +185,13 @@ export function ensureMetaTechProviderAndPolicies(database: SqlDatabase) {
         language: "en",
         status: "APPROVED",
         components: JSON.stringify([
-          { type: "HEADER", format: "TEXT", text: "Appointment Confirmation - Lumera Health" },
+          { type: "HEADER", format: "TEXT", text: "Appointment Confirmation - {{clinic_name}}" },
           {
             type: "BODY",
-            text: "Hello {{1}}, your consultation with {{2}} is confirmed for {{3}} at {{4}}. Your OPD Token is #{{5}}. Please arrive 10 minutes prior to your slot.",
+            text: "Hello {{1}}, your consultation with {{doctor_name}} at {{clinic_name}} is confirmed for {{3}} at {{4}}. Your OPD Token is #{{5}}. Please arrive 10 minutes prior to your slot.",
             example: { body_text: [["Rajiv Saxena", "Dr. Vikram Malhotra", "Tomorrow", "09:30 AM", "04"]] }
           },
-          { type: "FOOTER", text: "Lumera Apex PolyClinic • Indiranagar, Bengaluru" },
+          { type: "FOOTER", text: "{{clinic_name}}" },
           {
             type: "BUTTONS",
             buttons: [
@@ -215,14 +215,14 @@ export function ensureMetaTechProviderAndPolicies(database: SqlDatabase) {
           { type: "HEADER", format: "DOCUMENT" },
           {
             type: "BODY",
-            text: "Dear {{1}}, thank you for consulting Dr. {{2}}. Your digital prescription (Rx: {{3}}) and itemized consultation receipt are attached above. You can view dosage schedules anytime on your Lumera Portal.",
+            text: "Dear {{1}}, thank you for consulting {{doctor_name}} at {{clinic_name}}. Your digital prescription (Rx: {{3}}) and itemized consultation receipt are attached above. You can view dosage schedules anytime from your clinic.",
             example: { body_text: [["Sunita Roy", "Vikram Malhotra", "RX-2026-0101"]] }
           },
-          { type: "FOOTER", text: "Lumera Health EMR System • Digital Rx" },
+          { type: "FOOTER", text: "{{clinic_name}} • Digital Rx" },
           {
             type: "BUTTONS",
             buttons: [
-              { type: "URL", text: "Open Patient Portal", url: "https://lumera.health/portal" }
+              { type: "URL", text: "Open Patient Portal", url: "{{portal_url}}" }
             ]
           }
         ]),
@@ -244,7 +244,7 @@ export function ensureMetaTechProviderAndPolicies(database: SqlDatabase) {
             text: "Namaste {{1}}, your test results for {{2}} conducted on {{3}} have been signed off by the pathologist and are now ready for download.",
             example: { body_text: [["Rajiv Saxena", "Renal & Vitamin Profile", "28 Aug 2026"]] }
           },
-          { type: "FOOTER", text: "Lumera Central Diagnostics" },
+          { type: "FOOTER", text: "{{clinic_name}}" },
           {
             type: "BUTTONS",
             buttons: [
@@ -287,7 +287,7 @@ export function ensureMetaTechProviderAndPolicies(database: SqlDatabase) {
         components: JSON.stringify([
           {
             type: "BODY",
-            text: "Your Lumera Health verification code is {{1}}. Valid for 5 minutes. Never share this code with anyone.",
+            text: "Your {{clinic_name}} verification code is {{1}}. Valid for 5 minutes. Never share this code with anyone.",
             example: { body_text: [["492810"]] }
           },
           {
@@ -312,7 +312,7 @@ export function ensureMetaTechProviderAndPolicies(database: SqlDatabase) {
           { type: "HEADER", format: "IMAGE" },
           {
             type: "BODY",
-            text: "Dear {{1}}, Lumera Health is organizing a Comprehensive Cardiac Wellness Camp on Saturday, {{2}}. Includes ECG, Lipid Profile & Senior Cardiologist consultation at 50% discount.",
+            text: "Dear {{1}}, {{clinic_name}} is organizing a Comprehensive Cardiac Wellness Camp on Saturday, {{2}} with {{doctor_name}}. Includes ECG, Lipid Profile and a senior cardiologist consultation.",
             example: { body_text: [["Rajiv", "15 September 2026"]] }
           },
           { type: "FOOTER", text: "Reply STOP to unsubscribe from health updates" },

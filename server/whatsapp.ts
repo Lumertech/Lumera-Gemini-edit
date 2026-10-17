@@ -28,6 +28,7 @@ import { CLINICIAN_ROLES, requireAuth, requireRole } from "./auth.ts";
 import { rejectUntrustedTenantClaim } from "./tenant-guard.ts";
 import { authenticatedLabReportPath, authorizeLabReport, labOwnerTenantId, sendLabReportDenied } from "./lab-report-access.ts";
 import { WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
+import { buildRxWhatsAppText, WHATSAPP_SEND_FAILED } from "../src/lib/whatsappRxDispatch.ts";
 import { formatINR } from "../src/lib/currency.ts";
 import { AI_RUPEE_OUTPUT_RULE } from "./india-currency-copy.ts";
 import {
@@ -1242,10 +1243,16 @@ ${AI_RUPEE_OUTPUT_RULE}`;
       });
 
       const pdfUrl = `/api/whatsapp/prescription/${rxNumber}/pdf`;
-      const medsText = medicines.slice(0, 3).map((m: any, i: number) => `  ${i + 1}. *${m.drugName}* (${m.dosage} - ${m.frequency})`).join("\n");
-      const moreMeds = medicines.length > 3 ? `\n  _...and ${medicines.length - 3} more medications_` : "";
-
-      const content = `🩺 *${clinicName}*\n*Official Digital Prescription*\n\nNamaste *${patientName}* (UHID: ${uhid}),\nYour consultation prescription has been finalized and signed by *${doctorName}* (${doctorSpecialty}).\n\n📋 *Diagnosis:* ${diagnosis}\n💊 *Prescribed Medications (${medicines.length}):*\n${medsText}${moreMeds}\n\n📄 *Download Official PDF Prescription:*\n${pdfUrl}\n\n_Please follow the dosage schedule strictly. For emergency follow-up, reply to this chat._`;
+      const content = buildRxWhatsAppText({
+        clinicName,
+        doctorName,
+        doctorSpecialty,
+        patientName,
+        uhid,
+        diagnosis,
+        medicines: Array.isArray(medicines) ? medicines : [],
+        pdfUrl,
+      });
 
       const msgId = `msg-rx-${crypto.randomUUID().slice(0, 8)}`;
       db.prepare(`
@@ -1277,9 +1284,9 @@ ${AI_RUPEE_OUTPUT_RULE}`;
         status: 'delivered',
         message: 'Prescription PDF dispatched successfully via WhatsApp Graph API'
       });
-    } catch (err: any) {
-      console.error("WhatsApp Rx dispatch error:", err);
-      return res.status(500).json({ error: "Failed to dispatch WhatsApp Rx: " + err.message });
+    } catch {
+      console.error("WhatsApp Rx dispatch failed");
+      return res.status(500).json({ code: WHATSAPP_SEND_FAILED });
     }
   });
 
