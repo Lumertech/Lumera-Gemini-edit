@@ -8,6 +8,7 @@ import {
   resolveSpecialtyPack,
 } from "./specialty-packs.ts";
 import { CMS_POLICY_UPSERTS } from "./cms-policy-seed.ts";
+import { templateByName } from "../src/lib/whatsappMetaTemplates.ts";
 
 function backfillUserSpecialtyEnum(database: SqlDatabase) {
   try {
@@ -175,172 +176,29 @@ export function ensureMetaTechProviderAndPolicies(database: SqlDatabase) {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
-    const standardTemplates = [
-      {
-        id: "tpl-1",
-        tenant_id: "tenant-lumera-main",
-        waba_id: "waba_398249018247019",
-        name: "appointment_reminder_v1",
-        category: "UTILITY",
-        language: "en",
-        status: "APPROVED",
-        components: JSON.stringify([
-          { type: "HEADER", format: "TEXT", text: "Appointment Confirmation - {{clinic_name}}" },
-          {
-            type: "BODY",
-            text: "Hello {{1}}, your consultation with {{doctor_name}} at {{clinic_name}} is confirmed for {{3}} at {{4}}. Your OPD Token is #{{5}}. Please arrive 10 minutes prior to your slot.",
-            example: { body_text: [["Rajiv Saxena", "Dr. Vikram Malhotra", "Tomorrow", "09:30 AM", "04"]] }
-          },
-          { type: "FOOTER", text: "{{clinic_name}}" },
-          {
-            type: "BUTTONS",
-            buttons: [
-              { type: "QUICK_REPLY", text: "Confirm Arrival" },
-              { type: "QUICK_REPLY", text: "Reschedule Slot" }
-            ]
-          }
-        ]),
-        meta_template_id: "meta_tpl_983102948102",
-        rejection_reason: null
-      },
-      {
-        id: "tpl-2",
-        tenant_id: "tenant-lumera-main",
-        waba_id: "waba_398249018247019",
-        name: "post_consultation_rx",
-        category: "UTILITY",
-        language: "en",
-        status: "APPROVED",
-        components: JSON.stringify([
-          { type: "HEADER", format: "DOCUMENT" },
-          {
-            type: "BODY",
-            text: "Dear {{1}}, thank you for consulting {{doctor_name}} at {{clinic_name}}. Your digital prescription (Rx: {{3}}) and itemized consultation receipt are attached above. You can view dosage schedules anytime from your clinic.",
-            example: { body_text: [["Sunita Roy", "Vikram Malhotra", "RX-2026-0101"]] }
-          },
-          { type: "FOOTER", text: "{{clinic_name}} • Digital Rx" },
-          {
-            type: "BUTTONS",
-            buttons: [
-              { type: "URL", text: "Open Patient Portal", url: "{{portal_url}}" }
-            ]
-          }
-        ]),
-        meta_template_id: "meta_tpl_983102948103",
-        rejection_reason: null
-      },
-      {
-        id: "tpl-3",
-        tenant_id: "tenant-lumera-main",
-        waba_id: "waba_398249018247019",
-        name: "lab_report_ready",
-        category: "UTILITY",
-        language: "en",
-        status: "APPROVED",
-        components: JSON.stringify([
-          { type: "HEADER", format: "TEXT", text: "Diagnostic Pathology Report" },
-          {
-            type: "BODY",
-            text: "Namaste {{1}}, your test results for {{2}} conducted on {{3}} have been signed off by the pathologist and are now ready for download.",
-            example: { body_text: [["Rajiv Saxena", "Renal & Vitamin Profile", "28 Aug 2026"]] }
-          },
-          { type: "FOOTER", text: "{{clinic_name}}" },
-          {
-            type: "BUTTONS",
-            buttons: [
-              { type: "QUICK_REPLY", text: "Download PDF" },
-              { type: "QUICK_REPLY", text: "Book Follow-up" }
-            ]
-          }
-        ]),
-        meta_template_id: "meta_tpl_983102948104",
-        rejection_reason: null
-      },
-      {
-        id: "tpl-4",
-        tenant_id: "tenant-lumera-main",
-        waba_id: "waba_398249018247019",
-        name: "opd_queue_token_alert",
-        category: "UTILITY",
-        language: "en",
-        status: "APPROVED",
-        components: JSON.stringify([
-          { type: "HEADER", format: "TEXT", text: "Live Queue Update" },
-          {
-            type: "BODY",
-            text: "Patient Alert: Token #{{1}} ({{2}}). You are next in line for {{3}}. Please proceed to {{4}}.",
-            example: { body_text: [["02", "Priyanka Mukherjee", "Dr. Siddharth Varma", "Rehab Suite 105"]] }
-          },
-          { type: "FOOTER", text: "Live OPD Triage System" }
-        ]),
-        meta_template_id: "meta_tpl_983102948105",
-        rejection_reason: null
-      },
-      {
-        id: "tpl-5",
-        tenant_id: "tenant-lumera-main",
-        waba_id: "waba_398249018247019",
-        name: "otp_login_verification",
-        category: "AUTHENTICATION",
-        language: "en",
-        status: "APPROVED",
-        components: JSON.stringify([
-          {
-            type: "BODY",
-            text: "Your {{clinic_name}} verification code is {{1}}. Valid for 5 minutes. Never share this code with anyone.",
-            example: { body_text: [["492810"]] }
-          },
-          {
-            type: "BUTTONS",
-            buttons: [
-              { type: "QUICK_REPLY", text: "Copy Code" }
-            ]
-          }
-        ]),
-        meta_template_id: "meta_tpl_983102948106",
-        rejection_reason: null
-      },
-      {
-        id: "tpl-6",
-        tenant_id: "tenant-lumera-main",
-        waba_id: "waba_398249018247019",
-        name: "preventive_cardiac_camp",
-        category: "MARKETING",
-        language: "en",
-        status: "PENDING",
-        components: JSON.stringify([
-          { type: "HEADER", format: "IMAGE" },
-          {
-            type: "BODY",
-            text: "Dear {{1}}, {{clinic_name}} is organizing a Comprehensive Cardiac Wellness Camp on Saturday, {{2}} with {{doctor_name}}. Includes ECG, Lipid Profile and a senior cardiologist consultation.",
-            example: { body_text: [["Rajiv", "15 September 2026"]] }
-          },
-          { type: "FOOTER", text: "Reply STOP to unsubscribe from health updates" },
-          {
-            type: "BUTTONS",
-            buttons: [
-              { type: "QUICK_REPLY", text: "Book Camp Slot" },
-              { type: "QUICK_REPLY", text: "View Details" }
-            ]
-          }
-        ]),
-        meta_template_id: "meta_tpl_983102948107",
-        rejection_reason: null
-      }
+    const standardTemplateRows = [
+      { id: "tpl-1", name: "appointment_reminder_v1", status: "APPROVED", meta_template_id: "meta_tpl_983102948102" },
+      { id: "tpl-2", name: "post_consultation_rx", status: "APPROVED", meta_template_id: "meta_tpl_983102948103" },
+      { id: "tpl-3", name: "lab_report_ready", status: "APPROVED", meta_template_id: "meta_tpl_983102948104" },
+      { id: "tpl-4", name: "opd_queue_token_alert", status: "APPROVED", meta_template_id: "meta_tpl_983102948105" },
+      { id: "tpl-5", name: "otp_login_verification", status: "APPROVED", meta_template_id: "meta_tpl_983102948106" },
+      { id: "tpl-6", name: "preventive_cardiac_camp", status: "PENDING", meta_template_id: "meta_tpl_983102948107" },
     ];
 
-    for (const tpl of standardTemplates) {
+    for (const row of standardTemplateRows) {
+      const spec = templateByName(row.name);
+      if (!spec) throw new Error(`Missing WhatsApp template spec: ${row.name}`);
       insertTemplate.run(
-        tpl.id,
-        tpl.tenant_id,
-        tpl.waba_id,
-        tpl.name,
-        tpl.category,
-        tpl.language,
-        tpl.status,
-        tpl.components,
-        tpl.meta_template_id,
-        tpl.rejection_reason,
+        row.id,
+        "tenant-lumera-main",
+        "waba_398249018247019",
+        spec.name,
+        spec.category,
+        "en",
+        row.status,
+        JSON.stringify(spec.components),
+        row.meta_template_id,
+        null,
         now,
         now
       );

@@ -33,7 +33,7 @@ const LEGACY_SEEDED_RX_TEMPLATE_FOOTER = "Lumera Health EMR System • Certified
 const SEEDED_RX_TEMPLATE_FOOTER = "Lumera Health EMR System • Digital Rx";
 /**
  * Seeded template whose footer was that sentence. lab_report_ready does not apply:
- * its footer is a clinic name variable, not this exact sentence.
+ * its footer was never this exact sentence.
  */
 const SEEDED_RX_TEMPLATE_NAMES = ["post_consultation_rx"] as const;
 

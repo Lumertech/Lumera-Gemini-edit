@@ -4,6 +4,7 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_WHATSAPP_TEMPLATES } from "../data/clinicalData.ts";
+import { WHATSAPP_TEMPLATE_BODY_INDEX } from "./whatsappMetaTemplates.ts";
 import {
   WHATSAPP_SEND_FAILED,
   WHATSAPP_SEND_UNREACHABLE,
@@ -84,22 +85,19 @@ describe("WhatsApp Rx dispatch honesty", () => {
     const appointment = DEFAULT_WHATSAPP_TEMPLATES.find((tpl) => tpl.name === "appointment_confirmation_v2");
     assert.ok(rxTemplate);
     assert.ok(appointment);
-    assert.match(JSON.stringify(rxTemplate), /\{\{clinic_name\}\}/);
-    assert.match(JSON.stringify(rxTemplate), /\{\{doctor_name\}\}/);
-    assert.match(JSON.stringify(appointment), /\{\{clinic_name\}\}/);
-    assert.match(JSON.stringify(appointment), /\{\{doctor_name\}\}/);
+    assert.equal(WHATSAPP_TEMPLATE_BODY_INDEX.digital_prescription_ready.doctor_name, 1);
+    assert.equal(WHATSAPP_TEMPLATE_BODY_INDEX.digital_prescription_ready.clinic_name, 2);
+    assert.equal(WHATSAPP_TEMPLATE_BODY_INDEX.appointment_confirmation_v2.doctor_name, 2);
+    assert.equal(WHATSAPP_TEMPLATE_BODY_INDEX.appointment_confirmation_v2.clinic_name, 4);
     for (const tpl of DEFAULT_WHATSAPP_TEMPLATES) {
-      assert.doesNotMatch(JSON.stringify(tpl), /lumera/i, tpl.name);
+      const text = JSON.stringify(tpl).replaceAll("mylumera.in", "");
+      assert.doesNotMatch(text, /lumera/i, tpl.name);
     }
 
     const seed = fs.readFileSync(path.join(root, "server/db-seed-meta.ts"), "utf8");
-    const templates = seed.slice(seed.indexOf("const standardTemplates"), seed.indexOf("for (const tpl of standardTemplates)"));
-    const componentBodies = [...templates.matchAll(/components: JSON\.stringify\(\[([\s\S]*?)\]\)/g)].map((match) => match[1]);
-    assert.ok(componentBodies.length >= 4);
-    const componentText = componentBodies.join("\n");
-    assert.match(componentText, /\{\{clinic_name\}\}/);
-    assert.match(componentText, /\{\{doctor_name\}\}/);
-    assert.doesNotMatch(componentText, /lumera/i);
+    assert.match(seed, /templateByName\(row\.name\)/);
+    assert.doesNotMatch(seed, /\{\{clinic_name\}\}/);
+    assert.doesNotMatch(seed, /\{\{doctor_name\}\}/);
 
     const whatsappRoute = fs.readFileSync(path.join(root, "server/whatsapp.ts"), "utf8");
     const sendRx = whatsappRoute.slice(whatsappRoute.indexOf('router.post("/send-rx"'), whatsappRoute.indexOf("router.get(\"/prescription/:id/pdf\""));

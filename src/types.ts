@@ -638,11 +638,12 @@ export interface WhatsAppMessage {
 export interface WhatsAppTemplate {
   id: string;
   name: string;
-  category: 'APPOINTMENT_REMINDER' | 'PRESCRIPTION_DELIVERY' | 'INVOICE_PAY_LINK' | 'FOLLOWUP_CHECK' | 'LAB_READY';
+  category: 'UTILITY' | 'MARKETING' | 'AUTHENTICATION';
   language: string;
   headerText?: string;
   bodyText: string;
   footerText?: string;
+  bodyExample?: string[];
   buttons?: { type: 'URL' | 'QUICK_REPLY'; text: string; payload?: string }[];
   status: 'APPROVED' | 'PENDING';
 }
