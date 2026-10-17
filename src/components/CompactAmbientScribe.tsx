@@ -14,11 +14,15 @@ import {
 import { SoapNote, Patient, Doctor } from "../types";
 import { useAuth } from "../auth/AuthContext";
 import { ABHA_LINKING_STATUS, showsAbhaSandboxStatus } from "../lib/clinicNav";
+import { AmbientRecordingDisclosure, AmbientScribeConsentDialog } from "./AmbientScribeConsentDialog";
 import {
+  ambientWebSpeechEnabled,
   beginAmbientMicGesture,
   isSpeechRecognitionAvailable,
   micErrorMessage,
   microphoneStatusLabel,
+  resetAmbientMicrophoneSession,
+  shouldUploadAmbientRecording,
   SPEECH_UNSUPPORTED_NOTICE,
   startAmbientMic,
   transcriptBadge,
@@ -26,6 +30,8 @@ import {
   type AmbientMicGesture,
   type TranscriptOrigin,
 } from "../lib/ambientMic";
+import { ambientMicStartDecision } from "../lib/ambientScribeConsent";
+import { useAmbientScribeConsent } from "../lib/useAmbientScribeConsent";
 import { extractClinicalTokens, type PulseExtractSource } from "../lib/pulseClinicalTokens";
 import { resolveRxModule } from "../lib/specialtyWorkflow";
 import { flashPopulatedRxFields } from "../lib/flashPopulatedRxFields";
@@ -46,6 +52,8 @@ interface CompactAmbientScribeProps {
   onStatusChange?: (status: AmbientScribeStatus) => void;
   /** Active Rx module — GP, cardiology, physio, etc. Independent of demo pack-id `gp`. */
   practiceSpecialty?: string;
+  /** Visit this recording belongs to. Empty uses a same-day key for this patient. */
+  appointmentId?: string;
 }
 
 const DEMO_BY_MODULE: Record<string, Array<{ id: string; label: string; text: string }>> = {
@@ -143,6 +151,7 @@ export const CompactAmbientScribe = React.forwardRef<CompactAmbientScribeHandle,
   onClose,
   onStatusChange,
   practiceSpecialty,
+  appointmentId,
 }, ref) {
   const { user } = useAuth();
   const showAbhaStatus = showsAbhaSandboxStatus(user?.role);
@@ -169,6 +178,13 @@ export const CompactAmbientScribe = React.forwardRef<CompactAmbientScribeHandle,
   const uploadLockRef = useRef(false);
   const cancelStartRef = useRef(false);
   const skipUploadRef = useRef(false);
+  const captureStartedAtRef = useRef(0);
+  const stopMicRef = useRef<() => void>(() => {});
+  const consent = useAmbientScribeConsent({
+    appointmentId,
+    patientId: currentPatient.id,
+    onAuditFailed: () => stopMicRef.current(),
+  });
 
   const transcript = [finalTranscript, interimTranscript].filter(Boolean).join(interimTranscript ? " " : "");
   const status: AmbientScribeStatus = isTranscribing
@@ -227,7 +243,12 @@ export const CompactAmbientScribe = React.forwardRef<CompactAmbientScribeHandle,
   };
 
   const uploadFallback = async (audioBlob: Blob) => {
-    if (!speechFallbackRef.current || speechSawTextRef.current) return;
+    const upload = shouldUploadAmbientRecording({
+      webSpeechEnabled: ambientWebSpeechEnabled(),
+      speechSawText: speechSawTextRef.current,
+      speechFallback: speechFallbackRef.current,
+    });
+    if (!upload) return;
     if (uploadLockRef.current) return;
     if (audioBlob.size < 100) {
       setMicError("No audio was captured to transcribe. Allow the microphone and speak, or type the consult.");
@@ -236,7 +257,8 @@ export const CompactAmbientScribe = React.forwardRef<CompactAmbientScribeHandle,
     uploadLockRef.current = true;
     setIsTranscribing(true);
     try {
-      const text = await transcribeRecordedAudio(audioBlob);
+      const elapsed = captureStartedAtRef.current > 0 ? Date.now() - captureStartedAtRef.current : 0;
+      const text = await transcribeRecordedAudio(audioBlob, undefined, elapsed);
       setFinalTranscript(text);
       setInterimTranscript("");
       setTextSource("server");
@@ -252,12 +274,22 @@ export const CompactAmbientScribe = React.forwardRef<CompactAmbientScribeHandle,
   };
 
   const handleToggleRecording = (force?: "start" | "stop") => {
-    const shouldStop = force === "stop" || (force !== "start" && (recordingRef.current || requestingRef.current));
-    if (shouldStop) {
+    const decision = ambientMicStartDecision({
+      force,
+      listening: recordingRef.current,
+      requesting: requestingRef.current,
+      busy: uploadLockRef.current,
+      consentGranted: consent.allowsStart(),
+    });
+    if (decision === "stop") {
       stopMic();
       return;
     }
-    if (recordingRef.current || requestingRef.current || uploadLockRef.current) return;
+    if (decision === "ask-consent") {
+      consent.ask();
+      return;
+    }
+    if (decision !== "start") return;
     // Microphone and AudioContext.resume must run in this turn, before any await.
     let gesture: AmbientMicGesture;
     try {
@@ -275,7 +307,7 @@ export const CompactAmbientScribe = React.forwardRef<CompactAmbientScribeHandle,
     setGeneratedSoap(null);
     setAppliedSuccess(false);
     speechSawTextRef.current = false;
-    speechFallbackRef.current = !isSpeechRecognitionAvailable();
+    speechFallbackRef.current = !ambientWebSpeechEnabled() || !isSpeechRecognitionAvailable();
     if (textSource === "sample") {
       setFinalTranscript("");
       setInterimTranscript("");
@@ -343,9 +375,10 @@ export const CompactAmbientScribe = React.forwardRef<CompactAmbientScribeHandle,
       sessionRef.current = session;
       recordingRef.current = true;
       requestingRef.current = false;
+      captureStartedAtRef.current = Date.now();
       setIsRequesting(false);
       setIsRecording(true);
-      if (!isSpeechRecognitionAvailable()) {
+      if (ambientWebSpeechEnabled() && !isSpeechRecognitionAvailable()) {
         setSpeechNotice(SPEECH_UNSUPPORTED_NOTICE);
       }
     } catch (err) {
@@ -358,6 +391,11 @@ export const CompactAmbientScribe = React.forwardRef<CompactAmbientScribeHandle,
     }
   };
 
+  stopMicRef.current = () => {
+    skipUploadRef.current = true;
+    stopMic();
+    resetAmbientMicrophoneSession();
+  };
   const toggleRef = useRef(handleToggleRecording);
   toggleRef.current = handleToggleRecording;
   useImperativeHandle(ref, () => ({
@@ -532,6 +570,13 @@ export const CompactAmbientScribe = React.forwardRef<CompactAmbientScribeHandle,
         </div>
       )}
 
+      <AmbientScribeConsentDialog
+        open={consent.open}
+        error={consent.error}
+        onCancel={() => consent.close()}
+        onConfirm={() => consent.confirm(() => handleToggleRecording("start"))}
+      />
+
       <div className="p-4 grid grid-cols-1 lg:grid-cols-2 gap-3">
         <div className="space-y-2">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between min-w-0">
@@ -601,6 +646,7 @@ export const CompactAmbientScribe = React.forwardRef<CompactAmbientScribeHandle,
               <span>{isGenerating ? "Extracting tokens…" : "Extract clinical tokens"}</span>
             </button>
           </div>
+          <AmbientRecordingDisclosure />
 
           <div className="space-y-1">
             <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Sample/Demo dialogues — not a live recording</p>

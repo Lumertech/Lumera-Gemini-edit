@@ -108,6 +108,7 @@ interface PrescriptionWriterProps {
   appointments?: Appointment[];
   onBookFollowUp?: (input: Partial<Appointment>) => Promise<Appointment | void>;
   onAutoSave?: (prescription: Prescription, options?: { immediate?: boolean }) => void;
+  appointmentId?: string;
 }
 
 export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
@@ -123,6 +124,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
   appointments = [],
   onBookFollowUp,
   onAutoSave,
+  appointmentId,
 }) => {
   // Determine initial specialty from current doctor
   const getInitialSpecialty = (doctorSpec: string): PolyclinicSpecialty =>
@@ -955,6 +957,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
         currentPatient={currentPatient}
         currentDoctor={currentDoctor}
         practiceSpecialty={activeSpecialty}
+        appointmentId={appointmentId}
         onApplyToRx={handleApplySoapToRx}
         isOpen={isAmbientScribeOpen}
         onClose={() => setIsAmbientScribeOpen(false)}

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Mic, 
   MicOff, 
@@ -23,11 +23,15 @@ import { SoapNote, Patient, Doctor, isAbhaLinked } from '../types';
 import { useAuth } from '../auth/AuthContext';
 import { apiFetchResponse } from '../api/http';
 import { ABHA_LINKING_STATUS, showsAbhaSandboxStatus } from '../lib/clinicNav';
+import { AmbientRecordingDisclosure, AmbientScribeConsentDialog } from './AmbientScribeConsentDialog';
 import {
+  ambientWebSpeechEnabled,
   beginAmbientMicGesture,
   isSpeechRecognitionAvailable,
   micErrorMessage,
   microphoneStatusLabel,
+  resetAmbientMicrophoneSession,
+  shouldUploadAmbientRecording,
   SPEECH_UNSUPPORTED_NOTICE,
   startAmbientMic,
   transcriptBadge,
@@ -35,6 +39,8 @@ import {
   type AmbientMicGesture,
   type TranscriptOrigin,
 } from '../lib/ambientMic';
+import { ambientMicStartDecision } from '../lib/ambientScribeConsent';
+import { useAmbientScribeConsent } from '../lib/useAmbientScribeConsent';
 
 interface AmbientAIStudioProps {
   currentPatient: Patient;
@@ -42,6 +48,7 @@ interface AmbientAIStudioProps {
   onTransferToRx: (soap: SoapNote) => void;
   onSelectPatient: (patient: Patient) => void;
   allPatients: Patient[];
+  appointmentId?: string;
 }
 
 const SAMPLE_CONSULTATIONS = [
@@ -131,6 +138,7 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
   onTransferToRx,
   onSelectPatient,
   allPatients,
+  appointmentId,
 }) => {
   const { user } = useAuth();
   const showAbhaStatus = showsAbhaSandboxStatus(user?.role);
@@ -155,6 +163,13 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
   const cancelStartRef = React.useRef(false);
   const startingRef = React.useRef(false);
   const skipUploadRef = React.useRef(false);
+  const captureStartedAtRef = useRef(0);
+  const stopMicRef = useRef<() => void>(() => {});
+  const consent = useAmbientScribeConsent({
+    appointmentId,
+    patientId: currentPatient.id,
+    onAuditFailed: () => stopMicRef.current(),
+  });
 
   useEffect(() => {
     let interval: ReturnType<typeof setInterval> | undefined;
@@ -180,7 +195,12 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
   const shownTranscript = [transcript, interimTranscript].filter(Boolean).join(interimTranscript ? ' ' : '');
 
   const uploadFallback = async (audioBlob: Blob) => {
-    if (!speechFallbackRef.current || speechSawTextRef.current) return;
+    const upload = shouldUploadAmbientRecording({
+      webSpeechEnabled: ambientWebSpeechEnabled(),
+      speechSawText: speechSawTextRef.current,
+      speechFallback: speechFallbackRef.current,
+    });
+    if (!upload) return;
     if (uploadLockRef.current) return;
     if (audioBlob.size < 100) {
       setMicError('No audio was captured to transcribe. Allow the microphone and speak, or type the consult.');
@@ -189,7 +209,8 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
     uploadLockRef.current = true;
     setIsTranscribing(true);
     try {
-      const text = await transcribeRecordedAudio(audioBlob);
+      const elapsed = captureStartedAtRef.current > 0 ? Date.now() - captureStartedAtRef.current : 0;
+      const text = await transcribeRecordedAudio(audioBlob, undefined, elapsed);
       finalTranscriptRef.current = text;
       setTranscript(text);
       setInterimTranscript('');
@@ -228,12 +249,29 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
     speechSawTextRef.current = false;
   };
 
-  const handleStartStopRecording = () => {
-    if (isRecording || isRequesting || startingRef.current) {
+  stopMicRef.current = () => {
+    skipUploadRef.current = true;
+    stopMic();
+    resetAmbientMicrophoneSession();
+  };
+
+  const handleStartStopRecording = (force?: 'start' | 'stop') => {
+    const decision = ambientMicStartDecision({
+      force,
+      listening: isRecording,
+      requesting: isRequesting || startingRef.current,
+      busy: uploadLockRef.current,
+      consentGranted: consent.allowsStart(),
+    });
+    if (decision === 'stop') {
       stopMic();
       return;
     }
-    if (uploadLockRef.current) return;
+    if (decision === 'ask-consent') {
+      consent.ask();
+      return;
+    }
+    if (decision !== 'start') return;
     startingRef.current = true;
     let gesture: AmbientMicGesture;
     try {
@@ -249,7 +287,7 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
     setSpeechNotice(null);
     setIsRequesting(true);
     speechSawTextRef.current = false;
-    speechFallbackRef.current = !isSpeechRecognitionAvailable();
+    speechFallbackRef.current = !ambientWebSpeechEnabled() || !isSpeechRecognitionAvailable();
     if (transcriptOrigin === 'sample') {
       finalTranscriptRef.current = '';
       setTranscript('');
@@ -317,9 +355,10 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
       }
       sessionRef.current = session;
       startingRef.current = false;
+      captureStartedAtRef.current = Date.now();
       setIsRequesting(false);
       setIsRecording(true);
-      if (!isSpeechRecognitionAvailable()) setSpeechNotice(SPEECH_UNSUPPORTED_NOTICE);
+      if (ambientWebSpeechEnabled() && !isSpeechRecognitionAvailable()) setSpeechNotice(SPEECH_UNSUPPORTED_NOTICE);
     } catch (err) {
       const mapped = micErrorMessage(err);
       setMicError(mapped.message);
@@ -483,6 +522,13 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
               </div>
             )}
 
+            <AmbientScribeConsentDialog
+              open={consent.open}
+              error={consent.error}
+              onCancel={() => consent.close()}
+              onConfirm={() => consent.confirm(() => handleStartStopRecording('start'))}
+            />
+
             {/* Mic Button & real level meter */}
             <div className="flex flex-col sm:flex-row items-center gap-3.5 bg-slate-50 p-3.5 rounded-lg border border-slate-200/80">
               <button
@@ -541,6 +587,7 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
                 </div>
               </div>
             </div>
+            <AmbientRecordingDisclosure />
 
             {/* Multilingual Code-Switching Consultation Scenarios */}
             <div>

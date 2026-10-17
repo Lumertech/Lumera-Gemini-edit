@@ -185,9 +185,34 @@ export const RECORDER_MIME_CANDIDATES = ["audio/webm;codecs=opus", "audio/mp4"] 
 
 export type CapturePath = "web-speech" | "media-recorder";
 
-/** Web Speech missing → record and POST /api/gemini/transcribe. */
+/**
+ * Chrome Web Speech sends audio to a third-party speech service outside our contract.
+ * Off unless a test or a future founder flag sets `__LUMERA_AMBIENT_WEB_SPEECH__` to true.
+ * The scribe path records with MediaRecorder and POSTs /api/gemini/transcribe.
+ */
+export function ambientWebSpeechEnabled(): boolean {
+  try {
+    return (globalThis as { __LUMERA_AMBIENT_WEB_SPEECH__?: unknown }).__LUMERA_AMBIENT_WEB_SPEECH__ === true;
+  } catch {
+    return false;
+  }
+}
+
+/** Web Speech is off by default, even when the browser exposes it. */
 export function selectCapturePath(speechRecognitionAvailable: boolean): CapturePath {
+  if (!ambientWebSpeechEnabled()) return "media-recorder";
   return speechRecognitionAvailable ? "web-speech" : "media-recorder";
+}
+
+/** Server transcription is the default. Live captions upload only when that flag is on and they produced no text. */
+export function shouldUploadAmbientRecording(input: {
+  webSpeechEnabled: boolean;
+  speechSawText: boolean;
+  speechFallback: boolean;
+}): boolean {
+  if (!input.webSpeechEnabled) return true;
+  if (input.speechSawText) return false;
+  return input.speechFallback;
 }
 
 export function selectRecorderMimeType(isTypeSupported: (mime: string) => boolean): string {
@@ -241,7 +266,8 @@ export function micErrorMessage(err: unknown): { code: AmbientMicErrorCode; mess
 
 export async function transcribeRecordedAudio(
   blob: Blob,
-  fetchImpl?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
+  fetchImpl?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>,
+  durationMs?: number
 ): Promise<string> {
   if (blob.size < 100) {
     throw new Error("The recording was too short to transcribe. Speak for a few seconds, then stop listening.");
@@ -249,17 +275,22 @@ export async function transcribeRecordedAudio(
   const mimeType = transcriptionMimeType(blob.type);
   // The data URL lives only for this request. Nothing writes the clip to disk, localStorage, or the chart.
   const dataUrl = await blobToDataUrl(blob, mimeType);
+  const claimedDuration = Number(durationMs);
   const init: RequestInit = {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ audioBase64: dataUrl, mimeType }),
+    body: JSON.stringify({
+      audioBase64: dataUrl,
+      mimeType,
+      ...(Number.isFinite(claimedDuration) && claimedDuration > 0 ? { durationMs: Math.round(claimedDuration) } : {}),
+    }),
   };
   const res = fetchImpl
     ? await fetchImpl("/api/gemini/transcribe", init)
     : await apiFetchResponse("/api/gemini/transcribe", init);
   const raw = await res.text();
-  let data: { success?: boolean; transcription?: string; error?: string } = {};
+  let data: { success?: boolean; transcription?: string; error?: string; code?: string } = {};
   try {
     data = raw ? (JSON.parse(raw) as typeof data) : {};
   } catch {
@@ -270,18 +301,22 @@ export async function transcribeRecordedAudio(
   if (res.status === 413) {
     throw new Error("The recording is too long to transcribe. Record a shorter consult, or type it.");
   }
-  if (res.status === 503) {
-    throw new Error(
-      "Server transcription is not configured (missing API key). Use Chrome or Edge for live speech-to-text, or type the consult."
-    );
+  if (res.status === 415) {
+    throw new Error("This recording format cannot be transcribed. Type the consult.");
+  }
+  if (res.status === 429) {
+    throw new Error("Too many transcription requests. Wait a moment, then try again.");
+  }
+  if (res.status === 503 || data.code === "transcribe_unavailable") {
+    throw new Error("Server transcription is not configured. Type the consult.");
   }
   if (res.status === 404) {
-    throw new Error("Server transcription is unavailable. The transcribe endpoint was not found. Type the consult, or use Chrome or Edge for live speech-to-text.");
+    throw new Error("Server transcription is unavailable. Type the consult.");
   }
   if (res.status === 401 || res.status === 403) {
     throw new Error("Transcription was refused. Sign in again, then retry the microphone.");
   }
-  throw new Error(data.error || "Server transcription failed. Type the consult, or use Chrome or Edge for live speech-to-text.");
+  throw new Error("Server transcription failed. Type the consult.");
 }
 
 async function blobToDataUrl(blob: Blob, mimeType: string): Promise<string> {
@@ -704,7 +739,7 @@ export async function startAmbientMic(options: StartAmbientMicOptions): Promise<
   };
 
   if (capturePath === "media-recorder") {
-    options.onSpeechNotice?.(SPEECH_UNSUPPORTED_NOTICE);
+    if (ambientWebSpeechEnabled()) options.onSpeechNotice?.(SPEECH_UNSUPPORTED_NOTICE);
   } else if (Ctor) {
     recognition = new Ctor();
     recognition.continuous = true;

@@ -930,6 +930,7 @@ export default function ClinicianApp() {
               onTransferToRx={handleTransferToRx}
               onSelectPatient={handleSelectPatient}
               allPatients={patients}
+              appointmentId={draftAppointmentId}
             />
           )}
 
@@ -975,6 +976,7 @@ export default function ClinicianApp() {
                     key={writerKey(draftSession) || currentPatient.id}
                     currentPatient={currentPatient}
                     currentDoctor={currentDoctor}
+                    appointmentId={draftAppointmentId}
                     initialDraft={draftSession.draft}
                     initialSoapData={null}
                     onSavePrescription={handleSavePrescription}

@@ -1,12 +1,20 @@
 import type { Express, Request, Response } from "express";
 import { GoogleGenAI } from "@google/genai";
 import { requireAuth } from "./auth.ts";
+import { mountAmbientScribeConsentRoutes } from "./ambient-scribe-consent.ts";
+import { maxTranscribeBase64Chars, transcribeJsonParser } from "./json-body.ts";
+import { denyUnlessPrescriber } from "./patient-access.ts";
+import { rejectUntrustedTenantClaim } from "./tenant-guard.ts";
+import { transcribeRateLimit } from "./transcribe-rate-limit.ts";
+import { base64DecodedBytes, canonicalTranscribeMime, resolveTranscribeDurationMs, transcribeDurationTooLong } from "./transcribe-policy.ts";
 import { mountGeminiVoiceRoutes } from "./gemini-voice.ts";
 import { generateRuleBasedSoap, getPulseFallbackAnswer } from "./gemini-fallbacks.ts";
-import { aiScribeTenantIdFromRequest, blockedAiScribeResponse, meterSuccessfulGeminiScribe } from "./gemini-scribe-meter.ts";
+import { aiScribeTenantIdFromRequest, blockedAiScribeResponse, meterSuccessfulGeminiScribe, meterSuccessfulTranscription } from "./gemini-scribe-meter.ts";
 import { AI_RUPEE_OUTPUT_RULE } from "./india-currency-copy.ts";
+import type { NextFunction } from "express";
 
 let testSoapGenerator: ((body: Record<string, unknown>) => Promise<unknown>) | undefined;
+let testTranscribeGenerator: (() => Promise<string>) | undefined;
 
 /** Test-only Gemini mock so HTTP tests do not need live API keys. */
 export function setGeminiSoapGeneratorForTests(
@@ -15,8 +23,19 @@ export function setGeminiSoapGeneratorForTests(
   testSoapGenerator = fn;
 }
 
+/** Test-only transcription stand-in. It does not receive audio or a transcript. */
+export function setGeminiTranscribeGeneratorForTests(fn?: (() => Promise<string>) | undefined) {
+  testTranscribeGenerator = fn;
+}
+
+function prescriberOnly(req: Request, res: Response, next: NextFunction): void {
+  if (!denyUnlessPrescriber(req, res)) return;
+  next();
+}
+
 /** Clinical Gemini HTTP routes. Split from server.ts so MCP can upload both files intact. */
 export function mountGeminiClinicalRoutes(app: Express) {
+  // DATA USE: production must use a paid, billing-enabled Gemini API project (no training on data) or Vertex AI in an India region. Founder confirmation pending.
   // Lazy Google GenAI initialization
   let genAIClient: GoogleGenAI | null = null;
   function getGenAI(): GoogleGenAI | null {
@@ -163,47 +182,70 @@ export function mountGeminiClinicalRoutes(app: Express) {
       res.status(500).json({ error: error.message });
     }
   });
-  app.post("/api/gemini/transcribe", requireAuth, async (req: Request, res: Response) => {
-    const tenantId = String(req.user?.tenantId || "").trim();
-    if (!tenantId) {
-      return res.status(400).json({ error: "No tenant associated with this account." });
+  app.post(
+    "/api/gemini/transcribe",
+    requireAuth,
+    prescriberOnly,
+    transcribeRateLimit,
+    transcribeJsonParser(),
+    rejectUntrustedTenantClaim,
+    async (req: Request, res: Response) => {
+      const tenantId = String(req.user?.tenantId || "").trim();
+      const blocked = blockedAiScribeResponse(tenantId);
+      if (blocked) return res.status(blocked.status).json(blocked.body);
+      try {
+        const { audioBase64, mimeType, durationMs } = req.body ?? {};
+        if (!audioBase64) {
+          return res.status(400).json({ error: "audioBase64 is required" });
+        }
+        const canonicalMime = canonicalTranscribeMime(mimeType);
+        if (!canonicalMime) {
+          return res.status(415).json({ error: "Unsupported audio type." });
+        }
+        const cleanBase64 = String(audioBase64).replace(/^data:audio\/[a-z0-9]+;base64,/, "");
+        // Size and duration before the API key, so an over-long clip is 413 even when the key is missing.
+        // The clip is not stored.
+        if (cleanBase64.length > maxTranscribeBase64Chars()) {
+          return res.status(413).json({ error: "Recording is too long to transcribe." });
+        }
+        const audioBytes = base64DecodedBytes(cleanBase64);
+        if (transcribeDurationTooLong(audioBytes, durationMs)) {
+          return res.status(413).json({ error: "Recording is too long to transcribe." });
+        }
+        const duration = resolveTranscribeDurationMs(audioBytes, durationMs);
+        let transcription = "";
+        if (testTranscribeGenerator) {
+          transcription = (await testTranscribeGenerator()).trim();
+        } else {
+          const ai = getGenAI();
+          if (!ai) return res.status(503).json({ code: "transcribe_unavailable" });
+          const response = await ai.models.generateContent({
+            model: "gemini-3.5-transcribe",
+            contents: [
+              {
+                inlineData: {
+                  mimeType: canonicalMime,
+                  data: cleanBase64,
+                },
+              },
+              {
+                text: "Transcribe this medical consultation audio accurately. Return the verbatim words in the spoken language (English, Hindi, Hinglish, Marathi, Tamil, Telugu, etc.).",
+              },
+            ],
+          });
+          transcription = response.text?.trim() || "";
+        }
+        if (!transcription) return res.status(500).json({ code: "transcribe_failed" });
+        meterSuccessfulTranscription({ tenantId, durationMs: duration, audioBytes });
+        return res.json({ success: true, transcription });
+      } catch (err: unknown) {
+        const name = err && typeof err === "object" && "name" in err ? String((err as { name?: string }).name) : "Error";
+        console.error("Ambient transcribe failed:", name);
+        return res.status(500).json({ code: "transcribe_failed" });
+      }
     }
-    try {
-      const { audioBase64, mimeType = "audio/webm" } = req.body;
-      if (!audioBase64) {
-        return res.status(400).json({ error: "audioBase64 is required" });
-      }
-      const ai = getGenAI();
-      if (!ai) {
-        return res.status(503).json({ error: "Gemini AI API key not configured" });
-      }
-      const cleanBase64 = audioBase64.replace(/^data:audio\/[a-z0-9]+;base64,/, "");
-      // About 8MB of decoded audio. The client also stops at 90s / 8MB. The clip is not stored.
-      const maxBase64Chars = Math.ceil((8 * 1024 * 1024) / 3) * 4;
-      if (cleanBase64.length > maxBase64Chars) {
-        return res.status(413).json({ error: "Recording is too long to transcribe." });
-      }
-      const response = await ai.models.generateContent({
-        model: "gemini-3.5-transcribe",
-        contents: [
-          {
-            inlineData: {
-              mimeType,
-              data: cleanBase64,
-            },
-          },
-          {
-            text: "Transcribe this medical consultation audio accurately. Return the verbatim transcript in the spoken language (English, Hindi, Hinglish, Marathi, Tamil, Telugu, etc.).",
-          },
-        ],
-      });
-      const transcription = response.text?.trim() || "";
-      return res.json({ success: true, transcription });
-    } catch (err: any) {
-      console.error("Gemini 3.5 transcribe error:", err?.message);
-      return res.status(500).json({ error: err.message || "Transcription failed" });
-    }
-  });
+  );
 
+  mountAmbientScribeConsentRoutes(app);
   mountGeminiVoiceRoutes(app, getGenAI);
 }

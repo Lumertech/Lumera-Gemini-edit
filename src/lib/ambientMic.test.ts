@@ -15,7 +15,9 @@ import {
   queryMicrophonePermission,
   RECORDER_MIME_CANDIDATES,
   resetAmbientMicrophoneSession,
+  ambientWebSpeechEnabled,
   selectCapturePath,
+  shouldUploadAmbientRecording,
   selectRecorderMimeType,
   speechRecognitionFailureMessage,
   SPEECH_UNSUPPORTED_NOTICE,
@@ -125,10 +127,28 @@ describe("mapAmbientCaptureFailure", () => {
   });
 });
 
-describe("Web Speech missing selects the MediaRecorder fallback", () => {
-  it("records instead of doing nothing, preferring opus then mp4", () => {
+describe("MediaRecorder is the default capture path", () => {
+  it("records on every platform unless the off-by-default speech flag is on", () => {
+    assert.equal(ambientWebSpeechEnabled(), false);
     assert.equal(selectCapturePath(false), "media-recorder");
-    assert.equal(selectCapturePath(true), "web-speech");
+    assert.equal(selectCapturePath(true), "media-recorder");
+    assert.equal(
+      shouldUploadAmbientRecording({ webSpeechEnabled: false, speechSawText: false, speechFallback: false }),
+      true
+    );
+    const flag = globalThis as { __LUMERA_AMBIENT_WEB_SPEECH__?: boolean };
+    flag.__LUMERA_AMBIENT_WEB_SPEECH__ = true;
+    try {
+      assert.equal(ambientWebSpeechEnabled(), true);
+      assert.equal(selectCapturePath(true), "web-speech");
+      assert.equal(selectCapturePath(false), "media-recorder");
+      assert.equal(
+        shouldUploadAmbientRecording({ webSpeechEnabled: true, speechSawText: true, speechFallback: false }),
+        false
+      );
+    } finally {
+      delete flag.__LUMERA_AMBIENT_WEB_SPEECH__;
+    }
     assert.deepEqual([...RECORDER_MIME_CANDIDATES], ["audio/webm;codecs=opus", "audio/mp4"]);
     assert.equal(
       selectRecorderMimeType((mime) => mime === "audio/webm;codecs=opus" || mime === "audio/mp4"),
@@ -371,16 +391,40 @@ describe("speech recognition failures stay visible", () => {
 });
 
 describe("server transcription fallback", () => {
-  it("surfaces a missing API key instead of an empty transcript", async () => {
+  it("surfaces a missing transcription service without naming a vendor", async () => {
     const blob = new Blob([new Uint8Array(200)], { type: "audio/webm" });
     const fakeFetch = async () =>
-      new Response(JSON.stringify({ error: "Gemini AI API key not configured" }), {
+      new Response(JSON.stringify({ code: "transcribe_unavailable", error: "Gemini AI API key not configured" }), {
         status: 503,
         headers: { "Content-Type": "application/json" },
       });
     await assert.rejects(
       () => transcribeRecordedAudio(blob, fakeFetch as typeof fetch),
-      /not configured|API key/i
+      (err: unknown) => {
+        assert.ok(err instanceof Error);
+        assert.match(err.message, /not configured/i);
+        assert.doesNotMatch(err.message, /gemini/i);
+        assert.doesNotMatch(err.message, /API key/i);
+        return true;
+      }
+    );
+  });
+
+  it("does not surface a provider error message when transcription fails", async () => {
+    const blob = new Blob([new Uint8Array(200)], { type: "audio/webm" });
+    const fakeFetch = async () =>
+      new Response(JSON.stringify({ code: "transcribe_failed", error: "Gemini secret failure" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      });
+    await assert.rejects(
+      () => transcribeRecordedAudio(blob, fakeFetch as typeof fetch),
+      (err: unknown) => {
+        assert.ok(err instanceof Error);
+        assert.match(err.message, /failed/i);
+        assert.doesNotMatch(err.message, /gemini|secret/i);
+        return true;
+      }
     );
   });
 
@@ -397,12 +441,16 @@ describe("server transcription fallback", () => {
     assert.equal(source.includes("Authorization"), false);
     const blob = new Blob([new Uint8Array(180)], { type: "audio/mp4" });
     let mime = "";
+    let durationMs = 0;
     const fakeFetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
-      mime = String(JSON.parse(String(init?.body)).mimeType);
+      const body = JSON.parse(String(init?.body)) as { mimeType?: string; durationMs?: number };
+      mime = String(body.mimeType);
+      durationMs = Number(body.durationMs);
       return new Response(JSON.stringify({ success: true, transcription: "ok" }), { status: 200 });
     };
-    await transcribeRecordedAudio(blob, fakeFetch);
+    await transcribeRecordedAudio(blob, fakeFetch, 4200);
     assert.equal(mime, "audio/mp4");
+    assert.equal(durationMs, 4200);
   });
 
   it("returns the transcription body from the existing /api/gemini/transcribe route", async () => {
