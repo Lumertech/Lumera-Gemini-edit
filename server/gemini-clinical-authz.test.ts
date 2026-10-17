@@ -9,6 +9,7 @@ import {
   mountGeminiClinicalRoutes,
   setGeminiCopilotGeneratorForTests,
   setGeminiSafetyCheckGeneratorForTests,
+  setGeminiSoapGeneratorForTests,
 } from "./gemini-clinical.ts";
 import { resetClinicalGeminiRateLimits, setClinicalGeminiRateLimitForTests } from "./gemini-clinical-rate-limit.ts";
 import { hashPassword } from "./password.ts";
@@ -61,6 +62,7 @@ describe("clinical Gemini route auth", () => {
     resetClinicalGeminiRateLimits();
     setGeminiCopilotGeneratorForTests(undefined);
     setGeminiSafetyCheckGeneratorForTests(undefined);
+    setGeminiSoapGeneratorForTests(undefined);
     try {
       getDb();
     } catch {
@@ -83,6 +85,7 @@ describe("clinical Gemini route auth", () => {
     resetClinicalGeminiRateLimits();
     setGeminiCopilotGeneratorForTests(undefined);
     setGeminiSafetyCheckGeneratorForTests(undefined);
+    setGeminiSoapGeneratorForTests(undefined);
     await close?.();
   });
 
@@ -108,6 +111,19 @@ describe("clinical Gemini route auth", () => {
     assert.ok(mountAt > authAt, "clinical routes are mounted before the /api/gemini session check");
   });
 
+  it("locks server.ts so app.use('/api/gemini', requireAuth) runs before mountGeminiClinicalRoutes", () => {
+    const serverSrc = fs.readFileSync(path.join(root, "server.ts"), "utf8");
+    const lines = serverSrc.split("\n");
+    const authLine = lines.findIndex((line) => line.includes('app.use("/api/gemini", requireAuth)') && !line.trim().startsWith("//"));
+    const mountLine = lines.findIndex((line) => line.includes("mountGeminiClinicalRoutes(app)") && !line.trim().startsWith("//"));
+    assert.ok(authLine >= 0, "server.ts does not call app.use('/api/gemini', requireAuth)");
+    assert.ok(mountLine > authLine, "mountGeminiClinicalRoutes runs before the /api/gemini session middleware");
+    assert.equal(
+      lines.filter((line) => line.includes("mountGeminiClinicalRoutes(app)") && !line.trim().startsWith("//")).length,
+      1
+    );
+  });
+
   it("returns 401 for an anonymous post on each route", async () => {
     for (const route of ROUTES) {
       const res = await jsonRequest(port, "POST", route, {
@@ -118,6 +134,13 @@ describe("clinical Gemini route auth", () => {
       assert.match(String(res.json.error || ""), /authentication required/i);
       assert.equal(JSON.stringify(res.json).includes(PATIENT_MARKER), false);
     }
+    const soap = await jsonRequest(port, "POST", "/api/gemini/generate-soap", {
+      transcript: "Patient has fever and cough today",
+      patientName: PATIENT_MARKER,
+    });
+    assert.equal(soap.status, 401);
+    assert.match(String(soap.json.error || ""), /authentication required/i);
+    assert.equal(JSON.stringify(soap.json).includes(PATIENT_MARKER), false);
   });
 
   it("returns 403 for patient, reception, and super_admin", async () => {
@@ -136,6 +159,16 @@ describe("clinical Gemini route auth", () => {
         assert.equal(res.json.code, "ROLE_DENIED");
         assert.equal(JSON.stringify(res.json).includes(PATIENT_MARKER), false);
       }
+      const soap = await jsonRequest(
+        port,
+        "POST",
+        "/api/gemini/generate-soap",
+        { transcript: "Patient has fever and cough today", patientName: PATIENT_MARKER },
+        auth(token)
+      );
+      assert.equal(soap.status, 403, role);
+      assert.equal(soap.json.code, "ROLE_DENIED");
+      assert.equal(JSON.stringify(soap.json).includes(PATIENT_MARKER), false);
     }
   });
 
@@ -220,6 +253,7 @@ describe("clinical Gemini route auth", () => {
     }
     setGeminiCopilotGeneratorForTests(undefined);
     setGeminiSafetyCheckGeneratorForTests(undefined);
+    setGeminiSoapGeneratorForTests(undefined);
   });
 
   it("returns 429 per user and per tenant", async () => {
@@ -252,6 +286,54 @@ describe("clinical Gemini route auth", () => {
     assert.equal(tenantFirst.status, 200);
     assert.equal(tenantSecond.status, 429);
     assert.equal(JSON.stringify(tenantSecond.json).includes("Error"), false);
+    resetClinicalGeminiRateLimits();
+  });
+
+  it("returns 429 when generate-soap exceeds the shared clinical limit", async () => {
+    resetClinicalGeminiRateLimits();
+    setClinicalGeminiRateLimitForTests({ userMax: 1, tenantMax: 20 });
+    const token = await login(doctor.email);
+    const body = { transcript: "Patient has fever and a dry cough today.", patientName: PATIENT_MARKER };
+    const first = await jsonRequest(port, "POST", "/api/gemini/generate-soap", body, auth(token));
+    const second = await jsonRequest(port, "POST", "/api/gemini/generate-soap", body, auth(token));
+    assert.equal(first.status, 200, JSON.stringify(first.json));
+    assert.equal(second.status, 429);
+    assert.ok(Number(second.headers.get("retry-after")) >= 1);
+    assert.equal(JSON.stringify(second.json).includes(PATIENT_MARKER), false);
+    assert.match(String(second.json.error || ""), /too many clinical assistant requests/i);
+    resetClinicalGeminiRateLimits();
+  });
+
+  it("returns soap_failed without err.message or details", async () => {
+    resetClinicalGeminiRateLimits();
+    const token = await login(doctor.email);
+    setGeminiSoapGeneratorForTests(async () => {
+      throw new Error(LEAK);
+    });
+    const res = await jsonRequest(
+      port,
+      "POST",
+      "/api/gemini/generate-soap",
+      { transcript: "Patient has fever and cough today", patientName: PATIENT_MARKER },
+      auth(token)
+    );
+    assert.equal(res.status, 500);
+    assert.equal(res.json.code, "soap_failed");
+    assert.equal(res.json.error, undefined);
+    assert.equal(res.json.details, undefined);
+    const body = JSON.stringify(res.json);
+    assert.equal(body.includes(LEAK), false);
+    assert.equal(body.includes(PATIENT_MARKER), false);
+    assert.equal(body.includes("details"), false);
+
+    const clinical = fs.readFileSync(path.join(root, "server/gemini-clinical.ts"), "utf8");
+    const soapSrc = clinical.slice(clinical.indexOf('"/api/gemini/generate-soap"'), clinical.indexOf("const handleGeminiCopilot"));
+    assert.match(soapSrc, /requireAuth,\s*prescriberOnly,\s*clinicalGeminiRateLimit,\s*rejectUntrustedTenantClaim/);
+    assert.match(soapSrc, /soap_failed/);
+    assert.doesNotMatch(soapSrc, /error\.message/);
+    assert.doesNotMatch(soapSrc, /err\.message/);
+    assert.doesNotMatch(soapSrc, /details/);
+    setGeminiSoapGeneratorForTests(undefined);
     resetClinicalGeminiRateLimits();
   });
 });

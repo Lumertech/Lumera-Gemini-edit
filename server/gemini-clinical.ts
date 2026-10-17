@@ -54,7 +54,13 @@ export function mountGeminiClinicalRoutes(app: Express) {
     return genAIClient;
   }
 
-  app.post("/api/gemini/generate-soap", async (req: Request, res: Response) => {
+  app.post(
+    "/api/gemini/generate-soap",
+    requireAuth,
+    prescriberOnly,
+    clinicalGeminiRateLimit,
+    rejectUntrustedTenantClaim,
+    async (req: Request, res: Response) => {
     try {
       const {
         patientName = "Patient",
@@ -105,15 +111,15 @@ export function mountGeminiClinicalRoutes(app: Express) {
             metadata: { source: "gemini-3.7-flash", endpoint: "generate-soap" },
           });
           return res.json({ success: true, soap: parsed, source: "Pulse AI" });
-        } catch (geminiError: any) {
-          console.error("Gemini SOAP generation error, using fallback clinical synthesis:", geminiError?.message);
+        } catch {
+          console.error("SOAP model call failed");
         }
       }
       const fallbackSoap = generateRuleBasedSoap(patientName, patientAge, patientGender, transcript, vitals);
       return res.json({ success: true, soap: fallbackSoap, source: "clinical-synthesis-engine" });
-    } catch (error: any) {
-      console.error("SOAP endpoint error:", error);
-      res.status(500).json({ error: "Failed to generate SOAP note", details: error.message });
+    } catch {
+      console.error("SOAP generation failed");
+      res.status(500).json({ code: "soap_failed" });
     }
   });
 

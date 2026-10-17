@@ -1,6 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 
-/** 12 calls per signed-in user and 40 per tenant in 10 minutes. */
+/** Shared by generate-soap, copilot, pulse, hexa, and safety-check. 12 calls per signed-in user and 40 per tenant in 10 minutes, counted in this process only. */
 export const CLINICAL_GEMINI_RATE_WINDOW_MS = 10 * 60 * 1000;
 export const CLINICAL_GEMINI_USER_MAX = 12;
 export const CLINICAL_GEMINI_TENANT_MAX = 40;
