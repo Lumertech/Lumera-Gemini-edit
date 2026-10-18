@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Building2, CheckCircle2, ArrowRight } from "lucide-react";
 import { apiFetch } from "../api/http";
+import { META_TECH_PROVIDER_STATEMENT, WHATSAPP_PERMISSIONS_PENDING_SENTENCE } from "../lib/metaStatus";
 import {
   launchEmbeddedSignupV4,
   loadFacebookSdk,
@@ -103,8 +104,8 @@ export const ClinicWabaConnect: React.FC = () => {
         </span>
       </div>
       <p className="text-xs text-slate-600">
-        Optional clinic-owned WABA (one per tenant). Real Meta Embedded Signup v4 is wired; Lumera is not a certified
-        Tech Provider. Contact ravee@lumer.me.
+        Optional clinic-owned WABA (one per tenant). Real Meta Embedded Signup v4 is wired. {META_TECH_PROVIDER_STATEMENT}{" "}
+        {WHATSAPP_PERMISSIONS_PENDING_SENTENCE} Contact ravee@lumer.me.
       </p>
       {connected ? (
         <p className="text-xs flex items-center gap-1.5 text-emerald-700">

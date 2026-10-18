@@ -3,6 +3,7 @@ import { getDb } from "./db.ts";
 import { CLINIC_MANAGER_ROLES, isPlatformAdminRole, requireAuth, requirePlatformAdmin, requireRole } from "./auth.ts";
 import { rejectUntrustedTenantClaim } from "./tenant-guard.ts";
 import { isProduction } from "./runtime.ts";
+import { SANDBOX_FAKE_WABA_MESSAGE, META_TECH_PROVIDER_STATEMENT, WHATSAPP_PERMISSIONS_PENDING_SENTENCE } from "../src/lib/metaStatus.ts";
 import { rejectProductionSimulator } from "./meta-security.ts";
 import {
   clinicActor,
@@ -252,7 +253,7 @@ export function createWhatsAppNumbersRouter(): Router {
       embeddedSignupLive: false,
       embeddedSignupConfigured: signup.configured,
       notice:
-        "SANDBOX / DEV-ONLY until App Review: Lumera is not a certified Meta Tech Provider. Real Embedded Signup v4 is available when FACEBOOK_APP_ID and META_EMBEDDED_SIGNUP_CONFIG_ID are set. Contact ravee@lumer.me.",
+        `${META_TECH_PROVIDER_STATEMENT} ${WHATSAPP_PERMISSIONS_PENDING_SENTENCE} Real Embedded Signup v4 is available when FACEBOOK_APP_ID and META_EMBEDDED_SIGNUP_CONFIG_ID are set. Contact ravee@lumer.me.`,
     });
   });
 
@@ -316,7 +317,7 @@ export function createWhatsAppNumbersRouter(): Router {
       res.json({
         whatsappNumber: publicWhatsAppNumber(row),
         sandbox: !isProduction(),
-        notice: "SANDBOX / DEV-ONLY: Embedded Signup is not live. Lumera is not a certified Meta Tech Provider.",
+        notice: `${META_TECH_PROVIDER_STATEMENT} ${WHATSAPP_PERMISSIONS_PENDING_SENTENCE}`,
       });
     } catch (err) {
       handleWabaError(res, err, "Failed to connect personal WhatsApp number");
@@ -382,8 +383,7 @@ export function createWhatsAppNumbersRouter(): Router {
         success: true,
         sandbox: true,
         notice: "SANDBOX / DEV-ONLY simulator — not live Meta Embedded Signup.",
-        message:
-          "SANDBOX / DEV-ONLY: fake WABA ids stored locally. This is not Meta Embedded Signup and Lumera is not a certified Tech Provider.",
+        message: SANDBOX_FAKE_WABA_MESSAGE,
         whatsappNumber: publicWhatsAppNumber(simulated.row),
         wabaId: simulated.wabaId,
         phoneNumberId: simulated.phoneNumberId,

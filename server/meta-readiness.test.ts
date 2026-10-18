@@ -135,31 +135,46 @@ describe("Graph credential hygiene", () => {
 });
 
 describe("Overview claims", () => {
-  it("returns SANDBOX / NOT_SUBMITTED rather than Tech Provider APPROVED", () => {
-    const overview = buildMetaReadinessOverview({
-      connectedWabasCount: 1,
-      totalClinics: 2,
-      approvedTemplatesCount: 3,
-      totalTemplatesCount: 4,
-      totalMessagesSentAndReceived: 5,
-      webhookUrl: "/api/meta/webhook",
-      graphOtpConfigured: false,
-      webhookSecretConfigured: false,
-      verifyTokenConfigured: false,
-      facebookOAuthConfigured: false,
-    });
-    assert.equal(overview.providerType.includes("SANDBOX"), true);
-    assert.equal(overview.certificationStatus, "NOT_CERTIFIED");
-    assert.equal(overview.appReviewStatus.status, "NOT_SUBMITTED");
-    assert.equal(JSON.stringify(overview).includes(META_TECH_PROVIDER_STATEMENT), true);
-    assert.match(JSON.stringify(overview), /credentials are optional until provisioned/i);
-    assert.equal(overview.appReviewStatus.checklist.every((c) => c.passed), false);
-    assert.ok(overview.appReviewStatus.checklist.some((c) => c.item === "Embedded Signup config_id configured"));
-    assert.ok(
-      overview.appReviewStatus.checklist.some((c) =>
+  it("returns SUBMITTED_PENDING and TECH_PROVIDER without a SANDBOX providerType", () => {
+    const prevReview = process.env.META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED;
+    delete process.env.META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED;
+    try {
+      const overview = buildMetaReadinessOverview({
+        connectedWabasCount: 1,
+        totalClinics: 2,
+        approvedTemplatesCount: 3,
+        totalTemplatesCount: 4,
+        totalMessagesSentAndReceived: 5,
+        webhookUrl: "/api/meta/webhook",
+        graphOtpConfigured: false,
+        webhookSecretConfigured: false,
+        verifyTokenConfigured: false,
+        facebookOAuthConfigured: false,
+      });
+      assert.equal(overview.providerType.startsWith("SANDBOX"), false);
+      assert.equal(overview.providerType.includes(META_TECH_PROVIDER_STATEMENT), false);
+      assert.equal(overview.providerType, "WhatsApp Cloud API");
+      assert.equal(overview.certificationStatus, "NOT_CERTIFIED");
+      assert.equal(overview.appReviewStatus.status, "SUBMITTED_PENDING");
+      assert.equal(overview.techProviderStatus, "TECH_PROVIDER");
+      assert.equal(overview.techProviderLabel, META_TECH_PROVIDER_STATEMENT);
+      assert.equal(JSON.stringify(overview).includes(META_TECH_PROVIDER_STATEMENT), true);
+      assert.match(JSON.stringify(overview), /credentials are optional until provisioned/i);
+      assert.equal(/App Review approved/i.test(JSON.stringify(overview)), false);
+      assert.equal(overview.appReviewStatus.checklist.every((c) => c.passed), false);
+      assert.ok(overview.appReviewStatus.checklist.some((c) => c.item === "Embedded Signup config_id configured"));
+      const scopesItem = overview.appReviewStatus.checklist.find((c) =>
         c.item.includes("whatsapp_business_management / business_management / whatsapp_business_messaging")
-      )
-    );
+      );
+      assert.ok(scopesItem);
+      assert.equal(scopesItem.passed, false);
+      assert.equal(scopesItem.item.startsWith("SANDBOX"), true);
+      assert.match(String(scopesItem.note || ""), /SANDBOX/);
+      assert.match(String(scopesItem.note || ""), /not yet granted/);
+    } finally {
+      if (prevReview === undefined) delete process.env.META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED;
+      else process.env.META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED = prevReview;
+    }
   });
 });
 

@@ -5,8 +5,9 @@ Cloud SQL instance. Confirm the decisions below with whoever holds GCP billing
 (`ravee@lumer.me`) **before** anyone runs the `gcloud sql instances create`
 commands.
 
-Lumera is **not** a certified Meta Tech Provider, does not claim HIPAA-grade
-controls, and is not “ABDM Compliant” by virtue of using Postgres.
+Lumera Solutions LLP is a Meta Tech Provider for the WhatsApp Business Platform.
+WhatsApp permissions submitted for Meta App Review in September 2026; not yet granted.
+Do not claim HIPAA-grade controls, and Postgres does not make Lumera “ABDM Compliant”.
 
 Production app: Cloud Run service **`lumera-gemini-edit`** in **`asia-south1`**
 behind Firebase Hosting `https://www.mylumera.in`.
@@ -154,5 +155,5 @@ PHI is on Cloud SQL.
 
 ## Honesty
 
-Not a certified Meta Tech Provider. No HIPAA / Official Tech Provider /
+Meta Tech Provider for the WhatsApp Business Platform. WhatsApp permissions submitted for Meta App Review in September 2026; not yet granted. No HIPAA / Official Tech Provider /
 Certified M1–M3 / “ABDM Compliant” claims. Questions: **ravee@lumer.me**.

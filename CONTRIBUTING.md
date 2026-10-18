@@ -1,6 +1,6 @@
 # Contributing to Lumera
 
-Lumera is **not** a certified Meta Tech Provider. Do not add copy that claims HIPAA-grade, Official Tech Provider, certified ABDM M1–M3, or “ABDM Compliant”. Compliance contact: **ravee@lumer.me** only.
+Lumera Solutions LLP is a Meta Tech Provider for the WhatsApp Business Platform. WhatsApp permissions submitted for Meta App Review in September 2026; not yet granted. Do not add copy that claims HIPAA-grade, Official Tech Provider, App Review approval, certified ABDM M1–M3, or “ABDM Compliant”. Compliance contact: **ravee@lumer.me** only.
 
 ## HTTP route tests (standing rule)
 

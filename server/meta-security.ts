@@ -1,6 +1,9 @@
 import crypto from "node:crypto";
 import type { Request, Response, NextFunction } from "express";
-import { META_TECH_PROVIDER_STATEMENT } from "../src/lib/metaStatus.ts";
+import {
+  META_TECH_PROVIDER_STATEMENT,
+  WHATSAPP_PERMISSIONS_PENDING_SENTENCE,
+} from "../src/lib/metaStatus.ts";
 import { envFlag, isProduction, readSecret, sandboxSimulatorsEnabled } from "./runtime.ts";
 
 export const META_APP_REVIEW_WHATSAPP_SCOPES_FLAG = "META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED";
@@ -156,8 +159,8 @@ export function buildMetaReadinessOverview(opts: {
       passed: signedRequestReady,
       url: opts.dataDeletionUrl || "/data-deletion-instructions",
       note: signedRequestReady
-        ? "HMAC-SHA256 signed_request verification runs when META_APP_SECRET is set. Not App Review complete. Lumera is not a certified Tech Provider."
-        : "Callback scaffold only — signed_request verification requires META_APP_SECRET. Not App Review complete.",
+        ? `HMAC-SHA256 signed_request verification runs when META_APP_SECRET is set. ${WHATSAPP_PERMISSIONS_PENDING_SENTENCE}`
+        : `Callback scaffold only — signed_request verification requires META_APP_SECRET. ${WHATSAPP_PERMISSIONS_PENDING_SENTENCE}`,
     },
     {
       item: "Government & public-authority data request policy (Data Handling four areas)",
@@ -187,15 +190,17 @@ export function buildMetaReadinessOverview(opts: {
       item: "Embedded Signup config_id configured",
       passed: configIdReady,
       note: configIdReady
-        ? "META_EMBEDDED_SIGNUP_CONFIG_ID is set. Handshake is still SANDBOX-honest until App Review; Lumera is not a certified Tech Provider."
-        : "Unset META_EMBEDDED_SIGNUP_CONFIG_ID — Facebook Login for Business configuration not provisioned. Contact ravee@lumer.me.",
+        ? `META_EMBEDDED_SIGNUP_CONFIG_ID is set. ${WHATSAPP_PERMISSIONS_PENDING_SENTENCE}`
+        : `Unset META_EMBEDDED_SIGNUP_CONFIG_ID — Facebook Login for Business configuration not provisioned. ${WHATSAPP_PERMISSIONS_PENDING_SENTENCE} Contact ravee@lumer.me.`,
     },
     {
-      item: "App Review approved for whatsapp_business_management / business_management / whatsapp_business_messaging",
+      item: scopesApproved
+        ? "WhatsApp permissions for whatsapp_business_management / business_management / whatsapp_business_messaging"
+        : "SANDBOX: WhatsApp permissions for whatsapp_business_management / business_management / whatsapp_business_messaging",
       passed: scopesApproved,
       note: scopesApproved
         ? "Manually set via META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED=true. Not auto-detected from Meta's dashboard."
-        : "SANDBOX-honest: App Review is not submitted/approved unless META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED=true. Contact ravee@lumer.me.",
+        : `SANDBOX: ${WHATSAPP_PERMISSIONS_PENDING_SENTENCE}`,
     },
   ];
 
@@ -203,12 +208,14 @@ export function buildMetaReadinessOverview(opts: {
 
   return {
     providerName: "Lumera Solutions LLP",
-    providerType: `SANDBOX — ${META_TECH_PROVIDER_STATEMENT}`,
+    providerType: "WhatsApp Cloud API",
     certificationStatus: "NOT_CERTIFIED",
+    techProviderStatus: "TECH_PROVIDER",
+    techProviderLabel: META_TECH_PROVIDER_STATEMENT,
     environment: isProduction() ? "production" : "sandbox",
     simulatorsEnabled,
     appReviewStatus: {
-      status: scopesApproved ? "WHATSAPP_SCOPES_MARKED_APPROVED" : "NOT_SUBMITTED",
+      status: "SUBMITTED_PENDING",
       checklist,
       passedCount,
       totalCount: checklist.length,
@@ -224,6 +231,6 @@ export function buildMetaReadinessOverview(opts: {
     facebookOAuthConfigured: opts.facebookOAuthConfigured,
     qualityRating: "UNKNOWN — not fetched from Graph (do not treat local GREEN as live)",
     notice:
-      "SANDBOX / DEV-ONLY readiness view. Live Meta/Facebook app credentials are optional until provisioned separately. Lumera is not Meta Tech Provider certified and App Review is NOT_SUBMITTED. Do not use this payload for marketing claims.",
+      `SANDBOX / DEV-ONLY readiness view. Live Meta/Facebook app credentials are optional until provisioned separately. ${WHATSAPP_PERMISSIONS_PENDING_SENTENCE} Do not use this payload for marketing claims.`,
   };
 }

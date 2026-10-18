@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { IndianRupee, AlertTriangle, Wallet } from "lucide-react";
 import { apiFetch } from "../../api/http";
 import { formatINR } from "../../lib/currency.ts";
-import { META_TECH_PROVIDER_STATEMENT } from "../../lib/metaStatus.ts";
+import { META_TECH_PROVIDER_STATEMENT, WHATSAPP_PERMISSIONS_PENDING_SENTENCE } from "../../lib/metaStatus.ts";
 import { useTenantScope } from "./TenantScopeContext";
 
 type WalletState = "ok" | "low" | "empty" | "negative";
@@ -166,7 +166,8 @@ export const AdminUsageBilling: React.FC = () => {
         <p className="text-xs text-slate-500 mt-1">
           Platform-to-tenant usage (AI Scribe). WhatsApp is the clinic's own Meta number and is not marked up. Separate
           from clinic-to-patient invoices and monthly SaaS subscriptions. Default markup is a <strong>20% placeholder</strong>{" "}
-          — not a contractual rate. {META_TECH_PROVIDER_STATEMENT} Contact ravee@lumer.me.
+          — not a contractual rate. Tech Provider status: TECH_PROVIDER. {META_TECH_PROVIDER_STATEMENT}{" "}
+          {WHATSAPP_PERMISSIONS_PENDING_SENTENCE} Contact ravee@lumer.me.
         </p>
       </div>
 

@@ -95,7 +95,7 @@ export const TERMS_OF_SERVICE_BODY = `# Lumera Terms of Service
 **Jurisdiction:** India  
 **Contact:** ravee@lumer.me
 
-${WHATSAPP_CLOUD_API_SECTION} These Terms describe the clinic software product and the optional WhatsApp Cloud API / Facebook Login path. They are not a certification or App Review approval claim.
+These Terms describe the clinic software product and the optional WhatsApp Cloud API / Facebook Login path. They are not a certification or App Review approval claim.
 
 ---
 
@@ -116,7 +116,7 @@ These Terms of Service (“Terms”) constitute a binding legal agreement betwee
 The Clinic is the controller of patient clinical communications. Lumera processes personal data to provide the product and to meet India Digital Personal Data Protection (DPDP) Act obligations. See the Privacy Policy and Data Deletion Instructions.
 
 ### 5. Service Availability
-Lumera targets high availability for core clinical and WhatsApp webhook processing. Scheduled maintenance windows are announced in advance in the Admin Audit Log. Until Meta grants them, some WhatsApp features may be labelled SANDBOX in the product.
+Lumera targets high availability for core clinical and WhatsApp webhook processing. Scheduled maintenance windows are announced in advance in the Admin Audit Log. Until Meta grants Lumera's WhatsApp permissions, some WhatsApp features may be labelled SANDBOX in the product.
 
 ### 6. Termination & Data Portability
 Upon account termination or cancellation, Clinics may export patient records, EMR notes, and appointment histories within thirty (30) days, subject to medical-record retention law.

@@ -80,6 +80,12 @@ const PUBLIC_COPY_SURFACES = [
   "src/lib/pricingModel.ts",
   "src/pages/PricingPage.tsx",
   "index.html",
+  "src/components/ClinicWabaConnect.tsx",
+  "src/components/PersonalWabaConnect.tsx",
+  "server/embedded-signup.ts",
+  "server/whatsapp-numbers-routes.ts",
+  "server/meta.ts",
+  "server/meta-security.ts",
 ];
 
 const STALE_TECH_PROVIDER_COPY =
@@ -170,6 +176,8 @@ describe("Compliance #26 policy seed grep", () => {
     assert.equal(TERMS_OF_SERVICE_BODY.includes(META_TECH_PROVIDER_STATEMENT), true);
     assert.equal(TERMS_OF_SERVICE_BODY.includes(WHATSAPP_CLOUD_API_SECTION), true);
     assert.equal(TERMS_OF_SERVICE_BODY.includes("This does not mean Meta endorses Lumera."), true);
+    assert.equal(TERMS_OF_SERVICE_BODY.includes("Until Meta grants Lumera's WhatsApp permissions"), true);
+    assert.equal(TERMS_OF_SERVICE_BODY.split(WHATSAPP_CLOUD_API_SECTION).length - 1, 1);
     assert.equal(DATA_DELETION_INSTRUCTIONS_BODY.includes(META_TECH_PROVIDER_STATEMENT), true);
     assert.equal(DATA_DELETION_INSTRUCTIONS_BODY.includes(WHATSAPP_APP_REVIEW_SENTENCE), true);
     assert.equal(GOVERNMENT_DATA_REQUEST_POLICY_BODY.includes(META_TECH_PROVIDER_STATEMENT), true);
@@ -198,6 +206,19 @@ describe("Compliance #26 policy seed grep", () => {
           continue;
         }
         leftovers.push(`${rel}:${n} certified: ${line.trim()}`);
+      }
+    }
+    assert.deepEqual(leftovers, [], leftovers.join("\n"));
+  });
+
+  it("bans a bare Meta Tech Provider label without the WhatsApp Business Platform scope", () => {
+    const bare = /Meta Tech Provider(?! for the WhatsApp Business Platform)/;
+    const leftovers: string[] = [];
+    for (const rel of PUBLIC_COPY_SURFACES) {
+      const lines = readRepo(rel).split(/\n/);
+      for (let i = 0; i < lines.length; i++) {
+        if (!bare.test(lines[i])) continue;
+        leftovers.push(`${rel}:${i + 1} bare: ${lines[i].trim()}`);
       }
     }
     assert.deepEqual(leftovers, [], leftovers.join("\n"));

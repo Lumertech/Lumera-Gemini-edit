@@ -1,9 +1,9 @@
 /**
- * Meta Embedded Signup v4 — Tech Provider-style handshake.
+ * Meta Embedded Signup v4 handshake.
  *
- * Lumera is NOT a certified Meta Tech Provider. This implements the documented
- * code-exchange + subscribed_apps path so App Review / SANDBOX testing can
- * proceed; it does not claim certification.
+ * See META_TECH_PROVIDER_STATEMENT in src/lib/metaStatus.ts.
+ * WhatsApp permissions submitted for Meta App Review in September 2026; not yet granted.
+ * This implements the documented code-exchange + subscribed_apps path.
  *
  * Docs (fetched 2026-09-13):
  * - Implementation (v4): FB.login({ config_id, response_type: "code",
@@ -20,6 +20,10 @@
  */
 
 import crypto from "node:crypto";
+import {
+  META_TECH_PROVIDER_STATEMENT,
+  WHATSAPP_PERMISSIONS_PENDING_SENTENCE,
+} from "../src/lib/metaStatus.ts";
 import { envFlag, graphApiVersion, isProduction, isUnsetOrPlaceholder, readSecret, sandboxSimulatorsEnabled } from "./runtime.ts";
 import {
   getWhatsAppNumberByPhoneNumberId,
@@ -73,6 +77,12 @@ export function embeddedSignupPublicConfig() {
   const appId = facebookAppIdForEmbeddedSignup() || "";
   const configId = embeddedSignupConfigId() || "";
   const configured = Boolean(appId && configId);
+  const scopesApproved = appReviewWhatsAppScopesApproved();
+  const statusLine = `${META_TECH_PROVIDER_STATEMENT} ${
+    scopesApproved
+      ? "META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED=true is set. Not auto-detected from Meta's dashboard."
+      : WHATSAPP_PERMISSIONS_PENDING_SENTENCE
+  }`;
   return {
     appId: appId || null,
     configId: configId || null,
@@ -81,10 +91,10 @@ export function embeddedSignupPublicConfig() {
     configured,
     sandbox: !isProduction(),
     simulatorsEnabled: sandboxSimulatorsEnabled(),
-    appReviewWhatsAppScopesApproved: appReviewWhatsAppScopesApproved(),
+    appReviewWhatsAppScopesApproved: scopesApproved,
     notice: configured
-      ? "Embedded Signup v4 handshake is wired. Lumera is not a certified Meta Tech Provider. App Review stays SANDBOX-honest until META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED=true. Contact ravee@lumer.me."
-      : "SANDBOX / DEV-ONLY: FACEBOOK_APP_ID and META_EMBEDDED_SIGNUP_CONFIG_ID are not live. Real FB.login will fail until the founder provisions them. Lumera is not a certified Meta Tech Provider. Contact ravee@lumer.me.",
+      ? `Embedded Signup v4 handshake is wired. ${statusLine} Contact ravee@lumer.me.`
+      : `SANDBOX / DEV-ONLY: FACEBOOK_APP_ID and META_EMBEDDED_SIGNUP_CONFIG_ID are not live. Real FB.login will fail until the founder provisions them. ${statusLine} Contact ravee@lumer.me.`,
   };
 }
 

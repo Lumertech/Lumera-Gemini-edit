@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Smartphone, CheckCircle2, ArrowRight } from "lucide-react";
 import { apiFetch } from "../api/http";
+import { META_TECH_PROVIDER_STATEMENT, WHATSAPP_PERMISSIONS_PENDING_SENTENCE } from "../lib/metaStatus";
 import {
   launchEmbeddedSignupV4,
   loadFacebookSdk,
@@ -137,8 +138,8 @@ export const PersonalWabaConnect: React.FC<PersonalWabaConnectProps> = ({ varian
       </div>
       <p className={bodyClass}>
         Optional. Use this if you practice at more than one clinic and want inbound WhatsApp on a personal number.
-        Real Meta Embedded Signup v4 (JS SDK + config_id) is wired; Lumera is not a certified Tech Provider and App Review
-        is not claimed. Contact ravee@lumer.me.
+        Real Meta Embedded Signup v4 (JS SDK + config_id) is wired. {META_TECH_PROVIDER_STATEMENT}{" "}
+        {WHATSAPP_PERMISSIONS_PENDING_SENTENCE} Contact ravee@lumer.me.
       </p>
       {connected ? (
         <p className={`text-xs flex items-center gap-1.5 ${variant === "onboarding" ? "text-emerald-300" : "text-emerald-700"}`}>

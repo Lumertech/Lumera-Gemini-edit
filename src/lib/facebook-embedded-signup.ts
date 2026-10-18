@@ -4,7 +4,7 @@
  * plus WA_EMBEDDED_SIGNUP postMessage (waba_id, phone_number_id).
  * Legacy sessionInfoResponse event name is also accepted.
  *
- * Lumera is not a certified Meta Tech Provider. Contact ravee@lumer.me.
+ * See META_TECH_PROVIDER_STATEMENT. WhatsApp permissions submitted for Meta App Review in September 2026; not yet granted. Contact ravee@lumer.me.
  */
 
 const FACEBOOK_HOST_LABEL = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)$/;

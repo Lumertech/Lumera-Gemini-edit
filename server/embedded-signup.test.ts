@@ -489,7 +489,7 @@ describe("Embedded Signup checklist + onboarding caps", () => {
     assert.equal(configItem!.passed, false);
     assert.ok(reviewItem);
     assert.equal(reviewItem!.passed, false);
-    assert.equal(overview.appReviewStatus.status, "NOT_SUBMITTED");
+    assert.equal(overview.appReviewStatus.status, "SUBMITTED_PENDING");
     if (prevConfig === undefined) delete process.env.META_EMBEDDED_SIGNUP_CONFIG_ID;
     else process.env.META_EMBEDDED_SIGNUP_CONFIG_ID = prevConfig;
     if (prevReview === undefined) delete process.env.META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED;
