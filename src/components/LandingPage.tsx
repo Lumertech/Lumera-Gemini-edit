@@ -36,6 +36,7 @@ import {
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { LEGAL_ENTITY_NAME, PRODUCT_NAME } from "../brand";
+import { META_TECH_PROVIDER_STATEMENT } from "../lib/metaStatus";
 import { BrandMark } from "./BrandMark";
 import { destinationAfterAuth, useAuth } from "../auth/AuthContext";
 import { goAfterAuth, useNav } from "../nav/NavigationContext";
@@ -416,8 +417,8 @@ export const LandingPage: React.FC = () => {
                 <MessageSquare className="w-5 h-5" />
               </div>
               <div className="text-left">
-                <span className="block text-xs font-bold text-slate-100 uppercase tracking-wider">WhatsApp Cloud API · Meta Tech Provider path</span>
-                <span className="text-[11px] text-slate-400 font-medium">SANDBOX readiness — App Review not submitted</span>
+                <span className="block text-xs font-bold text-slate-100 tracking-wide">{META_TECH_PROVIDER_STATEMENT}</span>
+                <span className="text-[11px] text-slate-400 font-medium">WhatsApp Cloud API from Meta</span>
               </div>
             </div>
 
@@ -533,7 +534,7 @@ export const LandingPage: React.FC = () => {
                 </p>
               </div>
               <p className="text-slate-300 text-xs leading-relaxed">
-                Automate appointment booking, live OPD token updates, and follow-up reminders via WhatsApp Cloud API (Meta Tech Provider path).
+                Automate appointment booking, live OPD token updates, and follow-up reminders via WhatsApp Cloud API from Meta.
               </p>
               <ul className="space-y-2 text-xs text-slate-400 pt-2 border-t border-slate-800">
                 <li className="flex items-center gap-2">
@@ -1004,7 +1005,7 @@ export const LandingPage: React.FC = () => {
           {/* Compliance declaration */}
           <div className="pt-2 text-[11px] text-slate-500 space-y-1">
             <p>
-              {PRODUCT_NAME} is building toward Meta Tech Provider. App Review is not submitted.
+              {META_TECH_PROVIDER_STATEMENT}
             </p>
             <p>
               Designed for ABDM M1–M3 &amp; DPDP (sandbox path).

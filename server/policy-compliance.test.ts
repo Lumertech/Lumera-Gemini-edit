@@ -14,6 +14,11 @@ import {
   TERMS_OF_SERVICE_BODY,
 } from "./cms-policy-seed.ts";
 import { GOVERNMENT_DATA_REQUEST_POLICY_BODY } from "./government-data-request-policy.ts";
+import {
+  META_TECH_PROVIDER_STATEMENT,
+  WHATSAPP_APP_REVIEW_SENTENCE,
+  WHATSAPP_CLOUD_API_SECTION,
+} from "../src/lib/metaStatus.ts";
 import { ensureMetaTechProviderAndPolicies, getDb, initDatabase } from "./db.ts";
 import { createMetaRouter } from "./meta.ts";
 import { attachPublicPolicyHtml, PUBLIC_POLICY_HTML_PATHS } from "./policy-html.ts";
@@ -44,15 +49,50 @@ function overclaimWithoutHonesty(src: string): string[] {
     const hasOfficial = /official Meta Tech Provider/i.test(line);
     const hasAuthorized = /Authorized Tech Provider/i.test(line);
     const hasBsp = /Business Solution Provider/i.test(line);
-    if (!hasOfficial && !hasAuthorized && !hasBsp) continue;
-    const window = lines.slice(Math.max(0, i - 2), i + 3).join(" ");
-    const honest = /not a certified/i.test(window) || /not certified/i.test(window);
-    if (hasOfficial || hasAuthorized || (hasBsp && !honest)) {
+    // No honesty-window exemption: a nearby "not a certified" does not excuse BSP.
+    if (hasOfficial || hasAuthorized || hasBsp) {
       leftovers.push(`L${i + 1}: ${line.trim()}`);
     }
   }
   return leftovers;
 }
+
+/**
+ * Public copy Meta reviewers and clinics can read.
+ * PR #117's stripHonestTechProviderNegation is not applied: it would hide
+ * "not a certified…" from the certified ban. The only exemption is the
+ * physio biography at server/db-seed-maps.ts:61.
+ */
+const PUBLIC_COPY_SURFACES = [
+  "server/cms-policy-seed.ts",
+  "server/db.ts",
+  "server/db-seed.ts",
+  "server/db-seed-maps.ts",
+  "server/db-seed-clinical.ts",
+  "server/db-seed-meta.ts",
+  "server/government-data-request-policy.ts",
+  "server/policy-html.ts",
+  "src/pages/PolicyPage.tsx",
+  "src/components/LandingPage.tsx",
+  "server/pricing-html.ts",
+  "server/pricing-catalog.ts",
+  "src/lib/pricingCopy.ts",
+  "src/lib/pricingModel.ts",
+  "src/pages/PricingPage.tsx",
+  "index.html",
+];
+
+const STALE_TECH_PROVIDER_COPY =
+  /not a certified (Meta )?Tech Provider|not (Meta )?Tech Provider certif|building toward Meta Tech Provider|Tech Provider path|App Review (is )?not submitted/i;
+
+const TECH_PROVIDER_OVERCLAIM =
+  /Meta (Business )?partner|official WhatsApp partner|Solution Partner|Business Solution Provider|\bBSP\b|official Meta|Official Tech Provider|Authorized Tech Provider|Tech Provider Verified|Meta[- ](certified|approved|verified)|App Review (approved|complete)/i;
+
+const CERTIFIED_WORD = /\bcertified\b/i;
+const PHYSIO_BIO_REL = "server/db-seed-maps.ts";
+const PHYSIO_BIO_LINE = 61;
+const PHYSIO_BIO_TEXT =
+  "Lead Musculoskeletal & Sports Physiotherapist certified in Spinal Mobilization, Dry Needling & Post-Operative Knee Rehab.";
 
 /** #18/#47 theatre this PR must not reintroduce on landing/CMS/policy surfaces. */
 const RESKIM_THEATRE: Array<{ id: string; re: RegExp }> = [
@@ -114,19 +154,53 @@ describe("Compliance #26 re-skim bar", () => {
 });
 
 describe("Compliance #26 policy seed grep", () => {
-  it("fails overclaim phrases without not-certified honesty; requires STOP and absolute deletion URL", () => {
+  it("fails overclaim phrases; requires the Tech Provider statement, STOP, and absolute deletion URL", () => {
     const src = policySeedSource();
     assert.deepEqual(overclaimWithoutHonesty(src), []);
     assert.equal(/official Meta Tech Provider/i.test(src), false);
     assert.equal(/Authorized Tech Provider/i.test(src), false);
     assert.match(src, /\bSTOP\b/);
     assert.match(src, /https:\/\/www\.mylumera\.in\/api\/meta\/data-deletion/);
-    assert.match(src, /not a certified Meta Tech Provider/i);
-    assert.match(src, /App Review is not submitted/);
+    assert.equal(
+      META_TECH_PROVIDER_STATEMENT,
+      "Lumera Solutions LLP is a Meta Tech Provider for the WhatsApp Business Platform."
+    );
+    assert.equal(PRIVACY_POLICY_BODY.includes(META_TECH_PROVIDER_STATEMENT), true);
+    assert.equal(PRIVACY_POLICY_BODY.includes(WHATSAPP_CLOUD_API_SECTION), true);
+    assert.equal(TERMS_OF_SERVICE_BODY.includes(META_TECH_PROVIDER_STATEMENT), true);
+    assert.equal(TERMS_OF_SERVICE_BODY.includes(WHATSAPP_CLOUD_API_SECTION), true);
+    assert.equal(TERMS_OF_SERVICE_BODY.includes("This does not mean Meta endorses Lumera."), true);
+    assert.equal(DATA_DELETION_INSTRUCTIONS_BODY.includes(META_TECH_PROVIDER_STATEMENT), true);
+    assert.equal(DATA_DELETION_INSTRUCTIONS_BODY.includes(WHATSAPP_APP_REVIEW_SENTENCE), true);
+    assert.equal(GOVERNMENT_DATA_REQUEST_POLICY_BODY.includes(META_TECH_PROVIDER_STATEMENT), true);
     assert.match(PRIVACY_POLICY_BODY, /replying \*\*STOP\*\*/);
-    assert.match(TERMS_OF_SERVICE_BODY, /not a certified Meta Tech Provider/i);
     assert.match(DATA_DELETION_INSTRUCTIONS_BODY, /https:\/\/www\.mylumera\.in\/api\/meta\/data-deletion/);
     assert.ok(CMS_POLICY_UPSERTS.some((row) => row.slug === "privacy-policy"));
+  });
+
+  it("bans stale Tech Provider denials and widened overclaims on public surfaces", () => {
+    const leftovers: string[] = [];
+    for (const rel of PUBLIC_COPY_SURFACES) {
+      const lines = readRepo(rel).split(/\n/);
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const n = i + 1;
+        if (STALE_TECH_PROVIDER_COPY.test(line)) {
+          leftovers.push(`${rel}:${n} stale: ${line.trim()}`);
+        }
+        if (TECH_PROVIDER_OVERCLAIM.test(line)) {
+          leftovers.push(`${rel}:${n} overclaim: ${line.trim()}`);
+        }
+        if (!CERTIFIED_WORD.test(line)) continue;
+        if (rel === PHYSIO_BIO_REL && n === PHYSIO_BIO_LINE) {
+          if (line.includes(PHYSIO_BIO_TEXT)) continue;
+          leftovers.push(`${rel}:${n} physio bio exemption did not match: ${line.trim()}`);
+          continue;
+        }
+        leftovers.push(`${rel}:${n} certified: ${line.trim()}`);
+      }
+    }
+    assert.deepEqual(leftovers, [], leftovers.join("\n"));
   });
 
   it("founder lock: public policy contacts are ravee@lumer.me only", () => {
@@ -212,7 +286,7 @@ describe("Compliance #26 public policy HTML + deletion-status", () => {
     const row = getDb()
       .prepare("SELECT body FROM cms_policies WHERE slug = ?")
       .get("privacy-policy") as { body: string };
-    assert.match(row.body, /not a certified Meta Tech Provider/i);
+    assert.equal(row.body.includes(META_TECH_PROVIDER_STATEMENT), true);
     assert.equal(/official Meta Tech Provider/i.test(row.body), false);
     assert.equal(/Authorized Tech Provider/i.test(row.body), false);
     assert.match(row.body, /\bSTOP\b/);
@@ -226,7 +300,25 @@ describe("Compliance #26 public policy HTML + deletion-status", () => {
       assert.equal(res.status, 200, p);
       assert.match(res.headers.get("content-type") || "", /html/i);
       const html = await res.text();
-      assert.match(html, /not a certified Meta Tech Provider/i);
+      const description = html.match(/<meta name="description" content="([^"]*)"/);
+      assert.ok(description, `${p} meta description`);
+      assert.equal(description[1].includes(META_TECH_PROVIDER_STATEMENT), true, `${p} meta description`);
+      assert.equal(
+        description[1].includes("Clinics connect their own WhatsApp Business accounts."),
+        true,
+        `${p} meta description clinics`
+      );
+      const notice = html.match(/<p class="notice">([\s\S]*?)<\/p>/);
+      assert.ok(notice, `${p} notice`);
+      assert.equal(notice[1].includes(META_TECH_PROVIDER_STATEMENT), true, `${p} notice`);
+      assert.equal(
+        notice[1].includes("Clinics connect their own WhatsApp Business accounts."),
+        true,
+        `${p} notice clinics`
+      );
+      const article = html.match(/<article>([\s\S]*?)<\/article>/);
+      assert.ok(article, `${p} body`);
+      assert.equal(article[1].includes(META_TECH_PROVIDER_STATEMENT), true, `${p} body`);
       assert.equal(/id="root"/.test(html), false, `${p} should not be the Vite SPA shell`);
       assert.match(html, /ravee@lumer\.me/);
       assert.equal(/dpo@lumera\.me|compliance@lumera\.health|privacy@lumera\.health|legal@lumera\.health/.test(html), false);
@@ -260,7 +352,7 @@ describe("Compliance #26 public policy HTML + deletion-status", () => {
       assert.equal(res.status, 200, slug);
       const json = (await res.json()) as { slug: string; body: string; title: string };
       assert.equal(json.slug, slug);
-      assert.match(json.body, /not a certified Meta Tech Provider/i);
+      assert.equal(json.body.includes(META_TECH_PROVIDER_STATEMENT), true);
       assert.match(json.body, /ravee@lumer\.me/);
       assert.equal(/dpo@lumera\.me|compliance@lumera\.health|privacy@lumera\.health|legal@lumera\.health/.test(json.body), false);
       if (slug === "privacy-policy") assert.match(json.body, /\bSTOP\b/);

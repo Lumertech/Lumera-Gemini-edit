@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import type { Request, Response, NextFunction } from "express";
+import { META_TECH_PROVIDER_STATEMENT } from "../src/lib/metaStatus.ts";
 import { envFlag, isProduction, readSecret, sandboxSimulatorsEnabled } from "./runtime.ts";
 
 export const META_APP_REVIEW_WHATSAPP_SCOPES_FLAG = "META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED";
@@ -202,7 +203,7 @@ export function buildMetaReadinessOverview(opts: {
 
   return {
     providerName: "Lumera Solutions LLP",
-    providerType: "SANDBOX — not a certified Meta Tech Provider",
+    providerType: `SANDBOX — ${META_TECH_PROVIDER_STATEMENT}`,
     certificationStatus: "NOT_CERTIFIED",
     environment: isProduction() ? "production" : "sandbox",
     simulatorsEnabled,

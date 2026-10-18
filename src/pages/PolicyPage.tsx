@@ -18,6 +18,7 @@ import {
 import { Link } from "react-router-dom";
 import { apiFetchResponse } from "../api/http";
 import { PRODUCT_NAME } from "../brand";
+import { META_TECH_PROVIDER_STATEMENT } from "../lib/metaStatus";
 import { BrandMark } from "../components/BrandMark";
 import { useNav } from "../nav/NavigationContext";
 import { surfaceToPath } from "../nav/surfaces";
@@ -127,7 +128,7 @@ export const PolicyPage: React.FC<{ slug: string }> = ({ slug: initialSlug }) =>
               </div>
               <span className="font-bold text-sm text-slate-900 tracking-tight">{PRODUCT_NAME} Compliance Hub</span>
               <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
-                <AlertCircle className="w-3 h-3" /> Meta WhatsApp — not Tech Provider certified
+                <AlertCircle className="w-3 h-3" /> Meta Tech Provider
               </span>
             </div>
           </div>
@@ -160,7 +161,7 @@ export const PolicyPage: React.FC<{ slug: string }> = ({ slug: initialSlug }) =>
           <div className="max-w-2xl">
             <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900">{title}</h1>
             <p className="mt-2 text-sm text-slate-600 leading-relaxed">
-              Governance documentation for {PRODUCT_NAME}, WhatsApp Cloud API integration (not Tech Provider certified), and data protection.
+              Governance documentation for {PRODUCT_NAME}. {META_TECH_PROVIDER_STATEMENT}
             </p>
             {updatedAt && (
               <div className="mt-3 text-xs text-slate-400">
@@ -288,7 +289,7 @@ export const PolicyPage: React.FC<{ slug: string }> = ({ slug: initialSlug }) =>
               <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">Notice</span>
             </div>
             <p className="text-xs text-slate-300 leading-relaxed">
-              {PRODUCT_NAME} is building a WhatsApp Cloud API integration. This is not Meta Tech Provider certification and App Review is not submitted. Policies below describe intended processing:
+              {META_TECH_PROVIDER_STATEMENT} Policies below describe processing that applies when the Cloud API or Facebook Login is configured:
             </p>
             <ul className="text-xs space-y-1.5 text-slate-200">
               <li className="flex items-center gap-1.5">

@@ -17,6 +17,7 @@ import { createApiRouter } from "./api.ts";
 import { getDb, initDatabase } from "./db.ts";
 import { jsonRequest, startTestServer } from "./test-http.ts";
 import { WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
+import { META_TECH_PROVIDER_STATEMENT } from "../src/lib/metaStatus.ts";
 
 function hmacSha256(secret: string, body: string): string {
   return "sha256=" + crypto.createHmac("sha256", secret).update(body).digest("hex");
@@ -150,7 +151,7 @@ describe("Overview claims", () => {
     assert.equal(overview.providerType.includes("SANDBOX"), true);
     assert.equal(overview.certificationStatus, "NOT_CERTIFIED");
     assert.equal(overview.appReviewStatus.status, "NOT_SUBMITTED");
-    assert.match(JSON.stringify(overview), /not a certified Meta Tech Provider/i);
+    assert.equal(JSON.stringify(overview).includes(META_TECH_PROVIDER_STATEMENT), true);
     assert.match(JSON.stringify(overview), /credentials are optional until provisioned/i);
     assert.equal(overview.appReviewStatus.checklist.every((c) => c.passed), false);
     assert.ok(overview.appReviewStatus.checklist.some((c) => c.item === "Embedded Signup config_id configured"));
