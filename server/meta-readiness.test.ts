@@ -176,6 +176,35 @@ describe("Overview claims", () => {
       else process.env.META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED = prevReview;
     }
   });
+
+  it("marks WhatsApp scopes approved only when META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED is set", () => {
+    const prevReview = process.env.META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED;
+    process.env.META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED = "true";
+    try {
+      const overview = buildMetaReadinessOverview({
+        connectedWabasCount: 0,
+        totalClinics: 1,
+        approvedTemplatesCount: 0,
+        totalTemplatesCount: 0,
+        totalMessagesSentAndReceived: 0,
+        webhookUrl: "/api/meta/webhook",
+        graphOtpConfigured: false,
+        webhookSecretConfigured: false,
+        verifyTokenConfigured: false,
+        facebookOAuthConfigured: false,
+      });
+      assert.equal(overview.appReviewStatus.status, "WHATSAPP_SCOPES_MARKED_APPROVED");
+      assert.equal(overview.certificationStatus, "NOT_CERTIFIED");
+      const scopesItem = overview.appReviewStatus.checklist.find((c) =>
+        c.item.includes("whatsapp_business_management / business_management / whatsapp_business_messaging")
+      );
+      assert.ok(scopesItem);
+      assert.equal(scopesItem.passed, true);
+    } finally {
+      if (prevReview === undefined) delete process.env.META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED;
+      else process.env.META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED = prevReview;
+    }
+  });
 });
 
 describe("Facebook OAuth identity", () => {

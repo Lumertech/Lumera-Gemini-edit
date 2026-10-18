@@ -215,7 +215,7 @@ export function buildMetaReadinessOverview(opts: {
     environment: isProduction() ? "production" : "sandbox",
     simulatorsEnabled,
     appReviewStatus: {
-      status: "SUBMITTED_PENDING",
+      status: scopesApproved ? "WHATSAPP_SCOPES_MARKED_APPROVED" : "SUBMITTED_PENDING",
       checklist,
       passedCount,
       totalCount: checklist.length,
