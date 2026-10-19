@@ -19,8 +19,8 @@ import { reportCaughtError } from "./error-tracker.ts";
  * @lumera.me demo logins are left for the founder.
  */
 
-const RETIRED_HEALTH = ["lumera", "health"].join(".");
-const RETIRED_CLINIC = ["lumeraclinic", "in"].join(".");
+const RETIRED_HEALTH = "lumera.health";
+const RETIRED_CLINIC = "lumeraclinic.in";
 const OPAQUE_BASE = "https://www.mylumera.in";
 const DEMO_UPI = "demo@upi-sandbox";
 const DEMO_LETTERHEAD_EMAIL = "care@example.com";
@@ -48,6 +48,12 @@ const SEED_DOCTOR_LOCALS = [
   "dr.arun",
   "dr.alok",
 ] as const;
+
+/**
+ * Roster ids from DOCTOR_SEED. doc-2 through doc-9 are inserted with a null
+ * user_id, so a demo-user join never sees them.
+ */
+const SEED_DOCTOR_IDS = ["doc-1", "doc-2", "doc-3", "doc-4", "doc-5", "doc-6", "doc-7", "doc-8", "doc-9"] as const;
 
 const SEEDED_PATIENT_LOCALS = [
   "rajiv.saxena",
@@ -183,6 +189,10 @@ export function rewriteSeedPhrases(value: string): string {
 /**
  * Opaque slot for a seeded template button.
  * The purpose must be a whole path segment so /payments is not treated as /pay.
+ *
+ * TODO(#169): when the opaque patient-link branch lands, remove tpl-2's portal
+ * button instead of rewriting it to /portal/v/{{1}}. Leave the #164 and #169
+ * template conflict unresolved in this PR.
  */
 export function rewriteSeedTemplateLinks(value: string): string {
   const health = RETIRED_HEALTH.replace(/\./g, "\\.");
@@ -348,6 +358,11 @@ function rewriteExactColumn(
 
 function userOnDemoTenant(userIdColumn: string): string {
   return `EXISTS (SELECT 1 FROM users u WHERE u.id = ${userIdColumn} AND ${demoTenantPredicate("u.tenant_id")})`;
+}
+
+function seedDoctorIdPredicate(idColumn: string): string {
+  const list = SEED_DOCTOR_IDS.map((id) => `'${id}'`).join(", ");
+  return `${idColumn} IN (${list})`;
 }
 
 function rewriteSeedTemplates(database: SqlDatabase): number {
@@ -520,7 +535,7 @@ export function migrateUnownedDomains(database: SqlDatabase): void {
       "id",
       "email",
       doctorEmailPairs(),
-      userOnDemoTenant("doctors.user_id")
+      `(${userOnDemoTenant("doctors.user_id")} OR ${seedDoctorIdPredicate("doctors.id")})`
     ),
     staff: rewriteExactColumn(
       database,

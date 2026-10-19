@@ -100,6 +100,19 @@ export const PR164_OWNED_URLS: Readonly<Record<string, readonly RegExp[]>> = {
   "server/db-seed-meta.ts": [/https:\/\/lumera\.health\/portal\b/],
 };
 
+/**
+ * Retired hosts the domain migration has to name. Only these two constant
+ * assignments are exempt. Another lumera.health or lumeraclinic.in in that
+ * file still fails. unusedMigrationHostExemptions() fails when a pattern
+ * matches nothing.
+ */
+export const MIGRATION_RETIRED_HOST_EXEMPTIONS: Readonly<Record<string, readonly RegExp[]>> = {
+  "server/migrate-unowned-domains.ts": [
+    /const RETIRED_HEALTH = "lumera\.health"/,
+    /const RETIRED_CLINIC = "lumeraclinic\.in"/,
+  ],
+};
+
 export type HostViolation = { file: string; line: number; host: string; kind: string };
 
 function lineOf(source: string, index: number): number {
@@ -227,8 +240,12 @@ function hostFromUrl(raw: string): string | null {
   }
 }
 
-function exemptionSpans(relPath: string, source: string): Array<[number, number]> {
-  const patterns = PR164_OWNED_URLS[relPath.replace(/\\/g, "/")];
+function spansFor(
+  table: Readonly<Record<string, readonly RegExp[]>>,
+  relPath: string,
+  source: string
+): Array<[number, number]> {
+  const patterns = table[relPath.replace(/\\/g, "/")];
   if (!patterns) return [];
   const spans: Array<[number, number]> = [];
   for (const pattern of patterns) {
@@ -242,13 +259,23 @@ function exemptionSpans(relPath: string, source: string): Array<[number, number]
   return spans;
 }
 
+function exemptionSpans(relPath: string, source: string): Array<[number, number]> {
+  return [
+    ...spansFor(PR164_OWNED_URLS, relPath, source),
+    ...spansFor(MIGRATION_RETIRED_HOST_EXEMPTIONS, relPath, source),
+  ];
+}
+
 function insideSpan(spans: Array<[number, number]>, index: number): boolean {
   return spans.some(([start, end]) => index >= start && index < end);
 }
 
-export function unusedPr164Exemptions(root: string): string[] {
+export function unusedHostExemptions(
+  root: string,
+  table: Readonly<Record<string, readonly RegExp[]>>
+): string[] {
   const unused: string[] = [];
-  for (const [rel, patterns] of Object.entries(PR164_OWNED_URLS)) {
+  for (const [rel, patterns] of Object.entries(table)) {
     const full = path.join(root, rel);
     let source = "";
     try {
@@ -264,6 +291,14 @@ export function unusedPr164Exemptions(root: string): string[] {
     });
   }
   return unused;
+}
+
+export function unusedPr164Exemptions(root: string): string[] {
+  return unusedHostExemptions(root, PR164_OWNED_URLS);
+}
+
+export function unusedMigrationHostExemptions(root: string): string[] {
+  return unusedHostExemptions(root, MIGRATION_RETIRED_HOST_EXEMPTIONS);
 }
 
 export function findUnownedHosts(source: string, relPath: string): HostViolation[] {

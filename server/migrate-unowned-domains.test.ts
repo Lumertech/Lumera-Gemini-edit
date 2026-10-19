@@ -192,6 +192,24 @@ describe("unowned domain seed rewrite", () => {
       "dr.siddharth@lumera.health",
       "https://images.unsplash.com/photo-real"
     );
+    db.prepare("INSERT INTO doctors (id, user_id, email, avatar_url) VALUES (?, ?, ?, ?)").run(
+      "doc-2",
+      null,
+      "dr.ananya@lumera.health",
+      ""
+    );
+    db.prepare("INSERT INTO doctors (id, user_id, email, avatar_url) VALUES (?, ?, ?, ?)").run(
+      "doc-3",
+      null,
+      "desk@city.example",
+      ""
+    );
+    db.prepare("INSERT INTO doctors (id, user_id, email, avatar_url) VALUES (?, ?, ?, ?)").run(
+      "doc-outside",
+      null,
+      "dr.ananya@lumera.health",
+      ""
+    );
     const insertTemplate = db.prepare(
       "INSERT INTO meta_templates (id, tenant_id, components) VALUES (?, ?, ?)"
     );
@@ -336,6 +354,18 @@ describe("unowned domain seed rewrite", () => {
     assert.equal(
       (db.prepare("SELECT email FROM doctors WHERE id = ?").get("doc-real") as { email: string }).email,
       "dr.siddharth@lumera.health"
+    );
+    assert.equal(
+      (db.prepare("SELECT email FROM doctors WHERE id = ?").get("doc-2") as { email: string }).email,
+      "dr.ananya@example.com"
+    );
+    assert.equal(
+      (db.prepare("SELECT email FROM doctors WHERE id = ?").get("doc-3") as { email: string }).email,
+      "desk@city.example"
+    );
+    assert.equal(
+      (db.prepare("SELECT email FROM doctors WHERE id = ?").get("doc-outside") as { email: string }).email,
+      "dr.ananya@lumera.health"
     );
     assert.equal(
       (db.prepare("SELECT email FROM users WHERE id = ?").get("user-demo-doctor") as { email: string }).email,

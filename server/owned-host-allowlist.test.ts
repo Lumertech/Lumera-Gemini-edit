@@ -6,12 +6,14 @@ import { fileURLToPath } from "node:url";
 import {
   ALLOWED_HOSTS,
   HOST_SUFFIXES,
+  MIGRATION_RETIRED_HOST_EXEMPTIONS,
   PR164_OWNED_URLS,
   findUnownedHosts,
   hostAllowed,
   scanUserFacingHosts,
   scannedFiles,
   stripComments,
+  unusedMigrationHostExemptions,
   unusedPr164Exemptions,
 } from "./owned-host-allowlist.ts";
 
@@ -157,6 +159,22 @@ describe("owned host allowlist", () => {
     assert.match(seed, /email: "doctor@lumera\.me"/);
   });
 
+  it("exempts only the named retired-host constants in the domain migration", () => {
+    assert.equal(unusedMigrationHostExemptions(root).join("\n"), "");
+    const source = fs.readFileSync(path.join(root, "server/migrate-unowned-domains.ts"), "utf8");
+    assert.match(source, /const RETIRED_HEALTH = "lumera\.health"/);
+    assert.match(source, /const RETIRED_CLINIC = "lumeraclinic\.in"/);
+    assert.equal(source.includes('["lumera", "health"].join'), false);
+    assert.equal(source.includes('["lumeraclinic", "in"].join'), false);
+    assert.deepEqual(findUnownedHosts(source, "server/migrate-unowned-domains.ts"), []);
+    const leaked = findUnownedHosts(
+      `${source}\nconst leaked = "https://lumera.health/extra";\n`,
+      "server/migrate-unowned-domains.ts"
+    );
+    assert.ok(leaked.some((hit) => hit.host === "lumera.health"));
+    assert.equal(MIGRATION_RETIRED_HOST_EXEMPTIONS["server/migrate-unowned-domains.ts"].length, 2);
+  });
+
   it("scans src, server, public, hosting, server.ts, and index.html, and fails closed on any other host", () => {
     const files = scannedFiles(root).map((file) => file.replace(/\\/g, "/"));
     assert.ok(files.some((file) => file.endsWith("/server.ts") || file.endsWith("/index.html")));
@@ -164,6 +182,11 @@ describe("owned host allowlist", () => {
       unusedPr164Exemptions(root).join("\n"),
       "",
       "delete PR #164 exemptions that match nothing"
+    );
+    assert.equal(
+      unusedMigrationHostExemptions(root).join("\n"),
+      "",
+      "delete migration host exemptions that match nothing"
     );
     const violations = scanUserFacingHosts(root);
     assert.deepEqual(
