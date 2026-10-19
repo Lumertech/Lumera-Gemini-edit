@@ -638,7 +638,7 @@ export interface WhatsAppMessage {
 export interface WhatsAppTemplate {
   id: string;
   name: string;
-  category: 'APPOINTMENT_REMINDER' | 'PRESCRIPTION_DELIVERY' | 'INVOICE_PAY_LINK' | 'FOLLOWUP_CHECK' | 'LAB_READY';
+  category: 'APPOINTMENT_REMINDER' | 'PRESCRIPTION_DELIVERY' | 'FOLLOWUP_CHECK' | 'LAB_READY';
   language: string;
   headerText?: string;
   bodyText: string;

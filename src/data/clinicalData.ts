@@ -1368,19 +1368,6 @@ export const DEFAULT_WHATSAPP_TEMPLATES: WhatsAppTemplate[] = [
     status: 'APPROVED'
   },
   {
-    id: 'tmpl-3',
-    name: 'invoice_payment_link',
-    category: 'INVOICE_PAY_LINK',
-    language: 'English (en_IN)',
-    headerText: '💳 Bill & Payment Request',
-    bodyText: 'Dear {{1}},\n\nInvoice *{{2}}* for {{3}} has been generated for total amount *₹{{4}}*.\n\nYou can pay securely via UPI, Cards, or NetBanking using the link below.',
-    footerText: 'Instant GST Receipt provided on payment',
-    buttons: [
-      { type: 'URL', text: 'Pay ₹{{4}} via UPI/Card', payload: 'https://lumera.health/pay/{{2}}' }
-    ],
-    status: 'APPROVED'
-  },
-  {
     id: 'tmpl-4',
     name: 'medication_adherence_checkin',
     category: 'FOLLOWUP_CHECK',

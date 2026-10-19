@@ -13,8 +13,8 @@ import path from "node:path";
  * PR #164's server/public-url-hosts.test.ts is the lumera.health / lumera.me
  * host regression. This scan is the broader host and email allowlist. It does
  * not flag the URL strings that test already owns (Rx QR, FHIR systems, the
- * client Rx/pay buttons, and the seeded portal URL). The clinicalData.ts
- * patterns match only those two button URLs. They do not cover
+ * client Rx button, and the seeded portal URL). The clinicalData.ts
+ * pattern matches only that Rx button URL. It does not cover
  * DEFAULT_DOCTORS: those nine roster mailboxes are @example.com and are not
  * logins. Each of those exemptions must still match source. When #164 removes
  * the URL, this test fails until the exemption is deleted.
@@ -96,7 +96,7 @@ export const PR164_OWNED_URLS: Readonly<Record<string, readonly RegExp[]>> = {
   "server/clinical.ts": [/https:\/\/lumera\.health\/rx\/\$\{/],
   "server/fhir.ts": [/https:\/\/lumera\.health\/(?:uhid|fhir\/prescription|fhir\/op-consult)\b/],
   "src/components/PrescriptionWriter.tsx": [/https:\/\/lumera\.health\/rx\//],
-  "src/data/clinicalData.ts": [/https:\/\/lumera\.health\/rx\/\{\{3/, /https:\/\/lumera\.health\/pay\/\{\{2/],
+  "src/data/clinicalData.ts": [/https:\/\/lumera\.health\/rx\/\{\{3/],
   "server/db-seed-meta.ts": [/https:\/\/lumera\.health\/portal\b/],
 };
 

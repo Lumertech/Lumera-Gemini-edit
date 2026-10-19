@@ -262,7 +262,7 @@ export function ensureMetaTechProviderAndPolicies(database: SqlDatabase) {
         name: "opd_queue_token_alert",
         category: "UTILITY",
         language: "en",
-        status: "APPROVED",
+        status: "PENDING",
         components: JSON.stringify([
           { type: "HEADER", format: "TEXT", text: "Live Queue Update" },
           {
@@ -272,7 +272,7 @@ export function ensureMetaTechProviderAndPolicies(database: SqlDatabase) {
           },
           { type: "FOOTER", text: "Live OPD Triage System" }
         ]),
-        meta_template_id: "meta_tpl_983102948105",
+        meta_template_id: null,
         rejection_reason: null
       },
       {

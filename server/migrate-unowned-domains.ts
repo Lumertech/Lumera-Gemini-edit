@@ -11,9 +11,9 @@ import { reportCaughtError } from "./error-tracker.ts";
  * mailbox defaults, qr_verification_url, and demo-tenant invoices.upi_id.
  * The seeded post_consultation_rx body keeps a doctor variable and a clinic
  * variable. Known Lumera Portal / Lumera Health EMR / Rx-number copies of
- * that seed are replaced only on demo seed template ids. A rewritten demo
- * seed row, or one that still carries a retired seed Meta id, is stored as
- * PENDING with a null Meta template id. tpl-4 is unchanged and stays approved.
+ * that seed are replaced only on demo seed template ids. Demo seed rows
+ * tpl-1 through tpl-6 are stored as PENDING with a null Meta template id
+ * when their wording changes or they are still marked approved.
  * lumera.health and lumeraclinic.in match only as an exact host or as the
  * prefix of an http(s) URL. lumerahealth@icici matches only as a whole value.
  * A note that merely contains those strings is left alone.
@@ -39,16 +39,20 @@ export const SEED_TEMPLATE_IDS = ["tpl-1", "tpl-2", "tpl-3", "tpl-4", "tpl-5", "
 export const LOCAL_DEMO_TEMPLATE_STATUS = "PENDING";
 
 /**
- * Fake Meta ids on seed templates whose wording no longer matches the copy
- * that was stored as approved. tpl-4's id is absent: that template is unchanged.
+ * Fake Meta ids on the seeded templates whose wording is no longer the copy
+ * that was stored as approved. tpl-1 through tpl-6.
  */
 const RETIRED_SEED_META_IDS = new Set([
   "meta_tpl_983102948102",
   "meta_tpl_983102948103",
   "meta_tpl_983102948104",
+  "meta_tpl_983102948105",
   "meta_tpl_983102948106",
   "meta_tpl_983102948107",
 ]);
+
+/** Demo seed rows whose stored wording is not a Meta-approved submission. */
+const LOCAL_DEMO_TEMPLATE_IDS = new Set<string>(SEED_TEMPLATE_IDS);
 
 const DEMO_TENANT_IDS = [
   "tenant-lumera-main",
@@ -477,8 +481,12 @@ function rewriteSeedTemplates(database: SqlDatabase): number {
     const current = asText(row.value);
     const next = neutralizePostConsultationSeed(rewriteSeedPhrases(rewriteSeedTemplateLinks(current)));
     const wordingChanged = next !== current;
-    const falseMetaId = RETIRED_SEED_META_IDS.has(asText(row.meta_template_id));
-    if (!wordingChanged && !falseMetaId) continue;
+    const metaId = asText(row.meta_template_id);
+    const falseMetaId = RETIRED_SEED_META_IDS.has(metaId);
+    const falseApproval =
+      LOCAL_DEMO_TEMPLATE_IDS.has(id) &&
+      (asText(row.status).toUpperCase() === "APPROVED" || falseMetaId || metaId !== "");
+    if (!wordingChanged && !falseApproval) continue;
     const wrote = runRow(`migrate-unowned-domains meta_templates.components ${id}`, () => {
       update.run(next, LOCAL_DEMO_TEMPLATE_STATUS, id);
     });
