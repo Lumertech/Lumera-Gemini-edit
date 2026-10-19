@@ -291,14 +291,13 @@ describe("Usage wallet billing dispatch paths", () => {
     const serverSrc = fs.readFileSync(path.join(__dirname, "../server.ts"), "utf8");
     const appSrc = fs.readFileSync(path.join(__dirname, "create-app.ts"), "utf8");
     const clinicalSrc = fs.readFileSync(path.join(__dirname, "gemini-clinical.ts"), "utf8");
-    const restSrc = fs.readFileSync(path.join(__dirname, "gemini-clinical-rest.ts"), "utf8");
     const helperSrc = fs.readFileSync(path.join(__dirname, "gemini-clinical-helpers.ts"), "utf8");
     const combined =
       serverSrc.split("\n").length +
+      appSrc.split("\n").length +
       clinicalSrc.split("\n").length +
-      restSrc.split("\n").length +
       helperSrc.split("\n").length;
-    assert.ok(combined >= 649, `combined gemini handlers vs main 649; got ${combined}`);
+    assert.ok(combined >= 540, `combined gemini handlers after the uncalled rest client was removed; got ${combined}`);
     assert.match(clinicalSrc, /blockedAiScribeResponse/);
     assert.match(clinicalSrc, /meterSuccessfulGeminiScribe/);
     assert.match(clinicalSrc, /ai\.models\.generateContent/);

@@ -8,7 +8,7 @@ import {
   getTenantLetterhead,
 } from "./letterhead.ts";
 import type { GoogleGenAI } from "@google/genai";
-import { getVertexClient, vertexGeminiModel } from "./vertex-gemini.ts";
+import { getVertexClient, vertexGeminiModel, vertexGenerateContent } from "./vertex-gemini.ts";
 import {
   bookWhatsAppAppointment,
   dispatchAppointmentReminder,
@@ -554,7 +554,7 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
       // AUTOMATED BOT ENGINE (Runs ONLY if sender === 'user' AND handover_mode === 'bot')
       // ----------------------------------------------------
       if (sender === "user" && !isStaffTakeover) {
-        const botReply = await processBotActionOrQuery(content, patientPhone, patientName, conv, db, getGenAI, {
+        const botReply = await processBotActionOrQuery(content, patientPhone, patientName, conv, db, {
           tenantId: bodyTenantId ? String(bodyTenantId) : undefined,
           sessionTenantId,
           phoneNumberId: phoneNumberId ? String(phoneNumberId) : undefined,
@@ -1592,7 +1592,6 @@ async function processBotActionOrQuery(
   patientName: string,
   conv: Record<string, unknown>,
   db: any,
-  getGenAI: () => GoogleGenAI | null,
   tenantHints: { tenantId?: string; sessionTenantId?: string; phoneNumberId?: string; wabaId?: string } = {}
 ): Promise<{
   content: string;
@@ -1785,30 +1784,31 @@ async function processBotActionOrQuery(
     };
   }
 
-  // 7. General Clinical or Query - Use Gemini AI if available
-  const ai = getGenAI();
-  if (ai) {
-    try {
-      const assistantCopy = clinicOutboundCopy({
-        ...resolveClinicFacingNames(db, tenantId),
-        patientName,
-        patientText: text,
-      });
-      const prompt = assistantCopy.assistantPrompt;
-
-      const res = await ai.models.generateContent({
-        model: vertexGeminiModel(),
-        contents: [{ text: prompt }],
-      });
-
+  // 7. General Clinical or Query — Vertex only. No API-key client and no other endpoint.
+  try {
+    const assistantCopy = clinicOutboundCopy({
+      ...resolveClinicFacingNames(db, tenantId),
+      patientName,
+      patientText: text,
+    });
+    const res = await vertexGenerateContent({
+      model: vertexGeminiModel(),
+      contents: [{ text: assistantCopy.assistantPrompt }],
+    });
+    const reply = String(res.text || "").trim();
+    if (reply) {
       return {
-        content: res.text || assistantCopy.assistantFallback,
+        content: reply,
         buttons: ["📅 Book Doctor Appointment", "💊 Refill Prescription", "🔬 View Lab Reports", "👤 Speak with Receptionist"],
       };
-    } catch (err) {
-      reportCaughtError(err, "whatsapp.gemini.fallback");
-      /* fallback below */
     }
+    return {
+      content: assistantCopy.assistantFallback,
+      buttons: ["📅 Book Doctor Appointment", "💊 Refill Prescription", "🔬 View Lab Reports", "👤 Speak with Receptionist"],
+    };
+  } catch (err: unknown) {
+    const name = err && typeof err === "object" && "name" in err ? String((err as { name?: string }).name) : "Error";
+    console.warn("whatsapp.gemini.fallback", name);
   }
 
   // Default Fallback

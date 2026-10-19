@@ -25,9 +25,6 @@ const PHI_ROUTES = [
   "server/gemini-clinical.ts",
   "server/gemini-voice.ts",
   "server/whatsapp.ts",
-  "server/gemini-clinical-rest.ts",
-  "server/gemini-soap-copilot.ts",
-  "server/gemini-safety-voice.ts",
   "server/vertex-gemini.ts",
 ];
 
