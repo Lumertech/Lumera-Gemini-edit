@@ -71,7 +71,7 @@ import {
 
 export default function ClinicianApp() {
   const { user } = useAuth();
-  const { go, appView, pathname, recordId } = useNav();
+  const { go, appView, pathname, recordId, screen } = useNav();
   const isDemo = Boolean(user?.isDemoWorkspace);
   const sessionDoctor = doctorFromUser(user);
   const pack = workflowForUser(user);
@@ -594,8 +594,17 @@ export default function ClinicianApp() {
     setCurrentPatient(p);
     setCurrentDoctor(user?.role === 'doctor' ? d : selected || d);
     handleUpdateAppointmentStatus(apt.id, 'In Consultation');
-    setCurrentView('rx');
+    go('app', { appView: 'rx', recordId: apt.id, workspaceSlug: sessionWorkspace });
   };
+
+  useEffect(() => {
+    if (!recordId || (currentView !== 'rx' && currentView !== 'smart-rx')) return;
+    const visit = [...appointments, ...queueAppointments].find((row) => row.id === recordId);
+    if (!visit) return;
+    const patient = patients.find((row) => row.id === visit.patientId);
+    if (patient) setCurrentPatient((prev) => (prev.id === patient.id ? prev : patient));
+    setPinnedBillAppointmentId((prev) => (prev === visit.id ? prev : visit.id));
+  }, [recordId, currentView, appointments, queueAppointments, patients]);
 
   const handleOpenBillForAppointment = (apt: Appointment) => {
     const p = patients.find((pat) => pat.id === apt.patientId) || currentPatient;
@@ -665,6 +674,8 @@ export default function ClinicianApp() {
   return (
     <div
       data-testid="clinician-app"
+      data-screen={screen || currentView}
+      data-record-id={recordId}
       className="h-dvh max-h-dvh w-full max-w-full overflow-hidden flex flex-col bg-slate-100 text-slate-900 font-sans selection:bg-blue-600 selection:text-white"
     >
       <Navbar

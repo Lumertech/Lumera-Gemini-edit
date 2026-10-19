@@ -84,4 +84,12 @@ export function attachProductionSpaFallback(app: Express, distPath = resolveClie
     applyHtmlDocumentSecurityHeaders(res);
     res.sendFile(indexFile);
   });
+  attachUnknownApiJsonNotFound(app);
+}
+
+/** Unknown /api paths stay JSON. They must not fall through to index.html. */
+export function attachUnknownApiJsonNotFound(app: Express): void {
+  app.use("/api", (_req: Request, res: Response) => {
+    res.status(404).type("application/json").send(JSON.stringify({ error: "Not found" }));
+  });
 }
