@@ -267,6 +267,109 @@ describe("WhatsApp bot lookup audit and first-name replies", () => {
     assert.equal(fallbackText.includes(`hello ${echo}`), false);
   });
 
+  it("a super admin in clinic B cannot book, queue, or cancel clinic A by posting tenantId A", async () => {
+    const suffix = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    const clinicA = createClinic("phiOwnA");
+    const clinicB = createClinic("phiOwnB");
+    const adminId = `user-follow-sa-${suffix}`;
+    const adminEmail = `phi.sa.${suffix}@wa-follow.example`.toLowerCase();
+    const now = new Date().toISOString();
+    getDb()
+      .prepare("UPDATE tenants SET name = ? WHERE id = ?")
+      .run(`ZXQCLINICA ${suffix}`, clinicA.tenantId);
+    getDb()
+      .prepare(
+        `INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, clinic_name, onboarding_completed, practice_type, specialty, last_login, created_at)
+         VALUES (?, ?, ?, ?, ?, 'super_admin', 'active', ?, 'Lumera', 1, 'individual', 'General Medicine', ?, ?)`
+      )
+      .run(adminId, clinicB.tenantId, adminEmail, hashPassword("Lumera@2026"), `SA ${suffix}`, `+91 86${suffix.slice(0, 8)}`, now, now);
+    cleanup.tenants.push(clinicA.tenantId, clinicB.tenantId);
+    cleanup.users.push(clinicA.userId, clinicB.userId, adminId);
+
+    const phoneA = `+91 85${String(Date.now()).slice(-8)}`;
+    const bookPhone = `+91 84${String(Date.now() + 9).slice(-8)}`;
+    cleanup.phones.push(phoneA, bookPhone);
+    const patientId = `pat-own-a-${suffix}`;
+    const appointmentId = `appt-own-a-${suffix}`;
+    cleanup.patients.push(patientId);
+    cleanup.appointments.push(appointmentId);
+    const storedName = `ZXQROWA ${suffix}`;
+    const uhid = `UHID-A-${suffix}`;
+    const tokenNumber = 870000 + (Date.now() % 1000);
+    insertPatient({ id: patientId, tenantId: clinicA.tenantId, name: storedName, phone: phoneA, uhid });
+    getDb()
+      .prepare(
+        `INSERT INTO appointments (
+           id, tenant_id, token_number, patient_id, patient_name, patient_phone, uhid, doctor_id, doctor_name,
+           specialty, date, time_slot, type, status, source, consultation_fee, is_paid, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, 'doc-a', 'Dr SecretA', 'ZXQSPEC', '2026-10-19', '09:00 AM', 'New Consultation', 'Waiting', 'Desk', 0, 0, ?)`
+      )
+      .run(appointmentId, clinicA.tenantId, tokenNumber, patientId, storedName, phoneA, uhid, now);
+
+    const token = await login(adminEmail);
+    const auth = { Authorization: `Bearer ${token}` };
+    const secrets = [storedName, uhid, String(tokenNumber), "Dr SecretA", `ZXQCLINICA ${suffix}`];
+
+    const booked = await jsonRequest(
+      server.port,
+      "POST",
+      "/api/whatsapp/send",
+      { patientPhone: bookPhone, patientName: "Booker Name", sender: "user", content: "book dr. siddharth", tenantId: clinicA.tenantId },
+      auth
+    );
+    assert.equal(booked.status, 201, String(booked.json.error || ""));
+    const bookedBody = JSON.stringify(booked.json);
+    for (const secret of secrets) assert.equal(bookedBody.includes(secret), false, `book leaked ${secret}`);
+    const bookedRows = getDb()
+      .prepare("SELECT id, tenant_id FROM appointments WHERE patient_phone = ?")
+      .all(bookPhone) as { id: string; tenant_id: string }[];
+    for (const row of bookedRows) {
+      cleanup.appointments.push(row.id);
+      assert.equal(row.tenant_id, clinicB.tenantId);
+    }
+    const bookedPatient = getDb().prepare("SELECT id FROM patients WHERE phone = ? AND tenant_id = ?").get(bookPhone, clinicB.tenantId) as
+      | { id: string }
+      | undefined;
+    if (bookedPatient?.id) cleanup.patients.push(bookedPatient.id);
+
+    const queued = await jsonRequest(
+      server.port,
+      "POST",
+      "/api/whatsapp/send",
+      { patientPhone: phoneA, patientName: "Caller Name", sender: "user", content: "queue", tenantId: clinicA.tenantId },
+      auth
+    );
+    assert.equal(queued.status, 201, String(queued.json.error || ""));
+    const queuedBody = JSON.stringify(queued.json);
+    for (const secret of secrets) assert.equal(queuedBody.includes(secret), false, `queue leaked ${secret}`);
+
+    const cancelled = await jsonRequest(
+      server.port,
+      "POST",
+      "/api/whatsapp/send",
+      { patientPhone: phoneA, patientName: "Caller Name", sender: "user", content: "❌ cancel", tenantId: clinicA.tenantId },
+      auth
+    );
+    assert.equal(cancelled.status, 201, String(cancelled.json.error || ""));
+    const cancelledBody = JSON.stringify(cancelled.json);
+    for (const secret of secrets) assert.equal(cancelledBody.includes(secret), false, `cancel leaked ${secret}`);
+
+    const appointment = getDb().prepare("SELECT status, tenant_id FROM appointments WHERE id = ?").get(appointmentId) as {
+      status: string;
+      tenant_id: string;
+    };
+    assert.equal(appointment.status, "Waiting");
+    assert.equal(appointment.tenant_id, clinicA.tenantId);
+    assert.equal(
+      (getDb().prepare("SELECT COUNT(*) AS c FROM appointments WHERE tenant_id = ?").get(clinicA.tenantId) as { c: number }).c,
+      1
+    );
+    assert.equal(
+      (getDb().prepare("SELECT COUNT(*) AS c FROM whatsapp_messages WHERE tenant_id = ?").get(clinicA.tenantId) as { c: number }).c,
+      0
+    );
+  });
+
   it("documents that exact E.164 matching is not on main yet", () => {
     const source = fs.readFileSync(fileURLToPath(new URL("./whatsapp-tenant-resolve.ts", import.meta.url)), "utf8");
     assert.match(source, /isDemoWhatsAppAllowlisted/);

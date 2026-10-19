@@ -575,7 +575,6 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
       // ----------------------------------------------------
       if (sender === "user" && !isStaffTakeover) {
         const botReply = await processBotActionOrQuery(content, patientPhone, patientName, conv, db, getGenAI, {
-          tenantId: bodyTenantId ? String(bodyTenantId) : undefined,
           sessionTenantId,
           phoneNumberId: phoneNumberId ? String(phoneNumberId) : undefined,
           wabaId: wabaId ? String(wabaId) : undefined,
@@ -1596,7 +1595,6 @@ function patientFirstName(name: string): string {
 }
 
 type BotTenantHints = {
-  tenantId?: string;
   sessionTenantId?: string;
   phoneNumberId?: string;
   wabaId?: string;
@@ -1647,13 +1645,6 @@ async function processBotActionOrQuery(
 } | null> {
   const q = text.toLowerCase().trim();
   const sessionTenantId = String(tenantHints.sessionTenantId || "").trim();
-  const tenantId = resolveWhatsAppTenantId({
-    tenantId: tenantHints.tenantId,
-    sessionTenantId: tenantHints.sessionTenantId,
-    phoneNumberId: tenantHints.phoneNumberId,
-    wabaId: tenantHints.wabaId,
-    patientPhone: phone,
-  });
 
   // 1. Prescription Request
   if (q.includes("prescription") || q.includes("rx") || q.includes("refill") || q.includes("medicine") || q.includes("दवा") || q.includes("औषध")) {
@@ -1703,7 +1694,7 @@ async function processBotActionOrQuery(
     q.includes("dr. ananya") ||
     (q.includes("book") && q.includes("slot"));
   if (specificBook) {
-    if (!tenantId) {
+    if (!sessionTenantId) {
       return {
         content: "We could not match this chat to a clinic calendar, so the booking was not created.",
         buttons: ["👤 Speak with Receptionist"],
@@ -1718,14 +1709,14 @@ async function processBotActionOrQuery(
             ? "Ananya"
             : undefined;
       const booked = bookWhatsAppAppointment({
-        tenantId,
+        tenantId: sessionTenantId,
         patientPhone: phone,
         patientName,
         doctorName,
       });
       const appt = booked.appointment;
       if (!booked.reused) {
-        await dispatchWhatsAppBookConfirmation({ tenantId, appointment: appt });
+        await dispatchWhatsAppBookConfirmation({ tenantId: sessionTenantId, appointment: appt });
       }
       return {
         content: `${booked.reused ? "📌 *Existing booking found*" : "🎉 *Appointment Confirmed!*"}\n\n*Token*: *#${appt.tokenNumber}*\n*Doctor*: ${appt.doctorName}\n*Specialty*: ${appt.specialty}\n*Date*: ${appt.date}\n*Slot*: ${appt.timeSlot || "OPD hours"}\n*Source*: ${appt.source}\n\nThis token is on the clinician OPD calendar for your clinic.`,
@@ -1754,7 +1745,7 @@ async function processBotActionOrQuery(
     const docOptions = doctors.map((d) => `• *${d.name}* (${d.specialty}) - OPD Room ${d.opd_room}, Fee ${formatINR(Number(d.consultation_fee || 0))}`).join("\n");
 
     const bookingCopy = clinicOutboundCopy({
-      ...resolveClinicFacingNames(db, tenantId),
+      ...resolveClinicFacingNames(db, sessionTenantId),
       docOptions,
     });
     return {
@@ -1779,7 +1770,7 @@ async function processBotActionOrQuery(
     const roster = doctors.map((d) => `👨‍⚕️ *${d.name}* (${d.specialty})\n  🕒 ${d.opd_timing} | 🚪 ${d.opd_room}`).join("\n\n");
 
     const rosterCopy = clinicOutboundCopy({
-      ...resolveClinicFacingNames(db, tenantId),
+      ...resolveClinicFacingNames(db, sessionTenantId),
       roster,
     });
     return {
@@ -1826,7 +1817,7 @@ async function processBotActionOrQuery(
     }
   }
 
-  if (tenantId && q.includes("reschedule")) {
+  if (sessionTenantId && q.includes("reschedule")) {
     return {
       content: "Please share your preferred date (YYYY-MM-DD) and time slot, or ask reception to reschedule on the clinic calendar.",
       buttons: ["📅 Book Appointment", "👤 Speak with Receptionist"],
@@ -1838,7 +1829,7 @@ async function processBotActionOrQuery(
   if (ai) {
     try {
       const assistantCopy = clinicOutboundCopy({
-        ...resolveClinicFacingNames(db, tenantId),
+        ...resolveClinicFacingNames(db, sessionTenantId),
         patientName,
         patientText: text,
       });
