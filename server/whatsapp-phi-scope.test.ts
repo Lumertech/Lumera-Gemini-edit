@@ -41,12 +41,22 @@ function insertPatient(opts: { id: string; tenantId: string; name: string; phone
 
 describe("WhatsApp bot PHI tenant scope", () => {
   let server: TestHttpServer;
-  const cleanupIds: { patients: string[]; rxs: string[]; labs: string[]; tenants: string[]; users: string[] } = {
+  const cleanupIds: {
+    patients: string[];
+    rxs: string[];
+    labs: string[];
+    tenants: string[];
+    users: string[];
+    doctors: string[];
+    appointments: string[];
+  } = {
     patients: [],
     rxs: [],
     labs: [],
     tenants: [],
     users: [],
+    doctors: [],
+    appointments: [],
   };
 
   before(async () => {
@@ -67,6 +77,8 @@ describe("WhatsApp bot PHI tenant scope", () => {
     const db = getDb();
     for (const id of cleanupIds.labs) db.prepare("DELETE FROM lab_reports WHERE id = ?").run(id);
     for (const id of cleanupIds.rxs) db.prepare("DELETE FROM prescriptions WHERE id = ?").run(id);
+    for (const id of cleanupIds.appointments) db.prepare("DELETE FROM appointments WHERE id = ?").run(id);
+    for (const id of cleanupIds.doctors) db.prepare("DELETE FROM doctors WHERE id = ?").run(id);
     for (const id of cleanupIds.patients) {
       db.prepare("DELETE FROM whatsapp_messages WHERE patient_phone = (SELECT phone FROM patients WHERE id = ?)").run(id);
       db.prepare("DELETE FROM whatsapp_conversations WHERE patient_phone = (SELECT phone FROM patients WHERE id = ?)").run(id);
@@ -347,5 +359,160 @@ describe("WhatsApp bot PHI tenant scope", () => {
       assert.equal(row.content.includes("UHID"), false);
       assert.equal(row.content.includes(patient.uhid), false);
     }
+  });
+
+  it("booking list and roster include only the session clinic's doctors", async () => {
+    const suffix = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    const a = createClinic("phiDocA");
+    const b = createClinic("phiDocB");
+    cleanupIds.tenants.push(a.tenantId, b.tenantId);
+    cleanupIds.users.push(a.userId, b.userId);
+    const doctorA = `doc-phi-a-${suffix}`;
+    const doctorB = `doc-phi-b-${suffix}`;
+    cleanupIds.doctors.push(doctorA, doctorB);
+    const nameA = `ZXQDOCA ${suffix}`;
+    const nameB = `ZXQDOCB ${suffix}`;
+    const roomA = `ROOMA-${suffix}`;
+    const roomB = `ROOMB-${suffix}`;
+    const specA = `ZXQSPECA-${suffix}`;
+    const specB = `ZXQSPECB-${suffix}`;
+    const timingA = `ZXQTIMEA-${suffix}`;
+    const timingB = `ZXQTIMEB-${suffix}`;
+    const secretA = `ZXQMAILA-${suffix}@phi.example`;
+    const secretB = `ZXQMAILB-${suffix}@phi.example`;
+    const bioA = `ZXQBIOA-${suffix}`;
+    const bioB = `ZXQBIOB-${suffix}`;
+    getDb()
+      .prepare(
+        `INSERT INTO doctors (
+           id, user_id, name, specialty, consultation_fee, opd_room, opd_timing, phone, email, bio, active
+         ) VALUES (?, ?, ?, ?, 4242, ?, ?, '+910000111222', ?, ?, 1)`
+      )
+      .run(doctorA, a.userId, nameA, specA, roomA, timingA, secretA, bioA);
+    getDb()
+      .prepare(
+        `INSERT INTO doctors (
+           id, user_id, name, specialty, consultation_fee, opd_room, opd_timing, phone, email, bio, active
+         ) VALUES (?, ?, ?, ?, 5151, ?, ?, '+910000333444', ?, ?, 1)`
+      )
+      .run(doctorB, b.userId, nameB, specB, roomB, timingB, secretB, bioB);
+
+    const tokenB = await login(b.email);
+    const phone = `+91 92${String(Date.now()).slice(-8)}`;
+    const booking = await jsonRequest(
+      server.port,
+      "POST",
+      "/api/whatsapp/send",
+      { patientPhone: phone, patientName: "Roster Patient", sender: "user", content: "appointment" },
+      auth(tokenB)
+    );
+    assert.equal(booking.status, 201, String(booking.json.error || ""));
+    const bookingText = String((booking.json.botReply as { content?: string } | undefined)?.content || "");
+    assert.equal(bookingText.includes(nameB), true);
+    assert.equal(bookingText.includes(roomB), true);
+    assert.equal(bookingText.includes(specB), true);
+    for (const foreign of [nameA, roomA, specA, timingA, secretA, secretB, bioA, bioB]) {
+      assert.equal(bookingText.includes(foreign), false, `booking list leaked ${foreign}`);
+    }
+
+    const roster = await jsonRequest(
+      server.port,
+      "POST",
+      "/api/whatsapp/send",
+      { patientPhone: phone, patientName: "Roster Patient", sender: "user", content: "roster" },
+      auth(tokenB)
+    );
+    assert.equal(roster.status, 201, String(roster.json.error || ""));
+    const rosterText = String((roster.json.botReply as { content?: string } | undefined)?.content || "");
+    assert.equal(rosterText.includes(nameB), true);
+    assert.equal(rosterText.includes(roomB), true);
+    assert.equal(rosterText.includes(timingB), true);
+    for (const foreign of [nameA, roomA, specA, timingA, secretA, secretB, bioA, bioB]) {
+      assert.equal(rosterText.includes(foreign), false, `roster leaked ${foreign}`);
+    }
+  });
+
+  it("queue and cancel use the session clinic, and a tenantless super admin cannot target another clinic", async () => {
+    const suffix = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    const a = createClinic("phiQA");
+    const b = createClinic("phiQB");
+    const adminId = `user-phi-sa-${suffix}`;
+    const adminEmail = `phi.sa.${suffix}@wa-phi.example`.toLowerCase();
+    const now = new Date().toISOString();
+    getDb()
+      .prepare(
+        `INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, clinic_name, onboarding_completed, practice_type, specialty, last_login, created_at)
+         VALUES (?, '', ?, ?, ?, 'super_admin', 'active', ?, 'Lumera', 1, 'individual', 'General Medicine', ?, ?)`
+      )
+      .run(adminId, adminEmail, hashPassword("Lumera@2026"), `SA ${suffix}`, `+91 91${suffix.slice(0, 8)}`, now, now);
+    cleanupIds.tenants.push(a.tenantId, b.tenantId);
+    cleanupIds.users.push(a.userId, b.userId, adminId);
+
+    const phone = `+91 90${String(Date.now()).slice(-8)}`;
+    const patientId = `pat-phi-q-${suffix}`;
+    const appointmentId = `appt-phi-q-${suffix}`;
+    const storedName = `ZXQROW ${suffix}`;
+    const tokenNumber = 880000 + (Date.now() % 10000);
+    const uhid = `UHID-Q-${suffix}`;
+    cleanupIds.patients.push(patientId);
+    cleanupIds.appointments.push(appointmentId);
+    insertPatient({ id: patientId, tenantId: a.tenantId, name: storedName, phone, uhid });
+    getDb()
+      .prepare(
+        `INSERT INTO appointments (
+           id, tenant_id, token_number, patient_id, patient_name, patient_phone, uhid, doctor_id, doctor_name,
+           specialty, date, time_slot, type, status, source, consultation_fee, is_paid, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, 'doc-q', 'Dr Queue', 'ZXQSPEC', '2026-10-19', '09:00 AM', 'New Consultation', 'Waiting', 'Desk', 0, 0, ?)`
+      )
+      .run(appointmentId, a.tenantId, tokenNumber, patientId, storedName, phone, uhid, now);
+
+    const tokenB = await login(b.email);
+    const queued = await jsonRequest(
+      server.port,
+      "POST",
+      "/api/whatsapp/send",
+      { patientPhone: phone, patientName: "Caller Name", sender: "user", content: "queue" },
+      auth(tokenB)
+    );
+    assert.equal(queued.status, 201, String(queued.json.error || ""));
+    const queuedBody = JSON.stringify(queued.json);
+    for (const secret of [storedName, String(tokenNumber), uhid, "Dr Queue"]) {
+      assert.equal(queuedBody.includes(secret), false, `tenant B queue leaked ${secret}`);
+    }
+
+    const cancelled = await jsonRequest(
+      server.port,
+      "POST",
+      "/api/whatsapp/send",
+      { patientPhone: phone, patientName: "Caller Name", sender: "user", content: "❌ cancel" },
+      auth(tokenB)
+    );
+    assert.equal(cancelled.status, 201, String(cancelled.json.error || ""));
+    assert.equal(JSON.stringify(cancelled.json).includes(storedName), false);
+    assert.equal(
+      (getDb().prepare("SELECT status FROM appointments WHERE id = ?").get(appointmentId) as { status: string }).status,
+      "Waiting"
+    );
+
+    const tokenAdmin = await login(adminEmail);
+    for (const content of ["queue", "❌ cancel"]) {
+      const forged = await jsonRequest(
+        server.port,
+        "POST",
+        "/api/whatsapp/send",
+        { patientPhone: phone, patientName: "Caller Name", sender: "user", content, tenantId: a.tenantId },
+        auth(tokenAdmin)
+      );
+      assert.equal(forged.status, 400, content);
+      assert.equal(forged.json.error, "No tenant associated with this account.");
+      const forgedBody = JSON.stringify(forged.json);
+      for (const secret of [storedName, String(tokenNumber), uhid, "Dr Queue"]) {
+        assert.equal(forgedBody.includes(secret), false, `super admin ${content} leaked ${secret}`);
+      }
+    }
+    assert.equal(
+      (getDb().prepare("SELECT status FROM appointments WHERE id = ?").get(appointmentId) as { status: string }).status,
+      "Waiting"
+    );
   });
 });

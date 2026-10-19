@@ -1610,6 +1610,7 @@ async function processBotActionOrQuery(
   media?: Record<string, unknown>;
 } | null> {
   const q = text.toLowerCase().trim();
+  const sessionTenantId = String(tenantHints.sessionTenantId || "").trim();
   const tenantId = resolveWhatsAppTenantId({
     tenantId: tenantHints.tenantId,
     sessionTenantId: tenantHints.sessionTenantId,
@@ -1701,7 +1702,17 @@ async function processBotActionOrQuery(
   }
 
   if (q.includes("book") || q.includes("appointment") || q.includes("schedule") || q.includes("अपॉइंटमेंट") || q.includes("डॉक्टर")) {
-    const doctors = db.prepare("SELECT * FROM doctors WHERE active = 1 LIMIT 4").all() as Record<string, unknown>[];
+    const doctors = sessionTenantId
+      ? (db
+          .prepare(
+            `SELECT d.name, d.specialty, d.opd_room, d.consultation_fee
+             FROM doctors d
+             INNER JOIN users u ON u.id = d.user_id
+             WHERE u.tenant_id = ? AND d.active = 1
+             LIMIT 4`
+          )
+          .all(sessionTenantId) as Record<string, unknown>[])
+      : [];
     const docOptions = doctors.map((d) => `• *${d.name}* (${d.specialty}) - OPD Room ${d.opd_room}, Fee ${formatINR(Number(d.consultation_fee || 0))}`).join("\n");
 
     const bookingCopy = clinicOutboundCopy({
@@ -1716,7 +1727,17 @@ async function processBotActionOrQuery(
 
   // 4. Check Doctor Timings
   if (q.includes("timing") || q.includes("hours") || q.includes("doctor timing") || q.includes("roster") || q.includes("समय")) {
-    const doctors = db.prepare("SELECT * FROM doctors WHERE active = 1 LIMIT 5").all() as Record<string, unknown>[];
+    const doctors = sessionTenantId
+      ? (db
+          .prepare(
+            `SELECT d.name, d.specialty, d.opd_timing, d.opd_room
+             FROM doctors d
+             INNER JOIN users u ON u.id = d.user_id
+             WHERE u.tenant_id = ? AND d.active = 1
+             LIMIT 5`
+          )
+          .all(sessionTenantId) as Record<string, unknown>[])
+      : [];
     const roster = doctors.map((d) => `👨‍⚕️ *${d.name}* (${d.specialty})\n  🕒 ${d.opd_timing} | 🚪 ${d.opd_room}`).join("\n\n");
 
     const rosterCopy = clinicOutboundCopy({
@@ -1731,13 +1752,13 @@ async function processBotActionOrQuery(
 
   // 5. Queue Status
   if (q.includes("queue") || q.includes("token") || q.includes("wait") || q.includes("कतार") || q.includes("नंबर")) {
-    if (!tenantId) {
+    if (!sessionTenantId) {
       return {
         content: "We could not match this chat to a clinic calendar. Please ask reception to link your WhatsApp number.",
         buttons: ["📅 Book Appointment", "👤 Speak with Receptionist"],
       };
     }
-    const queue = getWhatsAppQueue({ tenantId, patientPhone: phone });
+    const queue = getWhatsAppQueue({ tenantId: sessionTenantId, patientPhone: phone });
     if (queue.hasAppointment && queue.appointment) {
       const appt = queue.appointment;
       return {
@@ -1748,10 +1769,10 @@ async function processBotActionOrQuery(
   }
 
   // 6. Cancel / reschedule — same appointments row as ClinicianApp PATCH
-  if (tenantId && (q.includes("cancel appointment") || q.includes("cancel my appointment") || q.includes("❌ cancel"))) {
+  if (sessionTenantId && (q.includes("cancel appointment") || q.includes("cancel my appointment") || q.includes("❌ cancel"))) {
     try {
       const appointment = patchWhatsAppAppointment({
-        tenantId,
+        tenantId: sessionTenantId,
         patientPhone: phone,
         body: { status: "Cancelled" },
       });
