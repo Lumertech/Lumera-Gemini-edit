@@ -528,7 +528,7 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
                       type="email"
                       value={formData.email}
                       onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                      placeholder="doctor@example.com"
+                      placeholder="doctor@lumera.health"
                       className="w-full px-3 py-2 bg-slate-800/80 border border-slate-700 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
                     />
                   </div>

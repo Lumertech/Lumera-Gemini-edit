@@ -222,7 +222,7 @@ export function ensureMetaTechProviderAndPolicies(database: SqlDatabase) {
           {
             type: "BUTTONS",
             buttons: [
-              { type: "URL", text: "Open Patient Portal", url: "https://www.mylumera.in/portal/v/{{1}}" }
+              { type: "URL", text: "Open Patient Portal", url: "https://lumera.health/portal" }
             ]
           }
         ]),

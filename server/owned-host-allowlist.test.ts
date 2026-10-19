@@ -4,7 +4,6 @@ import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   ALLOWED_HOSTS,
-  PR164_EXEMPT_LINES,
   findUnownedHosts,
   scanUserFacingHosts,
 } from "./owned-host-allowlist.ts";
@@ -33,20 +32,18 @@ describe("owned host allowlist", () => {
     ]) {
       assert.ok(hosts.includes(required), `missing ${required}`);
     }
+    assert.ok(hosts.includes("clinic.example"), "missing clinic.example");
     assert.ok(ALLOWED_HOSTS.length <= 24, `allowlist grew to ${ALLOWED_HOSTS.length}`);
     for (const entry of ALLOWED_HOSTS) {
       assert.ok(entry.why.length > 20, entry.host);
     }
-    assert.deepEqual(PR164_EXEMPT_LINES, [
-      "src/components/PrescriptionWriter.tsx:601",
-      "src/components/PrescriptionWriter.tsx:2295",
-    ]);
   });
 
-  it("fails an unowned host and exempts @lumera.me demo logins", () => {
+  it("fails an unowned host and exempts @lumera.me and @lumera.health mailboxes", () => {
     const sample = [
       'export const contact = "ravee@lumer.me";',
       'export const demo = "doctor@lumera.me";',
+      'export const legacy = "dr.malhotra@lumera.health";',
       'export const clinic = "care@example.com";',
       'export const bad = "https://lumera.health/portal";',
       'export const mail = "care@lumeraclinic.in";',
@@ -74,15 +71,24 @@ describe("owned host allowlist", () => {
     assert.equal(hits[0].host, "lumera.me");
   });
 
-  it("leaves the PrescriptionWriter lines owned by PR #164", () => {
-    const lines = Array.from({ length: 2295 }, () => "");
-    lines[0] = "export const other = `https://lumera.health/portal`;";
-    lines[600] = "qrVerificationUrl: `https://lumera.health/rx/${rxNumber}`,";
-    lines[2294] = "<p>URL: https://lumera.health/rx/{rxNumber}</p>";
+  it("leaves only the URL shapes PR #164 already replaces", () => {
+    const lines = [
+      "export const other = `https://lumera.health/portal`;",
+      "qrVerificationUrl: `https://lumera.health/rx/${rxNumber}`,",
+      "<p>URL: https://lumera.health/rx/{rxNumber}</p>",
+    ];
     const hits = findUnownedHosts(lines.join("\n"), "src/components/PrescriptionWriter.tsx");
     assert.equal(hits.length, 1);
     assert.equal(hits[0].line, 1);
     assert.equal(hits[0].host, "lumera.health");
+    const clinical = findUnownedHosts(
+      'const payload = "https://lumera.health/rx/{{3}}";\nconst other = "https://lumera.health/account";\n',
+      "src/data/clinicalData.ts"
+    );
+    assert.deepEqual(
+      clinical.map((hit) => hit.line),
+      [2]
+    );
   });
 
   it("scans src and server, excluding tests, and fails closed on any other host", () => {

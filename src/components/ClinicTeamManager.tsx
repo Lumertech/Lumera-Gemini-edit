@@ -281,7 +281,7 @@ export const ClinicTeamManager: React.FC<ClinicTeamManagerProps> = ({
               <input
                 required
                 type="email"
-                placeholder="doctor@example.com"
+                placeholder="doctor@lumera.health"
                 className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-blue-500"
                 value={form.email}
                 onChange={(e) => setForm({ ...form, email: e.target.value })}

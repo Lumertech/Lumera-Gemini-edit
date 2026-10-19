@@ -508,8 +508,12 @@ export function migrate(database: SqlDatabase) {
   backfillWhatsAppTenantIds(database);
   migrateWhatsAppConversationKey(database);
   enforceWhatsAppTenantNotNull(database);
-  rewriteLegacyHonestyCopy(database);
+  // Unowned-domain seed rewrite. It sits above rewriteLegacyHonestyCopy so
+  // PR #164 can append its patient_link_tokens, rx_signed_safety, and
+  // whatsapp_patient_opt_ins schema immediately after the honesty pass.
+  // This block does not create those tables.
   migrateUnownedDomains(database);
+  rewriteLegacyHonestyCopy(database);
 }
 
 /**

@@ -1,5 +1,6 @@
 import { isDemoAccountEmail } from "../src/lib/demoAccounts.ts";
 import { migrate } from "./db-migrate.ts";
+import { migrateUnownedDomains } from "./migrate-unowned-domains.ts";
 import {
   seedIfEmpty,
   seedSubscriptionsIfMissing,
@@ -187,6 +188,11 @@ export function initDatabase(): DatabaseSync {
   // The repair itself returns immediately unless DEMO_LOGIN_ENABLED is on, so a
   // production boot with demo login off does not move these emails or rewrite hashes.
   ensureSunriseClinic(db);
+  // Seeds run after migrate(). Rewrite unowned-domain rows they just inserted.
+  // The same call inside migrate() covers rows that already existed. A second
+  // pass writes nothing once the values are current. PR #164's token-table
+  // block stays at the end of migrate(), after the honesty pass.
+  migrateUnownedDomains(db);
   return db as DatabaseSync;
 }
 

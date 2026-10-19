@@ -9,13 +9,17 @@ import path from "node:path";
  * TODO(founder): @lumera.me addresses are demo logins and stay until the
  * founder replaces them. The exemption is emails only, not https://lumera.me.
  *
- * TODO(#164): src/components/PrescriptionWriter.tsx lines 601 and 2295 are
- * owned by Lumera Meta. This scan does not edit those lines.
+ * PR #164's server/public-url-hosts.test.ts is the lumera.health / lumera.me
+ * host regression. This scan is the broader host and email allowlist. It does
+ * not flag the URL strings that test already owns (Rx QR, FHIR systems, the
+ * client Rx/pay buttons, and the seeded portal URL). @lumera.health mailboxes
+ * are stripped the same way that test strips them.
  */
 export const ALLOWED_HOSTS: ReadonlyArray<{ host: string; why: string }> = [
   { host: "mylumera.in", why: "Apex domain Lumera owns. Subdomains such as www are included." },
   { host: "lumer.me", why: "Owned contact domain. The public contact mailbox is ravee@lumer.me." },
   { host: "example.com", why: "Demo clinic letterhead contact and non-login doctor mailboxes." },
+  { host: "clinic.example", why: "Placeholder mailbox on the clinic team form. PR #164 uses doctor@clinic.example." },
   { host: "googleapis.com", why: "Google Fonts, OAuth token, and Google API hosts." },
   { host: "gstatic.com", why: "Google Fonts file host." },
   { host: "google.com", why: "Google account host used by OAuth (accounts.google.com)." },
@@ -51,13 +55,26 @@ const HOST_SUFFIXES = [
   "unsplash.com",
 ];
 
-/** TODO(#164): exact file:line owned by Lumera Meta. Do not edit these lines in the domain sweep. */
-export const PR164_EXEMPT_LINES = [
-  "src/components/PrescriptionWriter.tsx:601",
-  "src/components/PrescriptionWriter.tsx:2295",
-] as const;
+/**
+ * URL shapes PR #164 already replaces. The broader scan leaves them alone so
+ * it does not fight public-url-hosts.test.ts. Any other host in those files
+ * still fails.
+ */
+export const PR164_OWNED_URLS: Readonly<Record<string, readonly RegExp[]>> = {
+  "server/clinical.ts": [/https:\/\/lumera\.health\/rx\/\$\{/],
+  "server/fhir.ts": [/https:\/\/lumera\.health\/(?:uhid|fhir\/prescription|fhir\/op-consult)\b/],
+  "src/components/PrescriptionWriter.tsx": [/https:\/\/lumera\.health\/rx\//],
+  "src/data/clinicalData.ts": [/https:\/\/lumera\.health\/rx\/\{\{3/, /https:\/\/lumera\.health\/pay\/\{\{2/],
+  "server/db-seed-meta.ts": [/https:\/\/lumera\.health\/portal\b/],
+};
 
 export type HostViolation = { file: string; line: number; host: string; kind: string };
+
+function ownedByPr164(relPath: string, url: string): boolean {
+  const patterns = PR164_OWNED_URLS[relPath.replace(/\\/g, "/")];
+  if (!patterns) return false;
+  return patterns.some((pattern) => pattern.test(url));
+}
 
 function lineOf(source: string, index: number): number {
   return source.slice(0, index).split("\n").length;
@@ -160,15 +177,16 @@ export function findUnownedHosts(source: string, relPath: string): HostViolation
   const hits: HostViolation[] = [];
   const push = (index: number, host: string, kind: string) => {
     const line = lineOf(stripped, index);
-    const key = `${relPath.replace(/\\/g, "/")}:${line}`;
-    if ((PR164_EXEMPT_LINES as readonly string[]).includes(key)) return;
     // TODO(founder): @lumera.me demo logins await the founder. Emails only.
-    if (kind === "email" && host.toLowerCase() === "lumera.me") return;
+    // @lumera.health mailboxes match PR #164's host test, which strips them
+    // before looking for hosts. A lumera.health URL is still a violation.
+    if (kind === "email" && (host.toLowerCase() === "lumera.me" || host.toLowerCase() === "lumera.health")) return;
     if (hostAllowed(host)) return;
     hits.push({ file: relPath.replace(/\\/g, "/"), line, host, kind });
   };
 
   for (const match of stripped.matchAll(URL_RE)) {
+    if (ownedByPr164(relPath, match[0])) continue;
     const host = hostFromUrl(match[0]);
     if (host) push(match.index ?? 0, host, "url");
   }

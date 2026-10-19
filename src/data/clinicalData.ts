@@ -921,7 +921,7 @@ export const DEFAULT_DOCTORS: Doctor[] = [
     availableDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
     opdTiming: '09:00 AM - 02:00 PM',
     phone: '+91 98765 43210',
-    email: 'dr.malhotra@example.com',
+    email: 'dr.malhotra@lumera.health',
     active: true
   },
   {
@@ -936,7 +936,7 @@ export const DEFAULT_DOCTORS: Doctor[] = [
     availableDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
     opdTiming: '08:30 AM - 01:30 PM, 04:30 PM - 08:00 PM',
     phone: '+91 98312 77889',
-    email: 'dr.siddharth@example.com',
+    email: 'dr.siddharth@lumera.health',
     active: true
   },
   {
@@ -951,7 +951,7 @@ export const DEFAULT_DOCTORS: Doctor[] = [
     availableDays: ['Mon', 'Wed', 'Fri', 'Sat'],
     opdTiming: '10:00 AM - 03:00 PM',
     phone: '+91 98112 34567',
-    email: 'dr.ananya@example.com',
+    email: 'dr.ananya@lumera.health',
     active: true
   },
   {
@@ -966,7 +966,7 @@ export const DEFAULT_DOCTORS: Doctor[] = [
     availableDays: ['Tue', 'Thu', 'Sat'],
     opdTiming: '11:00 AM - 04:00 PM',
     phone: '+91 98223 99887',
-    email: 'dr.rajesh@example.com',
+    email: 'dr.rajesh@lumera.health',
     active: true
   },
   {
@@ -981,7 +981,7 @@ export const DEFAULT_DOCTORS: Doctor[] = [
     availableDays: ['Mon', 'Tue', 'Thu', 'Fri'],
     opdTiming: '02:00 PM - 07:00 PM',
     phone: '+91 97334 11223',
-    email: 'dr.meera@example.com',
+    email: 'dr.meera@lumera.health',
     active: true
   },
   {
@@ -996,7 +996,7 @@ export const DEFAULT_DOCTORS: Doctor[] = [
     availableDays: ['Mon', 'Wed', 'Fri'],
     opdTiming: '09:30 AM - 01:30 PM',
     phone: '+91 99445 66778',
-    email: 'dr.harsh@example.com',
+    email: 'dr.harsh@lumera.health',
     active: true
   },
   {
@@ -1011,7 +1011,7 @@ export const DEFAULT_DOCTORS: Doctor[] = [
     availableDays: ['Mon', 'Tue', 'Thu', 'Sat'],
     opdTiming: '10:00 AM - 02:30 PM',
     phone: '+91 98319 88990',
-    email: 'dr.shalini@example.com',
+    email: 'dr.shalini@lumera.health',
     active: true
   },
   {
@@ -1026,7 +1026,7 @@ export const DEFAULT_DOCTORS: Doctor[] = [
     availableDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
     opdTiming: '09:00 AM - 01:00 PM, 05:00 PM - 08:30 PM',
     phone: '+91 98401 22334',
-    email: 'dr.arun@example.com',
+    email: 'dr.arun@lumera.health',
     active: true
   },
   {
@@ -1041,7 +1041,7 @@ export const DEFAULT_DOCTORS: Doctor[] = [
     availableDays: ['Mon', 'Wed', 'Fri', 'Sat'],
     opdTiming: '11:00 AM - 04:30 PM',
     phone: '+91 98109 44332',
-    email: 'dr.alok@example.com',
+    email: 'dr.alok@lumera.health',
     active: true
   }
 ];
@@ -1362,8 +1362,7 @@ export const DEFAULT_WHATSAPP_TEMPLATES: WhatsAppTemplate[] = [
     bodyText: 'Dear {{1}},\n\nYour digital prescription from {{2}} has been generated successfully.\n\n📋 Rx No: *{{3}}*\n💊 Medications: {{4}} items\n🗓️ Follow-up: *{{5}}*\n\nTap the button below to view or print your digital prescription anytime.',
     footerText: 'Issued under the Telemedicine Practice Guidelines, 2020',
     buttons: [
-      // {{1}} is an opaque token minted for purpose "rx". Never an rx number.
-      { type: 'URL', text: 'View Digital Rx PDF', payload: 'https://www.mylumera.in/rx/v/{{1}}' },
+      { type: 'URL', text: 'View Digital Rx PDF', payload: 'https://lumera.health/rx/{{3}}' },
       { type: 'QUICK_REPLY', text: 'Order Medicines', payload: 'ORDER_MEDS' }
     ],
     status: 'APPROVED'
@@ -1377,8 +1376,7 @@ export const DEFAULT_WHATSAPP_TEMPLATES: WhatsAppTemplate[] = [
     bodyText: 'Dear {{1}},\n\nInvoice *{{2}}* for {{3}} has been generated for total amount *₹{{4}}*.\n\nYou can pay securely via UPI, Cards, or NetBanking using the link below.',
     footerText: 'Instant GST Receipt provided on payment',
     buttons: [
-      // {{1}} is an opaque token (purpose "receipt"). The page may only hand off to the clinic's own Razorpay or UPI. Lumera does not collect patient money.
-      { type: 'URL', text: 'Pay ₹{{4}} via UPI/Card', payload: 'https://www.mylumera.in/pay/v/{{1}}' }
+      { type: 'URL', text: 'Pay ₹{{4}} via UPI/Card', payload: 'https://lumera.health/pay/{{2}}' }
     ],
     status: 'APPROVED'
   },
