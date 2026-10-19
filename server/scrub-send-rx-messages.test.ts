@@ -4,7 +4,14 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
-import { migrate, scrubHistoricalSendRxMessages, SEND_RX_MESSAGE_MARKER } from "./db-migrate.ts";
+import {
+  applyHistoricalSendRxScrub,
+  migrate,
+  scrubHistoricalSendRxMessages,
+  SEND_RX_MESSAGE_MARKER,
+  SEND_RX_NOT_DELIVERED_MARKER,
+  SEND_RX_SCRUB_AUDIT_ACTION,
+} from "./db-migrate.ts";
 
 function tempSqlite(): { db: DatabaseSync; close: () => void } {
   const file = path.join(
@@ -80,6 +87,7 @@ function insertMessage(
     status?: string;
     direction?: string;
     wamid?: string;
+    tenantId?: string;
   }
 ) {
   db.prepare(
@@ -87,7 +95,7 @@ function insertMessage(
        id, conversation_id, patient_phone, sender, staff_name, content, translated_content,
        detected_language, time_display, buttons, media, audio_url, voice_transcript, status,
        created_at, tenant_id, body, metadata, direction, wamid
-     ) VALUES (?, 'conv-1', '+919800011122', 'agent', 'Dr North', ?, ?, 'en', '4:10 PM', ?, ?, null, null, ?, '2026-01-02T04:10:00.000Z', 'tenant-north', ?, ?, ?, ?)`
+     ) VALUES (?, 'conv-1', '+919800011122', 'agent', 'Dr North', ?, ?, 'en', '4:10 PM', ?, ?, null, null, ?, '2026-01-02T04:10:00.000Z', ?, ?, ?, ?, ?)`
   ).run(
     row.id,
     row.content,
@@ -95,6 +103,7 @@ function insertMessage(
     row.buttons === undefined ? null : row.buttons,
     row.media === undefined ? null : row.media,
     row.status || "delivered",
+    row.tenantId || "tenant-north",
     row.body === undefined ? null : row.body,
     row.metadata === undefined ? null : row.metadata,
     row.direction || "outbound",
@@ -104,6 +113,24 @@ function insertMessage(
 
 function readRow(db: DatabaseSync, id: string): MessageRow {
   return db.prepare("SELECT * FROM whatsapp_messages WHERE id = ?").get(id) as MessageRow;
+}
+
+let conversationSeq = 0;
+
+function insertConversation(db: DatabaseSync, id: string, lastMessage: string, tenantId = "tenant-north") {
+  conversationSeq += 1;
+  const phone = `+9197${String(conversationSeq).padStart(8, "0")}`;
+  db.prepare(
+    `INSERT INTO whatsapp_conversations (
+       id, patient_phone, patient_name, last_message, last_message_time, updated_at, tenant_id
+     ) VALUES (?, ?, 'Asha Rao', ?, '4:10 PM', '2026-01-02T04:10:00.000Z', ?)`
+  ).run(id, phone, lastMessage, tenantId);
+}
+
+function auditRows(db: DatabaseSync): Array<{ action: string; details: string }> {
+  return db
+    .prepare("SELECT action, details FROM audit_logs WHERE action = ? ORDER BY timestamp, id")
+    .all(SEND_RX_SCRUB_AUDIT_ACTION) as Array<{ action: string; details: string }>;
 }
 
 describe("historical send-rx message scrub", () => {
@@ -175,9 +202,32 @@ describe("historical send-rx message scrub", () => {
         }),
         wamid: "wamid.EMR",
       });
+      insertMessage(db, {
+        id: "msg-failed",
+        content: legacyContent(uhid, diagnosis, drug),
+        buttons: legacyButtons(),
+        media: legacyMedia("RX-FAILED"),
+        status: "failed",
+        wamid: "wamid.FAILED",
+      });
+      insertMessage(db, {
+        id: "msg-undelivered",
+        content: legacyContent("UHID-SOUTH", "SOUTH_DIAGNOSIS", "SOUTH_DRUG"),
+        media: legacyMedia("RX-SOUTH"),
+        status: "undelivered",
+        wamid: "wamid.SOUTH",
+        tenantId: "tenant-south",
+      });
+      insertConversation(db, "conv-exact", "Digital Rx: RX-PREVIEW-77");
+      insertConversation(db, "conv-sentence", "Digital Rx: RX-1 and then more text");
+      insertConversation(db, "conv-embedded", "Staff said Digital Rx: RX-2");
+      insertConversation(db, "conv-blank", "Digital Rx: ");
+      insertConversation(db, "conv-colon", "Digital Rx:");
+      insertConversation(db, "conv-trail", "Digital Rx: RX-1 ");
+      insertConversation(db, "conv-normal", "Namaste, your appointment is at 4.");
 
       const changed = scrubHistoricalSendRxMessages(db);
-      assert.equal(changed, 3);
+      assert.equal(changed, 6);
 
       const scrubbed = readRow(db, "msg-rx-old");
       assert.equal(scrubbed.content, SEND_RX_MESSAGE_MARKER);
@@ -215,6 +265,61 @@ describe("historical send-rx message scrub", () => {
       assert.equal(buttonsOnly.status, "read");
       assert.equal(buttonsOnly.wamid, "wamid.BUTTONS");
 
+      const failed = readRow(db, "msg-failed");
+      assert.equal(failed.content, SEND_RX_NOT_DELIVERED_MARKER);
+      assert.equal(failed.buttons, SEND_RX_NOT_DELIVERED_MARKER);
+      assert.equal(failed.media, SEND_RX_NOT_DELIVERED_MARKER);
+      assert.equal(failed.status, "failed");
+      assert.equal(failed.wamid, "wamid.FAILED");
+      assert.equal(JSON.stringify(failed).includes(diagnosis), false);
+      const undelivered = readRow(db, "msg-undelivered");
+      assert.equal(undelivered.content, SEND_RX_NOT_DELIVERED_MARKER);
+      assert.equal(undelivered.media, SEND_RX_NOT_DELIVERED_MARKER);
+      assert.equal(undelivered.status, "undelivered");
+      assert.equal(undelivered.tenant_id, "tenant-south");
+      assert.equal(JSON.stringify(undelivered).includes("SOUTH_DIAGNOSIS"), false);
+
+      const lastMessage = (id: string) =>
+        (db.prepare("SELECT last_message FROM whatsapp_conversations WHERE id = ?").get(id) as { last_message: string })
+          .last_message;
+      assert.equal(lastMessage("conv-exact"), SEND_RX_MESSAGE_MARKER);
+      for (const id of ["conv-sentence", "conv-embedded", "conv-blank", "conv-colon", "conv-trail", "conv-normal"]) {
+        assert.notEqual(lastMessage(id), SEND_RX_MESSAGE_MARKER);
+      }
+      assert.equal(lastMessage("conv-sentence"), "Digital Rx: RX-1 and then more text");
+      assert.equal(lastMessage("conv-trail"), "Digital Rx: RX-1 ");
+
+      const audits = auditRows(db);
+      assert.equal(audits.length, 1);
+      const details = JSON.parse(audits[0].details) as {
+        reason: string;
+        messages: number;
+        previews: number;
+        tenants: Array<{ tenantId: string; messages: number; previews: number }>;
+        messageIds: string[];
+        previewIds: string[];
+      };
+      assert.equal(typeof details.reason, "string");
+      assert.ok(details.reason.length > 0);
+      assert.equal(details.messages, 5);
+      assert.equal(details.previews, 1);
+      assert.deepEqual(details.tenants, [
+        { tenantId: "tenant-north", messages: 4, previews: 1 },
+        { tenantId: "tenant-south", messages: 1, previews: 0 },
+      ]);
+      assert.deepEqual(details.messageIds, [
+        "msg-buttons-only",
+        "msg-failed",
+        "msg-media-only",
+        "msg-rx-old",
+        "msg-undelivered",
+      ]);
+      assert.deepEqual(details.previewIds, ["conv-exact"]);
+      const auditText = JSON.stringify(details);
+      for (const secret of [diagnosis, drug, uhid, "UHID-SOUTH", "SOUTH_DIAGNOSIS", "SOUTH_DRUG", "RX-PREVIEW-77", "Digital Rx:", "/api/whatsapp/prescription/"]) {
+        assert.equal(auditText.includes(secret), false);
+      }
+
       for (const id of ["msg-chat", "msg-lab", "msg-emr-pdf"]) {
         const row = readRow(db, id);
         assert.notEqual(row.content, SEND_RX_MESSAGE_MARKER);
@@ -251,19 +356,94 @@ describe("historical send-rx message scrub", () => {
         buttons: JSON.stringify([{ type: "QUICK_REPLY", text: "Thanks", payload: "thanks" }]),
         wamid: "wamid.KEEPCHAT",
       });
+      insertMessage(db, {
+        id: "msg-failed-boot",
+        content: legacyContent("UHID-FAIL", "FAIL_DIAGNOSIS", "FAIL_DRUG"),
+        status: "failed",
+        wamid: "wamid.FAILBOOT",
+      });
+      insertConversation(db, "conv-boot", "Digital Rx: RX-BOOT-9");
+      insertConversation(db, "conv-keep", "Ordinary preview");
 
       migrate(db);
       assert.equal(readRow(db, "msg-rx-boot").content, SEND_RX_MESSAGE_MARKER);
       assert.equal(readRow(db, "msg-rx-boot").wamid, "wamid.BOOT");
+      assert.equal(readRow(db, "msg-failed-boot").content, SEND_RX_NOT_DELIVERED_MARKER);
+      assert.equal(readRow(db, "msg-failed-boot").status, "failed");
       assert.equal(readRow(db, "msg-keep").content, "Ordinary clinic reply");
+      const bootPreview = db.prepare("SELECT last_message FROM whatsapp_conversations WHERE id = ?").get("conv-boot") as {
+        last_message: string;
+      };
+      assert.equal(bootPreview.last_message, SEND_RX_MESSAGE_MARKER);
+      assert.equal(auditRows(db).length, 1);
 
-      const afterFirst = db.prepare("SELECT * FROM whatsapp_messages ORDER BY id").all();
+      const afterFirst = {
+        messages: db.prepare("SELECT * FROM whatsapp_messages ORDER BY id").all(),
+        conversations: db.prepare("SELECT * FROM whatsapp_conversations ORDER BY id").all(),
+        audits: db.prepare("SELECT * FROM audit_logs ORDER BY id").all(),
+      };
       assert.equal(scrubHistoricalSendRxMessages(db), 0);
       migrate(db);
-      assert.deepEqual(db.prepare("SELECT * FROM whatsapp_messages ORDER BY id").all(), afterFirst);
-      assert.equal(JSON.stringify(afterFirst).includes("BOOT_DIAGNOSIS"), false);
+      assert.deepEqual(db.prepare("SELECT * FROM whatsapp_messages ORDER BY id").all(), afterFirst.messages);
+      assert.deepEqual(db.prepare("SELECT * FROM whatsapp_conversations ORDER BY id").all(), afterFirst.conversations);
+      assert.deepEqual(db.prepare("SELECT * FROM audit_logs ORDER BY id").all(), afterFirst.audits);
+      assert.equal(auditRows(db).length, 1);
+      assert.equal(JSON.stringify(afterFirst.messages).includes("BOOT_DIAGNOSIS"), false);
+      assert.equal(JSON.stringify(afterFirst.messages).includes("FAIL_DIAGNOSIS"), false);
+      assert.equal(JSON.stringify(afterFirst.audits).includes("RX-BOOT-9"), false);
+      assert.equal(JSON.stringify(afterFirst.audits).includes("Digital Rx:"), false);
     } finally {
       close();
     }
+  });
+
+  it("rolls the rewrite back when the audit insert fails", () => {
+    const { db, close } = tempSqlite();
+    try {
+      migrate(db);
+      db.exec("ALTER TABLE whatsapp_messages ADD COLUMN body TEXT");
+      db.exec("ALTER TABLE whatsapp_messages ADD COLUMN metadata TEXT");
+      db.exec("ALTER TABLE whatsapp_messages ADD COLUMN direction TEXT");
+      db.exec("ALTER TABLE whatsapp_messages ADD COLUMN wamid TEXT");
+      insertMessage(db, {
+        id: "msg-atomic",
+        content: legacyContent("UHID-ATOMIC", "ATOMIC_DIAGNOSIS", "ATOMIC_DRUG"),
+        wamid: "wamid.ATOMIC",
+      });
+      insertConversation(db, "conv-atomic", "Digital Rx: RX-ATOMIC");
+      db.exec("DROP TABLE audit_logs");
+      assert.throws(() => scrubHistoricalSendRxMessages(db));
+      assert.equal(readRow(db, "msg-atomic").content.includes("ATOMIC_DIAGNOSIS"), true);
+      const preview = db.prepare("SELECT last_message FROM whatsapp_conversations WHERE id = ?").get("conv-atomic") as {
+        last_message: string;
+      };
+      assert.equal(preview.last_message, "Digital Rx: RX-ATOMIC");
+    } finally {
+      close();
+    }
+  });
+
+  it("logs the error name and rethrows so boot does not swallow the scrub", () => {
+    const database = {
+      prepare() {
+        const error = new Error("ATOMIC_DIAGNOSIS leaked into the log");
+        error.name = "SqliteError";
+        throw error;
+      },
+      exec() {
+        throw new Error("exec should not run");
+      },
+    };
+    const lines: unknown[][] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => {
+      lines.push(args);
+    };
+    try {
+      assert.throws(() => applyHistoricalSendRxScrub(database as never), /ATOMIC_DIAGNOSIS/);
+    } finally {
+      console.error = original;
+    }
+    assert.deepEqual(lines, [["whatsapp_sendrx_phi_scrub failed", "SqliteError"]]);
   });
 });

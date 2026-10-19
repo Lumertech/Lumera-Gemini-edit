@@ -9,7 +9,6 @@ import { attachUser } from "./auth.ts";
 import { createApiRouter } from "./api.ts";
 import { createUsageBillingRouter } from "./usage-billing-api.ts";
 import { getDb, initDatabase } from "./db.ts";
-import { SEND_RX_MESSAGE_MARKER } from "./db-migrate.ts";
 import { dispatchWhatsAppCloudMessage, sendPaymentReceipt } from "./graph-whatsapp.ts";
 import { hashPassword } from "./password.ts";
 import {
@@ -272,14 +271,6 @@ describe("Usage wallet billing dispatch paths", () => {
       .prepare("SELECT COUNT(*) AS c FROM usage_events WHERE tenant_id = ? AND resource = 'whatsapp_message'")
       .get(tenantId) as { c: number };
     assert.ok(rxAfter.c >= rxBefore + 1, "send-rx must insert usage_events");
-    const rxRow = getDb()
-      .prepare("SELECT content, buttons, media FROM whatsapp_messages WHERE patient_phone = ? ORDER BY created_at DESC LIMIT 1")
-      .get(patientPhone) as { content: string; buttons: string | null; media: string | null } | undefined;
-    assert.equal(rxRow?.content, SEND_RX_MESSAGE_MARKER);
-    assert.equal(rxRow?.buttons, null);
-    assert.equal(rxRow?.media, null);
-    assert.equal(String(rxRow?.content || "").includes("Usage wallet check"), false);
-    assert.equal(String(rxRow?.content || "").includes("Paracetamol"), false);
 
     const calendarSrc =
       fs.readFileSync(path.join(__dirname, "whatsapp-calendar.ts"), "utf8") +

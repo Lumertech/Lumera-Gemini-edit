@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { type SqlDatabase } from "./sql-engine.ts";
 import { ensurePlatformTenantSchema } from "./platform-tenants.ts";
 import { BOOTSTRAP_DDL } from "./db-bootstrap-ddl.ts";
@@ -507,11 +508,7 @@ export function migrate(database: SqlDatabase) {
   migrateWhatsAppConversationKey(database);
   enforceWhatsAppTenantNotNull(database);
   rewriteLegacyHonestyCopy(database);
-  try {
-    scrubHistoricalSendRxMessages(database);
-  } catch {
-    /* whatsapp_messages is created earlier; a partial bootstrap skips the scrub */
-  }
+  applyHistoricalSendRxScrub(database);
 }
 
 /**
@@ -562,17 +559,28 @@ export function backfillLabReportAndBranchTenants(database: SqlDatabase) {
   } catch {}
 }
 
-/** Neutral replacement for a historical send-rx WhatsApp row. Not a clinical document. */
+/** Neutral replacement for a historical send-rx row that was delivered, sent, or read. */
 export const SEND_RX_MESSAGE_MARKER = "Prescription notification sent";
+/** Neutral replacement when that historical row was failed, undelivered, or any other status. */
+export const SEND_RX_NOT_DELIVERED_MARKER = "Prescription notification (not delivered)";
+export const SEND_RX_SCRUB_AUDIT_ACTION = "whatsapp_sendrx_phi_scrub";
 
+const SEND_RX_SCRUB_REASON =
+  "Replaced historical send-rx WhatsApp message fields and matching conversation previews with a neutral marker.";
+const SEND_RX_PREVIEW_PREFIX = "Digital Rx: ";
 const SEND_RX_SCRUB_COLUMNS = ["content", "body", "translated_content", "buttons", "media", "metadata", "metadata_json"] as const;
 
 /**
- * Old POST /send-rx wrote diagnosis, medicines, UHID, and
- * /api/whatsapp/prescription/.../pdf into whatsapp_messages content, buttons,
- * and media. Only rows with that send-rx marker are rewritten. id, tenant_id,
- * timestamps, direction, status, and wamid are not in the SET list.
- * The marker does not match the predicate, so a second run changes nothing.
+ * Old POST /send-rx wrote diagnosis, medicines, UHID, and a prescription PDF
+ * URL into whatsapp_messages, and set whatsapp_conversations.last_message to
+ * "Digital Rx: <rxNumber>". Only those rows are rewritten. id, tenant_id,
+ * timestamps, direction, status, and wamid stay. Delivered, sent, and read
+ * rows get the sent marker. Every other status, including failed and
+ * undelivered, gets the not-delivered marker. A preview matches only when the
+ * whole last_message is that prefix plus one token.
+ * The markers do not match again, so a second run changes nothing and writes
+ * no audit row. When anything changes, one audit_logs row is inserted in the
+ * same transaction. Its details name the reason, per-tenant counts, and ids.
  */
 export function scrubHistoricalSendRxMessages(database: SqlDatabase): number {
   const present = new Set(whatsappMessageColumnNames(database));
@@ -580,8 +588,23 @@ export function scrubHistoricalSendRxMessages(database: SqlDatabase): number {
   const assignments = sendRxScrubAssignments(present);
   const where = sendRxMessagePredicate(present);
   if (!assignments || !where) return 0;
-  const result = database.prepare(`UPDATE whatsapp_messages SET ${assignments} WHERE ${where}`).run();
-  return Number(result.changes || 0);
+  const previewWhere = sendRxPreviewPredicate(database.dialect === "postgres" ? "postgres" : "sqlite");
+  const messages = scalarCount(database, `SELECT COUNT(*) AS c FROM whatsapp_messages WHERE ${where}`);
+  const previews = scalarCount(database, `SELECT COUNT(*) AS c FROM whatsapp_conversations WHERE ${previewWhere}`);
+  if (messages + previews === 0) return 0;
+  execInTransaction(database, sendRxScrubScript(database, assignments, where, previewWhere));
+  return messages + previews;
+}
+
+/** Boot path. Logs the error name and rethrows so migrate does not continue. */
+export function applyHistoricalSendRxScrub(database: SqlDatabase): number {
+  try {
+    return scrubHistoricalSendRxMessages(database);
+  } catch (err) {
+    const name = err instanceof Error && err.name ? err.name : "Error";
+    console.error("whatsapp_sendrx_phi_scrub failed", name);
+    throw err;
+  }
 }
 
 function whatsappMessageColumnNames(database: SqlDatabase): string[] {
@@ -599,8 +622,14 @@ function whatsappMessageColumnNames(database: SqlDatabase): string[] {
   return rows.map((row) => String(row?.name || "").trim()).filter(Boolean);
 }
 
+function sendRxMarkerSql(): string {
+  const sent = sqlString(SEND_RX_MESSAGE_MARKER);
+  const missed = sqlString(SEND_RX_NOT_DELIVERED_MARKER);
+  return `CASE WHEN LOWER(TRIM(COALESCE(status, ''))) IN ('delivered', 'sent', 'read') THEN ${sent} ELSE ${missed} END`;
+}
+
 function sendRxScrubAssignments(present: Set<string>): string {
-  const marker = `'${SEND_RX_MESSAGE_MARKER}'`;
+  const marker = sendRxMarkerSql();
   const parts: string[] = [];
   for (const column of SEND_RX_SCRUB_COLUMNS) {
     if (!present.has(column)) continue;
@@ -637,4 +666,152 @@ function sendRxMessagePredicate(present: Set<string>): string {
     )`);
   }
   return clauses.join(" OR ");
+}
+
+/** Whole last_message is "Digital Rx: " plus one token. A longer sentence does not match. */
+function sendRxPreviewPredicate(dialect: "postgres" | "sqlite"): string {
+  const tokenAt = SEND_RX_PREVIEW_PREFIX.length + 1;
+  const absent = (code: number) =>
+    dialect === "postgres"
+      ? `strpos(substr(last_message, ${tokenAt}), chr(${code})) = 0`
+      : `instr(substr(last_message, ${tokenAt}), char(${code})) = 0`;
+  return [
+    `last_message LIKE 'Digital Rx: %'`,
+    `length(last_message) > ${SEND_RX_PREVIEW_PREFIX.length}`,
+    absent(32),
+    absent(9),
+    absent(10),
+    absent(13),
+  ].join(" AND ");
+}
+
+function scalarCount(database: SqlDatabase, sql: string): number {
+  const row = database.prepare(sql).get() as { c?: number } | undefined;
+  return Number(row?.c || 0);
+}
+
+function sqlString(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+function sendRxAuditDetailsSql(dialect: "postgres" | "sqlite"): string {
+  const reason = sqlString(SEND_RX_SCRUB_REASON);
+  if (dialect === "postgres") {
+    return `json_build_object(
+      'reason', ${reason},
+      'messages', (SELECT COUNT(*) FROM wa_sendrx_phi_scrub_msg),
+      'previews', (SELECT COUNT(*) FROM wa_sendrx_phi_scrub_preview),
+      'tenants', COALESCE((
+        SELECT json_agg(json_build_object(
+          'tenantId', tenant_id,
+          'messages', messages,
+          'previews', previews
+        ) ORDER BY tenant_id)
+        FROM (
+          SELECT tenant_id, SUM(messages) AS messages, SUM(previews) AS previews
+          FROM (
+            SELECT tenant_id, 1 AS messages, 0 AS previews FROM wa_sendrx_phi_scrub_msg
+            UNION ALL
+            SELECT tenant_id, 0 AS messages, 1 AS previews FROM wa_sendrx_phi_scrub_preview
+          ) AS parts
+          GROUP BY tenant_id
+        ) AS counts
+      ), '[]'::json),
+      'messageIds', COALESCE((SELECT json_agg(id ORDER BY id) FROM wa_sendrx_phi_scrub_msg), '[]'::json),
+      'previewIds', COALESCE((SELECT json_agg(id ORDER BY id) FROM wa_sendrx_phi_scrub_preview), '[]'::json)
+    )::text`;
+  }
+  return `json_object(
+    'reason', ${reason},
+    'messages', (SELECT COUNT(*) FROM wa_sendrx_phi_scrub_msg),
+    'previews', (SELECT COUNT(*) FROM wa_sendrx_phi_scrub_preview),
+    'tenants', (
+      SELECT json_group_array(json_object(
+        'tenantId', tenant_id,
+        'messages', messages,
+        'previews', previews
+      ))
+      FROM (
+        SELECT tenant_id, SUM(messages) AS messages, SUM(previews) AS previews
+        FROM (
+          SELECT tenant_id, 1 AS messages, 0 AS previews FROM wa_sendrx_phi_scrub_msg
+          UNION ALL
+          SELECT tenant_id, 0 AS messages, 1 AS previews FROM wa_sendrx_phi_scrub_preview
+        )
+        GROUP BY tenant_id
+        ORDER BY tenant_id
+      )
+    ),
+    'messageIds', COALESCE((SELECT json_group_array(id) FROM (SELECT id FROM wa_sendrx_phi_scrub_msg ORDER BY id)), json_array()),
+    'previewIds', COALESCE((SELECT json_group_array(id) FROM (SELECT id FROM wa_sendrx_phi_scrub_preview ORDER BY id)), json_array())
+  )`;
+}
+
+function sendRxScrubScript(
+  database: SqlDatabase,
+  assignments: string,
+  messageWhere: string,
+  previewWhere: string
+): string {
+  const dialect = database.dialect === "postgres" ? "postgres" : "sqlite";
+  const auditId = sqlString(crypto.randomUUID());
+  const timestamp = sqlString(new Date().toISOString());
+  return `
+    DROP TABLE IF EXISTS wa_sendrx_phi_scrub_msg;
+    DROP TABLE IF EXISTS wa_sendrx_phi_scrub_preview;
+    CREATE TEMP TABLE wa_sendrx_phi_scrub_msg (id TEXT, tenant_id TEXT);
+    CREATE TEMP TABLE wa_sendrx_phi_scrub_preview (id TEXT, tenant_id TEXT);
+    INSERT INTO wa_sendrx_phi_scrub_msg (id, tenant_id)
+    SELECT id, COALESCE(NULLIF(TRIM(tenant_id), ''), '')
+    FROM whatsapp_messages
+    WHERE ${messageWhere};
+    INSERT INTO wa_sendrx_phi_scrub_preview (id, tenant_id)
+    SELECT id, COALESCE(NULLIF(TRIM(tenant_id), ''), '')
+    FROM whatsapp_conversations
+    WHERE ${previewWhere};
+    UPDATE whatsapp_messages
+    SET ${assignments}
+    WHERE id IN (SELECT id FROM wa_sendrx_phi_scrub_msg);
+    UPDATE whatsapp_conversations
+    SET last_message = ${sqlString(SEND_RX_MESSAGE_MARKER)}
+    WHERE id IN (SELECT id FROM wa_sendrx_phi_scrub_preview);
+    INSERT INTO audit_logs (
+      id, timestamp, user_id, user_name, action, details,
+      tenant_id, patient_id, actor_role, entity_type, entity_id
+    )
+    SELECT
+      ${auditId},
+      ${timestamp},
+      NULL,
+      'migration',
+      ${sqlString(SEND_RX_SCRUB_AUDIT_ACTION)},
+      ${sendRxAuditDetailsSql(dialect)},
+      '',
+      '',
+      'system',
+      'whatsapp_message',
+      ''
+    WHERE (SELECT COUNT(*) FROM wa_sendrx_phi_scrub_msg) + (SELECT COUNT(*) FROM wa_sendrx_phi_scrub_preview) > 0;
+    DROP TABLE IF EXISTS wa_sendrx_phi_scrub_msg;
+    DROP TABLE IF EXISTS wa_sendrx_phi_scrub_preview;
+  `;
+}
+
+function execInTransaction(database: SqlDatabase, script: string): void {
+  if (database.dialect === "postgres") {
+    database.exec(script);
+    return;
+  }
+  database.exec("BEGIN");
+  try {
+    database.exec(script);
+    database.exec("COMMIT");
+  } catch (err) {
+    try {
+      database.exec("ROLLBACK");
+    } catch {
+      /* boot should see the original scrub error */
+    }
+    throw err;
+  }
 }
