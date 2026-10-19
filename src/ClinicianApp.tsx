@@ -1101,6 +1101,7 @@ export default function ClinicianApp() {
             <WhatsAppAssistant
               currentPatient={currentPatient}
               doctors={doctors}
+              clinicEmail={clinicSettings.email}
             />
           )}
 

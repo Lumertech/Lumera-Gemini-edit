@@ -63,8 +63,20 @@ function tokenHash(token: string): string {
   return crypto.createHash("sha256").update(token, "utf8").digest("hex");
 }
 
-function hashCode(code: string): string {
-  return crypto.createHash("sha256").update(code, "utf8").digest("hex");
+function otpMacKey(tokenHashHex: string): string {
+  const secret = String(process.env.PATIENT_LINK_OTP_SECRET || process.env.JWT_SECRET || "").trim();
+  return secret || tokenHashHex;
+}
+
+function hashCode(code: string, tokenHashHex: string): string {
+  return crypto.createHmac("sha256", otpMacKey(tokenHashHex)).update(String(code || ""), "utf8").digest("hex");
+}
+
+function macEquals(stored: string, digest: string): boolean {
+  const left = Buffer.from(stored, "utf8");
+  const right = Buffer.from(digest, "utf8");
+  if (left.length === 0 || left.length !== right.length) return false;
+  return crypto.timingSafeEqual(left, right);
 }
 
 function escapeHtml(value: string): string {
@@ -82,9 +94,16 @@ function protect(res: Response) {
   res.setHeader("Content-Security-Policy", "frame-ancestors 'none'");
 }
 
-function page(opts: { title: string; clinic: string; doctor: string; body: string }): string {
+function page(opts: { title: string; clinic: string; doctor: string; body: string; purpose?: PatientLinkPurpose }): string {
   const clinic = escapeHtml(opts.clinic || "your clinic");
-  const doctor = escapeHtml(opts.doctor || "your clinician");
+  const doctorName = String(opts.doctor || "").trim();
+  const doctor = escapeHtml(doctorName);
+  let byline = "";
+  if (opts.purpose === "rx") {
+    byline = `<p>Reviewed and signed by ${doctor || "your clinician"}.</p>`;
+  } else if (opts.purpose === "receipt") {
+    byline = doctor ? `<p>Issued by ${clinic}. ${doctor}.</p>` : `<p>Issued by ${clinic}.</p>`;
+  }
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -94,7 +113,7 @@ function page(opts: { title: string; clinic: string; doctor: string; body: strin
 </head>
 <body style="font-family: Georgia, serif; margin: 2rem auto; max-width: 36rem; color: #1f2937;">
   <h1 style="font-size: 1.25rem;">${clinic}</h1>
-  <p>Reviewed and signed by ${doctor}.</p>
+  ${byline}
   ${opts.body}
 </body>
 </html>`;
@@ -109,20 +128,26 @@ function clinicName(db: DatabaseSync, tenantId: string): string {
   }
 }
 
-function doctorName(db: DatabaseSync, tenantId: string, purpose: PatientLinkPurpose, resourceId: string): string {
+function doctorName(
+  db: DatabaseSync,
+  tenantId: string,
+  purpose: PatientLinkPurpose,
+  resourceId: string,
+  patientId: string
+): string {
   try {
     if (purpose === "rx") {
       const row = db
-        .prepare(`SELECT doctor_name FROM prescriptions WHERE tenant_id = ? AND rx_number = ?`)
-        .get(tenantId, resourceId) as { doctor_name?: string } | undefined;
+        .prepare(`SELECT doctor_name FROM prescriptions WHERE tenant_id = ? AND rx_number = ? AND patient_id = ?`)
+        .get(tenantId, resourceId, patientId) as { doctor_name?: string } | undefined;
       return String(row?.doctor_name || "").trim();
     }
     if (purpose === "receipt") {
       const row = db
         .prepare(
-          `SELECT consulting_doctor_name FROM invoices WHERE tenant_id = ? AND (id = ? OR invoice_number = ?)`
+          `SELECT consulting_doctor_name FROM invoices WHERE tenant_id = ? AND (id = ? OR invoice_number = ?) AND patient_id = ?`
         )
-        .get(tenantId, resourceId, resourceId) as { consulting_doctor_name?: string } | undefined;
+        .get(tenantId, resourceId, resourceId, patientId) as { consulting_doctor_name?: string } | undefined;
       return String(row?.consulting_doctor_name || "").trim();
     }
   } catch {
@@ -144,12 +169,14 @@ function patientPhone(db: DatabaseSync, tenantId: string, patientId: string): st
 
 function rxSignedForPatient(db: DatabaseSync, tenantId: string, resourceId: string, patientId: string): boolean {
   const rx = db
-    .prepare(`SELECT patient_id, specialty_modules FROM prescriptions WHERE tenant_id = ? AND rx_number = ?`)
-    .get(tenantId, resourceId) as { patient_id?: string; specialty_modules?: string } | undefined;
+    .prepare(`SELECT patient_id, doctor_id, specialty_modules FROM prescriptions WHERE tenant_id = ? AND rx_number = ?`)
+    .get(tenantId, resourceId) as { patient_id?: string; doctor_id?: string; specialty_modules?: string } | undefined;
   if (!rx || String(rx.patient_id || "") !== patientId) return false;
+  const doctorId = String(rx.doctor_id || "").trim();
+  if (!doctorId) return false;
   try {
     const modules = JSON.parse(String(rx.specialty_modules || "{}")) as { reviewedBy?: unknown };
-    return Boolean(String(modules.reviewedBy || "").trim());
+    return String(modules.reviewedBy || "").trim() === doctorId;
   } catch {
     return false;
   }
@@ -159,12 +186,13 @@ function reveal(db: DatabaseSync, purpose: PatientLinkPurpose, tenantId: string,
   if (purpose === "receipt") {
     const invoice = db
       .prepare(
-        `SELECT invoice_number, total_amount, date, status FROM invoices WHERE tenant_id = ? AND (id = ? OR invoice_number = ?)`
+        `SELECT invoice_number, total_amount, date, status FROM invoices WHERE tenant_id = ? AND (id = ? OR invoice_number = ?) AND patient_id = ?`
       )
-      .get(tenantId, resourceId, resourceId) as
+      .get(tenantId, resourceId, resourceId, patientId) as
       | { invoice_number?: string; total_amount?: number; date?: string; status?: string }
       | undefined;
-    return `<h2>Payment receipt</h2><p>Reference ${escapeHtml(String(invoice?.invoice_number || ""))}</p><p>Amount ${escapeHtml(String(invoice?.total_amount ?? ""))}</p><p>Date ${escapeHtml(String(invoice?.date || ""))}</p><p>Status ${escapeHtml(String(invoice?.status || ""))}</p>`;
+    if (!invoice) return null;
+    return `<h2>Payment receipt</h2><p>Reference ${escapeHtml(String(invoice.invoice_number || ""))}</p><p>Amount ${escapeHtml(String(invoice.total_amount ?? ""))}</p><p>Date ${escapeHtml(String(invoice.date || ""))}</p><p>Status ${escapeHtml(String(invoice.status || ""))}</p>`;
   }
   if (purpose !== "rx") {
     return "<p>Verified.</p>";
@@ -233,14 +261,14 @@ function rememberSend(db: DatabaseSync, hash: string, code: string, now: Date) {
     db.prepare(
       `INSERT INTO patient_link_otps (token_hash, otp_hash, expires_at, attempts, send_count, recent_sends, created_at)
        VALUES (?, ?, ?, 0, 1, ?, ?)`
-    ).run(hash, hashCode(code), expires, JSON.stringify(recent), now.toISOString());
+    ).run(hash, hashCode(code, hash), expires, JSON.stringify(recent), now.toISOString());
     return;
   }
   db.prepare(
     `UPDATE patient_link_otps
      SET otp_hash = ?, expires_at = ?, send_count = send_count + 1, recent_sends = ?, created_at = ?
      WHERE token_hash = ?`
-  ).run(hashCode(code), expires, JSON.stringify(recent), now.toISOString(), hash);
+  ).run(hashCode(code, hash), expires, JSON.stringify(recent), now.toISOString(), hash);
 }
 
 function undoSend(db: DatabaseSync, hash: string, previous: OtpRow | undefined) {
@@ -287,7 +315,7 @@ function handle(kind: PatientLinkPurpose, sendOtp: SendOtp) {
         res
           .status(429)
           .type("html")
-          .send(page({ title: "Link", clinic: "Clinic", doctor: "", body: "<p>Too many attempts. Try again later.</p>" }));
+          .send(page({ title: "Link", clinic: "Clinic", doctor: "", purpose: kind, body: "<p>Too many attempts. Try again later.</p>" }));
         return;
       }
     }
@@ -297,13 +325,13 @@ function handle(kind: PatientLinkPurpose, sendOtp: SendOtp) {
       res
         .status(status)
         .type("html")
-        .send(page({ title: "Link", clinic: "Clinic", doctor: "", body: "<p>This link is not valid.</p>" }));
+        .send(page({ title: "Link", clinic: "Clinic", doctor: "", purpose: kind, body: "<p>This link is not valid.</p>" }));
       return;
     }
     const clinic = clinicName(db, resolved.tenantId);
-    const doctor = doctorName(db, resolved.tenantId, kind, resolved.resourceId);
+    const doctor = doctorName(db, resolved.tenantId, kind, resolved.resourceId, resolved.patientId);
     const shell = (status: number, body: string) => {
-      res.status(status).type("html").send(page({ title: clinic || "Clinic", clinic, doctor, body }));
+      res.status(status).type("html").send(page({ title: clinic || "Clinic", clinic, doctor, purpose: kind, body }));
     };
     const otp = String((req.body as { otp?: string } | undefined)?.otp || "").trim();
     const hash = tokenHash(token);
@@ -316,14 +344,15 @@ function handle(kind: PatientLinkPurpose, sendOtp: SendOtp) {
         return;
       }
       const expired = !row?.expires_at || Date.parse(String(row.expires_at)) <= Date.now();
-      const digest = hashCode(otp);
+      const digest = hashCode(otp, hash);
       const stored = String(row?.otp_hash || "");
-      const matches =
-        Boolean(stored) && digest.length === stored.length && crypto.timingSafeEqual(Buffer.from(digest), Buffer.from(stored));
+      const matches = macEquals(stored, digest);
       if (!row || expired || !matches) {
         if (row && !expired) {
-          const next = attempts + 1;
-          db.prepare(`UPDATE patient_link_otps SET attempts = ? WHERE token_hash = ?`).run(next, hash);
+          const updated = db
+            .prepare(`UPDATE patient_link_otps SET attempts = attempts + 1 WHERE token_hash = ? RETURNING attempts`)
+            .get(hash) as { attempts?: number } | undefined;
+          const next = Number(updated?.attempts || 0);
           if (next >= FAILURE_REVOKE_AT) {
             await revokePatientLinkToken(token);
             shell(410, "<p>This link is not valid.</p>");

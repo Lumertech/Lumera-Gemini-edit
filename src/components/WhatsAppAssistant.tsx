@@ -53,6 +53,7 @@ import { outboundCountLabel, outboundDeliveryCounts } from '../lib/whatsappDeliv
 interface WhatsAppAssistantProps {
   currentPatient: Patient;
   doctors: Doctor[];
+  clinicEmail?: string;
 }
 
 type ConversationItem = WhatsAppConversationItem;
@@ -102,6 +103,7 @@ const CANNED_STAFF_REPLIES = [
 export const WhatsAppAssistant: React.FC<WhatsAppAssistantProps> = ({
   currentPatient,
   doctors,
+  clinicEmail,
 }) => {
   // Navigation tabs: 'chat' (Patient Simulator), 'inbox' (Staff 2-Way Dashboard), 'outbound' (Trigger Engine)
   const [activeTab, setActiveTab] = useState<'chat' | 'inbox' | 'outbound'>('chat');
@@ -1066,6 +1068,7 @@ export const WhatsAppAssistant: React.FC<WhatsAppAssistantProps> = ({
       {/* 4. Document Preview Modal (Prescription or Lab Report) */}
       <DocumentPreviewModal
         document={previewDocument}
+        clinicEmail={clinicEmail}
         onClose={() => setPreviewDocument(null)}
       />
     </div>

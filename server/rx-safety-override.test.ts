@@ -302,4 +302,72 @@ describe("signed prescription safety override", () => {
     const sent = await jsonRequest(port, "POST", "/api/whatsapp/send-rx", { rxNumber }, auth);
     assert.notEqual(sent.json.code, SAFETY_REVIEW_REQUIRED);
   });
+
+  async function reviewedSend(reply: unknown) {
+    setGeminiSafetyCheckForTests(async () => reply);
+    const clinic = seedDoctor("model");
+    const auth = await login(clinic.email);
+    const phone = `+919814${String(Date.now()).slice(-7)}`;
+    const patient = await createPatient(auth, phone, []);
+    const checked = await checkSafety(auth, patient.id, [SAFE_MEDICINE], []);
+    assert.equal(checked.status, 200, JSON.stringify(checked.json));
+    assert.notEqual(checked.json.safetyStatus, "SAFE");
+    const signed = await signRx(auth, patient.id, clinic.userId, [SAFE_MEDICINE]);
+    assert.equal(signed.status, 201, JSON.stringify(signed.json));
+    const prescription = signed.json.prescription as { rxNumber?: string; qrVerificationUrl?: string };
+    assert.match(String(prescription.qrVerificationUrl || ""), /\/rx\/v\//);
+    const rxNumber = String(prescription.rxNumber || "");
+    const sent = await jsonRequest(port, "POST", "/api/whatsapp/send-rx", { rxNumber }, auth);
+    assert.equal(sent.status, 409);
+    assert.equal(sent.json.code, SAFETY_REVIEW_REQUIRED);
+    const other = await createPatient(auth, `+919815${String(Date.now()).slice(-7)}`, []);
+    const mismatch = await jsonRequest(
+      port,
+      "POST",
+      "/api/patient-links",
+      { purpose: "rx", patientId: other.id, resourceId: rxNumber },
+      auth
+    );
+    assert.equal(mismatch.status, 409);
+    const unsigned = await jsonRequest(
+      port,
+      "POST",
+      "/api/prescriptions",
+      { patientId: patient.id, diagnosis: "Draft", medicines: [SAFE_MEDICINE], doctorId: clinic.userId },
+      auth
+    );
+    assert.equal(unsigned.status, 201, JSON.stringify(unsigned.json));
+    assert.equal(String((unsigned.json.prescription as { qrVerificationUrl?: string }).qrVerificationUrl || ""), "");
+    return checked.json;
+  }
+
+  it("stores REVIEW when Gemini returns an empty object and blocks send", async () => {
+    try {
+      const body = await reviewedSend({});
+      assert.equal(body.safetyStatus, "REVIEW");
+      assert.equal(body.source, RULE_BASED_SAFETY_SOURCE);
+    } finally {
+      setGeminiSafetyCheckForTests(async () => {
+        throw new Error("boom");
+      });
+    }
+  });
+
+  it("does not accept a model SAFE status when alerts are present", async () => {
+    try {
+      const body = await reviewedSend({
+        safetyStatus: "SAFE",
+        source: "model",
+        hasHighRiskAlert: false,
+        alerts: [{ type: "INTERACTION", severity: "Moderate", description: "Dose is high for this age." }],
+      });
+      assert.equal(body.safetyStatus, "REVIEW");
+      assert.equal(body.source, undefined);
+      assert.equal(JSON.stringify(body).includes("SAFE"), false);
+    } finally {
+      setGeminiSafetyCheckForTests(async () => {
+        throw new Error("boom");
+      });
+    }
+  });
 });

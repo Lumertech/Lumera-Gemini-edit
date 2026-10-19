@@ -1588,7 +1588,7 @@ async function processBotActionOrQuery(
         await dispatchWhatsAppBookConfirmation({ tenantId, appointment: appt });
       }
       return {
-        content: `${booked.reused ? "📌 *Existing booking found*" : "🎉 *Appointment Confirmed!*"}\n\n*Token*: *#${appt.tokenNumber}*\n*Doctor*: ${appt.doctorName}\n*Specialty*: ${appt.specialty}\n*Date*: ${appt.date}\n*Slot*: ${appt.timeSlot || "OPD hours"}\n*UHID*: ${appt.uhid}\n*Source*: ${appt.source}\n\nThis token is on the clinician OPD calendar for your clinic.`,
+        content: `${booked.reused ? "📌 *Existing booking found*" : "🎉 *Appointment Confirmed!*"}\n\n*Token*: *#${appt.tokenNumber}*\n*Doctor*: ${appt.doctorName}\n*Specialty*: ${appt.specialty}\n*Date*: ${appt.date}\n*Slot*: ${appt.timeSlot || "OPD hours"}\n*Source*: ${appt.source}\n\nThis token is on the clinician OPD calendar for your clinic.`,
         buttons: ["🎫 View My Queue", "🔄 Reschedule Slot", "❌ Cancel Appointment"],
       };
     } catch (err: unknown) {

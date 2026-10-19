@@ -142,17 +142,37 @@ export function mountGeminiClinicalRoutes(app: Express) {
   app.post("/api/gemini/pulse-assistant", handleGeminiCopilot);
   app.post("/api/gemini/hexa-assistant", handleGeminiCopilot);
 
+  function alertListIsSevere(alerts: unknown[]): boolean {
+    return alerts.some((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+      const severity = String((item as { severity?: unknown }).severity || "").trim().toLowerCase();
+      return severity === "severe" || severity === "critical";
+    });
+  }
+
+  /** Model JSON is usable only as an alert list. Status and source are computed here. */
+  function modelSafetyPayload(raw: unknown): { hasHighRiskAlert: boolean; alerts: unknown[]; safetyStatus: "HIGH_RISK" | "REVIEW" | "SAFE" } {
+    const parsed = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : null;
+    if (!parsed || !Array.isArray(parsed.alerts) || typeof parsed.hasHighRiskAlert !== "boolean") {
+      throw new Error("safety check reply was not a usable alert list");
+    }
+    const alerts = parsed.alerts;
+    const hasHighRiskAlert = parsed.hasHighRiskAlert === true || alertListIsSevere(alerts);
+    const safetyStatus = hasHighRiskAlert ? "HIGH_RISK" : alerts.length > 0 ? "REVIEW" : "SAFE";
+    return { hasHighRiskAlert, alerts, safetyStatus };
+  }
+
   function finishSafetyCheck(req: Request, res: Response, body: unknown) {
     const record = body && typeof body === "object" && !Array.isArray(body) ? (body as Record<string, unknown>) : {};
     const alerts = Array.isArray(record.alerts) ? record.alerts : [];
-    const hasHighRiskAlert = record.hasHighRiskAlert === true;
-    const named = typeof record.safetyStatus === "string" ? record.safetyStatus.trim() : "";
-    let safetyStatus = named || (hasHighRiskAlert ? "HIGH_RISK" : alerts.length > 0 ? "REVIEW" : "SAFE");
-    // A rule-based fallback is never a pass. #155's fail-closed 503 (no fallback) wins on rebase; keep that 503.
-    if (record.source === RULE_BASED_SAFETY_SOURCE && safetyStatus === "SAFE") {
-      safetyStatus = hasHighRiskAlert ? "HIGH_RISK" : "REVIEW";
-    }
-    const payload = { ...record, hasHighRiskAlert, alerts, safetyStatus };
+    const hasHighRiskAlert = record.hasHighRiskAlert === true || alertListIsSevere(alerts);
+    const fallback = record.source === RULE_BASED_SAFETY_SOURCE;
+    // Ignore a model-supplied safetyStatus. #155's fail-closed 503 (no fallback) wins on rebase; keep that 503.
+    let safetyStatus = hasHighRiskAlert ? "HIGH_RISK" : alerts.length > 0 ? "REVIEW" : "SAFE";
+    if (fallback && safetyStatus === "SAFE") safetyStatus = "REVIEW";
+    const payload: Record<string, unknown> = { ...record, hasHighRiskAlert, alerts, safetyStatus };
+    if (fallback) payload.source = RULE_BASED_SAFETY_SOURCE;
+    else delete payload.source;
     const tenantId = String(req.user?.tenantId || "").trim();
     if (tenantId) {
       try {
@@ -188,7 +208,7 @@ export function mountGeminiClinicalRoutes(app: Express) {
       const ai = getGenAI();
       if (testSafetyCheck) {
         try {
-          return finishSafetyCheck(req, res, await testSafetyCheck());
+          return finishSafetyCheck(req, res, modelSafetyPayload(await testSafetyCheck()));
         } catch (err: any) {
           console.error("Safety check Gemini error:", err?.message);
         }
@@ -201,7 +221,7 @@ export function mountGeminiClinicalRoutes(app: Express) {
             config: { responseMimeType: "application/json", temperature: 0.1 },
           });
           const parsed = JSON.parse(response.text?.trim() || "{}");
-          return finishSafetyCheck(req, res, parsed);
+          return finishSafetyCheck(req, res, modelSafetyPayload(parsed));
         } catch (err: any) {
           console.error("Safety check Gemini error:", err?.message);
         }

@@ -323,7 +323,7 @@ describe("patient document link page", () => {
     }
   });
 
-  async function revealAfterOtp(token: string): Promise<{ status: number; body: string }> {
+  async function revealAfterOtp(token: string, route = "rx"): Promise<{ status: number; body: string }> {
     const app = express();
     let sentCode = "";
     app.use(
@@ -335,7 +335,7 @@ describe("patient document link page", () => {
       })
     );
     const { server, port } = await listen(app);
-    const url = `http://127.0.0.1:${port}/rx/v/${token}`;
+    const url = `http://127.0.0.1:${port}/${route}/v/${token}`;
     try {
       assert.equal((await fetch(url, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "action=send" })).status, 200);
       const revealed = await fetch(url, {
@@ -348,6 +348,36 @@ describe("patient document link page", () => {
       await new Promise((resolve) => server.close(() => resolve(undefined)));
     }
   }
+
+  it("counts parallel wrong guesses once each", async () => {
+    resetSendOtpRateLimits();
+    const { minted } = await planted("parallel");
+    const app = express();
+    app.use(createPatientDocumentLinkRouter({ sendOtp: async () => ({ ok: true }) }));
+    const { server, port } = await listen(app);
+    const url = `http://127.0.0.1:${port}/rx/v/${minted.token}`;
+    const hash = crypto.createHash("sha256").update(minted.token, "utf8").digest("hex");
+    try {
+      assert.equal(
+        (await fetch(url, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "action=send" })).status,
+        200
+      );
+      const guesses = await Promise.all(
+        Array.from({ length: 4 }, (_, index) =>
+          fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: `action=verify&otp=11111${index}`,
+          })
+        )
+      );
+      for (const guess of guesses) assert.equal(guess.status, 403);
+      const row = getDb().prepare(`SELECT attempts FROM patient_link_otps WHERE token_hash = ?`).get(hash) as { attempts: number };
+      assert.equal(row.attempts, 4);
+    } finally {
+      await new Promise((resolve) => server.close(() => resolve(undefined)));
+    }
+  });
 
   it("does not reveal an unsigned prescription or a token for a different patient", async () => {
     const suffix = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
@@ -417,5 +447,80 @@ describe("patient document link page", () => {
     const hidden = await revealAfterOtp(unsigned.token);
     assert.equal(hidden.status, 410);
     assert.equal(hidden.body.includes(diagnosis), false);
+
+    const otherSigner = `RX-OTHER-SIGNER-${suffix}`;
+    db.prepare(
+      `INSERT INTO prescriptions (
+         id, tenant_id, rx_number, patient_id, patient_name, patient_phone, patient_uhid,
+         doctor_id, doctor_name, doctor_specialty, doctor_reg_number, date, diagnosis, medicines, specialty_modules, created_at
+       ) VALUES (?, ?, ?, ?, 'Asha', ?, ?, 'doc-1', 'Dr Mehta', 'GP', 'REG1', '2026-10-19', ?, '[]', ?, ?)`
+    ).run(
+      `rx-other-signer-${suffix}`,
+      tenantId,
+      otherSigner,
+      patientA,
+      `+9181${suffix.slice(-8)}`,
+      `UHA${suffix}`,
+      diagnosis,
+      JSON.stringify({ reviewedBy: "doc-other" }),
+      now
+    );
+    const wrongSigner = await mintPatientLinkToken({ tenantId, patientId: patientA, purpose: "rx", resourceId: otherSigner });
+    const notThisDoctor = await revealAfterOtp(wrongSigner.token);
+    assert.equal(notThisDoctor.status, 410);
+    assert.equal(notThisDoctor.body.includes(diagnosis), false);
+  });
+
+  it("hides a receipt for a different patient and does not call it signed", async () => {
+    const suffix = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    const tenantId = `tenant-receipt-${suffix}`;
+    const patientA = `patient-ra-${suffix}`;
+    const patientB = `patient-rb-${suffix}`;
+    const invoiceId = `inv-${suffix}`;
+    const amount = 700;
+    const now = new Date().toISOString();
+    const db = getDb();
+    db.prepare(
+      `INSERT INTO tenants (id, name, specialty, country, timezone, phone, trial_ends_at, created_at, updated_at)
+       VALUES (?, 'North Clinic', 'GP', 'IN', 'Asia/Kolkata', ?, ?, ?, ?)`
+    ).run(tenantId, `+9193${suffix.slice(-8)}`, now, now, now);
+    db.prepare(`INSERT INTO patients (id, tenant_id, uhid, name, phone, created_at) VALUES (?, ?, ?, 'Asha', ?, ?)`).run(
+      patientA,
+      tenantId,
+      `UHR${suffix}`,
+      `+9183${suffix.slice(-8)}`,
+      now
+    );
+    db.prepare(`INSERT INTO patients (id, tenant_id, uhid, name, phone, created_at) VALUES (?, ?, ?, 'Other', ?, ?)`).run(
+      patientB,
+      tenantId,
+      `UHS${suffix}`,
+      `+9184${suffix.slice(-8)}`,
+      now
+    );
+    db.prepare(
+      `INSERT INTO invoices (id, tenant_id, invoice_number, patient_id, date, total_amount, status, consulting_doctor_name, created_at)
+       VALUES (?, ?, ?, ?, '2026-10-19', ?, 'Paid', 'Dr Mehta', ?)`
+    ).run(invoiceId, tenantId, `RCP-${suffix}`, patientA, amount, now);
+    const own = await mintPatientLinkToken({ tenantId, patientId: patientA, purpose: "receipt", resourceId: invoiceId });
+    const shown = await revealAfterOtp(own.token, "pay");
+    assert.equal(shown.status, 200);
+    assert.match(shown.body, /Issued by North Clinic/);
+    assert.match(shown.body, /Dr Mehta/);
+    assert.equal(shown.body.includes("Reviewed and signed"), false);
+    assert.match(shown.body, new RegExp(String(amount)));
+
+    const mismatched = await mintPatientLinkToken({ tenantId, patientId: patientB, purpose: "receipt", resourceId: invoiceId });
+    const hidden = await revealAfterOtp(mismatched.token, "pay");
+    assert.equal(hidden.status, 410);
+    assert.equal(hidden.body.includes(String(amount)), false);
+    assert.equal(hidden.body.includes(`RCP-${suffix}`), false);
+    assert.equal(hidden.body.includes("Reviewed and signed"), false);
+
+    const portal = await mintPatientLinkToken({ tenantId, patientId: patientA, purpose: "portal", resourceId: invoiceId });
+    const portalPage = await revealAfterOtp(portal.token, "portal");
+    assert.equal(portalPage.status, 200);
+    assert.equal(portalPage.body.includes("Reviewed and signed"), false);
+    assert.equal(portalPage.body.includes("Issued by"), false);
   });
 });

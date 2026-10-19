@@ -13,13 +13,23 @@ export interface DocumentPreviewData {
 interface DocumentPreviewModalProps {
   document: DocumentPreviewData | null;
   onClose: () => void;
+  /** Clinic letterhead email. A Lumera mailbox is not printed on a patient document. */
+  clinicEmail?: string;
 }
 
-export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({ document, onClose }) => {
+function clinicDocumentEmail(email: string | undefined): string {
+  const value = String(email || "").trim();
+  if (!value || /@(?:mylumera\.in|lumer\.me|lumera\.(?:me|health|in))$/i.test(value)) return "";
+  if (/@example\.com$/i.test(value)) return "";
+  return value;
+}
+
+export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({ document, onClose, clinicEmail }) => {
   if (!document) return null;
 
   const isRx = document.type === 'prescription';
   const rawData = document.data || {};
+  const contactEmail = clinicDocumentEmail(clinicEmail);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 backdrop-blur-xs p-4 overflow-y-auto">
@@ -67,7 +77,7 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({ docu
               <h2 className="text-xl font-black text-blue-900 tracking-tight">LUMERA HEALTHCARE POLYCLINIC</h2>
               <p className="text-xs text-slate-500">
                 Integrated Multispecialty OPD, Diagnostic Pathology & Rehabilitation<br />
-                Indiranagar, Bengaluru • Phone: +91 80 4123 4567 • emr@mylumera.in
+                Indiranagar, Bengaluru • Phone: +91 80 4123 4567{contactEmail ? ` • ${contactEmail}` : ""}
               </p>
             </div>
             <div className="text-right">

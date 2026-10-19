@@ -1227,16 +1227,18 @@ async function insertPrescription(
       String(body.clinicName || body.clinic_name || stamped.name || ""),
       String(body.clinicAddress || body.clinic_address || stamped.address || ""),
       String(body.clinicPhone || body.clinic_phone || stamped.phone || ""),
-      (
-        await mintPatientLinkToken({
-          tenantId,
-          patientId: mappedPatient.id,
-          purpose: "rx",
-          resourceId: rxNumber,
-          ttlHours: PATIENT_LINK_PRINT_TTL_HOURS,
-          createdBy: sessionUserId,
-        })
-      ).url,
+      signerId
+        ? (
+            await mintPatientLinkToken({
+              tenantId,
+              patientId: mappedPatient.id,
+              purpose: "rx",
+              resourceId: rxNumber,
+              ttlHours: PATIENT_LINK_PRINT_TTL_HOURS,
+              createdBy: sessionUserId,
+            })
+          ).url
+        : "",
       "unsent",
       String(body.specialtyType || body.specialty_type || ""),
       specialtyModulesFromBody(body, signerId)

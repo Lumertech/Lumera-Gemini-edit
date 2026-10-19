@@ -920,7 +920,7 @@ export const DEFAULT_DOCTORS: Doctor[] = [
     availableDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
     opdTiming: '09:00 AM - 02:00 PM',
     phone: '+91 98765 43210',
-    email: 'dr.malhotra@mylumera.in',
+    email: 'dr.malhotra@lumera.health',
     active: true
   },
   {
@@ -935,7 +935,7 @@ export const DEFAULT_DOCTORS: Doctor[] = [
     availableDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
     opdTiming: '08:30 AM - 01:30 PM, 04:30 PM - 08:00 PM',
     phone: '+91 98312 77889',
-    email: 'dr.siddharth@mylumera.in',
+    email: 'dr.siddharth@lumera.health',
     active: true
   },
   {
@@ -950,7 +950,7 @@ export const DEFAULT_DOCTORS: Doctor[] = [
     availableDays: ['Mon', 'Wed', 'Fri', 'Sat'],
     opdTiming: '10:00 AM - 03:00 PM',
     phone: '+91 98112 34567',
-    email: 'dr.ananya@mylumera.in',
+    email: 'dr.ananya@lumera.health',
     active: true
   },
   {
@@ -965,7 +965,7 @@ export const DEFAULT_DOCTORS: Doctor[] = [
     availableDays: ['Tue', 'Thu', 'Sat'],
     opdTiming: '11:00 AM - 04:00 PM',
     phone: '+91 98223 99887',
-    email: 'dr.rajesh@mylumera.in',
+    email: 'dr.rajesh@lumera.health',
     active: true
   },
   {
@@ -980,7 +980,7 @@ export const DEFAULT_DOCTORS: Doctor[] = [
     availableDays: ['Mon', 'Tue', 'Thu', 'Fri'],
     opdTiming: '02:00 PM - 07:00 PM',
     phone: '+91 97334 11223',
-    email: 'dr.meera@mylumera.in',
+    email: 'dr.meera@lumera.health',
     active: true
   },
   {
@@ -995,7 +995,7 @@ export const DEFAULT_DOCTORS: Doctor[] = [
     availableDays: ['Mon', 'Wed', 'Fri'],
     opdTiming: '09:30 AM - 01:30 PM',
     phone: '+91 99445 66778',
-    email: 'dr.harsh@mylumera.in',
+    email: 'dr.harsh@lumera.health',
     active: true
   },
   {
@@ -1010,7 +1010,7 @@ export const DEFAULT_DOCTORS: Doctor[] = [
     availableDays: ['Mon', 'Tue', 'Thu', 'Sat'],
     opdTiming: '10:00 AM - 02:30 PM',
     phone: '+91 98319 88990',
-    email: 'dr.shalini@mylumera.in',
+    email: 'dr.shalini@lumera.health',
     active: true
   },
   {
@@ -1025,7 +1025,7 @@ export const DEFAULT_DOCTORS: Doctor[] = [
     availableDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
     opdTiming: '09:00 AM - 01:00 PM, 05:00 PM - 08:30 PM',
     phone: '+91 98401 22334',
-    email: 'dr.arun@mylumera.in',
+    email: 'dr.arun@lumera.health',
     active: true
   },
   {
@@ -1040,7 +1040,7 @@ export const DEFAULT_DOCTORS: Doctor[] = [
     availableDays: ['Mon', 'Wed', 'Fri', 'Sat'],
     opdTiming: '11:00 AM - 04:30 PM',
     phone: '+91 98109 44332',
-    email: 'dr.alok@mylumera.in',
+    email: 'dr.alok@lumera.health',
     active: true
   }
 ];
