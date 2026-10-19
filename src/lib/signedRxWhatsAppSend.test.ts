@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   PATIENT_PHONE_MISSING,
+  SAFETY_REVIEW_REQUIRED,
   RX_NOT_FOUND,
   RX_NOT_SIGNED,
   RX_SEND_FAILED,
@@ -81,6 +82,7 @@ describe("signed Rx WhatsApp client", () => {
       WHATSAPP_POLICY_BLOCKED,
       RX_SEND_FAILED,
       PATIENT_PHONE_MISSING,
+      SAFETY_REVIEW_REQUIRED,
     ]) {
       const item = notice(400, { code, error: RAW });
       assert.equal(item.text, SIGNED_RX_WHATSAPP_COPY[code]);

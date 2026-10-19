@@ -670,6 +670,12 @@ export interface ClinicSettings {
 
 export interface SafetyCheckResult {
   hasHighRiskAlert: boolean;
+  /** Present on the #156 safety payload. Optional until that PR is the base. */
+  safetyStatus?: "SAFE" | "REVIEW" | "HIGH_RISK" | "MODERATE_RISK" | string;
+  source?: string | null;
+  summary?: string;
+  contraindications?: string[];
+  recommendations?: string[];
   alerts: {
     type: 'INTERACTION' | 'ALLERGY' | 'CONTRAINDICATION' | 'DOSAGE_WARNING' | 'PREGNANCY_LACTATION';
     severity: 'Mild' | 'Moderate' | 'Severe' | 'Critical';

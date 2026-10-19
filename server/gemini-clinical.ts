@@ -1,4 +1,6 @@
 import type { Express, Request, Response } from "express";
+import { getDb } from "./db.ts";
+import { rememberSafetyCheckResponse } from "./rx-safety-store.ts";
 import { GoogleGenAI } from "@google/genai";
 import { requireAuth } from "./auth.ts";
 import { mountGeminiVoiceRoutes } from "./gemini-voice.ts";
@@ -133,6 +135,32 @@ export function mountGeminiClinicalRoutes(app: Express) {
   app.post("/api/gemini/pulse-assistant", handleGeminiCopilot);
   app.post("/api/gemini/hexa-assistant", handleGeminiCopilot);
 
+  function finishSafetyCheck(req: Request, res: Response, body: unknown) {
+    const record = body && typeof body === "object" && !Array.isArray(body) ? (body as Record<string, unknown>) : {};
+    const alerts = Array.isArray(record.alerts) ? record.alerts : [];
+    const hasHighRiskAlert = record.hasHighRiskAlert === true;
+    const named = typeof record.safetyStatus === "string" ? record.safetyStatus.trim() : "";
+    const safetyStatus = named || (hasHighRiskAlert ? "HIGH_RISK" : alerts.length > 0 ? "REVIEW" : "SAFE");
+    const payload = { ...record, hasHighRiskAlert, alerts, safetyStatus };
+    const tenantId = String(req.user?.tenantId || "").trim();
+    if (tenantId) {
+      try {
+        const incoming = (req.body || {}) as { medicines?: unknown; patientAllergies?: unknown; chronicConditions?: unknown };
+        rememberSafetyCheckResponse(getDb(), {
+          tenantId,
+          medicines: incoming.medicines,
+          allergies: incoming.patientAllergies,
+          chronicConditions: incoming.chronicConditions,
+          status: 200,
+          body: payload,
+        });
+      } catch (err) {
+        console.error("safety check persist failed", err);
+      }
+    }
+    return res.json(payload);
+  }
+
   app.post("/api/gemini/safety-check", async (req: Request, res: Response) => {
     try {
       const { patientAllergies = [], chronicConditions = [], medicines = [], patientAge, patientGender } = req.body;
@@ -145,20 +173,27 @@ export function mountGeminiClinicalRoutes(app: Express) {
             contents: prompt,
             config: { responseMimeType: "application/json", temperature: 0.1 },
           });
-          return res.json(JSON.parse(response.text?.trim() || "{}"));
+          const parsed = JSON.parse(response.text?.trim() || "{}");
+          return finishSafetyCheck(req, res, parsed);
         } catch (err: any) {
           console.error("Safety check Gemini error:", err?.message);
         }
       }
       const alerts: any[] = [];
-      const drugNames = medicines.map((m: any) => (m.drugName + " " + (m.composition || "")).toLowerCase());
+      const drugNames = (medicines || []).map((m: any) => (m.drugName + " " + (m.composition || "")).toLowerCase());
       for (const allergy of patientAllergies) {
         const allgLower = String(allergy).toLowerCase();
         if (allgLower.includes("penicillin") && drugNames.some((d: string) => d.includes("amoxicillin") || d.includes("augmentin") || d.includes("ampicillin"))) {
           alerts.push({ type: "ALLERGY", severity: "Severe", drugsInvolved: ["Amoxicillin/Clavulanate"], description: "Patient is allergic to Penicillin.", clinicalRecommendation: "Switch to a Macrolide." });
         }
       }
-      return res.json({ hasHighRiskAlert: alerts.some((a) => a.severity === "Severe" || a.severity === "Critical"), alerts });
+      const hasHighRiskAlert = alerts.some((a) => a.severity === "Severe" || a.severity === "Critical");
+      return finishSafetyCheck(req, res, {
+        hasHighRiskAlert,
+        alerts,
+        safetyStatus: hasHighRiskAlert ? "HIGH_RISK" : alerts.length > 0 ? "REVIEW" : "SAFE",
+        source: "rule-based fallback",
+      });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
