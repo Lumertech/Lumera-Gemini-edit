@@ -63,13 +63,41 @@ function tokenHash(token: string): string {
   return crypto.createHash("sha256").update(token, "utf8").digest("hex");
 }
 
+class PatientLinkOtpUnavailable extends Error {
+  constructor() {
+    super("PATIENT_LINK_OTP_SECRET is unset");
+    this.name = "PatientLinkOtpUnavailable";
+  }
+}
+
+function logMissingPatientLinkOtpSecret(): void {
+  console.error("PATIENT_LINK_OTP_SECRET is unset. Refusing to issue or verify a patient-link OTP.");
+}
+
+/** Dedicated PATIENT_LINK_OTP_SECRET. Token-hash fallback is non-production only. JWT_SECRET is not a key. */
 function otpMacKey(tokenHashHex: string): string {
-  const secret = String(process.env.PATIENT_LINK_OTP_SECRET || process.env.JWT_SECRET || "").trim();
-  return secret || tokenHashHex;
+  const secret = String(process.env.PATIENT_LINK_OTP_SECRET || "").trim();
+  if (secret) return secret;
+  if (process.env.NODE_ENV === "production") {
+    logMissingPatientLinkOtpSecret();
+    throw new PatientLinkOtpUnavailable();
+  }
+  return tokenHashHex;
 }
 
 function hashCode(code: string, tokenHashHex: string): string {
   return crypto.createHmac("sha256", otpMacKey(tokenHashHex)).update(String(code || ""), "utf8").digest("hex");
+}
+
+/** Atomic failure count. Callers must read attempts from RETURNING, not from a prior row. */
+export function incrementPatientLinkOtpAttempts(
+  db: { prepare(sql: string): { get(...params: unknown[]): unknown } },
+  tokenHashHex: string
+): number {
+  const updated = db
+    .prepare(`UPDATE patient_link_otps SET attempts = attempts + 1 WHERE token_hash = ? RETURNING attempts`)
+    .get(tokenHashHex) as { attempts?: number | string } | undefined;
+  return Number(updated?.attempts || 0);
 }
 
 function macEquals(stored: string, digest: string): boolean {
@@ -344,15 +372,21 @@ function handle(kind: PatientLinkPurpose, sendOtp: SendOtp) {
         return;
       }
       const expired = !row?.expires_at || Date.parse(String(row.expires_at)) <= Date.now();
-      const digest = hashCode(otp, hash);
+      let digest = "";
+      try {
+        digest = hashCode(otp, hash);
+      } catch (err) {
+        if (err instanceof PatientLinkOtpUnavailable) {
+          shell(503, "<p>The code could not be checked. Try again later.</p>");
+          return;
+        }
+        throw err;
+      }
       const stored = String(row?.otp_hash || "");
       const matches = macEquals(stored, digest);
       if (!row || expired || !matches) {
         if (row && !expired) {
-          const updated = db
-            .prepare(`UPDATE patient_link_otps SET attempts = attempts + 1 WHERE token_hash = ? RETURNING attempts`)
-            .get(hash) as { attempts?: number } | undefined;
-          const next = Number(updated?.attempts || 0);
+          const next = incrementPatientLinkOtpAttempts(db, hash);
           if (next >= FAILURE_REVOKE_AT) {
             await revokePatientLinkToken(token);
             shell(410, "<p>This link is not valid.</p>");
@@ -402,7 +436,15 @@ function handle(kind: PatientLinkPurpose, sendOtp: SendOtp) {
         return;
       }
       const code = String(crypto.randomInt(0, 1_000_000)).padStart(6, "0");
-      rememberSend(db, hash, code, now);
+      try {
+        rememberSend(db, hash, code, now);
+      } catch (err) {
+        if (err instanceof PatientLinkOtpUnavailable) {
+          shell(503, "<p>The code could not be sent. Try again later.</p>");
+          return;
+        }
+        throw err;
+      }
       const sent = await sendOtp({ to: phone, code, tenantId: resolved.tenantId });
       if (!sent.ok) {
         undoSend(db, hash, existing);

@@ -523,4 +523,152 @@ describe("patient document link page", () => {
     assert.equal(portalPage.body.includes("Reviewed and signed"), false);
     assert.equal(portalPage.body.includes("Issued by"), false);
   });
+
+  function hmac(key: string, code: string): string {
+    return crypto.createHmac("sha256", key).update(code, "utf8").digest("hex");
+  }
+
+  async function withOtpEnv(
+    env: { nodeEnv?: string; otpSecret?: string; jwtSecret?: string },
+    run: () => Promise<void>
+  ) {
+    const prevNode = process.env.NODE_ENV;
+    const prevOtp = process.env.PATIENT_LINK_OTP_SECRET;
+    const prevJwt = process.env.JWT_SECRET;
+    if (env.nodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = env.nodeEnv;
+    if (env.otpSecret === undefined) delete process.env.PATIENT_LINK_OTP_SECRET;
+    else process.env.PATIENT_LINK_OTP_SECRET = env.otpSecret;
+    if (env.jwtSecret === undefined) delete process.env.JWT_SECRET;
+    else process.env.JWT_SECRET = env.jwtSecret;
+    try {
+      await run();
+    } finally {
+      if (prevNode === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = prevNode;
+      if (prevOtp === undefined) delete process.env.PATIENT_LINK_OTP_SECRET;
+      else process.env.PATIENT_LINK_OTP_SECRET = prevOtp;
+      if (prevJwt === undefined) delete process.env.JWT_SECRET;
+      else process.env.JWT_SECRET = prevJwt;
+    }
+  }
+
+  it("keys the OTP with the token hash outside production and ignores JWT_SECRET", async () => {
+    resetSendOtpRateLimits();
+    const { minted } = await planted("mac");
+    const jwt = "jwt-should-not-key-the-otp";
+    await withOtpEnv({ jwtSecret: jwt }, async () => {
+      let sentCode = "";
+      const app = express();
+      app.use(
+        createPatientDocumentLinkRouter({
+          sendOtp: async ({ code }) => {
+            sentCode = code;
+            return { ok: true };
+          },
+        })
+      );
+      const { server, port } = await listen(app);
+      const url = `http://127.0.0.1:${port}/rx/v/${minted.token}`;
+      const hash = crypto.createHash("sha256").update(minted.token, "utf8").digest("hex");
+      try {
+        assert.equal(
+          (await fetch(url, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "action=send" })).status,
+          200
+        );
+        const row = getDb().prepare(`SELECT otp_hash FROM patient_link_otps WHERE token_hash = ?`).get(hash) as { otp_hash: string };
+        assert.equal(row.otp_hash, hmac(hash, sentCode));
+        assert.notEqual(row.otp_hash, hmac(jwt, sentCode));
+        const verified = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: `action=verify&otp=${sentCode}`,
+        });
+        assert.equal(verified.status, 410);
+        assert.equal(getDb().prepare(`SELECT otp_hash FROM patient_link_otps WHERE token_hash = ?`).get(hash), undefined);
+      } finally {
+        await new Promise((resolve) => server.close(() => resolve(undefined)));
+      }
+    });
+  });
+
+  it("refuses to issue or verify a patient-link OTP in production when PATIENT_LINK_OTP_SECRET is unset", async () => {
+    resetSendOtpRateLimits();
+    const { minted } = await planted("prod-secret");
+    const jwt = "jwt-should-not-key-the-otp";
+    await withOtpEnv({ nodeEnv: "production", jwtSecret: jwt }, async () => {
+      const logs: string[] = [];
+      const original = console.error;
+      console.error = (...args: unknown[]) => {
+        logs.push(args.map((part) => String(part)).join(" "));
+      };
+      const app = express();
+      app.use(createPatientDocumentLinkRouter({ sendOtp: async () => ({ ok: true }) }));
+      const { server, port } = await listen(app);
+      const url = `http://127.0.0.1:${port}/rx/v/${minted.token}`;
+      const hash = crypto.createHash("sha256").update(minted.token, "utf8").digest("hex");
+      try {
+        const sent = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: "action=send",
+        });
+        assert.equal(sent.status, 503);
+        assert.equal(getDb().prepare(`SELECT token_hash FROM patient_link_otps WHERE token_hash = ?`).get(hash), undefined);
+        const checked = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: "action=verify&otp=000000",
+        });
+        assert.equal(checked.status, 503);
+        const logged = logs.join("\n");
+        assert.match(logged, /PATIENT_LINK_OTP_SECRET is unset/);
+        assert.equal(logged.includes(jwt), false);
+      } finally {
+        console.error = original;
+        await new Promise((resolve) => server.close(() => resolve(undefined)));
+      }
+    });
+  });
+
+  it("uses PATIENT_LINK_OTP_SECRET in production and does not fall back to JWT_SECRET", async () => {
+    resetSendOtpRateLimits();
+    const { minted } = await planted("prod-keyed");
+    const otpSecret = "patient-link-otp-secret-for-test";
+    const jwt = "jwt-should-not-key-the-otp";
+    await withOtpEnv({ nodeEnv: "production", otpSecret, jwtSecret: jwt }, async () => {
+      let sentCode = "";
+      const app = express();
+      app.use(
+        createPatientDocumentLinkRouter({
+          sendOtp: async ({ code }) => {
+            sentCode = code;
+            return { ok: true };
+          },
+        })
+      );
+      const { server, port } = await listen(app);
+      const url = `http://127.0.0.1:${port}/rx/v/${minted.token}`;
+      const hash = crypto.createHash("sha256").update(minted.token, "utf8").digest("hex");
+      try {
+        assert.equal(
+          (await fetch(url, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "action=send" })).status,
+          200
+        );
+        const row = getDb().prepare(`SELECT otp_hash FROM patient_link_otps WHERE token_hash = ?`).get(hash) as { otp_hash: string };
+        assert.equal(row.otp_hash, hmac(otpSecret, sentCode));
+        assert.notEqual(row.otp_hash, hmac(jwt, sentCode));
+        assert.notEqual(row.otp_hash, hmac(hash, sentCode));
+        const verified = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: `action=verify&otp=${sentCode}`,
+        });
+        assert.equal(verified.status, 410);
+        assert.equal(getDb().prepare(`SELECT otp_hash FROM patient_link_otps WHERE token_hash = ?`).get(hash), undefined);
+      } finally {
+        await new Promise((resolve) => server.close(() => resolve(undefined)));
+      }
+    });
+  });
 });

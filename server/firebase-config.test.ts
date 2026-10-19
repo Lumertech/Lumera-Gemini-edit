@@ -51,6 +51,7 @@ describe("Firebase Hosting → Cloud Run config (#26)", () => {
     assert.match(yaml, /_CLOUDSQL_INSTANCE/);
     assert.match(readRepo("deploy/CLOUD_RUN_BOOT_CHECK.md"), /JWT_SECRET is required/);
     assert.match(readRepo("deploy/CLOUD_RUN_BOOT_CHECK.md"), /DATABASE_URL is required/);
+    assert.match(readRepo("deploy/CLOUD_RUN_BOOT_CHECK.md"), /PATIENT_LINK_OTP_SECRET is required/);
     assert.match(readRepo("docs/CLOUD_SQL_POSTGRES.md"), /asia-south1/);
     assert.match(readRepo(".env.example"), /DATABASE_URL=/);
     assert.match(readRepo("package.json"), /alias:node:sqlite/);

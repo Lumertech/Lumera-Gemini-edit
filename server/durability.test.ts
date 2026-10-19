@@ -13,11 +13,13 @@ import {
   DATABASE_URL_REQUIRED_MESSAGE,
   failFastRequiredProductionEnv,
   JWT_SECRET_REQUIRED_MESSAGE,
+  PATIENT_LINK_OTP_SECRET_REQUIRED_MESSAGE,
 } from "./runtime.ts";
 import { sqliteFallbackForbidden } from "./sql-engine.ts";
 
 const PROD_JWT = "a-sufficiently-long-cloud-run-secret";
 const PROD_DB = "postgres://lumera:local@127.0.0.1:5432/lumera";
+const PROD_OTP = "patient-link-otp-secret-for-tests";
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sqlitePath = path.join(root, "data", "lumera.db");
 
@@ -63,17 +65,41 @@ describe("production DATABASE_URL fail-fast (Epic 0.2)", () => {
         } as NodeJS.ProcessEnv),
       /APP_URL/
     );
+    assert.throws(
+      () =>
+        assertRequiredProductionEnv({
+          NODE_ENV: "production",
+          JWT_SECRET: PROD_JWT,
+          DATABASE_URL: PROD_DB,
+          APP_URL: "https://www.mylumera.in",
+        } as NodeJS.ProcessEnv),
+      /PATIENT_LINK_OTP_SECRET/
+    );
+    assert.throws(
+      () =>
+        assertRequiredProductionEnv({
+          NODE_ENV: "production",
+          JWT_SECRET: PROD_JWT,
+          DATABASE_URL: PROD_DB,
+          APP_URL: "https://www.mylumera.in",
+          PATIENT_LINK_OTP_SECRET: "replace-with-otp-secret",
+        } as NodeJS.ProcessEnv),
+      /PATIENT_LINK_OTP_SECRET/
+    );
     assert.doesNotThrow(() =>
       assertRequiredProductionEnv({
         NODE_ENV: "production",
         JWT_SECRET: PROD_JWT,
         DATABASE_URL: PROD_DB,
         APP_URL: "https://www.mylumera.in",
+        PATIENT_LINK_OTP_SECRET: PROD_OTP,
       } as NodeJS.ProcessEnv)
     );
     assert.match(APP_URL_REQUIRED_MESSAGE, /APP_URL is required/);
     assert.match(DATABASE_URL_REQUIRED_MESSAGE, /DATABASE_URL is required/);
     assert.match(JWT_SECRET_REQUIRED_MESSAGE, /JWT_SECRET is required/);
+    assert.match(PATIENT_LINK_OTP_SECRET_REQUIRED_MESSAGE, /PATIENT_LINK_OTP_SECRET is required/);
+    assert.equal(PATIENT_LINK_OTP_SECRET_REQUIRED_MESSAGE.includes(PROD_OTP), false);
   });
 
   it("exits non-zero at boot when production APP_URL is unset and stays up in development", () => {

@@ -6,10 +6,11 @@ Cloud Run logs are checked.
 ## What the process does
 
 1. `applyBundledServerNodeEnv()` — `dist/server.cjs` implies `NODE_ENV=production`.
-2. `failFastRequiredProductionEnv()` — **exits immediately** if `JWT_SECRET` **or** `DATABASE_URL` is
-   missing or a placeholder. Log lines:
+2. `failFastRequiredProductionEnv()` — **exits immediately** if `JWT_SECRET`, `DATABASE_URL`,
+   `APP_URL`, or `PATIENT_LINK_OTP_SECRET` is missing or a placeholder. Log lines:
    `JWT_SECRET is required in production (no weak default).`
    `DATABASE_URL is required in production (Cloud Run is stateless…`
+   `PATIENT_LINK_OTP_SECRET is required in production.`
    That crash happens **before** `listen`. Cloud Run then reports a PORT timeout
    even though `app.listen(PORT, "0.0.0.0")` is correct. JWT is checked first.
 3. Register `/healthz` (`200 ok`) and the rest of the Express app.
@@ -19,9 +20,9 @@ Cloud Run logs are checked.
 
 ## CoS action
 
-Set a real `JWT_SECRET` **and** `DATABASE_URL` on service `lumera-gemini-edit` (`asia-south1`) via
+Set a real `JWT_SECRET`, `DATABASE_URL`, and `PATIENT_LINK_OTP_SECRET` on service `lumera-gemini-edit` (`asia-south1`) via
 Secret Manager or Cloud Run Console. `cloudbuild.yaml` uses `--update-env-vars`
-for `APP_URL` / `NODE_ENV` only and **must not wipe** `JWT_SECRET` or `DATABASE_URL`.
+for `APP_URL` / `NODE_ENV` only and **must not wipe** `JWT_SECRET`, `DATABASE_URL`, or `PATIENT_LINK_OTP_SECRET`.
 Attach Cloud SQL with `--add-cloudsql-instances` / `_CLOUDSQL_INSTANCE` after the
 founder confirms the instance (`docs/CLOUD_SQL_POSTGRES.md`).
 
