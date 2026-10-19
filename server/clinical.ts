@@ -10,12 +10,13 @@ import {
   writeAudit,
 } from "./db.ts";
 import { clinicLine, getTenantLetterhead } from "./letterhead.ts";
-import { mintPatientLinkToken, PATIENT_LINK_PRINT_TTL_HOURS } from "./patient-link-token.ts";
+import { mintPatientLinkToken, PATIENT_LINK_PRINT_TTL_HOURS, revokePatientLinkTokensFor } from "./patient-link-token.ts";
 import { recordWhatsAppOptIn } from "./whatsapp-opt-in.ts";
 import {
   bindStoredSafetyCheckToRx,
   patientSafetyLists,
   recordSignedRxSafetyOverride,
+  SAFETY_OVERRIDE_REASON_MIN,
 } from "./rx-safety-store.ts";
 import { requireAuth } from "./auth.ts";
 import { reportCaughtError } from "./error-tracker.ts";
@@ -1133,7 +1134,22 @@ function deletePrescriptionDraft(input: {
   );
 }
 
-async function insertPrescription(tenantId: string, body: Record<string, unknown>, actorId: string, actorRole?: string) {
+function prescriptionReviewedBy(row: { specialty_modules?: unknown } | undefined): string {
+  try {
+    const modules = JSON.parse(String(row?.specialty_modules || "{}")) as { reviewedBy?: unknown };
+    return String(modules.reviewedBy || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+async function insertPrescription(
+  tenantId: string,
+  body: Record<string, unknown>,
+  actorId: string,
+  actorRole?: string,
+  actorName?: string
+) {
   assertReviewedAiPrescription(body);
   const sessionUserId = String(actorId || "").trim();
   if (clientRequestedReview(body) && !sessionUserId) {
@@ -1162,6 +1178,15 @@ async function insertPrescription(tenantId: string, body: Record<string, unknown
   const date = String(body.date || now.slice(0, 10));
   const letterhead = getTenantLetterhead(tenantId);
   const stamped = clinicLine(letterhead);
+  const requestedNumber = String(body.rxNumber || body.rx_number || "").trim();
+  if (signerId && requestedNumber) {
+    const prior = getDb()
+      .prepare(`SELECT id FROM prescriptions WHERE tenant_id = ? AND rx_number = ?`)
+      .get(tenantId, requestedNumber) as { id?: string } | undefined;
+    if (prior?.id) {
+      await revokePatientLinkTokensFor({ tenantId, resourceId: requestedNumber, purpose: "rx" });
+    }
+  }
   getDb()
     .prepare(
       `INSERT INTO prescriptions (
@@ -1222,22 +1247,34 @@ async function insertPrescription(tenantId: string, body: Record<string, unknown
   bindStoredSafetyCheckToRx(getDb(), {
     tenantId,
     rxNumber,
+    patientId: mappedPatient.id,
     medicines,
     allergies: lists.allergies,
     chronicConditions: lists.chronicConditions,
   });
   const overrideReason = String(body.safetyOverrideReason || body.safety_override_reason || "").trim();
-  if (overrideReason && sessionUserId) {
-    recordSignedRxSafetyOverride(getDb(), {
+  const clinicianName = String(actorName || "").trim();
+  if (overrideReason.length >= SAFETY_OVERRIDE_REASON_MIN && signerId && sessionUserId) {
+    const savedOverride = recordSignedRxSafetyOverride(getDb(), {
       tenantId,
       rxNumber,
       userId: sessionUserId,
-      userName: String(body.doctorName || body.doctor_name || "Clinician"),
+      userName: clinicianName,
       reason: overrideReason,
       medicines,
       allergies: lists.allergies,
       chronicConditions: lists.chronicConditions,
     });
+    if (savedOverride) {
+      writeAudit(
+        getDb(),
+        sessionUserId,
+        clinicianName || "Clinician",
+        "safety_override",
+        `tenant ${tenantId} rx ${rxNumber} safety override recorded`,
+        { tenantId, actorRole, entityType: "prescription", entityId: rxNumber, patientId: mappedPatient.id }
+      );
+    }
   }
   return saved;
 }
@@ -1642,23 +1679,42 @@ export function createClinicalRouter(): Router {
     if (!tenantId) return;
     const rxNumber = String(req.params.rxNumber || "").trim();
     const reason = String((req.body || {}).reason || "").trim();
-    if (!reason) return res.status(400).json({ error: "A reason is required." });
+    if (reason.length < SAFETY_OVERRIDE_REASON_MIN) {
+      return res.status(400).json({ error: "Type a reason for this override." });
+    }
     const rx = getDb()
-      .prepare(`SELECT patient_id, medicines FROM prescriptions WHERE tenant_id = ? AND rx_number = ?`)
-      .get(tenantId, rxNumber) as { patient_id?: string; medicines?: string } | undefined;
+      .prepare(`SELECT patient_id, doctor_id, medicines, specialty_modules FROM prescriptions WHERE tenant_id = ? AND rx_number = ?`)
+      .get(tenantId, rxNumber) as
+      | { patient_id?: string; doctor_id?: string; medicines?: string; specialty_modules?: string }
+      | undefined;
     if (!rx) return res.status(404).json({ error: "Prescription not found" });
+    const doctorId = String(rx.doctor_id || "").trim();
+    const signer = treatingDoctorId(tenantId, String(req.user?.id || ""), String(req.user?.role || ""), doctorId);
+    if (!signer || signer !== doctorId) return res.status(403).json({ error: "Only the treating doctor can override this prescription." });
+    const reviewedBy = prescriptionReviewedBy(rx);
+    if (!reviewedBy || reviewedBy !== doctorId) {
+      return res.status(409).json({ error: "Sign the prescription before recording an override." });
+    }
     const lists = patientSafetyLists(getDb(), tenantId, String(rx.patient_id || ""));
+    const clinicianName = String(req.user?.name || "").trim();
     const saved = recordSignedRxSafetyOverride(getDb(), {
       tenantId,
       rxNumber,
       userId: String(req.user?.id || ""),
-      userName: String(req.user?.name || ""),
+      userName: clinicianName,
       reason,
       medicines: rx.medicines,
       allergies: lists.allergies,
       chronicConditions: lists.chronicConditions,
     });
-    if (!saved) return res.status(400).json({ error: "Could not record the override." });
+    if (!saved) return res.status(409).json({ error: "A safety check for this signed prescription is required." });
+    writeAudit(getDb(), String(req.user?.id || ""), clinicianName || "Clinician", "safety_override", `tenant ${tenantId} rx ${rxNumber} safety override recorded`, {
+      tenantId,
+      actorRole: String(req.user?.role || ""),
+      entityType: "prescription",
+      entityId: rxNumber,
+      patientId: String(rx.patient_id || ""),
+    });
     res.json({ ok: true });
   });
 
@@ -1673,6 +1729,21 @@ export function createClinicalRouter(): Router {
     if (!patientId || !resourceId) return res.status(400).json({ error: "patientId and resourceId are required" });
     const patient = getTenantPatient(tenantId, patientId);
     if (!patient) return res.status(404).json({ error: "Patient not found" });
+    if (purpose === "rx") {
+      const rx = getDb()
+        .prepare(`SELECT patient_id, doctor_id, specialty_modules FROM prescriptions WHERE tenant_id = ? AND rx_number = ?`)
+        .get(tenantId, resourceId) as
+        | { patient_id?: string; doctor_id?: string; specialty_modules?: string }
+        | undefined;
+      if (!rx) return res.status(404).json({ error: "Prescription not found" });
+      if (String(rx.patient_id || "") !== patientId) {
+        return res.status(409).json({ error: "This prescription is for a different patient." });
+      }
+      const reviewedBy = prescriptionReviewedBy(rx);
+      if (!reviewedBy || reviewedBy !== String(rx.doctor_id || "").trim()) {
+        return res.status(409).json({ error: "Sign the prescription before issuing a link." });
+      }
+    }
     const requested = Number(body.ttlHours);
     const ttlHours =
       Number.isFinite(requested) && requested > 0 ? Math.min(PATIENT_LINK_PRINT_TTL_HOURS, requested) : PATIENT_LINK_PRINT_TTL_HOURS;
@@ -1701,7 +1772,8 @@ export function createClinicalRouter(): Router {
         tenantId,
         req.body || {},
         String(req.user?.id || ""),
-        String(req.user?.role || "")
+        String(req.user?.role || ""),
+        String(req.user?.name || "")
       );
       const mapped = prescriptionForClient(req, tenantId, row);
       const signed = Boolean(String((mapped as { reviewedBy?: string }).reviewedBy || "").trim());

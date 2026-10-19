@@ -528,7 +528,7 @@ export default function ClinicianApp() {
     return next;
   };
 
-  const handleSavePrescription = (newRx: Prescription) => {
+  const handleSavePrescription = async (newRx: Prescription): Promise<Prescription | void> => {
     setPrescriptions((prev) => [newRx, ...prev.filter((p) => p.id !== newRx.id)]);
     setAppointments((prev) =>
       prev.map((a) =>
@@ -544,23 +544,22 @@ export default function ClinicianApp() {
           : a
       )
     );
-    void (async () => {
-      try {
-        const { prescription } = await apiFetch<{ prescription: Prescription }>('/api/prescriptions', {
-          method: 'POST',
-          body: JSON.stringify({ ...newRx, appointmentId: draftAppointmentId }),
-        });
-        setPrescriptions((prev) => [prescription, ...prev.filter((p) => p.id !== prescription.id && p.id !== newRx.id)]);
-        const inConsult = appointments.find(
-          (a) => a.patientId === newRx.patientId && (a.status === 'In Consultation' || a.status === 'Completed')
-        );
-        if (inConsult) {
-          await persistAppointmentPatch(inConsult.id, { status: 'Completed' });
-        }
-      } catch (err) {
-        console.error('Failed to persist prescription', err);
+    try {
+      const { prescription } = await apiFetch<{ prescription: Prescription }>('/api/prescriptions', {
+        method: 'POST',
+        body: JSON.stringify({ ...newRx, appointmentId: draftAppointmentId }),
+      });
+      setPrescriptions((prev) => [prescription, ...prev.filter((p) => p.id !== prescription.id && p.id !== newRx.id)]);
+      const inConsult = appointments.find(
+        (a) => a.patientId === newRx.patientId && (a.status === 'In Consultation' || a.status === 'Completed')
+      );
+      if (inConsult) {
+        await persistAppointmentPatch(inConsult.id, { status: 'Completed' });
       }
-    })();
+      return prescription;
+    } catch (err) {
+      console.error('Failed to persist prescription', err);
+    }
   };
 
   const handleUpdateAppointmentStatus = (id: string, status: Appointment['status']) => {

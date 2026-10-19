@@ -4,9 +4,10 @@
  * registered for that patient and shows diagnosis, medicines, or receipt
  * amounts only after the code matches.
  *
- * Sends are capped per token (3 / 15 min, 10 lifetime), and per phone and
- * IP through the shared OTP limiter. A resend never clears failed guesses.
- * Ten failures revoke the link.
+ * Sends are capped per token at the stricter of 3 / 15 min and 3 / hour
+ * (3 / 15 min), plus 10 per lifetime, and per phone and IP through the
+ * shared OTP limiter. A resend never clears failed guesses.
+ * Ten cumulative failures revoke the link.
  */
 
 import crypto from "node:crypto";
@@ -141,7 +142,20 @@ function patientPhone(db: DatabaseSync, tenantId: string, patientId: string): st
   }
 }
 
-function reveal(db: DatabaseSync, purpose: PatientLinkPurpose, tenantId: string, resourceId: string): string {
+function rxSignedForPatient(db: DatabaseSync, tenantId: string, resourceId: string, patientId: string): boolean {
+  const rx = db
+    .prepare(`SELECT patient_id, specialty_modules FROM prescriptions WHERE tenant_id = ? AND rx_number = ?`)
+    .get(tenantId, resourceId) as { patient_id?: string; specialty_modules?: string } | undefined;
+  if (!rx || String(rx.patient_id || "") !== patientId) return false;
+  try {
+    const modules = JSON.parse(String(rx.specialty_modules || "{}")) as { reviewedBy?: unknown };
+    return Boolean(String(modules.reviewedBy || "").trim());
+  } catch {
+    return false;
+  }
+}
+
+function reveal(db: DatabaseSync, purpose: PatientLinkPurpose, tenantId: string, resourceId: string, patientId: string): string | null {
   if (purpose === "receipt") {
     const invoice = db
       .prepare(
@@ -155,9 +169,11 @@ function reveal(db: DatabaseSync, purpose: PatientLinkPurpose, tenantId: string,
   if (purpose !== "rx") {
     return "<p>Verified.</p>";
   }
+  if (!rxSignedForPatient(db, tenantId, resourceId, patientId)) return null;
   const rx = db
-    .prepare(`SELECT diagnosis, medicines FROM prescriptions WHERE tenant_id = ? AND rx_number = ?`)
-    .get(tenantId, resourceId) as { diagnosis?: string; medicines?: string } | undefined;
+    .prepare(`SELECT diagnosis, medicines, patient_id FROM prescriptions WHERE tenant_id = ? AND rx_number = ? AND patient_id = ?`)
+    .get(tenantId, resourceId, patientId) as { diagnosis?: string; medicines?: string; patient_id?: string } | undefined;
+  if (!rx) return null;
   let lines = "";
   try {
     const meds = JSON.parse(String(rx?.medicines || "[]")) as Array<{ drugName?: string; dosage?: string }>;
@@ -323,7 +339,12 @@ function handle(kind: PatientLinkPurpose, sendOtp: SendOtp) {
         return;
       }
       db.prepare(`DELETE FROM patient_link_otps WHERE token_hash = ?`).run(hash);
-      shell(200, reveal(db, kind, consumed.tenantId, consumed.resourceId));
+      const shown = reveal(db, kind, consumed.tenantId, consumed.resourceId, consumed.patientId);
+      if (shown == null) {
+        shell(410, "<p>This link is not valid.</p>");
+        return;
+      }
+      shell(200, shown);
       return;
     }
     if (req.method === "POST" && action === "send") {

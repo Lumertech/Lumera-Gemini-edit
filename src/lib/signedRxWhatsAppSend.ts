@@ -21,7 +21,7 @@ export const SIGNED_RX_WHATSAPP_COPY: Record<string, string> = {
   [RX_SEND_FAILED]: "WhatsApp did not accept this prescription.",
   [PATIENT_PHONE_MISSING]: "Add the patient's phone before sending on WhatsApp.",
   [SAFETY_REVIEW_REQUIRED]:
-    "This prescription was flagged HIGH_RISK by the AI Safety Audit. Review the contraindications above and acknowledge the override before proceeding.",
+    "Review the safety check before sending this prescription on WhatsApp.",
   [WHATSAPP_OPT_IN_REQUIRED]: "This patient has not opted in to WhatsApp messages from this clinic.",
 };
 

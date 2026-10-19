@@ -535,6 +535,8 @@ export interface Prescription {
   clinicAddress: string;
   clinicPhone: string;
   qrVerificationUrl?: string;
+  /** Typed on sign when the safety check needs a clinician reason. Never pre-filled. */
+  safetyOverrideReason?: string;
   whatsappSentStatus?: 'unsent' | 'queued' | 'sent' | 'delivered' | 'read';
   
   // Dynamic specialty modules

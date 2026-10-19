@@ -7,14 +7,21 @@ import { mountGeminiVoiceRoutes } from "./gemini-voice.ts";
 import { generateRuleBasedSoap, getPulseFallbackAnswer } from "./gemini-fallbacks.ts";
 import { aiScribeTenantIdFromRequest, blockedAiScribeResponse, meterSuccessfulGeminiScribe } from "./gemini-scribe-meter.ts";
 import { AI_RUPEE_OUTPUT_RULE } from "./india-currency-copy.ts";
+import { RULE_BASED_SAFETY_SOURCE } from "../src/lib/safetyCheckGate.ts";
 
 let testSoapGenerator: ((body: Record<string, unknown>) => Promise<unknown>) | undefined;
+let testSafetyCheck: (() => Promise<unknown>) | undefined;
 
 /** Test-only Gemini mock so HTTP tests do not need live API keys. */
 export function setGeminiSoapGeneratorForTests(
   fn?: ((body: Record<string, unknown>) => Promise<unknown>) | undefined
 ) {
   testSoapGenerator = fn;
+}
+
+/** Test-only stand-in for the safety-check model. A throw takes the rule-based path. */
+export function setGeminiSafetyCheckForTests(fn?: (() => Promise<unknown>) | undefined) {
+  testSafetyCheck = fn;
 }
 
 /** Clinical Gemini HTTP routes. Split from server.ts so MCP can upload both files intact. */
@@ -140,14 +147,28 @@ export function mountGeminiClinicalRoutes(app: Express) {
     const alerts = Array.isArray(record.alerts) ? record.alerts : [];
     const hasHighRiskAlert = record.hasHighRiskAlert === true;
     const named = typeof record.safetyStatus === "string" ? record.safetyStatus.trim() : "";
-    const safetyStatus = named || (hasHighRiskAlert ? "HIGH_RISK" : alerts.length > 0 ? "REVIEW" : "SAFE");
+    let safetyStatus = named || (hasHighRiskAlert ? "HIGH_RISK" : alerts.length > 0 ? "REVIEW" : "SAFE");
+    // A rule-based fallback is never a pass. #155's fail-closed 503 (no fallback) wins on rebase; keep that 503.
+    if (record.source === RULE_BASED_SAFETY_SOURCE && safetyStatus === "SAFE") {
+      safetyStatus = hasHighRiskAlert ? "HIGH_RISK" : "REVIEW";
+    }
     const payload = { ...record, hasHighRiskAlert, alerts, safetyStatus };
     const tenantId = String(req.user?.tenantId || "").trim();
     if (tenantId) {
       try {
-        const incoming = (req.body || {}) as { medicines?: unknown; patientAllergies?: unknown; chronicConditions?: unknown };
+        const incoming = (req.body || {}) as {
+          medicines?: unknown;
+          patientAllergies?: unknown;
+          chronicConditions?: unknown;
+          patientId?: unknown;
+          patientAge?: unknown;
+          patientGender?: unknown;
+        };
         rememberSafetyCheckResponse(getDb(), {
           tenantId,
+          patientId: String(incoming.patientId || ""),
+          age: incoming.patientAge,
+          gender: incoming.patientGender,
           medicines: incoming.medicines,
           allergies: incoming.patientAllergies,
           chronicConditions: incoming.chronicConditions,
@@ -165,7 +186,13 @@ export function mountGeminiClinicalRoutes(app: Express) {
     try {
       const { patientAllergies = [], chronicConditions = [], medicines = [], patientAge, patientGender } = req.body;
       const ai = getGenAI();
-      if (ai && medicines.length > 0) {
+      if (testSafetyCheck) {
+        try {
+          return finishSafetyCheck(req, res, await testSafetyCheck());
+        } catch (err: any) {
+          console.error("Safety check Gemini error:", err?.message);
+        }
+      } else if (ai && medicines.length > 0) {
         try {
           const prompt = `Analyze clinical safety for Age ${patientAge || 40}, ${patientGender || "Adult"}, Allergies: ${(patientAllergies || []).join(", ") || "None"}, Conditions: ${(chronicConditions || []).join(", ") || "None"}, Medicines: ${JSON.stringify(medicines)}. Return JSON { hasHighRiskAlert, alerts }.`;
           const response = await ai.models.generateContent({
@@ -191,8 +218,8 @@ export function mountGeminiClinicalRoutes(app: Express) {
       return finishSafetyCheck(req, res, {
         hasHighRiskAlert,
         alerts,
-        safetyStatus: hasHighRiskAlert ? "HIGH_RISK" : alerts.length > 0 ? "REVIEW" : "SAFE",
-        source: "rule-based fallback",
+        safetyStatus: hasHighRiskAlert ? "HIGH_RISK" : "REVIEW",
+        source: RULE_BASED_SAFETY_SOURCE,
       });
     } catch (error: any) {
       res.status(500).json({ error: error.message });

@@ -304,6 +304,11 @@ export const rxSignedSafety = pgTable(
     overrideUserName: text("override_user_name"),
     overrideAt: text("override_at"),
     overrideReason: text("override_reason"),
+    overrideAlertsJson: text("override_alerts_json").notNull().default("[]"),
+    rxUpdatedAt: text("rx_updated_at").notNull().default(""),
+    patientId: text("patient_id").notNull().default(""),
+    patientAge: text("patient_age").notNull().default(""),
+    patientGender: text("patient_gender").notNull().default(""),
     updatedAt: text("updated_at").notNull(),
   },
   (t) => [unique("rx_signed_safety_pk").on(t.tenantId, t.rxNumber)]

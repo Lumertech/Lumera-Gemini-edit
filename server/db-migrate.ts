@@ -536,6 +536,11 @@ export function migrate(database: SqlDatabase) {
         override_user_name TEXT,
         override_at TEXT,
         override_reason TEXT,
+        override_alerts_json TEXT NOT NULL DEFAULT '[]',
+        rx_updated_at TEXT NOT NULL DEFAULT '',
+        patient_id TEXT NOT NULL DEFAULT '',
+        patient_age TEXT NOT NULL DEFAULT '',
+        patient_gender TEXT NOT NULL DEFAULT '',
         updated_at TEXT NOT NULL,
         PRIMARY KEY (tenant_id, rx_number)
       );

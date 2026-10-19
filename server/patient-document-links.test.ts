@@ -39,8 +39,8 @@ describe("patient document link page", () => {
     db.prepare(
       `INSERT INTO prescriptions (
          id, tenant_id, rx_number, patient_id, patient_name, patient_phone, patient_uhid,
-         doctor_id, doctor_name, doctor_specialty, doctor_reg_number, date, diagnosis, medicines, created_at
-       ) VALUES (?, ?, ?, ?, 'Asha', ?, ?, 'doc-1', 'Dr Mehta', 'GP', 'REG1', '2026-10-19', ?, ?, ?)`
+         doctor_id, doctor_name, doctor_specialty, doctor_reg_number, date, diagnosis, medicines, specialty_modules, created_at
+       ) VALUES (?, ?, ?, ?, 'Asha', ?, ?, 'doc-1', 'Dr Mehta', 'GP', 'REG1', '2026-10-19', ?, ?, ?, ?)`
     ).run(
       `rx-${suffix}`,
       tenantId,
@@ -50,6 +50,7 @@ describe("patient document link page", () => {
       uhid,
       diagnosis,
       JSON.stringify([{ drugName: drug, dosage: "1 tab" }]),
+      JSON.stringify({ reviewedBy: "doc-1" }),
       now
     );
     const minted = await mintPatientLinkToken({
@@ -320,5 +321,101 @@ describe("patient document link page", () => {
       else process.env.ALLOWED_ORIGINS = prevOrigins;
       await new Promise((resolve) => server.close(() => resolve(undefined)));
     }
+  });
+
+  async function revealAfterOtp(token: string): Promise<{ status: number; body: string }> {
+    const app = express();
+    let sentCode = "";
+    app.use(
+      createPatientDocumentLinkRouter({
+        sendOtp: async ({ code }) => {
+          sentCode = code;
+          return { ok: true };
+        },
+      })
+    );
+    const { server, port } = await listen(app);
+    const url = `http://127.0.0.1:${port}/rx/v/${token}`;
+    try {
+      assert.equal((await fetch(url, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "action=send" })).status, 200);
+      const revealed = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: `action=verify&otp=${sentCode}`,
+      });
+      return { status: revealed.status, body: await revealed.text() };
+    } finally {
+      await new Promise((resolve) => server.close(() => resolve(undefined)));
+    }
+  }
+
+  it("does not reveal an unsigned prescription or a token for a different patient", async () => {
+    const suffix = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    const tenantId = `tenant-bind-${suffix}`;
+    const patientA = `patient-a-${suffix}`;
+    const patientB = `patient-b-${suffix}`;
+    const rxNumber = `RX-BIND-${suffix}`;
+    const diagnosis = `BoundDiagnosis${suffix}`;
+    const now = new Date().toISOString();
+    const db = getDb();
+    db.prepare(
+      `INSERT INTO tenants (id, name, specialty, country, timezone, phone, trial_ends_at, created_at, updated_at)
+       VALUES (?, 'North Clinic', 'GP', 'IN', 'Asia/Kolkata', ?, ?, ?, ?)`
+    ).run(tenantId, `+9191${suffix.slice(-8)}`, now, now, now);
+    db.prepare(`INSERT INTO patients (id, tenant_id, uhid, name, phone, created_at) VALUES (?, ?, ?, 'Asha', ?, ?)`).run(
+      patientA,
+      tenantId,
+      `UHA${suffix}`,
+      `+9181${suffix.slice(-8)}`,
+      now
+    );
+    db.prepare(`INSERT INTO patients (id, tenant_id, uhid, name, phone, created_at) VALUES (?, ?, ?, 'Other', ?, ?)`).run(
+      patientB,
+      tenantId,
+      `UHB${suffix}`,
+      `+9182${suffix.slice(-8)}`,
+      now
+    );
+    db.prepare(
+      `INSERT INTO prescriptions (
+         id, tenant_id, rx_number, patient_id, patient_name, patient_phone, patient_uhid,
+         doctor_id, doctor_name, doctor_specialty, doctor_reg_number, date, diagnosis, medicines, specialty_modules, created_at
+       ) VALUES (?, ?, ?, ?, 'Asha', ?, ?, 'doc-1', 'Dr Mehta', 'GP', 'REG1', '2026-10-19', ?, '[]', ?, ?)`
+    ).run(
+      `rx-signed-${suffix}`,
+      tenantId,
+      rxNumber,
+      patientA,
+      `+9181${suffix.slice(-8)}`,
+      `UHA${suffix}`,
+      diagnosis,
+      JSON.stringify({ reviewedBy: "doc-1" }),
+      now
+    );
+    const mismatched = await mintPatientLinkToken({ tenantId, patientId: patientB, purpose: "rx", resourceId: rxNumber });
+    const wrongPatient = await revealAfterOtp(mismatched.token);
+    assert.equal(wrongPatient.status, 410);
+    assert.equal(wrongPatient.body.includes(diagnosis), false);
+
+    const unsignedNumber = `RX-UNSIGNED-${suffix}`;
+    db.prepare(
+      `INSERT INTO prescriptions (
+         id, tenant_id, rx_number, patient_id, patient_name, patient_phone, patient_uhid,
+         doctor_id, doctor_name, doctor_specialty, doctor_reg_number, date, diagnosis, medicines, specialty_modules, created_at
+       ) VALUES (?, ?, ?, ?, 'Asha', ?, ?, 'doc-1', 'Dr Mehta', 'GP', 'REG1', '2026-10-19', ?, '[]', '{}', ?)`
+    ).run(
+      `rx-unsigned-${suffix}`,
+      tenantId,
+      unsignedNumber,
+      patientA,
+      `+9181${suffix.slice(-8)}`,
+      `UHA${suffix}`,
+      diagnosis,
+      now
+    );
+    const unsigned = await mintPatientLinkToken({ tenantId, patientId: patientA, purpose: "rx", resourceId: unsignedNumber });
+    const hidden = await revealAfterOtp(unsigned.token);
+    assert.equal(hidden.status, 410);
+    assert.equal(hidden.body.includes(diagnosis), false);
   });
 });

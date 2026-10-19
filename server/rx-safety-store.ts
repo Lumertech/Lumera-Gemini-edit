@@ -13,6 +13,7 @@ import {
 } from "../src/lib/safetyCheckGate.ts";
 
 export const SAFETY_REVIEW_REQUIRED = "SAFETY_REVIEW_REQUIRED";
+export const SAFETY_OVERRIDE_REASON_MIN = 20;
 
 type StoredCheck = {
   signature: string;
@@ -22,6 +23,14 @@ type StoredCheck = {
   alert_count: number;
   acknowledged_signature: string | null;
 };
+
+function addColumn(db: DatabaseSync, table: string, definition: string) {
+  try {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${definition}`);
+  } catch {
+    /* column already present */
+  }
+}
 
 export function ensureRxSafetySchema(db: DatabaseSync) {
   db.exec(`
@@ -34,15 +43,26 @@ export function ensureRxSafetySchema(db: DatabaseSync) {
       alert_count INTEGER NOT NULL DEFAULT 0,
       acknowledged_signature TEXT,
       updated_at TEXT NOT NULL,
+      patient_id TEXT NOT NULL DEFAULT '',
+      patient_age TEXT NOT NULL DEFAULT '',
+      patient_gender TEXT NOT NULL DEFAULT '',
+      alerts_json TEXT NOT NULL DEFAULT '[]',
       PRIMARY KEY (tenant_id, signature)
     )
   `);
+  addColumn(db, "rx_safety_checks", "patient_id TEXT NOT NULL DEFAULT ''");
+  addColumn(db, "rx_safety_checks", "patient_age TEXT NOT NULL DEFAULT ''");
+  addColumn(db, "rx_safety_checks", "patient_gender TEXT NOT NULL DEFAULT ''");
+  addColumn(db, "rx_safety_checks", "alerts_json TEXT NOT NULL DEFAULT '[]'");
 }
 
 export function rememberSafetyCheckResponse(
   db: DatabaseSync,
   opts: {
     tenantId: string;
+    patientId?: string;
+    age?: unknown;
+    gender?: unknown;
     medicines: unknown;
     allergies?: unknown;
     chronicConditions?: unknown;
@@ -53,45 +73,48 @@ export function rememberSafetyCheckResponse(
   const decision = interpretSafetyCheckResponse(opts.status, opts.body);
   if (decision.accepted === false) return;
   const medicines = parseMedicines(opts.medicines);
-  const signature = buildSafetyListSignature({
+  const identity = {
+    patientId: String(opts.patientId || "").trim(),
+    age: normalizeAge(opts.age),
+    gender: normalizeGender(opts.gender),
+  };
+  const signature = safetySignature({
     medicines,
     allergies: Array.isArray(opts.allergies) ? (opts.allergies as string[]) : [],
     chronicConditions: Array.isArray(opts.chronicConditions) ? (opts.chronicConditions as string[]) : [],
+    ...identity,
   });
-  const alerts = Array.isArray(decision.result.alerts) ? decision.result.alerts.length : 0;
+  const alerts = Array.isArray(decision.result.alerts) ? decision.result.alerts : [];
   ensureRxSafetySchema(db);
   db.prepare(
     `INSERT INTO rx_safety_checks
-      (tenant_id, signature, safety_status, has_high_risk, source, alert_count, acknowledged_signature, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, NULL, ?)
+      (tenant_id, signature, safety_status, has_high_risk, source, alert_count, acknowledged_signature, updated_at,
+       patient_id, patient_age, patient_gender, alerts_json)
+     VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)
      ON CONFLICT(tenant_id, signature) DO UPDATE SET
        safety_status = excluded.safety_status,
        has_high_risk = excluded.has_high_risk,
        source = excluded.source,
        alert_count = excluded.alert_count,
        acknowledged_signature = NULL,
-       updated_at = excluded.updated_at`
+       updated_at = excluded.updated_at,
+       patient_id = excluded.patient_id,
+       patient_age = excluded.patient_age,
+       patient_gender = excluded.patient_gender,
+       alerts_json = excluded.alerts_json`
   ).run(
     opts.tenantId,
     signature,
     String(decision.result.safetyStatus || ""),
     decision.result.hasHighRiskAlert ? 1 : 0,
     String(decision.result.source || ""),
-    alerts,
-    new Date().toISOString()
+    alerts.length,
+    new Date().toISOString(),
+    identity.patientId,
+    identity.age,
+    identity.gender,
+    JSON.stringify(alerts)
   );
-}
-
-export function acknowledgeSafetyCheck(db: DatabaseSync, tenantId: string, signature: string): boolean {
-  ensureRxSafetySchema(db);
-  const sig = String(signature || "").trim();
-  if (!tenantId || !sig) return false;
-  const result = db
-    .prepare(
-      `UPDATE rx_safety_checks SET acknowledged_signature = ?, updated_at = ? WHERE tenant_id = ? AND signature = ?`
-    )
-    .run(sig, new Date().toISOString(), tenantId, sig);
-  return Number(result.changes || 0) > 0;
 }
 
 function parseMedicines(raw: unknown): Array<{ id: string; drugName: string; dosage: string; frequency: string; durationDays: number | string }> {
@@ -117,12 +140,68 @@ function parseMedicines(raw: unknown): Array<{ id: string; drugName: string; dos
   });
 }
 
+function normalizeAge(value: unknown): string {
+  if (value == null || value === "") return "";
+  const numeric = Number(value);
+  if (Number.isFinite(numeric)) return String(numeric);
+  return String(value).trim();
+}
+
+function normalizeGender(value: unknown): string {
+  return String(value || "").trim().toLowerCase();
+}
+
+type PatientIdentity = { patientId: string; age: string; gender: string; updatedAt: string };
+
+function patientIdentity(db: DatabaseSync, tenantId: string, patientId: string): PatientIdentity {
+  const row = db
+    .prepare(`SELECT id, age, gender FROM patients WHERE id = ? AND tenant_id = ?`)
+    .get(patientId, tenantId) as { id?: string; age?: unknown; gender?: string } | undefined;
+  return {
+    patientId: String(row?.id || "").trim(),
+    age: normalizeAge(row?.age),
+    gender: normalizeGender(row?.gender),
+    updatedAt: "",
+  };
+}
+
+function rxIdentity(db: DatabaseSync, tenantId: string, rxNumber: string): PatientIdentity | null {
+  const rx = db
+    .prepare(`SELECT patient_id, created_at FROM prescriptions WHERE tenant_id = ? AND rx_number = ?`)
+    .get(tenantId, rxNumber) as { patient_id?: string; created_at?: string } | undefined;
+  if (!rx) return null;
+  const identity = patientIdentity(db, tenantId, String(rx.patient_id || ""));
+  identity.updatedAt = String(rx.created_at || "");
+  return identity;
+}
+
+function safetySignature(input: {
+  medicines: ReturnType<typeof parseMedicines>;
+  allergies?: string[];
+  chronicConditions?: string[];
+  patientId: string;
+  age: string;
+  gender: string;
+}): string {
+  const list = buildSafetyListSignature({
+    medicines: input.medicines,
+    allergies: input.allergies || [],
+    chronicConditions: input.chronicConditions || [],
+  });
+  return `${list}||patient:${input.patientId}||age:${input.age}||gender:${input.gender}`;
+}
+
 type SignedSafetyRow = StoredCheck & {
   rx_number?: string;
+  patient_id?: string;
+  patient_age?: string;
+  patient_gender?: string;
   override_user_id?: string | null;
   override_user_name?: string | null;
   override_at?: string | null;
   override_reason?: string | null;
+  override_alerts_json?: string | null;
+  rx_updated_at?: string | null;
 };
 
 function parseStringList(raw: unknown): string[] {
@@ -171,10 +250,20 @@ function ensureSignedSafetySchema(db: DatabaseSync) {
       override_user_name TEXT,
       override_at TEXT,
       override_reason TEXT,
+      override_alerts_json TEXT NOT NULL DEFAULT '[]',
+      rx_updated_at TEXT NOT NULL DEFAULT '',
+      patient_id TEXT NOT NULL DEFAULT '',
+      patient_age TEXT NOT NULL DEFAULT '',
+      patient_gender TEXT NOT NULL DEFAULT '',
       updated_at TEXT NOT NULL,
       PRIMARY KEY (tenant_id, rx_number)
     )
   `);
+  addColumn(db, "rx_signed_safety", "override_alerts_json TEXT NOT NULL DEFAULT '[]'");
+  addColumn(db, "rx_signed_safety", "rx_updated_at TEXT NOT NULL DEFAULT ''");
+  addColumn(db, "rx_signed_safety", "patient_id TEXT NOT NULL DEFAULT ''");
+  addColumn(db, "rx_signed_safety", "patient_age TEXT NOT NULL DEFAULT ''");
+  addColumn(db, "rx_signed_safety", "patient_gender TEXT NOT NULL DEFAULT ''");
 }
 
 function upsertSignedSafety(
@@ -191,14 +280,20 @@ function upsertSignedSafety(
     overrideUserName?: string | null;
     overrideAt?: string | null;
     overrideReason?: string | null;
+    overrideAlertsJson?: string | null;
+    rxUpdatedAt?: string | null;
+    patientId?: string;
+    patientAge?: string;
+    patientGender?: string;
   }
 ) {
   ensureSignedSafetySchema(db);
   db.prepare(
     `INSERT INTO rx_signed_safety (
        tenant_id, rx_number, signature, safety_status, has_high_risk, source, alert_count,
-       override_user_id, override_user_name, override_at, override_reason, updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       override_user_id, override_user_name, override_at, override_reason, override_alerts_json,
+       rx_updated_at, patient_id, patient_age, patient_gender, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(tenant_id, rx_number) DO UPDATE SET
        signature = excluded.signature,
        safety_status = excluded.safety_status,
@@ -209,6 +304,11 @@ function upsertSignedSafety(
        override_user_name = excluded.override_user_name,
        override_at = excluded.override_at,
        override_reason = excluded.override_reason,
+       override_alerts_json = excluded.override_alerts_json,
+       rx_updated_at = excluded.rx_updated_at,
+       patient_id = excluded.patient_id,
+       patient_age = excluded.patient_age,
+       patient_gender = excluded.patient_gender,
        updated_at = excluded.updated_at`
   ).run(
     row.tenantId,
@@ -222,32 +322,51 @@ function upsertSignedSafety(
     row.overrideUserName || null,
     row.overrideAt || null,
     row.overrideReason || null,
+    row.overrideAlertsJson || "[]",
+    row.rxUpdatedAt || "",
+    row.patientId || "",
+    row.patientAge || "",
+    row.patientGender || "",
     new Date().toISOString()
   );
 }
 
-/** Copy a stored safety-check onto the signed prescription when the medicine list still matches. */
+/** Copy a stored safety-check onto the signed prescription when the medicine list and the patient row still match. */
 export function bindStoredSafetyCheckToRx(
   db: DatabaseSync,
   opts: {
     tenantId: string;
     rxNumber: string;
+    patientId: string;
     medicines: unknown;
     allergies?: string[];
     chronicConditions?: string[];
   }
 ): boolean {
+  const identity = patientIdentity(db, opts.tenantId, opts.patientId);
+  if (!identity.patientId) return false;
   const medicines = parseMedicines(opts.medicines);
-  const signature = buildSafetyListSignature({
+  const signature = safetySignature({
     medicines,
     allergies: opts.allergies || [],
     chronicConditions: opts.chronicConditions || [],
+    patientId: identity.patientId,
+    age: identity.age,
+    gender: identity.gender,
   });
   ensureSignedSafetySchema(db);
   const check = db
-    .prepare(`SELECT * FROM rx_safety_checks WHERE tenant_id = ? AND signature = ?`)
-    .get(opts.tenantId, signature) as StoredCheck | undefined;
+    .prepare(`SELECT * FROM rx_safety_checks WHERE tenant_id = ? AND signature = ? AND patient_id = ?`)
+    .get(opts.tenantId, signature, identity.patientId) as (StoredCheck & {
+      patient_id?: string;
+      patient_age?: string;
+      patient_gender?: string;
+    }) | undefined;
   if (!check) return false;
+  if (normalizeAge(check.patient_age) !== identity.age || normalizeGender(check.patient_gender) !== identity.gender) {
+    return false;
+  }
+  const rx = rxIdentity(db, opts.tenantId, opts.rxNumber);
   const existing = db
     .prepare(`SELECT * FROM rx_signed_safety WHERE tenant_id = ? AND rx_number = ?`)
     .get(opts.tenantId, opts.rxNumber) as SignedSafetyRow | undefined;
@@ -263,6 +382,11 @@ export function bindStoredSafetyCheckToRx(
     overrideUserName: existing?.override_user_name,
     overrideAt: existing?.override_at,
     overrideReason: existing?.override_reason,
+    overrideAlertsJson: existing?.override_alerts_json,
+    rxUpdatedAt: rx?.updatedAt || existing?.rx_updated_at || "",
+    patientId: identity.patientId,
+    patientAge: identity.age,
+    patientGender: identity.gender,
   });
   return true;
 }
@@ -284,29 +408,47 @@ export function recordSignedRxSafetyOverride(
   const userId = String(opts.userId || "").trim();
   const reason = String(opts.reason || "").trim();
   const rxNumber = String(opts.rxNumber || "").trim();
-  if (!opts.tenantId || !rxNumber || !userId || !reason) return false;
+  if (!opts.tenantId || !rxNumber || !userId || reason.length < SAFETY_OVERRIDE_REASON_MIN) return false;
+  const identity = rxIdentity(db, opts.tenantId, rxNumber);
+  if (!identity?.patientId) return false;
   const medicines = parseMedicines(opts.medicines);
-  const signature = buildSafetyListSignature({
+  const signature = safetySignature({
     medicines,
     allergies: opts.allergies || [],
     chronicConditions: opts.chronicConditions || [],
+    patientId: identity.patientId,
+    age: identity.age,
+    gender: identity.gender,
   });
   ensureSignedSafetySchema(db);
   const existing = db
     .prepare(`SELECT * FROM rx_signed_safety WHERE tenant_id = ? AND rx_number = ?`)
     .get(opts.tenantId, rxNumber) as SignedSafetyRow | undefined;
+  if (!existing || existing.signature !== signature) return false;
+  if (String(existing.patient_id || "") !== identity.patientId) return false;
+  if (normalizeAge(existing.patient_age) !== identity.age || normalizeGender(existing.patient_gender) !== identity.gender) {
+    return false;
+  }
+  const check = db
+    .prepare(`SELECT alerts_json FROM rx_safety_checks WHERE tenant_id = ? AND signature = ? AND patient_id = ?`)
+    .get(opts.tenantId, signature, identity.patientId) as { alerts_json?: string } | undefined;
   upsertSignedSafety(db, {
     tenantId: opts.tenantId,
     rxNumber,
     signature,
-    safetyStatus: existing?.safety_status || "HIGH_RISK",
-    hasHighRisk: existing ? Number(existing.has_high_risk) === 1 : true,
-    source: existing?.source || "",
-    alertCount: existing ? Number(existing.alert_count) || 0 : 1,
+    safetyStatus: existing.safety_status,
+    hasHighRisk: Number(existing.has_high_risk) === 1,
+    source: existing.source || "",
+    alertCount: Number(existing.alert_count) || 0,
     overrideUserId: userId,
     overrideUserName: String(opts.userName || "").trim(),
     overrideAt: new Date().toISOString(),
     overrideReason: reason,
+    overrideAlertsJson: String(check?.alerts_json || existing.override_alerts_json || "[]"),
+    rxUpdatedAt: identity.updatedAt,
+    patientId: identity.patientId,
+    patientAge: identity.age,
+    patientGender: identity.gender,
   });
   return true;
 }
@@ -318,8 +460,11 @@ export function recordPassingSafetyAuditForStoredRx(db: DatabaseSync, tenantId: 
     .get(tenantId, rxNumber) as { patient_id?: string; medicines?: string } | undefined;
   if (!rx) return false;
   const lists = patientSafetyLists(db, tenantId, String(rx.patient_id || ""));
+  const identity = patientIdentity(db, tenantId, String(rx.patient_id || ""));
+  if (!identity.patientId) return false;
   const medicines = parseMedicines(rx.medicines);
-  const signature = buildSafetyListSignature({ medicines, ...lists });
+  const signature = safetySignature({ medicines, ...lists, patientId: identity.patientId, age: identity.age, gender: identity.gender });
+  const version = rxIdentity(db, tenantId, rxNumber);
   upsertSignedSafety(db, {
     tenantId,
     rxNumber,
@@ -328,6 +473,10 @@ export function recordPassingSafetyAuditForStoredRx(db: DatabaseSync, tenantId: 
     hasHighRisk: false,
     source: "test-audit",
     alertCount: 0,
+    rxUpdatedAt: version?.updatedAt || "",
+    patientId: identity.patientId,
+    patientAge: identity.age,
+    patientGender: identity.gender,
   });
   return true;
 }
@@ -350,8 +499,24 @@ export function signedRxSafetyRefusal(
     .prepare(`SELECT * FROM rx_signed_safety WHERE tenant_id = ? AND rx_number = ?`)
     .get(tenantId, rxNumber) as SignedSafetyRow | undefined;
   if (!row) return true;
+  const identity = rxIdentity(db, tenantId, rxNumber);
+  if (!identity?.patientId) return true;
+  if (
+    String(row.patient_id || "") !== identity.patientId ||
+    normalizeAge(row.patient_age) !== identity.age ||
+    normalizeGender(row.patient_gender) !== identity.gender
+  ) {
+    return true;
+  }
   const medicines = parseMedicines(medicinesRaw);
-  const signature = buildSafetyListSignature({ medicines, allergies, chronicConditions });
+  const signature = safetySignature({
+    medicines,
+    allergies,
+    chronicConditions,
+    patientId: identity.patientId,
+    age: identity.age,
+    gender: identity.gender,
+  });
   const overrideComplete = Boolean(
     String(row.override_user_id || "").trim() &&
       String(row.override_at || "").trim() &&
@@ -378,36 +543,4 @@ export function signedRxSafetyRefusal(
     row.signature === signature &&
     (row.safety_status === "SAFE" || (row.safety_status === "REVIEW" && Number(row.alert_count) === 0));
   return !passing;
-}
-
-/** True when #156's gate blocks, or a REVIEW result still has unacknowledged alerts. */
-export function safetyReviewBlocksWhatsAppSend(
-  db: DatabaseSync,
-  tenantId: string,
-  medicinesRaw: unknown,
-  allergies: string[] = [],
-  chronicConditions: string[] = []
-): boolean {
-  const medicines = parseMedicines(medicinesRaw);
-  if (medicines.length === 0) return false;
-  const signature = buildSafetyListSignature({ medicines, allergies, chronicConditions });
-  ensureRxSafetySchema(db);
-  const row = db
-    .prepare(`SELECT * FROM rx_safety_checks WHERE tenant_id = ? AND signature = ?`)
-    .get(tenantId, signature) as StoredCheck | undefined;
-  const blocked = safetyGateBlocksActions({
-    medicineCount: medicines.length,
-    checkedSignature: row ? row.signature : null,
-    medicinesSignature: signature,
-    safetyStatus: row?.safety_status,
-    hasHighRiskAlert: Number(row?.has_high_risk) === 1,
-    source: row?.source || null,
-    overrideSignature: row?.acknowledged_signature || null,
-  });
-  const reviewWithAlerts =
-    row?.safety_status === "REVIEW" &&
-    Number(row.alert_count) > 0 &&
-    row.acknowledged_signature !== signature &&
-    row.source !== RULE_BASED_SAFETY_SOURCE;
-  return blocked || Boolean(reviewWithAlerts);
 }

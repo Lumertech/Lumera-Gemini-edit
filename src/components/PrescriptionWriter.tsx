@@ -90,6 +90,7 @@ import { CompactAmbientScribe, AmbientScribeStatus } from './CompactAmbientScrib
 import { FollowUpSlotPicker, ReservedFollowUp } from './FollowUpSlotPicker';
 import { clonePresetExercises, presetHepToastMessage } from '../lib/rxPresetHep';
 import { followUpBookingRef } from '../lib/followUpSlots';
+import { RULE_BASED_SAFETY_SOURCE, safetyGateBlocksActions } from '../lib/safetyCheckGate';
 import { resolveRxModule } from '../lib/specialtyWorkflow';
 import { PatientRecordModal } from './PatientRecordModal';
 import {
@@ -108,7 +109,7 @@ interface PrescriptionWriterProps {
   initialSoapData: SoapNote | null;
   /** Restored draft for this patient. Null means the fetch resolved with no saved draft. */
   initialDraft?: unknown | null;
-  onSavePrescription: (prescription: Prescription) => void;
+  onSavePrescription: (prescription: Prescription) => void | Promise<Prescription | void>;
   clinicSettings: ClinicSettings;
   isSpecialtyLocked?: boolean;
   lockedSpecialty?: string;
@@ -361,14 +362,13 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
   // Safety checker state
   const [isCheckingSafety, setIsCheckingSafety] = useState(false);
   const [safetyResult, setSafetyResult] = useState<SafetyCheckResult | null>(null);
-  // Tracks which exact medicine list the last safety check ran against, and
-  // which exact list a HIGH_RISK override was acknowledged for. Both are
-  // compared against the *current* medicine list signature below, so any
-  // edit to the medicine list invalidates a stale check or a stale override
-  // and re-blocks Print/Send/Finalize until the doctor re-runs the audit.
+  // Tracks which medicine list the last safety check ran against. A later
+  // edit makes that check stale and blocks Print, Send, and Sign until the
+  // doctor runs the audit again. A required reason starts empty.
   const [safetyCheckedSignature, setSafetyCheckedSignature] = useState<string | null>(null);
-  const [safetyOverrideSignature, setSafetyOverrideSignature] = useState<string | null>(null);
+  const [safetyOverrideReason, setSafetyOverrideReason] = useState('');
   const [printVerifyUrl, setPrintVerifyUrl] = useState('');
+  const SAFETY_OVERRIDE_REASON_MIN = 20;
 
   // Fingerprint of the current medicine list — used purely to detect whether
   // the medicine list has changed since the last safety audit ran.
@@ -376,20 +376,39 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     .map((m) => `${m.id}:${m.drugName}:${m.dosage}:${m.frequency}:${m.durationDays}`)
     .join('|');
   const isSafetyCheckStale = medicines.length > 0 && safetyCheckedSignature !== medicinesSignature;
-  const isSafetyHighRisk = safetyResult?.safetyStatus === 'HIGH_RISK';
-  const isSafetyOverridden = safetyOverrideSignature === medicinesSignature;
+  const overrideReason = safetyOverrideReason.trim();
+  const overrideReady = overrideReason.length >= SAFETY_OVERRIDE_REASON_MIN;
+  const reviewWithAlerts =
+    safetyResult?.safetyStatus === 'REVIEW' &&
+    (safetyResult.alerts?.length || 0) > 0 &&
+    safetyResult.source !== RULE_BASED_SAFETY_SOURCE;
+  const showSafetyOverride =
+    Boolean(safetyResult) &&
+    !isSafetyCheckStale &&
+    (safetyResult?.safetyStatus === 'HIGH_RISK' ||
+      safetyResult?.hasHighRiskAlert === true ||
+      (safetyResult?.source === RULE_BASED_SAFETY_SOURCE && safetyResult?.safetyStatus === 'REVIEW') ||
+      reviewWithAlerts);
   // Blocks Print / WhatsApp Dispatch / Finalize & Sign until the doctor has
-  // run the AI Safety Audit against the *current* medicine list, and — if it
-  // came back HIGH_RISK — explicitly acknowledged the override. This is the
-  // safety gate: a prescription must not leave the app unaudited.
+  // run the AI Safety Audit against the *current* medicine list, and typed a
+  // reason when the check needs one. The reason starts empty.
   const isSafetyGateBlocking =
-    medicines.length > 0 && (isSafetyCheckStale || (isSafetyHighRisk && !isSafetyOverridden));
+    safetyGateBlocksActions({
+      medicineCount: medicines.length,
+      checkedSignature: safetyCheckedSignature,
+      medicinesSignature,
+      safetyStatus: safetyResult?.safetyStatus,
+      hasHighRiskAlert: safetyResult?.hasHighRiskAlert,
+      source: safetyResult?.source,
+      overrideSignature: overrideReady ? medicinesSignature : null,
+    }) ||
+    (medicines.length > 0 && !isSafetyCheckStale && reviewWithAlerts && !overrideReady);
   const safetyGateMessage = !medicines.length
     ? ''
     : isSafetyCheckStale
     ? 'Run the AI Safety Audit before printing, sending, or signing this prescription — the medicine list has changed since the last check.'
-    : isSafetyHighRisk && !isSafetyOverridden
-    ? 'This prescription was flagged HIGH_RISK by the AI Safety Audit. Review the contraindications above and acknowledge the override before proceeding.'
+    : isSafetyGateBlocking
+    ? 'Review the safety check and type a reason before printing, sending, or signing this prescription.'
     : '';
 
   // WhatsApp Translation modal
@@ -457,6 +476,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          patientId: currentPatient.id,
           patientAllergies: currentPatient.allergies,
           chronicConditions: currentPatient.chronicConditions,
           medicines: medicines,
@@ -467,9 +487,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
       const data = await response.json();
       setSafetyResult(data);
       setSafetyCheckedSignature(medicinesSignature);
-      // A fresh check invalidates any previous override — the doctor must
-      // re-acknowledge if this new result is still HIGH_RISK.
-      setSafetyOverrideSignature(null);
+      setSafetyOverrideReason('');
     } catch (err) {
       console.error('Safety check failed:', err);
       // On a failed check we deliberately do NOT record a checked signature,
@@ -590,29 +608,6 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     return keys;
   });
   const skipInitialAutosave = React.useRef(true);
-
-  useEffect(() => {
-    if (!currentPatient.id || !rxNumber) return;
-    let cancelled = false;
-    void apiFetch<{ url?: string }>('/api/patient-links', {
-      method: 'POST',
-      body: JSON.stringify({
-        purpose: 'rx',
-        patientId: currentPatient.id,
-        resourceId: rxNumber,
-        ttlHours: 168,
-      }),
-    })
-      .then((data) => {
-        if (!cancelled && data?.url) setPrintVerifyUrl(data.url);
-      })
-      .catch(() => {
-        /* the printed link stays blank until the server issues a token */
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [currentPatient.id, rxNumber]);
 
   const keepModule = (key: string, active: boolean) =>
     savedModuleKeys.includes(key) || (active && !aiSource);
@@ -889,7 +884,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     return true;
   };
 
-  const handleFinalizeAndSignRx = () => {
+  const handleFinalizeAndSignRx = async () => {
     if (aiReviewOpen) {
       window.alert(reviewGateMessage);
       return;
@@ -902,7 +897,11 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     }
     const rx = stampReviewed(buildCurrentRx());
     if (rx.reviewedBy) setReviewedBy(rx.reviewedBy);
-    onSavePrescription(rx);
+    const saved = await onSavePrescription({
+      ...rx,
+      ...(showSafetyOverride && overrideReady ? { safetyOverrideReason: overrideReason } : {}),
+    });
+    if (saved?.qrVerificationUrl) setPrintVerifyUrl(saved.qrVerificationUrl);
     setIsFinalized(true);
     setShowFinalizeModal(true);
   };
@@ -1209,27 +1208,18 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
             </div>
           )}
 
-          {isSafetyHighRisk && !isSafetyCheckStale && (
-            <label className="flex items-start gap-2 pt-2 border-t border-rose-200 text-xs text-rose-900 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={isSafetyOverridden}
-                onChange={(e) => {
-                  const checked = e.target.checked;
-                  setSafetyOverrideSignature(checked ? medicinesSignature : null);
-                  if (!checked || !rxNumber) return;
-                  void apiFetch(`/api/prescriptions/${encodeURIComponent(rxNumber)}/safety-override`, {
-                    method: 'POST',
-                    body: JSON.stringify({
-                      reason: 'Reviewed the contraindications and chose to proceed with this prescription as written.',
-                    }),
-                  }).catch(() => setSafetyOverrideSignature(null));
-                }}
-                className="mt-0.5"
+          {showSafetyOverride && (
+            <label className="block pt-2 border-t border-rose-200 text-xs text-rose-900 space-y-1.5">
+              <span>Type why you are proceeding. The reason is stored with your name and is never filled in for you.</span>
+              <textarea
+                value={safetyOverrideReason}
+                onChange={(e) => setSafetyOverrideReason(e.target.value)}
+                rows={3}
+                placeholder="Type the clinical reason for proceeding"
+                className="w-full rounded-lg border border-rose-200 bg-white px-2 py-1.5 text-xs text-slate-800"
               />
-              <span>
-                I have reviewed the contraindications above and, using my clinical judgment, choose to proceed
-                with this prescription as written.
+              <span className="text-[11px] text-slate-500">
+                {overrideReason.length}/{SAFETY_OVERRIDE_REASON_MIN} characters
               </span>
             </label>
           )}
