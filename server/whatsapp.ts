@@ -647,6 +647,13 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
       }
 
       const patientId = patient?.id ? String(patient.id) : "";
+      let clinicEmail = "";
+      try {
+        const tenant = db.prepare("SELECT email FROM tenants WHERE id = ?").get(tenantId) as { email?: string } | undefined;
+        clinicEmail = String(tenant?.email || "").trim();
+      } catch {
+        clinicEmail = "";
+      }
 
       if (action === "get_prescription") {
         const rx = db.prepare(`
@@ -677,6 +684,7 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
             dietInstructions: rx.diet_instructions,
             followUpDate: rx.follow_up_date,
             pdfUrl: `/api/emr/prescription/${rx.id}/pdf`,
+            ...(clinicEmail ? { clinicEmail } : {}),
           },
         });
       }
@@ -702,6 +710,7 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
             doctorInterpretation: l.doctor_interpretation,
             results: JSON.parse((l.results as string) || "[]"),
             pdfUrl: authenticatedLabReportPath(String(l.id)),
+            ...(clinicEmail ? { clinicEmail } : {}),
           })),
         });
       }
