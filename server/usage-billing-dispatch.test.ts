@@ -9,6 +9,8 @@ import { attachUser } from "./auth.ts";
 import { createApiRouter } from "./api.ts";
 import { createUsageBillingRouter } from "./usage-billing-api.ts";
 import { getDb, initDatabase } from "./db.ts";
+import { recordPassingSafetyAuditForStoredRx } from "./rx-safety-store.ts";
+import { recordWhatsAppOptIn } from "./whatsapp-opt-in.ts";
 import { dispatchWhatsAppCloudMessage, sendPaymentReceipt } from "./graph-whatsapp.ts";
 import { hashPassword } from "./password.ts";
 import {
@@ -151,6 +153,7 @@ describe("Usage wallet billing dispatch paths", () => {
       .prepare("SELECT COUNT(*) AS c FROM usage_events WHERE tenant_id = ? AND resource = 'whatsapp_message'")
       .get(tenantId) as { c: number };
 
+    recordWhatsAppOptIn(getDb(), { tenantId, phone: patientPhone, optedIn: true, source: "test", actorId: "test" });
     const reminder = await dispatchAppointmentReminder({
       tenantId,
       appointment: booked.appointment,
@@ -274,6 +277,9 @@ describe("Usage wallet billing dispatch paths", () => {
       clinicAuth
     );
     assert.equal(meteredRx.status, 201, String(meteredRx.json.error || "rx"));
+    const meteredRxNumber = String((meteredRx.json.prescription as { rxNumber: string }).rxNumber);
+    assert.equal(recordPassingSafetyAuditForStoredRx(getDb(), tenantId, meteredRxNumber), true);
+    recordWhatsAppOptIn(getDb(), { tenantId, phone: patientPhone, optedIn: true, source: "test", actorId: "test" });
     const rxSend = await jsonRequest(
       port,
       "POST",

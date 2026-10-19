@@ -23,7 +23,10 @@ import {
 import { isProduction } from "./runtime.ts";
 import { getTenantLetterhead } from "./letterhead.ts";
 import { appPublicUrl, AppPublicUrlError } from "./runtime.ts";
-import { PATIENT_PHONE_MISSING, RX_SEND_FAILED } from "../src/lib/signedRxWhatsAppSend.ts";
+import { PATIENT_PHONE_MISSING, RX_SEND_FAILED, SAFETY_REVIEW_REQUIRED } from "../src/lib/signedRxWhatsAppSend.ts";
+import { mintPatientLinkToken } from "./patient-link-token.ts";
+import { patientOptedIn } from "./whatsapp-opt-in.ts";
+import { patientSafetyLists, signedRxSafetyRefusal } from "./rx-safety-store.ts";
 import { WALLET_INSUFFICIENT_ERROR } from "./usage-wallet.ts";
 import { dispatchPatientCloudText } from "./whatsapp-patient-dispatch.ts";
 import { upsertScopedConversation } from "./whatsapp-scope.ts";
@@ -31,7 +34,8 @@ import { upsertScopedConversation } from "./whatsapp-scope.ts";
 export const RX_NUMBER_REQUIRED = "RX_NUMBER_REQUIRED";
 export const RX_NOT_FOUND = "RX_NOT_FOUND";
 export const RX_NOT_SIGNED = "RX_NOT_SIGNED";
-export { PATIENT_PHONE_MISSING, RX_SEND_FAILED };
+export const WHATSAPP_OPT_IN_REQUIRED = "WHATSAPP_OPT_IN_REQUIRED";
+export { PATIENT_PHONE_MISSING, RX_SEND_FAILED, SAFETY_REVIEW_REQUIRED };
 
 type Sql = {
   prepare: (sql: string) => { get: (...args: unknown[]) => unknown };
@@ -48,6 +52,8 @@ export type SignedRxSend =
       text: string;
       pdfUrl: string;
       clinicName: string;
+      viewUrl: string;
+      linkToken: string;
     };
 
 function fail(status: number, code: string): SignedRxSend {
@@ -105,36 +111,34 @@ function medicineLines(raw: unknown): { lines: string; count: number } {
   return { lines: `${lines}${more}`, count: medicines.length };
 }
 
-/** Clinic copy for a signed Rx. {{portal_url}} is replaced only with the server origin. */
+/** PHI-light clinic copy. The view link is the only patient-specific value. */
 export function signedRxWhatsAppText(input: {
   clinicName: string;
   doctorName: string;
-  doctorSpecialty: string;
-  patientName: string;
-  uhid: string;
-  diagnosis: string;
-  medicineLines: string;
-  medicineCount: number;
+  doctorSpecialty?: string;
+  patientName?: string;
+  uhid?: string;
+  diagnosis?: string;
+  medicineLines?: string;
+  medicineCount?: number;
   portalUrl: string;
 }): string {
   const clinicName = input.clinicName.trim() || "your clinic";
   const doctorName = input.doctorName.trim() || "your doctor";
-  const specialty = input.doctorSpecialty.trim() || "General Medicine";
-  const portalUrl = String(input.portalUrl || "").trim().replace(/\/$/, "");
-  const template = `🩺 *Prescription from ${clinicName}*\n\nNamaste *${input.patientName}* (UHID: ${input.uhid}),\nYour consultation prescription has been finalized and signed by *${doctorName}* (${specialty}).\n\n📋 *Diagnosis:* ${input.diagnosis}\n💊 *Prescribed Medications (${input.medicineCount}):*\n${input.medicineLines}\n\nPatient portal: {{portal_url}}\n\n_Please follow the dosage schedule strictly. For emergency follow-up, reply to this chat._`;
-  return template.replaceAll("{{portal_url}}", portalUrl);
+  const view = String(input.portalUrl || "").trim();
+  return `Prescription from ${clinicName}, reviewed and signed by ${doctorName}. View: ${view}`;
 }
 
 /**
  * Load one signed prescription for the session tenant.
  * patientPhone, patientName, diagnosis, medicines, and portal_url on the body are never read.
  */
-export function resolveSignedRxWhatsAppSend(
+export async function resolveSignedRxWhatsAppSend(
   db: Sql,
   tenantId: string,
   body: unknown,
-  portalUrl: string
-): SignedRxSend {
+  _portalUrl: string
+): Promise<SignedRxSend> {
   const record = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
   const rxNumber = String(record.rxNumber || record.rx_number || "").trim();
   if (!rxNumber) return fail(400, RX_NUMBER_REQUIRED);
@@ -162,29 +166,35 @@ export function resolveSignedRxWhatsAppSend(
 
   const storedRxNumber = String(rx.rx_number || rxNumber);
   const pdfUrl = `/api/whatsapp/prescription/${storedRxNumber}/pdf`;
-  const meds = medicineLines(rx.medicines);
   const clinicName = getTenantLetterhead(tenant).clinicName;
+  const doctorName = signerName || "your doctor";
+  const lists = patientSafetyLists(getDb(), tenant, patientId);
+  if (signedRxSafetyRefusal(getDb(), tenant, storedRxNumber, rx.medicines, lists.allergies, lists.chronicConditions)) {
+    return fail(409, SAFETY_REVIEW_REQUIRED);
+  }
+  const link = await mintPatientLinkToken({
+    tenantId: tenant,
+    patientId,
+    purpose: "rx",
+    resourceId: storedRxNumber,
+  });
   const text = signedRxWhatsAppText({
     clinicName,
-    doctorName: signerName,
-    doctorSpecialty: String(rx.doctor_specialty || ""),
-    patientName: String(patient.name || "").trim() || "Patient",
-    uhid: String(patient.uhid || ""),
-    diagnosis: String(rx.diagnosis || ""),
-    medicineLines: meds.lines,
-    medicineCount: meds.count,
-    portalUrl,
+    doctorName,
+    portalUrl: link.url,
   });
   return {
     ok: true,
     rxNumber: storedRxNumber,
     phone,
     patientName: String(patient.name || "").trim() || "Patient",
-      doctorName: signerName || "your doctor",
-      clinicName,
-      text,
-      pdfUrl,
-    };
+    doctorName,
+    clinicName,
+    text,
+    pdfUrl,
+    viewUrl: link.url,
+    linkToken: link.token,
+  };
 }
 
 const META_MESSAGE_ID = /^wamid\.\S+$/;
@@ -202,6 +212,8 @@ function rxFailureCode(error: string): string {
     return "WHATSAPP_NOT_CONNECTED";
   }
   if (text.includes("TEMPLATE_NOT_APPROVED")) return "TEMPLATE_NOT_APPROVED";
+  if (text.startsWith("WHATSAPP_OPT_IN_REQUIRED")) return WHATSAPP_OPT_IN_REQUIRED;
+  if (text.includes("SAFETY_REVIEW_REQUIRED")) return SAFETY_REVIEW_REQUIRED;
   if (
     text === READ_ONLY_WHATSAPP_SEND_ERROR ||
     text === WHATSAPP_WINDOW_CLOSED_ERROR ||
@@ -225,6 +237,7 @@ export async function dispatchSignedRxCloudMessage(opts: {
   clinicName: string;
   doctorName: string;
   rxNumber: string;
+  urlSuffix?: string;
   fetchImpl?: typeof fetch;
 }): Promise<CloudDispatchResult> {
   const db = getDb();
@@ -246,7 +259,7 @@ export async function dispatchSignedRxCloudMessage(opts: {
       textBody: opts.textBody,
       templateLanguage: approved.language,
       templateParameters: prescriptionReadyTemplateParameters(opts),
-      urlButtonParameter: prescriptionUrlSuffix(opts.rxNumber),
+      urlButtonParameter: prescriptionUrlSuffix(opts.urlSuffix || ""),
       db,
       tenantId: opts.tenantId,
       fetchImpl: opts.fetchImpl,
@@ -362,10 +375,24 @@ export async function handleSignedRxWhatsAppSend(req: Request, res: Response): P
       }
       throw err;
     }
-    const resolved = resolveSignedRxWhatsAppSend(getDb(), tenantId, req.body, portalUrl);
+    const resolved = await resolveSignedRxWhatsAppSend(getDb(), tenantId, req.body, portalUrl);
     if (resolved.ok === false) {
       auditRxSend(req, tenantId, rxNumber, "failed", resolved.code);
       res.status(resolved.status).json({ code: resolved.code });
+      return;
+    }
+    const rxRow = getDb()
+      .prepare("SELECT patient_id, medicines FROM prescriptions WHERE rx_number = ? AND tenant_id = ?")
+      .get(resolved.rxNumber, tenantId) as { patient_id?: string; medicines?: string } | undefined;
+    const lists = patientSafetyLists(getDb(), tenantId, String(rxRow?.patient_id || ""));
+    if (signedRxSafetyRefusal(getDb(), tenantId, resolved.rxNumber, rxRow?.medicines, lists.allergies, lists.chronicConditions)) {
+      auditRxSend(req, tenantId, resolved.rxNumber, "failed", SAFETY_REVIEW_REQUIRED);
+      res.status(409).json({ code: SAFETY_REVIEW_REQUIRED });
+      return;
+    }
+    if (!patientOptedIn(getDb(), tenantId, resolved.phone)) {
+      auditRxSend(req, tenantId, resolved.rxNumber, "failed", WHATSAPP_OPT_IN_REQUIRED);
+      res.status(409).json({ code: WHATSAPP_OPT_IN_REQUIRED });
       return;
     }
     const sent = await dispatchSignedRxCloudMessage({
@@ -376,6 +403,7 @@ export async function handleSignedRxWhatsAppSend(req: Request, res: Response): P
       clinicName: resolved.clinicName,
       doctorName: resolved.doctorName,
       rxNumber: resolved.rxNumber,
+      urlSuffix: resolved.linkToken,
     });
     if (isCloudDispatchFailure(sent)) {
       const code = rxFailureCode(sent.error);

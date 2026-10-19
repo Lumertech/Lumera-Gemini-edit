@@ -131,6 +131,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [quickPhone, setQuickPhone] = useState('');
   const [quickSubmitting, setQuickSubmitting] = useState(false);
   const [quickError, setQuickError] = useState<string | null>(null);
+  const [quickOptIn, setQuickOptIn] = useState(false);
 
   const handleQuickAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -148,7 +149,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
           phone: quickPhone.trim(),
           age: 30,
           gender: 'Other',
-          bloodGroup: 'O+'
+          bloodGroup: 'O+',
+          whatsappOptIn: quickOptIn,
         }),
       });
       if (data && data.patient) {
@@ -157,6 +159,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         setIsQuickAddOpen(false);
         setQuickName('');
         setQuickPhone('');
+        setQuickOptIn(false);
       }
     } catch (err: any) {
       setQuickError(err?.message || 'Failed to register patient.');
@@ -413,6 +416,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none"
                   />
                 </div>
+
+                <label className="flex items-start gap-2 text-xs text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={quickOptIn}
+                    onChange={(e) => setQuickOptIn(e.target.checked)}
+                    className="mt-0.5"
+                  />
+                  <span>Patient agrees to WhatsApp messages from this clinic</span>
+                </label>
 
                 <div className="pt-2 flex items-center justify-end space-x-2.5">
                   <button

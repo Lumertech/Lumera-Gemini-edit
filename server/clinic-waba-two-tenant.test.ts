@@ -6,12 +6,13 @@ import express from "express";
 import { getDb, initDatabase } from "./db.ts";
 import {
   applyMessageTemplateStatusUpdate,
-  CLINIC_TEMPLATE_CATALOG,
+  clinicTemplatesToProvision,
   provisionClinicMessageTemplates,
   TEMPLATE_NOT_APPROVED_ERROR,
 } from "./clinic-whatsapp-templates.ts";
 import { sendAppointmentReminder, sendPaymentReceipt } from "./graph-whatsapp.ts";
 import { dispatchSignedRxCloudMessage } from "./whatsapp-rx-bind.ts";
+import { recordWhatsAppOptIn } from "./whatsapp-opt-in.ts";
 import { createMetaRouter } from "./meta.ts";
 import { platformAdminActor, upsertWhatsAppNumber } from "./whatsapp-numbers.ts";
 import { getTenantConversation, listTenantConversations } from "./whatsapp-scope.ts";
@@ -162,11 +163,11 @@ describe("two-tenant clinic WhatsApp Graph path", () => {
       fetchImpl,
     });
     assert.equal(provisioned.failed.length, 0);
-    assert.equal(provisioned.recorded.length, CLINIC_TEMPLATE_CATALOG.length);
+    assert.equal(provisioned.recorded.length, clinicTemplatesToProvision().length);
     const pending = getDb()
       .prepare(`SELECT name, status FROM meta_templates WHERE tenant_id = ?`)
       .all(tenantA) as Array<{ name: string; status: string }>;
-    assert.equal(pending.length, 4);
+    assert.equal(pending.length, clinicTemplatesToProvision().length);
     assert.equal(pending.every((row) => row.status === "PENDING"), true);
     const again = await provisionClinicMessageTemplates({
       db: getDb(),
@@ -179,7 +180,7 @@ describe("two-tenant clinic WhatsApp Graph path", () => {
     const still = getDb()
       .prepare(`SELECT COUNT(*) AS c FROM meta_templates WHERE tenant_id = ?`)
       .get(tenantA) as { c: number };
-    assert.equal(still.c, 4);
+    assert.equal(still.c, clinicTemplatesToProvision().length);
 
     getDb()
       .prepare(`UPDATE meta_templates SET status = 'APPROVED' WHERE tenant_id = ? AND name = 'clinic_appointment_reminder'`)
@@ -203,6 +204,16 @@ describe("two-tenant clinic WhatsApp Graph path", () => {
     assert.equal(otherTenant.c, 0);
 
     calls.length = 0;
+    recordWhatsAppOptIn(getDb(), { tenantId: tenantA, phone: "+919811100001", optedIn: true, source: "test", actorId: "test" });
+    recordWhatsAppOptIn(getDb(), { tenantId: tenantB, phone: "+919811100002", optedIn: true, source: "test", actorId: "test" });
+    getDb()
+      .prepare(
+        `INSERT INTO patients (
+           id, tenant_id, uhid, name, age, gender, phone, email, blood_group, allergies, chronic_conditions,
+           emergency_contact, address, created_at
+         ) VALUES (?, ?, ?, 'Bina', 30, 'Female', ?, '', 'O+', '[]', '[]', '', '', ?)`
+      )
+      .run(`patient-b-${tenantB}`, tenantB, `UH-B-${tenantB.slice(-8)}`, "+919811100002", new Date().toISOString());
     const sentA = await sendAppointmentReminder({
       to: "+919811100001",
       patientName: "Asha",
@@ -264,7 +275,14 @@ describe("two-tenant clinic WhatsApp Graph path", () => {
       .find((part) => part.type === "body")
       ?.parameters?.map((parameter) => parameter.text);
     assert.equal((calls[2].body.template as { name?: string }).name, "lumera_payment_receipt_v2");
-    assert.deepEqual(receiptParams, ["Bina", "Lumera Sandbox Demo", "Dr Sen", "700", "INV-1042", "20 Oct 2026"]);
+    assert.equal(receiptParams?.[0], "Bina");
+    assert.equal(receiptParams?.[1], "INR 700");
+    assert.equal(receiptParams?.[2], "Lumera Sandbox Demo");
+    assert.equal(receiptParams?.[3], "Dr Sen");
+    assert.equal(receiptParams?.[4], "INV-1042");
+    assert.match(String(receiptParams?.[5] || ""), /^https:\/\/www\.mylumera\.in\/pay\/v\/[A-Za-z0-9_-]+$/);
+    assert.equal(String(receiptParams?.[5] || "").includes("INV-1042"), false);
+    assert.equal(receiptParams?.includes("20 Oct 2026"), false);
 
     getDb().prepare(`DELETE FROM meta_templates WHERE tenant_id = ? AND name = 'clinic_appointment_reminder'`).run(tenantA);
     const gated = await sendAppointmentReminder({
@@ -468,6 +486,7 @@ describe("two-tenant clinic WhatsApp Graph path", () => {
         headers: { "Content-Type": "application/json" },
       });
     };
+    recordWhatsAppOptIn(getDb(), { tenantId: tenantA, phone: "+919811100099", optedIn: true, source: "test", actorId: "test" });
     const sent = await dispatchSignedRxCloudMessage({
       tenantId: tenantA,
       to: "+919811100099",
@@ -476,6 +495,7 @@ describe("two-tenant clinic WhatsApp Graph path", () => {
       clinicName: "Sunrise Clinic",
       doctorName: "Dr Mehta",
       rxNumber: "RX-1001",
+      urlSuffix: "opaqueexampletoken",
       fetchImpl,
     });
     assert.equal(sent.ok, true, JSON.stringify(sent));
@@ -495,7 +515,7 @@ describe("two-tenant clinic WhatsApp Graph path", () => {
     const buttonParams = template.components
       ?.find((part) => part.type === "button")
       ?.parameters?.map((parameter) => parameter.text);
-    assert.deepEqual(buttonParams, ["RX-1001"]);
+    assert.deepEqual(buttonParams, ["opaqueexampletoken"]);
 
     getDb()
       .prepare(`UPDATE meta_templates SET status = 'PENDING' WHERE tenant_id = ? AND name = 'clinic_prescription_ready'`)
@@ -516,5 +536,40 @@ describe("two-tenant clinic WhatsApp Graph path", () => {
       assert.equal(blocked.status, 409);
     }
     assert.equal(calls.length, 1);
+  });
+
+  it("does not insert or edit templates for a tenant that only has a stale waba id", () => {
+    const stale = `tenant-stale-${crypto.randomUUID().slice(0, 8)}`;
+    insertTenant(stale, "Stale WABA Clinic");
+    upsertWhatsAppNumber(platformAdminActor(), {
+      ownerType: "tenant",
+      ownerId: stale,
+      wabaId: `30991${Date.now().toString().slice(-8)}`,
+      phoneNumberId: `16661${Date.now().toString().slice(-8)}`,
+      metaAccessToken: A_TOKEN,
+      metaWabaName: "Stale",
+      status: "connected",
+    });
+    getDb().prepare(`UPDATE tenants SET waba_id = ? WHERE id = ?`).run(A_WABA, stale);
+    const before = getDb().prepare(`SELECT COUNT(*) AS c FROM meta_templates WHERE tenant_id = ?`).get(stale) as { c: number };
+    const changed = applyMessageTemplateStatusUpdate(getDb(), A_WABA, {
+      message_template_name: "clinic_booking_confirmation",
+      message_template_language: "en",
+      event: "APPROVED",
+    });
+    const after = getDb().prepare(`SELECT COUNT(*) AS c FROM meta_templates WHERE tenant_id = ?`).get(stale) as { c: number };
+    assert.equal(after.c, before.c);
+    assert.equal(after.c, 0);
+    getDb().prepare(`DELETE FROM meta_templates WHERE tenant_id = ? AND name = ? AND language = 'en'`).run(tenantA, "clinic_payment_receipt");
+    applyMessageTemplateStatusUpdate(getDb(), A_WABA, {
+      message_template_name: "clinic_payment_receipt",
+      message_template_language: "en",
+      event: "APPROVED",
+    });
+    const missingAfter = getDb()
+      .prepare(`SELECT COUNT(*) AS c FROM meta_templates WHERE tenant_id = ? AND name = ? AND language = 'en'`)
+      .get(tenantA, "clinic_payment_receipt") as { c: number };
+    assert.equal(missingAfter.c, 0);
+    assert.ok(changed >= 0);
   });
 });

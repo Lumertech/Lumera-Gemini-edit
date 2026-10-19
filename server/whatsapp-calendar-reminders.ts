@@ -1,4 +1,4 @@
-import { getDb, mapAppointment } from "./db.ts";
+import { getDb, mapAppointment, writeAudit } from "./db.ts";
 import {
   isCloudDispatchFailure,
   sandboxBanner,
@@ -168,6 +168,21 @@ export type ReminderDispatchResult =
   | { ok: true; channel: "graph" | "sandbox"; messageId?: string; eventId: string }
   | { ok: false; error: string; channel: "none" | "graph"; eventId?: string; status?: number };
 
+function auditTemplateDispatch(eventType: string, tenantId: string, outcome: "sent" | "failed") {
+  try {
+    writeAudit(
+      getDb(),
+      null,
+      "system",
+      "whatsapp_template_send",
+      `tenant ${tenantId || "none"} template ${eventType} outcome ${outcome}`,
+      { tenantId: tenantId || undefined, entityType: "whatsapp_template", entityId: eventType }
+    );
+  } catch {
+    /* audit must not block the reminder */
+  }
+}
+
 function recordCloudDispatch(opts: {
   eventType: string;
   appointment: ReturnType<typeof mapAppointment>;
@@ -175,6 +190,11 @@ function recordCloudDispatch(opts: {
   sent: CloudDispatchResult;
   sandboxText: string;
 }): ReminderDispatchResult {
+  auditTemplateDispatch(
+    opts.eventType,
+    String(opts.payload.tenantId || ""),
+    opts.sent.ok ? "sent" : "failed"
+  );
   if (opts.sent.ok && opts.sent.channel === "graph") {
     const eventId = recordOutboundEvent({
       eventType: opts.eventType,

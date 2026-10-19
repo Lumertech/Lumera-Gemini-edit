@@ -10,6 +10,13 @@ import {
   writeAudit,
 } from "./db.ts";
 import { clinicLine, getTenantLetterhead } from "./letterhead.ts";
+import { mintPatientLinkToken, PATIENT_LINK_PRINT_TTL_HOURS } from "./patient-link-token.ts";
+import { recordWhatsAppOptIn } from "./whatsapp-opt-in.ts";
+import {
+  bindStoredSafetyCheckToRx,
+  patientSafetyLists,
+  recordSignedRxSafetyOverride,
+} from "./rx-safety-store.ts";
 import { requireAuth } from "./auth.ts";
 import { reportCaughtError } from "./error-tracker.ts";
 import { resolveAbdmMode, type AbdmMode } from "./abdm-mode.ts";
@@ -1126,7 +1133,7 @@ function deletePrescriptionDraft(input: {
   );
 }
 
-function insertPrescription(tenantId: string, body: Record<string, unknown>, actorId: string, actorRole?: string) {
+async function insertPrescription(tenantId: string, body: Record<string, unknown>, actorId: string, actorRole?: string) {
   assertReviewedAiPrescription(body);
   const sessionUserId = String(actorId || "").trim();
   if (clientRequestedReview(body) && !sessionUserId) {
@@ -1195,12 +1202,44 @@ function insertPrescription(tenantId: string, body: Record<string, unknown>, act
       String(body.clinicName || body.clinic_name || stamped.name || ""),
       String(body.clinicAddress || body.clinic_address || stamped.address || ""),
       String(body.clinicPhone || body.clinic_phone || stamped.phone || ""),
-      String(body.qrVerificationUrl || body.qr_verification_url || `https://lumera.health/rx/${rxNumber}`),
+      (
+        await mintPatientLinkToken({
+          tenantId,
+          patientId: mappedPatient.id,
+          purpose: "rx",
+          resourceId: rxNumber,
+          ttlHours: PATIENT_LINK_PRINT_TTL_HOURS,
+          createdBy: sessionUserId,
+        })
+      ).url,
       "unsent",
       String(body.specialtyType || body.specialty_type || ""),
       specialtyModulesFromBody(body, signerId)
     );
-  return getTenantPrescription(tenantId, id)!;
+  const saved = getTenantPrescription(tenantId, id)!;
+  const lists = patientSafetyLists(getDb(), tenantId, mappedPatient.id);
+  const medicines = body.medicines;
+  bindStoredSafetyCheckToRx(getDb(), {
+    tenantId,
+    rxNumber,
+    medicines,
+    allergies: lists.allergies,
+    chronicConditions: lists.chronicConditions,
+  });
+  const overrideReason = String(body.safetyOverrideReason || body.safety_override_reason || "").trim();
+  if (overrideReason && sessionUserId) {
+    recordSignedRxSafetyOverride(getDb(), {
+      tenantId,
+      rxNumber,
+      userId: sessionUserId,
+      userName: String(body.doctorName || body.doctor_name || "Clinician"),
+      reason: overrideReason,
+      medicines,
+      allergies: lists.allergies,
+      chronicConditions: lists.chronicConditions,
+    });
+  }
+  return saved;
 }
 
 /**
@@ -1309,6 +1348,16 @@ export function createClinicalRouter(): Router {
       delete incoming.consent_artefact;
       delete incoming.consent;
       const row = insertPatient(tenantId, incoming);
+      if (incoming.whatsappOptIn === true || incoming.whatsappOptIn === "true" || incoming.whatsapp_opt_in === true) {
+        recordWhatsAppOptIn(getDb(), {
+          tenantId,
+          phone: String(incoming.phone || (row as { phone?: string }).phone || ""),
+          patientId: String(row.id || ""),
+          optedIn: true,
+          source: "registration",
+          actorId: String(req.user?.id || ""),
+        });
+      }
       const reused = Boolean((row as Record<string, unknown>).__reused);
       if (!reused) {
         writeAudit(getDb(), req.user?.id || null, req.user?.name || "Clinician", "Patient created", mapPatient(row).name);
@@ -1474,6 +1523,18 @@ export function createClinicalRouter(): Router {
     }
     try {
       const row = insertAppointment(tenantId, req.body || {}, { id: req.user?.id, name: req.user?.name });
+      const booked = mapAppointment(row);
+      const optInFlag = (req.body || {}).whatsappOptIn;
+      if (optInFlag === true || optInFlag === "true") {
+        recordWhatsAppOptIn(getDb(), {
+          tenantId,
+          phone: String(booked.patientPhone || ""),
+          patientId: String(booked.patientId || ""),
+          optedIn: true,
+          source: "booking",
+          actorId: String(req.user?.id || ""),
+        });
+      }
       writeAudit(
         getDb(),
         req.user?.id || null,
@@ -1575,12 +1636,68 @@ export function createClinicalRouter(): Router {
     );
   });
 
-  api.post("/prescriptions", requireAuth, (req, res) => {
+  api.post("/prescriptions/:rxNumber/safety-override", requireAuth, (req, res) => {
+    if (!denyUnlessPrescriber(req, res)) return;
+    const tenantId = requireTenant(req, res);
+    if (!tenantId) return;
+    const rxNumber = String(req.params.rxNumber || "").trim();
+    const reason = String((req.body || {}).reason || "").trim();
+    if (!reason) return res.status(400).json({ error: "A reason is required." });
+    const rx = getDb()
+      .prepare(`SELECT patient_id, medicines FROM prescriptions WHERE tenant_id = ? AND rx_number = ?`)
+      .get(tenantId, rxNumber) as { patient_id?: string; medicines?: string } | undefined;
+    if (!rx) return res.status(404).json({ error: "Prescription not found" });
+    const lists = patientSafetyLists(getDb(), tenantId, String(rx.patient_id || ""));
+    const saved = recordSignedRxSafetyOverride(getDb(), {
+      tenantId,
+      rxNumber,
+      userId: String(req.user?.id || ""),
+      userName: String(req.user?.name || ""),
+      reason,
+      medicines: rx.medicines,
+      allergies: lists.allergies,
+      chronicConditions: lists.chronicConditions,
+    });
+    if (!saved) return res.status(400).json({ error: "Could not record the override." });
+    res.json({ ok: true });
+  });
+
+  api.post("/patient-links", requireAuth, async (req, res) => {
+    if (!denyUnlessPrescriber(req, res)) return;
+    const tenantId = requireTenant(req, res);
+    if (!tenantId) return;
+    const body = (req.body || {}) as { purpose?: string; patientId?: string; resourceId?: string; ttlHours?: number };
+    const purpose = body.purpose === "receipt" || body.purpose === "portal" || body.purpose === "hep" ? body.purpose : "rx";
+    const patientId = String(body.patientId || "").trim();
+    const resourceId = String(body.resourceId || "").trim();
+    if (!patientId || !resourceId) return res.status(400).json({ error: "patientId and resourceId are required" });
+    const patient = getTenantPatient(tenantId, patientId);
+    if (!patient) return res.status(404).json({ error: "Patient not found" });
+    const requested = Number(body.ttlHours);
+    const ttlHours =
+      Number.isFinite(requested) && requested > 0 ? Math.min(PATIENT_LINK_PRINT_TTL_HOURS, requested) : PATIENT_LINK_PRINT_TTL_HOURS;
+    try {
+      const link = await mintPatientLinkToken({
+        tenantId,
+        patientId,
+        purpose,
+        resourceId,
+        ttlHours,
+        createdBy: String(req.user?.id || ""),
+      });
+      res.status(201).json({ url: link.url, expiresAt: link.expiresAt.toISOString() });
+    } catch (err) {
+      reportCaughtError(err, "clinical.patientLink");
+      res.status(500).json({ error: "Could not issue the link" });
+    }
+  });
+
+  api.post("/prescriptions", requireAuth, async (req, res) => {
     if (!denyUnlessPrescriber(req, res)) return;
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     try {
-      const row = insertPrescription(
+      const row = await insertPrescription(
         tenantId,
         req.body || {},
         String(req.user?.id || ""),

@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import { after, before, describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
 import { createApiRouter } from "./api.ts";
 import { treatingDoctorId } from "./clinical.ts";
 import { getDb, initDatabase } from "./db.ts";
@@ -8,7 +11,9 @@ import { appPublicUrl } from "./runtime.ts";
 import { jsonRequest, startTestServer } from "./test-http.ts";
 import { createUsageBillingRouter } from "./usage-billing-api.ts";
 import { ensureWhatsAppOwnershipSchema } from "./whatsapp-numbers-store.ts";
-import { resolveSignedRxWhatsAppSend, PATIENT_PHONE_MISSING, RX_NOT_FOUND, RX_NOT_SIGNED, RX_SEND_FAILED } from "./whatsapp-rx-bind.ts";
+import { resolveSignedRxWhatsAppSend, PATIENT_PHONE_MISSING, RX_NOT_FOUND, RX_NOT_SIGNED, RX_SEND_FAILED, SAFETY_REVIEW_REQUIRED } from "./whatsapp-rx-bind.ts";
+import { recordPassingSafetyAuditForStoredRx } from "./rx-safety-store.ts";
+import { recordWhatsAppOptIn } from "./whatsapp-opt-in.ts";
 
 const GRAPH_TOKEN = "EAAGraphTokenWithoutEllipsis0123456789abcdef";
 const META_REJECT = "Meta rejected the recipient because it is not on the allow-list";
@@ -168,17 +173,22 @@ describe("usage-billing Rx WhatsApp send is bound to the signed prescription", (
     };
   }
 
-  function assertComposedText(content: string, attackerPhone: string, portal: string) {
-    assert.match(content, /Prescription from /);
-    assert.equal(content.includes("Official"), false);
-    assert.equal(content.includes("Download"), false);
-    assert.equal(/lumera/i.test(content), false);
+  function allowRxSend(tenantId: string, rxNumber: string, phone: string) {
+    assert.equal(recordPassingSafetyAuditForStoredRx(getDb(), tenantId, rxNumber), true);
+    recordWhatsAppOptIn(getDb(), { tenantId, phone, optedIn: true, source: "test", actorId: "test" });
+  }
+
+  function assertComposedText(content: string, attackerPhone: string) {
+    assert.match(
+      content,
+      /^Prescription from .+, reviewed and signed by .+\. View: https:\/\/www\.mylumera\.in\/rx\/v\/[A-Za-z0-9_-]+$/
+    );
+    assert.equal(content.includes("Asha"), false);
+    assert.equal(content.includes("Viral fever"), false);
+    assert.equal(content.includes("Paracetamol"), false);
+    assert.equal(/UHID/i.test(content), false);
+    assert.equal(/lumera\.health/i.test(content), false);
     assert.equal(content.includes("/api/whatsapp/prescription"), false);
-    assert.match(content, /Asha Rao/);
-    assert.match(content, /Viral fever/);
-    assert.match(content, /Paracetamol/);
-    assert.match(content, new RegExp(portal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-    assert.equal(content.includes("{{portal_url}}"), false);
     assert.equal(content.includes(attackerPhone), false);
     assert.equal(content.includes("Not Asha"), false);
     assert.equal(content.includes("LEAK_DIAGNOSIS"), false);
@@ -200,11 +210,13 @@ describe("usage-billing Rx WhatsApp send is bound to the signed prescription", (
     const attackerPhone = `+91 91111 ${String(Date.now()).slice(-5)}`;
     const body = leakBody(rx.rxNumber, attackerPhone);
     const portal = appPublicUrl(`127.0.0.1:${port}`, "http").replace(/\/$/, "");
-    const resolved = resolveSignedRxWhatsAppSend(getDb(), clinic.tenantId, body, portal);
+    allowRxSend(clinic.tenantId, rx.rxNumber, phone);
+    const resolved = await resolveSignedRxWhatsAppSend(getDb(), clinic.tenantId, body, portal);
     assert.equal(resolved.ok, true);
     if (resolved.ok) {
       assert.equal(resolved.phone, phone);
-      assertComposedText(resolved.text, attackerPhone, portal);
+      assertComposedText(resolved.text, attackerPhone);
+      assert.equal(resolved.text.includes(portal), false);
     }
     const res = await jsonRequest(port, "POST", "/api/whatsapp/send-rx", body, auth);
     assert.equal(res.status, 200, JSON.stringify(res.json));
@@ -232,6 +244,7 @@ describe("usage-billing Rx WhatsApp send is bound to the signed prescription", (
     });
     connectClinicLine(clinic.tenantId, rx.rxNumber);
     openServiceWindow(clinic.tenantId, phone);
+    allowRxSend(clinic.tenantId, rx.rxNumber, phone);
     const attackerPhone = `+91 92222 ${String(Date.now()).slice(-5)}`;
     const wamid = `wamid.RX_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
     const original = globalThis.fetch;
@@ -252,8 +265,7 @@ describe("usage-billing Rx WhatsApp send is bound to the signed prescription", (
       assert.equal(row.patient_phone, phone);
       assert.equal(row.status, "sent");
       assert.equal(row.tenant_id, clinic.tenantId);
-      const portal = appPublicUrl(`127.0.0.1:${port}`, "http").replace(/\/$/, "");
-      assertComposedText(row.content, attackerPhone, portal);
+      assertComposedText(row.content, attackerPhone);
       const stored = getDb()
         .prepare("SELECT whatsapp_sent_status, diagnosis FROM prescriptions WHERE rx_number = ? AND tenant_id = ?")
         .get(rx.rxNumber, clinic.tenantId) as { whatsapp_sent_status: string; diagnosis: string };
@@ -282,6 +294,7 @@ describe("usage-billing Rx WhatsApp send is bound to the signed prescription", (
     });
     connectClinicLine(clinic.tenantId, rx.rxNumber);
     openServiceWindow(clinic.tenantId, phone);
+    allowRxSend(clinic.tenantId, rx.rxNumber, phone);
     const original = globalThis.fetch;
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -464,10 +477,11 @@ describe("usage-billing Rx WhatsApp send is bound to the signed prescription", (
     assert.equal(signedRx.reviewedBy, clinic.userId);
     assert.equal(signedRx.doctorId, clinic.userId);
     const portal = appPublicUrl(`127.0.0.1:${port}`, "http").replace(/\/$/, "");
-    const resolved = resolveSignedRxWhatsAppSend(getDb(), clinic.tenantId, { rxNumber: signedRx.rxNumber }, portal);
+    allowRxSend(clinic.tenantId, signedRx.rxNumber, phone);
+    const resolved = await resolveSignedRxWhatsAppSend(getDb(), clinic.tenantId, { rxNumber: signedRx.rxNumber }, portal);
     assert.equal(resolved.ok, true);
     if (resolved.ok) {
-      assert.match(resolved.text, /signed by \*Dr signer\*/);
+      assert.match(resolved.text, /reviewed and signed by Dr signer/);
       assert.equal(resolved.text.includes("Impostor Name"), false);
     }
     const sent = await jsonRequest(port, "POST", "/api/whatsapp/send-rx", { rxNumber: signedRx.rxNumber }, doctorAuth);
@@ -596,5 +610,33 @@ describe("usage-billing Rx WhatsApp send is bound to the signed prescription", (
     const ownerRx = ownerSigned.json.prescription as { reviewedBy?: string; doctorId?: string };
     assert.equal(ownerRx.reviewedBy, ownerDoctorId);
     assert.equal(ownerRx.doctorId, ownerDoctorId);
+  });
+
+  it("rejects a direct POST when the signed Rx has no passing audit and no override", async () => {
+    const root = path.dirname(fileURLToPath(import.meta.url));
+    const whatsappRoute = fs.readFileSync(path.join(root, "whatsapp.ts"), "utf8");
+    const usageRoute = fs.readFileSync(path.join(root, "usage-billing-api.ts"), "utf8");
+    assert.match(whatsappRoute, /router\.post\("\/send-rx"[\s\S]{0,180}handleSignedRxWhatsAppSend/);
+    assert.match(usageRoute, /api\.post\("\/whatsapp\/send-rx"[\s\S]{0,180}handleSignedRxWhatsAppSend/);
+
+    const clinic = createClinic("unaudited");
+    const auth = await login(clinic.email);
+    const phone = `+91 98218 ${String(Date.now()).slice(-5)}`;
+    const patient = await createPatient(auth, "Unaudited Patient", phone);
+    const rx = await createRx(auth, patient.id, { diagnosis: "Needs an audit", reviewedBy: clinic.userId });
+    recordWhatsAppOptIn(getDb(), { tenantId: clinic.tenantId, phone, optedIn: true, source: "test", actorId: "test" });
+    const portal = appPublicUrl(`127.0.0.1:${port}`, "http").replace(/\/$/, "");
+    const resolved = await resolveSignedRxWhatsAppSend(getDb(), clinic.tenantId, { rxNumber: rx.rxNumber }, portal);
+    assert.equal(resolved.ok, false);
+    if (resolved.ok === false) {
+      assert.equal(resolved.status, 409);
+      assert.equal(resolved.code, SAFETY_REVIEW_REQUIRED);
+    }
+    const sent = await jsonRequest(port, "POST", "/api/whatsapp/send-rx", { rxNumber: rx.rxNumber }, auth);
+    assert.equal(sent.status, 409);
+    assert.equal(sent.json.code, SAFETY_REVIEW_REQUIRED);
+    assert.equal(JSON.stringify(sent.json).includes("Needs an audit"), false);
+    const row = getDb().prepare("SELECT id FROM whatsapp_messages WHERE patient_phone = ?").get(phone);
+    assert.equal(row, undefined);
   });
 });

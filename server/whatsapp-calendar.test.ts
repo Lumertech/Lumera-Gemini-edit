@@ -25,6 +25,7 @@ import {
   tenantUtcOffsetMinutes,
 } from "./whatsapp-calendar.ts";
 import { platformAdminActor, upsertWhatsAppNumber } from "./whatsapp-numbers.ts";
+import { recordWhatsAppOptIn } from "./whatsapp-opt-in.ts";
 
 async function jsonRequest(
   port: number,
@@ -83,6 +84,15 @@ function createClinicUser(label: string) {
 }
 
 let phoneSeq = 0;
+function allowTemplates(tenantId: string, phone: string) {
+  recordWhatsAppOptIn(getDb(), { tenantId, phone, optedIn: true, source: "test", actorId: "test" });
+}
+
+function bookOpted(opts: Parameters<typeof bookWhatsAppAppointment>[0]) {
+  allowTemplates(opts.tenantId, opts.patientPhone);
+  return bookWhatsAppAppointment(opts);
+}
+
 function uniquePhone(): string {
   phoneSeq += 1;
   const n = `${Date.now()}${phoneSeq}${Math.floor(Math.random() * 900 + 100)}`.replace(/\D/g, "").slice(-10);
@@ -148,6 +158,7 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
     const token = await login(clinic.email);
     const auth = { Authorization: `Bearer ${token}` };
     const phone = uniquePhone();
+    allowTemplates(clinic.tenantId, phone);
 
     const booked = await jsonRequest(
       port,
@@ -340,7 +351,7 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
 
     try {
       const clinic = createClinicUser("remindS");
-      const booked = bookWhatsAppAppointment({
+      const booked = bookOpted({
         tenantId: clinic.tenantId,
         patientPhone: uniquePhone(),
         patientName: "Reminder Sandbox",
@@ -388,7 +399,7 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
 
     try {
       const clinic = createClinicUser("remindG");
-      const booked = bookWhatsAppAppointment({
+      const booked = bookOpted({
         tenantId: clinic.tenantId,
         patientPhone: uniquePhone(),
         patientName: "Reminder Graph",
@@ -470,7 +481,7 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
       process.env.NODE_ENV = "production";
       delete process.env.META_ACCESS_TOKEN;
       delete process.env.META_PHONE_NUMBER_ID;
-      const booked = bookWhatsAppAppointment({
+      const booked = bookOpted({
         tenantId: clinic.tenantId,
         patientPhone: uniquePhone(),
         patientName: "Reminder Prod",
@@ -515,7 +526,7 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
       const clinic = createClinicUser("skipSt");
       const token = await login(clinic.email);
       const phone = uniquePhone();
-      const booked = bookWhatsAppAppointment({
+      const booked = bookOpted({
         tenantId: clinic.tenantId,
         patientPhone: phone,
         patientName: "Skip Completed",
@@ -596,6 +607,8 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
       assert.equal(String(recovered?.patient_phone || ""), e164);
 
       getDb().prepare("UPDATE appointments SET patient_phone = ? WHERE id = ?").run("+910000000000", appointment.id);
+      allowTemplates(clinic.tenantId, "+910000000000");
+      allowTemplates(clinic.tenantId, spaced);
       const reminded = await jsonRequest(
         port,
         "POST",
@@ -761,6 +774,7 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
         note: "Clip A reminder test credit",
         createdBy: "system",
       });
+      allowTemplates(DEMO_TENANT_ID, "+919999973271");
       const token = await login("admin@lumera.me");
       const reminded = await jsonRequest(
         port,
@@ -820,7 +834,7 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
            VALUES (?, ?, '204800000000000', 'clinic_appointment_reminder', 'UTILITY', 'en_US', 'APPROVED', '[]', ?, ?)`
         )
         .run(`tpl-${clinic.tenantId}`, clinic.tenantId, now, now);
-      const booked = bookWhatsAppAppointment({
+      const booked = bookOpted({
         tenantId: clinic.tenantId,
         patientPhone: uniquePhone(),
         patientName: "Param Patient",
@@ -854,7 +868,7 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
       const clinicRow = getDb().prepare("SELECT name FROM tenants WHERE id = ?").get(clinic.tenantId) as { name: string };
       const parameters = (body?.parameters || []).map((parameter) => parameter.text);
       assert.deepEqual(parameters, [
-        "Param Patient",
+        "Param",
         clinicRow.name,
         booked.appointment.doctorName,
         "2026-10-02",

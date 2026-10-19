@@ -7,6 +7,8 @@ import { DatabaseSync } from "node:sqlite";
 import { after, before, describe, it } from "node:test";
 import { createApiRouter, otpEventTenantId, uniqueOtpClinicId } from "./api.ts";
 import { getDb, initDatabase } from "./db.ts";
+import { recordPassingSafetyAuditForStoredRx } from "./rx-safety-store.ts";
+import { recordWhatsAppOptIn } from "./whatsapp-opt-in.ts";
 import { applyWhatsAppOutboundStatus } from "./meta.ts";
 import { hashPassword } from "./password.ts";
 import { installWhatsAppRouterPatch, protectWhatsAppDashboard } from "./whatsapp-dashboard-guard.ts";
@@ -690,7 +692,7 @@ describe("WhatsApp tenant scope, send validation, OTP limit, invoice UHID", () =
       server.port,
       "POST",
       "/api/patients",
-      { name: "Receipt Patient", phone: receiptPhone, age: 40, gender: "Female" },
+      { name: "Receipt Patient", phone: receiptPhone, age: 40, gender: "Female", whatsappOptIn: true },
       authA
     );
     assert.equal(patientRes.status, 201, String(patientRes.json.error || ""));
@@ -747,6 +749,9 @@ describe("WhatsApp tenant scope, send validation, OTP limit, invoice UHID", () =
       authA
     );
     assert.equal(signedRx.status, 201, String(signedRx.json.error || "signed rx"));
+    const isolatedRxNumber = String((signedRx.json.prescription as { rxNumber: string }).rxNumber);
+    assert.equal(recordPassingSafetyAuditForStoredRx(getDb(), clinicA.tenantId, isolatedRxNumber), true);
+    recordWhatsAppOptIn(getDb(), { tenantId: clinicA.tenantId, phone: rxPhone, optedIn: true, source: "test", actorId: "test" });
     const rx = await jsonRequest(
       server.port,
       "POST",

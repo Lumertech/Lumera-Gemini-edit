@@ -180,6 +180,7 @@ describe("Wave 2 Razorpay UPI collect", () => {
         phone: `+91 98120 ${phoneTail}`,
         age: 36,
         gender: "Female",
+        whatsappOptIn: true,
       },
       auth
     );

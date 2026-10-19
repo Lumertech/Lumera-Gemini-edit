@@ -335,6 +335,8 @@ describe("Meta Tech Provider audit", () => {
       .run(`tpl-${tenantId}`, tenantId, now, now);
 
     let payload = "";
+    const { recordWhatsAppOptIn } = await import("./whatsapp-opt-in.ts");
+    recordWhatsAppOptIn(getDb(), { tenantId, phone: "+919812340008", optedIn: true, source: "test", actorId: "test" });
     const sent = await sendAppointmentReminder({
       to: "+919812340008",
       patientName: "Asha",

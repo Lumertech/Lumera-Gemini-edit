@@ -15,6 +15,8 @@ import {
   reminderTemplateParameters,
   TEMPLATE_NOT_APPROVED_ERROR,
 } from "./clinic-whatsapp-templates.ts";
+import { mintPatientLinkToken } from "./patient-link-token.ts";
+import { whatsAppOptInBlock } from "./whatsapp-opt-in.ts";
 
 /**
  * Shared Meta WhatsApp Cloud API send module (Wave 1B OTP + Wave 2 utilities).
@@ -580,6 +582,7 @@ export type ReceiptFields = {
   currency?: string;
   invoiceId?: string;
   date?: string;
+  receiptUrl?: string;
   tenantId?: string;
   gstin?: string;
   upiId?: string;
@@ -726,6 +729,19 @@ export async function dispatchWhatsAppCloudMessage(opts: {
 
   if (creds && clinicPlan === "blocked") {
     return { ok: false, error: TEMPLATE_NOT_APPROVED_ERROR, channel: "none", status: 409 };
+  }
+
+  const templateBusiness =
+    clinicPlan === "template" || (clinicPlan !== "text" && ["appointment_reminder", "book_confirmation", "payment_receipt", "prescription_ready"].includes(kind));
+  const optInError = whatsAppOptInBlock({
+    db: opts.db,
+    tenantId,
+    to: opts.to,
+    kind,
+    templateSend: templateBusiness,
+  });
+  if (optInError) {
+    return { ok: false, error: optInError, channel: "none", status: 409 };
   }
 
   if (creds) {
@@ -996,6 +1012,34 @@ export async function sendPaymentReceipt(opts: {
   if (opts.tenantId && !opts.textBody && !clinicName) {
     return { ok: false, channel: "none", error: CLINIC_DOCTOR_NAME_REQUIRED, status: 400 };
   }
+  let receiptUrl = "";
+  const invoiceId = String(opts.invoiceId || "").trim();
+  const tenantId = String(opts.tenantId || "").trim();
+  if (opts.db && tenantId && invoiceId) {
+    const digits = String(opts.to || "").replace(/\D/g, "").slice(-10);
+    let patientId = "";
+    if (digits) {
+      try {
+        const patient = opts.db
+          .prepare(
+            `SELECT id FROM patients WHERE tenant_id = ? AND REPLACE(REPLACE(REPLACE(phone, '+', ''), ' ', ''), '-', '') LIKE ? LIMIT 1`
+          )
+          .get(tenantId, `%${digits}`) as { id?: string } | undefined;
+        patientId = String(patient?.id || "").trim();
+      } catch {
+        patientId = "";
+      }
+    }
+    if (patientId) {
+      const link = await mintPatientLinkToken({
+        tenantId,
+        patientId,
+        purpose: "receipt",
+        resourceId: invoiceId,
+      });
+      receiptUrl = link.url;
+    }
+  }
   const receiptFields: ReceiptFields = {
     patientName: opts.patientName,
     clinicName,
@@ -1003,8 +1047,9 @@ export async function sendPaymentReceipt(opts: {
     amount: opts.amount,
     invoiceId: opts.invoiceId,
     date: opts.date,
+    receiptUrl,
   };
-  return dispatchWhatsAppCloudMessage({
+  const sent = await dispatchWhatsAppCloudMessage({
     to: opts.to,
     kind: "payment_receipt",
     textBody: opts.textBody || buildReceiptText({ ...opts, clinicName }),
@@ -1016,4 +1061,18 @@ export async function sendPaymentReceipt(opts: {
     fetchImpl: opts.fetchImpl,
     tenantId: opts.tenantId,
   });
+  try {
+    const { getDb, writeAudit } = await import("./db.ts");
+    writeAudit(
+      opts.db || getDb(),
+      null,
+      "system",
+      "whatsapp_template_send",
+      `tenant ${tenantId || "none"} template payment_receipt outcome ${sent.ok ? "sent" : "failed"}`,
+      { tenantId: tenantId || undefined, entityType: "whatsapp_template", entityId: "payment_receipt" }
+    );
+  } catch {
+    /* audit is best-effort and must not block the receipt */
+  }
+  return sent;
 }

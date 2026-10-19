@@ -368,6 +368,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
   // and re-blocks Print/Send/Finalize until the doctor re-runs the audit.
   const [safetyCheckedSignature, setSafetyCheckedSignature] = useState<string | null>(null);
   const [safetyOverrideSignature, setSafetyOverrideSignature] = useState<string | null>(null);
+  const [printVerifyUrl, setPrintVerifyUrl] = useState('');
 
   // Fingerprint of the current medicine list — used purely to detect whether
   // the medicine list has changed since the last safety audit ran.
@@ -590,6 +591,29 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
   });
   const skipInitialAutosave = React.useRef(true);
 
+  useEffect(() => {
+    if (!currentPatient.id || !rxNumber) return;
+    let cancelled = false;
+    void apiFetch<{ url?: string }>('/api/patient-links', {
+      method: 'POST',
+      body: JSON.stringify({
+        purpose: 'rx',
+        patientId: currentPatient.id,
+        resourceId: rxNumber,
+        ttlHours: 168,
+      }),
+    })
+      .then((data) => {
+        if (!cancelled && data?.url) setPrintVerifyUrl(data.url);
+      })
+      .catch(() => {
+        /* the printed link stays blank until the server issues a token */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentPatient.id, rxNumber]);
+
   const keepModule = (key: string, active: boolean) =>
     savedModuleKeys.includes(key) || (active && !aiSource);
 
@@ -630,7 +654,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     clinicName: clinicSettings.name,
     clinicAddress: clinicSettings.address,
     clinicPhone: clinicSettings.phone,
-    qrVerificationUrl: `https://lumera.health/rx/${rxNumber}`,
+    qrVerificationUrl: printVerifyUrl,
     whatsappSentStatus: 'unsent',
     specialtyType: activeSpecialty,
     physiotherapyAssessment: keepModule('physiotherapyAssessment', activeSpecialty === 'Physiotherapy & Rehabilitation') ? physioAssessment : undefined,
@@ -1190,7 +1214,17 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
               <input
                 type="checkbox"
                 checked={isSafetyOverridden}
-                onChange={(e) => setSafetyOverrideSignature(e.target.checked ? medicinesSignature : null)}
+                onChange={(e) => {
+                  const checked = e.target.checked;
+                  setSafetyOverrideSignature(checked ? medicinesSignature : null);
+                  if (!checked || !rxNumber) return;
+                  void apiFetch(`/api/prescriptions/${encodeURIComponent(rxNumber)}/safety-override`, {
+                    method: 'POST',
+                    body: JSON.stringify({
+                      reason: 'Reviewed the contraindications and chose to proceed with this prescription as written.',
+                    }),
+                  }).catch(() => setSafetyOverrideSignature(null));
+                }}
                 className="mt-0.5"
               />
               <span>
@@ -2335,7 +2369,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
             </div>
             <div className="text-[10px] text-slate-500 space-y-0.5">
               <p className="font-bold text-slate-800">Scan to Verify Digital Rx</p>
-              <p>URL: https://lumera.health/rx/{rxNumber}</p>
+              <p>URL: {printVerifyUrl || 'https://www.mylumera.in/rx/v/…'}</p>
               <p className="text-slate-400">Designed for ABDM records (sandbox — not yet live)</p>
             </div>
           </div>
