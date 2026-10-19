@@ -691,6 +691,8 @@ describe("Auth / tenant isolation / CORS / CSRF / rate limit", () => {
       assert.equal(login.headers.get("x-content-type-options"), "nosniff");
       assert.equal(login.headers.get("x-frame-options"), "DENY");
       assert.match(login.headers.get("permissions-policy") || "", /microphone=\(self\)/);
+      assert.match(login.headers.get("permissions-policy") || "", /camera=\(self\)/);
+      assert.equal(login.headers.get("cache-control"), "private, no-cache");
       assert.equal(login.headers.get("x-powered-by"), null);
       const missingOrigin = await fetch(`${origin}/login`);
       assert.equal(missingOrigin.status, 200);

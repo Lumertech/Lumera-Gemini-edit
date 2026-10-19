@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Express, NextFunction, Request, Response } from "express";
 import express from "express";
-import { applyHtmlDocumentSecurityHeaders } from "./html-security-headers.ts";
+import { applyHtmlDocumentSecurityHeaders, HTML_DOCUMENT_CACHE_CONTROL } from "./html-security-headers.ts";
 import { isPublicPolicyHtmlPath, PUBLIC_POLICY_HTML_PATHS } from "./policy-html.ts";
 import { isPricingHtmlPath } from "./pricing-html.ts";
 
@@ -74,7 +74,17 @@ export function resolveClientDist(cwd = process.cwd()): string {
 
 export function attachProductionSpaFallback(app: Express, distPath = resolveClientDist()): void {
   const indexFile = path.join(distPath, "index.html");
-  app.use(express.static(distPath, { index: false, fallthrough: true }));
+  app.use(
+    express.static(distPath, {
+      index: false,
+      fallthrough: true,
+      setHeaders(res, filePath) {
+        if (filePath.endsWith(`${path.sep}index.html`) || filePath.endsWith("/index.html")) {
+          res.setHeader("Cache-Control", HTML_DOCUMENT_CACHE_CONTROL);
+        }
+      },
+    })
+  );
   app.use((req: Request, res: Response, next: NextFunction) => {
     if (req.method !== "GET" && req.method !== "HEAD") return next();
     if (!isSpaHistoryFallbackPath(req.path)) return next();
