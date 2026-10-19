@@ -1586,7 +1586,7 @@ export function createClinicalRouter(): Router {
       try {
         notify = await notifyReceptionBooking({ tenantId, appointment });
       } catch (notifyErr) {
-        console.error("Appointment booked but WhatsApp notify failed:", notifyErr);
+        console.error("Appointment booked but WhatsApp notify failed:", notifyErr instanceof Error ? notifyErr.name : "Error");
         notify = { sent: false, reason: "Graph error" };
       }
       res.status(201).json(withPatientTenant(req, tenantId, { appointment, notify }));

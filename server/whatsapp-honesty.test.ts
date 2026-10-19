@@ -6,9 +6,11 @@ import { ensureTenantSubscription } from "./platform-tenants.ts";
 import { hashPassword } from "./password.ts";
 import { resetSendOtpRateLimits } from "./otp-rate-limit.ts";
 import { jsonRequest, startTestServer, type TestHttpServer } from "./test-http.ts";
+import { OTP_PUBLIC_SEND_FAILURE } from "./otp-attempt.ts";
 import { bookWhatsAppAppointment, runAppointmentReminders } from "./whatsapp-calendar.ts";
 import { REMINDER_RETRY_BACKOFF_MS } from "./whatsapp-calendar-reminders.ts";
 import { platformAdminActor, upsertWhatsAppNumber } from "./whatsapp-numbers.ts";
+import { recordWhatsAppOptIn } from "./whatsapp-opt-in.ts";
 
 const LIVE_TOKEN = "EAAGisAlongEnoughTokenWithoutEllipsis0123456789abcdef";
 const LIVE_PHONE = "123456789012345";
@@ -91,7 +93,7 @@ describe("WhatsApp honesty: booking notify, reminder template, OTP wamid", () =>
         graphCalls += 1;
         graphBodies.push(JSON.parse(String(init?.body || "{}")) as Record<string, unknown>);
         if (graphMode === "fail") {
-          return new Response(JSON.stringify({ error: { message: "Template rejected" } }), {
+          return new Response(JSON.stringify({ error: { message: "Template rejected (#131000) META_ACCESS_TOKEN" } }), {
             status: 500,
             headers: { "Content-Type": "application/json" },
           });
@@ -131,7 +133,12 @@ describe("WhatsApp honesty: booking notify, reminder template, OTP wamid", () =>
     return String(res.json.token || "");
   }
 
-  async function book(auth: Record<string, string>, patientId: string, doctorId: string, phone?: string) {
+  async function book(
+    auth: Record<string, string>,
+    patientId: string,
+    doctorId: string,
+    opts?: { whatsappOptIn?: boolean }
+  ) {
     return jsonRequest(
       server.port,
       "POST",
@@ -143,7 +150,7 @@ describe("WhatsApp honesty: booking notify, reminder template, OTP wamid", () =>
         timeSlot: "09:30 AM",
         type: "New Consultation",
         source: "Walk-in",
-        ...(phone === undefined ? {} : {}),
+        ...(opts?.whatsappOptIn ? { whatsappOptIn: true } : {}),
       },
       auth
     );
@@ -157,7 +164,7 @@ describe("WhatsApp honesty: booking notify, reminder template, OTP wamid", () =>
     delete process.env.META_PHONE_NUMBER_ID;
     const clinic = createClinic("sent", "Cedar Clinic");
     connectClinic(clinic.tenantId);
-    approveTemplate(clinic.tenantId, "cedar_visit_booking");
+    approveTemplate(clinic.tenantId, "clinic_booking_confirmation", "en");
     const token = await login(clinic.email);
     const auth = { Authorization: `Bearer ${token}` };
     const patientRes = await jsonRequest(
@@ -169,19 +176,21 @@ describe("WhatsApp honesty: booking notify, reminder template, OTP wamid", () =>
     );
     assert.equal(patientRes.status, 201, String(patientRes.json.error || ""));
     const patientId = String((patientRes.json.patient as { id: string }).id);
-    const created = await book(auth, patientId, clinic.doctorId);
+    const created = await book(auth, patientId, clinic.doctorId, { whatsappOptIn: true });
     assert.equal(created.status, 201, String(created.json.error || ""));
     const notify = created.json.notify as { sent?: boolean; wamid?: string; reason?: string };
     assert.equal(notify.sent, true);
     assert.equal(notify.wamid, "wamid.HONESTY_OK");
     assert.equal(graphCalls, 1);
     const parameters = templateBodyParameters(graphBodies[0]);
-    assert.deepEqual(parameters, ["Cedar Clinic", "Dr Iyer", "2026-10-21 09:30 AM", "Asha Rao"]);
+    assert.equal(parameters[0], "Asha");
+    assert.equal(parameters[1], "Cedar Clinic");
+    assert.equal(parameters[2], "Dr Iyer");
     for (const value of parameters) assert.equal(/lumera/i.test(value), false, value);
     assert.equal(graphBodies[0].type, "template");
     assert.equal(graphBodies[0].text, undefined);
     const template = graphBodies[0].template as { name?: string };
-    assert.equal(template.name, "cedar_visit_booking");
+    assert.equal(template.name, "clinic_booking_confirmation");
     const phone = String((created.json.appointment as { patientPhone: string }).patientPhone);
     const event = getDb()
       .prepare(
@@ -202,7 +211,7 @@ describe("WhatsApp honesty: booking notify, reminder template, OTP wamid", () =>
     delete process.env.META_ACCESS_TOKEN;
     delete process.env.META_PHONE_NUMBER_ID;
     const clinic = createClinic("offline", "Cedar Clinic");
-    approveTemplate(clinic.tenantId, "cedar_visit_booking");
+    approveTemplate(clinic.tenantId, "clinic_booking_confirmation", "en");
     const token = await login(clinic.email);
     const auth = { Authorization: `Bearer ${token}` };
     const patientRes = await jsonRequest(
@@ -213,7 +222,7 @@ describe("WhatsApp honesty: booking notify, reminder template, OTP wamid", () =>
       auth
     );
     const patientId = String((patientRes.json.patient as { id: string }).id);
-    const created = await book(auth, patientId, clinic.doctorId);
+    const created = await book(auth, patientId, clinic.doctorId, { whatsappOptIn: true });
     assert.equal(created.status, 201, String(created.json.error || ""));
     assert.ok((created.json.appointment as { id: string }).id);
     const notify = created.json.notify as { sent?: boolean; wamid?: string; reason?: string };
@@ -238,7 +247,7 @@ describe("WhatsApp honesty: booking notify, reminder template, OTP wamid", () =>
     graphMode = "fail";
     const clinic = createClinic("gfail", "Cedar Clinic");
     connectClinic(clinic.tenantId);
-    approveTemplate(clinic.tenantId, "cedar_visit_booking");
+    approveTemplate(clinic.tenantId, "clinic_booking_confirmation", "en");
     const token = await login(clinic.email);
     const auth = { Authorization: `Bearer ${token}` };
     const patientRes = await jsonRequest(
@@ -249,7 +258,7 @@ describe("WhatsApp honesty: booking notify, reminder template, OTP wamid", () =>
       auth
     );
     const patientId = String((patientRes.json.patient as { id: string }).id);
-    const created = await book(auth, patientId, clinic.doctorId);
+    const created = await book(auth, patientId, clinic.doctorId, { whatsappOptIn: true });
     graphMode = "ok";
     assert.equal(created.status, 201, String(created.json.error || ""));
     assert.ok((created.json.appointment as { id: string }).id);
@@ -295,7 +304,7 @@ describe("WhatsApp honesty: booking notify, reminder template, OTP wamid", () =>
     assert.equal(bookingCopy(notify), "Booked, WhatsApp not sent: no template");
 
     getDb().prepare("UPDATE patients SET phone = '' WHERE id = ?").run(patientId);
-    approveTemplate(clinic.tenantId, "cedar_visit_booking");
+    approveTemplate(clinic.tenantId, "clinic_booking_confirmation", "en");
     const noPhone = await book(auth, patientId, clinic.doctorId);
     assert.equal(noPhone.status, 201, String(noPhone.json.error || ""));
     const phoneNotify = noPhone.json.notify as { sent?: boolean; reason?: string };
@@ -311,6 +320,8 @@ describe("WhatsApp honesty: booking notify, reminder template, OTP wamid", () =>
     graphMode = "ok";
     process.env.META_ACCESS_TOKEN = LIVE_TOKEN;
     process.env.META_PHONE_NUMBER_ID = LIVE_PHONE;
+    process.env.META_BOOK_CONFIRMATION_TEMPLATE_NAME = "lumera_appointment_booked";
+    process.env.META_UTILITY_TEMPLATE_LANGUAGE = "en_US";
     const clinic = createClinic("demo", "Cedar Clinic");
     ensureTenantSubscription(getDb(), clinic.tenantId, { billingSource: "demo" });
     const phone = uniquePhone();
@@ -327,10 +338,12 @@ describe("WhatsApp honesty: booking notify, reminder template, OTP wamid", () =>
         auth
       );
       const patientId = String((patientRes.json.patient as { id: string }).id);
-      created = await book(auth, patientId, clinic.doctorId);
+      created = await book(auth, patientId, clinic.doctorId, { whatsappOptIn: true });
     } finally {
       delete process.env.META_ACCESS_TOKEN;
       delete process.env.META_PHONE_NUMBER_ID;
+      delete process.env.META_BOOK_CONFIRMATION_TEMPLATE_NAME;
+      delete process.env.META_UTILITY_TEMPLATE_LANGUAGE;
       delete process.env.DEMO_WHATSAPP_RECIPIENT_ALLOWLIST;
     }
     assert.equal(created.status, 201, String(created.json.error || ""));
@@ -341,7 +354,8 @@ describe("WhatsApp honesty: booking notify, reminder template, OTP wamid", () =>
     assert.equal(template.name, "lumera_appointment_booked");
     assert.equal(template.language?.code, "en_US");
     const parameters = templateBodyParameters(graphBodies[0]);
-    assert.equal(parameters[0], "Cedar Clinic");
+    assert.equal(parameters[0], "Asha");
+    assert.equal(parameters[1], "Cedar Clinic");
     for (const value of parameters) assert.equal(/lumera/i.test(value), false, value);
   });
 
@@ -377,11 +391,13 @@ describe("WhatsApp honesty: booking notify, reminder template, OTP wamid", () =>
     assert.equal(bare.failed[0].result.ok, false);
     if (!bare.failed[0].result.ok) assert.equal(bare.failed[0].result.error, "no_approved_template");
 
-    approveTemplate(clinic.tenantId, "lumera_appointment_reminder", "en_US");
+    approveTemplate(clinic.tenantId, "clinic_appointment_reminder", "en");
     connectClinic(clinic.tenantId);
+    const retryPhone = uniquePhone();
+    recordWhatsAppOptIn(getDb(), { tenantId: clinic.tenantId, phone: retryPhone, optedIn: true, source: "test", actorId: "test" });
     const retryTarget = bookWhatsAppAppointment({
       tenantId: clinic.tenantId,
-      patientPhone: uniquePhone(),
+      patientPhone: retryPhone,
       patientName: "Meera Shah",
       doctorId: clinic.doctorId,
       date: "2026-09-11",
@@ -424,10 +440,12 @@ describe("WhatsApp honesty: booking notify, reminder template, OTP wamid", () =>
   it("a successful reminder template carries clinic and doctor names and no plain text", async () => {
     const clinic = createClinic("remok", "Cedar Clinic");
     connectClinic(clinic.tenantId);
-    approveTemplate(clinic.tenantId, "sunrise_visit_reminder", "en_US");
+    approveTemplate(clinic.tenantId, "clinic_appointment_reminder", "en_US");
+    const reminderPhone = uniquePhone();
+    recordWhatsAppOptIn(getDb(), { tenantId: clinic.tenantId, phone: reminderPhone, optedIn: true, source: "test", actorId: "test" });
     const booked = bookWhatsAppAppointment({
       tenantId: clinic.tenantId,
-      patientPhone: uniquePhone(),
+      patientPhone: reminderPhone,
       patientName: "Asha Rao",
       doctorId: clinic.doctorId,
       date: "2026-09-11",
@@ -447,9 +465,10 @@ describe("WhatsApp honesty: booking notify, reminder template, OTP wamid", () =>
     assert.equal(bodies[0].type, "template");
     assert.equal(bodies[0].text, undefined);
     const template = bodies[0].template as { name?: string; language?: { code?: string } };
-    assert.equal(template.name, "sunrise_visit_reminder");
+    assert.equal(template.name, "clinic_appointment_reminder");
     assert.equal(template.language?.code, "en_US");
     const parameters = templateBodyParameters(bodies[0]);
+    assert.equal(parameters[0], "Asha");
     assert.equal(parameters[1], "Cedar Clinic");
     assert.equal(parameters[2], "Dr Iyer");
     for (const value of parameters) assert.equal(/lumera/i.test(value), false, value);
@@ -471,7 +490,11 @@ describe("WhatsApp honesty: booking notify, reminder template, OTP wamid", () =>
       name: "Dr Iyer",
     });
     assert.equal(first.status, 503, String(first.json.error || ""));
+    assert.equal(first.json.error, OTP_PUBLIC_SEND_FAILURE);
     assert.equal(first.json.otpDelivered, false);
+    assert.equal(JSON.stringify(first.json).includes("Template rejected"), false);
+    assert.equal(JSON.stringify(first.json).includes("META_ACCESS_TOKEN"), false);
+    assert.equal(JSON.stringify(first.json).includes("META_PHONE_NUMBER_ID"), false);
     assert.notEqual(first.json.message, "Pending verification reused.");
     assert.equal(first.json.wamid, undefined);
     assert.equal(/sent via WhatsApp/i.test(String(first.json.message || first.json.error || "")), false);
@@ -518,12 +541,97 @@ describe("WhatsApp honesty: booking notify, reminder template, OTP wamid", () =>
       purpose: "login",
     });
     assert.equal(empty.status, 503);
+    assert.equal(empty.json.error, OTP_PUBLIC_SEND_FAILURE);
     assert.equal(empty.json.wamid, undefined);
     assert.equal(/6-digit OTP sent/i.test(JSON.stringify(empty.json)), false);
+    assert.equal(JSON.stringify(empty.json).includes("message id"), false);
+    const noWamidAudit = getDb()
+      .prepare(`SELECT action FROM audit_logs WHERE action = 'whatsapp_otp_no_wamid' ORDER BY timestamp DESC LIMIT 1`)
+      .get() as { action: string } | undefined;
+    assert.equal(noWamidAudit?.action, "whatsapp_otp_no_wamid");
     graphMode = "ok";
     delete process.env.META_ACCESS_TOKEN;
     delete process.env.META_PHONE_NUMBER_ID;
+    const prevNode = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
     resetSendOtpRateLimits();
+    const barePhone = `+91 95${String(Date.now()).slice(-8)}`;
+    const bare = await jsonRequest(server.port, "POST", "/api/auth/whatsapp/send-otp", {
+      phone: barePhone,
+      email: `bare.${barePhone.replace(/\D/g, "")}@wa-honesty.example`,
+      purpose: "login",
+    });
+    if (prevNode === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = prevNode;
+    assert.equal(bare.status, 503, String(bare.json.error || ""));
+    assert.equal(bare.json.error, OTP_PUBLIC_SEND_FAILURE);
+    assert.equal(JSON.stringify(bare.json).includes("META_ACCESS_TOKEN"), false);
+    assert.equal(JSON.stringify(bare.json).includes("META_PHONE_NUMBER_ID"), false);
+    resetSendOtpRateLimits();
+  });
+
+  it("does not send a booking or reminder without WhatsApp opt-in, including after STOP", async () => {
+    graphCalls = 0;
+    graphBodies.length = 0;
+    graphMode = "ok";
+    delete process.env.META_ACCESS_TOKEN;
+    delete process.env.META_PHONE_NUMBER_ID;
+    const clinic = createClinic("optin", "Cedar Clinic");
+    connectClinic(clinic.tenantId);
+    approveTemplate(clinic.tenantId, "clinic_booking_confirmation", "en");
+    approveTemplate(clinic.tenantId, "clinic_appointment_reminder", "en");
+    const token = await login(clinic.email);
+    const auth = { Authorization: `Bearer ${token}` };
+    const phone = uniquePhone();
+    const patientRes = await jsonRequest(
+      server.port,
+      "POST",
+      "/api/patients",
+      { name: "Asha Rao", phone, age: 34, gender: "Female" },
+      auth
+    );
+    const patientId = String((patientRes.json.patient as { id: string }).id);
+    const created = await book(auth, patientId, clinic.doctorId);
+    assert.equal(created.status, 201, String(created.json.error || ""));
+    assert.ok((created.json.appointment as { id: string }).id);
+    const notify = created.json.notify as { sent?: boolean; wamid?: string; reason?: string };
+    assert.equal(notify.sent, false);
+    assert.equal(notify.wamid, undefined);
+    assert.equal(notify.reason, "no WhatsApp opt-in");
+    assert.equal(graphCalls, 0);
+    assert.equal(bookingCopy(notify), "Booked, WhatsApp not sent: no WhatsApp opt-in");
+
+    const stoppedPhone = uniquePhone();
+    recordWhatsAppOptIn(getDb(), {
+      tenantId: clinic.tenantId,
+      phone: stoppedPhone,
+      optedIn: false,
+      source: "stop",
+      actorId: "test",
+    });
+    const stopped = bookWhatsAppAppointment({
+      tenantId: clinic.tenantId,
+      patientPhone: stoppedPhone,
+      patientName: "Meera Shah",
+      doctorId: clinic.doctorId,
+      date: "2026-09-11",
+      timeSlot: "10:30 AM",
+    });
+    let reminderCalls = 0;
+    const run = await runAppointmentReminders({
+      tenantId: clinic.tenantId,
+      appointmentId: stopped.appointment.id,
+      now: new Date("2026-09-10T06:00:00.000Z"),
+      fetchImpl: async () => {
+        reminderCalls += 1;
+        return new Response(JSON.stringify({ messages: [{ id: "wamid.SHOULD_NOT" }] }), { status: 200 });
+      },
+    });
+    assert.equal(reminderCalls, 0);
+    assert.equal(run.sent.length, 0);
+    assert.equal(run.failed.length, 1);
+    assert.equal(run.failed[0].result.ok, false);
+    if (!run.failed[0].result.ok) assert.equal(run.failed[0].result.error, "no WhatsApp opt-in");
   });
 });
 

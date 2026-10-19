@@ -2,7 +2,7 @@ import { Router, type NextFunction, type Request, type Response } from "express"
 import { persistSpecialtyPackId } from "../src/lib/specialtyPack.ts";
 import { assignedRoleForPracticeType, getDb, normalizePracticeType } from "./db.ts";
 import { otpEchoPayload } from "./auth.ts";
-import { abandonFailedOtpSend, generateNumericOtp, reserveOtpSend, sendOtpLimited } from "./otp-attempt.ts";
+import { abandonFailedOtpSend, generateNumericOtp, logOtpSendFailure, OTP_PUBLIC_SEND_FAILURE, reserveOtpSend, sendOtpLimited } from "./otp-attempt.ts";
 import { requestClientIp } from "./otp-rate-limit.ts";
 import { liveRegistrationPasswordHash } from "./live-registration-password.ts";
 import { ensureTenantSubscription } from "./platform-tenants.ts";
@@ -45,8 +45,10 @@ function otpDispatchFailure(
         ip: req ? requestClientIp(req) : undefined,
       });
     }
+    const detail = result.ok === false ? result.error : "graph response had no message id";
+    logOtpSendFailure(verification?.phone || "", detail);
     res.status(503).json({
-      error: result.ok === false ? result.error : "WhatsApp Cloud API did not return a message id.",
+      error: OTP_PUBLIC_SEND_FAILURE,
       otpDelivered: false,
       channel: result.ok === false ? result.channel : "graph",
     });

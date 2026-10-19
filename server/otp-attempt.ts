@@ -6,6 +6,15 @@ import type { SqlDatabase } from "./sql-engine.ts";
 import { consumeSendOtpAttempt, otpSubjectKey, releaseOtpSendCooldown, requestClientIp } from "./otp-rate-limit.ts";
 
 export const OTP_SEND_LIMIT_ERROR = "Too many OTP requests. Try again later.";
+/** Shown on the unauthenticated login screen. Never a Graph body or an env-var name. */
+export const OTP_PUBLIC_SEND_FAILURE = "WhatsApp code not sent. Try again later.";
+
+export function logOtpSendFailure(phone: string, detail: string) {
+  const digits = String(phone || "").replace(/\D/g, "");
+  const masked = digits.length >= 4 ? `****${digits.slice(-4)}` : "****";
+  const safe = String(detail || "send failed").replace(/EAA[A-Za-z0-9]+/g, "[redacted]").slice(0, 300);
+  console.error(`[OTP] send failed for ${masked}: ${safe}`);
+}
 export const OTP_VERIFY_LOCK_ERROR = "Too many incorrect codes. This code is no longer valid. Request a new OTP.";
 export const VERIFY_OTP_MAX_FAILURES = 5;
 

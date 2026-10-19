@@ -35,6 +35,8 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
   const prevWaPhone = process.env.WHATSAPP_PHONE_NUMBER_ID;
   const prevNode = process.env.NODE_ENV;
   const prevTpl = process.env.META_REMINDER_TEMPLATE_NAME;
+  const prevBookTpl = process.env.META_BOOK_CONFIRMATION_TEMPLATE_NAME;
+  const prevUtilityLang = process.env.META_UTILITY_TEMPLATE_LANGUAGE;
   const prevOtpTpl = process.env.META_OTP_TEMPLATE_NAME;
 
   after(() => {
@@ -52,13 +54,19 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
     else process.env.META_REMINDER_TEMPLATE_NAME = prevTpl;
     if (prevOtpTpl === undefined) delete process.env.META_OTP_TEMPLATE_NAME;
     else process.env.META_OTP_TEMPLATE_NAME = prevOtpTpl;
+    if (prevBookTpl === undefined) delete process.env.META_BOOK_CONFIRMATION_TEMPLATE_NAME;
+    else process.env.META_BOOK_CONFIRMATION_TEMPLATE_NAME = prevBookTpl;
+    if (prevUtilityLang === undefined) delete process.env.META_UTILITY_TEMPLATE_LANGUAGE;
+    else process.env.META_UTILITY_TEMPLATE_LANGUAGE = prevUtilityLang;
   });
 
   it("Graph path sends reminder / confirmation / receipt / OTP when creds are set (mock fetch OK)", async () => {
     process.env.META_ACCESS_TOKEN = LIVE_TOKEN;
     process.env.META_PHONE_NUMBER_ID = LIVE_PHONE_ID;
     process.env.NODE_ENV = "test";
-    delete process.env.META_REMINDER_TEMPLATE_NAME;
+    process.env.META_REMINDER_TEMPLATE_NAME = "lumera_appointment_reminder";
+    process.env.META_BOOK_CONFIRMATION_TEMPLATE_NAME = "lumera_appointment_booked";
+    process.env.META_UTILITY_TEMPLATE_LANGUAGE = "en_US";
     delete process.env.META_OTP_TEMPLATE_NAME;
 
     const captured: Array<{ url: string; body: Record<string, unknown> }> = [];

@@ -76,7 +76,7 @@ import {
   upsertTenantSubscription,
 } from "./platform-tenants.ts";
 import { generateTemporaryPassword, hashPassword, passwordRuleError, verifyPassword } from "./password.ts";
-import { abandonFailedOtpSend, findPendingOtp, generateNumericOtp, rejectWrongOtp, reserveOtpSend, sendOtpLimited } from "./otp-attempt.ts";
+import { abandonFailedOtpSend, findPendingOtp, generateNumericOtp, logOtpSendFailure, OTP_PUBLIC_SEND_FAILURE, rejectWrongOtp, reserveOtpSend, sendOtpLimited } from "./otp-attempt.ts";
 import { consumeForgotPasswordAttempt, requestClientIp } from "./otp-rate-limit.ts";
 import { parseSpecialtyPackInput, resolveSpecialtyPack } from "./specialty-packs.ts";
 import { appPublicUrl, demoLoginEnabled, isProduction } from "./runtime.ts";
@@ -342,6 +342,17 @@ export type OtpDispatchResult =
   | { ok: true; channel: "graph" | "sandbox"; messageId?: string }
   | { ok: false; error: string; channel: "none" | "graph" };
 
+function auditOtpNoWamid(purpose: string) {
+  try {
+    writeAudit(getDb(), null, "system", "whatsapp_otp_no_wamid", `otp ${purpose} accepted without a message id`, {
+      entityType: "otp",
+      entityId: purpose,
+    });
+  } catch {
+    /* audit is best-effort and must not block the failure response */
+  }
+}
+
 async function dispatchWhatsAppOtpMessage(phone: string, name: string, otp: string, purpose: string): Promise<OtpDispatchResult> {
   const sent = await dispatchWhatsAppCloudMessage({
     to: phone,
@@ -355,6 +366,7 @@ async function dispatchWhatsAppOtpMessage(phone: string, name: string, otp: stri
 
   if (sent.ok && sent.channel === "graph") {
     if (!sent.messageId) {
+      auditOtpNoWamid(purpose);
       return { ok: false, error: "WhatsApp Cloud API did not return a message id.", channel: "graph" };
     }
     recordWhatsAppOtpEvent({
@@ -371,6 +383,7 @@ async function dispatchWhatsAppOtpMessage(phone: string, name: string, otp: stri
 
   if (isCloudDispatchFailure(sent)) {
     if (sent.channel === "graph") {
+      if (/did not return a message id|HTTP 200/i.test(sent.error)) auditOtpNoWamid(purpose);
       recordWhatsAppOtpEvent({
         phone,
         name,
@@ -443,8 +456,10 @@ function otpDispatchFailure(
         ip: req ? requestClientIp(req) : undefined,
       });
     }
+    const detail = result.ok === false ? result.error : "graph response had no message id";
+    logOtpSendFailure(verification?.phone || "", detail);
     res.status(503).json({
-      error: result.ok === false ? result.error : "WhatsApp Cloud API did not return a message id.",
+      error: OTP_PUBLIC_SEND_FAILURE,
       otpDelivered: false,
       channel: result.ok === false ? result.channel : "graph",
     });

@@ -1,4 +1,6 @@
+import { patientFirstName } from "./clinic-whatsapp-templates.ts";
 import { getDb, mapAppointment } from "./db.ts";
+import { WHATSAPP_OPT_IN_REQUIRED } from "./whatsapp-opt-in.ts";
 import {
   FAILED_FINAL,
   isCloudDispatchFailure,
@@ -219,17 +221,18 @@ function recordCloudDispatch(opts: {
   }
 
   if (isCloudDispatchFailure(opts.sent)) {
+    const error = opts.sent.error.startsWith(WHATSAPP_OPT_IN_REQUIRED) ? "no WhatsApp opt-in" : opts.sent.error;
     const eventId = recordOutboundEvent({
       eventType: opts.eventType,
       phone: opts.appointment.patientPhone,
       name: opts.appointment.patientName,
       status: "failed",
-      details: `${opts.eventType} not delivered: ${opts.sent.error}`,
-      payload: { ...opts.payload, channel: opts.sent.channel, error: opts.sent.error, sandbox: false },
+      details: `${opts.eventType} not delivered: ${error}`,
+      payload: { ...opts.payload, channel: opts.sent.channel, error, sandbox: false },
       tenantId: String(opts.payload.tenantId || ""),
       sentAt: opts.sentAt,
     });
-    return { ok: false, error: opts.sent.error, channel: opts.sent.channel, eventId, status: opts.sent.status };
+    return { ok: false, error, channel: opts.sent.channel, eventId, status: opts.sent.status };
   }
 
   const eventId = recordOutboundEvent({
@@ -378,7 +381,7 @@ export async function dispatchAppointmentReminder(opts: {
     templateLanguage: template.language,
     // lumera_appointment_reminder (Utility, en_US): {{1}} patient, {{2}} clinic, {{3}} doctor, {{4}} date, {{5}} time. No token.
     templateParameters: [
-      opts.appointment.patientName,
+      patientFirstName(opts.appointment.patientName),
       clinicName,
       doctorName,
       opts.appointment.date,
@@ -400,7 +403,9 @@ export async function dispatchAppointmentReminder(opts: {
       window: opts.window,
       attempt,
       permanent,
-      ...(isCloudDispatchFailure(sent) ? { reason: sent.error } : {}),
+      ...(isCloudDispatchFailure(sent)
+        ? { reason: sent.error.startsWith(WHATSAPP_OPT_IN_REQUIRED) ? "no WhatsApp opt-in" : sent.error }
+        : {}),
     },
     sent,
     sandboxText: text,
@@ -413,6 +418,7 @@ export type BookingNotifyResult = { sent: boolean; wamid?: string; reason?: stri
 function bookingFailureReason(sent: CloudDispatchResult): string {
   if (isCloudDispatchFailure(sent)) {
     if (sent.error === NO_APPROVED_TEMPLATE) return "no template";
+    if (sent.error.startsWith(WHATSAPP_OPT_IN_REQUIRED)) return "no WhatsApp opt-in";
     if (/not connected|not configured|WA_TOKEN_KEY/i.test(sent.error)) return "not connected";
     return "Graph error";
   }
@@ -475,10 +481,9 @@ export async function notifyReceptionBooking(opts: {
     date: opts.appointment.date,
     timeSlot: opts.appointment.timeSlot,
     tokenNumber: opts.appointment.tokenNumber,
-    uhid: opts.appointment.uhid,
     templateName: template.name,
     templateLanguage: template.language,
-    templateParameters: [clinicName, doctorName, dateTime, patientName],
+    templateParameters: [clinicName, doctorName, dateTime, patientFirstName(patientName)],
     textBody: `${clinicName}: appointment with ${doctorName} on ${dateTime} for ${patientName}`,
     db: getDb(),
     fetchImpl: opts.fetchImpl,

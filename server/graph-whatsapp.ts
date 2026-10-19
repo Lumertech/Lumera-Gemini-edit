@@ -793,7 +793,7 @@ function recordDemoAllowlistEvent(opts: {
  * Demo and seed tenants never call Graph for a recipient outside the allowlist.
  * Returns null when the send may proceed.
  */
-function demoAllowlistGate(opts: {
+async function demoAllowlistGate(opts: {
   to: string;
   kind: CloudMessageKind;
   db?: DatabaseSync | null;
@@ -804,7 +804,7 @@ function demoAllowlistGate(opts: {
   reminderWindow?: string;
   invoiceId?: string;
   sentAt?: string;
-}): CloudDispatchResult | null {
+}): Promise<CloudDispatchResult | null> {
   if (opts.platformSend) return null;
   const tenantId = String(opts.tenantId || "").trim();
   if (!opts.db || !tenantId || !isSandboxOrDemoTenant(opts.db, tenantId)) return null;
@@ -824,6 +824,16 @@ function demoAllowlistGate(opts: {
   );
   if (matched.some((row) => row.status === FAILED_FINAL) || matched.length >= DEMO_OUTBOUND_ATTEMPT_CAP) {
     console.warn(`[WhatsApp] demo recipient ${masked} ${FAILED_FINAL}`);
+    try {
+      const { getDb, writeAudit } = await import("./db.ts");
+      writeAudit(opts.db || getDb(), null, "system", "whatsapp_demo_cap", `demo recipient ${masked} ${FAILED_FINAL}`, {
+        tenantId,
+        entityType: "whatsapp",
+        entityId: opts.appointmentId || opts.invoiceId || masked,
+      });
+    } catch {
+      /* audit is best-effort and must not block the skip */
+    }
     return { ok: false, error: FAILED_FINAL, channel: "none", status: 422 };
   }
   const attempt = matched.length + 1;
@@ -913,7 +923,7 @@ export async function dispatchWhatsAppCloudMessage(opts: {
     return { ok: false, channel: "none", error: WA_TOKEN_KEY_UNSET_ERROR, status: 503 };
   }
 
-  const allowlist = demoAllowlistGate({
+  const allowlist = await demoAllowlistGate({
     to: opts.to,
     kind,
     db: opts.db,

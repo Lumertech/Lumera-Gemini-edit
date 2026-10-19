@@ -10,6 +10,7 @@ import {
 } from "./graph-whatsapp.ts";
 import { hashPassword } from "./password.ts";
 import { ensureTenantSubscription } from "./platform-tenants.ts";
+import { recordWhatsAppOptIn } from "./whatsapp-opt-in.ts";
 import { bookWhatsAppAppointment } from "./whatsapp-calendar.ts";
 import {
   appointmentReminderSchedulerActive,
@@ -110,6 +111,7 @@ describe("demo WhatsApp recipient allowlist", () => {
     process.env.META_ACCESS_TOKEN = LIVE_TOKEN;
     process.env.META_PHONE_NUMBER_ID = LIVE_PHONE;
     const clinic = createDemoClinic("us");
+    recordWhatsAppOptIn(getDb(), { tenantId: clinic.tenantId, phone: "+1 9999973271", optedIn: true, source: "test", actorId: "test" });
     let calls = 0;
     try {
       const sent = await sendPaymentReceipt({
@@ -183,6 +185,7 @@ describe("demo WhatsApp recipient allowlist", () => {
 
     process.env.META_ACCESS_TOKEN = LIVE_TOKEN;
     process.env.META_PHONE_NUMBER_ID = LIVE_PHONE;
+    recordWhatsAppOptIn(getDb(), { tenantId: clinic.tenantId, phone, optedIn: true, source: "test", actorId: "test" });
     let receiptCalls = 0;
     try {
       const receipt = await sendPaymentReceipt({
@@ -229,6 +232,20 @@ describe("demo WhatsApp recipient allowlist", () => {
       date: "2026-09-11",
       timeSlot: "10:30 AM",
     });
+    recordWhatsAppOptIn(getDb(), { tenantId: clinic.tenantId, phone, optedIn: true, source: "test", actorId: "test" });
+    const stamped = new Date().toISOString();
+    getDb()
+      .prepare(
+        `INSERT INTO meta_templates (id, tenant_id, waba_id, name, category, language, status, components, created_at, updated_at)
+         VALUES (?, ?, '204800000000000', ?, 'UTILITY', 'en', 'APPROVED', '[]', ?, ?)`
+      )
+      .run(`tpl-rem-${clinic.tenantId}`, clinic.tenantId, "clinic_appointment_reminder", stamped, stamped);
+    getDb()
+      .prepare(
+        `INSERT INTO meta_templates (id, tenant_id, waba_id, name, category, language, status, components, created_at, updated_at)
+         VALUES (?, ?, '204800000000000', ?, 'UTILITY', 'en', 'APPROVED', '[]', ?, ?)`
+      )
+      .run(`tpl-book-${clinic.tenantId}`, clinic.tenantId, "clinic_booking_confirmation", stamped, stamped);
     let calls = 0;
     const logs = captureLogs();
     try {
@@ -353,6 +370,12 @@ describe("demo WhatsApp recipient allowlist", () => {
       [SKIPPED_NOT_ALLOWLISTED, SKIPPED_NOT_ALLOWLISTED, FAILED_FINAL]
     );
     assert.equal(calls, 0);
+    const capAudit = getDb()
+      .prepare(`SELECT action, details FROM audit_logs WHERE action = 'whatsapp_demo_cap' AND tenant_id = ?`)
+      .get(clinic.tenantId) as { action: string; details: string } | undefined;
+    assert.equal(capAudit?.action, "whatsapp_demo_cap");
+    assert.match(String(capAudit?.details || ""), /failed_final/);
+    assert.equal(String(capAudit?.details || "").includes(phone.replace(/\D/g, "")), false);
   });
 
   it("APPOINTMENT_REMINDER_SCHEDULER off, false, and 0 do not start the scheduler", () => {
