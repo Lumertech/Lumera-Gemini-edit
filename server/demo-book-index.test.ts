@@ -6,6 +6,7 @@ import { clinicCalendarDate, shiftIsoDate } from "../src/lib/clinicDay.ts";
 import { INDIVIDUAL_DEMO_WINDOW, demoBookDateForIndex, spreadDemoBookDates } from "./demo-book-dates.ts";
 import { ensureDemoWorkspaceTenants } from "./demo-workspace-tenants.ts";
 import { migrate } from "./db-migrate.ts";
+import { Pool } from "pg";
 import { createPgShim } from "./pg-shim.ts";
 import type { SqlDatabase } from "./sql-engine.ts";
 
@@ -34,6 +35,8 @@ const APPOINTMENTS_DDL = `
 `;
 
 function spreadPostgresUrl(): string | null {
+  const sunrise = String(process.env.SUNRISE_TEST_DATABASE_URL || "").trim();
+  if (sunrise) return sunrise;
   const fromEnv = String(process.env.SPREAD_TEST_DATABASE_URL || "").trim();
   if (fromEnv) return fromEnv;
   if (fs.existsSync("/var/run/postgresql/.s.PGSQL.5432")) {
@@ -134,11 +137,22 @@ describe("indexed demo book spread", () => {
     assert.deepEqual(duplicateTokens(db), []);
   });
 
-  it("reallocates tokens on the target day for postgres, including a month boundary", { timeout: 120_000 }, () => {
+  it("reallocates tokens on the target day for postgres, including a month boundary", { timeout: 120_000 }, async () => {
     const url = spreadPostgresUrl();
-    if (!url) return;
+    if (!url) {
+      if (process.env.CI) {
+        throw new Error("SUNRISE_TEST_DATABASE_URL is required so CI can run the indexed demo spread on Postgres");
+      }
+      return;
+    }
+    const pool = new Pool({ connectionString: url, max: 1, connectionTimeoutMillis: 8000 });
+    try {
+      await pool.query("DROP SCHEMA IF EXISTS public CASCADE");
+      await pool.query("CREATE SCHEMA public");
+    } finally {
+      await pool.end();
+    }
     const db = createPgShim(url);
-    db.exec("DROP TABLE IF EXISTS appointments");
     db.exec(APPOINTMENTS_DDL);
     walkIndexedBook(db);
   });

@@ -1,6 +1,6 @@
 import { HIDDEN_AMBIENT_SOURCES, hiddenVisitSourceSql, isHiddenVisitSource } from "./ambient-walkin.ts";
 import { getDb, mapAppointment, mapPatient, writeAudit } from "./db.ts";
-import { clinicCalendarDate } from "../src/lib/clinicDay.ts";
+import { resolveQueueDate } from "../src/lib/clinicDay.ts";
 import {
   appointmentPhoneFromPatient,
   getTenantAppointment,
@@ -118,7 +118,7 @@ export function findActiveAppointment(opts: {
              ORDER BY created_at DESC LIMIT 1`
           )
           .get(opts.tenantId, opts.patientId, opts.date, ...HIDDEN_AMBIENT_SOURCES) as Record<string, unknown> | undefined);
-    if (row) return withLivePatientPhone(opts.tenantId, row);
+    return withLivePatientPhone(opts.tenantId, row);
   }
 
   if (opts.patientId) {
@@ -184,7 +184,7 @@ export function bookWhatsAppAppointment(opts: {
     name: opts.patientName,
   });
   const mappedPatient = mapPatient(patient);
-  const date = String(opts.date || "").trim() || clinicCalendarDate(new Date(), tenantTimezone(tenantId));
+  const date = resolveQueueDate(opts.date, tenantTimezone(tenantId));
   const timeSlot = String(opts.timeSlot || "").trim() || defaultTimeSlot();
 
   const existing = findActiveAppointment({

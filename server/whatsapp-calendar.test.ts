@@ -233,6 +233,29 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
     assert.equal(count.c, 1);
   });
 
+  it("an IST instant and the clinic YYYY-MM-DD are one WhatsApp booking", () => {
+    const clinic = createClinicUser("istDedupe");
+    const phone = uniquePhone();
+    const shared = {
+      tenantId: clinic.tenantId,
+      patientPhone: phone,
+      patientName: "IST Duplicate",
+      doctorId: clinic.doctorId,
+      timeSlot: "09:00 AM",
+    };
+    const first = bookWhatsAppAppointment({ ...shared, date: "2026-10-19" });
+    const second = bookWhatsAppAppointment({ ...shared, date: "2026-10-18T19:00:00.000Z" });
+    assert.equal(first.reused, false);
+    assert.equal(first.appointment.date, "2026-10-19");
+    assert.equal(second.reused, true);
+    assert.equal(second.appointment.id, first.appointment.id);
+    assert.equal(second.appointment.date, "2026-10-19");
+    const count = getDb()
+      .prepare("SELECT COUNT(*) AS c FROM appointments WHERE tenant_id = ? AND patient_id = ?")
+      .get(clinic.tenantId, first.patient.id) as { c: number };
+    assert.equal(Number(count.c), 1);
+  });
+
   it("clinic B cannot see clinic A's WhatsApp-booked token", async () => {
     const clinicA = createClinicUser("isoWA");
     const clinicB = createClinicUser("isoWB");
