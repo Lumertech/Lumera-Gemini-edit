@@ -6,6 +6,11 @@ import {
   loadFacebookSdk,
   type EmbeddedSignupConfig,
 } from "../lib/facebook-embedded-signup";
+import {
+  META_TECH_PROVIDER_STATEMENT,
+  WHATSAPP_CONNECTION_UNAVAILABLE_SENTENCE,
+  WHATSAPP_PERMISSIONS_STATUS_SENTENCE,
+} from "../lib/metaStatus";
 
 type MineResponse = {
   tenantNumber?: { id: string; status: string; wabaId?: string; phoneNumberId?: string; metaWabaName?: string } | null;
@@ -90,7 +95,7 @@ export const ClinicWabaConnect: React.FC = () => {
       if (!signup.appId || !signup.configId) {
         throw new Error(
           signup.notice ||
-            "WhatsApp connection isn't available on this environment yet. Contact ravee@lumer.me. Lumera Solutions LLP is a Meta Tech Provider for the WhatsApp Business Platform. WhatsApp permissions submitted for Meta App Review in September 2026; not yet granted."
+            `${WHATSAPP_CONNECTION_UNAVAILABLE_SENTENCE} ${META_TECH_PROVIDER_STATEMENT} ${WHATSAPP_PERMISSIONS_STATUS_SENTENCE}`
         );
       }
       await loadFacebookSdk(signup.appId, signup.graphVersion || "v21.0");
@@ -140,8 +145,7 @@ export const ClinicWabaConnect: React.FC = () => {
         </span>
       </div>
       <p className="text-xs text-slate-600">
-        Optional clinic-owned WABA (one per tenant). Lumera Solutions LLP is a Meta Tech Provider for the WhatsApp
-        Business Platform. WhatsApp permissions submitted for Meta App Review in September 2026; not yet granted.
+        Optional clinic-owned WABA (one per tenant). {META_TECH_PROVIDER_STATEMENT} {WHATSAPP_PERMISSIONS_STATUS_SENTENCE}
       </p>
       {connected ? (
         <div className="space-y-2" data-testid="clinic-whatsapp-status">
