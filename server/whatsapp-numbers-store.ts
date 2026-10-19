@@ -32,6 +32,8 @@ export type WhatsAppNumberRow = {
   meta_token_expires_at: string;
   created_at: string;
   updated_at: string;
+  display_phone_number?: string;
+  verified_name?: string;
 };
 
 export type PractitionerRow = {
@@ -94,6 +96,16 @@ export function ensureWhatsAppOwnershipSchema(database: DatabaseSync) {
   `);
   try {
     database.exec("ALTER TABLE whatsapp_number_secrets ADD COLUMN registration_pin TEXT NOT NULL DEFAULT ''");
+  } catch {
+    /* already present */
+  }
+  try {
+    database.exec("ALTER TABLE whatsapp_numbers ADD COLUMN display_phone_number TEXT NOT NULL DEFAULT ''");
+  } catch {
+    /* already present */
+  }
+  try {
+    database.exec("ALTER TABLE whatsapp_numbers ADD COLUMN verified_name TEXT NOT NULL DEFAULT ''");
   } catch {
     /* already present */
   }
@@ -263,6 +275,32 @@ export function getWhatsAppNumberSecret(metaTokenRef: string, database: Database
   } catch (err) {
     if (isProduction() && err instanceof Error && /WA_TOKEN_KEY|ciphertext/i.test(err.message)) throw err;
     return "";
+  }
+}
+
+export function rememberWhatsAppLineDisplay(
+  database: DatabaseSync,
+  phoneNumberId: string,
+  display: { displayPhoneNumber?: string; verifiedName?: string }
+): void {
+  const id = String(phoneNumberId || "").trim();
+  if (!id) return;
+  ensureWhatsAppOwnershipSchema(database);
+  try {
+    database
+      .prepare(
+        `UPDATE whatsapp_numbers
+         SET display_phone_number = ?, verified_name = ?, updated_at = ?
+         WHERE phone_number_id = ?`
+      )
+      .run(
+        String(display.displayPhoneNumber || "").trim(),
+        String(display.verifiedName || "").trim(),
+        new Date().toISOString(),
+        id
+      );
+  } catch {
+    /* column missing on a partial schema */
   }
 }
 

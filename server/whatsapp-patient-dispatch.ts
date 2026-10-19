@@ -13,6 +13,7 @@ export async function dispatchPatientCloudText(opts: {
   previewUrl?: boolean;
   /** True only for a staff-typed reply. Bot, Rx, and outbound triggers are automated. */
   isManual?: boolean;
+  fetchImpl?: typeof fetch;
 }): Promise<
   | { ok: true; channel: "graph" | "sandbox"; messageId?: string }
   | { ok: false; error: string; channel: "none" | "graph"; status?: number }
@@ -25,5 +26,6 @@ export async function dispatchPatientCloudText(opts: {
     db: getDb(),
     tenantId: opts.tenantId,
     isManual: opts.isManual,
+    fetchImpl: opts.fetchImpl,
   });
 }

@@ -89,7 +89,7 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({ docu
             </div>
             <div>
               <span className="text-slate-400 block font-medium">PHONE NUMBER</span>
-              <span className="font-mono text-slate-700">{rawData.patientPhone || '+91 98450 12345'}</span>
+              <span className="font-mono text-slate-700">{rawData.patientPhone || '—'}</span>
             </div>
             <div>
               <span className="text-slate-400 block font-medium">DATE</span>

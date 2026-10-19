@@ -149,6 +149,8 @@ export function publicWhatsAppNumber(row: WhatsAppNumberRow) {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     hasToken: Boolean(row.meta_token_ref),
+    displayPhoneNumber: String(row.display_phone_number || ""),
+    displayName: String(row.verified_name || row.meta_waba_name || ""),
   };
 }
 

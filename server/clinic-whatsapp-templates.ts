@@ -1,0 +1,671 @@
+/**
+ * Per-clinic WhatsApp template catalog.
+ *
+ * Names are clinic_* and are never the platform lumera_* templates.
+ * Bodies use positional {{1}}…{{n}} only. Footers have no variables.
+ * URL buttons are a fixed base plus one trailing variable.
+ *
+ * lumera_payment_receipt_v2 (Lumera's own number) is documented in commit
+ * 92a32fb as five positional params: patient, clinic_name, doctor, amount,
+ * invoice. The Active Meta template takes a sixth, the invoice date already
+ * on the receipt send. The previous Active name lumera_payment_receipt stays
+ * at 3 params (patient, amount, invoice) so Cloud Run can keep that name
+ * until this code is live.
+ */
+
+import crypto from "node:crypto";
+import type { DatabaseSync } from "node:sqlite";
+import { graphApiVersion } from "./runtime.ts";
+
+export type ReceiptParameterFields = {
+  patientName?: string;
+  clinicName?: string;
+  doctorName?: string;
+  amount?: number | string;
+  invoiceId?: string;
+  date?: string;
+};
+
+export const TEMPLATE_NOT_APPROVED = "TEMPLATE_NOT_APPROVED";
+export const TEMPLATE_NOT_APPROVED_ERROR =
+  "TEMPLATE_NOT_APPROVED: No approved WhatsApp template for this message. A normal chat reply is available only within 24 hours of the patient's last message.";
+
+export const CLINIC_TEMPLATE_LANGUAGE = "en";
+
+export const LUMERA_RECEIPT_TEMPLATE_V1 = "lumera_payment_receipt";
+export const LUMERA_RECEIPT_TEMPLATE_V2 = "lumera_payment_receipt_v2";
+
+const CLINIC_FALLBACK = "your clinic";
+const DOCTOR_FALLBACK = "your clinician";
+
+export type ClinicTemplateKind =
+  | "appointment_reminder"
+  | "book_confirmation"
+  | "payment_receipt"
+  | "prescription_ready";
+
+export type ClinicTemplateSpec = {
+  kind: ClinicTemplateKind;
+  name: string;
+  category: "UTILITY";
+  language: string;
+  label: string;
+  body: string;
+  example: string[];
+  footer: string;
+  urlButton?: { text: string; url: string; example: string };
+};
+
+export const CLINIC_TEMPLATE_CATALOG: readonly ClinicTemplateSpec[] = [
+  {
+    kind: "appointment_reminder",
+    name: "clinic_appointment_reminder",
+    category: "UTILITY",
+    language: CLINIC_TEMPLATE_LANGUAGE,
+    label: "Appointment reminder",
+    body: "Namaste {{1}}, this is a reminder from {{2}}. Your visit with {{3}} is on {{4}} at {{5}}. Please arrive 10 minutes early.",
+    example: ["Asha Rao", "Sunrise Clinic", "Dr Mehta", "20 Oct 2026", "9:30 AM"],
+    footer: "Reply to this chat if you need to reschedule.",
+  },
+  {
+    kind: "book_confirmation",
+    name: "clinic_booking_confirmation",
+    category: "UTILITY",
+    language: CLINIC_TEMPLATE_LANGUAGE,
+    label: "Booking confirmation",
+    body: "Namaste {{1}}, {{2}} confirmed your visit with {{3}} on {{4}} at {{5}}. Your token is {{6}}.",
+    example: ["Asha Rao", "Sunrise Clinic", "Dr Mehta", "20 Oct 2026", "9:30 AM", "4"],
+    footer: "Reply to this chat if you need a different time.",
+  },
+  {
+    kind: "payment_receipt",
+    name: "clinic_payment_receipt",
+    category: "UTILITY",
+    language: CLINIC_TEMPLATE_LANGUAGE,
+    label: "Payment receipt",
+    body: "Namaste {{1}}, {{2}} received payment for your visit with {{3}}. Amount {{4}}. Invoice {{5}}. Date {{6}}.",
+    example: ["Asha Rao", "Sunrise Clinic", "Dr Mehta", "₹700.00", "INV-1042", "20 Oct 2026"],
+    footer: "Reply to this chat if you need a copy of this receipt.",
+  },
+  {
+    kind: "prescription_ready",
+    name: "clinic_prescription_ready",
+    category: "UTILITY",
+    language: CLINIC_TEMPLATE_LANGUAGE,
+    label: "Prescription ready",
+    body: "Namaste {{1}}, {{2}} has a prescription that {{3}} reviewed and signed.",
+    example: ["Asha Rao", "Sunrise Clinic", "Dr Mehta"],
+    footer: "Follow the dose your doctor wrote. Reply to this chat if you need help.",
+    urlButton: {
+      text: "View prescription",
+      url: "https://www.mylumera.in/rx/{{1}}",
+      example: "https://www.mylumera.in/rx/RX1001",
+    },
+  },
+] as const;
+
+const CATALOG_BY_KIND = new Map(CLINIC_TEMPLATE_CATALOG.map((spec) => [spec.kind, spec]));
+const CATALOG_BY_NAME = new Map(CLINIC_TEMPLATE_CATALOG.map((spec) => [spec.name, spec]));
+
+export function clinicTemplateSpec(kind: string): ClinicTemplateSpec | undefined {
+  return CATALOG_BY_KIND.get(kind as ClinicTemplateKind);
+}
+
+export function clinicTemplateName(kind: string): string {
+  return clinicTemplateSpec(kind)?.name || "";
+}
+
+export function isClinicCatalogTemplate(name: string): boolean {
+  return CATALOG_BY_NAME.has(String(name || "").trim());
+}
+
+function paramText(value: unknown, fallback: string): string {
+  const text = String(value ?? "").trim();
+  return text || fallback;
+}
+
+/** Graph rejects an empty text parameter. Fallbacks never use a brand name. */
+export function receiptAmountParam(amount: unknown): string {
+  const raw = String(amount ?? "").trim();
+  if (!raw) return "₹0.00";
+  if (raw.includes("₹")) return raw;
+  const num = typeof amount === "number" ? amount : Number(raw.replace(/,/g, ""));
+  if (!Number.isFinite(num)) return raw;
+  try {
+    return new Intl.NumberFormat("en-IN", {
+      style: "currency",
+      currency: "INR",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(num);
+  } catch {
+    return `₹${num.toFixed(2)}`;
+  }
+}
+
+/**
+ * Lumera's own templates take the amount as stored. Commit 92a32fb asserts
+ * `700`, not a currency-formatted string. The clinic catalog body has no rupee
+ * sign, so that template sends a formatted amount.
+ */
+function receiptAmountForTemplate(amount: unknown, templateName?: string | null): string {
+  if (String(templateName || "").trim() === "clinic_payment_receipt") return receiptAmountParam(amount);
+  const raw = String(amount ?? "").trim();
+  return raw || "0";
+}
+
+/**
+ * Positional body for a payment receipt.
+ * lumera_payment_receipt (current Cloud Run name): {{1}} patient, {{2}} amount, {{3}} invoice.
+ * lumera_payment_receipt_v2 and clinic_payment_receipt:
+ * {{1}} patient, {{2}} clinic_name, {{3}} doctor, {{4}} amount, {{5}} invoice, {{6}} date.
+ */
+export function receiptTemplateParameters(fields: ReceiptParameterFields, templateName?: string | null): string[] {
+  const patient = paramText(fields.patientName, "Patient");
+  const clinic = paramText(fields.clinicName, CLINIC_FALLBACK);
+  const doctor = paramText(fields.doctorName, DOCTOR_FALLBACK);
+  const amount = receiptAmountForTemplate(fields.amount, templateName);
+  const invoice = paramText(fields.invoiceId, "invoice");
+  const date = paramText(fields.date, "today");
+  if (String(templateName || "").trim() === LUMERA_RECEIPT_TEMPLATE_V1) {
+    return [patient, amount, invoice];
+  }
+  return [patient, clinic, doctor, amount, invoice, date];
+}
+
+export function reminderTemplateParameters(fields: {
+  patientName?: string;
+  clinicName?: string;
+  doctorName?: string;
+  date?: string;
+  timeSlot?: string;
+}): string[] {
+  return [
+    paramText(fields.patientName, "Patient"),
+    paramText(fields.clinicName, CLINIC_FALLBACK),
+    paramText(fields.doctorName, DOCTOR_FALLBACK),
+    paramText(fields.date, "the scheduled date"),
+    paramText(fields.timeSlot, "OPD"),
+  ];
+}
+
+export function bookConfirmationTemplateParameters(fields: {
+  patientName?: string;
+  clinicName?: string;
+  doctorName?: string;
+  date?: string;
+  timeSlot?: string;
+  tokenNumber?: string | number;
+}): string[] {
+  const token = paramText(fields.tokenNumber, "");
+  return [
+    paramText(fields.patientName, "Patient"),
+    paramText(fields.clinicName, CLINIC_FALLBACK),
+    paramText(fields.doctorName, DOCTOR_FALLBACK),
+    paramText(fields.date, "the scheduled date"),
+    paramText(fields.timeSlot, "OPD"),
+    token || "pending",
+  ];
+}
+
+export function prescriptionReadyTemplateParameters(fields: {
+  patientName?: string;
+  clinicName?: string;
+  doctorName?: string;
+}): string[] {
+  return [
+    paramText(fields.patientName, "Patient"),
+    paramText(fields.clinicName, CLINIC_FALLBACK),
+    paramText(fields.doctorName, DOCTOR_FALLBACK),
+  ];
+}
+
+/** Trailing URL variable. Slashes would change the path Meta already fixed. */
+export function prescriptionUrlSuffix(rxNumber: string): string {
+  const cleaned = String(rxNumber || "").replace(/[^A-Za-z0-9_-]/g, "");
+  return cleaned || "RX";
+}
+
+export function graphComponentsForClinicTemplate(spec: ClinicTemplateSpec): Array<Record<string, unknown>> {
+  const components: Array<Record<string, unknown>> = [
+    {
+      type: "BODY",
+      text: spec.body,
+      example: { body_text: [spec.example] },
+    },
+    { type: "FOOTER", text: spec.footer },
+  ];
+  if (spec.urlButton) {
+    components.push({
+      type: "BUTTONS",
+      buttons: [
+        {
+          type: "URL",
+          text: spec.urlButton.text,
+          url: spec.urlButton.url,
+          example: [spec.urlButton.example],
+        },
+      ],
+    });
+  }
+  return components;
+}
+
+export const GRAPH_ERROR_GUIDANCE: Record<string, string> = {
+  "190": "The WhatsApp connection expired. Use Reconnect and sign in with Meta again.",
+  "133010": "This phone number is not registered for WhatsApp. Use Reconnect to register it again.",
+  "131048": "WhatsApp is limiting this number because of message quality. Pause bulk sends and try again later.",
+  "131056": "Too many messages were sent to this patient. Wait before messaging them again.",
+  "130429": "WhatsApp is throttling this number. Wait a few minutes and try again.",
+  "132000": "The message parameters do not match the approved template. Resync templates, then try again.",
+  "132001": "That template is not approved for this language. Check the template status before sending.",
+};
+
+export function graphErrorGuidance(code: string | number | undefined): string {
+  return GRAPH_ERROR_GUIDANCE[String(code ?? "").trim()] || "";
+}
+
+export function formatGraphSendError(code: string, message: string): string {
+  const guidance = graphErrorGuidance(code);
+  const base = message.trim() || "WhatsApp rejected the message.";
+  if (!code) return base;
+  return guidance ? `${base} (#${code}) ${guidance}` : `${base} (#${code})`;
+}
+
+export type ApprovedClinicTemplate = { name: string; language: string; category: string };
+
+export function approvedClinicTemplate(
+  db: DatabaseSync | null | undefined,
+  tenantId: string,
+  kind: string
+): ApprovedClinicTemplate | null {
+  const spec = clinicTemplateSpec(kind);
+  const tenant = String(tenantId || "").trim();
+  if (!db || !spec || !tenant) return null;
+  try {
+    const row = db
+      .prepare(
+        `SELECT name, language, category FROM meta_templates
+         WHERE tenant_id = ? AND name = ? AND UPPER(status) = 'APPROVED'
+         ORDER BY updated_at DESC
+         LIMIT 1`
+      )
+      .get(tenant, spec.name) as { name?: string; language?: string; category?: string } | undefined;
+    const name = String(row?.name || "").trim();
+    if (name !== spec.name) return null;
+    return {
+      name,
+      language: String(row?.language || spec.language).trim() || spec.language,
+      category: String(row?.category || spec.category).trim() || spec.category,
+    };
+  } catch {
+    return null;
+  }
+}
+
+type FetchImpl = typeof fetch;
+
+function graphErrorMessage(data: unknown, status: number): string {
+  if (data && typeof data === "object" && "error" in data) {
+    const error = (data as { error?: { message?: string; error_user_msg?: string } }).error;
+    return String(error?.message || error?.error_user_msg || `Graph error (HTTP ${status})`);
+  }
+  return `Graph request failed (HTTP ${status}).`;
+}
+
+function alreadyExists(data: unknown): boolean {
+  if (!data || typeof data !== "object" || !("error" in data)) return false;
+  const error = (data as { error?: { message?: string; error_user_msg?: string; error_subcode?: number } }).error;
+  const text = `${error?.message || ""} ${error?.error_user_msg || ""}`.toLowerCase();
+  if (/already exists|duplicate|content in this language/.test(text)) return true;
+  return Number(error?.error_subcode) === 2388024;
+}
+
+function upsertClinicTemplateRow(
+  db: DatabaseSync,
+  opts: {
+    tenantId: string;
+    wabaId: string;
+    spec: ClinicTemplateSpec;
+    metaTemplateId?: string;
+    status?: string;
+    rejectionReason?: string | null;
+    keepExistingStatus?: boolean;
+  }
+): void {
+  const now = new Date().toISOString();
+  const existing = db
+    .prepare(
+      `SELECT id, status, meta_template_id, rejection_reason FROM meta_templates
+       WHERE tenant_id = ? AND name = ? AND language = ?`
+    )
+    .get(opts.tenantId, opts.spec.name, opts.spec.language) as
+    | { id: string; status?: string; meta_template_id?: string; rejection_reason?: string | null }
+    | undefined;
+  const components = JSON.stringify(graphComponentsForClinicTemplate(opts.spec));
+  if (!existing) {
+    db.prepare(
+      `INSERT INTO meta_templates
+        (id, tenant_id, waba_id, name, category, language, status, components, meta_template_id, rejection_reason, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      `tpl-${crypto.randomUUID()}`,
+      opts.tenantId,
+      opts.wabaId,
+      opts.spec.name,
+      opts.spec.category,
+      opts.spec.language,
+      opts.status || "PENDING",
+      components,
+      opts.metaTemplateId || "",
+      opts.rejectionReason ?? null,
+      now,
+      now
+    );
+    return;
+  }
+  const status = opts.keepExistingStatus
+    ? String(existing.status || "PENDING")
+    : opts.status || String(existing.status || "PENDING");
+  const metaId = opts.metaTemplateId || String(existing.meta_template_id || "");
+  const reason =
+    opts.rejectionReason !== undefined ? opts.rejectionReason : existing.rejection_reason ?? null;
+  db.prepare(
+    `UPDATE meta_templates
+     SET waba_id = ?, category = ?, status = ?, components = ?, meta_template_id = ?, rejection_reason = ?, updated_at = ?
+     WHERE id = ? AND tenant_id = ?`
+  ).run(opts.wabaId, opts.spec.category, status, components, metaId, reason, now, existing.id, opts.tenantId);
+}
+
+export type ProvisionResult = {
+  recorded: Array<{ name: string; status: "PENDING"; outcome: "created" | "exists" }>;
+  failed: Array<{ name: string; error: string }>;
+};
+
+/** POST each clinic template. Re-running on reconnect does not fail signup or downgrade APPROVED. */
+export async function provisionClinicMessageTemplates(opts: {
+  db: DatabaseSync;
+  tenantId: string;
+  wabaId: string;
+  accessToken: string;
+  fetchImpl?: FetchImpl;
+}): Promise<ProvisionResult> {
+  const recorded: ProvisionResult["recorded"] = [];
+  const failed: ProvisionResult["failed"] = [];
+  const version = graphApiVersion();
+  const fetchImpl = opts.fetchImpl || fetch;
+  const wabaId = String(opts.wabaId || "").trim();
+  const token = String(opts.accessToken || "").trim();
+  for (const spec of CLINIC_TEMPLATE_CATALOG) {
+    if (!wabaId || !token) {
+      failed.push({ name: spec.name, error: "WABA id and business token are required to create templates." });
+      continue;
+    }
+    try {
+      const res = await fetchImpl(
+        `https://graph.facebook.com/${version}/${encodeURIComponent(wabaId)}/message_templates`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            name: spec.name,
+            language: spec.language,
+            category: spec.category,
+            parameter_format: "POSITIONAL",
+            components: graphComponentsForClinicTemplate(spec),
+          }),
+        }
+      );
+      const data = await res.json().catch(() => ({}));
+      const metaId = String((data as { id?: string })?.id || "").trim();
+      if (res.ok && !(data && typeof data === "object" && "error" in data && (data as { error?: unknown }).error)) {
+        upsertClinicTemplateRow(opts.db, {
+          tenantId: opts.tenantId,
+          wabaId,
+          spec,
+          metaTemplateId: metaId,
+          status: "PENDING",
+          rejectionReason: null,
+          keepExistingStatus: true,
+        });
+        recorded.push({ name: spec.name, status: "PENDING", outcome: "created" });
+        continue;
+      }
+      if (alreadyExists(data)) {
+        upsertClinicTemplateRow(opts.db, {
+          tenantId: opts.tenantId,
+          wabaId,
+          spec,
+          status: "PENDING",
+          keepExistingStatus: true,
+        });
+        recorded.push({ name: spec.name, status: "PENDING", outcome: "exists" });
+        continue;
+      }
+      const error = graphErrorMessage(data, res.status);
+      upsertClinicTemplateRow(opts.db, {
+        tenantId: opts.tenantId,
+        wabaId,
+        spec,
+        status: "PENDING",
+        rejectionReason: error,
+        keepExistingStatus: true,
+      });
+      failed.push({ name: spec.name, error });
+    } catch (err) {
+      const error = err instanceof Error ? err.message : "Template create failed.";
+      failed.push({ name: spec.name, error });
+    }
+  }
+  return { recorded, failed };
+}
+
+type GraphTemplateRow = {
+  id?: string;
+  name?: string;
+  status?: string;
+  language?: string;
+  rejected_reason?: string;
+  category?: string;
+};
+
+/** GET /{waba}/message_templates and copy status plus rejection reason onto this tenant's rows. */
+export async function resyncClinicMessageTemplates(opts: {
+  db: DatabaseSync;
+  tenantId: string;
+  wabaId: string;
+  accessToken: string;
+  fetchImpl?: FetchImpl;
+}): Promise<{ updated: string[] }> {
+  const version = graphApiVersion();
+  const fetchImpl = opts.fetchImpl || fetch;
+  const wabaId = String(opts.wabaId || "").trim();
+  const token = String(opts.accessToken || "").trim();
+  if (!wabaId || !token) {
+    throw Object.assign(new Error("Connect the clinic WhatsApp number before resyncing templates."), { status: 409 });
+  }
+  const url = `https://graph.facebook.com/${version}/${encodeURIComponent(wabaId)}/message_templates?limit=100&fields=id,name,status,language,rejected_reason,category`;
+  const res = await fetchImpl(url, { headers: { Authorization: `Bearer ${token}` } });
+  const data = (await res.json().catch(() => ({}))) as { data?: GraphTemplateRow[]; error?: { message?: string } };
+  if (!res.ok || data.error) {
+    throw Object.assign(new Error(graphErrorMessage(data, res.status)), { status: 502 });
+  }
+  const updated: string[] = [];
+  const rows = Array.isArray(data.data) ? data.data : [];
+  for (const remote of rows) {
+    const name = String(remote.name || "").trim();
+    const spec = CATALOG_BY_NAME.get(name);
+    if (!spec) continue;
+    const language = String(remote.language || spec.language).trim() || spec.language;
+    if (language !== spec.language) continue;
+    const status = String(remote.status || "PENDING").trim().toUpperCase() || "PENDING";
+    const reasonRaw = String(remote.rejected_reason || "").trim();
+    const reason = !reasonRaw || reasonRaw.toUpperCase() === "NONE" ? null : reasonRaw;
+    upsertClinicTemplateRow(opts.db, {
+      tenantId: opts.tenantId,
+      wabaId,
+      spec,
+      metaTemplateId: String(remote.id || "").trim(),
+      status,
+      rejectionReason: reason,
+      keepExistingStatus: false,
+    });
+    updated.push(name);
+  }
+  return { updated };
+}
+
+function tenantIdsForWaba(db: DatabaseSync, wabaId: string): string[] {
+  const ids = new Set<string>();
+  const waba = String(wabaId || "").trim();
+  if (!waba) return [];
+  try {
+    const numbers = db
+      .prepare(`SELECT owner_id FROM whatsapp_numbers WHERE owner_type = 'tenant' AND waba_id = ?`)
+      .all(waba) as Array<{ owner_id?: string }>;
+    for (const row of numbers) {
+      const id = String(row.owner_id || "").trim();
+      if (id) ids.add(id);
+    }
+  } catch {
+    /* ownership table missing */
+  }
+  try {
+    const tenants = db.prepare(`SELECT id FROM tenants WHERE waba_id = ?`).all(waba) as Array<{ id?: string }>;
+    for (const row of tenants) {
+      const id = String(row.id || "").trim();
+      if (id) ids.add(id);
+    }
+  } catch {
+    /* tenants.waba_id missing */
+  }
+  return [...ids];
+}
+
+/** message_template_status_update. Updates only tenants that own this WABA. */
+export function applyMessageTemplateStatusUpdate(
+  db: DatabaseSync,
+  wabaId: string,
+  value: Record<string, unknown> | null | undefined
+): number {
+  if (!value) return 0;
+  const name = String(value.message_template_name || "").trim();
+  const spec = CATALOG_BY_NAME.get(name);
+  if (!spec) return 0;
+  const event = String(value.event || "").trim().toUpperCase();
+  if (!event) return 0;
+  const language = String(value.message_template_language || spec.language).trim() || spec.language;
+  if (language !== spec.language) return 0;
+  const info = value.rejection_info as { reason?: string; recommendation?: string } | undefined;
+  const reasonRaw = String(value.reason || info?.reason || info?.recommendation || "").trim();
+  const reason = !reasonRaw || reasonRaw.toUpperCase() === "NONE" ? null : reasonRaw;
+  const metaId = String(value.message_template_id || "").trim();
+  const owners = tenantIdsForWaba(db, wabaId);
+  let changes = 0;
+  for (const tenantId of owners) {
+    const before = db
+      .prepare(`SELECT id, status FROM meta_templates WHERE tenant_id = ? AND name = ? AND language = ?`)
+      .get(tenantId, spec.name, spec.language) as { id?: string; status?: string } | undefined;
+    upsertClinicTemplateRow(db, {
+      tenantId,
+      wabaId,
+      spec,
+      metaTemplateId: metaId,
+      status: event,
+      rejectionReason: event === "APPROVED" ? null : reason,
+      keepExistingStatus: false,
+    });
+    if (!before || String(before.status || "").toUpperCase() !== event || reason) changes += 1;
+    else changes += 1;
+  }
+  return changes;
+}
+
+export type ClinicTemplateStatusRow = {
+  name: string;
+  label: string;
+  kind: ClinicTemplateKind;
+  status: "PENDING" | "APPROVED" | "REJECTED" | "MISSING";
+  rejectionReason: string;
+  sending: string;
+};
+
+function sendingMeaning(status: string, reason: string): string {
+  if (status === "APPROVED") {
+    return "Approved. This message can be sent even when the patient has not written in the last 24 hours.";
+  }
+  if (status === "REJECTED") {
+    const why = reason ? ` Meta said: ${reason}.` : "";
+    return `Rejected.${why} Until a template is approved, this message can go out only as a chat reply within 24 hours of the patient's last message.`;
+  }
+  if (status === "PENDING") {
+    return "Pending Meta review. Until it is approved, this message can go out only as a chat reply within 24 hours of the patient's last message.";
+  }
+  return "Not created on this WhatsApp account yet. Reconnect to submit it, or resync after it exists in Meta.";
+}
+
+function publicStatus(raw: string): ClinicTemplateStatusRow["status"] {
+  const status = String(raw || "").trim().toUpperCase();
+  if (status === "APPROVED" || status === "REJECTED" || status === "PENDING") return status;
+  if (!status) return "MISSING";
+  if (status.includes("REJECT")) return "REJECTED";
+  return "PENDING";
+}
+
+export function listClinicTemplateStatus(db: DatabaseSync, tenantId: string): ClinicTemplateStatusRow[] {
+  const tenant = String(tenantId || "").trim();
+  const rows = tenant
+    ? (db
+        .prepare(
+          `SELECT name, status, rejection_reason FROM meta_templates WHERE tenant_id = ?`
+        )
+        .all(tenant) as Array<{ name?: string; status?: string; rejection_reason?: string | null }>)
+    : [];
+  const byName = new Map(rows.map((row) => [String(row.name || ""), row]));
+  return CLINIC_TEMPLATE_CATALOG.map((spec) => {
+    const row = byName.get(spec.name);
+    const status = row ? publicStatus(String(row.status || "")) : "MISSING";
+    const rejectionReason = String(row?.rejection_reason || "").trim();
+    return {
+      name: spec.name,
+      label: spec.label,
+      kind: spec.kind,
+      status,
+      rejectionReason,
+      sending: sendingMeaning(status, rejectionReason),
+    };
+  });
+}
+
+export function latestGraphErrorForTenant(
+  db: DatabaseSync,
+  tenantId: string
+): { code: string; guidance: string; at: string; detail: string } | null {
+  const tenant = String(tenantId || "").trim();
+  if (!tenant) return null;
+  let rows: Array<{ details?: string; sent_at?: string; status?: string }> = [];
+  try {
+    rows = db
+      .prepare(
+        `SELECT details, sent_at, status FROM whatsapp_outbound_events
+         WHERE tenant_id = ? AND lower(status) = 'failed'
+         ORDER BY sent_at DESC
+         LIMIT 20`
+      )
+      .all(tenant) as typeof rows;
+  } catch {
+    return null;
+  }
+  for (const row of rows) {
+    const detail = String(row.details || "");
+    const match = detail.match(/#(\d{3,6})/);
+    const code = match?.[1] || "";
+    const guidance = graphErrorGuidance(code);
+    if (!guidance) continue;
+    return { code, guidance, at: String(row.sent_at || ""), detail };
+  }
+  return null;
+}

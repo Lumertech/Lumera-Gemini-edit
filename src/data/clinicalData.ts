@@ -22,7 +22,6 @@ import {
   PharmacyBatchItem,
   PolyclinicSpecialty
 } from '../types';
-
 export const PHYSIO_EXERCISE_DATABASE: PrescribedExercise[] = [
   // Spine & Neck
   {
@@ -1053,7 +1052,7 @@ export const DEFAULT_PATIENTS: Patient[] = [
     name: 'Rajiv Saxena',
     age: 44,
     gender: 'Male',
-    phone: '+91 98234 55667',
+    phone: '',
     email: 'rajiv.saxena@gmail.com',
     bloodGroup: 'O+',
     allergies: ['None known'],
@@ -1158,7 +1157,7 @@ export const DEFAULT_APPOINTMENTS: Appointment[] = [
     tokenNumber: 1,
     patientId: 'pat-6',
     patientName: 'Rajiv Saxena',
-    patientPhone: '+91 98234 55667',
+    patientPhone: '',
     uhid: 'LUM-2026-0106',
     doctorId: 'doc-6',
     doctorName: 'Dr. Siddharth Varma (PT)',

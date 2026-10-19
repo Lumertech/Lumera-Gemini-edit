@@ -21,6 +21,9 @@ import {
 } from "./http-security.ts";
 import { clinicTenantAccessError } from "./platform-tenants.ts";
 
+/** Clinician login has authenticated the account and then found no WhatsApp number. */
+export const USER_PHONE_MISSING = "USER_PHONE_MISSING";
+
 const COOKIE = "lumera_sid";
 const SESSION_DAYS = 7;
 

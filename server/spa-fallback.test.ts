@@ -55,6 +55,7 @@ describe("production listen / env helpers", () => {
     const prevJwt = process.env.JWT_SECRET;
     const prevNode = process.env.NODE_ENV;
     const prevDb = process.env.DATABASE_URL;
+    const prevAppUrl = process.env.APP_URL;
     try {
       process.env.NODE_ENV = "production";
       delete process.env.JWT_SECRET;
@@ -65,6 +66,11 @@ describe("production listen / env helpers", () => {
       process.env.JWT_SECRET = "a-sufficiently-long-cloud-run-secret";
       assert.throws(() => assertRequiredProductionEnv(), /DATABASE_URL/);
       process.env.DATABASE_URL = "postgres://lumera:local@127.0.0.1:5432/lumera";
+      delete process.env.APP_URL;
+      assert.throws(() => assertRequiredProductionEnv(), /APP_URL/);
+      process.env.APP_URL = "https://example.invalid/clinic";
+      assert.throws(() => assertRequiredProductionEnv(), /APP_URL/);
+      process.env.APP_URL = "https://www.mylumera.in";
       assert.doesNotThrow(() => assertRequiredProductionEnv());
       assert.match(JWT_SECRET_REQUIRED_MESSAGE, /JWT_SECRET is required/);
       assert.match(DATABASE_URL_REQUIRED_MESSAGE, /DATABASE_URL is required/);
@@ -75,6 +81,8 @@ describe("production listen / env helpers", () => {
       else process.env.NODE_ENV = prevNode;
       if (prevDb === undefined) delete process.env.DATABASE_URL;
       else process.env.DATABASE_URL = prevDb;
+      if (prevAppUrl === undefined) delete process.env.APP_URL;
+      else process.env.APP_URL = prevAppUrl;
     }
   });
 
@@ -104,6 +112,7 @@ describe("production listen / env helpers", () => {
         NODE_ENV: "production",
         JWT_SECRET: "a-sufficiently-long-cloud-run-secret",
         DATABASE_URL: "postgres://lumera:local@127.0.0.1:5432/lumera",
+        APP_URL: "https://www.mylumera.in",
       } as NodeJS.ProcessEnv,
       () => {
         exited = true;

@@ -93,7 +93,7 @@ export const DEMO_ACCOUNTS: DemoAccount[] = [
     name: "Rajiv Saxena",
     role: "patient",
     specialty: "",
-    phone: "+91 98234 55667",
+    phone: "",
     practiceLine: "Patient",
     practiceType: "individual",
   },

@@ -1,5 +1,5 @@
 import { Router, type NextFunction, type Request, type Response } from "express";
-import { isPlatformAdminRole, requireAuth } from "./auth.ts";
+import { CLINIC_MANAGER_ROLES, isPlatformAdminRole, requireAuth, requireRole } from "./auth.ts";
 import { findDataDeletionRequest, getDb } from "./db.ts";
 import { appPublicUrl, isProduction, sandboxSimulatorsEnabled } from "./runtime.ts";
 import { reportCaughtError } from "./error-tracker.ts";
@@ -15,6 +15,14 @@ import {
 import { handleMetaDataDeletionPost, handleMetaDeauthorizePost } from "./meta-signed-request.ts";
 import { normalizePhoneDigits, phonesMatch } from "./whatsapp-calendar-booking.ts";
 import { tenantIdFromReceivingPhoneNumberId } from "./whatsapp-tenant-resolve.ts";
+import {
+  applyMessageTemplateStatusUpdate,
+  GRAPH_ERROR_GUIDANCE,
+  latestGraphErrorForTenant,
+  listClinicTemplateStatus,
+  resyncClinicMessageTemplates,
+} from "./clinic-whatsapp-templates.ts";
+import { getTenantWabaNumber, getWhatsAppNumberSecret, publicWhatsAppNumber } from "./whatsapp-numbers.ts";
 import { WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
 import type { SqlDatabase } from "./sql-engine.ts";
 
@@ -326,6 +334,14 @@ export function createMetaRouter(): Router {
           if (entry.changes && Array.isArray(entry.changes)) {
             for (const change of entry.changes) {
               const val = change.value;
+              if (String(change.field || "") === "message_template_status_update") {
+                try {
+                  applyMessageTemplateStatusUpdate(db, String(entry?.id || ""), val || {});
+                } catch (err) {
+                  reportCaughtError(err, "meta.webhook.template-status");
+                }
+                continue;
+              }
               const phoneNumberId = String(val?.metadata?.phone_number_id || "").trim();
               const inboundTenantId = inboundTenantIdFromPhoneNumberId(phoneNumberId);
               if (!inboundTenantId) {
@@ -740,6 +756,57 @@ export function createMetaRouter(): Router {
   // ----------------------------------------------------
   // 4. META WHATSAPP TEMPLATES MANAGEMENT
   // ----------------------------------------------------
+
+  router.get("/whatsapp-clinic-status", requireAuth, requireRole(...CLINIC_MANAGER_ROLES), (req: Request, res: Response) => {
+    try {
+      const tenantId = sessionMetaTenant(req, res);
+      if (!tenantId) return;
+      const db = getDb();
+      const number = getTenantWabaNumber(tenantId, db);
+      const connected = Boolean(number && number.status === "connected");
+      const publicNumber = number ? publicWhatsAppNumber(number) : null;
+      res.json({
+        connected,
+        phoneNumberId: publicNumber?.phoneNumberId || "",
+        displayPhoneNumber: publicNumber?.displayPhoneNumber || "",
+        displayName: publicNumber?.displayName || publicNumber?.metaWabaName || "",
+        wabaId: publicNumber?.wabaId || "",
+        templates: listClinicTemplateStatus(db, tenantId),
+        graphErrors: Object.entries(GRAPH_ERROR_GUIDANCE).map(([code, guidance]) => ({ code, guidance })),
+        lastGraphError: latestGraphErrorForTenant(db, tenantId),
+      });
+    } catch (err) {
+      reportCaughtError(err, "meta.whatsapp-clinic-status");
+      res.status(500).json({ error: "Failed to load WhatsApp status" });
+    }
+  });
+
+  router.post("/templates/resync", ...metaCatalogGuards, async (req: Request, res: Response) => {
+    try {
+      const tenantId = sessionMetaTenant(req, res);
+      if (!tenantId) return;
+      const db = getDb();
+      const number = getTenantWabaNumber(tenantId, db);
+      if (!number || number.status !== "connected" || !number.waba_id) {
+        return res.status(409).json({ error: "Connect the clinic WhatsApp number before resyncing templates." });
+      }
+      const token = number.meta_token_ref ? getWhatsAppNumberSecret(number.meta_token_ref, db) : "";
+      const result = await resyncClinicMessageTemplates({
+        db,
+        tenantId,
+        wabaId: number.waba_id,
+        accessToken: token,
+      });
+      res.json({
+        updated: result.updated,
+        templates: listClinicTemplateStatus(db, tenantId),
+      });
+    } catch (err) {
+      const status = Number((err as { status?: number })?.status || 502);
+      reportCaughtError(err, "meta.templates.resync");
+      res.status(status).json({ error: err instanceof Error ? err.message : "Template resync failed" });
+    }
+  });
 
   // GET /api/meta/templates - List templates for the session clinic only
   router.get("/templates", ...metaCatalogGuards, (req: Request, res: Response) => {

@@ -367,6 +367,7 @@ async function dispatchInvoiceReceipt(
   const sent = await sendPaymentReceipt({
     to: invoice.patientPhone,
     patientName: invoice.patientName,
+    doctorName: invoice.consultingDoctorName,
     amount: invoice.totalAmount,
     currency: "₹",
     invoiceId: invoice.invoiceNumber,

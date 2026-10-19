@@ -82,8 +82,8 @@ interface AuthContextValue {
   verifyWhatsAppOtp: (verificationId: string, otp: string, updatedPhone?: string) => Promise<{ ok: boolean; user?: AppUser; token?: string; tenantId?: string; message?: string }>;
   registerClinic: (data: RegisterClinicData) => Promise<{ requiresOtp: boolean; verificationId: string; phone: string; email: string; demoOtp?: string; tenantId?: string; userId?: string; hfrId?: string; hprId?: string; hfrLabel?: string; hprLabel?: string; registryIdsPlaceholder?: boolean; abdmMode?: "stub" | "sandbox"; message: string }>;
   completeOnboarding: (data: OnboardingPayload) => Promise<{ ok: boolean; user?: AppUser; token?: string; homeView?: string; message?: string }>;
-  requestPasswordReset: (email: string) => Promise<{ ok: boolean; verificationId: string; phone: string; demoOtp?: string; message: string }>;
-  resetPassword: (verificationId: string, otp: string, newPassword: string) => Promise<{ ok: boolean; message: string }>;
+  requestPasswordReset: (email: string) => Promise<{ ok: boolean; message: string }>;
+  resetPassword: (email: string, otp: string, newPassword: string) => Promise<{ ok: boolean; message: string }>;
   logout: () => Promise<void>;
   setUserDirectly: (u: AppUser | null) => void;
   refreshSession: () => Promise<AppUser | null>;
@@ -264,16 +264,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const requestPasswordReset = useCallback(async (email: string) => {
-    return await apiFetch<{ ok: boolean; verificationId: string; phone: string; demoOtp?: string; message: string }>("/api/auth/forgot-password", {
+    return await apiFetch<{ ok: boolean; message: string }>("/api/auth/forgot-password", {
       method: "POST",
       body: JSON.stringify({ email }),
     });
   }, []);
 
-  const resetPassword = useCallback(async (verificationId: string, otp: string, newPassword: string) => {
+  const resetPassword = useCallback(async (email: string, otp: string, newPassword: string) => {
     return await apiFetch<{ ok: boolean; message: string }>("/api/auth/reset-password", {
       method: "POST",
-      body: JSON.stringify({ verificationId, otp, newPassword }),
+      body: JSON.stringify({ email, otp, newPassword }),
     });
   }, []);
 

@@ -8,8 +8,10 @@ import {
   resolveSqlEngineKind,
 } from "./sql-open.ts";
 import {
+  APP_URL_REQUIRED_MESSAGE,
   assertRequiredProductionEnv,
   DATABASE_URL_REQUIRED_MESSAGE,
+  failFastRequiredProductionEnv,
   JWT_SECRET_REQUIRED_MESSAGE,
 } from "./runtime.ts";
 import { sqliteFallbackForbidden } from "./sql-engine.ts";
@@ -42,15 +44,56 @@ describe("production DATABASE_URL fail-fast (Epic 0.2)", () => {
         } as NodeJS.ProcessEnv),
       /DATABASE_URL/
     );
+    assert.throws(
+      () =>
+        assertRequiredProductionEnv({
+          NODE_ENV: "production",
+          JWT_SECRET: PROD_JWT,
+          DATABASE_URL: PROD_DB,
+        } as NodeJS.ProcessEnv),
+      /APP_URL/
+    );
+    assert.throws(
+      () =>
+        assertRequiredProductionEnv({
+          NODE_ENV: "production",
+          JWT_SECRET: PROD_JWT,
+          DATABASE_URL: PROD_DB,
+          APP_URL: "replace-with-https://example.invalid",
+        } as NodeJS.ProcessEnv),
+      /APP_URL/
+    );
     assert.doesNotThrow(() =>
       assertRequiredProductionEnv({
         NODE_ENV: "production",
         JWT_SECRET: PROD_JWT,
         DATABASE_URL: PROD_DB,
+        APP_URL: "https://www.mylumera.in",
       } as NodeJS.ProcessEnv)
     );
+    assert.match(APP_URL_REQUIRED_MESSAGE, /APP_URL is required/);
     assert.match(DATABASE_URL_REQUIRED_MESSAGE, /DATABASE_URL is required/);
     assert.match(JWT_SECRET_REQUIRED_MESSAGE, /JWT_SECRET is required/);
+  });
+
+  it("exits non-zero at boot when production APP_URL is unset and stays up in development", () => {
+    let code = 0;
+    failFastRequiredProductionEnv(
+      {
+        NODE_ENV: "production",
+        JWT_SECRET: PROD_JWT,
+        DATABASE_URL: PROD_DB,
+      } as NodeJS.ProcessEnv,
+      (exitCode) => {
+        code = exitCode;
+      }
+    );
+    assert.equal(code, 1);
+    let devCode = 0;
+    failFastRequiredProductionEnv({ NODE_ENV: "development" } as NodeJS.ProcessEnv, (exitCode) => {
+      devCode = exitCode;
+    });
+    assert.equal(devCode, 0);
   });
 
   it("does not require DATABASE_URL outside production (sqlite tests)", () => {

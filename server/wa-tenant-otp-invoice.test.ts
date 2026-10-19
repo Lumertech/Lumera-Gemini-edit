@@ -724,6 +724,29 @@ describe("WhatsApp tenant scope, send validation, OTP limit, invoice UHID", () =
     const rxPhone = `+91 95${String(Date.now()).slice(-8)}`;
     const rxId = `conv-${tailOf(rxPhone)}`;
     plant(rxPhone, rxId);
+    const rxPatient = await jsonRequest(
+      server.port,
+      "POST",
+      "/api/patients",
+      { name: "Rx Patient", phone: rxPhone, age: 40, gender: "Female" },
+      authA
+    );
+    assert.equal(rxPatient.status, 201, String(rxPatient.json.error || "rx patient"));
+    const signedRx = await jsonRequest(
+      server.port,
+      "POST",
+      "/api/prescriptions",
+      {
+        patientId: String((rxPatient.json.patient as { id: string }).id),
+        diagnosis: "Isolation consult",
+        medicines: [],
+        doctorName: "Dr Iso",
+        doctorId: clinicA.userId,
+        reviewedBy: clinicA.userId,
+      },
+      authA
+    );
+    assert.equal(signedRx.status, 201, String(signedRx.json.error || "signed rx"));
     const rx = await jsonRequest(
       server.port,
       "POST",
@@ -732,18 +755,23 @@ describe("WhatsApp tenant scope, send validation, OTP limit, invoice UHID", () =
         patientPhone: rxPhone,
         patientName: "Rx Patient",
         uhid: "UHID-ISO",
-        rxNumber: `RX-ISO-${tailOf(rxPhone)}`,
+        rxNumber: String((signedRx.json.prescription as { rxNumber: string }).rxNumber),
         doctorName: "Dr Iso",
         medicines: [],
       },
       authA
     );
-    assert.equal(rx.status, 200, String(rx.json.error || ""));
+    assert.equal(rx.status, 200, JSON.stringify(rx.json));
+    assert.deepEqual(rx.json, { success: false, channel: "sandbox", status: "sandbox" });
     assertForeign(rxId);
-    const rxMessage = db
-      .prepare("SELECT tenant_id FROM whatsapp_messages WHERE patient_phone = ? AND tenant_id = ? LIMIT 1")
-      .get(rxPhone, clinicA.tenantId) as { tenant_id: string } | undefined;
-    assert.equal(rxMessage?.tenant_id, clinicA.tenantId);
+    const rxMessage = db.prepare("SELECT id FROM whatsapp_messages WHERE patient_phone = ?").get(rxPhone) as
+      | { id?: string }
+      | undefined;
+    assert.equal(rxMessage, undefined);
+    const foreignMessage = db
+      .prepare("SELECT id FROM whatsapp_messages WHERE conversation_id = ?")
+      .get(rxId) as { id?: string } | undefined;
+    assert.equal(foreignMessage, undefined);
     resetSendOtpRateLimits();
   });
 
