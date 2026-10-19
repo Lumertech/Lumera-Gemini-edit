@@ -61,13 +61,13 @@ export function reconcileWorkspacePath(pathname: string, sessionSlug: string, ro
   const rawParts = raw.split("/").filter(Boolean);
   if (p.startsWith("/app/")) {
     const view = (rawParts[1] || "queue").toLowerCase();
-    const recordId = view === "patients" ? rawParts[2] || "" : "";
+    const recordId = view === "patients" || view === "rx" ? rawParts[2] || "" : "";
     return recordId ? `/w/${slug}/${view}/${encodeURIComponent(recordId)}` : `/w/${slug}/${view}`;
   }
   if (p === "/w" || p.startsWith("/w/")) {
     const urlSlug = (rawParts[1] || "").toLowerCase();
     const viewSeg = (rawParts[2] || "").toLowerCase();
-    const recordId = viewSeg === "patients" ? rawParts[3] || "" : "";
+    const recordId = viewSeg === "patients" || viewSeg === "rx" ? rawParts[3] || "" : "";
     if (!urlSlug || urlSlug !== slug) {
       if (!viewSeg) return `/w/${slug}`;
       return recordId ? `/w/${slug}/${viewSeg}/${encodeURIComponent(recordId)}` : `/w/${slug}/${viewSeg}`;

@@ -26,6 +26,30 @@ export function blockedAiScribeResponse(tenantId: string, _database?: DatabaseSy
   return null;
 }
 
+/**
+ * Ambient transcription meter. Duration and byte count only.
+ * The transcript is not a parameter and must not be added to metadata or logs.
+ */
+export function meterSuccessfulTranscription(opts: {
+  tenantId: string;
+  durationMs: number;
+  audioBytes: number;
+  database?: DatabaseSync;
+}) {
+  const durationMs = Number(opts.durationMs);
+  const audioBytes = Number(opts.audioBytes);
+  return meterSuccessfulGeminiScribe({
+    tenantId: opts.tenantId,
+    durationMinutes: Number.isFinite(durationMs) && durationMs > 0 ? durationMs / 60_000 : undefined,
+    metadata: {
+      endpoint: "transcribe",
+      audioBytes: Number.isFinite(audioBytes) && audioBytes > 0 ? Math.round(audioBytes) : 0,
+      durationMs: Number.isFinite(durationMs) && durationMs > 0 ? Math.round(durationMs) : 0,
+    },
+    database: opts.database,
+  });
+}
+
 /** Meter-after-success, mirroring `meterWhatsAppUsage` → `recordWhatsAppUsageAndDebit`. */
 export function meterSuccessfulGeminiScribe(opts: {
   tenantId: string;

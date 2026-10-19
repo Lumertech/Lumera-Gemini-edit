@@ -4,6 +4,7 @@ import multer from "multer";
 import fs from "node:fs";
 import path from "node:path";
 import { createWhatsAppRouter } from "./whatsapp.ts";
+import { vertexEnvConfigured } from "./vertex-gemini.ts";
 import { authorizeLabReport, sendLabReportDenied } from "./lab-report-access.ts";
 import { createMetaRouter } from "./meta.ts";
 import { rememberFacebookAppUser } from "./meta-signed-request.ts";
@@ -54,6 +55,7 @@ import {
   requireRole,
 } from "./auth.ts";
 import { rejectUntrustedTenantClaim } from "./tenant-guard.ts";
+import { sendTenantResolve } from "./tenant-resolve.ts";
 import { publicBranch, publicTenant } from "./client-serializers.ts";
 import { clinicTenantId, upsertScopedConversation } from "./whatsapp-scope.ts";
 import { WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
@@ -1652,6 +1654,9 @@ export function createApiRouter(): Router {
 
   api.get("/me", sendSession);
   api.get("/auth/me", sendSession);
+  api.get("/tenant/resolve", requireAuth, (req, res) => {
+    sendTenantResolve(req, res);
+  });
 
   api.get("/w/:workspaceSlug/patients", requireAuth, (req, res) => {
     const slug = String(req.params.workspaceSlug || "").trim().toLowerCase();
@@ -2046,7 +2051,7 @@ export function createApiRouter(): Router {
       mrr: (getDb().prepare("SELECT COALESCE(SUM(monthly_price),0) AS c FROM subscriptions WHERE status = 'active'").get() as { c: number }).c,
       media: count("SELECT COUNT(*) AS c FROM cms_media"),
       policies: count("SELECT COUNT(*) AS c FROM cms_policies"),
-      geminiConfigured: Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== "MY_GEMINI_API_KEY"),
+      geminiConfigured: vertexEnvConfigured(),
       recentAudit: recent,
     });
   });
@@ -2547,7 +2552,7 @@ export function createApiRouter(): Router {
   });
 
   api.get("/cms/settings", requireAuth, requireRole(...ADMIN_ROLES), (_req, res) => {
-    res.json({ settings: settingsMap(), geminiConfigured: Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== "MY_GEMINI_API_KEY") });
+    res.json({ settings: settingsMap(), geminiConfigured: vertexEnvConfigured() });
   });
 
   api.put("/cms/settings", requireAuth, requireRole(...ADMIN_ROLES), (req, res) => {

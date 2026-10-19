@@ -94,7 +94,18 @@ describe("public vs app surface routing (founder lock #48)", () => {
       "/w/dr-demo-physio/patients/pat-42"
     );
     assert.equal(appViewToPath("whatsapp", "dr-demo-physio"), "/w/dr-demo-physio/whatsapp");
-    assert.equal(surfaceToPath("app", { appView: "billing", workspaceSlug: "dr-demo-physio" }), "/w/dr-demo-physio/billing");
+    assert.equal(surfaceToPath("app", { appView: "billing", workspaceSlug: "dr-demo-physio" }), "/w/dr-demo-physio/invoices");
+    assert.equal(
+      surfaceToPath("app", { appView: "billing", workspaceSlug: "dr-demo-physio", payFocus: true }),
+      "/w/dr-demo-physio/payments"
+    );
+    assert.equal(appViewToPath("queue", "dr-demo-physio"), "/w/dr-demo-physio/opd");
+    assert.equal(appViewToPath("rx", "dr-demo-physio", "visit-9"), "/w/dr-demo-physio/rx/visit-9");
+    assert.equal(pathToNav("/w/dr-demo-physio/opd").appView, "queue");
+    assert.equal(pathToNav("/w/dr-demo-physio/opd").screen, "opd");
+    assert.equal(pathToNav("/w/dr-demo-physio/rx/Visit-Keep").recordId, "Visit-Keep");
+    assert.equal(pathToNav("/w/dr-demo-physio/rx/Visit-Keep").screen, "rx");
+    assert.equal(pathToNav("/w/dr-demo-physio/not-a-screen").unrecognized, true);
     assert.equal(pathToNav("/app/queue").appView, "queue");
     assert.equal(pathToNav("/app/smart-rx").appView, "rx");
     assert.equal(pathToNav("/app").appView, "queue");
@@ -138,6 +149,8 @@ describe("public vs app surface routing (founder lock #48)", () => {
       adminTab: "overview",
       workspaceSlug: "",
       recordId: "",
+      screen: "consultations",
+      payFocus: false,
     });
     assert.deepEqual(destinationNavAfterAuth("app", "/w/dr-demo-physio/whatsapp"), {
       surface: "app",
@@ -145,6 +158,8 @@ describe("public vs app surface routing (founder lock #48)", () => {
       adminTab: "overview",
       workspaceSlug: "dr-demo-physio",
       recordId: "",
+      screen: "whatsapp",
+      payFocus: false,
     });
     assert.deepEqual(destinationNavAfterAuth("app", "/w/dr-demo-physio/patients/pat-42"), {
       surface: "app",
@@ -152,6 +167,8 @@ describe("public vs app surface routing (founder lock #48)", () => {
       adminTab: "overview",
       workspaceSlug: "dr-demo-physio",
       recordId: "pat-42",
+      screen: "patients",
+      payFocus: false,
     });
     assert.deepEqual(destinationNavAfterAuth("admin", "/app/rx"), { surface: "admin" });
   });

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { formatINR } from '../lib/currency.ts';
 import { apiFetchResponse } from '../api/http';
 import {
@@ -6,10 +6,11 @@ import {
   formatSafetyCheckTime,
   lastSuccessfulCheckCopy,
   reduceSafetyCheck,
-  RULE_BASED_SAFETY_SOURCE,
+  reviewNeedsAcknowledgement,
   safetyGateBlocksActions,
   type SafetyGateState,
 } from '../lib/safetyCheckGate';
+import { SafetyGatedButton } from './SafetyGatedButton';
 import { 
   FileText, 
   Plus, 
@@ -87,7 +88,7 @@ import { OphthalmologyRxModule } from './specialty-rx/OphthalmologyRxModule';
 import { DentalSurgeryRxModule } from './specialty-rx/DentalSurgeryRxModule';
 import { GynecologyRxModule } from './specialty-rx/GynecologyRxModule';
 import { PhysioProgressTracker } from './specialty-rx/PhysioProgressTracker';
-import { CompactAmbientScribe, AmbientScribeStatus } from './CompactAmbientScribe';
+import { CompactAmbientScribe, AmbientScribeStatus, CompactAmbientScribeHandle } from './CompactAmbientScribe';
 import { FollowUpSlotPicker, ReservedFollowUp } from './FollowUpSlotPicker';
 import { clonePresetExercises, presetHepToastMessage } from '../lib/rxPresetHep';
 import { followUpBookingRef } from '../lib/followUpSlots';
@@ -117,6 +118,7 @@ interface PrescriptionWriterProps {
   appointments?: Appointment[];
   onBookFollowUp?: (input: Partial<Appointment>) => Promise<Appointment | void>;
   onAutoSave?: (prescription: Prescription, options?: { immediate?: boolean }) => void;
+  appointmentId?: string;
 }
 
 export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
@@ -132,6 +134,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
   appointments = [],
   onBookFollowUp,
   onAutoSave,
+  appointmentId,
 }) => {
   // Determine initial specialty from current doctor
   const getInitialSpecialty = (doctorSpec: string): PolyclinicSpecialty =>
@@ -149,6 +152,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
 
   const [isAmbientScribeOpen, setIsAmbientScribeOpen] = useState(true);
   const [scribeStatus, setScribeStatus] = useState<AmbientScribeStatus>('idle');
+  const ambientScribeRef = useRef<CompactAmbientScribeHandle>(null);
   const [hepToast, setHepToast] = useState<string | null>(null);
   const [physioSubTab, setPhysioSubTab] = useState<'assessment' | 'procedures' | 'exercises'>('assessment');
   const [hepRevision, setHepRevision] = useState(0);
@@ -359,9 +363,10 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
   const isSafetyHighRisk = safetyResult?.safetyStatus === 'HIGH_RISK' || safetyResult?.hasHighRiskAlert === true;
   const needsManualReview =
     !isSafetyCheckStale &&
-    safetyResult?.source === RULE_BASED_SAFETY_SOURCE &&
-    safetyResult?.safetyStatus === 'REVIEW' &&
-    !isSafetyHighRisk;
+    reviewNeedsAcknowledgement({
+      safetyStatus: safetyResult?.safetyStatus,
+      alerts: safetyResult?.alerts,
+    });
   const isSafetyOverridden = safetyOverrideSignature === medicinesSignature;
   // Blocks Print / WhatsApp Dispatch / Finalize & Sign until the shared gate opens.
   const isSafetyGateBlocking = safetyGateBlocksActions({
@@ -370,6 +375,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     medicinesSignature,
     safetyStatus: safetyResult?.safetyStatus,
     hasHighRiskAlert: safetyResult?.hasHighRiskAlert,
+    alerts: safetyResult?.alerts,
     source: safetyResult?.source,
     overrideSignature: safetyOverrideSignature,
   });
@@ -380,7 +386,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     : isSafetyHighRisk && !isSafetyOverridden
     ? 'This prescription was flagged HIGH_RISK by the AI Safety Audit. Review the contraindications above and acknowledge the override before proceeding.'
     : needsManualReview && !isSafetyOverridden
-    ? 'This result came from the rule-based fallback. Acknowledge that you reviewed it manually before printing, sending, or signing.'
+    ? 'This safety check found alerts. Acknowledge that you reviewed them before printing, sending, or signing.'
     : '';
 
   // WhatsApp Translation modal
@@ -983,9 +989,11 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
       )}
 
       <CompactAmbientScribe
+        ref={ambientScribeRef}
         currentPatient={currentPatient}
         currentDoctor={currentDoctor}
         practiceSpecialty={activeSpecialty}
+        appointmentId={appointmentId}
         onApplyToRx={handleApplySoapToRx}
         isOpen={isAmbientScribeOpen}
         onClose={() => setIsAmbientScribeOpen(false)}
@@ -1053,32 +1061,44 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
             <span>{isFinalized ? '✓ Finalized & Signed' : 'Finalize & Sign Rx'}</span>
           </button>
 
-          {/* Embedded Ambient Scribe Toggle */}
+          {/* Consult toolbar mic — getUserMedia runs in this tap, not after a scroll. */}
           <button
+            type="button"
+            data-testid="consult-ambient-mic"
+            disabled={scribeStatus === 'requesting'}
             onClick={() => {
               setIsAmbientScribeOpen(true);
-              document.getElementById('ambient-scribe-top')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              if (scribeStatus === 'listening') {
+                ambientScribeRef.current?.stopListening();
+              } else if (scribeStatus === 'requesting') {
+                return;
+              } else if (scribeStatus !== 'processing' && scribeStatus !== 'transcribing') {
+                ambientScribeRef.current?.startListening();
+              }
+              window.setTimeout(() => {
+                document.getElementById('ambient-scribe-top')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              }, 30);
             }}
             className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition-all shadow-xs cursor-pointer ${
               scribeStatus === 'listening'
                 ? 'bg-rose-600 text-white'
-                : scribeStatus === 'processing'
+                : scribeStatus === 'requesting' || scribeStatus === 'processing' || scribeStatus === 'transcribing'
                   ? 'bg-amber-500 text-white'
-                  : isAmbientScribeOpen
-                    ? 'bg-purple-700 text-white ring-2 ring-purple-300'
-                    : 'bg-purple-50 hover:bg-purple-100 text-purple-900 border border-purple-200'
+                  : 'bg-purple-600 hover:bg-purple-700 text-white'
             }`}
-            title="Ambient AI Clinical Scribe status"
+            title={scribeStatus === 'listening' ? 'Stop the microphone' : 'Start the consult microphone'}
           >
-            <Mic className={`w-3.5 h-3.5 ${scribeStatus === 'listening' ? 'animate-pulse' : ''}`} />
+            <Mic className={`w-3.5 h-3.5 ${scribeStatus === 'listening' || scribeStatus === 'requesting' ? 'animate-pulse' : ''}`} />
             <span>
               {scribeStatus === 'listening'
-                ? 'Listening'
-                : scribeStatus === 'processing'
-                  ? 'Processing'
-                  : isAmbientScribeOpen
-                    ? 'Scribe Idle'
-                    : 'Show Ambient AI'}
+                ? 'Stop listening'
+                : scribeStatus === 'requesting'
+                  ? 'Starting…'
+                  : scribeStatus === 'transcribing'
+                    ? 'Transcribing…'
+                    : scribeStatus === 'processing'
+                      ? 'Processing'
+                      : 'Start ambient mic'}
             </span>
           </button>
 
@@ -2543,9 +2563,11 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
                   <span>Prescription PDF download link &amp; dosage guide delivered to {currentPatient.phone}!</span>
                 </div>
               ) : (
-                <button
+                <SafetyGatedButton
                   onClick={handleDirectWhatsAppDispatch}
-                  disabled={isSendingWhatsAppDirect || aiReviewOpen}
+                  blocked={isSafetyGateBlocking || aiReviewOpen}
+                  disabled={isSendingWhatsAppDirect}
+                  data-testid="whatsapp-direct-send"
                   className="w-full py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-xs transition-colors cursor-pointer disabled:opacity-50"
                 >
                   {isSendingWhatsAppDirect ? (
@@ -2554,7 +2576,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
                     <Send className="w-3.5 h-3.5" />
                   )}
                   <span>{isSendingWhatsAppDirect ? 'Dispatching via Meta API...' : '1-Click Send via WhatsApp'}</span>
-                </button>
+                </SafetyGatedButton>
               )}
             </div>
 
@@ -2670,13 +2692,15 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
                 >
                   Cancel
                 </button>
-                <button
+                <SafetyGatedButton
                   onClick={handleSaveAndDispatch}
+                  blocked={isSafetyGateBlocking || aiReviewOpen}
+                  data-testid="whatsapp-modal-send"
                   className="px-4 py-1.5 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs shadow-sm flex items-center space-x-1.5"
                 >
                   <Send className="w-3.5 h-3.5" />
                   <span>Send WhatsApp</span>
-                </button>
+                </SafetyGatedButton>
               </div>
             )}
           </div>

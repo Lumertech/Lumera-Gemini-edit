@@ -9,7 +9,7 @@ export function safetyCheckFailureCopy(status: number): string {
 }
 
 export function formatSafetyCheckTime(date: Date): string {
-  return new Intl.DateTimeFormat("en-GB", {
+  return new Intl.DateTimeFormat("en-IN", {
     timeZone: "Asia/Kolkata",
     hour: "2-digit",
     minute: "2-digit",
@@ -35,38 +35,73 @@ export function buildSafetyListSignature(input: {
   return `${meds}||allergies:${allergies}||conditions:${conditions}`;
 }
 
-function alertIsSevere(alerts: unknown): boolean {
-  if (!Array.isArray(alerts)) return false;
+export class SafetyCheckShapeError extends Error {
+  constructor() {
+    super("safety check reply was not usable");
+    this.name = "SafetyCheckShapeError";
+  }
+}
+
+function alertIsHighRisk(alerts: unknown[]): boolean {
   return alerts.some((item) => {
     if (!item || typeof item !== "object" || Array.isArray(item)) return false;
     const severity = String((item as { severity?: unknown }).severity || "").trim().toLowerCase();
-    return severity === "severe" || severity === "critical";
+    return severity === "severe" || severity === "critical" || severity === "high" || severity === "high-risk" || severity === "high risk";
   });
 }
 
-function hasSafetyPayload(body: unknown): body is SafetyCheckResult {
-  if (!body || typeof body !== "object") return false;
-  const status = (body as { safetyStatus?: unknown }).safetyStatus;
-  return typeof status === "string" && status.trim() !== "";
+/**
+ * Status comes from the alerts, not from a model-supplied safetyStatus.
+ * A missing alerts array or a non-boolean hasHighRiskAlert throws.
+ */
+export function pulseSafetyFromModel(raw: unknown): SafetyCheckResult {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new SafetyCheckShapeError();
+  const record = raw as { hasHighRiskAlert?: unknown; alerts?: unknown };
+  if (!Array.isArray(record.alerts) || typeof record.hasHighRiskAlert !== "boolean") {
+    throw new SafetyCheckShapeError();
+  }
+  const high = record.hasHighRiskAlert || alertIsHighRisk(record.alerts);
+  const safetyStatus = high ? "HIGH_RISK" : record.alerts.length > 0 ? "REVIEW" : "SAFE";
+  return {
+    safetyStatus,
+    source: "Pulse AI",
+    hasHighRiskAlert: high,
+    alerts: record.alerts as SafetyCheckResult["alerts"],
+  };
 }
 
-/** A check is stored only when the HTTP call succeeded and named a safety status. */
+/** True only for a derived HIGH_RISK or REVIEW status. SAFE is not a safety payload. */
+export function hasSafetyPayload(body: unknown): boolean {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return false;
+  const status = (body as { safetyStatus?: unknown }).safetyStatus;
+  return status === "HIGH_RISK" || status === "REVIEW";
+}
+
+/** A check is stored only when the HTTP call succeeded and the reply has a usable shape. */
 export function interpretSafetyCheckResponse(
   status: number,
   body: unknown
 ): { accepted: true; result: SafetyCheckResult } | { accepted: false; message: string } {
-  if (status < 200 || status >= 300 || !body || typeof body !== "object" || Array.isArray(body)) {
+  if (status < 200 || status >= 300) {
     return { accepted: false, message: safetyCheckFailureCopy(status) };
   }
-  const result: SafetyCheckResult = { ...(body as SafetyCheckResult) };
-  if (result.hasHighRiskAlert === true || alertIsSevere(result.alerts)) {
-    result.safetyStatus = "HIGH_RISK";
-    result.hasHighRiskAlert = true;
-  }
-  if (!hasSafetyPayload(result)) {
+  try {
+    const result = pulseSafetyFromModel(body);
+    if (result.safetyStatus !== "SAFE" && !hasSafetyPayload(result)) {
+      return { accepted: false, message: safetyCheckFailureCopy(status) };
+    }
+    return { accepted: true, result };
+  } catch {
     return { accepted: false, message: safetyCheckFailureCopy(status) };
   }
-  return { accepted: true, result };
+}
+
+/** REVIEW with at least one alert stays blocked until the clinician acknowledges it. */
+export function reviewNeedsAcknowledgement(opts: {
+  safetyStatus?: string | null;
+  alerts?: unknown;
+}): boolean {
+  return opts.safetyStatus === "REVIEW" && Array.isArray(opts.alerts) && opts.alerts.length > 0;
 }
 
 /** Print, Sign, and WhatsApp stay disabled until this is false. */
@@ -76,6 +111,7 @@ export function safetyGateBlocksActions(opts: {
   medicinesSignature: string;
   safetyStatus?: string | null;
   hasHighRiskAlert?: boolean | null;
+  alerts?: unknown;
   source?: string | null;
   overrideSignature: string | null;
 }): boolean {
@@ -83,9 +119,7 @@ export function safetyGateBlocksActions(opts: {
   if (opts.checkedSignature !== opts.medicinesSignature) return true;
   const highRisk = opts.safetyStatus === "HIGH_RISK" || opts.hasHighRiskAlert === true;
   if (highRisk && opts.overrideSignature !== opts.medicinesSignature) return true;
-  const manualReview =
-    opts.source === RULE_BASED_SAFETY_SOURCE && opts.safetyStatus === "REVIEW" && !highRisk;
-  if (manualReview && opts.overrideSignature !== opts.medicinesSignature) return true;
+  if (reviewNeedsAcknowledgement(opts) && opts.overrideSignature !== opts.medicinesSignature) return true;
   return false;
 }
 
@@ -143,6 +177,7 @@ export function safetyGateFromState(
     medicinesSignature,
     safetyStatus: state.result?.safetyStatus,
     hasHighRiskAlert: state.result?.hasHighRiskAlert,
+    alerts: state.result?.alerts,
     source: state.result?.source,
     overrideSignature: state.overrideSignature,
   });

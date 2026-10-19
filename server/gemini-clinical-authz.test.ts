@@ -108,19 +108,19 @@ describe("clinical Gemini route auth", () => {
   }
 
   it("keeps the global /api/gemini session check in front of the clinical routes", () => {
-    const serverSrc = fs.readFileSync(path.join(root, "server.ts"), "utf8");
+    const serverSrc = fs.readFileSync(path.join(root, "server/create-app.ts"), "utf8");
     const authAt = serverSrc.indexOf('app.use("/api/gemini", requireAuth)');
     const mountAt = serverSrc.indexOf("mountGeminiClinicalRoutes(app)");
-    assert.ok(authAt >= 0, "server.ts does not mount requireAuth on /api/gemini");
+    assert.ok(authAt >= 0, "create-app.ts does not mount requireAuth on /api/gemini");
     assert.ok(mountAt > authAt, "clinical routes are mounted before the /api/gemini session check");
   });
 
-  it("locks server.ts so app.use('/api/gemini', requireAuth) runs before mountGeminiClinicalRoutes", () => {
-    const serverSrc = fs.readFileSync(path.join(root, "server.ts"), "utf8");
+  it("locks the app factory so app.use('/api/gemini', requireAuth) runs before mountGeminiClinicalRoutes", () => {
+    const serverSrc = fs.readFileSync(path.join(root, "server/create-app.ts"), "utf8");
     const lines = serverSrc.split("\n");
     const authLine = lines.findIndex((line) => line.includes('app.use("/api/gemini", requireAuth)') && !line.trim().startsWith("//"));
     const mountLine = lines.findIndex((line) => line.includes("mountGeminiClinicalRoutes(app)") && !line.trim().startsWith("//"));
-    assert.ok(authLine >= 0, "server.ts does not call app.use('/api/gemini', requireAuth)");
+    assert.ok(authLine >= 0, "create-app.ts does not call app.use('/api/gemini', requireAuth)");
     assert.ok(mountLine > authLine, "mountGeminiClinicalRoutes runs before the /api/gemini session middleware");
     assert.equal(
       lines.filter((line) => line.includes("mountGeminiClinicalRoutes(app)") && !line.trim().startsWith("//")).length,
@@ -177,6 +177,7 @@ describe("clinical Gemini route auth", () => {
   });
 
   it("allows a prescriber and a clinic admin, and rejects a forged tenant id", async () => {
+    setGeminiCopilotGeneratorForTests(async () => ({ response: "Paracetamol is a common analgesic.", source: "Pulse AI" }));
     const doctorToken = await login(doctor.email);
     const adminToken = await login(clinicAdmin.email);
     for (const route of ROUTES) {
@@ -226,8 +227,8 @@ describe("clinical Gemini route auth", () => {
         { query: "paracetamol dose", patientContext: { name: PATIENT_MARKER }, history: { text: PATIENT_MARKER } },
         auth(token)
       );
-      assert.equal(res.status, 500, route);
-      const expected = route === "/api/gemini/safety-check" ? "safety_check_failed" : "copilot_failed";
+      assert.equal(res.status, 503, route);
+      const expected = route === "/api/gemini/safety-check" ? "AI_SAFETY_UNAVAILABLE" : "AI_COPILOT_UNAVAILABLE";
       assert.equal(res.json.code, expected);
       const body = JSON.stringify(res.json);
       assert.equal(body.includes(LEAK), false);
@@ -246,8 +247,11 @@ describe("clinical Gemini route auth", () => {
     assert.equal((mounted.match(/safetyCheckRateLimit/g) || []).length, 1);
     assert.equal((mounted.match(/rejectUntrustedTenantClaim/g) || []).length, 4);
     const handlers = clinical.slice(clinical.indexOf("const handleGeminiCopilot"), clinical.indexOf('"/api/gemini/transcribe"'));
-    assert.match(handlers, /copilot_failed/);
-    assert.match(handlers, /safety_check_failed/);
+    assert.match(handlers, /AI_COPILOT_UNAVAILABLE/);
+    assert.match(handlers, /AI_SAFETY_UNAVAILABLE/);
+    assert.match(handlers, /getVertexClient/);
+    assert.doesNotMatch(handlers, /new GoogleGenAI/);
+    assert.doesNotMatch(handlers, /GEMINI_API_KEY/);
     assert.doesNotMatch(handlers, /error\.message/);
     assert.doesNotMatch(handlers, /err\?\.message/);
     assert.doesNotMatch(handlers, /err\.message/);
@@ -263,6 +267,7 @@ describe("clinical Gemini route auth", () => {
 
   it("returns 429 per user and per tenant", async () => {
     resetClinicalGeminiRateLimits();
+    setGeminiCopilotGeneratorForTests(async () => ({ response: "Paracetamol is a common analgesic.", source: "Pulse AI" }));
     setClinicalGeminiRateLimitForTests({ userMax: 2, tenantMax: 20 });
     const token = await login(doctor.email);
     const headers = auth(token);
@@ -296,6 +301,7 @@ describe("clinical Gemini route auth", () => {
 
   it("keeps the safety-check budget separate from copilot and SOAP", async () => {
     resetClinicalGeminiRateLimits();
+    setGeminiCopilotGeneratorForTests(async () => ({ response: "Paracetamol is a common analgesic.", source: "Pulse AI" }));
     setClinicalGeminiRateLimitForTests({ userMax: 1, tenantMax: 20 });
     setSafetyCheckRateLimitForTests({ userMax: 1, tenantMax: 20 });
     const token = await login(doctor.email);
@@ -312,8 +318,8 @@ describe("clinical Gemini route auth", () => {
     const safetyAgain = await jsonRequest(port, "POST", "/api/gemini/safety-check", { medicines: [] }, headers);
     assert.equal(copilot.status, 200);
     assert.equal(safety.status, 200);
-    assert.equal(safety.json.safetyStatus, "REVIEW");
-    assert.equal(safety.json.source, "rule-based fallback");
+    assert.equal(safety.json.safetyStatus, "SAFE");
+    assert.equal(safety.json.source, "Pulse AI");
     assert.equal(soap.status, 429);
     assert.equal(safetyAgain.status, 429);
     assert.match(String(safetyAgain.json.error || ""), /too many safety checks/i);
@@ -347,16 +353,31 @@ describe("clinical Gemini route auth", () => {
     setGeminiSafetyCheckGeneratorForTests(async () => ({ hasHighRiskAlert: false, alerts: [] }));
     const low = await jsonRequest(port, "POST", "/api/gemini/safety-check", { medicines: [{ drugName: "Paracetamol" }] }, headers);
     assert.equal(low.status, 200, JSON.stringify(low.json));
-    assert.equal(low.json.safetyStatus, "REVIEW");
+    assert.equal(low.json.safetyStatus, "SAFE");
     assert.equal(low.json.source, "Pulse AI");
     assert.equal(low.json.hasHighRiskAlert, false);
 
-    setGeminiSafetyCheckGeneratorForTests(async () => ({ hasHighRiskAlert: true, alerts: "not-an-array" }));
-    const fallback = await jsonRequest(port, "POST", "/api/gemini/safety-check", { medicines: [{ drugName: "Paracetamol" }], patientAllergies: [] }, headers);
-    assert.equal(fallback.status, 200, JSON.stringify(fallback.json));
-    assert.equal(fallback.json.safetyStatus, "REVIEW");
-    assert.equal(fallback.json.source, "rule-based fallback");
-    assert.equal(JSON.stringify(fallback.json).includes("not-an-array"), false);
+    setGeminiSafetyCheckGeneratorForTests(async () => ({ safetyStatus: "SAFE", hasHighRiskAlert: false, alerts: [{ severity: "moderate" }] }));
+    const claimedSafe = await jsonRequest(port, "POST", "/api/gemini/safety-check", { medicines: [{ drugName: "Paracetamol" }] }, headers);
+    assert.equal(claimedSafe.status, 200, JSON.stringify(claimedSafe.json));
+    assert.equal(claimedSafe.json.safetyStatus, "REVIEW");
+    assert.equal(claimedSafe.json.hasHighRiskAlert, false);
+    assert.notEqual(claimedSafe.json.safetyStatus, "SAFE");
+
+    setGeminiSafetyCheckGeneratorForTests(async () => ({}));
+    const empty = await jsonRequest(port, "POST", "/api/gemini/safety-check", { medicines: [{ drugName: "Paracetamol" }] }, headers);
+    assert.equal(empty.status, 503, JSON.stringify(empty.json));
+    assert.equal(empty.json.code, "AI_SAFETY_UNAVAILABLE");
+    assert.notEqual(empty.json.safetyStatus, "SAFE");
+
+    setGeminiSafetyCheckGeneratorForTests(async () => {
+      throw new Error(LEAK);
+    });
+    const thrown = await jsonRequest(port, "POST", "/api/gemini/safety-check", { medicines: [{ drugName: "Paracetamol" }] }, headers);
+    assert.equal(thrown.status, 503, JSON.stringify(thrown.json));
+    assert.equal(thrown.json.code, "AI_SAFETY_UNAVAILABLE");
+    assert.equal(JSON.stringify(thrown.json).includes(LEAK), false);
+    assert.notEqual(thrown.json.safetyStatus, "SAFE");
 
     setGeminiSafetyCheckGeneratorForTests(undefined);
     resetClinicalGeminiRateLimits();
@@ -364,6 +385,7 @@ describe("clinical Gemini route auth", () => {
 
   it("returns 429 when generate-soap exceeds the shared clinical limit", async () => {
     resetClinicalGeminiRateLimits();
+    setGeminiSoapGeneratorForTests(async () => ({ subjective: "cough" }));
     setClinicalGeminiRateLimitForTests({ userMax: 1, tenantMax: 20 });
     const token = await login(doctor.email);
     const body = { transcript: "Patient has fever and a dry cough today.", patientName: PATIENT_MARKER };
@@ -390,8 +412,8 @@ describe("clinical Gemini route auth", () => {
       { transcript: "Patient has fever and cough today", patientName: PATIENT_MARKER },
       auth(token)
     );
-    assert.equal(res.status, 500);
-    assert.equal(res.json.code, "soap_failed");
+    assert.equal(res.status, 503);
+    assert.equal(res.json.code, "AI_SOAP_UNAVAILABLE");
     assert.equal(res.json.error, undefined);
     assert.equal(res.json.details, undefined);
     const body = JSON.stringify(res.json);

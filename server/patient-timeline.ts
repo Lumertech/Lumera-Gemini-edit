@@ -1,3 +1,4 @@
+import { HIDDEN_AMBIENT_SOURCES, hiddenVisitSourceSql } from "./ambient-walkin.ts";
 import { getDb, mapAppointment, mapInvoice, mapPrescription } from "./db.ts";
 import { isReceptionRole } from "./patient-access.ts";
 import { consentMethodLabel } from "../src/lib/healthDocumentNotice.ts";
@@ -77,9 +78,9 @@ export function buildPatientTimeline(tenantId: string, patientId: string, role: 
 
   const visits = db
     .prepare(
-      `SELECT * FROM appointments WHERE tenant_id = ? AND patient_id = ?`
+      `SELECT * FROM appointments WHERE tenant_id = ? AND patient_id = ? AND ${hiddenVisitSourceSql()}`
     )
-    .all(tenantId, patientId) as Record<string, unknown>[];
+    .all(tenantId, patientId, ...HIDDEN_AMBIENT_SOURCES) as Record<string, unknown>[];
   for (const row of visits) {
     const visit = mapAppointment(row);
     const at = asText(row.created_at) || asText(visit.date);

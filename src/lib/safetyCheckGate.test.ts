@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   EMPTY_SAFETY_GATE,
-  RULE_BASED_SAFETY_SOURCE,
   SAFETY_CHECK_FAILED_COPY,
   SAFETY_CHECK_RATE_LIMIT_COPY,
   buildSafetyListSignature,
+  formatSafetyCheckTime,
+  hasSafetyPayload,
   interpretSafetyCheckResponse,
   lastSuccessfulCheckCopy,
+  pulseSafetyFromModel,
   reduceSafetyCheck,
   safetyGateBlocksActions,
   safetyGateFromState,
@@ -28,6 +30,7 @@ function view(state: typeof EMPTY_SAFETY_GATE, listSignature = signature) {
     safetyStatus: state.result?.safetyStatus,
     hasHighRiskAlert: state.result?.hasHighRiskAlert,
     source: state.result?.source,
+    alerts: state.result?.alerts,
     overrideSignature: state.overrideSignature,
   };
 }
@@ -97,22 +100,32 @@ describe("safety check gate", () => {
     assert.equal(safetyGateFromState(afterFailure, meds.length, signature), true);
   });
 
-  it("requires a manual acknowledgement for a rule-based REVIEW and includes allergies in the signature", () => {
+  it("requires an acknowledgement when REVIEW still has alerts, and includes allergies in the signature", () => {
     const review = interpretSafetyCheckResponse(200, {
-      safetyStatus: "REVIEW",
-      source: RULE_BASED_SAFETY_SOURCE,
+      safetyStatus: "SAFE",
       hasHighRiskAlert: false,
-      alerts: [],
+      alerts: [{ severity: "Moderate", description: "Dose check" }],
     });
     assert.equal(review.accepted, true);
+    if (review.accepted) {
+      assert.equal(review.result.safetyStatus, "REVIEW");
+      assert.equal(hasSafetyPayload(review.result), true);
+    }
     const checked = reduceSafetyCheck(EMPTY_SAFETY_GATE, 200, {
-      safetyStatus: "REVIEW",
-      source: RULE_BASED_SAFETY_SOURCE,
+      safetyStatus: "SAFE",
       hasHighRiskAlert: false,
-      alerts: [],
+      alerts: [{ severity: "Moderate", description: "Dose check" }],
     }, signature, "11:00");
+    assert.equal(checked.result?.safetyStatus, "REVIEW");
     assert.equal(safetyGateBlocksActions(view(checked)), true);
     assert.equal(safetyGateBlocksActions({ ...view(checked), overrideSignature: signature }), false);
+    const clear = reduceSafetyCheck(EMPTY_SAFETY_GATE, 200, {
+      hasHighRiskAlert: false,
+      alerts: [],
+    }, signature, "11:05");
+    assert.equal(clear.result?.safetyStatus, "SAFE");
+    assert.equal(hasSafetyPayload(clear.result), false);
+    assert.equal(safetyGateBlocksActions(view(clear)), false);
 
     const withNewAllergy = buildSafetyListSignature({
       medicines: meds,
@@ -121,5 +134,23 @@ describe("safety check gate", () => {
     });
     assert.notEqual(withNewAllergy, signature);
     assert.equal(safetyGateFromState(checked, meds.length, withNewAllergy), true);
+  });
+
+  it("formats the check time in en-IN and rejects a model status that is not HIGH_RISK or REVIEW", () => {
+    const formatted = formatSafetyCheckTime(new Date("2026-10-17T03:45:00.000Z"));
+    assert.match(formatted, /09/);
+    assert.match(formatted, /15/);
+    assert.equal(hasSafetyPayload({ safetyStatus: "HIGH_RISK" }), true);
+    assert.equal(hasSafetyPayload({ safetyStatus: "REVIEW" }), true);
+    assert.equal(hasSafetyPayload({ safetyStatus: "SAFE" }), false);
+    assert.equal(hasSafetyPayload({ safetyStatus: "banana" }), false);
+    assert.equal(hasSafetyPayload({}), false);
+    const derived = pulseSafetyFromModel({
+      safetyStatus: "SAFE",
+      hasHighRiskAlert: false,
+      alerts: [{ severity: "high" }],
+    });
+    assert.equal(derived.safetyStatus, "HIGH_RISK");
+    assert.throws(() => pulseSafetyFromModel({}));
   });
 });

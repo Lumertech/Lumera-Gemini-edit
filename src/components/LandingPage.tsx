@@ -36,6 +36,7 @@ import {
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { LEGAL_ENTITY_NAME, PRODUCT_NAME } from "../brand";
+import { META_TECH_PROVIDER_STATEMENT } from "../lib/metaStatus";
 import { BrandMark } from "./BrandMark";
 import { destinationAfterAuth, useAuth } from "../auth/AuthContext";
 import { goAfterAuth, useNav } from "../nav/NavigationContext";
@@ -416,8 +417,8 @@ export const LandingPage: React.FC = () => {
                 <MessageSquare className="w-5 h-5" />
               </div>
               <div className="text-left">
-                <span className="block text-xs font-bold text-slate-100 uppercase tracking-wider">WhatsApp Cloud API · Meta Tech Provider path</span>
-                <span className="text-[11px] text-slate-400 font-medium">SANDBOX readiness — App Review not submitted</span>
+                <span className="block text-xs font-bold text-slate-100 tracking-wide">{META_TECH_PROVIDER_STATEMENT}</span>
+                <span className="text-[11px] text-slate-400 font-medium">WhatsApp Cloud API from Meta</span>
               </div>
             </div>
 
@@ -533,7 +534,7 @@ export const LandingPage: React.FC = () => {
                 </p>
               </div>
               <p className="text-slate-300 text-xs leading-relaxed">
-                Automate appointment booking, live OPD token updates, and follow-up reminders via WhatsApp Cloud API (Meta Tech Provider path).
+                Automate appointment booking, live OPD token updates, and follow-up reminders via WhatsApp Cloud API from Meta.
               </p>
               <ul className="space-y-2 text-xs text-slate-400 pt-2 border-t border-slate-800">
                 <li className="flex items-center gap-2">
@@ -605,7 +606,7 @@ export const LandingPage: React.FC = () => {
         <div className="text-center mb-12">
           <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-purple-500/20 border border-purple-500/30 text-xs text-purple-300 mb-3">
             <Sparkles className="w-3.5 h-3.5 text-purple-400" />
-            <span>Interactive Live Sandbox</span>
+            <span>Interactive Sample/Demo</span>
           </div>
           <h2 className="font-manrope text-3xl sm:text-4xl font-extrabold text-white">Experience Lumera In Action</h2>
           <p className="text-slate-400 mt-2 max-w-2xl mx-auto text-sm">
@@ -655,7 +656,7 @@ export const LandingPage: React.FC = () => {
               <div className="flex items-center justify-between text-[10px] text-slate-400 uppercase font-bold tracking-wider">
                 <span className="flex items-center gap-1 text-rose-400">
                   <span className={`w-2 h-2 rounded-full ${isSimulatingAudio ? 'bg-rose-500 animate-ping' : 'bg-emerald-500'}`} />
-                  {isSimulatingAudio ? "Transcribing Voice Audio..." : "Ambient Mic Complete"}
+                  {isSimulatingAudio ? "Playing sample dialogue…" : "Sample/Demo"}
                 </span>
                 <button
                   onClick={handleSimulateAudio}
@@ -1004,7 +1005,7 @@ export const LandingPage: React.FC = () => {
           {/* Compliance declaration */}
           <div className="pt-2 text-[11px] text-slate-500 space-y-1">
             <p>
-              {PRODUCT_NAME} is building toward Meta Tech Provider. App Review is not submitted.
+              {META_TECH_PROVIDER_STATEMENT}
             </p>
             <p>
               Designed for ABDM M1–M3 &amp; DPDP (sandbox path).

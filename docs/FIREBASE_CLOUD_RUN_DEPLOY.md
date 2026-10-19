@@ -15,7 +15,7 @@ Gemini AI Studio **Publish** may produce the Cloud Run service. Firebase Hosting
 Today’s live symptom (2026-09-10): www TLS presents `CN=firebaseapp.com` (SAN mismatch) and apex `mylumera.in` is 404. That is an unfinished Hosting custom-domain / cert mint, not a reason to change nameservers.
 
 **Canonical public origin:** `https://www.mylumera.in`  
-**Honesty:** Lumera is **not** a certified Meta Tech Provider. Facebook Login App Review is not WhatsApp Tech Provider certification. Do not paste Dashboard URLs until the smoke curls below return HTTPS 200.
+**Honesty:** Lumera Solutions LLP is a Meta Tech Provider for the WhatsApp Business Platform. Do not paste Dashboard URLs until the smoke curls below return HTTPS 200.
 
 Firebase project (from `firebase-applet-config.json` / `.firebaserc`): **`gen-lang-client-0108182367`**.
 
@@ -88,12 +88,15 @@ Wire / retarget the Console trigger:
 4. Optional substitution overrides: `_SERVICE`, `_REGION`, `_IMAGE` (use Artifact Registry if you already have `asia-south1-docker.pkg.dev/${PROJECT}/…`).
 5. Cloud Build SA needs Cloud Run Admin, Service Account User (act-as the Cloud Run runtime SA), and push to the image registry.
 
-Every revision still needs (set once in Console / Secret Manager; the pipeline pins only the public two via `--update-env-vars`):
+Every revision still needs secrets set once in Console / Secret Manager. The pipeline pins `APP_URL`, `NODE_ENV`, `VERTEX_PROJECT`, `VERTEX_LOCATION`, and `VERTEX_GEMINI_MODEL` via `--update-env-vars` (region `${_REGION}`, default `asia-south1`):
 
 | Variable | Value |
 | --- | --- |
 | `APP_URL` | `https://www.mylumera.in` |
 | `NODE_ENV` | `production` |
+| `VERTEX_PROJECT` | `gen-lang-client-0108182367` |
+| `VERTEX_LOCATION` | `asia-south1` |
+| `VERTEX_GEMINI_MODEL` | `gemini-3.5-flash-lite` |
 | `JWT_SECRET` | long random; production **exits before listen** on missing/placeholder. Cloud Run then reports a PORT timeout — that is not a bind bug. See `deploy/CLOUD_RUN_BOOT_CHECK.md`. |
 | `META_VERIFY_TOKEN` | required before Meta can verify `GET /api/meta/webhook` |
 
@@ -159,13 +162,16 @@ Leave unset for the URL-hosting stage. Production **does not fake** Graph delive
 | Variable | Needed when |
 | --- | --- |
 | `META_VERIFY_TOKEN` | Meta can verify `GET /api/meta/webhook` |
-| `META_APP_SECRET` | Webhook HMAC (`X-Hub-Signature-256`) in production |
+| `META_APP_SECRET` | Webhook HMAC (`X-Hub-Signature-256`). Also accepts `FACEBOOK_APP_SECRET`, then `WHATSAPP_APP_SECRET`, if the earlier names are unset or do not match the raw body |
 | `FACEBOOK_APP_ID` / `FACEBOOK_APP_SECRET` | Live Facebook Login |
 | `FACEBOOK_REDIRECT_URI` | Override; default is `{APP_URL}/api/auth/facebook/callback` |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Live Google Sign-in (Web application OAuth client) |
 | `GOOGLE_REDIRECT_URI` | Override; default is `{APP_URL}/api/auth/google/callback` |
 | `META_ACCESS_TOKEN` / `META_PHONE_NUMBER_ID` | Live Graph send |
-| `GEMINI_API_KEY` | Pulse AI / SOAP (landing + policy pages work without it; AI Studio often injects this) |
+| `VERTEX_PROJECT` | Vertex AI project for patient audio and other PHI. Default documented as `gen-lang-client-0108182367`. Production fails closed when unset. Pinned on deploy. |
+| `VERTEX_LOCATION` | Must be `asia-south1` (Mumbai), the same region as `_REGION` in `cloudbuild.yaml`. Any other value, including empty, fails closed in every environment. There is no fallback to `global`. Pinned on deploy. |
+| `VERTEX_GEMINI_MODEL` | Model id. Default `gemini-3.5-flash-lite` (GA, retirement 21 July 2027 or later, audio in asia-south1). Unset keeps that default. Pinned on deploy. |
+| `GEMINI_API_KEY` | Not used for patient audio or other PHI. Do not rely on it for transcription or SOAP. |
 | Razorpay keys | Payments — not required to host Review URLs |
 
 ---
@@ -207,7 +213,7 @@ curl -sI "https://www.mylumera.in/api/meta/webhook"
 Expect:
 
 - `/` → **HTTP 200** (SPA landing; no login wall).
-- `/privacy-policy`, `/terms-of-service`, `/data-deletion-instructions`, `/government-data-request-policy` → **HTTP 200** HTML that **embeds the `cms_policies` body** (title + article). Meta crawlers must see “not a certified Meta Tech Provider” and WhatsApp **STOP** in the document, not an empty SPA shell. The government-request page must include the four Data Handling headers (Required Legal Review, Challenging Unlawful Requests, Data Minimization, Documentation & Record-Keeping).
+- `/privacy-policy`, `/terms-of-service`, `/data-deletion-instructions`, `/government-data-request-policy` → **HTTP 200** HTML that **embeds the `cms_policies` body** (title + article). Meta crawlers must see “Lumera Solutions LLP is a Meta Tech Provider for the WhatsApp Business Platform.” and WhatsApp **STOP** in the document, not an empty SPA shell. The government-request page must include the four Data Handling headers (Required Legal Review, Challenging Unlawful Requests, Data Minimization, Documentation & Record-Keeping).
 - `/healthz` → **200** `ok`.
 - `/api/public/policies/privacy-policy` → **200** JSON (same honest CMS body, including WhatsApp STOP opt-out).
 - `GET /api/meta/webhook` without hub params → **403/500** until `META_VERIFY_TOKEN` is set. It must still be **reachable over HTTPS** (not a Firebase static 404 / cert mismatch).
@@ -240,7 +246,7 @@ done
 
 Canonical host: **`https://www.mylumera.in`**. Set `APP_URL` to that origin.
 
-**Facebook Login App Review:** founder confirmed **approved** for Login (`email`, `public_profile`). Still **not** a certified Meta Tech Provider. WhatsApp `whatsapp_business_*` scopes stay SANDBOX-honest unless `META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED=true` is set on Cloud Run after *those* permissions are actually approved.
+**Facebook Login App Review:** founder confirmed **approved** for Login (`email`, `public_profile`). Lumera Solutions LLP is a Meta Tech Provider for the WhatsApp Business Platform. Meta has approved Lumera's WhatsApp permission requests in App Review (`whatsapp_business_messaging`, `whatsapp_business_management`, `public_profile`). `META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED` only sets the admin marker `appReviewManuallyConfirmed` and does not change that status.
 
 Paste **only after** the smoke gate in §5 is green:
 
@@ -318,7 +324,7 @@ Hosting + TLS on www, Privacy, Terms, data-deletion page + callback, OAuth redir
 
 ### May stay SANDBOX until credentials + Review clear
 
-Graph OTP / reminder / receipt without tokens; `simulate-embedded-signup`; unsigned webhook (non-prod only — production rejects unsigned); in-product `NOT_SUBMITTED` / “building toward Meta Tech Provider”.
+Graph OTP / reminder / receipt without tokens; `simulate-embedded-signup`; unsigned webhook (non-prod only — production rejects unsigned). In-product App Review status is `APPROVED`. `META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED` only sets `appReviewManuallyConfirmed`. Meta has approved Lumera's WhatsApp permission requests in App Review. Public pages use: Lumera Solutions LLP is a Meta Tech Provider for the WhatsApp Business Platform.
 
 ---
 

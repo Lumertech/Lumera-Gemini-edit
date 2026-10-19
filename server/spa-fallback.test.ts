@@ -247,6 +247,8 @@ describe("production SPA history fallback", () => {
       assert.equal(home.headers.get("x-content-type-options"), "nosniff");
       assert.equal(home.headers.get("x-frame-options"), "DENY");
       assert.match(home.headers.get("permissions-policy") || "", /microphone=\(self\)/);
+      assert.match(home.headers.get("permissions-policy") || "", /camera=\(self\)/);
+      assert.equal(home.headers.get("cache-control"), "private, no-cache");
       assert.match(home.headers.get("referrer-policy") || "", /strict-origin-when-cross-origin/);
       for (const p of ["/app/rx", "/admin/users", "/signup", "/login", "/w/lumera-apex-polyclinic/queue"]) {
         const res = await fetch(`${origin}${p}`);
@@ -262,12 +264,31 @@ describe("production SPA history fallback", () => {
         const res = await fetch(`${origin}${p}`);
         assert.equal(res.status, 404, `${p} must not fall through to an empty SPA shell`);
       }
+      const indexHtml = await fetch(`${origin}/index.html`);
+      assert.equal(indexHtml.status, 200);
+      assert.equal(indexHtml.headers.get("cache-control"), "private, no-cache");
       const asset = await fetch(`${origin}/ok.txt`);
       assert.equal(asset.status, 200);
       assert.equal(await asset.text(), "static-ok");
       const api = await fetch(`${origin}/api/ping`);
       assert.equal(api.status, 200);
       assert.equal((await api.json()).ok, true);
+      const deepClinic = await fetch(`${origin}/w/x/patients/123`);
+      assert.equal(deepClinic.status, 200);
+      assert.match(deepClinic.headers.get("content-type") || "", /html/);
+      assert.match(await deepClinic.text(), /Lumera SPA/);
+      const deepRx = await fetch(`${origin}/w/physiodoctor-practice/rx/visit-1`);
+      assert.equal(deepRx.status, 200);
+      assert.match(await deepRx.text(), /Lumera SPA/);
+      const adminDeep = await fetch(`${origin}/admin/tenants`);
+      assert.equal(adminDeep.status, 200);
+      assert.match(await adminDeep.text(), /Lumera SPA/);
+      const missingApi = await fetch(`${origin}/api/nope`);
+      const missingApiText = await missingApi.text();
+      assert.equal(missingApi.status, 404);
+      assert.match(missingApi.headers.get("content-type") || "", /json/);
+      assert.equal(JSON.parse(missingApiText).error, "Not found");
+      assert.doesNotMatch(missingApiText, /<!doctype/i);
       const missingJs = await fetch(`${origin}/assets/missing.js`);
       assert.equal(missingJs.status, 404);
     } finally {

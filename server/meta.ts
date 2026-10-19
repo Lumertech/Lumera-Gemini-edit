@@ -8,14 +8,17 @@ import { facebookOAuthConfigured } from "./facebook-oauth.ts";
 import {
   buildMetaReadinessOverview,
   decideWebhookSignature,
-  getMetaAppSecret,
   getMetaVerifyToken,
+  logMetaWebhookSignatureVerified,
+  metaHubSignatureHeader,
+  metaWebhookSecretCandidates,
   rejectProductionSimulator,
 } from "./meta-security.ts";
 import { handleMetaDataDeletionPost, handleMetaDeauthorizePost } from "./meta-signed-request.ts";
 import { normalizePhoneDigits, phonesMatch } from "./whatsapp-calendar-booking.ts";
 import { tenantIdFromReceivingPhoneNumberId } from "./whatsapp-tenant-resolve.ts";
 import { WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
+import { SANDBOX_FAKE_WABA_MESSAGE } from "../src/lib/metaStatus.ts";
 import type { SqlDatabase } from "./sql-engine.ts";
 
 /** read and failed are terminal. delivered can still become read. */
@@ -302,22 +305,44 @@ export function createMetaRouter(): Router {
 
   // POST /api/meta/webhook - Meta Inbound Webhook Event Receiver
   router.post("/webhook", (req: Request, res: Response) => {
+    const candidates = metaWebhookSecretCandidates();
+    const rawBody = Buffer.isBuffer(req.rawBody) ? req.rawBody : undefined;
     const signatureDecision = decideWebhookSignature({
-      rawBody: req.rawBody ?? Buffer.from(JSON.stringify(req.body || {})),
-      signatureHeader: req.headers["x-hub-signature-256"],
-      appSecret: getMetaAppSecret(),
+      rawBody,
+      signatureHeader: metaHubSignatureHeader(req),
+      appSecret: candidates[0]?.value ?? "",
+      secretCandidates: candidates,
     });
     if (signatureDecision.ok === false) {
-      console.warn("[Meta Webhook] Signature rejected:", signatureDecision.error);
+      const names = signatureDecision.secretEnvNames.length ? signatureDecision.secretEnvNames.join(",") : "(none)";
+      console.warn(
+        `[Meta Webhook] Signature rejected: ${signatureDecision.error} reason=${signatureDecision.reason} secretEnv=${names}`
+      );
       return res.status(signatureDecision.status).json({ error: signatureDecision.error });
     }
+    if (signatureDecision.secretEnvName) {
+      logMetaWebhookSignatureVerified(signatureDecision.secretEnvName);
+    }
     if (signatureDecision.unsignedDevBypass) {
-      console.warn("[Meta Webhook] SANDBOX / DEV-ONLY: accepted unsigned webhook because META_WEBHOOK_ALLOW_UNSIGNED is set.");
+      console.warn(
+        "[Meta Webhook] SANDBOX / DEV-ONLY: accepted unsigned webhook (no app secret configured, or META_WEBHOOK_ALLOW_UNSIGNED)."
+      );
+    }
+
+    let body: any;
+    if (rawBody) {
+      try {
+        body = rawBody.length === 0 ? {} : JSON.parse(rawBody.toString("utf8"));
+      } catch {
+        console.warn("[Meta Webhook] JSON parse failed after signature verification.");
+        return res.status(400).json({ error: "Invalid JSON body." });
+      }
+    } else {
+      body = req.body;
     }
 
     try {
       const db = getDb();
-      const body = req.body;
       const now = new Date().toISOString();
 
       // Meta payload usually contains entry -> changes -> value -> messages / statuses
@@ -488,7 +513,7 @@ export function createMetaRouter(): Router {
           totalMessagesSentAndReceived: totalMessages + totalOutbound,
           webhookUrl: "/api/meta/webhook",
           graphOtpConfigured: Boolean(resolveGraphCredentials(db)),
-          webhookSecretConfigured: Boolean(getMetaAppSecret()),
+          webhookSecretConfigured: metaWebhookSecretCandidates().length > 0,
           verifyTokenConfigured: Boolean(getMetaVerifyToken()),
           facebookOAuthConfigured: facebookOAuthConfigured(),
         })
@@ -656,7 +681,7 @@ export function createMetaRouter(): Router {
         success: true,
         sandbox: true,
         notice: "SANDBOX / DEV-ONLY simulator — not live Meta Embedded Signup.",
-        message: "SANDBOX / DEV-ONLY: fake WABA ids stored locally. This is not Meta Embedded Signup and Lumera is not a certified Tech Provider.",
+        message: SANDBOX_FAKE_WABA_MESSAGE,
         wabaId: randomWaba,
         phoneNumberId: randomPhoneId,
         qualityRating: "UNKNOWN",
