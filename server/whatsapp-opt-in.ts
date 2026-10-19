@@ -97,7 +97,10 @@ export function patientOptedIn(db: DatabaseSync, tenantId: string, phone: string
   return Number(row?.opted_in) === 1;
 }
 
-/** Template sends need opt-in. Any send stops after STOP. OTP is untouched. */
+/**
+ * Template sends need opt-in. In-window free-text reminders do too.
+ * Any send stops after STOP. OTP and staff free-text are untouched except STOP.
+ */
 export function whatsAppOptInBlock(opts: {
   db?: DatabaseSync | null;
   tenantId?: string;
@@ -109,7 +112,9 @@ export function whatsAppOptInBlock(opts: {
   const tenantId = String(opts.tenantId || "").trim();
   if (!db || !tenantId || opts.kind === "otp") return null;
   if (patientOptedOut(db, tenantId, opts.to)) return WHATSAPP_OPT_IN_REQUIRED_ERROR;
-  if (opts.templateSend && TEMPLATE_KINDS.has(opts.kind) && !patientOptedIn(db, tenantId, opts.to)) {
+  const businessInitiated =
+    opts.kind === "appointment_reminder" || (opts.templateSend && TEMPLATE_KINDS.has(opts.kind));
+  if (businessInitiated && !patientOptedIn(db, tenantId, opts.to)) {
     return WHATSAPP_OPT_IN_REQUIRED_ERROR;
   }
   return null;

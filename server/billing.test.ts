@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { jsonRequest, startTestServer } from "./test-http.ts";
 import { createApiRouter } from "./api.ts";
 import { DEMO_TENANT_ID, getDb, initDatabase } from "./db.ts";
+import { recordWhatsAppOptIn } from "./whatsapp-opt-in.ts";
 import { hashPassword } from "./password.ts";
 import { applyWalletTransaction } from "./usage-wallet.ts";
 import {
@@ -171,13 +172,15 @@ describe("Wave 2 Razorpay UPI collect", () => {
   }
 
   async function seedVisit(auth: Record<string, string>, phoneTail: string) {
+    const numericTail = phoneTail.replace(/\D/g, "").padEnd(4, "0").slice(0, 4);
+    const stamp = `${Date.now()}${Math.floor(Math.random() * 1000)}`.slice(-6);
     const patientRes = await jsonRequest(
       port,
       "POST",
       "/api/patients",
       {
         name: "Billing Patient",
-        phone: `+91 98120 ${phoneTail}`,
+        phone: `+9198${stamp}${numericTail}`,
         age: 36,
         gender: "Female",
         whatsappOptIn: true,
@@ -323,6 +326,14 @@ describe("Wave 2 Razorpay UPI collect", () => {
     const aptPaid = await jsonRequest(port, "GET", `/api/appointments/${appointment.id}`, undefined, auth);
     assert.equal((aptPaid.json.appointment as { isPaid: boolean }).isPaid, true);
 
+    recordWhatsAppOptIn(getDb(), {
+      tenantId: clinic.tenantId,
+      phone: patient.phone,
+      patientId: patient.id,
+      optedIn: true,
+      source: "test",
+      actorId: "test",
+    });
     const receipt = await jsonRequest(port, "POST", `/api/invoices/${invoice.id}/receipt`, {}, auth);
     assert.equal(receipt.status, 200, String(receipt.json.error || ""));
     assert.equal(receipt.json.channel, "sandbox");

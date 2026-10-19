@@ -214,6 +214,12 @@ describe("two-tenant clinic WhatsApp Graph path", () => {
          ) VALUES (?, ?, ?, 'Bina', 30, 'Female', ?, '', 'O+', '[]', '[]', '', '', ?)`
       )
       .run(`patient-b-${tenantB}`, tenantB, `UH-B-${tenantB.slice(-8)}`, "+919811100002", new Date().toISOString());
+    getDb()
+      .prepare(
+        `INSERT INTO invoices (id, tenant_id, invoice_number, patient_id, date, created_at)
+         VALUES (?, ?, 'INV-1042', ?, '2026-10-20', ?)`
+      )
+      .run(`inv-1042-${tenantB}`, tenantB, `patient-b-${tenantB}`, new Date().toISOString());
     const sentA = await sendAppointmentReminder({
       to: "+919811100001",
       patientName: "Asha",
@@ -302,6 +308,7 @@ describe("two-tenant clinic WhatsApp Graph path", () => {
       assert.equal(gated.status, 409);
     }
     const beforeText = calls.length;
+    recordWhatsAppOptIn(getDb(), { tenantId: tenantA, phone: "+919811100004", optedIn: true, source: "test", actorId: "test" });
     const now = new Date().toISOString();
     getDb()
       .prepare(

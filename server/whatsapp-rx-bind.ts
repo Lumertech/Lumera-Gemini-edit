@@ -24,7 +24,7 @@ import { isProduction } from "./runtime.ts";
 import { getTenantLetterhead } from "./letterhead.ts";
 import { appPublicUrl, AppPublicUrlError } from "./runtime.ts";
 import { PATIENT_PHONE_MISSING, RX_SEND_FAILED, SAFETY_REVIEW_REQUIRED } from "../src/lib/signedRxWhatsAppSend.ts";
-import { mintPatientLinkToken } from "./patient-link-token.ts";
+import { mintPatientLinkToken, revokePatientLinkToken } from "./patient-link-token.ts";
 import { patientOptedIn } from "./whatsapp-opt-in.ts";
 import { patientSafetyLists, signedRxSafetyRefusal } from "./rx-safety-store.ts";
 import { WALLET_INSUFFICIENT_ERROR } from "./usage-wallet.ts";
@@ -46,14 +46,13 @@ export type SignedRxSend =
   | {
       ok: true;
       rxNumber: string;
+      patientId: string;
       phone: string;
       patientName: string;
       doctorName: string;
       text: string;
       pdfUrl: string;
       clinicName: string;
-      viewUrl: string;
-      linkToken: string;
     };
 
 function fail(status: number, code: string): SignedRxSend {
@@ -87,40 +86,10 @@ function treatingDoctorName(db: Sql, tenantId: string, signerId: string): string
   return String(doctor?.name || "").trim();
 }
 
-function medicineLines(raw: unknown): { lines: string; count: number } {
-  let medicines: Array<{ drugName?: unknown; dosage?: unknown; frequency?: unknown }> = [];
-  if (Array.isArray(raw)) medicines = raw;
-  else if (typeof raw === "string" && raw.trim()) {
-    try {
-      const parsed = JSON.parse(raw) as unknown;
-      if (Array.isArray(parsed)) medicines = parsed;
-    } catch {
-      medicines = [];
-    }
-  }
-  const lines = medicines
-    .slice(0, 3)
-    .map((med, index) => {
-      const name = String(med.drugName || "Medicine");
-      const dosage = String(med.dosage || "");
-      const frequency = String(med.frequency || "");
-      return `  ${index + 1}. *${name}* (${dosage} - ${frequency})`;
-    })
-    .join("\n");
-  const more = medicines.length > 3 ? `\n  _...and ${medicines.length - 3} more medications_` : "";
-  return { lines: `${lines}${more}`, count: medicines.length };
-}
-
 /** PHI-light clinic copy. The view link is the only patient-specific value. */
 export function signedRxWhatsAppText(input: {
   clinicName: string;
   doctorName: string;
-  doctorSpecialty?: string;
-  patientName?: string;
-  uhid?: string;
-  diagnosis?: string;
-  medicineLines?: string;
-  medicineCount?: number;
   portalUrl: string;
 }): string {
   const clinicName = input.clinicName.trim() || "your clinic";
@@ -172,28 +141,17 @@ export async function resolveSignedRxWhatsAppSend(
   if (signedRxSafetyRefusal(getDb(), tenant, storedRxNumber, rx.medicines, lists.allergies, lists.chronicConditions)) {
     return fail(409, SAFETY_REVIEW_REQUIRED);
   }
-  const link = await mintPatientLinkToken({
-    tenantId: tenant,
-    patientId,
-    purpose: "rx",
-    resourceId: storedRxNumber,
-  });
-  const text = signedRxWhatsAppText({
-    clinicName,
-    doctorName,
-    portalUrl: link.url,
-  });
+  const text = signedRxWhatsAppText({ clinicName, doctorName, portalUrl: "" });
   return {
     ok: true,
     rxNumber: storedRxNumber,
+    patientId,
     phone,
     patientName: String(patient.name || "").trim() || "Patient",
     doctorName,
     clinicName,
     text,
     pdfUrl,
-    viewUrl: link.url,
-    linkToken: link.token,
   };
 }
 
@@ -357,6 +315,7 @@ function recordGraphRxSend(tenantId: string, resolved: Extract<SignedRxSend, { o
 export async function handleSignedRxWhatsAppSend(req: Request, res: Response): Promise<void> {
   const body = (req.body || {}) as Record<string, unknown>;
   const rxNumber = String(body.rxNumber || body.rx_number || "").trim();
+  let mintedToken = "";
   try {
     const tenantId = String(req.user?.tenantId || "").trim();
     if (!tenantId) {
@@ -395,32 +354,55 @@ export async function handleSignedRxWhatsAppSend(req: Request, res: Response): P
       res.status(409).json({ code: WHATSAPP_OPT_IN_REQUIRED });
       return;
     }
+    const link = await mintPatientLinkToken({
+      tenantId,
+      patientId: resolved.patientId,
+      purpose: "rx",
+      resourceId: resolved.rxNumber,
+    });
+    mintedToken = link.token;
+    const text = signedRxWhatsAppText({
+      clinicName: resolved.clinicName,
+      doctorName: resolved.doctorName,
+      portalUrl: link.url,
+    });
     const sent = await dispatchSignedRxCloudMessage({
       tenantId,
       to: resolved.phone,
-      textBody: resolved.text,
+      textBody: text,
       patientName: resolved.patientName,
       clinicName: resolved.clinicName,
       doctorName: resolved.doctorName,
       rxNumber: resolved.rxNumber,
-      urlSuffix: resolved.linkToken,
+      urlSuffix: link.token,
     });
+    const messageId = sent.ok === true ? String(sent.messageId || "").trim() : "";
+    const delivered = sent.ok === true && sent.channel === "graph" && META_MESSAGE_ID.test(messageId);
+    if (!delivered) {
+      await revokePatientLinkToken(link.token);
+    }
     if (isCloudDispatchFailure(sent)) {
       const code = rxFailureCode(sent.error);
       auditRxSend(req, tenantId, resolved.rxNumber, "failed", code);
       res.status(cloudDispatchHttpStatus(sent.error, sent.status)).json({ code });
       return;
     }
-    const messageId = String(sent.messageId || "").trim();
-    if (sent.channel !== "graph" || !META_MESSAGE_ID.test(messageId)) {
+    if (!delivered) {
       auditRxSend(req, tenantId, resolved.rxNumber, "failed", "SANDBOX_NOT_SENT");
       res.status(200).json({ success: false, channel: "sandbox", status: "sandbox" });
       return;
     }
-    recordGraphRxSend(tenantId, resolved, messageId);
+    recordGraphRxSend(tenantId, { ...resolved, text }, messageId);
     auditRxSend(req, tenantId, resolved.rxNumber, "sent", "SENT");
     res.status(200).json({ success: true, status: "sent", messageId, channel: "graph" });
   } catch (err) {
+    if (mintedToken) {
+      try {
+        await revokePatientLinkToken(mintedToken);
+      } catch {
+        /* revoke is best-effort after a failed send */
+      }
+    }
     reportCaughtError(err, "whatsapp.send-rx");
     try {
       auditRxSend(req, String(req.user?.tenantId || ""), rxNumber, "failed", RX_SEND_FAILED);

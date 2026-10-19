@@ -15,7 +15,7 @@ import {
   reminderTemplateParameters,
   TEMPLATE_NOT_APPROVED_ERROR,
 } from "./clinic-whatsapp-templates.ts";
-import { mintPatientLinkToken } from "./patient-link-token.ts";
+import { mintPatientLinkToken, revokePatientLinkToken } from "./patient-link-token.ts";
 import { whatsAppOptInBlock } from "./whatsapp-opt-in.ts";
 
 /**
@@ -611,7 +611,7 @@ export function buildReminderText(fields: ReminderFields): string {
   );
 }
 
-export function buildBookConfirmationText(fields: ReminderFields & { uhid?: string }): string {
+export function buildBookConfirmationText(fields: ReminderFields): string {
   const name = fields.patientName || "Patient";
   const token =
     fields.tokenNumber != null && Number(fields.tokenNumber) > 0
@@ -625,8 +625,7 @@ export function buildBookConfirmationText(fields: ReminderFields & { uhid?: stri
     `Your visit with *${doctor || "the clinician"}*` +
     (fields.specialty ? ` (${fields.specialty})` : "") +
     ` is booked for *${fields.date || "the scheduled date"}* at *${fields.timeSlot || "TBD"}*.\n\n` +
-    `🎫 Token: *${token}*` +
-    (fields.uhid ? `\nUHID: ${fields.uhid}` : "")
+    `🎫 Token: *${token}*`
   );
 }
 
@@ -904,6 +903,45 @@ function meterWhatsAppUsage(opts: {
   }
 }
 
+const GRAPH_WAMID = /^wamid\.\S+$/;
+
+async function auditTemplateSend(
+  db: DatabaseSync | null | undefined,
+  eventType: string,
+  tenantId: string,
+  sent: CloudDispatchResult
+) {
+  try {
+    const { getDb, writeAudit } = await import("./db.ts");
+    writeAudit(
+      db || getDb(),
+      null,
+      "system",
+      "whatsapp_template_send",
+      `tenant ${tenantId || "none"} template ${eventType} outcome ${sent.ok ? "sent" : "failed"}`,
+      { tenantId: tenantId || undefined, entityType: "whatsapp_template", entityId: eventType }
+    );
+  } catch {
+    /* audit is best-effort and must not block the send */
+  }
+}
+
+function invoicePatientId(db: DatabaseSync, tenantId: string, invoiceId: string): string {
+  try {
+    const rows = db
+      .prepare(`SELECT patient_id FROM invoices WHERE tenant_id = ? AND (id = ? OR invoice_number = ?)`)
+      .all(tenantId, invoiceId, invoiceId) as Array<{ patient_id?: string }>;
+    const ids = [...new Set(rows.map((row) => String(row.patient_id || "").trim()).filter(Boolean))];
+    return ids.length === 1 ? ids[0] : "";
+  } catch {
+    return "";
+  }
+}
+
+function graphAccepted(sent: CloudDispatchResult): boolean {
+  return sent.ok === true && sent.channel === "graph" && GRAPH_WAMID.test(String(sent.messageId || "").trim());
+}
+
 function requireClinicAndDoctor(opts: {
   tenantId?: string;
   db?: DatabaseSync | null;
@@ -936,13 +974,16 @@ export async function sendAppointmentReminder(opts: {
   tenantId?: string;
 }): Promise<CloudDispatchResult> {
   const names = requireClinicAndDoctor(opts);
-  if ("channel" in names) return names;
+  if ("channel" in names) {
+    await auditTemplateSend(opts.db, "appointment_reminder", String(opts.tenantId || ""), names);
+    return names;
+  }
   const clinicName = names.clinicName;
   const doctorName = names.doctorName;
   const parameters = opts.tenantId
     ? reminderTemplateParameters({ ...opts, clinicName, doctorName })
     : opts.templateParameters;
-  return dispatchWhatsAppCloudMessage({
+  const sent = await dispatchWhatsAppCloudMessage({
     to: opts.to,
     kind: "appointment_reminder",
     textBody: opts.textBody || buildReminderText({ ...opts, clinicName, doctorName }),
@@ -952,6 +993,8 @@ export async function sendAppointmentReminder(opts: {
     fetchImpl: opts.fetchImpl,
     tenantId: opts.tenantId,
   });
+  await auditTemplateSend(opts.db, "appointment_reminder", String(opts.tenantId || ""), sent);
+  return sent;
 }
 
 export async function sendBookConfirmation(opts: {
@@ -963,7 +1006,6 @@ export async function sendBookConfirmation(opts: {
   date?: string;
   timeSlot?: string;
   tokenNumber?: number;
-  uhid?: string;
   textBody?: string;
   templateName?: string;
   templateParameters?: string[];
@@ -972,13 +1014,16 @@ export async function sendBookConfirmation(opts: {
   tenantId?: string;
 }): Promise<CloudDispatchResult> {
   const names = requireClinicAndDoctor(opts);
-  if ("channel" in names) return names;
+  if ("channel" in names) {
+    await auditTemplateSend(opts.db, "book_confirmation", String(opts.tenantId || ""), names);
+    return names;
+  }
   const clinicName = names.clinicName;
   const doctorName = names.doctorName;
   const parameters = opts.tenantId
     ? bookConfirmationTemplateParameters({ ...opts, clinicName, doctorName })
     : opts.templateParameters;
-  return dispatchWhatsAppCloudMessage({
+  const sent = await dispatchWhatsAppCloudMessage({
     to: opts.to,
     kind: "book_confirmation",
     textBody: opts.textBody || buildBookConfirmationText({ ...opts, clinicName, doctorName }),
@@ -988,6 +1033,8 @@ export async function sendBookConfirmation(opts: {
     fetchImpl: opts.fetchImpl,
     tenantId: opts.tenantId,
   });
+  await auditTemplateSend(opts.db, "book_confirmation", String(opts.tenantId || ""), sent);
+  return sent;
 }
 
 /** #25 assist: Graph dual-path only. Platform owns Razorpay/invoices and can pass textBody. */
@@ -1009,36 +1056,37 @@ export async function sendPaymentReceipt(opts: {
   tenantId?: string;
 }): Promise<CloudDispatchResult> {
   const clinicName = String(opts.clinicName || "").trim() || lookupClinicName(opts.db, opts.tenantId);
-  if (opts.tenantId && !opts.textBody && !clinicName) {
-    return { ok: false, channel: "none", error: CLINIC_DOCTOR_NAME_REQUIRED, status: 400 };
-  }
-  let receiptUrl = "";
   const invoiceId = String(opts.invoiceId || "").trim();
   const tenantId = String(opts.tenantId || "").trim();
-  if (opts.db && tenantId && invoiceId) {
-    const digits = String(opts.to || "").replace(/\D/g, "").slice(-10);
-    let patientId = "";
-    if (digits) {
-      try {
-        const patient = opts.db
-          .prepare(
-            `SELECT id FROM patients WHERE tenant_id = ? AND REPLACE(REPLACE(REPLACE(phone, '+', ''), ' ', ''), '-', '') LIKE ? LIMIT 1`
-          )
-          .get(tenantId, `%${digits}`) as { id?: string } | undefined;
-        patientId = String(patient?.id || "").trim();
-      } catch {
-        patientId = "";
-      }
-    }
-    if (patientId) {
-      const link = await mintPatientLinkToken({
-        tenantId,
-        patientId,
-        purpose: "receipt",
-        resourceId: invoiceId,
-      });
-      receiptUrl = link.url;
-    }
+  if (opts.tenantId && !opts.textBody && !clinicName) {
+    const blocked = { ok: false as const, channel: "none" as const, error: CLINIC_DOCTOR_NAME_REQUIRED, status: 400 };
+    await auditTemplateSend(opts.db, "payment_receipt", tenantId, blocked);
+    return blocked;
+  }
+  const optInError = whatsAppOptInBlock({
+    db: opts.db,
+    tenantId,
+    to: opts.to,
+    kind: "payment_receipt",
+    templateSend: true,
+  });
+  if (optInError) {
+    const blocked = { ok: false as const, channel: "none" as const, error: optInError, status: 409 };
+    await auditTemplateSend(opts.db, "payment_receipt", tenantId, blocked);
+    return blocked;
+  }
+  let receiptUrl = "";
+  let mintedToken = "";
+  const patientId = opts.db && tenantId && invoiceId ? invoicePatientId(opts.db, tenantId, invoiceId) : "";
+  if (patientId) {
+    const link = await mintPatientLinkToken({
+      tenantId,
+      patientId,
+      purpose: "receipt",
+      resourceId: invoiceId,
+    });
+    receiptUrl = link.url;
+    mintedToken = link.token;
   }
   const receiptFields: ReceiptFields = {
     patientName: opts.patientName,
@@ -1061,18 +1109,9 @@ export async function sendPaymentReceipt(opts: {
     fetchImpl: opts.fetchImpl,
     tenantId: opts.tenantId,
   });
-  try {
-    const { getDb, writeAudit } = await import("./db.ts");
-    writeAudit(
-      opts.db || getDb(),
-      null,
-      "system",
-      "whatsapp_template_send",
-      `tenant ${tenantId || "none"} template payment_receipt outcome ${sent.ok ? "sent" : "failed"}`,
-      { tenantId: tenantId || undefined, entityType: "whatsapp_template", entityId: "payment_receipt" }
-    );
-  } catch {
-    /* audit is best-effort and must not block the receipt */
+  if (mintedToken && !graphAccepted(sent)) {
+    await revokePatientLinkToken(mintedToken);
   }
+  await auditTemplateSend(opts.db, "payment_receipt", tenantId, sent);
   return sent;
 }

@@ -11,7 +11,7 @@ import { appPublicUrl } from "./runtime.ts";
 import { jsonRequest, startTestServer } from "./test-http.ts";
 import { createUsageBillingRouter } from "./usage-billing-api.ts";
 import { ensureWhatsAppOwnershipSchema } from "./whatsapp-numbers-store.ts";
-import { resolveSignedRxWhatsAppSend, PATIENT_PHONE_MISSING, RX_NOT_FOUND, RX_NOT_SIGNED, RX_SEND_FAILED, SAFETY_REVIEW_REQUIRED } from "./whatsapp-rx-bind.ts";
+import { resolveSignedRxWhatsAppSend, signedRxWhatsAppText, PATIENT_PHONE_MISSING, RX_NOT_FOUND, RX_NOT_SIGNED, RX_SEND_FAILED, SAFETY_REVIEW_REQUIRED } from "./whatsapp-rx-bind.ts";
 import { recordPassingSafetyAuditForStoredRx } from "./rx-safety-store.ts";
 import { recordWhatsAppOptIn } from "./whatsapp-opt-in.ts";
 
@@ -215,12 +215,30 @@ describe("usage-billing Rx WhatsApp send is bound to the signed prescription", (
     assert.equal(resolved.ok, true);
     if (resolved.ok) {
       assert.equal(resolved.phone, phone);
-      assertComposedText(resolved.text, attackerPhone);
       assert.equal(resolved.text.includes(portal), false);
+      assert.equal(resolved.text.includes("Asha"), false);
+      assert.equal(resolved.text.includes("Viral fever"), false);
+      const shaped = signedRxWhatsAppText({
+        clinicName: resolved.clinicName,
+        doctorName: resolved.doctorName,
+        portalUrl: "https://www.mylumera.in/rx/v/opaqueexampletoken",
+      });
+      assertComposedText(shaped, attackerPhone);
     }
+    const liveBefore = getDb()
+      .prepare(
+        `SELECT COUNT(*) AS c FROM patient_link_tokens WHERE tenant_id = ? AND resource_id = ? AND purpose = 'rx' AND revoked_at IS NULL`
+      )
+      .get(clinic.tenantId, rx.rxNumber) as { c: number };
     const res = await jsonRequest(port, "POST", "/api/whatsapp/send-rx", body, auth);
     assert.equal(res.status, 200, JSON.stringify(res.json));
     assert.deepEqual(res.json, { success: false, channel: "sandbox", status: "sandbox" });
+    const liveAfter = getDb()
+      .prepare(
+        `SELECT COUNT(*) AS c FROM patient_link_tokens WHERE tenant_id = ? AND resource_id = ? AND purpose = 'rx' AND revoked_at IS NULL`
+      )
+      .get(clinic.tenantId, rx.rxNumber) as { c: number };
+    assert.equal(liveAfter.c, liveBefore.c);
     const row = getDb().prepare("SELECT id FROM whatsapp_messages WHERE patient_phone = ?").get(phone);
     assert.equal(row, undefined);
     const attackerRow = getDb().prepare("SELECT id FROM whatsapp_messages WHERE patient_phone = ?").get(attackerPhone);
