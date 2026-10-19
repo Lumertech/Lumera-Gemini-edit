@@ -87,13 +87,25 @@ const PUBLIC_COPY_SURFACES = [
   "server/whatsapp-numbers-routes.ts",
   "server/meta.ts",
   "server/meta-security.ts",
+  "src/components/admin/AdminMetaTechProvider.tsx",
+  "src/components/admin/AdminWabaOnboardingCaps.tsx",
+  "src/components/admin/AdminUsageBilling.tsx",
 ];
 
 const STALE_TECH_PROVIDER_COPY =
   /not a certified (Meta )?Tech Provider|not (Meta )?Tech Provider certif|building toward Meta Tech Provider|Tech Provider path|App Review (is )?not submitted|not yet granted|submitted for Meta App Review/i;
 
 const TECH_PROVIDER_OVERCLAIM =
-  /Meta (Business )?partner|official WhatsApp partner|Solution Partner|Business Solution Provider|\bBSP\b|official Meta|Official Tech Provider|Authorized Tech Provider|Tech Provider Verified|Meta[- ](certified|approved|verified)|App Review (approved|complete)/i;
+  /Meta (Business )?partner|official WhatsApp partner|Solution Partner|Business Solution Provider|\bBSP\b|official Meta|Official Tech Provider|Authorized Tech Provider|Tech Provider Verified|Tech Partner|Meta[- ](certified|approved|verified)|App Review (approved|complete)/i;
+
+const USER_VISIBLE_STATUS_BANS: Array<{ id: string; re: RegExp }> = [
+  { id: "SUBMITTED_PENDING", re: /SUBMITTED_PENDING/ },
+  { id: "App Review pending", re: /App Review[^.]*pending/i },
+  { id: "permissions not granted", re: /permissions?[^.]*not granted/i },
+  { id: "available now", re: /available now/i },
+  { id: "live for clinics", re: /live for clinics/i },
+  { id: "live to clinics", re: /live to clinics/i },
+];
 
 const CERTIFIED_WORD = /\bcertified\b/i;
 const PHYSIO_BIO_REL = "server/db-seed-maps.ts";
@@ -193,6 +205,9 @@ describe("Compliance #26 policy seed grep", () => {
       assert.equal(/available now/i.test(body), false);
       assert.equal(/live for clinics/i.test(body), false);
       assert.equal(/live to clinics/i.test(body), false);
+      assert.equal(body.includes("SUBMITTED_PENDING"), false);
+      assert.equal(/App Review[^.]*pending/i.test(body), false);
+      assert.equal(/permissions?[^.]*not granted/i.test(body), false);
     }
     assert.equal(GOVERNMENT_DATA_REQUEST_POLICY_BODY.includes(META_TECH_PROVIDER_STATEMENT), true);
     assert.match(PRIVACY_POLICY_BODY, /replying \*\*STOP\*\*/);
@@ -220,6 +235,20 @@ describe("Compliance #26 policy seed grep", () => {
           continue;
         }
         leftovers.push(`${rel}:${n} certified: ${line.trim()}`);
+      }
+    }
+    assert.deepEqual(leftovers, [], leftovers.join("\n"));
+  });
+
+  it("bans SUBMITTED_PENDING, pending App Review, and permissions not granted in user-visible copy", () => {
+    const leftovers: string[] = [];
+    for (const rel of PUBLIC_COPY_SURFACES) {
+      const lines = readRepo(rel).split(/\n/);
+      for (let i = 0; i < lines.length; i++) {
+        for (const rule of USER_VISIBLE_STATUS_BANS) {
+          if (!rule.re.test(lines[i])) continue;
+          leftovers.push(`${rel}:${i + 1} [${rule.id}] ${lines[i].trim()}`);
+        }
       }
     }
     assert.deepEqual(leftovers, [], leftovers.join("\n"));

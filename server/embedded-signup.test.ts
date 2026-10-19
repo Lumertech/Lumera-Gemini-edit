@@ -8,9 +8,14 @@ import { createMetaRouter } from "./meta.ts";
 import { bootWhatsAppOwnershipSchema, createWhatsAppNumbersRouter, practitionerLinkMiddleware } from "./whatsapp-numbers-routes.ts";
 import { getDb, initDatabase } from "./db.ts";
 import { hashPassword } from "./password.ts";
-import { completeEmbeddedSignup, exchangeEmbeddedSignupCode, subscribeAppToCustomerWaba } from "./embedded-signup.ts";
+import { completeEmbeddedSignup, embeddedSignupPublicConfig, exchangeEmbeddedSignupCode, subscribeAppToCustomerWaba } from "./embedded-signup.ts";
 import { clinicActor, getTenantWabaNumber, getWhatsAppRegistrationPin } from "./whatsapp-numbers.ts";
 import { buildMetaReadinessOverview } from "./meta-security.ts";
+import {
+  META_TECH_PROVIDER_STATEMENT,
+  WHATSAPP_CONNECTION_UNAVAILABLE_SENTENCE,
+  WHATSAPP_PERMISSIONS_STATUS_SENTENCE,
+} from "../src/lib/metaStatus.ts";
 import { decideDataDeletionSignedRequest, signMetaSignedRequest } from "./meta-signed-request.ts";
 import { wabaOnboardingCapsOverview } from "./waba-onboarding-caps.ts";
 
@@ -338,6 +343,12 @@ describe("Embedded Signup v4 handshake", () => {
     assert.equal(authed.json.configId, "config-es-v4-test");
     assert.equal(authed.json.sandbox, true);
     assert.equal(authed.json.simulatorsEnabled, true);
+    const notice = String(authed.json.notice || "");
+    assert.equal(notice.includes(META_TECH_PROVIDER_STATEMENT), true);
+    assert.equal(notice.includes(WHATSAPP_PERMISSIONS_STATUS_SENTENCE), true);
+    assert.equal(notice.includes("FACEBOOK_APP_ID"), false);
+    assert.equal(notice.includes("META_EMBEDDED_SIGNUP_CONFIG_ID"), false);
+    assert.equal(notice.includes("META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED=true is set"), false);
   });
 
   it("POST /api/whatsapp-numbers/embedded-signup/complete exchanges, subscribes, and stores the token", async () => {
@@ -466,8 +477,10 @@ describe("Data deletion signed_request", () => {
 describe("Embedded Signup checklist + onboarding caps", () => {
   it("adds config_id and App Review checklist items, SANDBOX-honest by default", () => {
     const prevConfig = process.env.META_EMBEDDED_SIGNUP_CONFIG_ID;
+    const prevAppId = process.env.FACEBOOK_APP_ID;
     const prevReview = process.env.META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED;
     delete process.env.META_EMBEDDED_SIGNUP_CONFIG_ID;
+    delete process.env.FACEBOOK_APP_ID;
     delete process.env.META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED;
     const overview = buildMetaReadinessOverview({
       connectedWabasCount: 0,
@@ -483,15 +496,33 @@ describe("Embedded Signup checklist + onboarding caps", () => {
     });
     const configItem = overview.appReviewStatus.checklist.find((c) => c.item === "Embedded Signup config_id configured");
     const reviewItem = overview.appReviewStatus.checklist.find((c) =>
-      c.item.includes("whatsapp_business_management / business_management / whatsapp_business_messaging")
+      c.item.includes("whatsapp_business_messaging, whatsapp_business_management and public_profile")
     );
     assert.ok(configItem);
     assert.equal(configItem!.passed, false);
     assert.ok(reviewItem);
-    assert.equal(reviewItem!.passed, false);
-    assert.equal(overview.appReviewStatus.status, "SUBMITTED_PENDING");
+    assert.equal(reviewItem!.passed, true);
+    assert.equal(reviewItem!.note, WHATSAPP_PERMISSIONS_STATUS_SENTENCE);
+    assert.equal(overview.appReviewStatus.status, "APPROVED");
+    assert.equal(overview.appReviewManuallyConfirmed, false);
+    assert.equal(overview.certificationStatus, "NOT_CERTIFIED");
+    assert.equal(overview.techProviderStatus, "TECH_PROVIDER");
+    const clinicNotice = embeddedSignupPublicConfig().notice;
+    assert.equal(clinicNotice.includes(WHATSAPP_CONNECTION_UNAVAILABLE_SENTENCE), true);
+    assert.equal(clinicNotice.includes(META_TECH_PROVIDER_STATEMENT), true);
+    assert.equal(clinicNotice.includes(WHATSAPP_PERMISSIONS_STATUS_SENTENCE), true);
+    assert.equal(clinicNotice.includes("FACEBOOK_APP_ID"), false);
+    assert.equal(clinicNotice.includes("META_EMBEDDED_SIGNUP_CONFIG_ID"), false);
+    assert.equal(clinicNotice.includes("META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED=true is set"), false);
+    process.env.META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED = "true";
+    const flaggedNotice = embeddedSignupPublicConfig().notice;
+    assert.equal(flaggedNotice, clinicNotice);
+    assert.equal(flaggedNotice.includes(META_TECH_PROVIDER_STATEMENT), true);
+    assert.equal(flaggedNotice.includes(WHATSAPP_PERMISSIONS_STATUS_SENTENCE), true);
     if (prevConfig === undefined) delete process.env.META_EMBEDDED_SIGNUP_CONFIG_ID;
     else process.env.META_EMBEDDED_SIGNUP_CONFIG_ID = prevConfig;
+    if (prevAppId === undefined) delete process.env.FACEBOOK_APP_ID;
+    else process.env.FACEBOOK_APP_ID = prevAppId;
     if (prevReview === undefined) delete process.env.META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED;
     else process.env.META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED = prevReview;
   });

@@ -37,6 +37,8 @@ interface MetaOverview {
     passedCount?: number;
     totalCount?: number;
   };
+  appReviewManuallyConfirmed?: boolean;
+  appReviewManualConfirmationNote?: string;
   connectedWabasCount: number;
   totalClinics: number;
   approvedTemplatesCount: number;
@@ -317,10 +319,10 @@ export const AdminMetaTechProvider: React.FC = () => {
           <div className="bg-slate-900/60 p-3 rounded-xl border border-slate-800/80">
             <div className="text-xs text-slate-400 font-medium">App Review status</div>
             <div className="text-lg font-bold text-amber-300 flex items-center gap-1.5 mt-0.5">
-              <AlertCircle className="w-4 h-4" /> {overview?.appReviewStatus?.status || "SUBMITTED_PENDING"}
+              <AlertCircle className="w-4 h-4" /> {overview?.appReviewStatus?.status || "APPROVED"}
             </div>
             <div className="text-[11px] text-slate-400 mt-0.5">
-              {overview?.appReviewStatus?.passedCount ?? 0}/{overview?.appReviewStatus?.totalCount ?? 0} readiness items true. Tech Provider status: {overview?.techProviderStatus || "TECH_PROVIDER"}.
+              {overview?.appReviewStatus?.passedCount ?? 0}/{overview?.appReviewStatus?.totalCount ?? 0} readiness items true. Tech Provider status: {overview?.techProviderStatus || "TECH_PROVIDER"}. {overview?.appReviewManualConfirmationNote}
             </div>
           </div>
           <div className="bg-slate-900/60 p-3 rounded-xl border border-slate-800/80">
@@ -399,7 +401,7 @@ export const AdminMetaTechProvider: React.FC = () => {
               <div>
                 <h2 className="text-lg font-bold text-slate-900">Meta App Review submission parameters</h2>
                 <p className="text-sm text-slate-500">
-                  Policy URLs for the submitted Meta App Review packet. Presence of a page is not an approval. Status: <strong>{overview?.appReviewStatus?.status || "SUBMITTED_PENDING"}</strong>. {WHATSAPP_PERMISSIONS_STATUS_SENTENCE}
+                  Policy URLs for the submitted Meta App Review packet. Presence of a page is not an approval. Status: <strong>{overview?.appReviewStatus?.status || "APPROVED"}</strong>. {WHATSAPP_PERMISSIONS_STATUS_SENTENCE}
                 </p>
               </div>
               <span className="px-3 py-1 bg-emerald-50 text-emerald-800 font-semibold text-xs rounded-full border border-emerald-200 max-w-sm">
@@ -836,7 +838,7 @@ export const AdminMetaTechProvider: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Select Meta Approved Template</label>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Select an approved WhatsApp template</label>
                   <select
                     value={testTemplate}
                     onChange={(e) => setTestTemplate(e.target.value)}

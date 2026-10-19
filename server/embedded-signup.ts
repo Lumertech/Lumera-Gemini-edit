@@ -21,10 +21,10 @@
 
 import crypto from "node:crypto";
 import {
-  META_TECH_PROVIDER_STATEMENT,
-  WHATSAPP_PERMISSIONS_STATUS_SENTENCE,
+  WHATSAPP_CLINIC_STATUS_LINE,
+  WHATSAPP_CONNECTION_UNAVAILABLE_SENTENCE,
 } from "../src/lib/metaStatus.ts";
-import { envFlag, graphApiVersion, isProduction, isUnsetOrPlaceholder, readSecret, sandboxSimulatorsEnabled } from "./runtime.ts";
+import { graphApiVersion, isProduction, isUnsetOrPlaceholder, readSecret, sandboxSimulatorsEnabled } from "./runtime.ts";
 import {
   getWhatsAppNumberByPhoneNumberId,
   getWhatsAppRegistrationPin,
@@ -65,10 +65,6 @@ export function embeddedSignupConfigId(): string {
   return readSecret("META_EMBEDDED_SIGNUP_CONFIG_ID");
 }
 
-export function appReviewWhatsAppScopesApproved(): boolean {
-  return envFlag("META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED");
-}
-
 export function embeddedSignupConfigured(): boolean {
   return Boolean(facebookAppIdForEmbeddedSignup() && embeddedSignupConfigId());
 }
@@ -77,12 +73,6 @@ export function embeddedSignupPublicConfig() {
   const appId = facebookAppIdForEmbeddedSignup() || "";
   const configId = embeddedSignupConfigId() || "";
   const configured = Boolean(appId && configId);
-  const scopesApproved = appReviewWhatsAppScopesApproved();
-  const statusLine = `${META_TECH_PROVIDER_STATEMENT} ${
-    scopesApproved
-      ? "META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED=true is set. Not auto-detected from Meta's dashboard."
-      : WHATSAPP_PERMISSIONS_STATUS_SENTENCE
-  }`;
   return {
     appId: appId || null,
     configId: configId || null,
@@ -91,10 +81,9 @@ export function embeddedSignupPublicConfig() {
     configured,
     sandbox: !isProduction(),
     simulatorsEnabled: sandboxSimulatorsEnabled(),
-    appReviewWhatsAppScopesApproved: scopesApproved,
     notice: configured
-      ? `Embedded Signup v4 handshake is wired. ${statusLine} Contact ravee@lumer.me.`
-      : `SANDBOX / DEV-ONLY: FACEBOOK_APP_ID and META_EMBEDDED_SIGNUP_CONFIG_ID are not live. Real FB.login will fail until the founder provisions them. ${statusLine} Contact ravee@lumer.me.`,
+      ? `${WHATSAPP_CLINIC_STATUS_LINE} Contact ravee@lumer.me.`
+      : `${WHATSAPP_CONNECTION_UNAVAILABLE_SENTENCE} ${WHATSAPP_CLINIC_STATUS_LINE}`,
   };
 }
 

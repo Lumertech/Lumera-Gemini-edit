@@ -240,7 +240,7 @@ done
 
 Canonical host: **`https://www.mylumera.in`**. Set `APP_URL` to that origin.
 
-**Facebook Login App Review:** founder confirmed **approved** for Login (`email`, `public_profile`). Lumera Solutions LLP is a Meta Tech Provider for the WhatsApp Business Platform. WhatsApp `whatsapp_business_*` scopes stay SANDBOX-honest unless `META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED=true` is set on Cloud Run after *those* permissions are actually approved.
+**Facebook Login App Review:** founder confirmed **approved** for Login (`email`, `public_profile`). Lumera Solutions LLP is a Meta Tech Provider for the WhatsApp Business Platform. Meta has approved Lumera's WhatsApp permission requests in App Review (`whatsapp_business_messaging`, `whatsapp_business_management`, `public_profile`). `META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED` only sets the admin marker `appReviewManuallyConfirmed` and does not change that status.
 
 Paste **only after** the smoke gate in §5 is green:
 
@@ -318,7 +318,7 @@ Hosting + TLS on www, Privacy, Terms, data-deletion page + callback, OAuth redir
 
 ### May stay SANDBOX until credentials + Review clear
 
-Graph OTP / reminder / receipt without tokens; `simulate-embedded-signup`; unsigned webhook (non-prod only — production rejects unsigned); in-product `SUBMITTED_PENDING` token when the scopes flag is unset. Meta has approved Lumera's WhatsApp permission requests in App Review. Public pages use: Lumera Solutions LLP is a Meta Tech Provider for the WhatsApp Business Platform.
+Graph OTP / reminder / receipt without tokens; `simulate-embedded-signup`; unsigned webhook (non-prod only — production rejects unsigned). In-product App Review status is `APPROVED`. `META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED` only sets `appReviewManuallyConfirmed`. Meta has approved Lumera's WhatsApp permission requests in App Review. Public pages use: Lumera Solutions LLP is a Meta Tech Provider for the WhatsApp Business Platform.
 
 ---
 

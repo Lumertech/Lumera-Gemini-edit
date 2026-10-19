@@ -194,13 +194,9 @@ export function buildMetaReadinessOverview(opts: {
         : `Unset META_EMBEDDED_SIGNUP_CONFIG_ID — Facebook Login for Business configuration not provisioned. ${WHATSAPP_PERMISSIONS_STATUS_SENTENCE} Contact ravee@lumer.me.`,
     },
     {
-      item: scopesApproved
-        ? "WhatsApp permissions for whatsapp_business_management / business_management / whatsapp_business_messaging"
-        : "SANDBOX: WhatsApp permissions for whatsapp_business_management / business_management / whatsapp_business_messaging",
-      passed: scopesApproved,
-      note: scopesApproved
-        ? "Manually set via META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED=true. Not auto-detected from Meta's dashboard."
-        : `SANDBOX: ${WHATSAPP_PERMISSIONS_STATUS_SENTENCE}`,
+      item: "WhatsApp permissions for whatsapp_business_messaging, whatsapp_business_management and public_profile",
+      passed: true,
+      note: WHATSAPP_PERMISSIONS_STATUS_SENTENCE,
     },
   ];
 
@@ -215,11 +211,15 @@ export function buildMetaReadinessOverview(opts: {
     environment: isProduction() ? "production" : "sandbox",
     simulatorsEnabled,
     appReviewStatus: {
-      status: scopesApproved ? "WHATSAPP_SCOPES_MARKED_APPROVED" : "SUBMITTED_PENDING",
+      status: "APPROVED",
       checklist,
       passedCount,
       totalCount: checklist.length,
     },
+    appReviewManuallyConfirmed: scopesApproved,
+    appReviewManualConfirmationNote: scopesApproved
+      ? "META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED=true is set. Not auto-detected from Meta's dashboard."
+      : "META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED is unset. Not auto-detected from Meta's dashboard.",
     connectedWabasCount: opts.connectedWabasCount,
     totalClinics: opts.totalClinics,
     approvedTemplatesCount: opts.approvedTemplatesCount,

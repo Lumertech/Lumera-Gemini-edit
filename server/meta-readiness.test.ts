@@ -17,7 +17,7 @@ import { createApiRouter } from "./api.ts";
 import { getDb, initDatabase } from "./db.ts";
 import { jsonRequest, startTestServer } from "./test-http.ts";
 import { WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
-import { META_TECH_PROVIDER_STATEMENT } from "../src/lib/metaStatus.ts";
+import { META_TECH_PROVIDER_STATEMENT, WHATSAPP_PERMISSIONS_STATUS_SENTENCE } from "../src/lib/metaStatus.ts";
 
 function hmacSha256(secret: string, body: string): string {
   return "sha256=" + crypto.createHmac("sha256", secret).update(body).digest("hex");
@@ -135,7 +135,7 @@ describe("Graph credential hygiene", () => {
 });
 
 describe("Overview claims", () => {
-  it("returns SUBMITTED_PENDING and TECH_PROVIDER without a SANDBOX providerType", () => {
+  it("returns APPROVED and TECH_PROVIDER without a SANDBOX providerType", () => {
     const prevReview = process.env.META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED;
     delete process.env.META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED;
     try {
@@ -155,25 +155,24 @@ describe("Overview claims", () => {
       assert.equal(overview.providerType.includes(META_TECH_PROVIDER_STATEMENT), false);
       assert.equal(overview.providerType, "WhatsApp Cloud API");
       assert.equal(overview.certificationStatus, "NOT_CERTIFIED");
-      assert.equal(overview.appReviewStatus.status, "SUBMITTED_PENDING");
+      assert.equal(overview.appReviewStatus.status, "APPROVED");
+      assert.equal(overview.appReviewManuallyConfirmed, false);
       assert.equal(overview.techProviderStatus, "TECH_PROVIDER");
       assert.equal(overview.techProviderLabel, META_TECH_PROVIDER_STATEMENT);
       assert.equal(JSON.stringify(overview).includes(META_TECH_PROVIDER_STATEMENT), true);
       assert.match(JSON.stringify(overview), /credentials are optional until provisioned/i);
       assert.equal(/App Review approved/i.test(JSON.stringify(overview)), false);
+      assert.equal(JSON.stringify(overview).includes("SUBMITTED_PENDING"), false);
       assert.equal(overview.appReviewStatus.checklist.every((c) => c.passed), false);
       assert.ok(overview.appReviewStatus.checklist.some((c) => c.item === "Embedded Signup config_id configured"));
       const scopesItem = overview.appReviewStatus.checklist.find((c) =>
-        c.item.includes("whatsapp_business_management / business_management / whatsapp_business_messaging")
+        c.item.includes("whatsapp_business_messaging, whatsapp_business_management and public_profile")
       );
       assert.ok(scopesItem);
-      assert.equal(scopesItem.passed, false);
-      assert.equal(scopesItem.item.startsWith("SANDBOX"), true);
-      assert.match(String(scopesItem.note || ""), /SANDBOX/);
-      assert.match(
-        String(scopesItem.note || ""),
-        /Meta has approved Lumera's WhatsApp permission requests in App Review/
-      );
+      assert.equal(scopesItem.passed, true);
+      assert.equal(scopesItem.item.startsWith("SANDBOX"), false);
+      assert.equal(/\bbusiness_management\b/.test(scopesItem.item.replace(/whatsapp_business_management/g, "")), false);
+      assert.equal(scopesItem.note, WHATSAPP_PERMISSIONS_STATUS_SENTENCE);
     } finally {
       if (prevReview === undefined) delete process.env.META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED;
       else process.env.META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED = prevReview;
@@ -196,13 +195,20 @@ describe("Overview claims", () => {
         verifyTokenConfigured: false,
         facebookOAuthConfigured: false,
       });
-      assert.equal(overview.appReviewStatus.status, "WHATSAPP_SCOPES_MARKED_APPROVED");
+      assert.equal(overview.appReviewStatus.status, "APPROVED");
+      assert.equal(overview.appReviewManuallyConfirmed, true);
+      assert.match(
+        overview.appReviewManualConfirmationNote,
+        /META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED=true is set/
+      );
       assert.equal(overview.certificationStatus, "NOT_CERTIFIED");
+      assert.equal(overview.techProviderStatus, "TECH_PROVIDER");
       const scopesItem = overview.appReviewStatus.checklist.find((c) =>
-        c.item.includes("whatsapp_business_management / business_management / whatsapp_business_messaging")
+        c.item.includes("whatsapp_business_messaging, whatsapp_business_management and public_profile")
       );
       assert.ok(scopesItem);
       assert.equal(scopesItem.passed, true);
+      assert.equal(scopesItem.note, WHATSAPP_PERMISSIONS_STATUS_SENTENCE);
     } finally {
       if (prevReview === undefined) delete process.env.META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED;
       else process.env.META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED = prevReview;

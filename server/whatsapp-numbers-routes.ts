@@ -252,8 +252,7 @@ export function createWhatsAppNumbersRouter(): Router {
       simulatorsEnabled: signup.simulatorsEnabled,
       embeddedSignupLive: false,
       embeddedSignupConfigured: signup.configured,
-      notice:
-        `${META_TECH_PROVIDER_STATEMENT} ${WHATSAPP_PERMISSIONS_STATUS_SENTENCE} Real Embedded Signup v4 is available when FACEBOOK_APP_ID and META_EMBEDDED_SIGNUP_CONFIG_ID are set. Contact ravee@lumer.me.`,
+      notice: signup.notice,
     });
   });
 

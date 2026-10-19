@@ -26,3 +26,11 @@ export const WHATSAPP_CLOUD_API_SECTION =
 /** Policy HTML chrome: the statement plus the clinic-owned account fact. */
 export const POLICY_HTML_STATUS_LINE =
   `${META_TECH_PROVIDER_STATEMENT} Clinics connect their own WhatsApp Business accounts.`;
+
+/** Clinic-facing status. Always both sentences, whether or not the admin flag is set. */
+export const WHATSAPP_CLINIC_STATUS_LINE =
+  `${META_TECH_PROVIDER_STATEMENT} ${WHATSAPP_PERMISSIONS_STATUS_SENTENCE}`;
+
+/** Shown when Embedded Signup credentials are missing. No environment variable names. */
+export const WHATSAPP_CONNECTION_UNAVAILABLE_SENTENCE =
+  "WhatsApp connection isn't available on this environment yet. Contact ravee@lumer.me.";
