@@ -4,49 +4,118 @@ import type { SqlDatabase } from "./sql-engine.ts";
 /**
  * One-time scrub of bot replies that embedded a prescription or lab preview.
  * The same SQL runs on SQLite and Postgres. It does not query the catalog.
- * A second boot sees the audit row and does not write again.
+ * History is rewritten to a privacy notice. Live bot replies stay the
+ * "ready" sentences in processBotActionOrQuery. send-rx rows stay: they are
+ * sender 'agent', not 'bot'. Booking confirmations that only contain UHID
+ * are not markers. translated_content is cleared when the column allows it,
+ * otherwise it receives the same notice. A marker that exists only in
+ * translated_content still matches.
  *
- * Neutral sentences match processBotActionOrQuery. send-rx rows stay: they
- * are sender 'agent', not 'bot'. translated_content is cleared when the
- * column allows it, otherwise it receives the same neutral sentence. A marker
- * that exists only in translated_content still matches.
+ * Writes run in one transaction. A failure rolls back and does not write the
+ * audit marker, so the next boot retries. The log line is the error name only.
+ * Idempotency is the action whatsapp_bot_phi_scrub. A dev database that still
+ * has the previous action string is rewritten once and left with this row.
  */
-export const WHATSAPP_BOT_PHI_SCRUB_ACTION = "WhatsApp bot PHI scrub";
+export const WHATSAPP_BOT_PHI_SCRUB_ACTION = "whatsapp_bot_phi_scrub";
+export const WHATSAPP_BOT_PHI_SCRUB_ACTION_V1 = "WhatsApp bot PHI scrub";
+export const WHATSAPP_BOT_PHI_SCRUB_NOTICE = "[Message details removed for privacy]";
+export const WHATSAPP_BOT_PHI_SCRUB_REASON = "cross-tenant PHI copied by pre-#171 bot";
 
-const RX_READY = "your prescription is ready";
-const LAB_READY = "your lab report is ready";
 const RX_MARKER = "Prescription Record Found";
 const LAB_MARKER = "Verified Lab Diagnostic Report";
 const PREVIEW_MARKER = "previewData";
+const MARKERS = [PREVIEW_MARKER, RX_MARKER, LAB_MARKER];
 
-const MESSAGE_MATCH = `sender = 'bot' AND (
-  COALESCE(content, '') LIKE ? OR COALESCE(media, '') LIKE ? OR COALESCE(translated_content, '') LIKE ?
-  OR COALESCE(content, '') LIKE ? OR COALESCE(media, '') LIKE ? OR COALESCE(translated_content, '') LIKE ?
-  OR COALESCE(content, '') LIKE ? OR COALESCE(media, '') LIKE ? OR COALESCE(translated_content, '') LIKE ?
+function sqlString(value: string): string {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+function markerMatch(column: string): string {
+  return MARKERS.map((marker) => `COALESCE(${column}, '') LIKE ${sqlString(`%${marker}%`)}`).join(" OR ");
+}
+
+const MESSAGE_WHERE = `sender = 'bot' AND (
+  ${markerMatch("content")} OR ${markerMatch("media")} OR ${markerMatch("translated_content")}
 )`;
-
-const LAB_CASE = `CASE
-         WHEN COALESCE(content, '') LIKE ? OR COALESCE(media, '') LIKE ? OR COALESCE(translated_content, '') LIKE ? THEN ?
-         ELSE ?
-       END`;
-
-function likeTerm(marker: string): string {
-  return `%${marker}%`;
-}
-
-function markerTriples(): string[] {
-  return [PREVIEW_MARKER, PREVIEW_MARKER, PREVIEW_MARKER, RX_MARKER, RX_MARKER, RX_MARKER, LAB_MARKER, LAB_MARKER, LAB_MARKER].map(
-    likeTerm
-  );
-}
-
-function labCaseParams(): string[] {
-  return [likeTerm(LAB_MARKER), likeTerm(LAB_MARKER), likeTerm(LAB_MARKER), LAB_READY, RX_READY];
-}
 
 function isNotNullViolation(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
   return /not[- ]null/i.test(message);
+}
+
+function errorName(err: unknown): string {
+  return err instanceof Error && err.name ? err.name : "Error";
+}
+
+type ScrubMessageRow = { id?: string; conversation_id?: string; tenant_id?: string };
+
+function scrubStatements(rows: ScrubMessageRow[], clearTranslation: boolean): string[] {
+  const notice = sqlString(WHATSAPP_BOT_PHI_SCRUB_NOTICE);
+  const translation = clearTranslation ? "NULL" : notice;
+  const messageIds = [...new Set(rows.map((row) => String(row.id || "")).filter(Boolean))].sort();
+  const conversationIds = [...new Set(rows.map((row) => String(row.conversation_id || "")).filter(Boolean))].sort();
+  const countsByTenant: Record<string, number> = {};
+  for (const row of rows) {
+    const tenantId = String(row.tenant_id || "");
+    countsByTenant[tenantId] = (countsByTenant[tenantId] || 0) + 1;
+  }
+  const details = JSON.stringify({
+    reason: WHATSAPP_BOT_PHI_SCRUB_REASON,
+    messageIds,
+    conversationIds,
+    countsByTenant,
+  });
+  const statements = [
+    `UPDATE whatsapp_messages
+     SET content = ${notice},
+         translated_content = ${translation},
+         media = NULL,
+         buttons = NULL
+     WHERE ${MESSAGE_WHERE}`,
+  ];
+  if (conversationIds.length) {
+    statements.push(
+      `UPDATE whatsapp_conversations
+       SET last_message = ${notice}
+       WHERE id IN (${conversationIds.map(sqlString).join(", ")})
+         AND (${markerMatch("last_message")})`
+    );
+  }
+  statements.push(`DELETE FROM audit_logs WHERE action = ${sqlString(WHATSAPP_BOT_PHI_SCRUB_ACTION_V1)}`);
+  statements.push(
+    `INSERT INTO audit_logs (
+      id, timestamp, user_id, user_name, action, details,
+      tenant_id, patient_id, actor_role, entity_type, entity_id
+    ) VALUES (
+      ${sqlString(crypto.randomUUID())},
+      ${sqlString(new Date().toISOString())},
+      NULL,
+      'System',
+      ${sqlString(WHATSAPP_BOT_PHI_SCRUB_ACTION)},
+      ${sqlString(details)},
+      '', '', '', 'whatsapp_message', ''
+    )`
+  );
+  return statements;
+}
+
+function commitStatements(database: SqlDatabase, statements: string[]): void {
+  if (database.dialect === "postgres") {
+    database.exec(statements.join(";\n"));
+    return;
+  }
+  database.exec("BEGIN");
+  try {
+    for (const statement of statements) database.exec(statement);
+    database.exec("COMMIT");
+  } catch (err) {
+    try {
+      database.exec("ROLLBACK");
+    } catch {
+      /* ignore rollback failure */
+    }
+    throw err;
+  }
 }
 
 export function scrubWhatsAppBotPhi(database: SqlDatabase): { messages: number; conversations: number; skipped: boolean } {
@@ -60,75 +129,27 @@ export function scrubWhatsAppBotPhi(database: SqlDatabase): { messages: number; 
   }
   if (already?.id) return { messages: 0, conversations: 0, skipped: true };
 
-  const messageCount = database
-    .prepare(`SELECT COUNT(*) AS c FROM whatsapp_messages WHERE ${MESSAGE_MATCH}`)
-    .get(...markerTriples()) as { c?: number };
-  const messages = Number(messageCount?.c || 0);
-
-  const clearTranslation = `translated_content = NULL`;
-  const sentenceTranslation = `translated_content = ${LAB_CASE}`;
-  const updateSql = (translationAssign: string) =>
-    `UPDATE whatsapp_messages
-     SET content = ${LAB_CASE},
-     ${translationAssign},
-     media = NULL,
-     buttons = NULL
-     WHERE ${MESSAGE_MATCH}`;
+  let rows: ScrubMessageRow[] = [];
   try {
-    database.prepare(updateSql(clearTranslation)).run(...labCaseParams(), ...markerTriples());
+    rows = database.prepare(`SELECT id, conversation_id, tenant_id FROM whatsapp_messages WHERE ${MESSAGE_WHERE}`).all() as ScrubMessageRow[];
   } catch (err) {
-    if (!isNotNullViolation(err)) throw err;
-    database.prepare(updateSql(sentenceTranslation)).run(...labCaseParams(), ...labCaseParams(), ...markerTriples());
+    console.error(errorName(err));
+    return { messages: 0, conversations: 0, skipped: true };
   }
 
-  const conversationCount = database
-    .prepare(
-      `SELECT COUNT(*) AS c FROM whatsapp_conversations
-       WHERE COALESCE(last_message, '') LIKE ?
-          OR COALESCE(last_message, '') LIKE ?
-          OR COALESCE(last_message, '') LIKE ?`
-    )
-    .get(likeTerm(LAB_MARKER), likeTerm(RX_MARKER), likeTerm(PREVIEW_MARKER)) as { c?: number };
-  const conversations = Number(conversationCount?.c || 0);
+  const conversationIds = new Set(rows.map((row) => String(row.conversation_id || "")).filter(Boolean));
+  const apply = (clearTranslation: boolean) => commitStatements(database, scrubStatements(rows, clearTranslation));
+  try {
+    try {
+      apply(true);
+    } catch (err) {
+      if (!isNotNullViolation(err)) throw err;
+      apply(false);
+    }
+  } catch (err) {
+    console.error(errorName(err));
+    return { messages: 0, conversations: 0, skipped: true };
+  }
 
-  database
-    .prepare(
-      `UPDATE whatsapp_conversations
-       SET last_message = COALESCE(
-         (
-           SELECT m.content FROM whatsapp_messages m
-           WHERE m.conversation_id = whatsapp_conversations.id
-             AND m.sender = 'bot'
-             AND m.content IN (?, ?)
-           ORDER BY m.created_at DESC
-           LIMIT 1
-         ),
-         CASE WHEN COALESCE(last_message, '') LIKE ? THEN ? ELSE ? END
-       )
-       WHERE COALESCE(last_message, '') LIKE ?
-          OR COALESCE(last_message, '') LIKE ?
-          OR COALESCE(last_message, '') LIKE ?`
-    )
-    .run(
-      RX_READY,
-      LAB_READY,
-      likeTerm(LAB_MARKER),
-      LAB_READY,
-      RX_READY,
-      likeTerm(LAB_MARKER),
-      likeTerm(RX_MARKER),
-      likeTerm(PREVIEW_MARKER)
-    );
-
-  const details = `botMessages=${messages}; conversations=${conversations}`;
-  database
-    .prepare(
-      `INSERT INTO audit_logs (
-        id, timestamp, user_id, user_name, action, details,
-        tenant_id, patient_id, actor_role, entity_type, entity_id
-      ) VALUES (?, ?, NULL, 'System', ?, ?, '', '', '', 'whatsapp_message', '')`
-    )
-    .run(crypto.randomUUID(), new Date().toISOString(), WHATSAPP_BOT_PHI_SCRUB_ACTION, details);
-
-  return { messages, conversations, skipped: false };
+  return { messages: rows.length, conversations: conversationIds.size, skipped: false };
 }

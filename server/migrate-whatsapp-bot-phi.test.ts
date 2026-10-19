@@ -6,7 +6,14 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { migrate } from "./db-migrate.ts";
-import { scrubWhatsAppBotPhi, WHATSAPP_BOT_PHI_SCRUB_ACTION } from "./migrate-whatsapp-bot-phi.ts";
+import {
+  scrubWhatsAppBotPhi,
+  WHATSAPP_BOT_PHI_SCRUB_ACTION,
+  WHATSAPP_BOT_PHI_SCRUB_ACTION_V1,
+  WHATSAPP_BOT_PHI_SCRUB_NOTICE,
+  WHATSAPP_BOT_PHI_SCRUB_REASON,
+} from "./migrate-whatsapp-bot-phi.ts";
+import type { SqlDatabase } from "./sql-engine.ts";
 
 function tempSqlite(): { db: DatabaseSync; close: () => void } {
   const file = path.join(os.tmpdir(), `lumera-wa-phi-scrub-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}.db`);
@@ -97,17 +104,31 @@ describe("WhatsApp bot PHI scrub", () => {
       ).run(labContent, `अनुवाद ${labNote}`, JSON.stringify({ type: "pdf", previewData: { doctor_interpretation: labNote } }));
       db.prepare(
         `INSERT INTO whatsapp_messages (id, conversation_id, patient_phone, sender, content, translated_content, buttons, media, created_at, tenant_id)
-         VALUES ('msg-xlate', 'conv-xlate', '+919800011331', 'bot', 'See you tomorrow', ?, NULL, NULL, '2026-10-19T00:00:04.000Z', 'tenant-a')`
+         VALUES ('msg-xlate', 'conv-xlate', '+919800011331', 'bot', 'See you tomorrow', ?, NULL, NULL, '2026-10-19T00:00:04.000Z', 'tenant-b')`
       ).run(`🔬 *Verified Lab Diagnostic Report*\n${translatedOnly}`);
       db.prepare(
         `INSERT INTO whatsapp_messages (id, conversation_id, patient_phone, sender, content, translated_content, buttons, media, created_at, tenant_id)
          VALUES ('msg-agent', 'conv-agent', '+919800011000', 'agent', ?, ?, NULL, NULL, '2026-10-19T00:00:03.000Z', 'tenant-a')`
       ).run(agentContent, agentTranslation);
+      const bookingUhid = "🎉 *Appointment Confirmed!*\n*UHID*: LUM-KEEP-UHID\n*Token*: #12";
+      db.prepare(
+        `INSERT INTO whatsapp_conversations (id, patient_phone, patient_name, last_message, updated_at, tenant_id)
+         VALUES ('conv-uhid', '+919800011012', 'Hidden Patient', ?, '2026-10-19T00:00:00.000Z', 'tenant-a')`
+      ).run(bookingUhid);
+      db.prepare(
+        `INSERT INTO whatsapp_messages (id, conversation_id, patient_phone, sender, content, translated_content, created_at, tenant_id)
+         VALUES ('msg-uhid', 'conv-uhid', '+919800011012', 'bot', ?, ?, '2026-10-19T00:00:05.000Z', 'tenant-a')`
+      ).run(bookingUhid, "UHID LUM-KEEP-UHID");
+      const orphanPreview = "💊 *Prescription Record Found (RX-ORPHAN)*";
+      db.prepare(
+        `INSERT INTO whatsapp_conversations (id, patient_phone, patient_name, last_message, updated_at, tenant_id)
+         VALUES ('conv-orphan', '+919800011099', 'Hidden Patient', ?, '2026-10-19T00:00:00.000Z', 'tenant-a')`
+      ).run(orphanPreview);
 
       const first = scrubWhatsAppBotPhi(db);
       assert.equal(first.skipped, false);
       assert.equal(first.messages, 3);
-      assert.equal(first.conversations, 2);
+      assert.equal(first.conversations, 3);
 
       const rx = db.prepare("SELECT content, translated_content, media, buttons FROM whatsapp_messages WHERE id = 'msg-rx'").get() as {
         content: string;
@@ -133,26 +154,32 @@ describe("WhatsApp bot PHI scrub", () => {
         media: string | null;
         buttons: string | null;
       };
-      assert.equal(rx.content, "your prescription is ready");
+      assert.equal(rx.content, WHATSAPP_BOT_PHI_SCRUB_NOTICE);
       assert.equal(rx.translated_content, null);
       assert.equal(rx.media, null);
       assert.equal(rx.buttons, null);
-      assert.equal(lab.content, "your lab report is ready");
+      assert.equal(lab.content, WHATSAPP_BOT_PHI_SCRUB_NOTICE);
       assert.equal(lab.translated_content, null);
       assert.equal(lab.media, null);
       assert.equal(lab.buttons, null);
-      assert.equal(translated.content, "your lab report is ready");
+      assert.equal(translated.content, WHATSAPP_BOT_PHI_SCRUB_NOTICE);
       assert.equal(translated.translated_content, null);
       assert.equal(translated.media, null);
       assert.equal(agent.content, agentContent);
       assert.equal(agent.translated_content, agentTranslation);
+      const uhid = db.prepare("SELECT content, translated_content FROM whatsapp_messages WHERE id = 'msg-uhid'").get() as {
+        content: string;
+        translated_content: string;
+      };
+      assert.equal(uhid.content, bookingUhid);
+      assert.equal(uhid.translated_content, "UHID LUM-KEEP-UHID");
       assert.equal(
         (db.prepare("SELECT last_message FROM whatsapp_conversations WHERE id = 'conv-rx'").get() as { last_message: string }).last_message,
-        "your prescription is ready"
+        WHATSAPP_BOT_PHI_SCRUB_NOTICE
       );
       assert.equal(
         (db.prepare("SELECT last_message FROM whatsapp_conversations WHERE id = 'conv-lab'").get() as { last_message: string }).last_message,
-        "your lab report is ready"
+        WHATSAPP_BOT_PHI_SCRUB_NOTICE
       );
       assert.equal(
         (db.prepare("SELECT last_message FROM whatsapp_conversations WHERE id = 'conv-agent'").get() as { last_message: string }).last_message,
@@ -162,6 +189,14 @@ describe("WhatsApp bot PHI scrub", () => {
         (db.prepare("SELECT last_message FROM whatsapp_conversations WHERE id = 'conv-xlate'").get() as { last_message: string }).last_message,
         "See you tomorrow"
       );
+      assert.equal(
+        (db.prepare("SELECT last_message FROM whatsapp_conversations WHERE id = 'conv-orphan'").get() as { last_message: string }).last_message,
+        orphanPreview
+      );
+      assert.equal(
+        (db.prepare("SELECT last_message FROM whatsapp_conversations WHERE id = 'conv-uhid'").get() as { last_message: string }).last_message,
+        bookingUhid
+      );
 
       const audits = db.prepare("SELECT action, details, user_name FROM audit_logs").all() as {
         action: string;
@@ -170,12 +205,20 @@ describe("WhatsApp bot PHI scrub", () => {
       }[];
       assert.equal(audits.length, 1);
       assert.equal(audits[0].action, WHATSAPP_BOT_PHI_SCRUB_ACTION);
-      assert.equal(audits[0].details, "botMessages=3; conversations=2");
-      assert.equal(audits[0].details.includes(diagnosis), false);
-      assert.equal(audits[0].details.includes(labNote), false);
-      assert.equal(audits[0].details.includes(translatedOnly), false);
-      assert.equal(audits[0].details.includes("Hidden Patient"), false);
-      assert.equal(audits[0].details.includes("previewData"), false);
+      assert.equal(audits[0].user_name, "System");
+      const details = JSON.parse(audits[0].details) as {
+        reason: string;
+        messageIds: string[];
+        conversationIds: string[];
+        countsByTenant: Record<string, number>;
+      };
+      assert.equal(details.reason, WHATSAPP_BOT_PHI_SCRUB_REASON);
+      assert.deepEqual(details.messageIds, ["msg-lab", "msg-rx", "msg-xlate"]);
+      assert.deepEqual(details.conversationIds, ["conv-lab", "conv-rx", "conv-xlate"]);
+      assert.deepEqual(details.countsByTenant, { "tenant-a": 2, "tenant-b": 1 });
+      for (const secret of [diagnosis, labNote, translatedOnly, "Hidden Patient", "previewData", "LUM-KEEP-UHID", orphanPreview]) {
+        assert.equal(audits[0].details.includes(secret), false, secret);
+      }
 
       const snapshot = db.prepare("SELECT id, content, translated_content, media, buttons FROM whatsapp_messages ORDER BY id").all();
       const lastMessages = db.prepare("SELECT id, last_message FROM whatsapp_conversations ORDER BY id").all();
@@ -248,12 +291,15 @@ describe("WhatsApp bot PHI scrub", () => {
         content: string;
         translated_content: string;
       };
-      assert.equal(rx.content, "your prescription is ready");
-      assert.equal(rx.translated_content, "your prescription is ready");
-      assert.equal(lab.content, "your lab report is ready");
-      assert.equal(lab.translated_content, "your lab report is ready");
-      const audit = db.prepare("SELECT details FROM audit_logs").get() as { details: string };
-      assert.equal(audit.details, "botMessages=2; conversations=0");
+      assert.equal(rx.content, WHATSAPP_BOT_PHI_SCRUB_NOTICE);
+      assert.equal(rx.translated_content, WHATSAPP_BOT_PHI_SCRUB_NOTICE);
+      assert.equal(lab.content, WHATSAPP_BOT_PHI_SCRUB_NOTICE);
+      assert.equal(lab.translated_content, WHATSAPP_BOT_PHI_SCRUB_NOTICE);
+      const audit = db.prepare("SELECT action, details FROM audit_logs").get() as { action: string; details: string };
+      assert.equal(audit.action, WHATSAPP_BOT_PHI_SCRUB_ACTION);
+      const details = JSON.parse(audit.details) as { reason: string; messageIds: string[] };
+      assert.equal(details.reason, WHATSAPP_BOT_PHI_SCRUB_REASON);
+      assert.deepEqual(details.messageIds, ["msg-lab", "msg-rx"]);
       assert.equal(audit.details.includes(translatedOnly), false);
       const second = scrubWhatsAppBotPhi(db);
       assert.equal(second.skipped, true);
@@ -261,9 +307,103 @@ describe("WhatsApp bot PHI scrub", () => {
       assert.equal(
         (db.prepare("SELECT translated_content FROM whatsapp_messages WHERE id = 'msg-lab'").get() as { translated_content: string })
           .translated_content,
-        "your lab report is ready"
+        WHATSAPP_BOT_PHI_SCRUB_NOTICE
       );
     } finally {
+      close();
+    }
+  });
+
+  it("replaces a dev database's old scrub action with one new audit row", () => {
+    const { db, close } = tempSqlite();
+    const secret = "SECRET-OLD-ACTION";
+    try {
+      createScrubTables(db);
+      db.prepare(
+        `INSERT INTO audit_logs (id, timestamp, user_name, action, details)
+         VALUES ('old-audit', '2026-10-01T00:00:00.000Z', 'System', ?, 'botMessages=1; conversations=0')`
+      ).run(WHATSAPP_BOT_PHI_SCRUB_ACTION_V1);
+      db.prepare(
+        `INSERT INTO whatsapp_conversations (id, patient_phone, patient_name, last_message, updated_at, tenant_id)
+         VALUES ('conv-old', '+919800011001', 'Hidden Patient', 'See you tomorrow', '2026-10-19T00:00:00.000Z', 'tenant-a')`
+      ).run();
+      db.prepare(
+        `INSERT INTO whatsapp_messages (id, conversation_id, patient_phone, sender, content, translated_content, created_at, tenant_id)
+         VALUES ('msg-old', 'conv-old', '+919800011001', 'bot', 'See you tomorrow', ?, '2026-10-19T00:00:01.000Z', 'tenant-a')`
+      ).run(`Prescription Record Found ${secret}`);
+
+      const first = scrubWhatsAppBotPhi(db);
+      assert.equal(first.skipped, false);
+      assert.equal(
+        (db.prepare("SELECT content, translated_content FROM whatsapp_messages WHERE id = 'msg-old'").get() as { content: string; translated_content: string | null })
+          .content,
+        WHATSAPP_BOT_PHI_SCRUB_NOTICE
+      );
+      const audits = db.prepare("SELECT action, details FROM audit_logs").all() as { action: string; details: string }[];
+      assert.equal(audits.length, 1);
+      assert.equal(audits[0].action, WHATSAPP_BOT_PHI_SCRUB_ACTION);
+      assert.equal(audits[0].details.includes(secret), false);
+      assert.equal(audits[0].details.includes(WHATSAPP_BOT_PHI_SCRUB_ACTION_V1), false);
+      const second = scrubWhatsAppBotPhi(db);
+      assert.equal(second.skipped, true);
+      assert.equal((db.prepare("SELECT COUNT(*) AS c FROM audit_logs").get() as { c: number }).c, 1);
+    } finally {
+      close();
+    }
+  });
+
+  it("a forced scrub error rolls back and does not escape migrate()", () => {
+    const secret = "SECRET-FORCED-SCRUB";
+    const { db, close } = tempSqlite();
+    const logs: unknown[][] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => {
+      logs.push(args);
+    };
+    const failOnMarkerInsert = (inner: DatabaseSync): SqlDatabase => ({
+      exec(sql: string) {
+        if (sql.includes("INSERT INTO audit_logs") && sql.includes(WHATSAPP_BOT_PHI_SCRUB_ACTION)) {
+          const err = new Error(`forced failure ${secret} ${sql}`);
+          err.name = "ForcedScrubError";
+          throw err;
+        }
+        inner.exec(sql);
+      },
+      prepare(sql: string) {
+        return inner.prepare(sql);
+      },
+    });
+    try {
+      createScrubTables(db);
+      db.prepare(
+        `INSERT INTO whatsapp_messages (id, conversation_id, patient_phone, sender, content, translated_content, created_at, tenant_id)
+         VALUES ('msg-keep', 'conv-keep', '+919800011777', 'bot', ?, NULL, '2026-10-19T00:00:01.000Z', 'tenant-a')`
+      ).run(`Prescription Record Found ${secret}`);
+      const result = scrubWhatsAppBotPhi(failOnMarkerInsert(db));
+      assert.equal(result.skipped, true);
+      assert.equal(
+        (db.prepare("SELECT content FROM whatsapp_messages WHERE id = 'msg-keep'").get() as { content: string }).content,
+        `Prescription Record Found ${secret}`
+      );
+      assert.equal((db.prepare("SELECT COUNT(*) AS c FROM audit_logs").get() as { c: number }).c, 0);
+
+      const boot = tempSqlite();
+      try {
+        assert.doesNotThrow(() => migrate(failOnMarkerInsert(boot.db)));
+        assert.equal(
+          (boot.db.prepare("SELECT COUNT(*) AS c FROM audit_logs WHERE action = ?").get(WHATSAPP_BOT_PHI_SCRUB_ACTION) as { c: number }).c,
+          0
+        );
+      } finally {
+        boot.close();
+      }
+      const blob = JSON.stringify(logs);
+      assert.equal(blob.includes(secret), false);
+      assert.equal(blob.includes("INSERT INTO audit_logs"), false);
+      assert.equal(blob.includes("Prescription Record Found"), false);
+      assert.ok(logs.some((entry) => entry.length === 1 && entry[0] === "ForcedScrubError"));
+    } finally {
+      console.error = original;
       close();
     }
   });
