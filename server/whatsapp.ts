@@ -921,7 +921,7 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
       const sessionTenantId = clinicTenantId(req);
       db.prepare(`
         INSERT INTO whatsapp_outbound_events (id, event_type, patient_phone, patient_name, status, details, action_payload, sent_at, tenant_id)
-        VALUES (?, ?, ?, ?, 'delivered', ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)
       `).run(eventId, eventType, patientPhone, patientName, details, JSON.stringify(customPayload), now, sessionTenantId);
 
       let conv = sessionTenantId

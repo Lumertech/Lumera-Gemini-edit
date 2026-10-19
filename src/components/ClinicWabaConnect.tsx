@@ -174,29 +174,33 @@ export const ClinicWabaConnect: React.FC = () => {
           </div>
         </div>
       ) : (
-        <div className="flex flex-wrap gap-2 pt-1">
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => void handleRealConnect()}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-semibold disabled:opacity-50"
-          >
-            {busy ? "Connecting…" : "Connect with Meta Embedded Signup"}
-            <ArrowRight className="w-3.5 h-3.5" />
-          </button>
-          {simulatorsEnabled ? (
+        <div className="space-y-2 pt-1" data-testid="clinic-whatsapp-disconnected">
+          <p className="text-xs font-semibold text-slate-800">Not connected</p>
+          <p className="text-xs text-slate-600" data-testid="clinic-whatsapp-templates-empty">No templates</p>
+          <div className="flex flex-wrap gap-2">
             <button
               type="button"
               disabled={busy}
-              onClick={() => void handleSimulate()}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600 text-white text-xs font-semibold disabled:opacity-50"
+              onClick={() => void handleRealConnect()}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-semibold disabled:opacity-50"
             >
-              Simulate (SANDBOX / DEV-ONLY)
+              {busy ? "Connecting…" : "Connect WhatsApp"}
+              <ArrowRight className="w-3.5 h-3.5" />
             </button>
-          ) : null}
+            {simulatorsEnabled ? (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void handleSimulate()}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600 text-white text-xs font-semibold disabled:opacity-50"
+              >
+                Simulate (SANDBOX / DEV-ONLY)
+              </button>
+            ) : null}
+          </div>
         </div>
       )}
-      {status?.templates?.length ? (
+      {connected && status?.templates?.length ? (
         <ul className="text-xs space-y-1.5 pt-1">
           {status.templates.map((template) => (
             <li key={template.name} className="rounded-lg bg-white/80 border border-amber-100 px-2 py-1.5">

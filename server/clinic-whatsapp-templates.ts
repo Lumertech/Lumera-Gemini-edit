@@ -675,18 +675,21 @@ export function listClinicTemplateStatus(db: DatabaseSync, tenantId: string): Cl
         .all(tenant) as Array<{ name?: string; status?: string; rejection_reason?: string | null }>)
     : [];
   const byName = new Map(rows.map((row) => [String(row.name || ""), row]));
-  return CLINIC_TEMPLATE_CATALOG.map((spec) => {
+  return CLINIC_TEMPLATE_CATALOG.flatMap((spec) => {
     const row = byName.get(spec.name);
-    const status = row ? publicStatus(String(row.status || "")) : "MISSING";
+    if (!row) return [];
+    const status = publicStatus(String(row.status || ""));
     const rejectionReason = String(row?.rejection_reason || "").trim();
-    return {
-      name: spec.name,
-      label: spec.label,
-      kind: spec.kind,
-      status,
-      rejectionReason,
-      sending: sendingMeaning(status, rejectionReason),
-    };
+    return [
+      {
+        name: spec.name,
+        label: spec.label,
+        kind: spec.kind,
+        status,
+        rejectionReason,
+        sending: sendingMeaning(status, rejectionReason),
+      },
+    ];
   });
 }
 

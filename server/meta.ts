@@ -807,7 +807,7 @@ export function createMetaRouter(): Router {
         displayPhoneNumber: publicNumber?.displayPhoneNumber || "",
         displayName: publicNumber?.displayName || publicNumber?.metaWabaName || "",
         wabaId: publicNumber?.wabaId || "",
-        templates: listClinicTemplateStatus(db, tenantId),
+        templates: connected ? listClinicTemplateStatus(db, tenantId) : [],
         graphErrors: Object.entries(GRAPH_ERROR_GUIDANCE).map(([code, guidance]) => ({ code, guidance })),
         lastGraphError: latestGraphErrorForTenant(db, tenantId),
       });
