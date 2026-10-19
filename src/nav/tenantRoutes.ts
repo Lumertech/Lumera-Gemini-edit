@@ -114,7 +114,7 @@ export function parseWorkspaceScreen(viewSeg: string, recordSeg = ""): ParsedWor
     return { screen: "consultations", appView: "rx", recordId: "", payFocus: false, recognized: true };
   }
   if (key === "invoices" || key === "billing") {
-    return { screen: "invoices", appView: "billing", recordId: "", payFocus: false, recognized: true };
+    return { screen: "invoices", appView: "billing", recordId, payFocus: false, recognized: true };
   }
   if (key === "payments") {
     return { screen: "payments", appView: "billing", recordId: "", payFocus: true, recognized: true };
@@ -134,6 +134,7 @@ export function workspaceScreenPath(slug: string, screen: string, recordId = "")
   const id = String(recordId || "").trim();
   if (screen === "patients" && id) return `/w/${ws}/patients/${encodeURIComponent(id)}`;
   if (screen === "rx" && id) return `/w/${ws}/rx/${encodeURIComponent(id)}`;
+  if (screen === "invoices" && id) return `/w/${ws}/invoices/${encodeURIComponent(id)}`;
   return `/w/${ws}/${screen}`;
 }
 
@@ -151,7 +152,7 @@ export function appViewToWorkspacePath(
   if (key === "payments" || ((key === "billing" || key === "invoices") && payFocus)) {
     return workspaceScreenPath(slug, "payments");
   }
-  if (key === "billing" || key === "invoices") return workspaceScreenPath(slug, "invoices");
+  if (key === "billing" || key === "invoices") return workspaceScreenPath(slug, "invoices", id);
   if (key === "queue" || key === "opd-queue" || key === "opd") return workspaceScreenPath(slug, "opd");
   if (key === "voicebot" || key === "ai-voice") return workspaceScreenPath(slug, "ai-voice");
   if (key === "consultations" || key === "rx" || key === "smart-rx") return workspaceScreenPath(slug, "consultations");

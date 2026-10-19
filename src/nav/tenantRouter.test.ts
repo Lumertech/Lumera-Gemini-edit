@@ -38,6 +38,34 @@ describe("workspace router deep links", () => {
     assert.equal(router.state.location.pathname, "/w/physiodoctor-practice/patients/pat-123");
   });
 
+  it("reloads invoice detail from /invoices/:id and restores it on back", async () => {
+    const path = "/w/malhotra-individual-practice/invoices/inv-194b83";
+    const router = createMemoryRouter([{ path: "*", Component: ScreenProbe }], {
+      initialEntries: [path],
+    });
+    const first = markup(router);
+    assert.match(first, /data-testid="screen">invoices/);
+    assert.match(first, /data-testid="view">billing/);
+    assert.match(first, /inv-194b83/);
+    assert.equal(router.state.location.pathname, path);
+
+    const reloaded = createMemoryRouter([{ path: "*", Component: ScreenProbe }], {
+      initialEntries: [router.state.location.pathname],
+    });
+    const again = markup(reloaded);
+    assert.match(again, /data-testid="screen">invoices/);
+    assert.match(again, /data-testid="view">billing/);
+    assert.match(again, /inv-194b83/);
+
+    await reloaded.navigate("/w/malhotra-individual-practice/opd");
+    assert.equal(reloaded.state.location.pathname, "/w/malhotra-individual-practice/opd");
+    await reloaded.navigate(-1);
+    assert.equal(reloaded.state.historyAction, "POP");
+    assert.equal(reloaded.state.location.pathname, path);
+    assert.match(markup(reloaded), /inv-194b83/);
+    assert.match(markup(reloaded), /data-testid="view">billing/);
+  });
+
   it("renders the visit from rx/:visitId on first load", () => {
     const router = createMemoryRouter([{ path: "*", Component: ScreenProbe }], {
       initialEntries: ["/w/physiodoctor-practice/rx/visit-42"],

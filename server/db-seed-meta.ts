@@ -218,13 +218,7 @@ export function ensureMetaTechProviderAndPolicies(database: SqlDatabase) {
             text: "Dear {{1}}, thank you for consulting Dr. {{2}}. Your digital prescription (Rx: {{3}}) and itemized consultation receipt are attached above. You can view dosage schedules anytime on your Lumera Portal.",
             example: { body_text: [["Sunita Roy", "Vikram Malhotra", "RX-2026-0101"]] }
           },
-          { type: "FOOTER", text: "Lumera Health EMR System • Digital Rx" },
-          {
-            type: "BUTTONS",
-            buttons: [
-              { type: "URL", text: "Open Patient Portal", url: "https://lumera.health/portal" }
-            ]
-          }
+          { type: "FOOTER", text: "Lumera Health EMR System • Digital Rx" }
         ]),
         meta_template_id: "meta_tpl_983102948103",
         rejection_reason: null

@@ -75,7 +75,7 @@ export interface NavLocation {
   adminTab: AdminTab;
   appView: AppView;
   workspaceSlug: string;
-  /** Set for `/patients/:id` and `/rx/:visitId`. Empty on every other view. */
+  /** Set for `/patients/:id`, `/rx/:visitId`, and `/invoices/:id`. Empty on every other view. */
   recordId: string;
   /** Canonical screen segment (`opd`, `invoices`, `rx`, …). Empty off the clinic shell. */
   screen: string;
@@ -169,7 +169,7 @@ function decodePathSegment(raw: string): string {
   }
 }
 
-/** Patient id or visit id on the workspace record routes. Case is preserved. */
+/** Patient id, visit id, or invoice id on the workspace record routes. Case is preserved. */
 export function recordIdFromPath(pathname: string): string {
   const parts = (pathname.split("?")[0] || "/")
     .replace(/\/+$/, "")
@@ -178,7 +178,9 @@ export function recordIdFromPath(pathname: string): string {
   const head = (parts[0] || "").toLowerCase();
   const view = head === "w" ? (parts[2] || "").toLowerCase() : head === "app" ? (parts[1] || "").toLowerCase() : "";
   const record = head === "w" ? parts[3] : head === "app" ? parts[2] : "";
-  if ((view === "patients" || view === "rx") && record) return decodePathSegment(record);
+  if ((view === "patients" || view === "rx" || view === "invoices" || view === "billing") && record) {
+    return decodePathSegment(record);
+  }
   return "";
 }
 
@@ -198,7 +200,7 @@ export function appViewToPath(
   const id = String(recordId || "").trim();
   if (ws) return appViewToWorkspacePath(String(view || tab), ws, id, Boolean(opts?.payFocus));
   const base = `/app/${tab}`;
-  if ((tab === "patients" || tab === "rx") && id) return `${base}/${encodeURIComponent(id)}`;
+  if ((tab === "patients" || tab === "rx" || tab === "billing") && id) return `${base}/${encodeURIComponent(id)}`;
   return base;
 }
 
