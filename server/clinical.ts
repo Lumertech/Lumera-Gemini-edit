@@ -18,8 +18,9 @@ import { registerPatientDocumentRoutes } from "./patient-documents.ts";
 import { registerPatientDocumentConsentRoutes } from "./patient-document-consent.ts";
 import { buildPatientTimeline, presentPrescriptionForRole } from "./patient-timeline.ts";
 import { denyUnlessPatientRecordRole, denyUnlessPrescriber, isReceptionRole } from "./patient-access.ts";
-import { clinicCalendarDate, parseAppointmentListDate } from "../src/lib/clinicDay.ts";
+import { clinicCalendarDate, parseAppointmentListDate, resolveQueueDate } from "../src/lib/clinicDay.ts";
 import { HIDDEN_AMBIENT_SOURCES, hiddenVisitSourceSql, isHiddenVisitSource } from "./ambient-walkin.ts";
+import { allocateTokenNumber, writeAllocatedToken } from "./queue-tokens.ts";
 import {
   loadPatientClinicPhone,
   loadPatientTenant,
@@ -196,7 +197,7 @@ function yearToken(prefix: string): string {
   return `${prefix}-${year}-${crypto.randomUUID().replace(/-/g, "").slice(0, 6).toUpperCase()}`;
 }
 
-function tenantTimezone(tenantId: string): string {
+export function tenantTimezone(tenantId: string): string {
   const row = getDb().prepare("SELECT timezone FROM tenants WHERE id = ?").get(tenantId) as
     | { timezone?: string }
     | undefined;
@@ -226,14 +227,24 @@ export function listTenantAppointments(tenantId: string, date?: string | null): 
     .all(tenantId, ...HIDDEN_AMBIENT_SOURCES) as Record<string, unknown>[];
 }
 
-export function nextTokenNumber(tenantId: string, date: string): number {
+/**
+ * Next visible token for this tenant and queue date.
+ * Hidden ambient visits stay out of the sequence. Pass a doctor id to scope one queue.
+ */
+export function nextTokenNumber(tenantId: string, date: string, doctorId?: string): number {
+  const scoped = doctorId !== undefined;
   const row = getDb()
     .prepare(
       `SELECT COALESCE(MAX(token_number), 0) AS max_token
        FROM appointments
-       WHERE tenant_id = ? AND date = ? AND ${hiddenVisitSourceSql()}`
+       WHERE tenant_id = ? AND date = ? AND ${hiddenVisitSourceSql()}
+         ${scoped ? "AND doctor_id = ?" : ""}`
     )
-    .get(tenantId, date, ...HIDDEN_AMBIENT_SOURCES) as { max_token: number };
+    .get(
+      ...(scoped
+        ? [tenantId, date, ...HIDDEN_AMBIENT_SOURCES, String(doctorId)]
+        : [tenantId, date, ...HIDDEN_AMBIENT_SOURCES])
+    ) as { max_token: number };
   return Number(row?.max_token || 0) + 1;
 }
 
@@ -604,11 +615,16 @@ function uniqueUhid(): string {
   return yearToken("LUM");
 }
 
-function getDoctorById(id: string) {
-  if (!id) return undefined;
-  return getDb().prepare("SELECT * FROM doctors WHERE id = ?").get(id) as
-    | Record<string, unknown>
-    | undefined;
+/** Roster doctor in this tenant. A doctor row owned by another clinic is rejected. */
+function doctorForVisit(tenantId: string, doctorId: string): Record<string, unknown> | undefined {
+  if (!doctorId) return undefined;
+  const owned = tenantDoctor(tenantId, doctorId);
+  if (owned) return owned;
+  const foreign = getDb().prepare("SELECT id FROM doctors WHERE id = ?").get(doctorId) as { id?: string } | undefined;
+  if (foreign?.id) {
+    throw Object.assign(new Error("Consulting doctor is not in this clinic"), { status: 400 });
+  }
+  return undefined;
 }
 
 function uniqueRxNumber(requested?: string): string {
@@ -857,53 +873,58 @@ export function insertAppointment(tenantId: string, body: Record<string, unknown
     throw Object.assign(new Error("Patient not found"), { status: 404 });
   }
   const mappedPatient = mapPatient(patient);
-  const requestedDate = String(body.date || "").trim();
-  const date = /^\d{4}-\d{2}-\d{2}$/.test(requestedDate) ? requestedDate : clinicDayForTenant(tenantId);
-  const tokenNumber =
-    body.tokenNumber !== undefined && body.tokenNumber !== null
-      ? Number(body.tokenNumber)
-      : body.token_number !== undefined && body.token_number !== null
-        ? Number(body.token_number)
-        : nextTokenNumber(tenantId, date);
+  const date = resolveQueueDate(body.date, tenantTimezone(tenantId));
   const id = String(body.id || "").trim() || shortId("apt");
   const existing = getDb().prepare("SELECT id FROM appointments WHERE id = ?").get(id);
   if (existing) {
     throw Object.assign(new Error("Appointment id already exists"), { status: 409 });
   }
   const doctorId = String(body.doctorId || body.doctor_id || actor?.id || "");
-  const doctor = getDoctorById(doctorId);
+  const requestedToken =
+    body.tokenNumber !== undefined && body.tokenNumber !== null
+      ? Number(body.tokenNumber)
+      : body.token_number !== undefined && body.token_number !== null
+        ? Number(body.token_number)
+        : undefined;
+  const doctor = doctorForVisit(tenantId, doctorId);
   const now = new Date().toISOString();
   const vitals = body.vitals == null ? null : jsonText(body.vitals, "null");
   const patientPhone = canonicalAppointmentPhone(String(mappedPatient.phone || ""));
-  getDb()
-    .prepare(
-      `INSERT INTO appointments (
-        id, tenant_id, token_number, patient_id, patient_name, patient_phone, uhid,
-        doctor_id, doctor_name, specialty, date, time_slot, type, status, source,
-        consultation_fee, is_paid, vitals, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-    .run(
-      id,
-      tenantId,
-      tokenNumber,
-      mappedPatient.id,
-      mappedPatient.name,
-      patientPhone,
-      mappedPatient.uhid,
-      doctorId,
-      String(body.doctorName || body.doctor_name || doctor?.name || actor?.name || ""),
-      String(body.specialty || doctor?.specialty || "General Medicine"),
-      date,
-      String(body.timeSlot || body.time_slot || ""),
-      String(body.type || "New Consultation"),
-      String(body.status || "Waiting"),
-      String(body.source || "Walk-in"),
-      Number(body.consultationFee ?? body.consultation_fee ?? 0),
-      body.isPaid === false || body.is_paid === 0 || body.is_paid === false ? 0 : body.isPaid || body.is_paid ? 1 : 0,
-      vitals,
-      now
-    );
+  const insert = getDb().prepare(
+    `INSERT INTO appointments (
+      id, tenant_id, token_number, patient_id, patient_name, patient_phone, uhid,
+      doctor_id, doctor_name, specialty, date, time_slot, type, status, source,
+      consultation_fee, is_paid, vitals, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  );
+  const insertArgs = (tokenNumber: number) => [
+    id,
+    tenantId,
+    tokenNumber,
+    mappedPatient.id,
+    mappedPatient.name,
+    patientPhone,
+    mappedPatient.uhid,
+    doctorId,
+    String(body.doctorName || body.doctor_name || doctor?.name || actor?.name || ""),
+    String(body.specialty || doctor?.specialty || "General Medicine"),
+    date,
+    String(body.timeSlot || body.time_slot || ""),
+    String(body.type || "New Consultation"),
+    String(body.status || "Waiting"),
+    String(body.source || "Walk-in"),
+    Number(body.consultationFee ?? body.consultation_fee ?? 0),
+    body.isPaid === false || body.is_paid === 0 || body.is_paid === false ? 0 : body.isPaid || body.is_paid ? 1 : 0,
+    vitals,
+    now,
+  ];
+  writeAllocatedToken(
+    (tokenNumber) => {
+      insert.run(...insertArgs(tokenNumber));
+    },
+    (requested) => allocateTokenNumber(getDb(), tenantId, date, doctorId, requested),
+    requestedToken
+  );
   getDb()
     .prepare("UPDATE patients SET last_visit = ? WHERE id = ? AND tenant_id = ?")
     .run(date, mappedPatient.id, tenantId);
@@ -922,12 +943,15 @@ export function updateAppointment(
   }
   const mapped = mapAppointment(existing);
   const status = body.status !== undefined ? String(body.status) : mapped.status;
-  const tokenNumber =
-    body.tokenNumber !== undefined
-      ? Number(body.tokenNumber)
-      : body.token_number !== undefined
-        ? Number(body.token_number)
-        : mapped.tokenNumber;
+  const dateChanged = body.date !== undefined;
+  const doctorChanged = body.doctorId !== undefined || body.doctor_id !== undefined;
+  const tokenChanged = body.tokenNumber !== undefined || body.token_number !== undefined;
+  const nextDate = dateChanged ? resolveQueueDate(body.date, tenantTimezone(tenantId)) : String(mapped.date || "");
+  const nextDoctor = doctorChanged
+    ? String(body.doctorId ?? body.doctor_id ?? "")
+    : String(mapped.doctorId ?? "");
+  if (doctorChanged) doctorForVisit(tenantId, nextDoctor);
+  const requestedToken = tokenChanged ? Number(body.tokenNumber ?? body.token_number) : Number(mapped.tokenNumber);
   let vitalsText: string | null;
   if (body.vitals === null) {
     vitalsText = null;
@@ -951,29 +975,40 @@ export function updateAppointment(
     String(existing.patient_id || mapped.patientId || ""),
     String(existing.patient_phone || "")
   );
-  getDb()
-    .prepare(
-      `UPDATE appointments SET
-        status = ?, token_number = ?, vitals = ?, is_paid = ?,
-        type = ?, time_slot = ?, date = ?, doctor_id = ?, doctor_name = ?, specialty = ?,
-        patient_phone = ?
-       WHERE id = ? AND tenant_id = ?`
-    )
-    .run(
-      status,
-      tokenNumber,
-      vitalsText,
-      Number(isPaid),
-      String(body.type ?? mapped.type),
-      String(body.timeSlot ?? body.time_slot ?? mapped.timeSlot),
-      String(body.date ?? mapped.date),
-      String(body.doctorId ?? body.doctor_id ?? mapped.doctorId),
-      String(body.doctorName ?? body.doctor_name ?? mapped.doctorName),
-      String(body.specialty ?? mapped.specialty),
-      patientPhone,
-      appointmentId,
-      tenantId
+  const applyUpdate = (tokenNumber: number) => {
+    getDb()
+      .prepare(
+        `UPDATE appointments SET
+          status = ?, token_number = ?, vitals = ?, is_paid = ?,
+          type = ?, time_slot = ?, date = ?, doctor_id = ?, doctor_name = ?, specialty = ?,
+          patient_phone = ?
+         WHERE id = ? AND tenant_id = ?`
+      )
+      .run(
+        status,
+        tokenNumber,
+        vitalsText,
+        Number(isPaid),
+        String(body.type ?? mapped.type),
+        String(body.timeSlot ?? body.time_slot ?? mapped.timeSlot),
+        nextDate,
+        nextDoctor,
+        String(body.doctorName ?? body.doctor_name ?? mapped.doctorName),
+        String(body.specialty ?? mapped.specialty),
+        patientPhone,
+        appointmentId,
+        tenantId
+      );
+  };
+  if (dateChanged || doctorChanged || tokenChanged) {
+    writeAllocatedToken(
+      applyUpdate,
+      (requested) => allocateTokenNumber(getDb(), tenantId, nextDate, nextDoctor, requested, appointmentId),
+      requestedToken
     );
+  } else {
+    applyUpdate(Number(mapped.tokenNumber) || 0);
+  }
   if (body.status !== undefined && (status === "Completed" || status === "Cancelled")) {
     deletePrescriptionDraft({
       tenantId,

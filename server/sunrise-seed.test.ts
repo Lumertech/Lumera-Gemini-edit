@@ -549,21 +549,21 @@ describe("Sunrise clinic seed", () => {
         `INSERT INTO appointments (
            id, tenant_id, token_number, patient_id, patient_name, patient_phone, uhid,
            doctor_id, doctor_name, specialty, date, time_slot, status, created_at
-         ) VALUES (?, ?, 1, 'pat', 'Pat', '+91 90000 00000', 'UH', 'doc', 'Doc', 'General Medicine', ?, '10:00', ?, ?)`
+         ) VALUES (?, ?, ?, 'pat', 'Pat', '+91 90000 00000', 'UH', 'doc', 'Doc', 'General Medicine', ?, '10:00', ?, ?)`
       );
       const insertDraft = db.prepare(
         `INSERT INTO prescription_drafts (tenant_id, patient_id, appointment_id, doctor_id, draft_json, updated_at)
          VALUES (?, ?, ?, 'doc', ?, ?)`
       );
-      insertAppointment.run("apt-other-past", otherTenant, yesterday, "In Consultation", fresh);
-      insertAppointment.run("apt-other-open", otherTenant, today, "Waiting", fresh);
+      insertAppointment.run("apt-other-past", otherTenant, 1, yesterday, "In Consultation", fresh);
+      insertAppointment.run("apt-other-open", otherTenant, 1, today, "Waiting", fresh);
       insertDraft.run(otherTenant, "pat-other", "apt-other-open", '{"diagnosis":"KEEP"}', stale);
       insertDraft.run(otherTenant, "pat-other-2", "", '{"diagnosis":"KEEP-BLANK"}', fresh);
 
-      insertAppointment.run("apt-sun-open", SUNRISE_TENANT_ID, today, "Waiting", fresh);
-      insertAppointment.run("apt-sun-done", SUNRISE_TENANT_ID, today, "Completed", fresh);
-      insertAppointment.run("apt-sun-past", SUNRISE_TENANT_ID, yesterday, "In Consultation", fresh);
-      insertAppointment.run("apt-sun-today", SUNRISE_TENANT_ID, today, "In Consultation", fresh);
+      insertAppointment.run("apt-sun-open", SUNRISE_TENANT_ID, 1, today, "Waiting", fresh);
+      insertAppointment.run("apt-sun-done", SUNRISE_TENANT_ID, 2, today, "Completed", fresh);
+      insertAppointment.run("apt-sun-past", SUNRISE_TENANT_ID, 1, yesterday, "In Consultation", fresh);
+      insertAppointment.run("apt-sun-today", SUNRISE_TENANT_ID, 3, today, "In Consultation", fresh);
       insertDraft.run(SUNRISE_TENANT_ID, "pat-keep", "apt-sun-open", '{"diagnosis":"KEEP-SUN"}', fresh);
       insertDraft.run(SUNRISE_TENANT_ID, "pat-old", "apt-sun-open", '{"diagnosis":"OLD"}', stale);
       insertDraft.run(SUNRISE_TENANT_ID, "pat-done", "apt-sun-done", '{"diagnosis":"DONE"}', fresh);

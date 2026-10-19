@@ -1,11 +1,13 @@
 import { HIDDEN_AMBIENT_SOURCES, hiddenVisitSourceSql, isHiddenVisitSource } from "./ambient-walkin.ts";
 import { getDb, mapAppointment, mapPatient, writeAudit } from "./db.ts";
+import { clinicCalendarDate } from "../src/lib/clinicDay.ts";
 import {
   appointmentPhoneFromPatient,
   getTenantAppointment,
   getTenantPatient,
   insertAppointment,
   insertPatient,
+  tenantTimezone,
   updateAppointment,
 } from "./clinical.ts";
 import { findDoctor, findPatientByPhoneInTenant } from "./whatsapp-tenant-resolve.ts";
@@ -182,7 +184,7 @@ export function bookWhatsAppAppointment(opts: {
     name: opts.patientName,
   });
   const mappedPatient = mapPatient(patient);
-  const date = String(opts.date || new Date().toISOString().slice(0, 10));
+  const date = String(opts.date || "").trim() || clinicCalendarDate(new Date(), tenantTimezone(tenantId));
   const timeSlot = String(opts.timeSlot || "").trim() || defaultTimeSlot();
 
   const existing = findActiveAppointment({

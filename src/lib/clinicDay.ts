@@ -28,6 +28,32 @@ export function clinicCalendarDate(now = new Date(), timezone?: string | null): 
   return `${year}-${month}-${day}`;
 }
 
+/**
+ * Queue / invoice day key. A YYYY-MM-DD is kept (the caller already chose a clinic day).
+ * An instant, or an empty value, becomes the clinic timezone's calendar date.
+ * Empty timezone means IST, so 00:30 IST is today there and not the previous UTC date.
+ */
+export function resolveQueueDate(requested: unknown, timezone?: string | null, now = new Date()): string {
+  const raw = String(requested ?? "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  if (raw) {
+    const parsed = new Date(raw);
+    if (!Number.isNaN(parsed.getTime())) return clinicCalendarDate(parsed, timezone);
+  }
+  return clinicCalendarDate(now, timezone);
+}
+
+/** UTC instants [start, end) covering one clinic YYYY-MM-DD. Empty when the date is not ISO. */
+export function clinicDayUtcBounds(isoDate: string, timezone?: string | null): { start: string; end: string } {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(isoDate || "").trim());
+  if (!match) return { start: "", end: "" };
+  const startMs = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])) - utcOffsetMinutes(timezone) * 60_000;
+  return {
+    start: new Date(startMs).toISOString(),
+    end: new Date(startMs + 86_400_000).toISOString(),
+  };
+}
+
 export function shiftIsoDate(isoDate: string, days: number): string {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(isoDate || "").trim());
   if (!match) return "";

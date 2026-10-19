@@ -364,7 +364,17 @@ describe("ambient scribe per-visit consent", () => {
       .run(
         input.id,
         input.tenantId,
-        input.tokenNumber ?? 1,
+        input.tokenNumber ??
+          Number(
+            (
+              getDb()
+                .prepare(
+                  `SELECT COALESCE(MAX(token_number), 0) AS n FROM appointments
+                   WHERE tenant_id = ? AND date = ? AND doctor_id = ?`
+                )
+                .get(input.tenantId, input.date, input.doctorId) as { n: number }
+            )?.n || 0
+          ) + 1,
         input.patientId,
         input.doctorId,
         input.specialty || "General Medicine",
