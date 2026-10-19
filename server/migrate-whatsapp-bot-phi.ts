@@ -7,7 +7,9 @@ import type { SqlDatabase } from "./sql-engine.ts";
  * A second boot sees the audit row and does not write again.
  *
  * Neutral sentences match processBotActionOrQuery. send-rx rows stay: they
- * are sender 'agent', not 'bot'.
+ * are sender 'agent', not 'bot'. translated_content is cleared when the
+ * column allows it, otherwise it receives the same neutral sentence. A marker
+ * that exists only in translated_content still matches.
  */
 export const WHATSAPP_BOT_PHI_SCRUB_ACTION = "WhatsApp bot PHI scrub";
 
@@ -18,17 +20,33 @@ const LAB_MARKER = "Verified Lab Diagnostic Report";
 const PREVIEW_MARKER = "previewData";
 
 const MESSAGE_MATCH = `sender = 'bot' AND (
-  COALESCE(content, '') LIKE ? OR COALESCE(media, '') LIKE ?
-  OR COALESCE(content, '') LIKE ? OR COALESCE(media, '') LIKE ?
-  OR COALESCE(content, '') LIKE ? OR COALESCE(media, '') LIKE ?
+  COALESCE(content, '') LIKE ? OR COALESCE(media, '') LIKE ? OR COALESCE(translated_content, '') LIKE ?
+  OR COALESCE(content, '') LIKE ? OR COALESCE(media, '') LIKE ? OR COALESCE(translated_content, '') LIKE ?
+  OR COALESCE(content, '') LIKE ? OR COALESCE(media, '') LIKE ? OR COALESCE(translated_content, '') LIKE ?
 )`;
+
+const LAB_CASE = `CASE
+         WHEN COALESCE(content, '') LIKE ? OR COALESCE(media, '') LIKE ? OR COALESCE(translated_content, '') LIKE ? THEN ?
+         ELSE ?
+       END`;
 
 function likeTerm(marker: string): string {
   return `%${marker}%`;
 }
 
-function markerPairs(): string[] {
-  return [PREVIEW_MARKER, PREVIEW_MARKER, RX_MARKER, RX_MARKER, LAB_MARKER, LAB_MARKER].map(likeTerm);
+function markerTriples(): string[] {
+  return [PREVIEW_MARKER, PREVIEW_MARKER, PREVIEW_MARKER, RX_MARKER, RX_MARKER, RX_MARKER, LAB_MARKER, LAB_MARKER, LAB_MARKER].map(
+    likeTerm
+  );
+}
+
+function labCaseParams(): string[] {
+  return [likeTerm(LAB_MARKER), likeTerm(LAB_MARKER), likeTerm(LAB_MARKER), LAB_READY, RX_READY];
+}
+
+function isNotNullViolation(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /not[- ]null/i.test(message);
 }
 
 export function scrubWhatsAppBotPhi(database: SqlDatabase): { messages: number; conversations: number; skipped: boolean } {
@@ -44,21 +62,24 @@ export function scrubWhatsAppBotPhi(database: SqlDatabase): { messages: number; 
 
   const messageCount = database
     .prepare(`SELECT COUNT(*) AS c FROM whatsapp_messages WHERE ${MESSAGE_MATCH}`)
-    .get(...markerPairs()) as { c?: number };
+    .get(...markerTriples()) as { c?: number };
   const messages = Number(messageCount?.c || 0);
 
-  database
-    .prepare(
-      `UPDATE whatsapp_messages
-       SET content = CASE
-         WHEN COALESCE(content, '') LIKE ? OR COALESCE(media, '') LIKE ? THEN ?
-         ELSE ?
-       END,
-       media = NULL,
-       buttons = NULL
-       WHERE ${MESSAGE_MATCH}`
-    )
-    .run(likeTerm(LAB_MARKER), likeTerm(LAB_MARKER), LAB_READY, RX_READY, ...markerPairs());
+  const clearTranslation = `translated_content = NULL`;
+  const sentenceTranslation = `translated_content = ${LAB_CASE}`;
+  const updateSql = (translationAssign: string) =>
+    `UPDATE whatsapp_messages
+     SET content = ${LAB_CASE},
+     ${translationAssign},
+     media = NULL,
+     buttons = NULL
+     WHERE ${MESSAGE_MATCH}`;
+  try {
+    database.prepare(updateSql(clearTranslation)).run(...labCaseParams(), ...markerTriples());
+  } catch (err) {
+    if (!isNotNullViolation(err)) throw err;
+    database.prepare(updateSql(sentenceTranslation)).run(...labCaseParams(), ...labCaseParams(), ...markerTriples());
+  }
 
   const conversationCount = database
     .prepare(
