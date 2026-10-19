@@ -1,16 +1,15 @@
 import type { Express, Request, Response } from "express";
-import type { GoogleGenAI } from "@google/genai";
 import { requireAuth } from "./auth.ts";
 import { getDb } from "./db.ts";
 import { clinicLine, getTenantLetterhead } from "./letterhead.ts";
 import { AI_RUPEE_OUTPUT_RULE } from "./india-currency-copy.ts";
-import { vertexGeminiModel } from "./vertex-gemini.ts";
+import { getVertexClient, vertexGeminiModel } from "./vertex-gemini.ts";
 
 function errorName(err: unknown): string {
   return err && typeof err === "object" && "name" in err ? String((err as { name?: string }).name) : "Error";
 }
 
-export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI | null) {
+export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => ReturnType<typeof getVertexClient>) {
   // 4. Voice Bot & Triage Simulator with Emergency Escalation
   app.post("/api/gemini/voice-bot", async (req: Request, res: Response) => {
     try {

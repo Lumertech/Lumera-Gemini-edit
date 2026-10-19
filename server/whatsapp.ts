@@ -7,7 +7,6 @@ import {
   escapeHtml,
   getTenantLetterhead,
 } from "./letterhead.ts";
-import type { GoogleGenAI } from "@google/genai";
 import { getVertexClient, vertexGeminiModel, vertexGenerateContent } from "./vertex-gemini.ts";
 import {
   bookWhatsAppAppointment,
@@ -26,7 +25,6 @@ import { rejectProductionSimulator } from "./meta-security.ts";
 import { dispatchPatientCloudText } from "./whatsapp-patient-dispatch.ts";
 import { findPatientByPhoneInTenant } from "./whatsapp-tenant-resolve.ts";
 import { isProduction } from "./runtime.ts";
-import { reportCaughtError } from "./error-tracker.ts";
 import { CLINICIAN_ROLES, requireAuth, requireRole } from "./auth.ts";
 import { rejectUntrustedTenantClaim } from "./tenant-guard.ts";
 import { authenticatedLabReportPath, authorizeLabReport, labOwnerTenantId, sendLabReportDenied } from "./lab-report-access.ts";
@@ -124,8 +122,14 @@ ${AI_RUPEE_OUTPUT_RULE}`,
   };
 }
 
-function getDefaultGenAI(): GoogleGenAI | null {
+function getDefaultGenAI() {
   return getVertexClient();
+}
+
+function vertexErrorName(err: unknown): string {
+  return err && typeof err === "object" && "name" in err && (err as { name?: string }).name
+    ? String((err as { name?: string }).name)
+    : "Error";
 }
 
 function serializeWhatsAppMessage(m: Record<string, unknown>) {
@@ -190,7 +194,7 @@ function respondWhatsAppMessages(res: Response, tenantId: string, convId?: strin
   res.json({ messages: rows.map(serializeWhatsAppMessage) });
 }
 
-export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null): Router {
+export function createWhatsAppRouter(customGetGenAI?: () => ReturnType<typeof getDefaultGenAI>): Router {
   const getGenAI = customGetGenAI || getDefaultGenAI;
   const router = Router();
   router.use(...requireClinicWhatsApp, rejectUntrustedTenantClaim);
@@ -491,9 +495,9 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
       // If sent by staff and translation requested
       if (sender === "agent" && targetLanguage && targetLanguage !== "en") {
         try {
-          translatedContent = await translateWithGeminiOrFallback(content, String(targetLanguage), getGenAI());
-        } catch (err) {
-          reportCaughtError(err, "whatsapp.translate.outbound");
+          translatedContent = await translateWithGeminiOrFallback(content, String(targetLanguage));
+        } catch (err: unknown) {
+          console.warn("whatsapp.translate.outbound", vertexErrorName(err));
           translatedContent = null;
         }
       }
@@ -503,9 +507,9 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
         detectedLanguage = detectLanguageSimple(content);
         if (detectedLanguage !== "en") {
           try {
-            translatedContent = await translateWithGeminiOrFallback(content, "en", getGenAI());
-          } catch (err) {
-            reportCaughtError(err, "whatsapp.translate.inbound");
+            translatedContent = await translateWithGeminiOrFallback(content, "en");
+          } catch (err: unknown) {
+            console.warn("whatsapp.translate.inbound", vertexErrorName(err));
             translatedContent = null;
           }
         }
@@ -1185,7 +1189,7 @@ ${AI_RUPEE_OUTPUT_RULE}`;
       const { text, targetLanguage = "en", sourceLanguage } = req.body;
       if (!text) return res.status(400).json({ error: "Text is required" });
 
-      const translated = await translateWithGeminiOrFallback(text, targetLanguage, getGenAI());
+      const translated = await translateWithGeminiOrFallback(text, targetLanguage);
       res.json({
         originalText: text,
         translatedText: translated,
@@ -1828,13 +1832,12 @@ async function processBotActionOrQuery(
       buttons: ["📅 Book Doctor Appointment", "💊 Refill Prescription", "🔬 View Lab Reports", "👤 Speak with Receptionist"],
     };
   } catch (err: unknown) {
-    const name = err && typeof err === "object" && "name" in err ? String((err as { name?: string }).name) : "Error";
-    console.warn("whatsapp.gemini.fallback", name);
+    console.warn("whatsapp.gemini.fallback", vertexErrorName(err));
   }
 
-  // Default Fallback
+  // Fixed non-AI reply. The patient's message is not copied back into the chat.
   return {
-    content: `Namaste ${patientName}! 🙏 We have received your query: "${text}".\n\nOur clinic team is available to assist you. You can use the quick actions below to book consultations, view clinical prescriptions, or check diagnostic test reports:`,
+    content: `Namaste ${patientName}! 🙏 We have received your query.\n\nOur clinic team is available to assist you. You can use the quick actions below to book consultations, view clinical prescriptions, or check diagnostic test reports:`,
     buttons: ["📅 Book Doctor Appointment", "💊 Refill / View Prescription", "🔬 Download Lab Reports", "⏰ Check Doctor Timings"],
   };
 }
@@ -1856,7 +1859,7 @@ function detectLanguageSimple(text: string): string {
   return "en";
 }
 
-async function translateWithGeminiOrFallback(text: string, targetLang: string, ai: GoogleGenAI | null): Promise<string> {
+async function translateWithGeminiOrFallback(text: string, targetLang: string): Promise<string> {
   const langNames: Record<string, string> = {
     en: "English",
     hi: "Hindi",
@@ -1867,21 +1870,18 @@ async function translateWithGeminiOrFallback(text: string, targetLang: string, a
   };
   const targetName = langNames[targetLang] || targetLang;
 
-  if (ai) {
-    try {
-      const response = await ai.models.generateContent({
-        model: vertexGeminiModel(),
-        contents: [
-          {
-            text: `Translate the following clinical or medical chat message accurately into ${targetName}. Maintain a polite, reassuring medical tone. Only return the translated text:\n\n"${text}"`,
-          },
-        ],
-      });
-      if (response.text) return response.text.trim();
-    } catch (err) {
-      reportCaughtError(err, "whatsapp.translate.gemini");
-      /* fallback */
-    }
+  try {
+    const response = await vertexGenerateContent({
+      model: vertexGeminiModel(),
+      contents: [
+        {
+          text: `Translate the following clinical or medical chat message accurately into ${targetName}. Maintain a polite, reassuring medical tone. Only return the translated text:\n\n"${text}"`,
+        },
+      ],
+    });
+    if (response.text) return response.text.trim();
+  } catch (err: unknown) {
+    console.warn("whatsapp.translate.gemini", vertexErrorName(err));
   }
 
   // Common clinical translations dictionary fallback
