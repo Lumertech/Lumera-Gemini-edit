@@ -1,19 +1,16 @@
 import type { Request, Response } from "express";
-import { getDb } from "./db.ts";
 
 /**
  * Session-scoped workspace slug check.
  * The URL slug is never a tenant id. A match returns the session tenant only.
- * A different clinic's slug is 403. An unknown slug is 404. Neither body
- * includes the other tenant's id or rows.
+ * Any other slug — foreign or unknown — is the same 404, with the caller's own
+ * slug and no tenant row lookup, so the response does not reveal that a slug exists.
  */
 export interface TenantSlugResolveInput {
   role?: string | null;
   sessionSlug?: string | null;
   sessionTenantId?: string | null;
   requestedSlug?: string | null;
-  /** True when some tenant row already owns this slug. */
-  slugExists: boolean;
 }
 
 export interface TenantSlugResolveResult {
@@ -35,10 +32,6 @@ export function resolveTenantSlug(input: TenantSlugResolveInput): TenantSlugReso
     return { status: 403, body: { error: "Forbidden", redirect: "/admin" } };
   }
 
-  if (!requested) {
-    return { status: 404, body: { error: "Not found" } };
-  }
-
   if (sessionSlug && requested === sessionSlug) {
     return {
       status: 200,
@@ -49,22 +42,7 @@ export function resolveTenantSlug(input: TenantSlugResolveInput): TenantSlugReso
     };
   }
 
-  if (input.slugExists) {
-    const body: Record<string, unknown> = { error: "Forbidden" };
-    if (sessionSlug) body.slug = sessionSlug;
-    return { status: 403, body };
-  }
-
-  return { status: 404, body: { error: "Not found" } };
-}
-
-export function tenantSlugExists(slug: string): boolean {
-  const normalized = normalizeTenantSlug(slug);
-  if (!normalized) return false;
-  const row = getDb().prepare("SELECT id FROM tenants WHERE lower(slug) = ?").get(normalized) as
-    | { id?: string }
-    | undefined;
-  return Boolean(row?.id);
+  return { status: 404, body: { error: "Not found", slug: sessionSlug } };
 }
 
 export function sendTenantResolve(req: Request, res: Response) {
@@ -74,7 +52,6 @@ export function sendTenantResolve(req: Request, res: Response) {
     sessionSlug: req.user?.workspaceSlug,
     sessionTenantId: req.user?.tenantId,
     requestedSlug: requested,
-    slugExists: tenantSlugExists(requested),
   });
   res.status(result.status).json(result.body);
 }

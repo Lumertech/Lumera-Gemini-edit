@@ -18,7 +18,6 @@ describe("resolveTenantSlug", () => {
       sessionSlug: INDIVIDUAL_DEMO_SLUG,
       sessionTenantId: INDIVIDUAL_DEMO_TENANT_ID,
       requestedSlug: INDIVIDUAL_DEMO_SLUG,
-      slugExists: true,
     });
     assert.equal(own.status, 200);
     assert.equal(own.body.slug, INDIVIDUAL_DEMO_SLUG);
@@ -30,30 +29,25 @@ describe("resolveTenantSlug", () => {
       sessionSlug: INDIVIDUAL_DEMO_SLUG,
       sessionTenantId: INDIVIDUAL_DEMO_TENANT_ID,
       requestedSlug: POLYCLINIC_DEMO_SLUG,
-      slugExists: true,
     });
-    assert.equal(other.status, 403);
-    assert.equal(other.body.error, "Forbidden");
-    assert.equal(other.body.slug, INDIVIDUAL_DEMO_SLUG);
-    assert.equal(other.body.tenantId, undefined);
-    assert.equal(JSON.stringify(other.body).includes("tenant-demo-polyclinic"), false);
-
     const unknown = resolveTenantSlug({
       role: "doctor",
       sessionSlug: INDIVIDUAL_DEMO_SLUG,
       sessionTenantId: INDIVIDUAL_DEMO_TENANT_ID,
       requestedSlug: "not-a-clinic",
-      slugExists: false,
     });
+    assert.equal(other.status, 404);
     assert.equal(unknown.status, 404);
-    assert.deepEqual(unknown.body, { error: "Not found" });
+    assert.equal(JSON.stringify(other), JSON.stringify(unknown));
+    assert.deepEqual(other.body, { error: "Not found", slug: INDIVIDUAL_DEMO_SLUG });
+    assert.equal("tenantId" in other.body, false);
+    assert.equal(JSON.stringify(other.body).includes("tenant-demo-polyclinic"), false);
 
     const admin = resolveTenantSlug({
       role: "super_admin",
       sessionSlug: "lumera-apex-polyclinic",
       sessionTenantId: "tenant-lumera-main",
       requestedSlug: INDIVIDUAL_DEMO_SLUG,
-      slugExists: true,
     });
     assert.equal(admin.status, 403);
     assert.equal(admin.body.redirect, "/admin");
@@ -97,11 +91,12 @@ describe("GET /api/tenant/resolve", () => {
       `http://127.0.0.1:${server.port}/api/tenant/resolve?slug=${encodeURIComponent(slug)}`,
       { headers }
     );
-    const body = (await res.json()) as { slug?: string; tenantId?: string; error?: string; redirect?: string };
-    return { status: res.status, body };
+    const text = await res.text();
+    const body = JSON.parse(text) as { slug?: string; tenantId?: string; error?: string; redirect?: string };
+    return { status: res.status, text, body };
   }
 
-  it("200 own slug, 403 another clinic, 404 unknown, 403 Super Admin on /w", async () => {
+  it("200 own slug, identical 404 for foreign and unknown slugs, 403 Super Admin on /w", async () => {
     const doctor = await login("doctor@lumera.me");
     const own = await resolve(doctor, INDIVIDUAL_DEMO_SLUG);
     assert.equal(own.status, 200);
@@ -109,14 +104,13 @@ describe("GET /api/tenant/resolve", () => {
     assert.equal(own.body.tenantId, INDIVIDUAL_DEMO_TENANT_ID);
 
     const other = await resolve(doctor, POLYCLINIC_DEMO_SLUG);
-    assert.equal(other.status, 403);
-    assert.equal(other.body.tenantId, undefined);
-    assert.equal(other.body.slug, INDIVIDUAL_DEMO_SLUG);
-    assert.equal(JSON.stringify(other.body).includes("tenant-demo-polyclinic"), false);
-
     const unknown = await resolve(doctor, "not-a-real-clinic");
+    assert.equal(other.status, 404);
     assert.equal(unknown.status, 404);
-    assert.deepEqual(unknown.body, { error: "Not found" });
+    assert.equal(other.text, unknown.text);
+    assert.equal(other.text, JSON.stringify({ error: "Not found", slug: INDIVIDUAL_DEMO_SLUG }));
+    assert.equal(other.body.tenantId, undefined);
+    assert.equal(other.text.includes("tenant-demo-polyclinic"), false);
 
     const anon = await fetch(`http://127.0.0.1:${server.port}/api/tenant/resolve?slug=${INDIVIDUAL_DEMO_SLUG}`);
     assert.equal(anon.status, 401);

@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { apiFetchResponse } from "../api/http";
 import { clinicianHomeView } from "../lib/specialtyWorkflow";
-import { reconcileWorkspacePath, workspaceSlugFromUser } from "../lib/workspacePath";
+import { reconcileWorkspacePath, slugifyWorkspace, workspaceSlugFromUser } from "../lib/workspacePath";
 import { tenantRouteGuard } from "./routeGuard";
 import {
   canonicalizeTenantScreenPath,
@@ -145,20 +145,27 @@ export const NavigationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       void apiFetchResponse(`/api/tenant/resolve?slug=${encodeURIComponent(urlSlug)}`)
         .then(async (res) => {
           if (cancelled) return;
-          if (res.status === 404) {
-            setSlugDecision({ slug: urlSlug, status: "missing" });
-            return;
-          }
           const body = (await res.json().catch(() => ({}))) as { redirect?: string; slug?: string };
           if (res.status === 403 && body.redirect === "/admin") {
             setSlugDecision({ slug: urlSlug, status: "ready" });
             navigate("/admin", { replace: true });
             return;
           }
+          if (res.status === 404) {
+            const ownSlug = slugifyWorkspace(body.slug || "") || sessionWorkspace;
+            const swapped =
+              reconcileWorkspacePath(location.pathname, ownSlug, role) ||
+              reconcileWorkspacePath(location.pathname, sessionWorkspace, role) ||
+              location.pathname;
+            if (normalizePath(swapped) === normalizePath(location.pathname)) {
+              setSlugDecision({ slug: urlSlug, status: "ready" });
+              return;
+            }
+            finish(swapped);
+            return;
+          }
           setSlugDecision({ slug: urlSlug, status: "ready" });
-          const ownSlug = String(body.slug || sessionWorkspace || "").trim().toLowerCase();
-          const swapped = reconcileWorkspacePath(location.pathname, ownSlug || sessionWorkspace, role) || location.pathname;
-          finish(swapped);
+          finish(reconciled || location.pathname);
         })
         .catch(() => {
           if (cancelled) return;
