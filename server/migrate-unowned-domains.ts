@@ -2,16 +2,20 @@ import type { SqlDatabase } from "./sql-engine.ts";
 import { reportCaughtError } from "./error-tracker.ts";
 
 /**
- * Idempotent rewrite of stored demo-seed copy that pointed at domains Lumera
- * does not own. Every UPDATE is limited to demo tenants:
- * tenant-lumera-main, tenant-rehab-mumbai, tenant-suspended-demo,
- * tenant-543feff7 (Sunrise demo, when that row exists), and ids with the
- * tenant-demo- prefix.
+ * Idempotent, forward-only rewrite of demo config that pointed at domains
+ * Lumera does not own. Demo tenants are tenant-lumera-main,
+ * tenant-rehab-mumbai, tenant-suspended-demo, tenant-543feff7 (Sunrise demo,
+ * when that row exists), and ids with the tenant-demo- prefix.
  *
- * Emails, websites, and UPI ids match the whole value. A clinic note that
- * merely mentions a retired host is left alone. Unsplash avatar URLs are
- * left alone. WhatsApp rows outside a demo tenant are left alone.
- * Patient-link slots are rewritten only on the seeded template ids.
+ * Updates letterhead, contact fields, seeded template definitions, seed
+ * mailbox defaults, qr_verification_url, and demo-tenant invoices.upi_id.
+ * lumera.health and lumeraclinic.in match only as an exact host or as the
+ * prefix of an http(s) URL. lumerahealth@icici matches only as a whole value.
+ * A note that merely contains those strings is left alone.
+ *
+ * Does not rewrite message history, conversation previews, outbound event
+ * logs, or existing audit rows, on any tenant. One new audit row records the
+ * per-table counts when a pass changes something. A second pass writes nothing.
  * @lumera.me demo logins are left for the founder.
  */
 
@@ -111,18 +115,9 @@ const LETTERHEAD_EMAILS = new Map<string, string>([
   [`contact@${RETIRED_HEALTH}`, DEMO_LETTERHEAD_EMAIL],
 ]);
 
-const LETTERHEAD_SITES = new Set([
-  `https://${RETIRED_CLINIC}`,
-  `http://${RETIRED_CLINIC}`,
-  `https://www.${RETIRED_CLINIC}`,
-  `http://www.${RETIRED_CLINIC}`,
-  `https://${RETIRED_HEALTH}`,
-  `http://${RETIRED_HEALTH}`,
-  `https://www.${RETIRED_HEALTH}`,
-  `http://www.${RETIRED_HEALTH}`,
-]);
-
-const SEED_UPI = new Set(["lumerahealth@icici", "demo-clinic@upi-sample", DEMO_UPI]);
+const EXACT_RETIRED_UPI = new Set(["lumerahealth@icici", "demo-clinic@upi-sample"]);
+const SEED_UPI = new Set([...EXACT_RETIRED_UPI, DEMO_UPI]);
+const AUDIT_ACTION = "Unowned domain migration";
 
 function whole(value: string): string {
   return value.trim().toLowerCase().replace(/\/$/, "");
@@ -138,13 +133,41 @@ export function rewriteExactEmail(value: string, pairs: ReadonlyArray<readonly [
 
 export function rewriteExactUpi(value: string): string {
   const key = value.trim().toLowerCase();
-  if (key === "lumerahealth@icici" || key === "demo-clinic@upi-sample") return DEMO_UPI;
+  if (EXACT_RETIRED_UPI.has(key)) return DEMO_UPI;
   return value;
 }
 
+function isExactRetiredHost(hostname: string): boolean {
+  const host = hostname.trim().toLowerCase().replace(/\.$/, "");
+  return (
+    host === RETIRED_HEALTH ||
+    host === `www.${RETIRED_HEALTH}` ||
+    host === RETIRED_CLINIC ||
+    host === `www.${RETIRED_CLINIC}`
+  );
+}
+
+/** Whole http(s) URL whose host is exactly a retired host, or that host alone. */
+export function isRetiredExactUrl(value: string): boolean {
+  const raw = String(value ?? "").trim();
+  if (!raw) return false;
+  try {
+    const parsed = new URL(raw);
+    if ((parsed.protocol === "http:" || parsed.protocol === "https:") && isExactRetiredHost(parsed.hostname)) {
+      return true;
+    }
+  } catch {
+    /* A scheme-less host is checked below. */
+  }
+  const bare = raw.replace(/\/$/, "");
+  if (isExactRetiredHost(bare)) return true;
+  const health = RETIRED_HEALTH.replace(/\./g, "\\.");
+  const clinic = RETIRED_CLINIC.replace(/\./g, "\\.");
+  return new RegExp(`^(?:www\\.)?(?:${health}|${clinic})(?:\\/|$)`, "i").test(raw);
+}
+
 export function rewriteExactWebsite(value: string): string {
-  const key = whole(value);
-  if (LETTERHEAD_SITES.has(key)) return DEMO_LETTERHEAD_SITE;
+  if (isRetiredExactUrl(value)) return DEMO_LETTERHEAD_SITE;
   return value;
 }
 
@@ -166,7 +189,7 @@ export function rewriteSeedTemplateLinks(value: string): string {
   const clinic = RETIRED_CLINIC.replace(/\./g, "\\.");
   const boundary = "(?![A-Za-z0-9_-])";
   const retired = new RegExp(
-    `https?:\\/\\/(?:www\\.)?(?:${health}|${clinic})\\/(rx|pay|portal|hep)${boundary}(?:\\/[^\\s"'\\\\]*)?`,
+    `https?:\\/\\/(?:www\\.)?(?:${health}|${clinic})(?![A-Za-z0-9.-])(\\/[^\\s"'\\\\]*)?`,
     "gi"
   );
   const ownedWithId = new RegExp(
@@ -174,9 +197,12 @@ export function rewriteSeedTemplateLinks(value: string): string {
     "gi"
   );
   const opaque = (purpose: string) => `${OPAQUE_BASE}/${purpose.toLowerCase()}/v/{{1}}`;
-  return String(value ?? "")
-    .replace(retired, (_match, purpose: string) => opaque(purpose))
-    .replace(ownedWithId, (_match, purpose: string) => opaque(purpose));
+  const withoutRetired = String(value ?? "").replace(retired, (_match, path: string | undefined) => {
+    const purpose = String(path || "").match(/^\/(rx|pay|portal|hep)(?![A-Za-z0-9_-])/i);
+    if (!purpose) return DEMO_LETTERHEAD_SITE;
+    return opaque(purpose[1]);
+  });
+  return withoutRetired.replace(ownedWithId, (_match, purpose: string) => opaque(purpose));
 }
 
 export function rewriteUnownedSeedText(value: string): string {
@@ -324,44 +350,6 @@ function userOnDemoTenant(userIdColumn: string): string {
   return `EXISTS (SELECT 1 FROM users u WHERE u.id = ${userIdColumn} AND ${demoTenantPredicate("u.tenant_id")})`;
 }
 
-function phraseNeedles(column: string): string {
-  return PHRASES.map(([from]) => `CAST(${column} AS TEXT) LIKE '%${from.replace(/'/g, "")}%'`).join(" OR ");
-}
-
-function rewritePhrases(
-  database: SqlDatabase,
-  table: string,
-  idColumn: string,
-  column: string,
-  whereSql: string
-): number {
-  const rows = selectRows(
-    database,
-    `SELECT ${idColumn} AS id, ${column} AS value FROM ${table} WHERE (${phraseNeedles(column)}) AND ${whereSql}`,
-    `migrate-unowned-domains ${table}.${column}`
-  );
-  if (!rows) return 0;
-  let count = 0;
-  const update = prepareOrReport(
-    database,
-    `UPDATE ${table} SET ${column} = ? WHERE ${idColumn} = ? AND ${whereSql}`,
-    `migrate-unowned-domains ${table}.${column}`
-  );
-  if (!update) return 0;
-  for (const row of rows) {
-    const id = row.id;
-    if (id == null || id === "") continue;
-    const current = asText(row.value);
-    const next = rewriteSeedPhrases(current);
-    if (next === current) continue;
-    const wrote = runRow(`migrate-unowned-domains ${table}.${column} ${asText(id)}`, () => {
-      update.run(next, id);
-    });
-    if (wrote) count += 1;
-  }
-  return count;
-}
-
 function rewriteSeedTemplates(database: SqlDatabase): number {
   const where = `${demoTenantPredicate("tenant_id")} AND ${seedTemplatePredicate("id")}`;
   const rows = selectRows(
@@ -418,6 +406,7 @@ function rewriteCmsContact(database: SqlDatabase): number {
 }
 
 function retiredPatientQr(url: string): boolean {
+  if (isRetiredExactUrl(url)) return true;
   let host = "";
   let path = "";
   try {
@@ -426,14 +415,6 @@ function retiredPatientQr(url: string): boolean {
     path = parsed.pathname;
   } catch {
     return false;
-  }
-  if (
-    host === RETIRED_HEALTH ||
-    host.endsWith(`.${RETIRED_HEALTH}`) ||
-    host === RETIRED_CLINIC ||
-    host.endsWith(`.${RETIRED_CLINIC}`)
-  ) {
-    return true;
   }
   if (host !== "www.mylumera.in" && host !== "mylumera.in") return false;
   const purpose = path.match(/^\/(rx|pay|portal|hep)(?![A-Za-z0-9_-])(?:\/(.*))?$/i);
@@ -468,6 +449,38 @@ function nullRetiredQrUrls(database: SqlDatabase): number {
     if (wrote) count += 1;
   }
   return count;
+}
+
+function recordMigrationAudit(database: SqlDatabase, counts: Record<string, number>): void {
+  const total = Object.values(counts).reduce((sum, count) => sum + count, 0);
+  if (total <= 0) return;
+  const details = Object.entries(counts)
+    .map(([table, count]) => `${table}=${count}`)
+    .join(" ");
+  const id = crypto.randomUUID();
+  const timestamp = new Date().toISOString();
+  try {
+    database
+      .prepare(
+        `INSERT INTO audit_logs (
+          id, timestamp, user_id, user_name, action, details,
+          tenant_id, patient_id, actor_role, entity_type, entity_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(id, timestamp, null, "system", AUDIT_ACTION, details, "", "", "", "domain_migration", "unowned-domains");
+  } catch (wideErr) {
+    try {
+      database
+        .prepare(
+          `INSERT INTO audit_logs (id, timestamp, user_id, user_name, action, details)
+           VALUES (?, ?, ?, ?, ?, ?)`
+        )
+        .run(id, timestamp, null, "system", AUDIT_ACTION, details);
+    } catch (err) {
+      reportCaughtError(err, "migrate-unowned-domains audit");
+      reportCaughtError(wideErr, "migrate-unowned-domains audit.wide");
+    }
+  }
 }
 
 function rewriteInvoiceUpi(database: SqlDatabase): number {
@@ -536,21 +549,8 @@ export function migrateUnownedDomains(database: SqlDatabase): void {
     invoices: rewriteInvoiceUpi(database),
     meta_templates: rewriteSeedTemplates(database),
     cms_settings: rewriteCmsContact(database),
-    whatsapp_messages: rewritePhrases(
-      database,
-      "whatsapp_messages",
-      "id",
-      "content",
-      demoTenantPredicate("tenant_id")
-    ),
-    whatsapp_conversations: rewritePhrases(
-      database,
-      "whatsapp_conversations",
-      "id",
-      "last_message",
-      demoTenantPredicate("tenant_id")
-    ),
     prescriptions: nullRetiredQrUrls(database),
   };
   for (const [table, count] of Object.entries(counts)) logTable(table, count);
+  recordMigrationAudit(database, counts);
 }

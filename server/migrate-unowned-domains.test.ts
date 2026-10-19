@@ -24,7 +24,12 @@ describe("unowned domain seed rewrite", () => {
     assert.equal(rewriteUnownedSeedText("dr.meera@lumera.health"), "dr.meera@example.com");
     assert.equal(rewriteUnownedSeedText("see lumera.health today"), "see lumera.health today");
     assert.equal(rewriteUnownedSeedText("https://lumeraclinic.in"), "https://example.com");
-    assert.equal(rewriteUnownedSeedText("https://lumeraclinic.in/about"), "https://lumeraclinic.in/about");
+    assert.equal(rewriteUnownedSeedText("https://lumeraclinic.in/about"), "https://example.com");
+    assert.equal(rewriteUnownedSeedText("https://www.lumera.health/clinic"), "https://example.com");
+    assert.equal(rewriteUnownedSeedText("https://files.lumera.health/about"), "https://files.lumera.health/about");
+    assert.equal(rewriteUnownedSeedText("https://lumera.healthcare/about"), "https://lumera.healthcare/about");
+    assert.equal(rewriteUnownedSeedText("https://notlumera.health/about"), "https://notlumera.health/about");
+    assert.equal(rewriteUnownedSeedText("xlumerahealth@icici"), "xlumerahealth@icici");
     assert.equal(rewriteUnownedSeedText("doctor@lumera.me"), "doctor@lumera.me");
     assert.equal(
       rewriteUnownedSeedText("https://images.unsplash.com/photo-1?auto=format&fit=crop&w=400&q=80"),
@@ -45,6 +50,20 @@ describe("unowned domain seed rewrite", () => {
     assert.equal(
       rewriteSeedTemplateLinks("https://www.mylumera.in/portal/v/{{1}}"),
       "https://www.mylumera.in/portal/v/{{1}}"
+    );
+    assert.equal(rewriteSeedTemplateLinks("https://lumera.health/about"), "https://example.com");
+    assert.equal(rewriteSeedTemplateLinks("https://lumera.health/payments"), "https://example.com");
+    assert.equal(
+      rewriteSeedTemplateLinks("https://www.lumera.health/rx/RX-1"),
+      "https://www.mylumera.in/rx/v/{{1}}"
+    );
+    assert.equal(
+      rewriteSeedTemplateLinks("https://evil.lumera.health/portal"),
+      "https://evil.lumera.health/portal"
+    );
+    assert.equal(
+      rewriteSeedTemplateLinks("https://lumera.healthcare/portal"),
+      "https://lumera.healthcare/portal"
     );
     assert.equal(
       rewriteUnownedSeedText("Welcome to *Lumera Polyclinic WhatsApp Health Desk*."),
@@ -113,6 +132,25 @@ describe("unowned domain seed rewrite", () => {
         id TEXT PRIMARY KEY,
         tenant_id TEXT DEFAULT '',
         upi_id TEXT DEFAULT ''
+      );
+      CREATE TABLE whatsapp_outbound_events (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT DEFAULT '',
+        details TEXT DEFAULT '',
+        action_payload TEXT DEFAULT ''
+      );
+      CREATE TABLE audit_logs (
+        id TEXT PRIMARY KEY,
+        timestamp TEXT NOT NULL,
+        user_id TEXT,
+        user_name TEXT NOT NULL,
+        action TEXT NOT NULL,
+        details TEXT NOT NULL DEFAULT '',
+        tenant_id TEXT NOT NULL DEFAULT '',
+        patient_id TEXT NOT NULL DEFAULT '',
+        actor_role TEXT NOT NULL DEFAULT '',
+        entity_type TEXT NOT NULL DEFAULT '',
+        entity_id TEXT NOT NULL DEFAULT ''
       );
     `);
     const insertTenant = db.prepare(
@@ -195,14 +233,50 @@ describe("unowned domain seed rewrite", () => {
       "Welcome to *Lumera Polyclinic WhatsApp Health Desk*."
     );
     db.prepare("INSERT INTO whatsapp_conversations (id, tenant_id, last_message) VALUES (?, ?, ?)").run(
+      "conv-demo",
+      "tenant-lumera-main",
+      "Welcome to Lumera Health Desk."
+    );
+    db.prepare("INSERT INTO whatsapp_conversations (id, tenant_id, last_message) VALUES (?, ?, ?)").run(
       "conv-real",
       "tenant-real",
       "Welcome to Lumera Health Desk."
+    );
+    const sentPayload = JSON.stringify({ url: "https://lumera.health/rx/RX-1", upi: "lumerahealth@icici" });
+    db.prepare(
+      "INSERT INTO whatsapp_outbound_events (id, tenant_id, details, action_payload) VALUES (?, ?, ?, ?)"
+    ).run("evt-demo", "tenant-lumera-main", "Sent https://lumera.health/rx/RX-1", sentPayload);
+    db.prepare(
+      "INSERT INTO whatsapp_outbound_events (id, tenant_id, details, action_payload) VALUES (?, ?, ?, ?)"
+    ).run("evt-real", "tenant-real", "Sent https://lumeraclinic.in/pay/9", sentPayload);
+    const priorAudit = "Patient was sent https://lumera.health/rx/RX-1";
+    db.prepare(
+      `INSERT INTO audit_logs (
+        id, timestamp, user_id, user_name, action, details,
+        tenant_id, patient_id, actor_role, entity_type, entity_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      "audit-sent-1",
+      "2026-10-01T00:00:00.000Z",
+      "user-demo-doctor",
+      "Dr Demo",
+      "whatsapp_sent",
+      priorAudit,
+      "tenant-lumera-main",
+      "pat-6",
+      "doctor",
+      "whatsapp_message",
+      "msg-1"
     );
     db.prepare("INSERT INTO prescriptions (id, tenant_id, qr_verification_url) VALUES (?, ?, ?)").run(
       "rx-1",
       "tenant-demo-physio",
       "https://lumera.health/rx/RX-1"
+    );
+    db.prepare("INSERT INTO prescriptions (id, tenant_id, qr_verification_url) VALUES (?, ?, ?)").run(
+      "rx-subdomain",
+      "tenant-demo-physio",
+      "https://files.lumera.health/rx/RX-9"
     );
     db.prepare("INSERT INTO prescriptions (id, tenant_id, qr_verification_url) VALUES (?, ?, ?)").run(
       "rx-real",
@@ -293,19 +367,48 @@ describe("unowned domain seed rewrite", () => {
       (db.prepare("SELECT value AS v FROM cms_settings WHERE key = ?").get("contact_email") as { v: string }).v,
       "ravee@lumer.me"
     );
-    assert.match(
+    assert.equal(
       (db.prepare("SELECT content AS v FROM whatsapp_messages WHERE id = ?").get("msg-1") as { v: string }).v,
-      /Demo clinic/
+      "Welcome to *Lumera Polyclinic WhatsApp Health Desk*."
     );
-    assert.match(
+    assert.equal(
       (db.prepare("SELECT content AS v FROM whatsapp_messages WHERE id = ?").get("msg-real") as { v: string }).v,
-      /Lumera Polyclinic WhatsApp Health Desk/
+      "Welcome to *Lumera Polyclinic WhatsApp Health Desk*."
     );
-    assert.match(
+    assert.equal(
+      (db.prepare("SELECT last_message AS v FROM whatsapp_conversations WHERE id = ?").get("conv-demo") as { v: string })
+        .v,
+      "Welcome to Lumera Health Desk."
+    );
+    assert.equal(
       (db.prepare("SELECT last_message AS v FROM whatsapp_conversations WHERE id = ?").get("conv-real") as { v: string })
         .v,
-      /Lumera Health Desk/
+      "Welcome to Lumera Health Desk."
     );
+    const demoEvent = db
+      .prepare("SELECT details, action_payload FROM whatsapp_outbound_events WHERE id = ?")
+      .get("evt-demo") as { details: string; action_payload: string };
+    assert.equal(demoEvent.details, "Sent https://lumera.health/rx/RX-1");
+    assert.equal(demoEvent.action_payload, sentPayload);
+    assert.equal(
+      (db.prepare("SELECT details AS v FROM whatsapp_outbound_events WHERE id = ?").get("evt-real") as { v: string }).v,
+      "Sent https://lumeraclinic.in/pay/9"
+    );
+    const keptAudit = db.prepare("SELECT action, details FROM audit_logs WHERE id = ?").get("audit-sent-1") as {
+      action: string;
+      details: string;
+    };
+    assert.equal(keptAudit.action, "whatsapp_sent");
+    assert.equal(keptAudit.details, priorAudit);
+    const migrationAudits = db
+      .prepare("SELECT details FROM audit_logs WHERE action = ?")
+      .all("Unowned domain migration") as Array<{ details: string }>;
+    assert.equal(migrationAudits.length, 1);
+    assert.match(migrationAudits[0].details, /tenants=1/);
+    assert.match(migrationAudits[0].details, /invoices=1/);
+    assert.match(migrationAudits[0].details, /prescriptions=1/);
+    assert.match(migrationAudits[0].details, /patients=1/);
+    assert.doesNotMatch(migrationAudits[0].details, /whatsapp/);
     assert.equal(
       (db.prepare("SELECT qr_verification_url AS v FROM prescriptions WHERE id = ?").get("rx-1") as { v: string | null })
         .v,
@@ -318,6 +421,14 @@ describe("unowned domain seed rewrite", () => {
         }
       ).v,
       "https://lumera.health/rx/RX-1"
+    );
+    assert.equal(
+      (
+        db.prepare("SELECT qr_verification_url AS v FROM prescriptions WHERE id = ?").get("rx-subdomain") as {
+          v: string | null;
+        }
+      ).v,
+      "https://files.lumera.health/rx/RX-9"
     );
     assert.equal(
       (db.prepare("SELECT email AS v FROM patients WHERE id = ?").get("pat-6") as { v: string }).v,
@@ -387,6 +498,10 @@ describe("unowned domain seed rewrite", () => {
     assert.equal(source.includes("sqlite_master"), false);
     assert.equal(source.includes("PRAGMA"), false);
     assert.equal(source.includes("unsplash"), false);
+    assert.equal(source.includes("whatsapp_messages"), false);
+    assert.equal(source.includes("whatsapp_conversations"), false);
+    assert.equal(source.includes("whatsapp_outbound_events"), false);
+    assert.equal(source.includes("UPDATE audit_logs"), false);
     const clinicLine = source
       .split("\n")
       .find((line) => line.includes("Lumera Polyclinic WhatsApp Health Desk"));
