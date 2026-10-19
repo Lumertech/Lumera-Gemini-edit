@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import { after, before, describe, it } from "node:test";
 import { createApiRouter } from "./api.ts";
 import { getDb, initDatabase } from "./db.ts";
@@ -10,7 +11,7 @@ import { OTP_PUBLIC_SEND_FAILURE } from "./otp-attempt.ts";
 import { bookWhatsAppAppointment, runAppointmentReminders } from "./whatsapp-calendar.ts";
 import { REMINDER_RETRY_BACKOFF_MS } from "./whatsapp-calendar-reminders.ts";
 import { platformAdminActor, upsertWhatsAppNumber } from "./whatsapp-numbers.ts";
-import { recordWhatsAppOptIn } from "./whatsapp-opt-in.ts";
+import { confirmPatientWhatsAppReconsent, recordWhatsAppOptIn } from "./whatsapp-opt-in.ts";
 
 const LIVE_TOKEN = "EAAGisAlongEnoughTokenWithoutEllipsis0123456789abcdef";
 const LIVE_PHONE = "123456789012345";
@@ -632,6 +633,158 @@ describe("WhatsApp honesty: booking notify, reminder template, OTP wamid", () =>
     assert.equal(run.failed.length, 1);
     assert.equal(run.failed[0].result.ok, false);
     if (!run.failed[0].result.ok) assert.equal(run.failed[0].result.error, "no WhatsApp opt-in");
+  });
+
+  it("keeps a staff opt-in tick from clearing STOP, and a patient START clears it", async () => {
+    graphCalls = 0;
+    graphBodies.length = 0;
+    graphMode = "ok";
+    delete process.env.META_ACCESS_TOKEN;
+    delete process.env.META_PHONE_NUMBER_ID;
+    const clinic = createClinic("stopkeep", "Cedar Clinic");
+    const phoneNumberId = connectClinic(clinic.tenantId);
+    approveTemplate(clinic.tenantId, "clinic_booking_confirmation", "en");
+    const token = await login(clinic.email);
+    const auth = { Authorization: `Bearer ${token}` };
+    const phone = uniquePhone();
+    const patientRes = await jsonRequest(
+      server.port,
+      "POST",
+      "/api/patients",
+      { name: "Meera Shah", phone, age: 41, gender: "Female" },
+      auth
+    );
+    assert.equal(patientRes.status, 201, String(patientRes.json.error || ""));
+    const patientId = String((patientRes.json.patient as { id: string }).id);
+    const stopped = recordWhatsAppOptIn(getDb(), {
+      tenantId: clinic.tenantId,
+      phone,
+      patientId,
+      optedIn: false,
+      source: "stop",
+      actorId: "patient",
+    });
+    assert.equal(stopped, "recorded");
+    const digits = phone.replace(/\D/g, "");
+    const mask = `****${digits.slice(-4)}`;
+    const stopAudit = getDb()
+      .prepare(
+        `SELECT tenant_id, details, timestamp FROM audit_logs
+         WHERE action = 'whatsapp_stop' AND tenant_id = ? ORDER BY timestamp DESC LIMIT 1`
+      )
+      .get(clinic.tenantId) as { tenant_id: string; details: string; timestamp: string };
+    assert.equal(stopAudit.tenant_id, clinic.tenantId);
+    assert.match(stopAudit.details, new RegExp(`phone ${mask.replace(/\*/g, "\\*")} source stop at `));
+    assert.match(stopAudit.timestamp, /^\d{4}-\d{2}-\d{2}T/);
+    assert.equal(stopAudit.details.includes(digits), false);
+
+    const staffReconsent = await jsonRequest(server.port, "POST", "/api/patients/whatsapp-reconsent", { confirmed: true }, auth);
+    assert.equal(staffReconsent.status, 403);
+    const callsBefore = graphCalls;
+    const ticked = await book(auth, patientId, clinic.doctorId, { whatsappOptIn: true });
+    assert.equal(ticked.status, 201, String(ticked.json.error || ""));
+    const notify = ticked.json.notify as { sent?: boolean; wamid?: string; reason?: string };
+    assert.equal(notify.sent, false);
+    assert.equal(notify.wamid, undefined);
+    assert.equal(notify.reason, "patient replied STOP");
+    assert.equal(bookingCopy(notify), "Booked, WhatsApp not sent: patient replied STOP");
+    assert.equal(graphCalls, callsBefore);
+    const optRow = () =>
+      getDb()
+        .prepare(`SELECT opted_in, source FROM whatsapp_patient_opt_ins WHERE tenant_id = ? AND phone_digits = ?`)
+        .get(clinic.tenantId, digits) as { opted_in: number; source: string };
+    assert.equal(optRow().opted_in, 0);
+    assert.equal(optRow().source, "stop");
+    for (const source of ["booking", "registration", "reconsent"]) {
+      const again = recordWhatsAppOptIn(getDb(), {
+        tenantId: clinic.tenantId,
+        phone,
+        patientId,
+        optedIn: true,
+        source,
+        actorId: "staff",
+      });
+      assert.equal(again, "stop_active", source);
+      assert.equal(optRow().opted_in, 0);
+      assert.equal(optRow().source, "stop");
+    }
+
+    const secret = "honesty-webhook-secret";
+    const prevSecret = process.env.META_APP_SECRET;
+    process.env.META_APP_SECRET = secret;
+    const payload = {
+      object: "whatsapp_business_account",
+      entry: [
+        {
+          id: "waba-stopkeep",
+          changes: [
+            {
+              value: {
+                metadata: { phone_number_id: phoneNumberId },
+                messages: [{ from: phone, text: { body: "START" } }],
+              },
+            },
+          ],
+        },
+      ],
+    };
+    try {
+      const raw = JSON.stringify(payload);
+      const signature = crypto.createHmac("sha256", secret).update(raw).digest("hex");
+      const res = await fetch(`http://127.0.0.1:${server.port}/api/meta/webhook`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Hub-Signature-256": `sha256=${signature}` },
+        body: raw,
+      });
+      assert.equal(res.status, 200);
+    } finally {
+      if (prevSecret === undefined) delete process.env.META_APP_SECRET;
+      else process.env.META_APP_SECRET = prevSecret;
+    }
+    assert.equal(optRow().opted_in, 1);
+    assert.equal(optRow().source, "start");
+    const startAudit = getDb()
+      .prepare(
+        `SELECT tenant_id, details, timestamp FROM audit_logs
+         WHERE action = 'whatsapp_reconsent' AND tenant_id = ? ORDER BY timestamp DESC LIMIT 1`
+      )
+      .get(clinic.tenantId) as { tenant_id: string; details: string; timestamp: string };
+    assert.equal(startAudit.tenant_id, clinic.tenantId);
+    assert.match(startAudit.details, new RegExp(`phone ${mask.replace(/\*/g, "\\*")} source start at `));
+    assert.match(startAudit.timestamp, /^\d{4}-\d{2}-\d{2}T/);
+    assert.equal(startAudit.details.includes(digits), false);
+    assert.equal(graphCalls, callsBefore);
+
+    const other = uniquePhone();
+    recordWhatsAppOptIn(getDb(), {
+      tenantId: clinic.tenantId,
+      phone: other,
+      optedIn: false,
+      source: "stop",
+      actorId: "patient",
+    });
+    const reconsent = confirmPatientWhatsAppReconsent(getDb(), {
+      tenantId: clinic.tenantId,
+      phone: other,
+      source: "reconsent",
+      patientConfirmed: true,
+    });
+    assert.equal(reconsent, "recorded");
+    const otherDigits = other.replace(/\D/g, "");
+    const otherRow = getDb()
+      .prepare(`SELECT opted_in, source FROM whatsapp_patient_opt_ins WHERE tenant_id = ? AND phone_digits = ?`)
+      .get(clinic.tenantId, otherDigits) as { opted_in: number; source: string };
+    assert.equal(otherRow.opted_in, 1);
+    assert.equal(otherRow.source, "reconsent");
+    const reconsentAudit = getDb()
+      .prepare(
+        `SELECT details, timestamp, tenant_id FROM audit_logs
+         WHERE action = 'whatsapp_reconsent' AND tenant_id = ? AND details LIKE ? ORDER BY timestamp DESC LIMIT 1`
+      )
+      .get(clinic.tenantId, `%source reconsent%`) as { details: string; timestamp: string; tenant_id: string };
+    assert.equal(reconsentAudit.tenant_id, clinic.tenantId);
+    assert.match(reconsentAudit.details, /phone \*\*\*\*\d{4} source reconsent at /);
+    assert.match(reconsentAudit.timestamp, /^\d{4}-\d{2}-\d{2}T/);
   });
 });
 

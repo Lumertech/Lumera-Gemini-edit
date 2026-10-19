@@ -11,7 +11,7 @@ import {
 } from "./db.ts";
 import { clinicLine, getTenantLetterhead } from "./letterhead.ts";
 import { mintPatientLinkToken, PATIENT_LINK_PRINT_TTL_HOURS, revokePatientLinkTokensFor } from "./patient-link-token.ts";
-import { recordWhatsAppOptIn } from "./whatsapp-opt-in.ts";
+import { confirmPatientWhatsAppReconsent, recordWhatsAppOptIn } from "./whatsapp-opt-in.ts";
 import {
   bindStoredSafetyCheckToRx,
   patientSafetyLists,
@@ -1410,6 +1410,28 @@ export function createClinicalRouter(): Router {
     }
   });
 
+  api.post("/patients/whatsapp-reconsent", requireAuth, (req, res) => {
+    if (!requestIsPatient(req)) return res.status(403).json({ error: "Insufficient permissions" });
+    const tenantId = requireTenant(req, res);
+    if (!tenantId) return;
+    const patientId = sessionPatientId(req);
+    if (!patientId) return res.status(403).json({ error: "Insufficient permissions" });
+    if ((req.body || {}).confirmed !== true) {
+      return res.status(400).json({ error: "Patient confirmation is required" });
+    }
+    const row = getTenantPatient(tenantId, patientId);
+    if (!row) return res.status(404).json({ error: "Patient not found" });
+    const outcome = confirmPatientWhatsAppReconsent(getDb(), {
+      tenantId,
+      phone: String((row as { phone?: string }).phone || ""),
+      patientId,
+      source: "reconsent",
+      actorId: String(req.user?.id || ""),
+      patientConfirmed: true,
+    });
+    res.json({ outcome });
+  });
+
   api.post("/patients/link-abha", requireAuth, (req, res) => {
     if (!denyUnlessPatientRecordRole(req, res)) return;
     const tenantId = requireTenant(req, res);
@@ -1565,8 +1587,9 @@ export function createClinicalRouter(): Router {
       const row = insertAppointment(tenantId, req.body || {}, { id: req.user?.id, name: req.user?.name });
       const appointment = mapAppointment(row);
       const optInFlag = (req.body || {}).whatsappOptIn;
+      let optInOutcome: ReturnType<typeof recordWhatsAppOptIn> | undefined;
       if (optInFlag === true || optInFlag === "true") {
-        recordWhatsAppOptIn(getDb(), {
+        optInOutcome = recordWhatsAppOptIn(getDb(), {
           tenantId,
           phone: String(appointment.patientPhone || ""),
           patientId: String(appointment.patientId || ""),
@@ -1584,7 +1607,11 @@ export function createClinicalRouter(): Router {
       );
       let notify: { sent: boolean; wamid?: string; reason?: string } = { sent: false, reason: "Graph error" };
       try {
-        notify = await notifyReceptionBooking({ tenantId, appointment });
+        if (optInOutcome === "stop_active") {
+          notify = { sent: false, reason: "patient replied STOP" };
+        } else {
+          notify = await notifyReceptionBooking({ tenantId, appointment });
+        }
       } catch (notifyErr) {
         console.error("Appointment booked but WhatsApp notify failed:", notifyErr instanceof Error ? notifyErr.name : "Error");
         notify = { sent: false, reason: "Graph error" };
