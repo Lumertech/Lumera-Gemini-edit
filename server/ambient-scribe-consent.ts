@@ -16,7 +16,23 @@ export { AMBIENT_WALKIN_SOURCE };
  * Separate from the #141 health-document consent gate. That gate stays as it is.
  */
 export const AMBIENT_SCRIBE_CONSENT_TEXT =
-  "I have told the patient that this consult will be recorded and transcribed by an AI service to draft notes, and the patient agreed. Audio is not stored.";
+  "I have told the patient that this consult will be recorded and transcribed by Google Cloud Vertex AI (India) to draft notes, and the patient agreed. Audio is not stored.";
+
+/**
+ * Sentences already shown to clinicians. A recorded consent is the audit row
+ * (action + fixed details), not this string, so older rows stay valid.
+ * New writes may still send a previous sentence from an in-flight client.
+ */
+const PRIOR_AMBIENT_SCRIBE_CONSENT_TEXTS = new Set([
+  "I have told the patient that this consult will be recorded and transcribed by an AI service to draft notes, and the patient agreed. Audio is not stored.",
+]);
+
+export function ambientScribeConsentStatementAccepted(statement: unknown): boolean {
+  return (
+    statement === AMBIENT_SCRIBE_CONSENT_TEXT ||
+    (typeof statement === "string" && PRIOR_AMBIENT_SCRIBE_CONSENT_TEXTS.has(statement))
+  );
+}
 
 export const AMBIENT_SCRIBE_CONSENT_ACTION = "ambient_scribe_consent";
 
@@ -268,7 +284,7 @@ export function mountAmbientScribeConsentRoutes(app: Express): void {
       const body = (req.body || {}) as Record<string, unknown>;
       const patientId = cleanVisitId(body.patientId);
       if (!patientId) return res.status(400).json({ error: "patientId is required" });
-      if (body.attested !== true || body.statement !== AMBIENT_SCRIBE_CONSENT_TEXT) {
+      if (body.attested !== true || !ambientScribeConsentStatementAccepted(body.statement)) {
         return res.status(400).json({ error: "Confirm the patient agreement before recording." });
       }
       if (!patientInTenant(tenantId, patientId)) {

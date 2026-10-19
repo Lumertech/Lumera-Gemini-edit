@@ -21,6 +21,7 @@ import {
 } from "./ambient-walkin.ts";
 import {
   AMBIENT_SCRIBE_CONSENT_TEXT,
+  ambientScribeConsentStatementAccepted,
   AMBIENT_WALKIN_SOURCE,
   closeStaleAmbientWalkIns,
   hasAmbientScribeConsent,
@@ -92,7 +93,7 @@ describe("ambient scribe per-visit consent", () => {
   it("records one audit per appointment and does not grant the health-document consent", async () => {
     assert.equal(
       AMBIENT_SCRIBE_CONSENT_TEXT,
-      "I have told the patient that this consult will be recorded and transcribed by an AI service to draft notes, and the patient agreed. Audio is not stored."
+      "I have told the patient that this consult will be recorded and transcribed by Google Cloud Vertex AI (India) to draft notes, and the patient agreed. Audio is not stored."
     );
     const doctor = seedDoctor("doc");
     const token = await login(doctor.email);
@@ -223,6 +224,50 @@ describe("ambient scribe per-visit consent", () => {
       { Authorization: `Bearer ${deskToken}` }
     );
     assert.equal(denied.status, 403);
+  });
+
+  it("accepts the previous consent sentence and still rejects a paraphrase", async () => {
+    const previous =
+      "I have told the patient that this consult will be recorded and transcribed by an AI service to draft notes, and the patient agreed. Audio is not stored.";
+    assert.equal(ambientScribeConsentStatementAccepted(AMBIENT_SCRIBE_CONSENT_TEXT), true);
+    assert.equal(ambientScribeConsentStatementAccepted(previous), true);
+    assert.equal(ambientScribeConsentStatementAccepted(previous + " "), false);
+    const doctor = seedDoctor("prior");
+    const token = await login(doctor.email);
+    const auth = { Authorization: `Bearer ${token}` };
+    const created = await jsonRequest(
+      port,
+      "POST",
+      "/api/patients",
+      { name: "Prior Consent", phone: `+91 96${String(Date.now()).slice(-8)}`, age: 29, gender: "Female" },
+      auth
+    );
+    assert.equal(created.status, 201, String(created.json.error || ""));
+    const patientId = String((created.json.patient as { id: string }).id);
+    const saved = await jsonRequest(
+      port,
+      "POST",
+      "/api/ambient-scribe/consent",
+      { patientId, attested: true, statement: previous },
+      auth
+    );
+    assert.equal(saved.status, 201, String(saved.json.error || ""));
+    assert.equal(saved.json.confirmed, true);
+    const row = getDb()
+      .prepare(
+        `SELECT details FROM audit_logs WHERE action = 'ambient_scribe_consent' AND tenant_id = ? AND entity_id = ?`
+      )
+      .get(doctor.tenantId, String(saved.json.appointmentId)) as { details: string };
+    assert.equal(row.details.includes(previous), false);
+    assert.equal(hasAmbientScribeConsent(doctor.tenantId, String(saved.json.appointmentId)), true);
+    const paraphrased = await jsonRequest(
+      port,
+      "POST",
+      "/api/ambient-scribe/consent",
+      { patientId, attested: true, statement: "The patient agreed to recording." },
+      auth
+    );
+    assert.equal(paraphrased.status, 400);
   });
 
   it("rejects an appointment that is missing or belongs to another patient, and mints a walk-in id", async () => {

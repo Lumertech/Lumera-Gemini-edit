@@ -108,7 +108,7 @@ describe("per-visit ambient scribe consent", () => {
   it("uses the exact consent sentence and the disclosure under the mic", () => {
     assert.equal(
       AMBIENT_SCRIBE_CONSENT_TEXT,
-      "I have told the patient that this consult will be recorded and transcribed by an AI service to draft notes, and the patient agreed. Audio is not stored."
+      "I have told the patient that this consult will be recorded and transcribed by Google Cloud Vertex AI (India) to draft notes, and the patient agreed. Audio is not stored."
     );
     assert.equal(
       AMBIENT_RECORDING_DISCLOSURE,

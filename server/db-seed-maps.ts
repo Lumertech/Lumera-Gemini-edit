@@ -440,7 +440,7 @@ Lumera Solutions LLP (“Lumera”, “we”) provides AI-assisted practice mana
 Data is used to operate the clinician suite, patient portal, and admin CMS; to generate AI drafts you review; and to meet ABDM / NDHM interoperability where you enable it.
 
 ## Sharing
-We do not sell health information. Processors (for example Gemini API when a clinic key is configured) receive only the minimum payload needed for the requested inference.
+We do not sell health information. Processors (for example Google Cloud Vertex AI (Gemini), Mumbai, India region) receive only the minimum payload needed for the requested inference.
 
 ## Retention & rights
 Clinic administrators can disable users and export or delete CMS content from the Admin console. Contact ravee@lumer.me for data requests.`,
@@ -483,7 +483,7 @@ Emergency care should never rely on the AI receptionist or WhatsApp bot — dire
 - Passwords are stored with scrypt hashes; sessions use httpOnly cookies
 - Role-based access separates Super Admin, clinicians, reception, and patients
 - Mutating admin actions are written to an immutable audit log
-- Gemini API keys stay in server environment variables and are never written to SQLite
+- Google Cloud Vertex AI (Gemini), Mumbai, India region, handles optional transcription and note assist. No API key for that service is stored in SQLite
 - Uploaded media is stored on the clinic server under /uploads
 
 Report suspected incidents to ravee@lumer.me.`,
