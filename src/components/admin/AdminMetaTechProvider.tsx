@@ -111,7 +111,7 @@ export const AdminMetaTechProvider: React.FC = () => {
     language: "en",
     headerText: "Clinical Follow-up Reminder",
     bodyText: "Hello {{1}}, Dr. {{2}} has scheduled your post-op review for {{3}}. Please let us know if you need assistance.",
-    footerText: "Lumera Clinical Care Team",
+    footerText: "Demo clinic",
     button1Text: "Confirm Attendance",
     button2Text: "Request Reschedule",
   });
@@ -149,7 +149,7 @@ export const AdminMetaTechProvider: React.FC = () => {
 
   const getBaseOrigin = () => {
     if (typeof window !== "undefined") return window.location.origin;
-    return "https://lumera.health";
+    return "https://www.mylumera.in";
   };
 
   // Embedded Signup Simulation

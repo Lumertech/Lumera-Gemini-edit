@@ -1,6 +1,6 @@
 import { apiFetch } from "../api/http";
 import { ClinicSettings, Doctor, TenantLetterhead } from "../types";
-import { SEED_CLINIC_GSTIN, SEED_CLINIC_UPI } from "./sampleTaxInvoice";
+import { isSeedGstin, isSeedUpi, SEED_CLINIC_GSTIN, SEED_CLINIC_UPI } from "./sampleTaxInvoice";
 
 /** Seed GSTIN/UPI that must never appear on real-tenant Rx or invoices. */
 export { SEED_CLINIC_GSTIN, SEED_CLINIC_UPI };
@@ -164,5 +164,5 @@ export async function patchTenantLetterhead(
 }
 
 export function usesSeedLetterheadIdentifiers(settings: ClinicSettings): boolean {
-  return settings.gstin === SEED_CLINIC_GSTIN || settings.upiId === SEED_CLINIC_UPI;
+  return isSeedGstin(settings.gstin) || isSeedUpi(settings.upiId);
 }

@@ -40,47 +40,47 @@ export const ALL_SPECIALTIES: PolyclinicSpecialty[] = [
 export const PRESET_DOCTOR_AVATARS = [
   {
     label: 'Consultant Physician (Male)',
-    url: 'https://images.unsplash.com/photo-1622253692010-333f2da6031d?auto=format&fit=crop&w=400&q=80',
+    url: '/lumera-logo.svg#photo-1622253692010-333f2da6031d?auto=format&fit=crop&w=400&q=80',
     specialty: 'General Medicine',
   },
   {
     label: 'Sports Rehab & Physio (Male)',
-    url: 'https://images.unsplash.com/photo-1612349317150-e413f6a5b16d?auto=format&fit=crop&w=400&q=80',
+    url: '/lumera-logo.svg#photo-1612349317150-e413f6a5b16d?auto=format&fit=crop&w=400&q=80',
     specialty: 'Physiotherapy',
   },
   {
     label: 'Pediatric Specialist (Female)',
-    url: 'https://images.unsplash.com/photo-1594824813589-98072124c6e9?auto=format&fit=crop&w=400&q=80',
+    url: '/lumera-logo.svg#photo-1594824813589-98072124c6e9?auto=format&fit=crop&w=400&q=80',
     specialty: 'Pediatrics',
   },
   {
     label: 'Senior Cardiologist (Male)',
-    url: 'https://images.unsplash.com/photo-1537368910025-700350fe46c7?auto=format&fit=crop&w=400&q=80',
+    url: '/lumera-logo.svg#photo-1537368910025-700350fe46c7?auto=format&fit=crop&w=400&q=80',
     specialty: 'Cardiology',
   },
   {
     label: 'Dermatologist (Female)',
-    url: 'https://images.unsplash.com/photo-1559839734-2b71ea197ec2?auto=format&fit=crop&w=400&q=80',
+    url: '/lumera-logo.svg#photo-1559839734-2b71ea197ec2?auto=format&fit=crop&w=400&q=80',
     specialty: 'Dermatology',
   },
   {
     label: 'Orthopedic Surgeon (Male)',
-    url: 'https://images.unsplash.com/photo-1582750433449-648ed127bb54?auto=format&fit=crop&w=400&q=80',
+    url: '/lumera-logo.svg#photo-1582750433449-648ed127bb54?auto=format&fit=crop&w=400&q=80',
     specialty: 'Orthopedics',
   },
   {
     label: 'Senior Gynecologist (Female)',
-    url: 'https://images.unsplash.com/photo-1591604021695-0c69b7c05981?auto=format&fit=crop&w=400&q=80',
+    url: '/lumera-logo.svg#photo-1591604021695-0c69b7c05981?auto=format&fit=crop&w=400&q=80',
     specialty: 'Gynecology',
   },
   {
     label: 'Dental Surgeon & Endodontist',
-    url: 'https://images.unsplash.com/photo-1629909613654-28e377c37b09?auto=format&fit=crop&w=400&q=80',
+    url: '/lumera-logo.svg#photo-1629909613654-28e377c37b09?auto=format&fit=crop&w=400&q=80',
     specialty: 'Dental Surgery',
   },
   {
     label: 'Ophthalmic Eye Surgeon',
-    url: 'https://images.unsplash.com/photo-1579684385127-1ef15d508118?auto=format&fit=crop&w=400&q=80',
+    url: '/lumera-logo.svg#photo-1579684385127-1ef15d508118?auto=format&fit=crop&w=400&q=80',
     specialty: 'Ophthalmology',
   },
 ];
@@ -403,7 +403,7 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
                         <div className="pt-2">
                           <input
                             type="url"
-                            placeholder="https://example.com/doctor-headshot.jpg"
+                            placeholder="https://www.mylumera.in/media/doctor-headshot.jpg"
                             value={formData.avatarUrl || ''}
                             onChange={(e) => setFormData({ ...formData, avatarUrl: e.target.value })}
                             className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
@@ -528,7 +528,7 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
                       type="email"
                       value={formData.email}
                       onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                      placeholder="doctor@lumera.health"
+                      placeholder="doctor@example.com"
                       className="w-full px-3 py-2 bg-slate-800/80 border border-slate-700 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
                     />
                   </div>

@@ -30,6 +30,7 @@ import { rejectUntrustedTenantClaim } from "./tenant-guard.ts";
 import { authenticatedLabReportPath, authorizeLabReport, labOwnerTenantId, sendLabReportDenied } from "./lab-report-access.ts";
 import { WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
 import { formatINR } from "../src/lib/currency.ts";
+import { isSeedUpi, SAMPLE_UPI_DO_NOT_PAY } from "../src/lib/sampleTaxInvoice.ts";
 import { AI_RUPEE_OUTPUT_RULE } from "./india-currency-copy.ts";
 import { maxTranscribeBase64Chars } from "./json-body.ts";
 import { base64DecodedBytes, canonicalTranscribeMime, transcribeDurationTooLong } from "./transcribe-policy.ts";
@@ -1322,6 +1323,11 @@ ${AI_RUPEE_OUTPUT_RULE}`;
       const clinicEmail = escapeHtml(letterhead.email);
       const clinicGstin = escapeHtml(letterhead.gstin);
       const clinicUpi = escapeHtml(letterhead.upiId);
+      const clinicUpiLine = clinicUpi
+        ? isSeedUpi(letterhead.upiId)
+          ? `${clinicUpi} (${escapeHtml(SAMPLE_UPI_DO_NOT_PAY)})`
+          : clinicUpi
+        : "";
       const sealText = escapeHtml(letterhead.sealText);
       const footerDisclaimer = escapeHtml(letterhead.footerDisclaimer);
       const signatureUrl = doctorSignatureByDoctorId(String(rx.doctor_id || "")) || letterhead.signatureUrl;
@@ -1331,7 +1337,7 @@ ${AI_RUPEE_OUTPUT_RULE}`;
       const subLine = [clinicAddress, clinicPhone ? `Phone: ${clinicPhone}` : "", clinicEmail]
         .filter(Boolean)
         .join(" • ");
-      const gstinLine = [clinicGstin ? `GSTIN: ${clinicGstin}` : "", clinicUpi ? `UPI: ${clinicUpi}` : ""]
+      const gstinLine = [clinicGstin ? `GSTIN: ${clinicGstin}` : "", clinicUpiLine ? `UPI: ${clinicUpiLine}` : ""]
         .filter(Boolean)
         .join(" • ");
 

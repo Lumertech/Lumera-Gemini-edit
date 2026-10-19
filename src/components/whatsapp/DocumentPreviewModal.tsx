@@ -15,11 +15,24 @@ interface DocumentPreviewModalProps {
   onClose: () => void;
 }
 
+/** Clinic mailbox on the document. Empty means the email line is omitted. */
+export function clinicDocumentEmail(raw: Record<string, unknown> | null | undefined): string {
+  if (!raw) return "";
+  for (const key of ["clinicEmail", "contactEmail", "clinic_email", "contact_email"]) {
+    const value = raw[key];
+    if (typeof value !== "string") continue;
+    const text = value.trim();
+    if (text) return text;
+  }
+  return "";
+}
+
 export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({ document, onClose }) => {
   if (!document) return null;
 
   const isRx = document.type === 'prescription';
   const rawData = document.data || {};
+  const clinicContact = clinicDocumentEmail(rawData);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 backdrop-blur-xs p-4 overflow-y-auto">
@@ -67,8 +80,13 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({ docu
               <h2 className="text-xl font-black text-blue-900 tracking-tight">LUMERA HEALTHCARE POLYCLINIC</h2>
               <p className="text-xs text-slate-500">
                 Integrated Multispecialty OPD, Diagnostic Pathology & Rehabilitation<br />
-                Indiranagar, Bengaluru • Phone: +91 80 4123 4567 • emr@lumera.health
+                Indiranagar, Bengaluru • Phone: +91 80 4123 4567
               </p>
+              {clinicContact ? (
+                <p className="text-xs text-slate-500" data-testid="clinic-document-email">
+                  <InertText value={clinicContact} />
+                </p>
+              ) : null}
             </div>
             <div className="text-right">
               <div className="font-bold text-sm text-slate-900"><InertText value={rawData.doctorName || 'Dr. Siddharth Varma (PT)'} /></div>
@@ -176,7 +194,7 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({ docu
                 </div>
                 <div className="text-right">
                   <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Laboratory Facility</span>
-                  <span className="text-xs font-medium text-slate-700"><InertText value={rawData.labName || 'Lumera Diagnostic Central Lab'} /></span>
+                  <span className="text-xs font-medium text-slate-700"><InertText value={rawData.labName || 'Demo clinic laboratory'} /></span>
                 </div>
               </div>
 
@@ -242,7 +260,7 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({ docu
           <div className="pt-4 border-t border-slate-200 flex items-center justify-between text-xs text-slate-500">
             <div className="flex items-center space-x-2">
               <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-              <span>Cryptographically signed on Lumera Health Cloud • Tamper-proof EMR Record</span>
+              <span>Cryptographically signed digital record • Tamper-proof EMR Record</span>
             </div>
             <div className="text-right font-serif italic text-blue-900 font-bold text-base">
               {rawData.doctorName || 'Dr. Siddharth Varma'}

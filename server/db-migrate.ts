@@ -9,6 +9,7 @@ import {
 } from "./migrate-patients-phone.ts";
 import { backfillWhatsAppTenantIds } from "./whatsapp-tenant-backfill.ts";
 import { migratePrescriptionDraftKey } from "./migrate-prescription-drafts.ts";
+import { migrateUnownedDomains } from "./migrate-unowned-domains.ts";
 
 const DEMO_LETTERHEAD_SEED = {
   name: "Lumera Healthcare & Polyclinic Institute",
@@ -16,11 +17,11 @@ const DEMO_LETTERHEAD_SEED = {
   address: "Suite 401-405, Healthcare Towers, 14 Park Circus Avenue",
   city: "Kolkata, West Bengal - 700017",
   phone: "+91 (033) 2289-9000 / +91 98000 12345",
-  email: "care@lumeraclinic.in",
-  website: "https://lumeraclinic.in",
+  email: "care@example.com",
+  website: "https://example.com",
   gstin: "19AABCL8899K1Z5",
   regId: "WB-CLINIC-REG-2023/8892",
-  upiId: "lumerahealth@icici",
+  upiId: "demo@upi-sandbox",
   whatsappNumber: "+91 98000 12345",
   sealText: "Authorized Medical Seal & Digital Signature Verified",
   footerDisclaimer: "Prescription issued under the Telemedicine Practice Guidelines, 2020.",
@@ -31,10 +32,11 @@ const LEGACY_SEEDED_FOOTER_DISCLAIMER =
   "This prescription is digitally verified under National Health Authority (NHA) & Telemedicine Practice Guidelines. Please report any adverse drug reactions immediately.";
 /** Full seeded FOOTER text. A row changes only when that component text matches exactly. */
 const LEGACY_SEEDED_RX_TEMPLATE_FOOTER = "Lumera Health EMR System • Certified Digital Rx";
-const SEEDED_RX_TEMPLATE_FOOTER = "Lumera Health EMR System • Digital Rx";
+const SEEDED_RX_TEMPLATE_FOOTER = "Demo clinic • Digital Rx";
 /**
  * Seeded template whose footer was that sentence. lab_report_ready does not apply:
- * its seeded footer is "Lumera Central Diagnostics".
+ * its previous seeded footer was "Lumera Central Diagnostics", which the unowned-domain
+ * migration rewrites. This honesty pass does not touch that footer.
  */
 const SEEDED_RX_TEMPLATE_NAMES = ["post_consultation_rx"] as const;
 
@@ -508,6 +510,11 @@ export function migrate(database: SqlDatabase) {
   backfillWhatsAppTenantIds(database);
   migrateWhatsAppConversationKey(database);
   enforceWhatsAppTenantNotNull(database);
+  // Unowned-domain seed rewrite. It sits above rewriteLegacyHonestyCopy so
+  // PR #164 can append its patient_link_tokens, rx_signed_safety, and
+  // whatsapp_patient_opt_ins schema immediately after the honesty pass.
+  // This block does not create those tables.
+  migrateUnownedDomains(database);
   rewriteLegacyHonestyCopy(database);
 }
 

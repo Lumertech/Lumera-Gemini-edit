@@ -884,10 +884,10 @@ describe("legacy honesty copy migration", () => {
       (db.prepare("SELECT components AS v FROM meta_templates WHERE id = ?").get(id) as { v: string }).v;
     const tpl2 = componentsOf("tpl-2");
     assert.equal(tpl2.includes("Certified Digital Rx"), false);
-    assert.match(tpl2, /Lumera Health EMR System • Digital Rx/);
+    assert.match(tpl2, /Demo clinic • Digital Rx/);
     const parsed = JSON.parse(tpl2) as { type: string; text?: string }[];
     assert.equal(parsed[0].text, "Dear {{1}}");
-    assert.equal(parsed.find((part) => part.type === "FOOTER")?.text, "Lumera Health EMR System • Digital Rx");
+    assert.equal(parsed.find((part) => part.type === "FOOTER")?.text, "Demo clinic • Digital Rx");
 
     assert.equal(componentsOf("tpl-3"), labComponents);
     assert.equal(componentsOf("tpl-custom"), customComponents);
