@@ -82,7 +82,7 @@ import { CompactAmbientScribe, AmbientScribeStatus } from './CompactAmbientScrib
 import { FollowUpSlotPicker, ReservedFollowUp } from './FollowUpSlotPicker';
 import { clonePresetExercises, presetHepToastMessage } from '../lib/rxPresetHep';
 import { followUpBookingRef } from '../lib/followUpSlots';
-import { installPrescriptionPrintHooks, printPrescriptionDocument } from '../lib/printPrescription';
+import { installPrescriptionPrintHooks, joinPresent, printPrescriptionDocument } from '../lib/printPrescription';
 import { resolveRxModule } from '../lib/specialtyWorkflow';
 import { PatientRecordModal } from './PatientRecordModal';
 import {
@@ -1249,33 +1249,61 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
       {/* MAIN PRESCRIPTION LETTERHEAD & CLINICAL FORM */}
       <div data-rx-document="" className="bg-white rounded-xl border border-slate-200 p-4 sm:p-6 shadow-xs space-y-5 print:border-none print:shadow-none print:p-0 min-w-0">
         {/* Letterhead Header */}
-        <div className="border-b-2 border-slate-900 pb-4">
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-            <div>
-              <div className="flex items-center space-x-2">
-                <span className="text-xl font-black text-slate-900 tracking-tight">{clinicSettings.name}</span>
+        <div data-rx-letterhead="" className="border-b-2 border-slate-900 pb-4 min-w-0">
+          <div className="rx-letterhead-row flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 min-w-0">
+            <div className="rx-letterhead-id min-w-0 break-words">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xl font-black text-slate-900 tracking-tight break-words">{clinicSettings.name}</span>
                 {clinicSettings.tagline ? (
                   <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-teal-100 text-teal-800 uppercase tracking-wider">
                     {clinicSettings.tagline}
                   </span>
                 ) : null}
               </div>
-              <p className="text-xs text-slate-500 mt-0.5 break-words">{clinicSettings.address}{clinicSettings.city ? `, ${clinicSettings.city}` : ""} | Tel: {clinicSettings.phone}</p>
-              <p className="text-[11px] text-slate-400">Web: {clinicSettings.website} | Email: {clinicSettings.email}</p>
-              {(clinicSettings.gstin || clinicSettings.upiId) && (
-                <p className="text-[11px] text-slate-500 font-mono mt-0.5">
-                  {clinicSettings.gstin ? `GSTIN: ${clinicSettings.gstin}` : ""}
-                  {clinicSettings.gstin && clinicSettings.upiId ? " • " : ""}
-                  {clinicSettings.upiId ? `UPI: ${clinicSettings.upiId}` : ""}
+              {joinPresent([
+                [clinicSettings.address, clinicSettings.city].filter(Boolean).join(", "),
+                clinicSettings.phone ? `Tel: ${clinicSettings.phone}` : "",
+              ]) ? (
+                <p className="text-xs text-slate-500 mt-0.5 break-words">
+                  {joinPresent([
+                    [clinicSettings.address, clinicSettings.city].filter(Boolean).join(", "),
+                    clinicSettings.phone ? `Tel: ${clinicSettings.phone}` : "",
+                  ])}
                 </p>
-              )}
+              ) : null}
+              {joinPresent([
+                clinicSettings.website ? `Web: ${clinicSettings.website}` : "",
+                clinicSettings.email ? `Email: ${clinicSettings.email}` : "",
+              ]) ? (
+                <p className="text-[11px] text-slate-400 break-words">
+                  {joinPresent([
+                    clinicSettings.website ? `Web: ${clinicSettings.website}` : "",
+                    clinicSettings.email ? `Email: ${clinicSettings.email}` : "",
+                  ])}
+                </p>
+              ) : null}
+              {joinPresent([
+                clinicSettings.gstin ? `GSTIN: ${clinicSettings.gstin}` : "",
+                clinicSettings.upiId ? `UPI: ${clinicSettings.upiId}` : "",
+              ]) ? (
+                <p className="text-[11px] text-slate-500 font-mono mt-0.5 break-words">
+                  {joinPresent([
+                    clinicSettings.gstin ? `GSTIN: ${clinicSettings.gstin}` : "",
+                    clinicSettings.upiId ? `UPI: ${clinicSettings.upiId}` : "",
+                  ])}
+                </p>
+              ) : null}
             </div>
 
-            <div className="text-left sm:text-right">
-              <h3 className="text-sm font-bold text-slate-900">{currentDoctor.name}</h3>
-              <p className="text-xs font-medium text-teal-800">{currentDoctor.qualification}</p>
-              <p className="text-xs text-slate-600 font-semibold">{activeSpecialty}</p>
-              <p className="text-[11px] text-slate-400 font-mono">Reg No: {currentDoctor.regNumber}</p>
+            <div className="rx-letterhead-id min-w-0 max-w-full text-left sm:text-right break-words">
+              <h3 className="text-sm font-bold text-slate-900 break-words">{currentDoctor.name}</h3>
+              {currentDoctor.qualification ? (
+                <p className="text-xs font-medium text-teal-800 break-words">{currentDoctor.qualification}</p>
+              ) : null}
+              <p className="text-xs text-slate-600 font-semibold break-words">{activeSpecialty}</p>
+              {currentDoctor.regNumber ? (
+                <p className="text-[11px] text-slate-400 font-mono break-words">Reg No: {currentDoctor.regNumber}</p>
+              ) : null}
             </div>
           </div>
         </div>
@@ -1333,9 +1361,9 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
         </div>
 
         {/* Clinical Summary & Diagnosis Inputs */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4" data-rx-section-group="">
           {/* Chief Complaints */}
-          <div className={`space-y-1.5 min-w-0 ${aiFieldClass(pendingAiFields, 'chiefComplaints')}`}>
+          <div data-rx-has-content={chiefComplaints.length ? "true" : "false"} className={`space-y-1.5 min-w-0 ${aiFieldClass(pendingAiFields, 'chiefComplaints')}`}>
             <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
               Chief Complaints & Symptom Duration:
             </label>
@@ -1374,8 +1402,8 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
           </div>
 
           {/* Primary Diagnosis & ICD-10 */}
-          <div className={`space-y-2 min-w-0 ${aiFieldClass(pendingAiFields, 'diagnosis')}`}>
-            <div>
+          <div data-rx-has-content={diagnosis.trim() || icd10.trim() ? "true" : "false"} className={`space-y-2 min-w-0 ${aiFieldClass(pendingAiFields, 'diagnosis')}`}>
+            <div data-rx-has-content={diagnosis.trim() ? "true" : "false"}>
               <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
                 Clinical Diagnosis:
               </label>
@@ -1389,7 +1417,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
                 className="w-full min-w-0 text-xs font-bold text-slate-900 border border-slate-200 rounded px-2.5 py-1.5 focus:ring-1 focus:ring-blue-600 focus:outline-none bg-white"
               />
             </div>
-            <div className={`flex flex-wrap items-center gap-2 ${aiFieldClass(pendingAiFields, 'icd10Code')}`}>
+            <div data-rx-has-content={icd10.trim() ? "true" : "false"} className={`flex flex-wrap items-center gap-2 ${aiFieldClass(pendingAiFields, 'icd10Code')}`}>
               <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">ICD-10 Code:</label>
               <input
                 type="text"
@@ -1404,8 +1432,8 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 min-w-0">
-          <label className={`block space-y-1 min-w-0 ${aiFieldClass(pendingAiFields, 'historyOfPresentIllness')}`}>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 min-w-0" data-rx-section-group="">
+          <label data-rx-has-content={historyOfPresentIllness.trim() ? "true" : "false"} className={`block space-y-1 min-w-0 ${aiFieldClass(pendingAiFields, 'historyOfPresentIllness')}`}>
             <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">History of Present Illness</span>
             <textarea
               value={historyOfPresentIllness}
@@ -1417,7 +1445,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
               className="w-full min-w-0 text-xs border border-slate-200 rounded px-2.5 py-1.5 focus:ring-1 focus:ring-blue-600 focus:outline-none"
             />
           </label>
-          <label className={`block space-y-1 min-w-0 ${aiFieldClass(pendingAiFields, 'pastMedicalHistory')}`}>
+          <label data-rx-has-content={pastMedicalHistory.trim() ? "true" : "false"} className={`block space-y-1 min-w-0 ${aiFieldClass(pendingAiFields, 'pastMedicalHistory')}`}>
             <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Past Medical History</span>
             <textarea
               value={pastMedicalHistory}
@@ -1429,7 +1457,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
               className="w-full min-w-0 text-xs border border-slate-200 rounded px-2.5 py-1.5 focus:ring-1 focus:ring-blue-600 focus:outline-none"
             />
           </label>
-          <label className={`block space-y-1 min-w-0 ${aiFieldClass(pendingAiFields, 'reviewOfSystems')}`}>
+          <label data-rx-has-content={reviewOfSystems.trim() ? "true" : "false"} className={`block space-y-1 min-w-0 ${aiFieldClass(pendingAiFields, 'reviewOfSystems')}`}>
             <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Review of Systems</span>
             <textarea
               value={reviewOfSystems}
@@ -1441,7 +1469,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
               className="w-full min-w-0 text-xs border border-slate-200 rounded px-2.5 py-1.5 focus:ring-1 focus:ring-blue-600 focus:outline-none"
             />
           </label>
-          <label className={`block space-y-1 min-w-0 ${aiFieldClass(pendingAiFields, 'physicalExamination')}`}>
+          <label data-rx-has-content={physicalExamination.trim() ? "true" : "false"} className={`block space-y-1 min-w-0 ${aiFieldClass(pendingAiFields, 'physicalExamination')}`}>
             <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Physical Examination / Clinical Findings</span>
             <textarea
               value={physicalExamination}
@@ -1455,10 +1483,19 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
           </label>
         </div>
 
-        <div className={`space-y-2 min-w-0 ${aiFieldClass(pendingAiFields, 'vitals')}`}>
+        <div
+          data-rx-has-content={
+            [vitals.bloodPressureSystolic, vitals.bloodPressureDiastolic, vitals.heartRate, vitals.spO2, vitals.temperature].some(
+              (value) => typeof value === "number" && Number.isFinite(value)
+            )
+              ? "true"
+              : "false"
+          }
+          className={`space-y-2 min-w-0 ${aiFieldClass(pendingAiFields, 'vitals')}`}
+        >
           <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Vitals</span>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-            <label className="text-[10px] text-slate-500 font-bold block min-w-0">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2" data-rx-section-group="">
+            <label data-rx-has-content={typeof vitals.bloodPressureSystolic === "number" ? "true" : "false"} className="text-[10px] text-slate-500 font-bold block min-w-0">
               BP systolic
               <input
                 type="number"
@@ -1470,7 +1507,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
                 className="mt-1 w-full min-w-0 text-xs border border-slate-200 rounded px-2 py-1"
               />
             </label>
-            <label className="text-[10px] text-slate-500 font-bold block min-w-0">
+            <label data-rx-has-content={typeof vitals.bloodPressureDiastolic === "number" ? "true" : "false"} className="text-[10px] text-slate-500 font-bold block min-w-0">
               BP diastolic
               <input
                 type="number"
@@ -1482,7 +1519,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
                 className="mt-1 w-full min-w-0 text-xs border border-slate-200 rounded px-2 py-1"
               />
             </label>
-            <label className="text-[10px] text-slate-500 font-bold block min-w-0">
+            <label data-rx-has-content={typeof vitals.heartRate === "number" ? "true" : "false"} className="text-[10px] text-slate-500 font-bold block min-w-0">
               Pulse
               <input
                 type="number"
@@ -1494,7 +1531,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
                 className="mt-1 w-full min-w-0 text-xs border border-slate-200 rounded px-2 py-1"
               />
             </label>
-            <label className="text-[10px] text-slate-500 font-bold block min-w-0">
+            <label data-rx-has-content={typeof vitals.spO2 === "number" ? "true" : "false"} className="text-[10px] text-slate-500 font-bold block min-w-0">
               SpO2
               <input
                 type="number"
@@ -1506,7 +1543,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
                 className="mt-1 w-full min-w-0 text-xs border border-slate-200 rounded px-2 py-1"
               />
             </label>
-            <label className="text-[10px] text-slate-500 font-bold block min-w-0">
+            <label data-rx-has-content={typeof vitals.temperature === "number" ? "true" : "false"} className="text-[10px] text-slate-500 font-bold block min-w-0">
               Temp (F)
               <input
                 type="number"
@@ -1521,8 +1558,8 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 min-w-0">
-          <div className={`space-y-1.5 min-w-0 ${aiFieldClass(pendingAiFields, 'clinicalFindings')}`}>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 min-w-0" data-rx-section-group="">
+          <div data-rx-has-content={clinicalFindings.length ? "true" : "false"} className={`space-y-1.5 min-w-0 ${aiFieldClass(pendingAiFields, 'clinicalFindings')}`}>
             <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Clinical Findings</label>
             <ul className="space-y-1">
               {clinicalFindings.map((finding, idx) => (
@@ -1562,7 +1599,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
               </button>
             </div>
           </div>
-          <div className={`space-y-1.5 min-w-0 ${aiFieldClass(pendingAiFields, 'differentialDiagnoses')}`}>
+          <div data-rx-has-content={differentialDiagnoses.length ? "true" : "false"} className={`space-y-1.5 min-w-0 ${aiFieldClass(pendingAiFields, 'differentialDiagnoses')}`}>
             <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Differential Diagnoses</label>
             <ul className="space-y-1">
               {differentialDiagnoses.map((item, idx) => (
@@ -1604,8 +1641,8 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 min-w-0">
-          <label className={`block space-y-1 min-w-0 ${aiFieldClass(pendingAiFields, 'riskLevel')}`}>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 min-w-0" data-rx-section-group="">
+          <label data-rx-has-content={riskLevel ? "true" : "false"} className={`block space-y-1 min-w-0 ${aiFieldClass(pendingAiFields, 'riskLevel')}`}>
             <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Risk Level</span>
             <select
               value={riskLevel || ''}
@@ -1622,7 +1659,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
               <option value="Emergency">Emergency</option>
             </select>
           </label>
-          <div className={`space-y-1.5 min-w-0 ${aiFieldClass(pendingAiFields, 'redFlags')}`}>
+          <div data-rx-has-content={redFlags.length ? "true" : "false"} className={`space-y-1.5 min-w-0 ${aiFieldClass(pendingAiFields, 'redFlags')}`}>
             <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Red Flags</label>
             <ul className="space-y-1">
               {redFlags.map((flag, idx) => (
@@ -2094,7 +2131,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
         </div>
 
         {/* Rx Symbol & Medicines Table */}
-        <div className="space-y-2.5">
+        <div data-rx-meds="" className="space-y-2.5">
           <div className="flex items-center space-x-2 border-b border-slate-200 pb-1">
             <span className="font-serif font-black text-2xl text-blue-700 tracking-wider">℞</span>
             <h3 className="font-bold text-slate-800 text-xs uppercase tracking-wider">
@@ -2102,6 +2139,10 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
             </h3>
           </div>
 
+          {medicines.length === 0 ? (
+            <p className="text-xs text-slate-600">No medicines prescribed</p>
+          ) : (
+          <>
           <div className={`md:hidden space-y-2 ${aiFieldClass(pendingAiFields, 'medicines')}`}>
             {medicines.map((med, idx) => (
               <div key={med.id} className="rounded-lg border border-slate-200 p-2.5 text-xs space-y-1 min-w-0">
@@ -2164,10 +2205,12 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
               </tbody>
             </table>
           </div>
+          </>
+          )}
         </div>
 
         {/* Investigations & Lab Tests Section */}
-        <div className="space-y-2 border-t border-slate-100 pt-3.5">
+        <div data-rx-has-content={labTests.length ? "true" : "false"} className="space-y-2 border-t border-slate-100 pt-3.5">
           <div className="flex items-center justify-between">
             <h4 className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
               Recommended Investigations / Radiology:
@@ -2214,8 +2257,8 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
         </div>
 
         {/* General Advice & Follow-up */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 border-t border-slate-100 pt-3.5">
-          <div className="md:col-span-2 space-y-1.5">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 border-t border-slate-100 pt-3.5" data-rx-section-group="">
+          <div data-rx-has-content={adviceList.length ? "true" : "false"} className="md:col-span-2 space-y-1.5">
             <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Ergonomic & Lifestyle Directives:</label>
             <ul className="list-disc list-inside text-xs text-slate-700 space-y-1">
               {adviceList.map((adv, idx) => (
@@ -2291,7 +2334,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
         </div>
 
         {/* Footer with QR Code & Digital Signature Stamp */}
-        <div className="border-t-2 border-slate-900 pt-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div data-rx-signature="" className="border-t-2 border-slate-900 pt-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 min-w-0 break-words">
           <div className="flex items-center space-x-3">
             <div className="w-11 h-11 rounded-lg bg-slate-100 border border-slate-200 p-1 flex items-center justify-center">
               <QrCode className="w-9 h-9 text-slate-800" />

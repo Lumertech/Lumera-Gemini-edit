@@ -7,6 +7,19 @@
 export const RX_PRINT_ROOT_ID = "rx-print-root";
 export const RX_DOCUMENT_SELECTOR = "[data-rx-document]";
 
+/** Join only the parts that have text. Empty phone, web, or email fields drop out. */
+export function joinPresent(parts: Array<string | null | undefined>, separator = " · "): string {
+  return parts.map((part) => String(part ?? "").trim()).filter(Boolean).join(separator);
+}
+
+/** Drop print sections the doctor left blank, including an unset risk level. */
+export function omitEmptyPrintSections(root: ParentNode) {
+  root.querySelectorAll("[data-rx-has-content='false']").forEach((node) => node.remove());
+  root.querySelectorAll("[data-rx-section-group]").forEach((node) => {
+    if (!(node.textContent || "").trim()) node.remove();
+  });
+}
+
 const CHROME_SELECTOR = "[data-print-chrome], [data-rx-modal], [role='status']";
 
 type ChromeSnapshot = {
@@ -70,6 +83,7 @@ function printableClone(source: HTMLElement, doc: Document): HTMLElement {
   clone.querySelectorAll(".no-print").forEach((node) => node.remove());
   freezeEditableFields(clone, doc);
   clone.querySelectorAll("button, [data-print-chrome], [data-rx-modal]").forEach((node) => node.remove());
+  omitEmptyPrintSections(clone);
   return clone;
 }
 

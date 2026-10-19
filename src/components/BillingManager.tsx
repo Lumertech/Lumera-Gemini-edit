@@ -676,9 +676,9 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
   }
 
   return (
-    <div className="max-w-6xl mx-auto px-4 py-6 space-y-6" data-testid={linesLocked ? "invoice-detail" : undefined}>
+    <div className="invoice-fit mx-auto px-4 py-6 space-y-6" data-testid={linesLocked ? "invoice-detail" : undefined}>
       <div
-        className="no-print px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-700"
+        className="invoice-chip no-print px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-700"
         data-testid="pack-billing-lens"
       >
         {pack.billingLabel} · {pack.billingLens} · {pack.formularyLens === "who-eml" ? "WHO-EML / pharmacy" : pack.formularyLens === "rehab-exercises" ? "exercises & packages" : pack.formularyLens === "dental-materials" ? "chair procedures" : pack.formularyLens === "salon-menu" ? "salon menu" : "no clinical formulary"}
@@ -698,15 +698,15 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
       )}
       {dayEndView && (
         <div
-          className="no-print bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+          className="no-print bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3 min-w-0 max-w-full"
           data-testid="day-end-summary"
         >
-          <div>
+          <div className="min-w-0 max-w-full">
             <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Day-end collections</p>
-            <p className="mt-1 text-lg font-semibold text-slate-900" data-testid="day-end-date">
+            <p className="mt-1 text-lg font-semibold text-slate-900 break-words" data-testid="day-end-date">
               {dayEndView.dateLabel}
             </p>
-            <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+            <div className="invoice-pills mt-3 items-center text-sm">
               <span className="px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold" data-testid="day-end-paid">
                 Paid {dayEndView.paidCount}
               </span>
@@ -752,23 +752,23 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
 
       {showInvoicePreview ? (
       <>
-      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm no-print">
-        <div>
-          <div className="flex items-center space-x-2">
+      <div className="flex flex-col items-stretch justify-between gap-4 bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm no-print min-w-0 max-w-full">
+        <div className="min-w-0 max-w-full">
+          <div className="flex flex-wrap items-center gap-2 min-w-0">
             <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-teal-50 text-teal-700 border border-teal-200">
               Integrated OPD Desk & Pharmacy
             </span>
-            <span className="font-mono text-xs text-slate-500 font-medium" data-testid="invoice-number">{shownInvoiceNumber}</span>
+            <span className="invoice-number font-mono text-xs text-slate-500 font-medium" data-testid="invoice-number">{shownInvoiceNumber}</span>
             {statusChip}
           </div>
-          <h1 className="text-lg font-bold text-slate-900 mt-1">Multi-Specialty Billing, Therapy Packages & Batch Inventory</h1>
+          <h1 className="invoice-title text-lg font-bold text-slate-900 mt-1">Multi-Specialty Billing, Therapy Packages & Batch Inventory</h1>
         </div>
 
-        <div className="flex items-center space-x-2">
-          <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-semibold">
+        <div className="invoice-actions">
+          <div className="invoice-tabs bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-semibold" data-testid="invoice-tabs">
             <button
               onClick={() => setActiveTab('invoice')}
-              className={`px-3 py-1.5 rounded-lg transition-all ${
+              className={`shrink-0 px-3 py-1.5 rounded-lg transition-all whitespace-nowrap ${
                 activeTab === 'invoice' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
@@ -776,7 +776,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
             </button>
             <button
               onClick={() => setActiveTab('pharmacy_batches')}
-              className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all ${
+              className={`shrink-0 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all whitespace-nowrap ${
                 activeTab === 'pharmacy_batches' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
@@ -785,7 +785,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
             </button>
             <button
               onClick={() => setActiveTab('rehab_packages')}
-              className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all ${
+              className={`shrink-0 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all whitespace-nowrap ${
                 activeTab === 'rehab_packages' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
@@ -796,7 +796,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
 
           <button
             onClick={() => setShowCollectPaymentModal(true)}
-            className="flex items-center space-x-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs transition-all cursor-pointer"
+            className="invoice-collect flex items-center justify-center space-x-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs transition-all cursor-pointer"
           >
             <ReceiptIndianRupee className="w-3.5 h-3.5" />
             <span>{paid ? 'Payment Collected (Receipt)' : 'Collect Payment'}</span>
@@ -804,7 +804,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
 
           <button
             onClick={() => window.print()}
-            className="flex items-center space-x-1.5 px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold shadow-xs transition-all cursor-pointer"
+            className="invoice-print flex items-center justify-center space-x-1.5 px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold shadow-xs transition-all cursor-pointer"
           >
             <Printer className="w-3.5 h-3.5" />
             <span>Print</span>
@@ -813,15 +813,15 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
       </div>
 
       {activeTab === 'invoice' && (
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-md p-6 sm:p-8 space-y-6">
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-md p-4 sm:p-8 space-y-6 min-w-0 max-w-full">
           <SampleTaxBanner show={sampleTaxInvoice} />
-          <div className="border-b-2 border-slate-900 pb-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-            <div>
+          <div className="border-b-2 border-slate-900 pb-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 min-w-0">
+            <div className="min-w-0 max-w-full">
               <h2 className="text-xl font-bold text-slate-900">{clinicName}</h2>
               <p className="text-xs text-slate-600 mt-0.5">
                 {[clinicSettings.address, clinicSettings.city].filter(Boolean).join(', ') || 'Address not set'}
               </p>
-              <p className="text-xs text-slate-500 font-mono">
+              <p className="text-xs text-slate-500 font-mono break-words">
                 {[
                   `GSTIN: ${billingIds.gstinLabel}`,
                   `UPI: ${billingIds.upiLabel}`,
@@ -849,7 +849,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
             </div>
           </div>
 
-          <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+          <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs min-w-0">
             <div>
               <span className="text-slate-400 block text-[10px] uppercase font-bold">Billed To (Patient)</span>
               <strong className="text-slate-900 text-xs" data-testid="billed-patient">{billedName}</strong>
@@ -925,7 +925,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
           </div>
           )}
 
-          <div className="overflow-x-auto">
+          <div className="max-w-full min-w-0 overflow-x-auto">
             <table className="w-full text-left text-xs border-collapse">
               <thead>
                 <tr className="bg-slate-100 text-slate-700 border-b border-slate-200">
@@ -971,7 +971,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
           <div className="border-t border-slate-200 pt-4 flex flex-col sm:flex-row justify-between gap-6">
             <div className="space-y-3 flex-1">
               <span className="text-xs font-bold text-slate-700 uppercase tracking-wider block">Payment Mode:</span>
-              <div className="flex gap-2 no-print">
+              <div className="flex flex-wrap gap-2 no-print">
                 {(['UPI', 'Cash', 'Card', 'Insurance'] as const).map((mode) => (
                   <button
                     key={mode}

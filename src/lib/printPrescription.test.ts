@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { JSDOM } from "jsdom";
 import {
   finishPrescriptionPrint,
+  joinPresent,
   preparePrescriptionPrint,
   printPrescriptionDocument,
   RX_PRINT_ROOT_ID,
@@ -43,6 +44,72 @@ function rxPage(): Document {
 }
 
 describe("paper Rx print isolation", () => {
+  it("joins only the contact fields that have a value", () => {
+    assert.equal(joinPresent(["", "Tel: +91 98000 12000"]), "Tel: +91 98000 12000");
+    assert.equal(joinPresent(["", "Email: doctor@lumera.me"]), "Email: doctor@lumera.me");
+    assert.equal(
+      joinPresent(["12 MG Road, Bengaluru", "Tel: +91 98000 12000"]),
+      "12 MG Road, Bengaluru · Tel: +91 98000 12000"
+    );
+    assert.equal(joinPresent(["", "  ", null]), "");
+  });
+
+  it("omits blank clinical sections and an unset risk level from the print root", async () => {
+    const dom = new JSDOM(
+      `<!doctype html><body>
+        <article data-rx-document="">
+          <p>Malhotra Individual Practice</p>
+          <p>Tel: +91 98000 12000</p>
+          <p>Email: doctor@lumera.me</p>
+          <p>MBBS, MD (General Medicine), FICP</p>
+          <p>Reg No: MCI-2012-74892</p>
+          <div data-rx-section-group="">
+            <div data-rx-has-content="false"><label>Chief Complaints & Symptom Duration:</label></div>
+            <div data-rx-has-content="false"><label>History of Present Illness</label><textarea></textarea></div>
+          </div>
+          <div data-rx-has-content="false"><span>Vitals</span><label>BP systolic<input value="" /></label></div>
+          <label data-rx-has-content="false">Risk Level<select><option>Unset</option></select></label>
+          <div data-rx-has-content="false"><label>Red Flags</label></div>
+          <div data-rx-has-content="false"><label>Ergonomic & Lifestyle Directives:</label></div>
+          <div data-rx-has-content="true"><p>Clinical Diagnosis: Lumbar strain</p></div>
+          <div data-rx-meds="">
+            <h3>Medication Schedule</h3>
+            <p>No medicines prescribed</p>
+          </div>
+          <div data-rx-signature=""><p>Authorized Medical Signature</p></div>
+        </article>
+      </body>`,
+      { url: "https://www.mylumera.in/w/malhotra-individual-practice/rx/visit-1" }
+    );
+    const doc = dom.window.document;
+    (doc.defaultView as Window).print = () => {};
+    assert.equal(await printPrescriptionDocument(doc), true);
+    const printed = doc.getElementById(RX_PRINT_ROOT_ID)?.textContent || "";
+    assert.match(printed, /Malhotra Individual Practice/);
+    assert.match(printed, /Tel: \+91 98000 12000/);
+    assert.match(printed, /Email: doctor@lumera\.me/);
+    assert.match(printed, /MBBS, MD \(General Medicine\), FICP/);
+    assert.match(printed, /Reg No: MCI-2012-74892/);
+    assert.match(printed, /Lumbar strain/);
+    assert.match(printed, /Medication Schedule/);
+    assert.match(printed, /No medicines prescribed/);
+    assert.match(printed, /Authorized Medical Signature/);
+    for (const heading of [
+      "Chief Complaints",
+      "History of Present Illness",
+      "Vitals",
+      "BP systolic",
+      "Risk Level",
+      "Unset",
+      "Red Flags",
+      "Lifestyle",
+    ]) {
+      assert.equal(printed.includes(heading), false, heading);
+    }
+    assert.equal(printed.includes("| Tel:"), false);
+    assert.equal(printed.includes("Web:"), false);
+  });
+
   it("prints the letterhead Rx and not the digitally signed modal", async () => {
     const doc = rxPage();
     const win = doc.defaultView as Window & { print: () => void };
@@ -124,6 +191,10 @@ describe("paper Rx print isolation", () => {
   it("keeps the Rx print stylesheet on A4 and wires every Print control", () => {
     const css = fs.readFileSync(path.join(rootDir, "src/index.css"), "utf8");
     assert.match(css, /@page\s*\{[^}]*size:\s*A4/s);
+    assert.match(css, /margin:\s*12mm/);
+    assert.match(css, /width:\s*100%/);
+    assert.match(css, /box-sizing:\s*border-box/);
+    assert.match(css, /page-break-inside:\s*avoid/);
     assert.match(css, /body\.printing-rx > \*:not\(#rx-print-root\)/);
     assert.match(css, /\[data-rx-modal\]/);
     const writer = fs.readFileSync(path.join(rootDir, "src/components/PrescriptionWriter.tsx"), "utf8");
@@ -131,6 +202,13 @@ describe("paper Rx print isolation", () => {
     assert.match(writer, /data-rx-modal/);
     assert.match(writer, /printPrescriptionDocument\(document\)/);
     assert.equal(writer.includes("window.print()"), false);
+    assert.equal(writer.includes("| Tel:"), false);
+    assert.equal(writer.includes("Web: {clinicSettings.website} | Email:"), false);
+    assert.match(writer, /joinPresent\(/);
+    assert.match(writer, /No medicines prescribed/);
+    assert.match(writer, /data-rx-has-content=\{riskLevel \? "true" : "false"\}/);
+    assert.match(writer, /data-rx-signature/);
+    assert.match(writer, /data-rx-meds/);
     assert.match(writer, /Print Paper Rx/);
     assert.match(writer, /Print Prescription/);
     assert.match(writer, /Print Rx/);
