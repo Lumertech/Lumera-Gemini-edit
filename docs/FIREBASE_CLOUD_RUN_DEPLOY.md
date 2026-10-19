@@ -318,7 +318,7 @@ Hosting + TLS on www, Privacy, Terms, data-deletion page + callback, OAuth redir
 
 ### May stay SANDBOX until credentials + Review clear
 
-Graph OTP / reminder / receipt without tokens; `simulate-embedded-signup`; unsigned webhook (non-prod only — production rejects unsigned); in-product `SUBMITTED_PENDING` token (WhatsApp permissions submitted September 2026; not yet granted). Public pages use: Lumera Solutions LLP is a Meta Tech Provider for the WhatsApp Business Platform.
+Graph OTP / reminder / receipt without tokens; `simulate-embedded-signup`; unsigned webhook (non-prod only — production rejects unsigned); in-product `SUBMITTED_PENDING` token when the scopes flag is unset. Meta has approved Lumera's WhatsApp permission requests in App Review. Public pages use: Lumera Solutions LLP is a Meta Tech Provider for the WhatsApp Business Platform.
 
 ---
 

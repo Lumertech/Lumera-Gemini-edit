@@ -3,7 +3,7 @@ import { getDb } from "./db.ts";
 import { CLINIC_MANAGER_ROLES, isPlatformAdminRole, requireAuth, requirePlatformAdmin, requireRole } from "./auth.ts";
 import { rejectUntrustedTenantClaim } from "./tenant-guard.ts";
 import { isProduction } from "./runtime.ts";
-import { SANDBOX_FAKE_WABA_MESSAGE, META_TECH_PROVIDER_STATEMENT, WHATSAPP_PERMISSIONS_PENDING_SENTENCE } from "../src/lib/metaStatus.ts";
+import { SANDBOX_FAKE_WABA_MESSAGE, META_TECH_PROVIDER_STATEMENT, WHATSAPP_PERMISSIONS_STATUS_SENTENCE } from "../src/lib/metaStatus.ts";
 import { rejectProductionSimulator } from "./meta-security.ts";
 import {
   clinicActor,
@@ -253,7 +253,7 @@ export function createWhatsAppNumbersRouter(): Router {
       embeddedSignupLive: false,
       embeddedSignupConfigured: signup.configured,
       notice:
-        `${META_TECH_PROVIDER_STATEMENT} ${WHATSAPP_PERMISSIONS_PENDING_SENTENCE} Real Embedded Signup v4 is available when FACEBOOK_APP_ID and META_EMBEDDED_SIGNUP_CONFIG_ID are set. Contact ravee@lumer.me.`,
+        `${META_TECH_PROVIDER_STATEMENT} ${WHATSAPP_PERMISSIONS_STATUS_SENTENCE} Real Embedded Signup v4 is available when FACEBOOK_APP_ID and META_EMBEDDED_SIGNUP_CONFIG_ID are set. Contact ravee@lumer.me.`,
     });
   });
 
@@ -317,7 +317,7 @@ export function createWhatsAppNumbersRouter(): Router {
       res.json({
         whatsappNumber: publicWhatsAppNumber(row),
         sandbox: !isProduction(),
-        notice: `${META_TECH_PROVIDER_STATEMENT} ${WHATSAPP_PERMISSIONS_PENDING_SENTENCE}`,
+        notice: `${META_TECH_PROVIDER_STATEMENT} ${WHATSAPP_PERMISSIONS_STATUS_SENTENCE}`,
       });
     } catch (err) {
       handleWabaError(res, err, "Failed to connect personal WhatsApp number");

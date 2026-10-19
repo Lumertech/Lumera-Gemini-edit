@@ -1,6 +1,6 @@
 /**
  * GCP Error Reporting for Cloud Run, with a console fallback locally.
- * See META_TECH_PROVIDER_STATEMENT. WhatsApp permissions submitted for Meta App Review in September 2026; not yet granted. Contact ravee@lumer.me.
+ * See META_TECH_PROVIDER_STATEMENT. Meta has approved Lumera's WhatsApp permission requests in App Review. Contact ravee@lumer.me.
  *
  * No Sentry. Structured Cloud Logging events are ingested by Error Reporting
  * on Cloud Run (K_SERVICE / metadata server). Missing ADC must not crash tests.

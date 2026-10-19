@@ -16,8 +16,9 @@ import {
 import { GOVERNMENT_DATA_REQUEST_POLICY_BODY } from "./government-data-request-policy.ts";
 import {
   META_TECH_PROVIDER_STATEMENT,
-  WHATSAPP_APP_REVIEW_SENTENCE,
   WHATSAPP_CLOUD_API_SECTION,
+  WHATSAPP_FEATURES_ROLLOUT_SENTENCE,
+  WHATSAPP_PERMISSIONS_STATUS_SENTENCE,
 } from "../src/lib/metaStatus.ts";
 import { ensureMetaTechProviderAndPolicies, getDb, initDatabase } from "./db.ts";
 import { createMetaRouter } from "./meta.ts";
@@ -89,7 +90,7 @@ const PUBLIC_COPY_SURFACES = [
 ];
 
 const STALE_TECH_PROVIDER_COPY =
-  /not a certified (Meta )?Tech Provider|not (Meta )?Tech Provider certif|building toward Meta Tech Provider|Tech Provider path|App Review (is )?not submitted/i;
+  /not a certified (Meta )?Tech Provider|not (Meta )?Tech Provider certif|building toward Meta Tech Provider|Tech Provider path|App Review (is )?not submitted|not yet granted|submitted for Meta App Review/i;
 
 const TECH_PROVIDER_OVERCLAIM =
   /Meta (Business )?partner|official WhatsApp partner|Solution Partner|Business Solution Provider|\bBSP\b|official Meta|Official Tech Provider|Authorized Tech Provider|Tech Provider Verified|Meta[- ](certified|approved|verified)|App Review (approved|complete)/i;
@@ -176,10 +177,23 @@ describe("Compliance #26 policy seed grep", () => {
     assert.equal(TERMS_OF_SERVICE_BODY.includes(META_TECH_PROVIDER_STATEMENT), true);
     assert.equal(TERMS_OF_SERVICE_BODY.includes(WHATSAPP_CLOUD_API_SECTION), true);
     assert.equal(TERMS_OF_SERVICE_BODY.includes("This does not mean Meta endorses Lumera."), true);
-    assert.equal(TERMS_OF_SERVICE_BODY.includes("Until Meta grants Lumera's WhatsApp permissions"), true);
+    assert.equal(
+      WHATSAPP_PERMISSIONS_STATUS_SENTENCE,
+      "Meta has approved Lumera's WhatsApp permission requests in App Review."
+    );
+    assert.equal(TERMS_OF_SERVICE_BODY.includes(WHATSAPP_FEATURES_ROLLOUT_SENTENCE), true);
+    assert.equal(TERMS_OF_SERVICE_BODY.includes("Until Meta grants Lumera's WhatsApp permissions"), false);
     assert.equal(TERMS_OF_SERVICE_BODY.split(WHATSAPP_CLOUD_API_SECTION).length - 1, 1);
     assert.equal(DATA_DELETION_INSTRUCTIONS_BODY.includes(META_TECH_PROVIDER_STATEMENT), true);
-    assert.equal(DATA_DELETION_INSTRUCTIONS_BODY.includes(WHATSAPP_APP_REVIEW_SENTENCE), true);
+    assert.equal(DATA_DELETION_INSTRUCTIONS_BODY.includes(WHATSAPP_PERMISSIONS_STATUS_SENTENCE), true);
+    assert.equal(DATA_DELETION_INSTRUCTIONS_BODY.includes(WHATSAPP_FEATURES_ROLLOUT_SENTENCE), true);
+    for (const body of [PRIVACY_POLICY_BODY, TERMS_OF_SERVICE_BODY, DATA_DELETION_INSTRUCTIONS_BODY]) {
+      assert.equal(body.includes("not yet granted"), false);
+      assert.equal(body.includes("submitted for Meta App Review"), false);
+      assert.equal(/available now/i.test(body), false);
+      assert.equal(/live for clinics/i.test(body), false);
+      assert.equal(/live to clinics/i.test(body), false);
+    }
     assert.equal(GOVERNMENT_DATA_REQUEST_POLICY_BODY.includes(META_TECH_PROVIDER_STATEMENT), true);
     assert.match(PRIVACY_POLICY_BODY, /replying \*\*STOP\*\*/);
     assert.match(DATA_DELETION_INSTRUCTIONS_BODY, /https:\/\/www\.mylumera\.in\/api\/meta\/data-deletion/);

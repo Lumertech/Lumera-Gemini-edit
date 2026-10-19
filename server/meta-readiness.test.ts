@@ -170,7 +170,10 @@ describe("Overview claims", () => {
       assert.equal(scopesItem.passed, false);
       assert.equal(scopesItem.item.startsWith("SANDBOX"), true);
       assert.match(String(scopesItem.note || ""), /SANDBOX/);
-      assert.match(String(scopesItem.note || ""), /not yet granted/);
+      assert.match(
+        String(scopesItem.note || ""),
+        /Meta has approved Lumera's WhatsApp permission requests in App Review/
+      );
     } finally {
       if (prevReview === undefined) delete process.env.META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED;
       else process.env.META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED = prevReview;

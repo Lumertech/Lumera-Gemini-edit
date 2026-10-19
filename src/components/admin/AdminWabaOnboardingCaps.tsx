@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { AlertCircle, CheckCircle2 } from "lucide-react";
 import { apiFetch } from "../../api/http";
-import { META_TECH_PROVIDER_STATEMENT, WHATSAPP_PERMISSIONS_PENDING_SENTENCE } from "../../lib/metaStatus.ts";
+import { META_TECH_PROVIDER_STATEMENT, WHATSAPP_PERMISSIONS_STATUS_SENTENCE } from "../../lib/metaStatus.ts";
 
 type CapsResponse = {
   windowDays?: number;
@@ -47,7 +47,7 @@ export const AdminWabaOnboardingCaps: React.FC = () => {
           <h2 className="text-sm font-bold text-slate-900">Embedded Signup onboarding cap (rolling 7 days)</h2>
           <p className="text-xs text-slate-500 mt-0.5">
             Meta allows 10 new client WABAs / 7 days before full verification, 200 after. {META_TECH_PROVIDER_STATEMENT}{" "}
-            {WHATSAPP_PERMISSIONS_PENDING_SENTENCE} This count is local.
+            {WHATSAPP_PERMISSIONS_STATUS_SENTENCE} This count is local.
           </p>
         </div>
         <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-800 border border-amber-400/40 shrink-0">

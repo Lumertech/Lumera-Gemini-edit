@@ -18,7 +18,7 @@ import {
   Info,
 } from "lucide-react";
 import { apiFetch, apiFetchResponse } from "../../api/http";
-import { META_TECH_PROVIDER_STATEMENT, WHATSAPP_PERMISSIONS_PENDING_SENTENCE } from "../../lib/metaStatus.ts";
+import { META_TECH_PROVIDER_STATEMENT, WHATSAPP_PERMISSIONS_STATUS_SENTENCE } from "../../lib/metaStatus.ts";
 import { useNav } from "../../nav/NavigationContext";
 import { MetaWhatsAppTemplate } from "../../types";
 
@@ -288,7 +288,7 @@ export const AdminMetaTechProvider: React.FC = () => {
                 </span>
               </div>
               <p className="text-sm text-slate-300 mt-1 max-w-2xl">
-                {overview?.techProviderLabel || META_TECH_PROVIDER_STATEMENT} {WHATSAPP_PERMISSIONS_PENDING_SENTENCE}
+                {overview?.techProviderLabel || META_TECH_PROVIDER_STATEMENT} {WHATSAPP_PERMISSIONS_STATUS_SENTENCE}
                 {overview?.certificationStatus ? ` Certification status: ${overview.certificationStatus}.` : ""}
                 {overview?.providerType ? ` Provider type: ${overview.providerType}.` : ""}
               </p>
@@ -399,7 +399,7 @@ export const AdminMetaTechProvider: React.FC = () => {
               <div>
                 <h2 className="text-lg font-bold text-slate-900">Meta App Review submission parameters</h2>
                 <p className="text-sm text-slate-500">
-                  Policy URLs for the submitted Meta App Review packet. Presence of a page is not an approval. Status: <strong>{overview?.appReviewStatus?.status || "SUBMITTED_PENDING"}</strong>. {WHATSAPP_PERMISSIONS_PENDING_SENTENCE}
+                  Policy URLs for the submitted Meta App Review packet. Presence of a page is not an approval. Status: <strong>{overview?.appReviewStatus?.status || "SUBMITTED_PENDING"}</strong>. {WHATSAPP_PERMISSIONS_STATUS_SENTENCE}
                 </p>
               </div>
               <span className="px-3 py-1 bg-emerald-50 text-emerald-800 font-semibold text-xs rounded-full border border-emerald-200 max-w-sm">
@@ -449,7 +449,7 @@ export const AdminMetaTechProvider: React.FC = () => {
                     <span className="text-[11px] bg-emerald-100 text-emerald-800 font-semibold px-2 py-0.5 rounded">Meta Required</span>
                   </div>
                   <p className="text-xs text-slate-500">
-                    Details WhatsApp Acceptable Use, anti-spam policies, and patient prior consent. {WHATSAPP_PERMISSIONS_PENDING_SENTENCE}
+                    Details WhatsApp Acceptable Use, anti-spam policies, and patient prior consent. {WHATSAPP_PERMISSIONS_STATUS_SENTENCE}
                   </p>
                   <code className="text-xs text-slate-700 font-mono bg-white px-2 py-1 rounded border border-slate-300 inline-block break-all">
                     {termsUrl}

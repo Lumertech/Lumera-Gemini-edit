@@ -14,8 +14,8 @@ import { isSampleTaxInvoice, sampleTaxInvoiceReceiptText } from "../src/lib/samp
  * Import these helpers instead of duplicating Graph POST / dual-path logic.
  *
  * Dual-path: Graph when usable credentials are present; SANDBOX in non-prod when
- * missing; production hard-fails (no fake wamid). WhatsApp permissions submitted
- * for Meta App Review in September 2026; not yet granted.
+ * missing; production hard-fails (no fake wamid). Meta has approved Lumera's
+ * WhatsApp permission requests in App Review.
  */
 
 export type GraphCredentials = {

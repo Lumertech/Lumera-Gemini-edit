@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import type { Request, Response, NextFunction } from "express";
 import {
   META_TECH_PROVIDER_STATEMENT,
-  WHATSAPP_PERMISSIONS_PENDING_SENTENCE,
+  WHATSAPP_PERMISSIONS_STATUS_SENTENCE,
 } from "../src/lib/metaStatus.ts";
 import { envFlag, isProduction, readSecret, sandboxSimulatorsEnabled } from "./runtime.ts";
 
@@ -159,8 +159,8 @@ export function buildMetaReadinessOverview(opts: {
       passed: signedRequestReady,
       url: opts.dataDeletionUrl || "/data-deletion-instructions",
       note: signedRequestReady
-        ? `HMAC-SHA256 signed_request verification runs when META_APP_SECRET is set. ${WHATSAPP_PERMISSIONS_PENDING_SENTENCE}`
-        : `Callback scaffold only — signed_request verification requires META_APP_SECRET. ${WHATSAPP_PERMISSIONS_PENDING_SENTENCE}`,
+        ? `HMAC-SHA256 signed_request verification runs when META_APP_SECRET is set. ${WHATSAPP_PERMISSIONS_STATUS_SENTENCE}`
+        : `Callback scaffold only — signed_request verification requires META_APP_SECRET. ${WHATSAPP_PERMISSIONS_STATUS_SENTENCE}`,
     },
     {
       item: "Government & public-authority data request policy (Data Handling four areas)",
@@ -190,8 +190,8 @@ export function buildMetaReadinessOverview(opts: {
       item: "Embedded Signup config_id configured",
       passed: configIdReady,
       note: configIdReady
-        ? `META_EMBEDDED_SIGNUP_CONFIG_ID is set. ${WHATSAPP_PERMISSIONS_PENDING_SENTENCE}`
-        : `Unset META_EMBEDDED_SIGNUP_CONFIG_ID — Facebook Login for Business configuration not provisioned. ${WHATSAPP_PERMISSIONS_PENDING_SENTENCE} Contact ravee@lumer.me.`,
+        ? `META_EMBEDDED_SIGNUP_CONFIG_ID is set. ${WHATSAPP_PERMISSIONS_STATUS_SENTENCE}`
+        : `Unset META_EMBEDDED_SIGNUP_CONFIG_ID — Facebook Login for Business configuration not provisioned. ${WHATSAPP_PERMISSIONS_STATUS_SENTENCE} Contact ravee@lumer.me.`,
     },
     {
       item: scopesApproved
@@ -200,7 +200,7 @@ export function buildMetaReadinessOverview(opts: {
       passed: scopesApproved,
       note: scopesApproved
         ? "Manually set via META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED=true. Not auto-detected from Meta's dashboard."
-        : `SANDBOX: ${WHATSAPP_PERMISSIONS_PENDING_SENTENCE}`,
+        : `SANDBOX: ${WHATSAPP_PERMISSIONS_STATUS_SENTENCE}`,
     },
   ];
 
@@ -231,6 +231,6 @@ export function buildMetaReadinessOverview(opts: {
     facebookOAuthConfigured: opts.facebookOAuthConfigured,
     qualityRating: "UNKNOWN — not fetched from Graph (do not treat local GREEN as live)",
     notice:
-      `SANDBOX / DEV-ONLY readiness view. Live Meta/Facebook app credentials are optional until provisioned separately. ${WHATSAPP_PERMISSIONS_PENDING_SENTENCE} Do not use this payload for marketing claims.`,
+      `SANDBOX / DEV-ONLY readiness view. Live Meta/Facebook app credentials are optional until provisioned separately. ${WHATSAPP_PERMISSIONS_STATUS_SENTENCE} Do not use this payload for marketing claims.`,
   };
 }

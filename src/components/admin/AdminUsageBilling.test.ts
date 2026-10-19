@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { META_TECH_PROVIDER_STATEMENT, WHATSAPP_PERMISSIONS_PENDING_SENTENCE } from "../../lib/metaStatus.ts";
+import { META_TECH_PROVIDER_STATEMENT, WHATSAPP_PERMISSIONS_STATUS_SENTENCE } from "../../lib/metaStatus.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const src = readFileSync(join(here, "AdminUsageBilling.tsx"), "utf8");
@@ -23,10 +23,10 @@ describe("AdminUsageBilling console", () => {
     );
     assert.match(src, /\{META_TECH_PROVIDER_STATEMENT\}/);
     assert.match(src, /TECH_PROVIDER/);
-    assert.match(src, /\{WHATSAPP_PERMISSIONS_PENDING_SENTENCE\}/);
+    assert.match(src, /\{WHATSAPP_PERMISSIONS_STATUS_SENTENCE\}/);
     assert.equal(
-      WHATSAPP_PERMISSIONS_PENDING_SENTENCE,
-      "WhatsApp permissions submitted for Meta App Review in September 2026; not yet granted."
+      WHATSAPP_PERMISSIONS_STATUS_SENTENCE,
+      "Meta has approved Lumera's WhatsApp permission requests in App Review."
     );
     assert.match(shell, /AdminUsageBilling/);
     assert.match(shell, /id: "usage"/);

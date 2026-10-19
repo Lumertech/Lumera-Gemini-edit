@@ -9,19 +9,19 @@
 export const META_TECH_PROVIDER_STATEMENT =
   "Lumera Solutions LLP is a Meta Tech Provider for the WhatsApp Business Platform.";
 
-export const WHATSAPP_APP_REVIEW_SENTENCE =
-  "Lumera's WhatsApp permission requests were submitted for Meta App Review in September 2026.";
+export const WHATSAPP_PERMISSIONS_STATUS_SENTENCE =
+  "Meta has approved Lumera's WhatsApp permission requests in App Review.";
 
-/** Permissions were submitted; Meta has not granted the WhatsApp scopes. */
-export const WHATSAPP_PERMISSIONS_PENDING_SENTENCE =
-  "WhatsApp permissions submitted for Meta App Review in September 2026; not yet granted.";
+/** Rollout wording for the WhatsApp section. Not a live-for-clinics claim. */
+export const WHATSAPP_FEATURES_ROLLOUT_SENTENCE =
+  `${WHATSAPP_PERMISSIONS_STATUS_SENTENCE} WhatsApp features are being rolled out to clinics and may be labelled SANDBOX in the product until then.`;
 
 /** Local simulator payload. Not a live Embedded Signup result. */
 export const SANDBOX_FAKE_WABA_MESSAGE =
-  `SANDBOX / DEV-ONLY: fake WABA ids stored locally. This is not Meta Embedded Signup. ${META_TECH_PROVIDER_STATEMENT} ${WHATSAPP_PERMISSIONS_PENDING_SENTENCE}`;
+  `SANDBOX / DEV-ONLY: fake WABA ids stored locally. This is not Meta Embedded Signup. ${META_TECH_PROVIDER_STATEMENT} ${WHATSAPP_PERMISSIONS_STATUS_SENTENCE}`;
 
 export const WHATSAPP_CLOUD_API_SECTION =
-  `${META_TECH_PROVIDER_STATEMENT} Lumera provides clinic software that can send and receive WhatsApp messages through Meta's WhatsApp Cloud API after a clinic connects its own WhatsApp Business Account (WABA). Each clinic holds its own WhatsApp Business account and pays Meta directly for messaging; Lumera does not resell WhatsApp messaging. ${WHATSAPP_APP_REVIEW_SENTENCE} Until Meta grants them, some WhatsApp features may be labelled SANDBOX in the product. This section describes processing that applies when the Cloud API or Facebook Login is configured.`;
+  `${META_TECH_PROVIDER_STATEMENT} Lumera provides clinic software that can send and receive WhatsApp messages through Meta's WhatsApp Cloud API after a clinic connects its own WhatsApp Business Account (WABA). Each clinic holds its own WhatsApp Business account and pays Meta directly for messaging; Lumera does not resell WhatsApp messaging. ${WHATSAPP_FEATURES_ROLLOUT_SENTENCE} This section describes processing that applies when the Cloud API or Facebook Login is configured.`;
 
 /** Policy HTML chrome: the statement plus the clinic-owned account fact. */
 export const POLICY_HTML_STATUS_LINE =

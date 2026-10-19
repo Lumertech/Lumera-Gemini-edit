@@ -2,7 +2,7 @@
  * Meta Embedded Signup v4 handshake.
  *
  * See META_TECH_PROVIDER_STATEMENT in src/lib/metaStatus.ts.
- * WhatsApp permissions submitted for Meta App Review in September 2026; not yet granted.
+ * Meta has approved Lumera's WhatsApp permission requests in App Review.
  * This implements the documented code-exchange + subscribed_apps path.
  *
  * Docs (fetched 2026-09-13):
@@ -22,7 +22,7 @@
 import crypto from "node:crypto";
 import {
   META_TECH_PROVIDER_STATEMENT,
-  WHATSAPP_PERMISSIONS_PENDING_SENTENCE,
+  WHATSAPP_PERMISSIONS_STATUS_SENTENCE,
 } from "../src/lib/metaStatus.ts";
 import { envFlag, graphApiVersion, isProduction, isUnsetOrPlaceholder, readSecret, sandboxSimulatorsEnabled } from "./runtime.ts";
 import {
@@ -81,7 +81,7 @@ export function embeddedSignupPublicConfig() {
   const statusLine = `${META_TECH_PROVIDER_STATEMENT} ${
     scopesApproved
       ? "META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED=true is set. Not auto-detected from Meta's dashboard."
-      : WHATSAPP_PERMISSIONS_PENDING_SENTENCE
+      : WHATSAPP_PERMISSIONS_STATUS_SENTENCE
   }`;
   return {
     appId: appId || null,

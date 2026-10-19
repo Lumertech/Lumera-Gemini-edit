@@ -6,7 +6,7 @@ Cloud SQL instance. Confirm the decisions below with whoever holds GCP billing
 commands.
 
 Lumera Solutions LLP is a Meta Tech Provider for the WhatsApp Business Platform.
-WhatsApp permissions submitted for Meta App Review in September 2026; not yet granted.
+Meta has approved Lumera's WhatsApp permission requests in App Review.
 Do not claim HIPAA-grade controls, and Postgres does not make Lumera “ABDM Compliant”.
 
 Production app: Cloud Run service **`lumera-gemini-edit`** in **`asia-south1`**
@@ -155,5 +155,5 @@ PHI is on Cloud SQL.
 
 ## Honesty
 
-Meta Tech Provider for the WhatsApp Business Platform. WhatsApp permissions submitted for Meta App Review in September 2026; not yet granted. No HIPAA / Official Tech Provider /
+Meta Tech Provider for the WhatsApp Business Platform. Meta has approved Lumera's WhatsApp permission requests in App Review. No HIPAA / Official Tech Provider /
 Certified M1–M3 / “ABDM Compliant” claims. Questions: **ravee@lumer.me**.
