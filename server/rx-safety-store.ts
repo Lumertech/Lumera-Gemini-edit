@@ -165,14 +165,31 @@ function patientIdentity(db: DatabaseSync, tenantId: string, patientId: string):
   };
 }
 
-function rxIdentity(db: DatabaseSync, tenantId: string, rxNumber: string): PatientIdentity | null {
+type RxVersion = PatientIdentity & { createdAt: string };
+
+function rxIdentity(db: DatabaseSync, tenantId: string, rxNumber: string): RxVersion | null {
   const rx = db
-    .prepare(`SELECT patient_id, created_at FROM prescriptions WHERE tenant_id = ? AND rx_number = ?`)
-    .get(tenantId, rxNumber) as { patient_id?: string; created_at?: string } | undefined;
+    .prepare(`SELECT patient_id, created_at, updated_at FROM prescriptions WHERE tenant_id = ? AND rx_number = ?`)
+    .get(tenantId, rxNumber) as { patient_id?: string; created_at?: string; updated_at?: string } | undefined;
   if (!rx) return null;
   const identity = patientIdentity(db, tenantId, String(rx.patient_id || ""));
-  identity.updatedAt = String(rx.created_at || "");
-  return identity;
+  const createdAt = String(rx.created_at || "").trim();
+  identity.updatedAt = String(rx.updated_at || "").trim() || createdAt;
+  return { ...identity, createdAt };
+}
+
+function timestampMs(value: string): number | null {
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+/** The live row is newer than the audit snapshot or the signature time. Missing clocks fail closed. */
+function rxChangedAfterAuditOrSignature(liveUpdatedAt: string, auditStamp: string, signedAt: string): boolean {
+  const live = timestampMs(liveUpdatedAt);
+  const audited = timestampMs(auditStamp);
+  const signed = timestampMs(signedAt);
+  if (live == null || audited == null || signed == null) return true;
+  return live > audited || live > signed;
 }
 
 function safetySignature(input: {
@@ -501,6 +518,9 @@ export function signedRxSafetyRefusal(
   if (!row) return true;
   const identity = rxIdentity(db, tenantId, rxNumber);
   if (!identity?.patientId) return true;
+  if (rxChangedAfterAuditOrSignature(identity.updatedAt, String(row.rx_updated_at || ""), identity.createdAt)) {
+    return true;
+  }
   if (
     String(row.patient_id || "") !== identity.patientId ||
     normalizeAge(row.patient_age) !== identity.age ||

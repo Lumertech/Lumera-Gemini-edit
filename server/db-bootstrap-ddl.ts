@@ -196,7 +196,8 @@ export const BOOTSTRAP_DDL = `
       diet_instructions TEXT,
       follow_up_date TEXT,
       pdf_url TEXT,
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT ''
     );
 
     CREATE TABLE IF NOT EXISTS prescription_drafts (

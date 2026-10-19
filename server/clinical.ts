@@ -1193,10 +1193,10 @@ async function insertPrescription(
         id, tenant_id, rx_number, patient_id, patient_name, patient_phone, patient_uhid,
         patient_age, patient_gender, doctor_id, doctor_name, doctor_specialty, doctor_reg_number,
         date, diagnosis, icd10_code, chief_complaints, medicines, lab_tests, advice,
-        diet_instructions, follow_up_date, pdf_url, created_at, vitals, clinic_name,
+        diet_instructions, follow_up_date, pdf_url, created_at, updated_at, vitals, clinic_name,
         clinic_address, clinic_phone, qr_verification_url, whatsapp_sent_status,
         specialty_type, specialty_modules
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       id,
@@ -1222,6 +1222,7 @@ async function insertPrescription(
       body.dietInstructions || body.diet_instructions ? String(body.dietInstructions || body.diet_instructions) : null,
       String(body.followUpDate || body.follow_up_date || ""),
       String(body.pdfUrl || body.pdf_url || `/api/emr/prescription/${id}/pdf`),
+      now,
       now,
       body.vitals == null ? null : jsonText(body.vitals, "null"),
       String(body.clinicName || body.clinic_name || stamped.name || ""),

@@ -376,6 +376,14 @@ export function migrate(database: SqlDatabase) {
   try {
     database.exec("ALTER TABLE prescriptions ADD COLUMN specialty_modules TEXT DEFAULT '{}'");
   } catch {}
+  try {
+    database.exec("ALTER TABLE prescriptions ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''");
+  } catch {}
+  try {
+    database.exec(
+      "UPDATE prescriptions SET updated_at = created_at WHERE updated_at IS NULL OR TRIM(updated_at) = ''"
+    );
+  } catch {}
 
   try {
     database.exec("CREATE INDEX IF NOT EXISTS idx_patients_tenant ON patients(tenant_id)");
