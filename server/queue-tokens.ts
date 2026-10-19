@@ -5,6 +5,9 @@
  * overwrite a different row.
  */
 import type { SqlDatabase } from "./sql-engine.ts";
+import { HIDDEN_AMBIENT_SOURCES } from "./ambient-walkin.ts";
+
+const TOKEN_INDEX = "idx_appointments_tenant_queue_doctor_token";
 
 export interface TokenDuplicate {
   tenant_id: string;
@@ -134,16 +137,84 @@ export function appointmentTokenDuplicates(database: SqlDatabase): TokenDuplicat
   }
 }
 
+function appointmentsHaveSource(database: SqlDatabase): boolean {
+  try {
+    if (database.dialect === "postgres") {
+      const row = database
+        .prepare(
+          `SELECT 1 AS ok FROM information_schema.columns
+           WHERE table_schema = current_schema() AND table_name = 'appointments' AND column_name = 'source'`
+        )
+        .get() as { ok?: number } | undefined;
+      return Boolean(row?.ok);
+    }
+    const row = database
+      .prepare(`SELECT 1 AS ok FROM pragma_table_info('appointments') WHERE name = 'source'`)
+      .get() as { ok?: number } | undefined;
+    return Boolean(row?.ok);
+  } catch {
+    return false;
+  }
+}
+
+/** Duplicates that would block the queue index. Hidden ambient token 0 rows are allowed to repeat. */
+function queueTokenDuplicates(database: SqlDatabase): TokenDuplicate[] {
+  if (!appointmentsHaveSource(database)) return appointmentTokenDuplicates(database);
+  try {
+    const rows = database
+      .prepare(
+        `SELECT tenant_id, date, doctor_id, token_number, COUNT(*) AS n
+         FROM appointments
+         WHERE COALESCE(source, '') NOT IN (?, ?)
+         GROUP BY tenant_id, date, doctor_id, token_number
+         HAVING COUNT(*) > 1`
+      )
+      .all(...HIDDEN_AMBIENT_SOURCES) as TokenDuplicate[];
+    return rows.map((row) => ({
+      tenant_id: String(row.tenant_id || ""),
+      date: String(row.date || ""),
+      doctor_id: String(row.doctor_id || ""),
+      token_number: Number(row.token_number || 0),
+      n: Number(row.n || 0),
+    }));
+  } catch {
+    return appointmentTokenDuplicates(database);
+  }
+}
+
+function existingTokenIndexSql(database: SqlDatabase): string {
+  try {
+    if (database.dialect === "postgres") {
+      const row = database
+        .prepare(
+          `SELECT pg_get_indexdef(c.oid) AS sql
+           FROM pg_class c
+           JOIN pg_namespace n ON n.oid = c.relnamespace
+           WHERE c.relkind = 'i' AND c.relname = ? AND n.nspname = current_schema()`
+        )
+        .get(TOKEN_INDEX) as { sql?: string } | undefined;
+      return String(row?.sql || "");
+    }
+    const row = database
+      .prepare(`SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?`)
+      .get(TOKEN_INDEX) as { sql?: string } | undefined;
+    return String(row?.sql || "");
+  } catch {
+    return "";
+  }
+}
+
 /**
- * Unique index on (tenant, queue date, doctor, token) when no duplicates exist.
- * Existing duplicate rows are reported and left in place. The index is skipped
- * so this migration cannot delete or rewrite them.
+ * Unique index on (tenant, queue date, doctor, token) when no visible duplicates exist.
+ * Hidden ambient visits share token 0 and stay outside the index. Existing duplicate
+ * rows are reported and left in place. The index is skipped so this migration cannot
+ * delete or rewrite them.
  */
 export function ensureAppointmentTokenIndex(database: SqlDatabase): {
   created: boolean;
   duplicates: TokenDuplicate[];
 } {
-  const duplicates = appointmentTokenDuplicates(database);
+  const duplicates = queueTokenDuplicates(database);
   if (duplicates.length > 0) {
     const skippedTenants = [...new Set(duplicates.map((row) => row.tenant_id).filter(Boolean))];
     const sample = duplicates
@@ -155,9 +226,21 @@ export function ensureAppointmentTokenIndex(database: SqlDatabase): {
     );
     return { created: false, duplicates };
   }
+  const partial = appointmentsHaveSource(database);
+  const existing = existingTokenIndexSql(database);
+  const partialReady = /ambient_walkin/.test(existing);
+  if (existing && (!partial || partialReady)) {
+    return { created: false, duplicates: [] };
+  }
+  if (existing) {
+    database.exec(`DROP INDEX IF EXISTS ${TOKEN_INDEX}`);
+  }
+  const predicate = partial
+    ? ` WHERE COALESCE(source, '') NOT IN ('ambient_walkin', 'ambient_walkin_dup')`
+    : "";
   database.exec(
-    `CREATE UNIQUE INDEX IF NOT EXISTS idx_appointments_tenant_queue_doctor_token
-     ON appointments(tenant_id, date, doctor_id, token_number)`
+    `CREATE UNIQUE INDEX IF NOT EXISTS ${TOKEN_INDEX}
+     ON appointments(tenant_id, date, doctor_id, token_number)${predicate}`
   );
   return { created: true, duplicates: [] };
 }

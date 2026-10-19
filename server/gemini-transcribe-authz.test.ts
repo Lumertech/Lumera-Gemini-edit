@@ -108,14 +108,24 @@ describe("POST /api/gemini/transcribe auth and body limit", () => {
     const date = visit.date || istClinicDay();
     const status = visit.status || "Waiting";
     getDb().prepare("DELETE FROM appointments WHERE id = ?").run(appointmentId);
+    const token = Number(
+      (
+        getDb()
+          .prepare(
+            `SELECT COALESCE(MAX(token_number), 0) AS n FROM appointments
+             WHERE tenant_id = ? AND date = ? AND doctor_id = ?`
+          )
+          .get(tenantId, date, userId) as { n: number }
+      )?.n || 0
+    ) + 1;
     getDb()
       .prepare(
         `INSERT INTO appointments (
           id, tenant_id, token_number, patient_id, patient_name, patient_phone, uhid, doctor_id, doctor_name,
           specialty, date, time_slot, type, status, source, consultation_fee, is_paid, created_at
-        ) VALUES (?, ?, 1, 'pat-transcribe-check', 'Test', '+910000000099', 'UHID-TX', ?, 'Dr', 'General Medicine', ?, '10:00', 'New Consultation', ?, 'Walk-in', 0, 0, ?)`
+        ) VALUES (?, ?, ?, 'pat-transcribe-check', 'Test', '+910000000099', 'UHID-TX', ?, 'Dr', 'General Medicine', ?, '10:00', 'New Consultation', ?, 'Walk-in', 0, 0, ?)`
       )
-      .run(appointmentId, tenantId, userId, date, status, new Date().toISOString());
+      .run(appointmentId, tenantId, token, userId, date, status, new Date().toISOString());
     writeAudit(getDb(), userId, "Dr", AMBIENT_SCRIBE_CONSENT_ACTION, "Patient agreed to this recording.", {
       tenantId,
       patientId: "pat-transcribe-check",
