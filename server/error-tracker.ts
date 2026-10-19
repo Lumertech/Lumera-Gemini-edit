@@ -1,6 +1,6 @@
 /**
  * GCP Error Reporting for Cloud Run, with a console fallback locally.
- * Lumera is not a certified Meta Tech Provider. Contact ravee@lumer.me.
+ * See META_TECH_PROVIDER_STATEMENT. Meta has approved Lumera's WhatsApp permission requests in App Review. Contact ravee@lumer.me.
  *
  * No Sentry. Structured Cloud Logging events are ingested by Error Reporting
  * on Cloud Run (K_SERVICE / metadata server). Missing ADC must not crash tests.

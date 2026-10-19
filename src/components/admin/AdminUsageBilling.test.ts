@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import { META_TECH_PROVIDER_STATEMENT, WHATSAPP_PERMISSIONS_STATUS_SENTENCE } from "../../lib/metaStatus.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const src = readFileSync(join(here, "AdminUsageBilling.tsx"), "utf8");
@@ -16,7 +17,17 @@ describe("AdminUsageBilling console", () => {
     assert.match(src, /\/api\/admin\/usage-billing\/tenants/);
     assert.match(src, /20% placeholder/);
     assert.match(src, /ravee@lumer\.me/);
-    assert.match(src, /not a[\s\S]+certified Meta Tech Provider/);
+    assert.equal(
+      META_TECH_PROVIDER_STATEMENT,
+      "Lumera Solutions LLP is a Meta Tech Provider for the WhatsApp Business Platform."
+    );
+    assert.match(src, /\{META_TECH_PROVIDER_STATEMENT\}/);
+    assert.match(src, /TECH_PROVIDER/);
+    assert.match(src, /\{WHATSAPP_PERMISSIONS_STATUS_SENTENCE\}/);
+    assert.equal(
+      WHATSAPP_PERMISSIONS_STATUS_SENTENCE,
+      "Meta has approved Lumera's WhatsApp permission requests in App Review."
+    );
     assert.match(shell, /AdminUsageBilling/);
     assert.match(shell, /id: "usage"/);
     const meta = readFileSync(join(here, "AdminMetaTechProvider.tsx"), "utf8");

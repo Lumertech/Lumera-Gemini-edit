@@ -1,3 +1,9 @@
+import {
+  appViewToWorkspacePath,
+  parseWorkspaceScreen,
+  safeWorkspaceReturnPath,
+} from "./tenantRoutes";
+
 export type Surface = "landing" | "login" | "app" | "admin" | "portal" | "policy" | "legal" | "onboarding" | "pricing";
 
 export const ADMIN_TABS = [
@@ -69,8 +75,14 @@ export interface NavLocation {
   adminTab: AdminTab;
   appView: AppView;
   workspaceSlug: string;
-  /** Set for `/patients/:id` inside the clinic workspace. Empty on every other view. */
+  /** Set for `/patients/:id` and `/rx/:visitId`. Empty on every other view. */
   recordId: string;
+  /** Canonical screen segment (`opd`, `invoices`, `rx`, …). Empty off the clinic shell. */
+  screen: string;
+  /** `/payments` shares the billing module with `/invoices`. */
+  payFocus: boolean;
+  /** True when `/w/:slug/:screen` is not a known screen or legacy view. */
+  unrecognized: boolean;
   loginMode: LoginMode;
   loginNext: Surface;
   loginNextPath: string;
@@ -83,6 +95,9 @@ export const DEFAULT_NAV: NavLocation = {
   appView: DEFAULT_APP_VIEW,
   workspaceSlug: "",
   recordId: "",
+  screen: "",
+  payFocus: false,
+  unrecognized: false,
   loginMode: "signin",
   loginNext: "app",
   loginNextPath: "",
@@ -154,19 +169,16 @@ function decodePathSegment(raw: string): string {
   }
 }
 
-/** Patient id on `/w/:slug/patients/:id` and `/app/patients/:id`. Case is preserved. */
+/** Patient id or visit id on the workspace record routes. Case is preserved. */
 export function recordIdFromPath(pathname: string): string {
   const parts = (pathname.split("?")[0] || "/")
     .replace(/\/+$/, "")
     .split("/")
     .filter(Boolean);
   const head = (parts[0] || "").toLowerCase();
-  if (head === "w" && (parts[2] || "").toLowerCase() === "patients" && parts[3]) {
-    return decodePathSegment(parts[3]);
-  }
-  if (head === "app" && (parts[1] || "").toLowerCase() === "patients" && parts[2]) {
-    return decodePathSegment(parts[2]);
-  }
+  const view = head === "w" ? (parts[2] || "").toLowerCase() : head === "app" ? (parts[1] || "").toLowerCase() : "";
+  const record = head === "w" ? parts[3] : head === "app" ? parts[2] : "";
+  if ((view === "patients" || view === "rx") && record) return decodePathSegment(record);
   return "";
 }
 
@@ -174,7 +186,8 @@ export function recordIdFromPath(pathname: string): string {
 export function appViewToPath(
   view?: string | null,
   workspaceSlug?: string | null,
-  recordId?: string | null
+  recordId?: string | null,
+  opts?: { payFocus?: boolean }
 ): string {
   const tab = canonicalizeAppView(view);
   const ws = String(workspaceSlug || "")
@@ -182,9 +195,10 @@ export function appViewToPath(
     .toLowerCase()
     .replace(/[^a-z0-9-]+/g, "-")
     .replace(/^-+|-+$/g, "");
-  const base = ws ? `/w/${ws}/${tab}` : `/app/${tab}`;
   const id = String(recordId || "").trim();
-  if (tab === "patients" && id) return `${base}/${encodeURIComponent(id)}`;
+  if (ws) return appViewToWorkspacePath(String(view || tab), ws, id, Boolean(opts?.payFocus));
+  const base = `/app/${tab}`;
+  if ((tab === "patients" || tab === "rx") && id) return `${base}/${encodeURIComponent(id)}`;
   return base;
 }
 
@@ -250,7 +264,8 @@ function firstSegmentAfter(prefix: string, pathname: string): string {
 
 function loginFromPath(pathname: string, search: string): NavLocation {
   const params = parseSearch(search);
-  const nextPath = safeNextPath(params.get("next"));
+  const rawNext = params.get("next");
+  const nextPath = safeWorkspaceReturnPath(rawNext) || safeNextPath(rawNext);
   const nextLoc = nextPath ? pathToNav(nextPath) : null;
   const allowedNext = nextLoc && isProtectedSurface(nextLoc.surface);
   return nav("login", {
@@ -284,20 +299,31 @@ export function pathToNav(pathname = "/", search = ""): NavLocation {
   if (p === "/landing" || p === "/site" || p === "/public") return nav("landing");
   if (p === "/onboarding") return nav("onboarding");
   if (p === "/w" || p.startsWith("/w/")) {
-    const rest = p === "/w" ? "" : p.slice(3);
-    const [workspaceSlug, viewSeg] = rest.split("/").filter(Boolean);
-    const appView = viewSeg ? canonicalizeAppView(viewSeg) : DEFAULT_APP_VIEW;
+    const rawParts = (pathname.split("?")[0] || "/").replace(/\/+$/, "").split("/").filter(Boolean);
+    const workspaceSlug = (rawParts[1] || "").toLowerCase();
+    const parsed = parseWorkspaceScreen(rawParts[2] || "", rawParts[3] ? decodePathSegment(rawParts[3]) : "");
     return nav("app", {
-      workspaceSlug: workspaceSlug || "",
-      appView,
-      recordId: appView === "patients" ? recordIdFromPath(pathname) : "",
+      workspaceSlug,
+      appView: (parsed.recognized ? parsed.appView : DEFAULT_APP_VIEW) as AppView,
+      recordId: parsed.recognized ? parsed.recordId : "",
+      screen: parsed.screen,
+      payFocus: parsed.payFocus,
+      unrecognized: !parsed.recognized,
     });
   }
   if (p === "/app" || p.startsWith("/app/")) {
-    const appView = canonicalizeAppView(firstSegmentAfter("/app", p));
+    const rawParts = (pathname.split("?")[0] || "/").replace(/\/+$/, "").split("/").filter(Boolean);
+    const viewSeg = rawParts[1] || "";
+    if (!viewSeg) return nav("app", { appView: DEFAULT_APP_VIEW, screen: "opd" });
+    const parsed = parseWorkspaceScreen(viewSeg, rawParts[2] ? decodePathSegment(rawParts[2]) : "");
+    if (!parsed.recognized) {
+      return nav("app", { appView: canonicalizeAppView(viewSeg) });
+    }
     return nav("app", {
-      appView,
-      recordId: appView === "patients" ? recordIdFromPath(pathname) : "",
+      appView: parsed.appView as AppView,
+      recordId: parsed.recordId,
+      screen: parsed.screen,
+      payFocus: parsed.payFocus,
     });
   }
   if (p === "/dashboard" || p === "/studio" || p === "/clinic") {
@@ -317,21 +343,25 @@ export interface SurfacePathOpts {
   appView?: AppView | string;
   workspaceSlug?: string;
   recordId?: string;
+  payFocus?: boolean;
 }
 
 export function surfaceToPath(surface: Surface, opts?: SurfacePathOpts): string {
   if (surface === "login") {
     const base = opts?.loginMode === "register" ? "/signup" : "/login";
     const next =
+      safeWorkspaceReturnPath(opts?.loginNextPath) ||
       safeNextPath(opts?.loginNextPath) ||
       (opts?.loginNext && isProtectedSurface(opts.loginNext)
-        ? surfaceToPath(opts.loginNext, { appView: opts.appView, adminTab: opts.adminTab })
+        ? surfaceToPath(opts.loginNext, { appView: opts.appView, adminTab: opts.adminTab, workspaceSlug: opts.workspaceSlug, recordId: opts.recordId, payFocus: opts.payFocus })
         : "");
     return next ? `${base}?next=${encodeURIComponent(next)}` : base;
   }
   if (surface === "app") {
     const ws = opts?.workspaceSlug;
-    if (opts?.appView) return appViewToPath(opts.appView, ws, opts.recordId);
+    if (opts?.appView || opts?.payFocus) {
+      return appViewToPath(opts?.appView, ws, opts?.recordId, { payFocus: opts?.payFocus });
+    }
     if (ws) return `/w/${ws}`;
     return "/app";
   }
@@ -356,8 +386,10 @@ export function destinationNavAfterAuth(dest: Surface, loginNextPath?: string): 
   adminTab?: AdminTab;
   workspaceSlug?: string;
   recordId?: string;
+  screen?: string;
+  payFocus?: boolean;
 } {
-  const nextPath = safeNextPath(loginNextPath);
+  const nextPath = safeWorkspaceReturnPath(loginNextPath) || safeNextPath(loginNextPath);
   if (!nextPath) return { surface: dest };
   const loc = pathToNav(nextPath);
   if (loc.surface !== dest) return { surface: dest };
@@ -367,6 +399,8 @@ export function destinationNavAfterAuth(dest: Surface, loginNextPath?: string): 
     adminTab: loc.adminTab,
     workspaceSlug: loc.workspaceSlug,
     recordId: loc.recordId,
+    screen: loc.screen,
+    payFocus: loc.payFocus,
   };
 }
 

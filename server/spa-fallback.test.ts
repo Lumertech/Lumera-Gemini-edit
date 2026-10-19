@@ -273,6 +273,22 @@ describe("production SPA history fallback", () => {
       const api = await fetch(`${origin}/api/ping`);
       assert.equal(api.status, 200);
       assert.equal((await api.json()).ok, true);
+      const deepClinic = await fetch(`${origin}/w/x/patients/123`);
+      assert.equal(deepClinic.status, 200);
+      assert.match(deepClinic.headers.get("content-type") || "", /html/);
+      assert.match(await deepClinic.text(), /Lumera SPA/);
+      const deepRx = await fetch(`${origin}/w/physiodoctor-practice/rx/visit-1`);
+      assert.equal(deepRx.status, 200);
+      assert.match(await deepRx.text(), /Lumera SPA/);
+      const adminDeep = await fetch(`${origin}/admin/tenants`);
+      assert.equal(adminDeep.status, 200);
+      assert.match(await adminDeep.text(), /Lumera SPA/);
+      const missingApi = await fetch(`${origin}/api/nope`);
+      const missingApiText = await missingApi.text();
+      assert.equal(missingApi.status, 404);
+      assert.match(missingApi.headers.get("content-type") || "", /json/);
+      assert.equal(JSON.parse(missingApiText).error, "Not found");
+      assert.doesNotMatch(missingApiText, /<!doctype/i);
       const missingJs = await fetch(`${origin}/assets/missing.js`);
       assert.equal(missingJs.status, 404);
     } finally {

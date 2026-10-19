@@ -4,8 +4,10 @@
  * plus WA_EMBEDDED_SIGNUP postMessage (waba_id, phone_number_id).
  * Legacy sessionInfoResponse event name is also accepted.
  *
- * Lumera is not a certified Meta Tech Provider. Contact ravee@lumer.me.
+ * See META_TECH_PROVIDER_STATEMENT. Meta has approved Lumera's WhatsApp permission requests in App Review. Contact ravee@lumer.me.
  */
+
+import { WHATSAPP_CLINIC_STATUS_LINE, WHATSAPP_CONNECTION_UNAVAILABLE_SENTENCE } from "./metaStatus";
 
 const FACEBOOK_HOST_LABEL = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)$/;
 
@@ -161,7 +163,7 @@ export function launchEmbeddedSignupV4(config: EmbeddedSignupConfig): Promise<Em
   if (!appId || !configId) {
     return Promise.reject(
       new Error(
-        "Embedded Signup is not configured (FACEBOOK_APP_ID / META_EMBEDDED_SIGNUP_CONFIG_ID). Contact ravee@lumer.me."
+        `${WHATSAPP_CONNECTION_UNAVAILABLE_SENTENCE} ${WHATSAPP_CLINIC_STATUS_LINE}`
       )
     );
   }

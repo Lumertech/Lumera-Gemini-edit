@@ -21,7 +21,7 @@ import {
   installProcessErrorHandlers,
   reportError,
 } from "./server/error-tracker.ts";
-import { attachProductionSpaFallback } from "./server/spa-fallback.ts";
+import { attachProductionSpaFallback, attachUnknownApiJsonNotFound } from "./server/spa-fallback.ts";
 import { attachPublicPolicyHtml } from "./server/policy-html.ts";
 import { attachPublicPricingHtml } from "./server/pricing-html.ts";
 import { isDedicatedPublicHtmlPath } from "./server/spa-fallback.ts";
@@ -76,6 +76,7 @@ app.post("/data-deletion-callback", (req, res, next) => {
 attachPublicPolicyHtml(app);
 attachPublicPricingHtml(app);
 mountGeminiClinicalRoutes(app);
+attachUnknownApiJsonNotFound(app);
 
 
 // ----------------------------------------------------

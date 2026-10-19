@@ -84,7 +84,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onNavigate,
 }) => {
   const { user, logout } = useAuth();
-  const { go, workspaceSlug } = useNav();
+  const { go, workspaceSlug, screen } = useNav();
   const userRole = user?.role || 'doctor';
   let allowedViews = visibleViewsForRole(userRole);
   const polyclinic = isPolyclinicPractice(user);
@@ -215,20 +215,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div className="flex-1 min-h-0 overflow-hidden p-2 space-y-0.5">
         {primaryItems.map((item) => {
           const Icon = NAV_ICONS[item.id] || Sparkles;
-          const isActive =
-            !item.payFocus &&
-            (currentView === item.id ||
-              (item.id === 'queue' && currentView === 'opd-queue') ||
-              (item.id === 'rx' && currentView === 'smart-rx') ||
-              (item.label === 'Dashboard' && currentView === homeView));
+          const isActive = item.payFocus
+            ? screen === 'payments'
+            : item.id === 'billing'
+              ? screen === 'invoices' || (currentView === 'billing' && screen !== 'payments')
+              : currentView === item.id ||
+                (item.id === 'queue' && (currentView === 'opd-queue' || screen === 'opd')) ||
+                (item.id === 'rx' && (currentView === 'smart-rx' || screen === 'consultations' || screen === 'rx')) ||
+                (item.label === 'Dashboard' && (currentView === homeView || screen === 'dashboard'));
           return (
             <Link
               key={item.testId}
-              to={appViewToPath(item.id, workspaceSlug)}
+              to={appViewToPath(item.id, workspaceSlug, undefined, { payFocus: Boolean(item.payFocus) })}
               onClick={() => {
-                if (item.payFocus) {
-                  try { sessionStorage.setItem('lumera-bill-focus', 'pay'); } catch { /* ignore */ }
-                }
                 onNavigate?.();
               }}
               data-testid={item.testId}

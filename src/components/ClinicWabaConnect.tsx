@@ -2,6 +2,12 @@ import React, { useEffect, useState } from "react";
 import { Building2, CheckCircle2, ArrowRight } from "lucide-react";
 import { apiFetch } from "../api/http";
 import {
+  META_TECH_PROVIDER_STATEMENT,
+  WHATSAPP_CLINIC_STATUS_LINE,
+  WHATSAPP_CONNECTION_UNAVAILABLE_SENTENCE,
+  WHATSAPP_PERMISSIONS_STATUS_SENTENCE,
+} from "../lib/metaStatus";
+import {
   launchEmbeddedSignupV4,
   loadFacebookSdk,
   type EmbeddedSignupConfig,
@@ -51,10 +57,7 @@ export const ClinicWabaConnect: React.FC = () => {
       const signup = config || (await apiFetch<EmbeddedSignupConfig>("/api/meta/embedded-signup-config"));
       setConfig(signup);
       if (!signup.appId || !signup.configId) {
-        throw new Error(
-          signup.notice ||
-            "Embedded Signup is not configured. Set FACEBOOK_APP_ID and META_EMBEDDED_SIGNUP_CONFIG_ID. Contact ravee@lumer.me."
-        );
+        throw new Error(signup.notice || `${WHATSAPP_CONNECTION_UNAVAILABLE_SENTENCE} ${WHATSAPP_CLINIC_STATUS_LINE}`);
       }
       await loadFacebookSdk(signup.appId, signup.graphVersion || "v21.0");
       const session = await launchEmbeddedSignupV4(signup);
@@ -103,8 +106,8 @@ export const ClinicWabaConnect: React.FC = () => {
         </span>
       </div>
       <p className="text-xs text-slate-600">
-        Optional clinic-owned WABA (one per tenant). Real Meta Embedded Signup v4 is wired; Lumera is not a certified
-        Tech Provider. Contact ravee@lumer.me.
+        Optional clinic-owned WABA (one per tenant). Real Meta Embedded Signup v4 is wired. {META_TECH_PROVIDER_STATEMENT}{" "}
+        {WHATSAPP_PERMISSIONS_STATUS_SENTENCE} Contact ravee@lumer.me.
       </p>
       {connected ? (
         <p className="text-xs flex items-center gap-1.5 text-emerald-700">
