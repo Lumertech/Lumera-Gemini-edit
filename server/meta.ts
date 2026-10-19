@@ -8,8 +8,9 @@ import { facebookOAuthConfigured } from "./facebook-oauth.ts";
 import {
   buildMetaReadinessOverview,
   decideWebhookSignature,
-  getMetaAppSecret,
   getMetaVerifyToken,
+  metaHubSignatureHeader,
+  metaWebhookSecretCandidates,
   rejectProductionSimulator,
 } from "./meta-security.ts";
 import { handleMetaDataDeletionPost, handleMetaDeauthorizePost } from "./meta-signed-request.ts";
@@ -303,22 +304,44 @@ export function createMetaRouter(): Router {
 
   // POST /api/meta/webhook - Meta Inbound Webhook Event Receiver
   router.post("/webhook", (req: Request, res: Response) => {
+    const candidates = metaWebhookSecretCandidates();
+    const rawBody = Buffer.isBuffer(req.rawBody) ? req.rawBody : undefined;
     const signatureDecision = decideWebhookSignature({
-      rawBody: req.rawBody ?? Buffer.from(JSON.stringify(req.body || {})),
-      signatureHeader: req.headers["x-hub-signature-256"],
-      appSecret: getMetaAppSecret(),
+      rawBody,
+      signatureHeader: metaHubSignatureHeader(req),
+      appSecret: candidates[0]?.value ?? "",
+      secretCandidates: candidates,
     });
     if (signatureDecision.ok === false) {
-      console.warn("[Meta Webhook] Signature rejected:", signatureDecision.error);
+      const names = signatureDecision.secretEnvNames.length ? signatureDecision.secretEnvNames.join(",") : "(none)";
+      console.warn(
+        `[Meta Webhook] Signature rejected: ${signatureDecision.error} reason=${signatureDecision.reason} secretEnv=${names}`
+      );
       return res.status(signatureDecision.status).json({ error: signatureDecision.error });
     }
+    if (signatureDecision.secretEnvName) {
+      console.info(`[Meta Webhook] Signature verified. secretEnv=${signatureDecision.secretEnvName}`);
+    }
     if (signatureDecision.unsignedDevBypass) {
-      console.warn("[Meta Webhook] SANDBOX / DEV-ONLY: accepted unsigned webhook because META_WEBHOOK_ALLOW_UNSIGNED is set.");
+      console.warn(
+        "[Meta Webhook] SANDBOX / DEV-ONLY: accepted unsigned webhook (no app secret configured, or META_WEBHOOK_ALLOW_UNSIGNED)."
+      );
+    }
+
+    let body: any;
+    if (rawBody) {
+      try {
+        body = rawBody.length === 0 ? {} : JSON.parse(rawBody.toString("utf8"));
+      } catch {
+        console.warn("[Meta Webhook] JSON parse failed after signature verification.");
+        return res.status(400).json({ error: "Invalid JSON body." });
+      }
+    } else {
+      body = req.body;
     }
 
     try {
       const db = getDb();
-      const body = req.body;
       const now = new Date().toISOString();
 
       // Meta payload usually contains entry -> changes -> value -> messages / statuses
@@ -489,7 +512,7 @@ export function createMetaRouter(): Router {
           totalMessagesSentAndReceived: totalMessages + totalOutbound,
           webhookUrl: "/api/meta/webhook",
           graphOtpConfigured: Boolean(resolveGraphCredentials(db)),
-          webhookSecretConfigured: Boolean(getMetaAppSecret()),
+          webhookSecretConfigured: metaWebhookSecretCandidates().length > 0,
           verifyTokenConfigured: Boolean(getMetaVerifyToken()),
           facebookOAuthConfigured: facebookOAuthConfigured(),
         })

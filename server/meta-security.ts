@@ -1,17 +1,93 @@
 import crypto from "node:crypto";
-import type { Request, Response, NextFunction } from "express";
+import express, { type NextFunction, type Request, type Response } from "express";
 import {
   META_TECH_PROVIDER_STATEMENT,
   WHATSAPP_PERMISSIONS_STATUS_SENTENCE,
 } from "../src/lib/metaStatus.ts";
-import { envFlag, isProduction, readSecret, sandboxSimulatorsEnabled } from "./runtime.ts";
+import { envFlag, isProduction, isUnsetOrPlaceholder, readSecret, sandboxSimulatorsEnabled } from "./runtime.ts";
 
 export const META_APP_REVIEW_WHATSAPP_SCOPES_FLAG = "META_APP_REVIEW_WHATSAPP_SCOPES_APPROVED";
 
 export const META_UNSIGNED_WEBHOOK_FLAG = "META_WEBHOOK_ALLOW_UNSIGNED";
 
+/**
+ * signed_request (data deletion / deauthorize) still uses this order.
+ * Webhook HMAC uses metaWebhookSecretCandidates(), which also accepts FACEBOOK_APP_SECRET.
+ */
 export function getMetaAppSecret(): string {
   return readSecret("META_APP_SECRET", "WHATSAPP_APP_SECRET");
+}
+
+/** Meta signs X-Hub-Signature-256 with the App Secret. These aliases are tried in order. */
+export const META_WEBHOOK_SECRET_ENV_NAMES = ["META_APP_SECRET", "FACEBOOK_APP_SECRET", "WHATSAPP_APP_SECRET"] as const;
+
+export type MetaWebhookSecretEnvName = (typeof META_WEBHOOK_SECRET_ENV_NAMES)[number];
+
+export type MetaWebhookSecretCandidate = { envName: MetaWebhookSecretEnvName; value: string };
+
+/** Non-placeholder app secrets, first name wins when two vars hold the same value. */
+export function metaWebhookSecretCandidates(env: NodeJS.ProcessEnv = process.env): MetaWebhookSecretCandidate[] {
+  const out: MetaWebhookSecretCandidate[] = [];
+  const seen = new Set<string>();
+  for (const envName of META_WEBHOOK_SECRET_ENV_NAMES) {
+    const value = String(env[envName] || "").trim();
+    if (isUnsetOrPlaceholder(value) || seen.has(value)) continue;
+    seen.add(value);
+    out.push({ envName, value });
+  }
+  return out;
+}
+
+const META_WEBHOOK_PATHS = new Set(["/api/meta/webhook", "/meta/webhook"]);
+
+export function isMetaWebhookPost(req: Request): boolean {
+  if (String(req.method || "GET").toUpperCase() !== "POST") return false;
+  for (const candidate of [req.path, req.originalUrl, req.url]) {
+    const pathOnly = String(candidate || "").split("?")[0];
+    const normalized = pathOnly.length > 1 && pathOnly.endsWith("/") ? pathOnly.slice(0, -1) : pathOnly;
+    if (META_WEBHOOK_PATHS.has(normalized)) return true;
+  }
+  return false;
+}
+
+/**
+ * Buffer the exact request bytes for the Meta webhook before express.json.
+ * Any content type: a JSON parser that skips or re-serialises the body breaks HMAC.
+ */
+export function metaWebhookRawBody(req: Request, res: Response, next: NextFunction): void {
+  if (!isMetaWebhookPost(req)) {
+    next();
+    return;
+  }
+  express.raw({
+    type: () => true,
+    limit: "10mb",
+    verify: (inner, _res, buf) => {
+      (inner as Request).rawBody = Buffer.from(buf);
+    },
+  })(req, res, next);
+}
+
+/** Node lowercases header names. req.get() is case-insensitive. */
+export function metaHubSignatureHeader(req: Request): string | string[] | undefined {
+  const viaGet = req.get("X-Hub-Signature-256") as string | string[] | undefined;
+  if (typeof viaGet === "string" || Array.isArray(viaGet)) return viaGet;
+  const raw = req.headers["x-hub-signature-256"];
+  if (typeof raw === "string" || Array.isArray(raw)) return raw;
+  return undefined;
+}
+
+function hubSignatureHex(signatureHeader: string | string[] | undefined): string | null {
+  const header = Array.isArray(signatureHeader) ? signatureHeader[0] : signatureHeader;
+  if (header == null) return null;
+  const match = /^sha256=([a-f0-9]{64})$/i.exec(header.trim());
+  return match ? match[1] : null;
+}
+
+export function classifyHubSignatureHeader(signatureHeader: string | string[] | undefined): "missing" | "malformed" | "present" {
+  const header = Array.isArray(signatureHeader) ? signatureHeader[0] : signatureHeader;
+  if (header == null || header.trim() === "") return "missing";
+  return hubSignatureHex(header) ? "present" : "malformed";
 }
 
 export function getMetaVerifyToken(): string | undefined {
@@ -43,38 +119,52 @@ export function isUsablePhoneNumberId(id?: string | null): boolean {
 }
 
 export function verifyMetaHubSignature(rawBody: Buffer | string, signatureHeader: string | string[] | undefined, appSecret: string): boolean {
-  const header = Array.isArray(signatureHeader) ? signatureHeader[0] : signatureHeader;
-  if (!header || !appSecret) return false;
-  const match = /^sha256=([a-f0-9]{64})$/i.exec(header.trim());
-  if (!match) return false;
+  const providedHex = hubSignatureHex(signatureHeader);
+  if (!providedHex || !appSecret) return false;
 
   const expectedHex = crypto.createHmac("sha256", appSecret).update(rawBody).digest("hex");
-  const provided = Buffer.from(match[1], "hex");
+  const provided = Buffer.from(providedHex, "hex");
   const expected = Buffer.from(expectedHex, "hex");
   if (provided.length !== expected.length) return false;
   return crypto.timingSafeEqual(provided, expected);
 }
 
+export type WebhookSignatureFailureReason =
+  | "missing_header"
+  | "malformed_header"
+  | "mismatch"
+  | "secret_missing"
+  | "raw_body_missing";
+
 export type WebhookSignatureDecision =
-  | { ok: true; unsignedDevBypass?: boolean }
-  | { ok: false; status: number; error: string };
+  | { ok: true; unsignedDevBypass?: boolean; secretEnvName?: string }
+  | { ok: false; status: number; error: string; reason: WebhookSignatureFailureReason; secretEnvNames: string[] };
 
 /**
  * Production always requires a valid X-Hub-Signature-256 (missing secret is a hard fail).
- * Non-prod: unsigned ingest is allowed when META_APP_SECRET is unset (credentials not
- * provisioned yet) or when META_WEBHOOK_ALLOW_UNSIGNED is set.
+ * Non-prod: unsigned ingest is allowed when every app-secret alias is unset, or when
+ * META_WEBHOOK_ALLOW_UNSIGNED is set. HMAC is over the raw body only — never JSON.stringify.
+ * Candidates are META_APP_SECRET, FACEBOOK_APP_SECRET, WHATSAPP_APP_SECRET. A payload is
+ * accepted only when one of those secrets matches; unsigned and invalid stay rejected.
  */
 export function decideWebhookSignature(opts: {
-  rawBody: Buffer | string;
+  rawBody?: Buffer | string;
   signatureHeader?: string | string[];
   appSecret: string;
+  secretCandidates?: MetaWebhookSecretCandidate[];
   production?: boolean;
   allowUnsignedDevFlag?: boolean;
 }): WebhookSignatureDecision {
   const production = opts.production ?? isProduction();
   const allowUnsignedFlag = !production && (opts.allowUnsignedDevFlag ?? envFlag(META_UNSIGNED_WEBHOOK_FLAG));
   const header = Array.isArray(opts.signatureHeader) ? opts.signatureHeader[0] : opts.signatureHeader;
-  const secretMissing = !opts.appSecret;
+  const secrets = opts.secretCandidates
+    ? opts.secretCandidates.filter((candidate) => candidate.value)
+    : opts.appSecret
+      ? [{ envName: "META_APP_SECRET" as const, value: opts.appSecret }]
+      : [];
+  const secretEnvNames = secrets.map((candidate) => candidate.envName);
+  const secretMissing = secrets.length === 0;
 
   if (!production && secretMissing) {
     return { ok: true, unsignedDevBypass: true };
@@ -88,15 +178,54 @@ export function decideWebhookSignature(opts: {
     return {
       ok: false,
       status: 500,
-      error: "META_APP_SECRET is not configured; webhook signatures cannot be verified.",
+      error:
+        "META_APP_SECRET is not configured (also checked FACEBOOK_APP_SECRET and WHATSAPP_APP_SECRET); webhook signatures cannot be verified.",
+      reason: "secret_missing",
+      secretEnvNames,
     };
   }
 
-  if (!verifyMetaHubSignature(opts.rawBody, header, opts.appSecret)) {
-    return { ok: false, status: 403, error: "Invalid or missing X-Hub-Signature-256." };
+  const headerClass = classifyHubSignatureHeader(header);
+  if (headerClass === "missing") {
+    return {
+      ok: false,
+      status: 403,
+      error: "Invalid or missing X-Hub-Signature-256.",
+      reason: "missing_header",
+      secretEnvNames,
+    };
+  }
+  if (headerClass === "malformed") {
+    return {
+      ok: false,
+      status: 403,
+      error: "Invalid or missing X-Hub-Signature-256.",
+      reason: "malformed_header",
+      secretEnvNames,
+    };
+  }
+  if (opts.rawBody === undefined) {
+    return {
+      ok: false,
+      status: 403,
+      error: "Invalid or missing X-Hub-Signature-256.",
+      reason: "raw_body_missing",
+      secretEnvNames,
+    };
   }
 
-  return { ok: true };
+  for (const candidate of secrets) {
+    if (verifyMetaHubSignature(opts.rawBody, header, candidate.value)) {
+      return { ok: true, secretEnvName: candidate.envName };
+    }
+  }
+  return {
+    ok: false,
+    status: 403,
+    error: "Invalid or missing X-Hub-Signature-256.",
+    reason: "mismatch",
+    secretEnvNames,
+  };
 }
 
 export function rejectProductionSimulator(req: Request, res: Response, next: NextFunction) {
@@ -174,7 +303,7 @@ export function buildMetaReadinessOverview(opts: {
       url: opts.webhookUrl,
     },
     {
-      item: "Webhook POST X-Hub-Signature-256 (META_APP_SECRET)",
+      item: "Webhook POST X-Hub-Signature-256 (META_APP_SECRET, FACEBOOK_APP_SECRET, WHATSAPP_APP_SECRET)",
       passed: opts.webhookSecretConfigured,
       url: opts.webhookUrl,
     },

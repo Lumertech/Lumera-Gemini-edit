@@ -159,7 +159,7 @@ Leave unset for the URL-hosting stage. Production **does not fake** Graph delive
 | Variable | Needed when |
 | --- | --- |
 | `META_VERIFY_TOKEN` | Meta can verify `GET /api/meta/webhook` |
-| `META_APP_SECRET` | Webhook HMAC (`X-Hub-Signature-256`) in production |
+| `META_APP_SECRET` | Webhook HMAC (`X-Hub-Signature-256`). Also accepts `FACEBOOK_APP_SECRET`, then `WHATSAPP_APP_SECRET`, if the earlier names are unset or do not match the raw body |
 | `FACEBOOK_APP_ID` / `FACEBOOK_APP_SECRET` | Live Facebook Login |
 | `FACEBOOK_REDIRECT_URI` | Override; default is `{APP_URL}/api/auth/facebook/callback` |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Live Google Sign-in (Web application OAuth client) |

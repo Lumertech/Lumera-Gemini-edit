@@ -316,6 +316,7 @@ describe("Gemini ambient-scribe usage meter", () => {
 
   it("generate-soap instruments the real generateContent call site and is not truncated", () => {
     const serverSrc = fs.readFileSync(path.join(__dirname, "../server.ts"), "utf8");
+    const appSrc = fs.readFileSync(path.join(__dirname, "create-app.ts"), "utf8");
     const clinicalSrc = fs.readFileSync(path.join(__dirname, "gemini-clinical.ts"), "utf8");
     const restSrc = fs.readFileSync(path.join(__dirname, "gemini-clinical-rest.ts"), "utf8");
     const helperSrc = fs.readFileSync(path.join(__dirname, "gemini-clinical-helpers.ts"), "utf8");
@@ -332,7 +333,7 @@ describe("Gemini ambient-scribe usage meter", () => {
     assert.match(clinicalSrc, /meterSuccessfulGeminiScribe/);
     assert.match(clinicalSrc, /ai\.models\.generateContent/);
     assert.match(clinicalSrc, /clinical-synthesis-engine/);
-    assert.match(serverSrc, /createUsageBillingRouter/);
+    assert.match(serverSrc + appSrc, /createUsageBillingRouter/);
     assert.match(restSrc, /\/api\/gemini\/copilot/);
     assert.match(restSrc, /startLumeraServer/);
     const usageApi = fs.readFileSync(path.join(__dirname, "usage-billing-api.ts"), "utf8");
