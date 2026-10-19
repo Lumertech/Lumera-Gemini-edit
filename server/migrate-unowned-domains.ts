@@ -1,5 +1,4 @@
 import type { SqlDatabase } from "./sql-engine.ts";
-import { PATIENT_LINK_PUBLIC_BASE_URL } from "./patient-link-token.ts";
 
 /**
  * Idempotent rewrite of stored seed copy that pointed at domains Lumera does
@@ -17,7 +16,7 @@ import { PATIENT_LINK_PUBLIC_BASE_URL } from "./patient-link-token.ts";
 
 const RETIRED_HEALTH = "lumera.health";
 const RETIRED_CLINIC = "lumeraclinic.in";
-const OPAQUE_BASE = PATIENT_LINK_PUBLIC_BASE_URL.replace(/\/$/, "");
+const OPAQUE_BASE = "https://www.mylumera.in";
 const DEMO_UPI = "demo@upi-sandbox";
 const DEMO_LETTERHEAD_EMAIL = "care@example.com";
 const DEMO_LETTERHEAD_SITE = "https://example.com";
