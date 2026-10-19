@@ -101,7 +101,6 @@ export function clinicOutboundCopy(opts: {
 } {
   const clinic = String(opts.clinicName || "").trim() || "your clinic";
   const doctor = String(opts.doctorName || "").trim() || "your doctor";
-  const patientName = String(opts.patientName || "Patient").trim() || "Patient";
   const patientText = String(opts.patientText || "");
   return {
     handoverRestored: `🤖 Automated AI Assistant Restored: ${clinic} assistant is now handling routine patient inquiries.`,
@@ -111,7 +110,6 @@ export function clinicOutboundCopy(opts: {
     roster: `⏰ *${clinic} OPD Roster & Timings*:\n\n${opts.roster || ""}\n\nEmergency care & triage desk operates 24/7.`,
     assistantPrompt: `You are the WhatsApp medical assistant for ${clinic}. The consulting clinician is ${doctor}.
 The patient is asking: "${patientText}".
-Patient Name: ${patientName}.
 Respond in friendly WhatsApp tone with emojis, medical accuracy, and clear next steps. Keep response within 80-120 words.
 Suggest relevant quick actions (booking appointment, checking timings, viewing lab report, or talking to staff).
 ${AI_RUPEE_OUTPUT_RULE}`,
@@ -130,6 +128,10 @@ function vertexErrorName(err: unknown): string {
   return err && typeof err === "object" && "name" in err && (err as { name?: string }).name
     ? String((err as { name?: string }).name)
     : "Error";
+}
+
+function patientFirstName(name: string): string {
+  return String(name || "").trim().split(/\s+/).filter(Boolean)[0] || "";
 }
 
 function serializeWhatsAppMessage(m: Record<string, unknown>) {
@@ -1304,9 +1306,9 @@ ${AI_RUPEE_OUTPUT_RULE}`;
         status: 'delivered',
         message: 'Prescription PDF dispatched successfully via WhatsApp Graph API'
       });
-    } catch (err: any) {
-      console.error("WhatsApp Rx dispatch error:", err);
-      return res.status(500).json({ error: "Failed to dispatch WhatsApp Rx: " + err.message });
+    } catch (err: unknown) {
+      console.error("WhatsApp Rx dispatch error", vertexErrorName(err));
+      return res.status(500).json({ error: "Failed to dispatch WhatsApp Rx" });
     }
   });
 
@@ -1813,7 +1815,6 @@ async function processBotActionOrQuery(
   try {
     const assistantCopy = clinicOutboundCopy({
       ...resolveClinicFacingNames(db, tenantId),
-      patientName,
       patientText: text,
     });
     const res = await vertexGenerateContent({
@@ -1837,7 +1838,7 @@ async function processBotActionOrQuery(
 
   // Fixed non-AI reply. The patient's message is not copied back into the chat.
   return {
-    content: `Namaste ${patientName}! 🙏 We have received your query.\n\nOur clinic team is available to assist you. You can use the quick actions below to book consultations, view clinical prescriptions, or check diagnostic test reports:`,
+    content: `Namaste ${patientFirstName(patientName)}! 🙏 We have received your query.\n\nOur clinic team is available to assist you. You can use the quick actions below to book consultations, view clinical prescriptions, or check diagnostic test reports:`,
     buttons: ["📅 Book Doctor Appointment", "💊 Refill / View Prescription", "🔬 Download Lab Reports", "⏰ Check Doctor Timings"],
   };
 }

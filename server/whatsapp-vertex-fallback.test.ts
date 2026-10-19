@@ -86,11 +86,13 @@ describe("WhatsApp bot fallback uses Vertex", () => {
 
     modelCalls = 0;
     seenModel = "";
+    let seenPrompt = "";
     setVertexClientForTests({
       models: {
-        generateContent: async (params: { model?: string }) => {
+        generateContent: async (params: { model?: string; contents?: unknown }) => {
           modelCalls += 1;
           seenModel = String(params.model || "");
+          seenPrompt = JSON.stringify(params.contents || "");
           return { text: MODEL_TEXT };
         },
       },
@@ -107,6 +109,9 @@ describe("WhatsApp bot fallback uses Vertex", () => {
     assert.equal(modelCalls, 1);
     assert.equal(seenModel, vertexGeminiModel());
     assert.equal((res.json.botReply as { content?: string } | undefined)?.content, MODEL_TEXT);
+    assert.equal(seenPrompt.includes(PATIENT), false);
+    assert.equal(seenPrompt.includes("Nair"), false);
+    assert.equal(seenPrompt.includes("Patient Name:"), false);
   });
 
   it("returns the non-AI fallback and no model text when Vertex is unset", async () => {
@@ -127,7 +132,9 @@ describe("WhatsApp bot fallback uses Vertex", () => {
       );
       assert.equal(res.status, 201, JSON.stringify(res.json));
       const content = String((res.json.botReply as { content?: string } | undefined)?.content || "");
-      assert.match(content, new RegExp(`Namaste ${PATIENT}`));
+      assert.match(content, /Namaste Asha!/);
+      assert.equal(content.includes(PATIENT), false);
+      assert.equal(content.includes("Nair"), false);
       assert.equal(content.includes(QUESTION), false);
       assert.equal(content.includes(MODEL_TEXT), false);
       assert.equal(modelCalls, before);
@@ -142,9 +149,11 @@ describe("WhatsApp bot fallback uses Vertex", () => {
   });
 
   it("returns the fixed non-AI reply when the Vertex fallback call errors", async () => {
+    let seenPrompt = "";
     setVertexClientForTests({
       models: {
-        generateContent: async () => {
+        generateContent: async (params: { contents?: unknown }) => {
+          seenPrompt = JSON.stringify(params.contents || "");
           const err = new Error(`phi leak ${QUESTION}`);
           err.name = "ForcedVertexError";
           throw err;
@@ -166,7 +175,11 @@ describe("WhatsApp bot fallback uses Vertex", () => {
       );
       assert.equal(res.status, 201, JSON.stringify(res.json));
       const content = String((res.json.botReply as { content?: string } | undefined)?.content || "");
-      assert.match(content, /Namaste /);
+      assert.match(content, /Namaste Asha!/);
+      assert.equal(content.includes(PATIENT), false);
+      assert.equal(content.includes("Nair"), false);
+      assert.equal(seenPrompt.includes(PATIENT), false);
+      assert.equal(seenPrompt.includes("Nair"), false);
       assert.equal(content.includes(QUESTION), false);
       assert.equal(content.includes(MODEL_TEXT), false);
       const logged = warns.filter((line) => line.includes("whatsapp.gemini.fallback")).join("\n");
