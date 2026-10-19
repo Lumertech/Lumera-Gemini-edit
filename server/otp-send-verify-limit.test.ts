@@ -30,6 +30,7 @@ describe("OTP send and verify limits", () => {
   let server: TestHttpServer;
 
   before(async () => {
+    if (!process.env.JWT_SECRET) process.env.JWT_SECRET = "test-jwt-secret-otp-limit";
     initDatabase();
     resetSendOtpRateLimits();
     server = await startTestServer((app) => {
