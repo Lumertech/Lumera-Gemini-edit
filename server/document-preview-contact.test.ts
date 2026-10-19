@@ -50,6 +50,15 @@ describe("patient-facing clinic document contact", () => {
 
     const source = fs.readFileSync(path.join(root, "src/components/whatsapp/DocumentPreviewModal.tsx"), "utf8");
     assert.equal(source.includes("care@example.com"), false);
+
+    const whatsapp = fs.readFileSync(path.join(root, "server/whatsapp.ts"), "utf8");
+    const previews = whatsapp.slice(
+      whatsapp.indexOf('if (action === "get_prescription")'),
+      whatsapp.indexOf('if (action === "get_doctors")')
+    );
+    const botPreview = whatsapp.split("async function processBotActionOrQuery")[1] || "";
+    assert.equal(previews.includes("clinicEmail"), false);
+    assert.equal(botPreview.includes("clinicEmail"), false);
   });
 
   it("keeps the public landing contact at ravee@lumer.me", () => {
