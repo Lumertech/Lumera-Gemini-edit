@@ -1157,7 +1157,7 @@ function insertPrescription(tenantId: string, body: Record<string, unknown>) {
       String(body.clinicName || body.clinic_name || stamped.name || ""),
       String(body.clinicAddress || body.clinic_address || stamped.address || ""),
       String(body.clinicPhone || body.clinic_phone || stamped.phone || ""),
-      String(body.qrVerificationUrl || body.qr_verification_url || `https://lumera.health/rx/${rxNumber}`),
+      String(body.qrVerificationUrl || body.qr_verification_url || ""),
       String(body.whatsappSentStatus || body.whatsapp_sent_status || "unsent"),
       String(body.specialtyType || body.specialty_type || ""),
       specialtyModulesFromBody(body)

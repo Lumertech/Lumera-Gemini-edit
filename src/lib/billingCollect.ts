@@ -65,6 +65,10 @@ export type PersistedInvoice = {
   invoiceNumber: string;
   appointmentId?: string;
   patientId?: string;
+  patientName?: string;
+  patientPhone?: string;
+  patientUhid?: string;
+  date?: string;
   paymentStatus: string;
   paymentMode?: string;
   payLink?: string;

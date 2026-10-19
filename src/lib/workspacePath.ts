@@ -43,6 +43,12 @@ export function workspaceSlugFromUser(user?: WorkspaceSlugInput | null): string 
   return tenant || "practice";
 }
 
+function workspaceRecordId(view: string, id: string): string {
+  const key = view.toLowerCase();
+  if (key === "patients" || key === "rx" || key === "invoices" || key === "billing") return id;
+  return "";
+}
+
 /**
  * Signed-in clinic URLs must use the session tenant slug.
  * A mismatched `/w/:slug` is rewritten to that slug (same tab). Super Admin never stays on `/w`.
@@ -61,13 +67,13 @@ export function reconcileWorkspacePath(pathname: string, sessionSlug: string, ro
   const rawParts = raw.split("/").filter(Boolean);
   if (p.startsWith("/app/")) {
     const view = (rawParts[1] || "queue").toLowerCase();
-    const recordId = view === "patients" || view === "rx" ? rawParts[2] || "" : "";
+    const recordId = workspaceRecordId(view, rawParts[2] || "");
     return recordId ? `/w/${slug}/${view}/${encodeURIComponent(recordId)}` : `/w/${slug}/${view}`;
   }
   if (p === "/w" || p.startsWith("/w/")) {
     const urlSlug = (rawParts[1] || "").toLowerCase();
     const viewSeg = (rawParts[2] || "").toLowerCase();
-    const recordId = viewSeg === "patients" || viewSeg === "rx" ? rawParts[3] || "" : "";
+    const recordId = workspaceRecordId(viewSeg, rawParts[3] || "");
     if (!urlSlug || urlSlug !== slug) {
       if (!viewSeg) return `/w/${slug}`;
       return recordId ? `/w/${slug}/${viewSeg}/${encodeURIComponent(recordId)}` : `/w/${slug}/${viewSeg}`;

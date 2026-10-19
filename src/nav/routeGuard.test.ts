@@ -38,6 +38,11 @@ describe("tenant route guard", () => {
       "/w/physiodoctor-practice/reception"
     );
     assert.equal(desk.redirect, null);
+    const deskBill = tenantRouteGuard(
+      user({ role: "receptionist", email: "reception@lumera.me" }),
+      "/w/malhotra-individual-practice/invoices/inv-194b83"
+    );
+    assert.equal(deskBill.redirect, null);
   });
 
   it("keeps Super Admin off /w and on /admin", () => {
