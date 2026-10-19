@@ -10,10 +10,11 @@ import {
   readVertexSettings,
   setVertexClientFactoryForTests,
   setVertexClientForTests,
+  VERTEX_DEFAULT_GEMINI_MODEL,
   VERTEX_DEFAULT_LOCATION,
   VERTEX_DEFAULT_PROJECT,
-  VERTEX_GEMINI_MODEL,
   vertexClientOptions,
+  vertexGeminiModel,
 } from "./vertex-gemini.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -48,7 +49,10 @@ describe("Vertex PHI client", () => {
       assert.equal(getVertexClient(env as NodeJS.ProcessEnv), null);
     }
     assert.equal(built, 0);
-    assert.equal(VERTEX_GEMINI_MODEL, "gemini-2.5-flash");
+    assert.equal(VERTEX_DEFAULT_GEMINI_MODEL, "gemini-3.5-flash-lite");
+    assert.equal(vertexGeminiModel({}), "gemini-3.5-flash-lite");
+    assert.equal(vertexGeminiModel({ NODE_ENV: "production" }), "gemini-3.5-flash-lite");
+    assert.equal(vertexGeminiModel({ VERTEX_GEMINI_MODEL: "  gemini-3.5-flash  " }), "gemini-3.5-flash");
     assert.equal(AI_TRANSCRIPTION_NOT_CONFIGURED, "AI_TRANSCRIPTION_NOT_CONFIGURED");
   });
 
@@ -99,7 +103,11 @@ describe("Vertex PHI client", () => {
     const clientAt = clinical.indexOf("getVertexClient()");
     assert.ok(consentAt > 0 && clientAt > consentAt);
     assert.match(clinical, /AI_TRANSCRIPTION_NOT_CONFIGURED/);
-    assert.match(clinical, /VERTEX_GEMINI_MODEL/);
+    assert.match(clinical, /vertexGeminiModel\(/);
+    const vertex = fs.readFileSync(path.join(root, "server/vertex-gemini.ts"), "utf8");
+    assert.match(vertex, /VERTEX_GEMINI_MODEL/);
+    assert.match(vertex, /gemini-3\.5-flash-lite/);
+    assert.match(vertex, /21 July 2027/);
     assert.doesNotMatch(clinical, /transcribe_unavailable/);
   });
 });

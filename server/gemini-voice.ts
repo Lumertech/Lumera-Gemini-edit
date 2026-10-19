@@ -4,7 +4,7 @@ import { requireAuth } from "./auth.ts";
 import { getDb } from "./db.ts";
 import { clinicLine, getTenantLetterhead } from "./letterhead.ts";
 import { AI_RUPEE_OUTPUT_RULE } from "./india-currency-copy.ts";
-import { VERTEX_GEMINI_MODEL } from "./vertex-gemini.ts";
+import { vertexGeminiModel } from "./vertex-gemini.ts";
 
 function errorName(err: unknown): string {
   return err && typeof err === "object" && "name" in err ? String((err as { name?: string }).name) : "Error";
@@ -50,7 +50,7 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
   ${AI_RUPEE_OUTPUT_RULE}`;
 
           const response = await ai.models.generateContent({
-            model: VERTEX_GEMINI_MODEL,
+            model: vertexGeminiModel(),
             contents: [{ parts: [{ text: `Patient says: "${message}"` }] }],
             config: {
               systemInstruction: prompt,
@@ -175,7 +175,7 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
   ${AI_RUPEE_OUTPUT_RULE}`;
 
           const response = await ai.models.generateContent({
-            model: VERTEX_GEMINI_MODEL,
+            model: vertexGeminiModel(),
             contents: prompt,
             config: {
               responseMimeType: "application/json",

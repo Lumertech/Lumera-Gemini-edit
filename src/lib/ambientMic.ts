@@ -199,7 +199,8 @@ export async function transcribeRecordedAudio(
   blob: Blob,
   fetchImpl?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>,
   durationMs?: number,
-  appointmentId?: string
+  appointmentId?: string,
+  acceptEmpty = false
 ): Promise<string> {
   if (blob.size < 100) {
     throw new Error("The recording was too short to transcribe. Speak for a few seconds, then stop listening.");
@@ -230,7 +231,7 @@ export async function transcribeRecordedAudio(
     data = { error: raw.slice(0, 180) || "Transcription failed." };
   }
   const transcription = data.transcription?.trim() || "";
-  if (res.ok && data.success && transcription) return transcription;
+  if (res.ok && (acceptEmpty || (data.success && transcription))) return transcription;
   if (res.status === 413) {
     throw new Error("The recording is too long to transcribe. Record a shorter consult, or type it.");
   }
@@ -631,7 +632,7 @@ export async function startAmbientMic(options: StartAmbientMicOptions): Promise<
   return { stream, stop };
 }
 
-/** Stay on Starting… until a live track has produced a non-empty chunk and that chunk transcribed. */
+/** Stay on Starting… until a live track has produced a non-empty chunk and the first transcribe returned 2xx. */
 export const AMBIENT_FIRST_CHUNK_MS = 10_000;
 export const AMBIENT_TRANSCRIBE_MS = 10_000;
 export const AMBIENT_NO_CHUNK_MESSAGE = "No audio arrived from the microphone. Tap Retry.";
@@ -695,7 +696,8 @@ export interface AmbientCaptureRun {
 
 /**
  * Listening is published only after the track is live, a non-empty chunk arrived,
- * and the first transcribe call returned text. A 503 or a 10s miss stays off Listening.
+ * and the first transcribe call returned 2xx. An empty transcript counts as success.
+ * No chunk within 10s, or no 2xx within 10s of that chunk, stays off Listening.
  */
 export function startAmbientCaptureRun(options: {
   gesture: AmbientMicGesture;
@@ -781,7 +783,7 @@ export function startAmbientCaptureRun(options: {
   const uploadFirst = (blob: Blob) => {
     const timeoutError = () => new Error(AMBIENT_NO_TRANSCRIPT_MESSAGE);
     void withTimeout(
-      transcribeRecordedAudio(blob, options.fetchImpl, firstChunkMs, options.appointmentId),
+      transcribeRecordedAudio(blob, options.fetchImpl, firstChunkMs, options.appointmentId, true),
       transcribeMs,
       timeoutError
     )

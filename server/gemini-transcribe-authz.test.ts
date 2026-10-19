@@ -344,6 +344,21 @@ describe("POST /api/gemini/transcribe auth and body limit", () => {
     assert.equal(typeof metadata.audioBytes, "number");
     assert.equal("transcript" in metadata, false);
     assert.equal(JSON.stringify(row).includes("phi-transcript-marker-not-stored"), false);
+
+    grantConsent(clinicA.tenantId, clinicA.userId, "apt-silent-visit");
+    setGeminiTranscribeGeneratorForTests(async () => "   ");
+    const beforeSilent = usageCount(clinicA.tenantId);
+    const silent = await jsonRequest(
+      port,
+      "POST",
+      "/api/gemini/transcribe",
+      { audioBase64: "AAAA", mimeType: "audio/webm", durationMs: 4000, appointmentId: "apt-silent-visit" },
+      { Authorization: `Bearer ${token}` }
+    );
+    assert.equal(silent.status, 200, JSON.stringify(silent.json));
+    assert.equal(silent.json.success, true);
+    assert.equal(silent.json.transcription, "");
+    assert.equal(usageCount(clinicA.tenantId), beforeSilent);
     setGeminiTranscribeGeneratorForTests(undefined);
 
     setTranscribeRateLimitForTests({ userMax: 2, tenantMax: 5 });

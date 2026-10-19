@@ -8,7 +8,7 @@ import {
   getTenantLetterhead,
 } from "./letterhead.ts";
 import type { GoogleGenAI } from "@google/genai";
-import { getVertexClient, VERTEX_GEMINI_MODEL } from "./vertex-gemini.ts";
+import { getVertexClient, vertexGeminiModel } from "./vertex-gemini.ts";
 import {
   bookWhatsAppAppointment,
   dispatchAppointmentReminder,
@@ -1096,7 +1096,7 @@ ${AI_RUPEE_OUTPUT_RULE}`;
 
           const cleanBase64 = audioBase64.replace(/^data:audio\/[a-z0-9]+;base64,/, "");
           const response = await ai.models.generateContent({
-            model: VERTEX_GEMINI_MODEL,
+            model: vertexGeminiModel(),
             contents: [
               {
                 inlineData: {
@@ -1781,7 +1781,7 @@ async function processBotActionOrQuery(
       const prompt = assistantCopy.assistantPrompt;
 
       const res = await ai.models.generateContent({
-        model: VERTEX_GEMINI_MODEL,
+        model: vertexGeminiModel(),
         contents: [{ text: prompt }],
       });
 
@@ -1833,7 +1833,7 @@ async function translateWithGeminiOrFallback(text: string, targetLang: string, a
   if (ai) {
     try {
       const response = await ai.models.generateContent({
-        model: VERTEX_GEMINI_MODEL,
+        model: vertexGeminiModel(),
         contents: [
           {
             text: `Translate the following clinical or medical chat message accurately into ${targetName}. Maintain a polite, reassuring medical tone. Only return the translated text:\n\n"${text}"`,

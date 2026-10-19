@@ -2,7 +2,7 @@ import type { Express, Request, Response } from "express";
 import type { GoogleGenAI } from "@google/genai";
 import { generateRuleBasedSoap, getPulseFallbackAnswer } from "./gemini-clinical-helpers.ts";
 import { AI_RUPEE_OUTPUT_RULE } from "./india-currency-copy.ts";
-import { VERTEX_GEMINI_MODEL } from "./vertex-gemini.ts";
+import { vertexGeminiModel } from "./vertex-gemini.ts";
 
 export function attachGeminiSoapAndCopilot(
   app: Express,
@@ -104,7 +104,7 @@ Return STRICTLY a JSON object with this exact schema:
 ${AI_RUPEE_OUTPUT_RULE}`;
 
         const response = await ai.models.generateContent({
-          model: VERTEX_GEMINI_MODEL,
+          model: vertexGeminiModel(),
           contents: prompt,
           config: {
             responseMimeType: "application/json",
@@ -178,7 +178,7 @@ ${AI_RUPEE_OUTPUT_RULE}`;
         });
 
         const response = await ai.models.generateContent({
-          model: VERTEX_GEMINI_MODEL,
+          model: vertexGeminiModel(),
           contents: contents,
           config: {
             systemInstruction: systemInstruction,

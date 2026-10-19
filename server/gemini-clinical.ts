@@ -13,7 +13,7 @@ import {
   AI_TRANSCRIPTION_NOT_CONFIGURED,
   AI_TRANSCRIPTION_NOT_CONFIGURED_MESSAGE,
   getVertexClient,
-  VERTEX_GEMINI_MODEL,
+  vertexGeminiModel,
 } from "./vertex-gemini.ts";
 import type { NextFunction } from "express";
 
@@ -72,7 +72,7 @@ export function mountGeminiClinicalRoutes(app: Express) {
           tenantId,
           durationMinutes: req.body?.durationMinutes,
           transcript,
-          metadata: { source: VERTEX_GEMINI_MODEL, endpoint: "generate-soap" },
+          metadata: { source: vertexGeminiModel(), endpoint: "generate-soap" },
         });
         return res.json({ success: true, soap, source: "Pulse AI" });
       }
@@ -84,7 +84,7 @@ export function mountGeminiClinicalRoutes(app: Express) {
       try {
         const prompt = `You are Lumera AI, an expert Clinical AI Medical Scribe. Generate a structured SOAP note.\nPATIENT: ${patientName} ${patientAge} / ${patientGender}, Doctor ${doctorName} (${doctorSpecialty}).\nTRANSCRIPT:\n${transcript}\nReturn JSON SOAP with subjective, objective, assessment, plan.\n${AI_RUPEE_OUTPUT_RULE}`;
         const response = await ai.models.generateContent({
-          model: VERTEX_GEMINI_MODEL,
+          model: vertexGeminiModel(),
           contents: prompt,
           config: { responseMimeType: "application/json", temperature: 0.2 },
         });
@@ -94,7 +94,7 @@ export function mountGeminiClinicalRoutes(app: Express) {
           tenantId,
           durationMinutes: req.body?.durationMinutes,
           transcript,
-          metadata: { source: VERTEX_GEMINI_MODEL, endpoint: "generate-soap" },
+          metadata: { source: vertexGeminiModel(), endpoint: "generate-soap" },
         });
         return res.json({ success: true, soap: parsed, source: "Pulse AI" });
       } catch (geminiError: unknown) {
@@ -127,7 +127,7 @@ export function mountGeminiClinicalRoutes(app: Express) {
         }
         contents.push({ role: "user", parts: [{ text: query }] });
         const response = await ai.models.generateContent({
-          model: VERTEX_GEMINI_MODEL,
+          model: vertexGeminiModel(),
           contents,
           config: { systemInstruction, temperature: 0.2 },
         });
@@ -158,7 +158,7 @@ export function mountGeminiClinicalRoutes(app: Express) {
       try {
         const prompt = `Analyze clinical safety for Age ${patientAge || 40}, ${patientGender || "Adult"}, Allergies: ${(patientAllergies || []).join(", ") || "None"}, Conditions: ${(chronicConditions || []).join(", ") || "None"}, Medicines: ${JSON.stringify(medicines)}. Return JSON { hasHighRiskAlert, alerts }.`;
         const response = await ai.models.generateContent({
-          model: VERTEX_GEMINI_MODEL,
+          model: vertexGeminiModel(),
           contents: prompt,
           config: { responseMimeType: "application/json", temperature: 0.1 },
         });
@@ -221,7 +221,7 @@ export function mountGeminiClinicalRoutes(app: Express) {
             });
           }
           const response = await ai.models.generateContent({
-            model: VERTEX_GEMINI_MODEL,
+            model: vertexGeminiModel(),
             contents: [
               {
                 inlineData: {
@@ -236,7 +236,9 @@ export function mountGeminiClinicalRoutes(app: Express) {
           });
           transcription = response.text?.trim() || "";
         }
-        if (!transcription) return res.status(500).json({ code: "transcribe_failed" });
+        if (!transcription) {
+          return res.json({ success: true, transcription: "" });
+        }
         meterSuccessfulTranscription({ tenantId, durationMs: duration, audioBytes });
         return res.json({ success: true, transcription });
       } catch (err: unknown) {

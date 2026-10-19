@@ -1,7 +1,7 @@
 import type { Express, Request, Response } from "express";
 import type { GoogleGenAI } from "@google/genai";
 import { AI_RUPEE_OUTPUT_RULE } from "./india-currency-copy.ts";
-import { VERTEX_GEMINI_MODEL } from "./vertex-gemini.ts";
+import { vertexGeminiModel } from "./vertex-gemini.ts";
 
 export function attachGeminiSafetyVoiceAndTranslate(
   app: Express,
@@ -43,7 +43,7 @@ Return JSON with format:
 ${AI_RUPEE_OUTPUT_RULE}`;
 
         const response = await ai.models.generateContent({
-          model: VERTEX_GEMINI_MODEL,
+          model: vertexGeminiModel(),
           contents: prompt,
           config: {
             responseMimeType: "application/json",
@@ -149,7 +149,7 @@ Output JSON:
 ${AI_RUPEE_OUTPUT_RULE}`;
 
         const response = await ai.models.generateContent({
-          model: VERTEX_GEMINI_MODEL,
+          model: vertexGeminiModel(),
           contents: [{ parts: [{ text: `Patient says: "${message}"` }] }],
           config: {
             systemInstruction: prompt,
@@ -205,7 +205,7 @@ Return JSON:
 ${AI_RUPEE_OUTPUT_RULE}`;
 
         const response = await ai.models.generateContent({
-          model: VERTEX_GEMINI_MODEL,
+          model: vertexGeminiModel(),
           contents: prompt,
           config: {
             responseMimeType: "application/json",

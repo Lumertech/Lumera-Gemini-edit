@@ -6,15 +6,25 @@ import { GoogleGenAI, type GenerateContentParameters, type GenerateContentRespon
  *   VERTEX_PROJECT=gen-lang-client-0108182367
  *   VERTEX_LOCATION=asia-south1
  *
- * Pinned model id `gemini-2.5-flash` (not a -latest or preview alias).
- * The model card lists audio input (audio/webm, audio/mp4) and asia-south1:
- * https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/2-5-flash
- * Region table: https://docs.cloud.google.com/vertex-ai/generative-ai/docs/learn/locations
- * That card also lists a retirement date of 2026-10-20.
+ * Pinned model id `gemini-3.5-flash-lite` (GA, not a preview or -latest alias).
+ * VERTEX_GEMINI_MODEL overrides it. An unset value keeps this id, including in production.
+ * Model card: GA, released 21 July 2026, retirement 21 July 2027 or later.
+ * Audio MIME types include audio/webm, audio/mp4, and audio/x-aac.
+ * Supported regions include Asia Pacific asia-south1:
+ * https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-5-flash-lite
+ * Locations table:
+ * https://docs.cloud.google.com/vertex-ai/generative-ai/docs/learn/locations
+ * gemini-3.8-flash is newer and also GA, but its card lists only global, us, and eu.
  */
 export const VERTEX_DEFAULT_PROJECT = "gen-lang-client-0108182367";
 export const VERTEX_DEFAULT_LOCATION = "asia-south1";
-export const VERTEX_GEMINI_MODEL = "gemini-2.5-flash";
+export const VERTEX_DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite";
+
+/** Resolved model id. Reads VERTEX_GEMINI_MODEL at call time so a deploy can swap it. */
+export function vertexGeminiModel(env: NodeJS.ProcessEnv = process.env): string {
+  const id = String(env.VERTEX_GEMINI_MODEL || "").trim();
+  return id || VERTEX_DEFAULT_GEMINI_MODEL;
+}
 
 export const AI_TRANSCRIPTION_NOT_CONFIGURED = "AI_TRANSCRIPTION_NOT_CONFIGURED";
 export const AI_TRANSCRIPTION_NOT_CONFIGURED_MESSAGE = "AI transcription not configured";
@@ -106,6 +116,6 @@ export async function vertexGenerateContent(
   }
   return ai.models.generateContent({
     ...params,
-    model: params.model || VERTEX_GEMINI_MODEL,
+    model: params.model || vertexGeminiModel(env),
   });
 }

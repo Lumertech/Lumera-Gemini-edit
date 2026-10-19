@@ -645,6 +645,64 @@ describe("one tap capture and no silent listening", () => {
     assert.equal(calls, 1);
   });
 
+  it("keeps Listening with no error when the first transcribe is 2xx and empty", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { stream } = liveTrackStream();
+    const slot: AmbientTapSlot = { phase: "idle", sessions: 0 };
+    const armed = commitAmbientTap(slot, { consentGranted: true, deps: tapDeps(stream, () => {}) });
+    assert.ok(armed.gesture);
+    let recorder: FakeRecorder | null = null;
+    const phases: AmbientRunPhase[] = [];
+    let snap: AmbientRunSnapshot | null = null;
+    let pendingFetch: ((response: Response) => void) | null = null;
+    let queuedResponse: Response | null = null;
+    const fetchImpl = () =>
+      new Promise<Response>((resolve) => {
+        if (queuedResponse) resolve(queuedResponse);
+        else pendingFetch = resolve;
+      });
+    const respond = (response: Response) => {
+      if (pendingFetch) pendingFetch(response);
+      else queuedResponse = response;
+    };
+    startAmbientCaptureRun({
+      gesture: armed.gesture,
+      fetchImpl: fetchImpl as typeof fetch,
+      onUpdate: (next) => {
+        phases.push(next.phase);
+        snap = next;
+      },
+      createRecorder: (media, mime) => {
+        recorder = new FakeRecorder(media, mime);
+        return recorder as unknown as MediaRecorder;
+      },
+    });
+    await flushMicrotasks();
+    assert.equal(snap?.phase, "starting");
+    (recorder as FakeRecorder).emit(new Blob([new Uint8Array(200)], { type: "audio/webm" }));
+    t.mock.timers.tick(0);
+    await flushMicrotasks();
+    t.mock.timers.tick(0);
+    await flushMicrotasks();
+    assert.equal(snap?.phase, "starting");
+    assert.equal(phases.includes("listening"), false);
+    respond(new Response(JSON.stringify({ success: true, transcription: "" }), { status: 200 }));
+    t.mock.timers.tick(0);
+    await flushMicrotasks();
+    t.mock.timers.tick(0);
+    await flushMicrotasks();
+    assert.equal(snap?.phase, "listening");
+    assert.equal(snap?.transcript, "");
+    assert.equal(snap?.error, null);
+    assert.equal(snap?.canRetry, false);
+    assert.equal(phases.includes("error"), false);
+    t.mock.timers.tick(AMBIENT_TRANSCRIBE_MS);
+    await flushMicrotasks();
+    assert.equal(snap?.phase, "listening");
+    assert.equal(snap?.error, null);
+    t.mock.timers.reset();
+  });
+
   it("ends in an error and never listening when no chunk arrives", async (t) => {
     t.mock.timers.enable({ apis: ["setTimeout"] });
     const { stream } = liveTrackStream();
