@@ -122,7 +122,7 @@ export function buildFhirPatient(p: PatientContext) {
           },
         ],
       },
-      system: "https://lumera.health/uhid",
+      system: "https://www.mylumera.in/uhid",
       value: p.uhid || `UHID-${p.id}`,
     },
   ];
@@ -536,7 +536,7 @@ export function createPrescriptionBundle(
       ],
     },
     identifier: {
-      system: "https://lumera.health/fhir/prescription",
+      system: "https://www.mylumera.in/fhir/prescription",
       value: rx.rxNumber || rx.id,
     },
     type: "document",
@@ -1077,7 +1077,7 @@ export function createOPConsultBundle(
       profile: [NRCES_PROFILES.OP_CONSULT],
     },
     identifier: {
-      system: "https://lumera.health/fhir/op-consult",
+      system: "https://www.mylumera.in/fhir/op-consult",
       value: consult.id,
     },
     type: "document",
