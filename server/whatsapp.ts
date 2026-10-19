@@ -31,6 +31,8 @@ import { authenticatedLabReportPath, authorizeLabReport, labOwnerTenantId, sendL
 import { WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
 import { formatINR } from "../src/lib/currency.ts";
 import { AI_RUPEE_OUTPUT_RULE } from "./india-currency-copy.ts";
+import { maxTranscribeBase64Chars } from "./json-body.ts";
+import { base64DecodedBytes, canonicalTranscribeMime, transcribeDurationTooLong } from "./transcribe-policy.ts";
 import {
   clinicTenantId,
   getTenantConversation,
@@ -1042,8 +1044,6 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
         patientPhone = "+91 98234 55667",
       } = req.body;
 
-      const ai = getGenAI();
-
       // If preset audio or prompt selected (e.g. testing in Hindi, Marathi, English)
       let transcription = "";
       let detectedLang = "en";
@@ -1074,6 +1074,19 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
 
       // Patient audio goes through Vertex. No API-key client and no invented transcript.
       if (audioBase64) {
+        const canonicalMime = canonicalTranscribeMime(mimeType);
+        if (!canonicalMime) {
+          return res.status(415).json({ error: "Unsupported audio type." });
+        }
+        const cleanBase64 = String(audioBase64).replace(/^data:audio\/[a-z0-9]+;base64,/, "");
+        if (cleanBase64.length > maxTranscribeBase64Chars()) {
+          return res.status(413).json({ error: "Recording is too long to transcribe." });
+        }
+        const audioBytes = base64DecodedBytes(cleanBase64);
+        if (transcribeDurationTooLong(audioBytes, req.body?.durationMs)) {
+          return res.status(413).json({ error: "Recording is too long to transcribe." });
+        }
+        const ai = getGenAI();
         if (!ai) {
           return res.status(503).json({ code: "AI_WHATSAPP_NOT_CONFIGURED", message: "AI transcription not configured" });
         }
@@ -1094,13 +1107,12 @@ Output strictly in JSON:
 }
 ${AI_RUPEE_OUTPUT_RULE}`;
 
-          const cleanBase64 = audioBase64.replace(/^data:audio\/[a-z0-9]+;base64,/, "");
           const response = await ai.models.generateContent({
             model: vertexGeminiModel(),
             contents: [
               {
                 inlineData: {
-                  mimeType,
+                  mimeType: canonicalMime,
                   data: cleanBase64,
                 },
               },
@@ -1124,7 +1136,10 @@ ${AI_RUPEE_OUTPUT_RULE}`;
         } catch (geminiErr: unknown) {
           const name = geminiErr && typeof geminiErr === "object" && "name" in geminiErr ? String((geminiErr as { name?: string }).name) : "Error";
           console.warn("WhatsApp audio transcription failed", name);
-          return res.status(503).json({ code: "AI_WHATSAPP_NOT_CONFIGURED", message: "AI transcription not configured" });
+          return res.status(503).json({
+            code: "AI_WHATSAPP_UNAVAILABLE",
+            message: "AI transcription is temporarily unavailable",
+          });
         }
       }
 
@@ -1146,7 +1161,8 @@ ${AI_RUPEE_OUTPUT_RULE}`;
         patientIntent: "prescription",
       });
     } catch (err: unknown) {
-      console.error("Error in /api/whatsapp/voice-process:", err);
+      const name = err && typeof err === "object" && "name" in err ? String((err as { name?: string }).name) : "Error";
+      console.error("Error in /api/whatsapp/voice-process", name);
       res.status(500).json({ error: "Failed to process voice note" });
     }
   });

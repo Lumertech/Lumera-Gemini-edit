@@ -241,12 +241,11 @@ export async function transcribeRecordedAudio(
   if (res.status === 429) {
     throw new Error("Too many transcription requests. Wait a moment, then try again.");
   }
-  if (
-    res.status === 503 ||
-    data.code === "AI_TRANSCRIPTION_NOT_CONFIGURED" ||
-    data.code === "transcribe_unavailable"
-  ) {
+  if (data.code === "AI_TRANSCRIPTION_NOT_CONFIGURED") {
     throw new Error("Server transcription is not configured. Type the consult.");
+  }
+  if (data.code === "AI_TRANSCRIPTION_UNAVAILABLE" || data.code === "transcribe_unavailable" || res.status === 503) {
+    throw new Error("Transcription is temporarily unavailable. Tap Retry.");
   }
   if (res.status === 404) {
     throw new Error("Server transcription is unavailable. Type the consult.");

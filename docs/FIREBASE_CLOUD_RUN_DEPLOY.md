@@ -169,7 +169,7 @@ Leave unset for the URL-hosting stage. Production **does not fake** Graph delive
 | `GOOGLE_REDIRECT_URI` | Override; default is `{APP_URL}/api/auth/google/callback` |
 | `META_ACCESS_TOKEN` / `META_PHONE_NUMBER_ID` | Live Graph send |
 | `VERTEX_PROJECT` | Vertex AI project for patient audio and other PHI. Default documented as `gen-lang-client-0108182367`. Production fails closed when unset. Pinned on deploy. |
-| `VERTEX_LOCATION` | Vertex region. Default documented as `asia-south1` (Mumbai), the same region as `_REGION` in `cloudbuild.yaml`. Production fails closed when unset. Pinned on deploy. |
+| `VERTEX_LOCATION` | Must be `asia-south1` (Mumbai), the same region as `_REGION` in `cloudbuild.yaml`. Any other value, including empty, fails closed in every environment. There is no fallback to `global`. Pinned on deploy. |
 | `VERTEX_GEMINI_MODEL` | Model id. Default `gemini-3.5-flash-lite` (GA, retirement 21 July 2027 or later, audio in asia-south1). Unset keeps that default. Pinned on deploy. |
 | `GEMINI_API_KEY` | Not used for patient audio or other PHI. Do not rely on it for transcription or SOAP. |
 | Razorpay keys | Payments — not required to host Review URLs |

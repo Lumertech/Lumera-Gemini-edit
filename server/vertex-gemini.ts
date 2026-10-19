@@ -14,7 +14,13 @@ import { GoogleGenAI, type GenerateContentParameters, type GenerateContentRespon
  * https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-5-flash-lite
  * Locations table:
  * https://docs.cloud.google.com/vertex-ai/generative-ai/docs/learn/locations
- * gemini-3.8-flash is newer and also GA, but its card lists only global, us, and eu.
+ * That card's Standard PayGo row is only global, us, and eu. asia-south1 is listed
+ * under Provisioned Throughput, not Standard PayGo. No current GA audio model lists
+ * Standard PayGo for the asia-south1 regional endpoint, so this pin stays.
+ * Mumbai calls need Provisioned Throughput. Do not send them to global or us/eu.
+ * gemini-3.5-flash also lists asia-south1 only for Provisioned Throughput, and its
+ * card says that region supports Single Zone Provisioned Throughput only:
+ * https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-5-flash
  */
 export const VERTEX_DEFAULT_PROJECT = "gen-lang-client-0108182367";
 export const VERTEX_DEFAULT_LOCATION = "asia-south1";
@@ -28,6 +34,11 @@ export function vertexGeminiModel(env: NodeJS.ProcessEnv = process.env): string 
 
 export const AI_TRANSCRIPTION_NOT_CONFIGURED = "AI_TRANSCRIPTION_NOT_CONFIGURED";
 export const AI_TRANSCRIPTION_NOT_CONFIGURED_MESSAGE = "AI transcription not configured";
+export const AI_TRANSCRIPTION_UNAVAILABLE = "AI_TRANSCRIPTION_UNAVAILABLE";
+export const AI_TRANSCRIPTION_UNAVAILABLE_MESSAGE = "Transcription is temporarily unavailable. Tap Retry.";
+
+/** Only Mumbai. There is no fallback to global, us, eu, or any other region. */
+export const VERTEX_REQUIRED_LOCATION = "asia-south1";
 
 export interface VertexSettings {
   project: string;
@@ -43,13 +54,14 @@ export interface VertexClientOptions {
 export function readVertexSettings(env: NodeJS.ProcessEnv = process.env): VertexSettings | null {
   const project = String(env.VERTEX_PROJECT || "").trim();
   const location = String(env.VERTEX_LOCATION || "").trim();
-  if (env.NODE_ENV === "production") {
-    if (!project || !location) return null;
-    return { project, location };
+  if (location !== VERTEX_REQUIRED_LOCATION) {
+    console.error("vertex location rejected", location);
+    return null;
   }
+  if (!project && env.NODE_ENV === "production") return null;
   return {
     project: project || VERTEX_DEFAULT_PROJECT,
-    location: location || VERTEX_DEFAULT_LOCATION,
+    location,
   };
 }
 

@@ -12,6 +12,8 @@ import { aiScribeTenantIdFromRequest, blockedAiScribeResponse, meterSuccessfulGe
 import {
   AI_TRANSCRIPTION_NOT_CONFIGURED,
   AI_TRANSCRIPTION_NOT_CONFIGURED_MESSAGE,
+  AI_TRANSCRIPTION_UNAVAILABLE,
+  AI_TRANSCRIPTION_UNAVAILABLE_MESSAGE,
   getVertexClient,
   vertexGeminiModel,
 } from "./vertex-gemini.ts";
@@ -67,14 +69,22 @@ export function mountGeminiClinicalRoutes(app: Express) {
       }
 
       if (testSoapGenerator) {
-        const soap = await testSoapGenerator(req.body);
-        meterSuccessfulGeminiScribe({
-          tenantId,
-          durationMinutes: req.body?.durationMinutes,
-          transcript,
-          metadata: { source: vertexGeminiModel(), endpoint: "generate-soap" },
-        });
-        return res.json({ success: true, soap, source: "Pulse AI" });
+        try {
+          const soap = await testSoapGenerator(req.body);
+          meterSuccessfulGeminiScribe({
+            tenantId,
+            durationMinutes: req.body?.durationMinutes,
+            transcript,
+            metadata: { source: vertexGeminiModel(), endpoint: "generate-soap" },
+          });
+          return res.json({ success: true, soap, source: "Pulse AI" });
+        } catch (geminiError: unknown) {
+          console.error("SOAP generation error", errorName(geminiError));
+          return res.status(503).json({
+            code: "AI_SOAP_UNAVAILABLE",
+            message: "AI note generation is temporarily unavailable",
+          });
+        }
       }
 
       const ai = getVertexClient();
@@ -99,7 +109,10 @@ export function mountGeminiClinicalRoutes(app: Express) {
         return res.json({ success: true, soap: parsed, source: "Pulse AI" });
       } catch (geminiError: unknown) {
         console.error("SOAP generation error", errorName(geminiError));
-        return res.status(500).json({ error: "Could not generate the note", code: "soap_failed" });
+        return res.status(503).json({
+          code: "AI_SOAP_UNAVAILABLE",
+          message: "AI note generation is temporarily unavailable",
+        });
       }
     } catch {
       console.error("SOAP endpoint error");
@@ -134,10 +147,13 @@ export function mountGeminiClinicalRoutes(app: Express) {
         return res.json({ response: response.text, source: "Pulse AI" });
       } catch (err: unknown) {
         console.error("Copilot generation error", errorName(err));
-        return res.status(503).json({ code: "AI_COPILOT_NOT_CONFIGURED", message: "AI assistant not configured" });
+        return res.status(503).json({
+          code: "AI_COPILOT_UNAVAILABLE",
+          message: "AI assistant is temporarily unavailable",
+        });
       }
     } catch {
-      res.status(500).json({ error: "Could not answer", code: "AI_COPILOT_NOT_CONFIGURED" });
+      res.status(503).json({ code: "AI_COPILOT_UNAVAILABLE", message: "AI assistant is temporarily unavailable" });
     }
   };
 
@@ -165,10 +181,13 @@ export function mountGeminiClinicalRoutes(app: Express) {
         return res.json(JSON.parse(response.text?.trim() || "{}"));
       } catch (err: unknown) {
         console.error("Safety check error", errorName(err));
-        return res.status(503).json({ code: "AI_SAFETY_NOT_CONFIGURED", message: "AI safety check not configured" });
+        return res.status(503).json({
+          code: "AI_SAFETY_UNAVAILABLE",
+          message: "AI safety check is temporarily unavailable",
+        });
       }
     } catch {
-      res.status(500).json({ error: "Could not check safety", code: "AI_SAFETY_NOT_CONFIGURED" });
+      res.status(503).json({ code: "AI_SAFETY_UNAVAILABLE", message: "AI safety check is temporarily unavailable" });
     }
   });
   app.post(
@@ -243,7 +262,10 @@ export function mountGeminiClinicalRoutes(app: Express) {
         return res.json({ success: true, transcription });
       } catch (err: unknown) {
         console.error("Ambient transcribe failed:", errorName(err));
-        return res.status(500).json({ code: "transcribe_failed" });
+        return res.status(503).json({
+          code: AI_TRANSCRIPTION_UNAVAILABLE,
+          message: AI_TRANSCRIPTION_UNAVAILABLE_MESSAGE,
+        });
       }
     }
   );

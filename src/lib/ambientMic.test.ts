@@ -386,10 +386,10 @@ describe("WebView microphone timeout", () => {
 });
 
 describe("server transcription fallback", () => {
-  it("surfaces a missing transcription service without naming a vendor", async () => {
+  it("surfaces a temporary transcription outage without naming a vendor", async () => {
     const blob = new Blob([new Uint8Array(200)], { type: "audio/webm" });
     const fakeFetch = async () =>
-      new Response(JSON.stringify({ code: "transcribe_unavailable", error: "Gemini AI API key not configured" }), {
+      new Response(JSON.stringify({ code: "AI_TRANSCRIPTION_UNAVAILABLE", error: "Gemini AI API key not configured" }), {
         status: 503,
         headers: { "Content-Type": "application/json" },
       });
@@ -397,7 +397,8 @@ describe("server transcription fallback", () => {
       () => transcribeRecordedAudio(blob, fakeFetch as typeof fetch),
       (err: unknown) => {
         assert.ok(err instanceof Error);
-        assert.match(err.message, /not configured/i);
+        assert.match(err.message, /temporarily unavailable/i);
+        assert.match(err.message, /retry/i);
         assert.doesNotMatch(err.message, /gemini/i);
         assert.doesNotMatch(err.message, /API key/i);
         return true;
@@ -484,6 +485,7 @@ describe("server transcription fallback", () => {
     const blob = new Blob([new Uint8Array(200)], { type: "audio/webm" });
     const cases: Array<{ status: number; code: string; pattern: RegExp }> = [
       { status: 503, code: "AI_TRANSCRIPTION_NOT_CONFIGURED", pattern: /not configured/i },
+      { status: 503, code: "AI_TRANSCRIPTION_UNAVAILABLE", pattern: /temporarily unavailable/i },
       { status: 409, code: "consent_required", pattern: /record the patient agreement/i },
       { status: 413, code: "too_large", pattern: /too long/i },
       { status: 415, code: "unsupported", pattern: /format cannot be transcribed/i },

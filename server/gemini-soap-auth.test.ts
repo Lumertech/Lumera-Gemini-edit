@@ -88,8 +88,8 @@ describe("POST /api/gemini/generate-soap auth and errors", () => {
       { transcript: "Patient has fever and cough for two days." },
       { Authorization: `Bearer ${login.json.token}` }
     );
-    assert.equal(failed.status, 500);
-    assert.equal(failed.json.code, "soap_failed");
+    assert.equal(failed.status, 503);
+    assert.equal(failed.json.code, "AI_SOAP_UNAVAILABLE");
     assert.equal(JSON.stringify(failed.json).includes("leak-soap-vendor-detail"), false);
   });
 });

@@ -1086,24 +1086,96 @@ describe("ambient scribe per-visit consent", () => {
       ),
       false
     );
+    const openPredicate = [
+      "waiting",
+      "open",
+      "in consultation",
+      "scheduled",
+      "confirmed",
+      "checked-in",
+      "checked in",
+      "triage / vitals",
+      "in progress",
+    ]
+      .map((status) => `'${status}'::text`)
+      .join(", ");
     assert.equal(
       openWalkInIndexDefinitionMatches(
-        `CREATE UNIQUE INDEX idx_appointments_ambient_walkin ON public.appointments USING btree (tenant_id, patient_id, doctor_id, date) WHERE ((source = 'ambient_walkin'::text) AND (lower(btrim(COALESCE(status, ''::text))) IN (${[
-          "waiting",
-          "open",
-          "in consultation",
-          "scheduled",
-          "confirmed",
-          "checked-in",
-          "checked in",
-          "triage / vitals",
-          "in progress",
-        ]
-          .map((status) => `'${status}'::text`)
-          .join(", ")})))`
+        `CREATE UNIQUE INDEX idx_appointments_ambient_walkin ON public.appointments USING btree (tenant_id, patient_id, doctor_id, date) WHERE ((source = 'ambient_walkin'::text) AND (lower(btrim(COALESCE(status, ''::text))) IN (${openPredicate})))`
       ),
       true
     );
+    assert.equal(
+      openWalkInIndexDefinitionMatches(
+        `CREATE UNIQUE INDEX idx_appointments_ambient_walkin ON public.appointments USING btree (tenant_id, patient_id, doctor_id, date) WHERE ((source = 'ambient_walkin'::text) AND (lower(btrim(COALESCE(status, ''::text))) IN (${openPredicate}, 'completed'::text)))`
+      ),
+      false
+    );
+    assert.equal(
+      openWalkInIndexDefinitionMatches(
+        `CREATE UNIQUE INDEX idx_appointments_ambient_walkin ON appointments (tenant_id, patient_id, doctor_id, date, status) WHERE source = 'ambient_walkin' AND lower(trim(COALESCE(status, ''))) IN (${openPredicate})`
+      ),
+      false
+    );
+  });
+
+  it("does not drop the unique index when a duplicate group is skipped", () => {
+    const doctor = seedDoctor("unsafedup");
+    const day = istClinicDay();
+    const patientId = `pat-${doctor.userId}`;
+    const safeId = `safe-${doctor.userId}`;
+    const unsafeId = `bad id ${doctor.userId}`;
+    getDb().exec("DROP INDEX IF EXISTS idx_appointments_ambient_walkin");
+    insertVisit({
+      id: safeId,
+      tenantId: doctor.tenantId,
+      patientId,
+      doctorId: doctor.userId,
+      date: day,
+      status: "Open",
+      source: AMBIENT_WALKIN_SOURCE,
+    });
+    insertVisit({
+      id: unsafeId,
+      tenantId: doctor.tenantId,
+      patientId,
+      doctorId: doctor.userId,
+      date: day,
+      status: "Open",
+      source: AMBIENT_WALKIN_SOURCE,
+    });
+    getDb().prepare("UPDATE appointments SET created_at = ? WHERE id = ?").run("2099-01-01T00:00:00.000Z", safeId);
+    getDb().prepare("UPDATE appointments SET created_at = ? WHERE id = ?").run("2020-01-01T00:00:00.000Z", unsafeId);
+    const db = getDb();
+    const calls: string[] = [];
+    const logs: string[] = [];
+    const originalExec = db.exec.bind(db);
+    const originalError = console.error;
+    db.exec = (sql: string) => {
+      calls.push(sql);
+      return originalExec(sql);
+    };
+    console.error = (...args: unknown[]) => {
+      logs.push(args.map((part) => String(part)).join(" "));
+    };
+    try {
+      ensureAmbientWalkInUniqueIndex(db);
+    } finally {
+      db.exec = originalExec;
+      console.error = originalError;
+    }
+    assert.equal(calls.some((sql) => /DROP INDEX/i.test(sql)), false);
+    assert.equal(calls.some((sql) => /CREATE UNIQUE INDEX/i.test(sql)), false);
+    assert.match(logs.join("\n"), /duplicate group was skipped/i);
+    assert.match(logs.join("\n"), /unique index left in place/i);
+    const rowOf = (id: string) =>
+      getDb().prepare("SELECT status, source FROM appointments WHERE id = ?").get(id) as { status: string; source: string };
+    assert.equal(rowOf(safeId).status, "Open");
+    assert.equal(rowOf(safeId).source, AMBIENT_WALKIN_SOURCE);
+    assert.equal(rowOf(unsafeId).status, "Open");
+    assert.equal(rowOf(unsafeId).source, AMBIENT_WALKIN_SOURCE);
+    getDb().prepare("DELETE FROM appointments WHERE id = ?").run(unsafeId);
+    ensureAmbientWalkInUniqueIndex(getDb());
   });
 
   it("request handlers pass a tenant when closing stale walk-ins", () => {

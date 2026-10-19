@@ -10,9 +10,11 @@ import {
   readVertexSettings,
   setVertexClientFactoryForTests,
   setVertexClientForTests,
+  AI_TRANSCRIPTION_UNAVAILABLE,
   VERTEX_DEFAULT_GEMINI_MODEL,
   VERTEX_DEFAULT_LOCATION,
   VERTEX_DEFAULT_PROJECT,
+  VERTEX_REQUIRED_LOCATION,
   vertexClientOptions,
   vertexGeminiModel,
 } from "./vertex-gemini.ts";
@@ -54,6 +56,49 @@ describe("Vertex PHI client", () => {
     assert.equal(vertexGeminiModel({ NODE_ENV: "production" }), "gemini-3.5-flash-lite");
     assert.equal(vertexGeminiModel({ VERTEX_GEMINI_MODEL: "  gemini-3.5-flash  " }), "gemini-3.5-flash");
     assert.equal(AI_TRANSCRIPTION_NOT_CONFIGURED, "AI_TRANSCRIPTION_NOT_CONFIGURED");
+    assert.equal(AI_TRANSCRIPTION_UNAVAILABLE, "AI_TRANSCRIPTION_UNAVAILABLE");
+    assert.equal(VERTEX_REQUIRED_LOCATION, "asia-south1");
+  });
+
+  it("accepts only asia-south1 and fails closed for global, us-central1, and an empty location", () => {
+    const logs: unknown[][] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => {
+      logs.push(args);
+    };
+    let built = 0;
+    setVertexClientFactoryForTests(() => {
+      built += 1;
+      return { models: { generateContent: async () => ({ text: "ok" }) } } as unknown as GoogleGenAI;
+    });
+    try {
+      for (const location of ["global", "us-central1", ""]) {
+        for (const nodeEnv of ["production", "test"]) {
+          const env = {
+            NODE_ENV: nodeEnv,
+            VERTEX_PROJECT: VERTEX_DEFAULT_PROJECT,
+            VERTEX_LOCATION: location,
+          } as NodeJS.ProcessEnv;
+          assert.equal(readVertexSettings(env), null, `${nodeEnv} ${location || "(empty)"}`);
+          assert.equal(getVertexClient(env), null);
+        }
+      }
+      const allowed = readVertexSettings({
+        NODE_ENV: "test",
+        VERTEX_LOCATION: "asia-south1",
+      });
+      assert.deepEqual(allowed, { project: VERTEX_DEFAULT_PROJECT, location: "asia-south1" });
+      assert.ok(getVertexClient({ NODE_ENV: "test", VERTEX_LOCATION: "asia-south1" }));
+      assert.equal(built, 1);
+      const rejected = logs.map((args) => String(args[1] ?? ""));
+      assert.ok(rejected.includes("global"));
+      assert.ok(rejected.includes("us-central1"));
+      assert.ok(rejected.includes(""));
+      assert.equal(rejected.includes(VERTEX_DEFAULT_PROJECT), false);
+      assert.equal(JSON.stringify(logs).includes("global endpoint"), false);
+    } finally {
+      console.error = original;
+    }
   });
 
   it("sends asia-south1 and the project, and does not attach an API key", () => {
@@ -86,9 +131,20 @@ describe("Vertex PHI client", () => {
     assert.equal(seen?.location, "asia-south1");
   });
 
-  it("uses documented defaults outside production", () => {
-    const settings = readVertexSettings({ NODE_ENV: "test" });
-    assert.deepEqual(settings, { project: VERTEX_DEFAULT_PROJECT, location: VERTEX_DEFAULT_LOCATION });
+  it("uses the documented project default outside production only when the location is asia-south1", () => {
+    const logs: unknown[][] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => {
+      logs.push(args);
+    };
+    try {
+      assert.equal(readVertexSettings({ NODE_ENV: "test" }), null);
+      assert.equal(String(logs.at(-1)?.[1] ?? ""), "");
+      const settings = readVertexSettings({ NODE_ENV: "test", VERTEX_LOCATION: VERTEX_DEFAULT_LOCATION });
+      assert.deepEqual(settings, { project: VERTEX_DEFAULT_PROJECT, location: "asia-south1" });
+    } finally {
+      console.error = original;
+    }
   });
 
   it("rejects an API-key client import on PHI routes", () => {

@@ -80,16 +80,42 @@ function quotedSqlText(value: string): string | null {
   return `'${value}'`;
 }
 
-/** True when an existing index already matches the open-walk-in predicate. */
+/** Statuses that must not appear in the open-walk-in index predicate. */
+const CLOSED_VISIT_STATUSES = ["completed", "cancelled", "canceled", "no-show", "no show", "archived"] as const;
+
+const OPEN_WALKIN_INDEX_COLUMNS = ["tenant_id", "patient_id", "doctor_id", "date"] as const;
+
+function indexColumnList(normalized: string): string[] | null {
+  const match = normalized.match(/\bon\s+[a-z0-9_."]+(?:\s+using\s+[a-z0-9_]+\s*)?\s*\(([^)]*)\)/);
+  if (!match) return null;
+  return match[1]
+    .split(",")
+    .map((part) => part.trim().replace(/"/g, ""))
+    .filter(Boolean);
+}
+
+function indexPredicate(normalized: string): string {
+  const whereAt = normalized.search(/\bwhere\b/);
+  if (whereAt < 0) return "";
+  return normalized.slice(whereAt);
+}
+
+/**
+ * True only for a unique index on exactly (tenant_id, patient_id, doctor_id, date)
+ * whose predicate is the open-walk-in allowlist. A predicate that names a closed
+ * status does not match, so boot will not treat that index as already correct.
+ */
 export function openWalkInIndexDefinitionMatches(sql: string): boolean {
   const normalized = sql.toLowerCase();
   if (!/\bunique\b/.test(normalized)) return false;
   if (!/source\s*=\s*'ambient_walkin'(?!_)/.test(normalized)) return false;
-  if (!normalized.includes("tenant_id") || !normalized.includes("patient_id") || !normalized.includes("doctor_id")) {
-    return false;
-  }
-  if (!/\bdate\b/.test(normalized)) return false;
-  return OPEN_VISIT_STATUSES.every((status) => normalized.includes(status));
+  const columns = indexColumnList(normalized);
+  if (!columns || columns.length !== OPEN_WALKIN_INDEX_COLUMNS.length) return false;
+  if (columns.some((column, index) => column !== OPEN_WALKIN_INDEX_COLUMNS[index])) return false;
+  const predicate = indexPredicate(normalized);
+  if (!predicate) return false;
+  if (CLOSED_VISIT_STATUSES.some((status) => predicate.includes(status))) return false;
+  return OPEN_VISIT_STATUSES.every((status) => predicate.includes(status));
 }
 
 /** Open hidden walk-ins only. A completed visit from earlier today must not block a new one. */
@@ -175,6 +201,10 @@ function logSkippedWalkInGroup(): void {
   console.error("ambient walk-in duplicate close skipped a group with an unsafe id");
 }
 
+function logIndexLeftInPlace(): void {
+  console.error("ambient walk-in unique index left in place because a duplicate group was skipped");
+}
+
 /**
  * One open hidden walk-in per clinic, patient, doctor, and clinic day.
  * A walk-in already closed earlier that day is a real visit, so only open rows are grouped.
@@ -200,6 +230,7 @@ export function ensureAmbientWalkInUniqueIndex(database: SqlDatabase): void {
      ORDER BY created_at DESC, id DESC`
   );
   const closures: WalkInId[] = [];
+  let skippedGroup = false;
   for (const group of groups) {
     const rows = ids.all(
       AMBIENT_WALKIN_SOURCE,
@@ -211,13 +242,13 @@ export function ensureAmbientWalkInUniqueIndex(database: SqlDatabase): void {
     const extras = rows.slice(1);
     if (extras.some((row) => !SQL_TEXT.test(row.id) || !SQL_TEXT.test(String(row.tenant_id || "")))) {
       logSkippedWalkInGroup();
+      skippedGroup = true;
       continue;
     }
     closures.push(...extras);
   }
 
-  const rebuildIndex = !openWalkInIndexDefinitionMatches(existingAmbientWalkInIndexSql(database));
-  if (!closures.length && !rebuildIndex) return;
+  const indexMatches = openWalkInIndexDefinitionMatches(existingAmbientWalkInIndexSql(database));
 
   if (database.dialect === "postgres") {
     const statements: string[] = [];
@@ -225,15 +256,23 @@ export function ensureAmbientWalkInUniqueIndex(database: SqlDatabase): void {
       const statement = postgresCloseAndAuditSql(extra.id, extra.tenant_id);
       if (!statement) {
         logSkippedWalkInGroup();
+        skippedGroup = true;
         continue;
       }
       statements.push(statement);
     }
-    if (rebuildIndex) {
+    if (skippedGroup) {
+      logIndexLeftInPlace();
+    } else if (!indexMatches) {
       statements.push("DROP INDEX IF EXISTS idx_appointments_ambient_walkin");
       statements.push(openAmbientWalkInIndexSql());
     }
     execTransactional(database, statements);
+    return;
+  }
+
+  if (!closures.length && (skippedGroup || indexMatches)) {
+    if (skippedGroup) logIndexLeftInPlace();
     return;
   }
 
@@ -253,7 +292,9 @@ export function ensureAmbientWalkInUniqueIndex(database: SqlDatabase): void {
       if (Number(result.changes || 0) < 1) continue;
       audit.run(randomUUID(), new Date().toISOString(), null, AMBIENT_WALKIN_CLOSED_DUP_ACTION, extra.tenant_id, extra.id);
     }
-    if (rebuildIndex) {
+    if (skippedGroup) {
+      logIndexLeftInPlace();
+    } else if (!indexMatches) {
       database.exec("DROP INDEX IF EXISTS idx_appointments_ambient_walkin");
       database.exec(openAmbientWalkInIndexSql());
     }

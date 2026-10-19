@@ -63,10 +63,15 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
           return res.json(parsed);
         } catch (err) {
           console.error("Voice bot error", errorName(err));
-          return res.status(503).json({ code: "AI_VOICE_NOT_CONFIGURED", message: "AI voice assistant not configured" });
+          return res.status(503).json({
+            code: "AI_VOICE_UNAVAILABLE",
+            message: isEmergency
+              ? "AI voice assistant is temporarily unavailable. If this is an emergency, go to the nearest emergency room or call 108."
+              : "AI voice assistant is temporarily unavailable",
+          });
         }
     } catch {
-      res.status(500).json({ error: "Could not answer", code: "AI_VOICE_NOT_CONFIGURED" });
+      res.status(503).json({ code: "AI_VOICE_UNAVAILABLE", message: "AI voice assistant is temporarily unavailable" });
     }
   });
 
@@ -186,10 +191,13 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
           return res.json(JSON.parse(response.text?.trim() || "{}"));
         } catch (err) {
           console.error("Translate Rx error", errorName(err));
-          return res.status(503).json({ code: "AI_TRANSLATE_NOT_CONFIGURED", message: "AI translation not configured" });
+          return res.status(503).json({
+            code: "AI_TRANSLATE_UNAVAILABLE",
+            message: "AI translation is temporarily unavailable",
+          });
         }
     } catch {
-      res.status(500).json({ error: "Could not translate", code: "AI_TRANSLATE_NOT_CONFIGURED" });
+      res.status(503).json({ code: "AI_TRANSLATE_UNAVAILABLE", message: "AI translation is temporarily unavailable" });
     }
   });
 }
