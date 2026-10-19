@@ -257,7 +257,6 @@ export const BOOTSTRAP_DDL = `
       time_display TEXT NOT NULL,
       buttons TEXT,
       media TEXT,
-      audio_url TEXT,
       voice_transcript TEXT,
       status TEXT NOT NULL DEFAULT 'delivered',
       created_at TEXT NOT NULL,

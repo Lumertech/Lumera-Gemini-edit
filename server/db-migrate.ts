@@ -133,8 +133,34 @@ export function ensureDemoTenantLetterhead(database: SqlDatabase) {
   }
 }
 
+const POSTGRES_WHATSAPP_AUDIO_URL_SQL = `
+  SELECT column_name AS name
+  FROM information_schema.columns
+  WHERE table_schema = current_schema()
+    AND table_name = 'whatsapp_messages'
+    AND column_name = 'audio_url'
+`;
+
+/**
+ * Older boots created whatsapp_messages.audio_url and never wrote it.
+ * Fresh DDL omits the column. Drop it only when it is still there so a
+ * second boot, on sqlite or postgres, does not run DROP COLUMN again.
+ */
+export function dropWhatsAppMessageAudioUrl(database: SqlDatabase): void {
+  if (database.dialect === "postgres") {
+    const column = database.prepare(POSTGRES_WHATSAPP_AUDIO_URL_SQL).get() as { name?: string } | undefined;
+    if (!column?.name) return;
+    database.exec("ALTER TABLE whatsapp_messages DROP COLUMN audio_url");
+    return;
+  }
+  const columns = database.prepare("PRAGMA table_info(whatsapp_messages)").all() as Array<{ name?: string }>;
+  if (!columns.some((column) => column?.name === "audio_url")) return;
+  database.exec("ALTER TABLE whatsapp_messages DROP COLUMN audio_url");
+}
+
 export function migrate(database: SqlDatabase) {
   database.exec(BOOTSTRAP_DDL);
+  dropWhatsAppMessageAudioUrl(database);
   migratePrescriptionDraftKey(database);
   try {
     database.exec("ALTER TABLE invoices ADD COLUMN consulting_doctor_id TEXT NOT NULL DEFAULT ''");

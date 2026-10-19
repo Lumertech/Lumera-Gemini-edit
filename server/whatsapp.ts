@@ -137,7 +137,6 @@ function serializeWhatsAppMessage(m: Record<string, unknown>) {
     time: m.time_display,
     buttons: m.buttons ? JSON.parse(m.buttons as string) : null,
     media: m.media ? JSON.parse(m.media as string) : null,
-    audioUrl: m.audio_url,
     voiceTranscript: m.voice_transcript,
     status: m.status,
     createdAt: m.created_at,
