@@ -209,6 +209,11 @@ function findPatientsByPhone(phone: string): Record<string, unknown>[] {
   }
 }
 
+/**
+ * Last-10 match via phonesMatch. PR #168's exact E.164 helper
+ * (isDemoWhatsAppAllowlisted: digits only, country code included) is not on
+ * main, so this lookup does not switch matchers yet.
+ */
 export function findPatientByPhoneInTenant(tenantId: string, phone: string): Record<string, unknown> | undefined {
   const rows = getDb()
     .prepare("SELECT * FROM patients WHERE tenant_id = ?")
