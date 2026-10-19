@@ -318,8 +318,8 @@ export const AdminMetaTechProvider: React.FC = () => {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-6 pt-6 border-t border-slate-800">
           <div className="bg-slate-900/60 p-3 rounded-xl border border-slate-800/80">
             <div className="text-xs text-slate-400 font-medium">App Review status</div>
-            <div className="text-lg font-bold text-amber-300 flex items-center gap-1.5 mt-0.5">
-              <AlertCircle className="w-4 h-4" /> {overview?.appReviewStatus?.status || "APPROVED"}
+            <div className="text-lg font-bold text-emerald-300 flex items-center gap-1.5 mt-0.5">
+              <CheckCircle2 className="w-4 h-4" /> {overview?.appReviewStatus?.status || "APPROVED"}
             </div>
             <div className="text-[11px] text-slate-400 mt-0.5">
               {overview?.appReviewStatus?.passedCount ?? 0}/{overview?.appReviewStatus?.totalCount ?? 0} readiness items true. Tech Provider status: {overview?.techProviderStatus || "TECH_PROVIDER"}. {overview?.appReviewManualConfirmationNote}

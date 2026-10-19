@@ -15,7 +15,7 @@ Gemini AI Studio **Publish** may produce the Cloud Run service. Firebase Hosting
 Today’s live symptom (2026-09-10): www TLS presents `CN=firebaseapp.com` (SAN mismatch) and apex `mylumera.in` is 404. That is an unfinished Hosting custom-domain / cert mint, not a reason to change nameservers.
 
 **Canonical public origin:** `https://www.mylumera.in`  
-**Honesty:** Lumera Solutions LLP is a Meta Tech Provider for the WhatsApp Business Platform. Facebook Login App Review is not WhatsApp Tech Provider certification. Do not paste Dashboard URLs until the smoke curls below return HTTPS 200.
+**Honesty:** Lumera Solutions LLP is a Meta Tech Provider for the WhatsApp Business Platform. Do not paste Dashboard URLs until the smoke curls below return HTTPS 200.
 
 Firebase project (from `firebase-applet-config.json` / `.firebaserc`): **`gen-lang-client-0108182367`**.
 
