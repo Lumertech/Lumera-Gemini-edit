@@ -22,7 +22,6 @@ import {
 } from "./graph-whatsapp.ts";
 import { isProduction } from "./runtime.ts";
 import { getTenantLetterhead } from "./letterhead.ts";
-import { appPublicUrl, AppPublicUrlError } from "./runtime.ts";
 import { PATIENT_PHONE_MISSING, RX_SEND_FAILED, SAFETY_REVIEW_REQUIRED } from "../src/lib/signedRxWhatsAppSend.ts";
 import { mintPatientLinkToken, revokePatientLinkToken } from "./patient-link-token.ts";
 import { patientOptedIn } from "./whatsapp-opt-in.ts";
@@ -195,7 +194,8 @@ export async function dispatchSignedRxCloudMessage(opts: {
   clinicName: string;
   doctorName: string;
   rxNumber: string;
-  urlSuffix?: string;
+  /** Opaque token from mintPatientLinkToken. Never the rx number or a UHID. */
+  linkToken?: string;
   fetchImpl?: typeof fetch;
 }): Promise<CloudDispatchResult> {
   const db = getDb();
@@ -217,7 +217,7 @@ export async function dispatchSignedRxCloudMessage(opts: {
       textBody: opts.textBody,
       templateLanguage: approved.language,
       templateParameters: prescriptionReadyTemplateParameters(opts),
-      urlButtonParameter: prescriptionUrlSuffix(opts.urlSuffix || ""),
+      urlButtonParameter: prescriptionUrlSuffix(opts.linkToken || ""),
       db,
       tenantId: opts.tenantId,
       fetchImpl: opts.fetchImpl,
@@ -323,18 +323,7 @@ export async function handleSignedRxWhatsAppSend(req: Request, res: Response): P
       res.status(404).json({ code: RX_NOT_FOUND });
       return;
     }
-    let portalUrl = "";
-    try {
-      portalUrl = appPublicUrl(req.get("host") || undefined, req.protocol);
-    } catch (err) {
-      if (err instanceof AppPublicUrlError) {
-        auditRxSend(req, tenantId, rxNumber, "failed", RX_SEND_FAILED);
-        res.status(500).json({ code: RX_SEND_FAILED });
-        return;
-      }
-      throw err;
-    }
-    const resolved = await resolveSignedRxWhatsAppSend(getDb(), tenantId, req.body, portalUrl);
+    const resolved = await resolveSignedRxWhatsAppSend(getDb(), tenantId, req.body, "");
     if (resolved.ok === false) {
       auditRxSend(req, tenantId, rxNumber, "failed", resolved.code);
       res.status(resolved.status).json({ code: resolved.code });
@@ -374,7 +363,7 @@ export async function handleSignedRxWhatsAppSend(req: Request, res: Response): P
       clinicName: resolved.clinicName,
       doctorName: resolved.doctorName,
       rxNumber: resolved.rxNumber,
-      urlSuffix: link.token,
+      linkToken: link.token,
     });
     const messageId = sent.ok === true ? String(sent.messageId || "").trim() : "";
     const delivered = sent.ok === true && sent.channel === "graph" && META_MESSAGE_ID.test(messageId);

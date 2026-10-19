@@ -1750,6 +1750,22 @@ export function createClinicalRouter(): Router {
     const ttlHours =
       Number.isFinite(requested) && requested > 0 ? Math.min(PATIENT_LINK_PRINT_TTL_HOURS, requested) : PATIENT_LINK_PRINT_TTL_HOURS;
     try {
+      if (purpose === "portal" || purpose === "hep") {
+        if (resourceId !== patientId) {
+          res.status(409).json({ error: "This link does not belong to that patient." });
+          return;
+        }
+        await revokePatientLinkTokensFor({ tenantId, resourceId, purpose });
+      } else if (purpose === "receipt") {
+        const invoices = getDb()
+          .prepare(`SELECT patient_id FROM invoices WHERE tenant_id = ? AND (id = ? OR invoice_number = ?)`)
+          .all(tenantId, resourceId, resourceId) as Array<{ patient_id?: string }>;
+        const owners = [...new Set(invoices.map((row) => String(row.patient_id || "").trim()).filter(Boolean))];
+        if (owners.length !== 1 || owners[0] !== patientId) {
+          res.status(409).json({ error: "This receipt is for a different patient." });
+          return;
+        }
+      }
       const link = await mintPatientLinkToken({
         tenantId,
         patientId,

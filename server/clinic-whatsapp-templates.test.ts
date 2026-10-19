@@ -5,8 +5,10 @@ import {
   LUMERA_RECEIPT_TEMPLATE_V1,
   LUMERA_RECEIPT_TEMPLATE_V2,
   graphComponentsForClinicTemplate,
+  prescriptionUrlSuffix,
   receiptTemplateParameters,
 } from "./clinic-whatsapp-templates.ts";
+import { PATIENT_LINK_PUBLIC_BASE_URL } from "./patient-link-token.ts";
 
 function placeholderNumbers(text: string): number[] {
   const found = [...text.matchAll(/\{\{(\d+)\}\}/g)].map((match) => Number(match[1]));
@@ -47,6 +49,18 @@ describe("clinic WhatsApp template catalog", () => {
     assert.ok(rx);
     assert.match(rx.body, /reviewed and signed/);
     assert.match(rx.body, /\{\{3\}\}/);
+    assert.equal(rx.urlButton?.url, `${PATIENT_LINK_PUBLIC_BASE_URL}/rx/v/{{1}}`);
+    const receipt = CLINIC_TEMPLATE_CATALOG.find((spec) => spec.name === "clinic_payment_receipt");
+    assert.equal(receipt?.example[5], `${PATIENT_LINK_PUBLIC_BASE_URL}/pay/v/opaqueexampletoken`);
+  });
+
+  it("puts only a minted token in the prescription button, never an rx number or UHID", () => {
+    const token = "A".repeat(43);
+    assert.equal(prescriptionUrlSuffix(token), token);
+    assert.equal(prescriptionUrlSuffix("RX-2026-ABCDEF"), "");
+    assert.equal(prescriptionUrlSuffix("LUM-2026-ABCDEF"), "");
+    assert.equal(prescriptionUrlSuffix("opaqueexampletoken"), "");
+    assert.equal(prescriptionUrlSuffix("RX-1001"), "");
   });
 
   it("fills the Manager receipt bodies: v2 has 6 params and the live name has 4", () => {
@@ -57,7 +71,7 @@ describe("clinic WhatsApp template catalog", () => {
       amount: 700,
       invoiceId: "INV-1042",
       date: "20 Oct 2026",
-      receiptUrl: "https://www.mylumera.in/pay/v/opaqueexampletoken",
+      receiptUrl: `${PATIENT_LINK_PUBLIC_BASE_URL}/pay/v/opaqueexampletoken`,
     };
     const v2 = [
       "Asha",
@@ -65,7 +79,7 @@ describe("clinic WhatsApp template catalog", () => {
       "Sunrise Clinic",
       "Dr Mehta",
       "INV-1042",
-      "https://www.mylumera.in/pay/v/opaqueexampletoken",
+      `${PATIENT_LINK_PUBLIC_BASE_URL}/pay/v/opaqueexampletoken`,
     ];
     assert.deepEqual(receiptTemplateParameters(fields, LUMERA_RECEIPT_TEMPLATE_V2), v2);
     assert.deepEqual(receiptTemplateParameters(fields, "clinic_payment_receipt"), v2);
@@ -74,7 +88,7 @@ describe("clinic WhatsApp template catalog", () => {
       "Asha",
       "INR 700",
       "Sunrise Clinic",
-      "https://www.mylumera.in/pay/v/opaqueexampletoken",
+      `${PATIENT_LINK_PUBLIC_BASE_URL}/pay/v/opaqueexampletoken`,
     ]);
     const fallback = receiptTemplateParameters({}, LUMERA_RECEIPT_TEMPLATE_V2);
     assert.equal(fallback.length, 6);

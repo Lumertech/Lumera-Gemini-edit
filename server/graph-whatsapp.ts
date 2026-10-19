@@ -16,6 +16,7 @@ import {
   TEMPLATE_NOT_APPROVED_ERROR,
 } from "./clinic-whatsapp-templates.ts";
 import { mintPatientLinkToken, revokePatientLinkToken } from "./patient-link-token.ts";
+import { reportCaughtError } from "./error-tracker.ts";
 import { whatsAppOptInBlock } from "./whatsapp-opt-in.ts";
 
 /**
@@ -1097,21 +1098,30 @@ export async function sendPaymentReceipt(opts: {
     date: opts.date,
     receiptUrl,
   };
-  const sent = await dispatchWhatsAppCloudMessage({
-    to: opts.to,
-    kind: "payment_receipt",
-    textBody: opts.textBody || buildReceiptText({ ...opts, clinicName }),
-    previewUrl: opts.previewUrl,
-    templateName: opts.templateName,
-    templateParameters: opts.templateParameters || receiptTemplateParameters(receiptFields),
-    receiptFields,
-    db: opts.db,
-    fetchImpl: opts.fetchImpl,
-    tenantId: opts.tenantId,
-  });
-  if (mintedToken && !graphAccepted(sent)) {
-    await revokePatientLinkToken(mintedToken);
+  let sent: CloudDispatchResult | undefined;
+  try {
+    sent = await dispatchWhatsAppCloudMessage({
+      to: opts.to,
+      kind: "payment_receipt",
+      textBody: opts.textBody || buildReceiptText({ ...opts, clinicName }),
+      previewUrl: opts.previewUrl,
+      templateName: opts.templateName,
+      templateParameters: opts.templateParameters || receiptTemplateParameters(receiptFields),
+      receiptFields,
+      db: opts.db,
+      fetchImpl: opts.fetchImpl,
+      tenantId: opts.tenantId,
+    });
+  } finally {
+    if (mintedToken && !(sent && graphAccepted(sent))) {
+      try {
+        await revokePatientLinkToken(mintedToken);
+      } catch (err) {
+        reportCaughtError(err, "graph.receipt.revoke");
+      }
+    }
   }
+  if (!sent) throw new Error("receipt dispatch produced no result");
   await auditTemplateSend(opts.db, "payment_receipt", tenantId, sent);
   return sent;
 }

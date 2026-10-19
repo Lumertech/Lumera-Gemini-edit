@@ -8,11 +8,13 @@
 
 import crypto from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
+import { PATIENT_LINK_PUBLIC_BASE_URL } from "../src/lib/patientLinkPublicBase.ts";
+
+export { PATIENT_LINK_PUBLIC_BASE_URL };
 
 export const PATIENT_LINK_DEFAULT_TTL_HOURS = 72;
 /** Printed QR codes. Security allows 7 days here; WhatsApp links stay at 72h. */
 export const PATIENT_LINK_PRINT_TTL_HOURS = 24 * 7;
-export const PATIENT_LINK_PUBLIC_BASE_URL = "https://www.mylumera.in";
 export const PATIENT_LINK_DEFAULT_MAX_USES = 5;
 
 export type PatientLinkPurpose = "rx" | "receipt" | "portal" | "hep";

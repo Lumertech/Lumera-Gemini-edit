@@ -55,4 +55,17 @@ describe("public URL hosts", () => {
     }
     assert.deepEqual(hits, []);
   });
+
+  it("keeps the client and server patient-link base on the same constant", async () => {
+    const { PATIENT_LINK_PUBLIC_BASE_URL: serverBase } = await import("./patient-link-token.ts");
+    const { PATIENT_LINK_PUBLIC_BASE_URL: clientBase } = await import("../src/lib/patientLinkPublicBase.ts");
+    assert.equal(serverBase, clientBase);
+    assert.equal(serverBase, "https://www.mylumera.in");
+    const hep = fs.readFileSync(
+      path.join(root, "src/components/specialty-rx/PhysioProgressTracker.tsx"),
+      "utf8"
+    );
+    assert.match(hep, /patientLinkPublicBase/);
+    assert.equal(hep.includes("${uhid}"), false);
+  });
 });

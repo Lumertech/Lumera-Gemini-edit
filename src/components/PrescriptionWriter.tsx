@@ -1251,6 +1251,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
             therapyPackage={selectedTherapyPackage}
             exercises={prescribedExercises}
             patientName={currentPatient.name}
+            patientId={currentPatient.id}
             uhid={currentPatient.uhid}
           />
         </div>
