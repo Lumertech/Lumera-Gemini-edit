@@ -2346,7 +2346,7 @@ export function createApiRouter(): Router {
   api.post("/doctors", requireAuth, requireRole(...ADMIN_ROLES, ...CLINIC_MANAGER_ROLES), (req, res) => {
     const b = req.body || {};
     if (!b.name || !b.specialty) return res.status(400).json({ error: "name and specialty are required" });
-    const id = b.id || `doc-${crypto.randomUUID().slice(0, 8)}`;
+    const id = `doc-${crypto.randomUUID().slice(0, 8)}`;
     getDb()
       .prepare(
         `INSERT INTO doctors (id, user_id, name, qualification, reg_number, specialty, experience_years, consultation_fee, opd_room, available_days, opd_timing, phone, email, avatar_url, bio, hpr_id, active)

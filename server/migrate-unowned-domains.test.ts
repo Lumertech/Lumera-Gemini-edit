@@ -108,7 +108,9 @@ describe("unowned domain seed rewrite", () => {
       CREATE TABLE meta_templates (
         id TEXT PRIMARY KEY,
         tenant_id TEXT DEFAULT '',
-        components TEXT DEFAULT '[]'
+        components TEXT DEFAULT '[]',
+        status TEXT NOT NULL DEFAULT 'APPROVED',
+        meta_template_id TEXT
       );
       CREATE TABLE cms_settings (key TEXT PRIMARY KEY, value TEXT DEFAULT '');
       CREATE TABLE whatsapp_messages (
@@ -524,7 +526,9 @@ describe("unowned domain seed rewrite", () => {
         id TEXT PRIMARY KEY,
         tenant_id TEXT DEFAULT '',
         name TEXT DEFAULT '',
-        components TEXT DEFAULT '[]'
+        components TEXT DEFAULT '[]',
+        status TEXT NOT NULL DEFAULT 'APPROVED',
+        meta_template_id TEXT
       );
       CREATE TABLE whatsapp_messages (
         id TEXT PRIMARY KEY,
@@ -554,6 +558,20 @@ describe("unowned domain seed rewrite", () => {
     insert.run("tpl-3", "tenant-lumera-main", "post_consultation_rx", near);
     insert.run("tpl-clinic-rx", "tenant-lumera-main", "post_consultation_rx", original);
     insert.run("tpl-4", "tenant-real", "post_consultation_rx", original);
+    insert.run(
+      "tpl-1",
+      "tenant-lumera-main",
+      "appointment_reminder_v1",
+      JSON.stringify([{ type: "BODY", text: "Hello {{1}}, your consultation is confirmed." }])
+    );
+    const stampMeta = db.prepare("UPDATE meta_templates SET status = 'APPROVED', meta_template_id = ? WHERE id = ?");
+    stampMeta.run("meta_tpl_983102948103", "tpl-2");
+    stampMeta.run("meta_tpl_983102948107", "tpl-6");
+    stampMeta.run("meta_tpl_983102948106", "tpl-5");
+    stampMeta.run("meta_tpl_clinic_custom", "tpl-3");
+    stampMeta.run("meta_tpl_clinic_custom", "tpl-clinic-rx");
+    stampMeta.run("meta_tpl_983102948103", "tpl-4");
+    stampMeta.run("meta_tpl_983102948102", "tpl-1");
     db.prepare("INSERT INTO whatsapp_messages (id, tenant_id, content) VALUES (?, ?, ?)").run(
       "msg-rx",
       "tenant-lumera-main",
@@ -605,6 +623,11 @@ describe("unowned domain seed rewrite", () => {
       const serialized = JSON.stringify(parts);
       assert.equal(serialized.includes("Lumera"), false);
       assert.equal(serialized.includes("Rx"), false);
+      const approval = db
+        .prepare("SELECT status, meta_template_id FROM meta_templates WHERE id = ? AND tenant_id = ?")
+        .get(id, tenantId) as { status: string; meta_template_id: string | null };
+      assert.equal(approval.status, "PENDING");
+      assert.equal(approval.meta_template_id, null);
     }
 
     const portal = componentsOf("tpl-2", "tenant-lumera-main").find((part) => part.type === "BUTTONS");
@@ -622,6 +645,19 @@ describe("unowned domain seed rewrite", () => {
       }).v;
     assert.equal(stored("tpl-clinic-rx", "tenant-lumera-main"), original);
     assert.equal(stored("tpl-4", "tenant-real"), original);
+    const approvalOf = (id: string) =>
+      db.prepare("SELECT status, meta_template_id FROM meta_templates WHERE id = ?").get(id) as {
+        status: string;
+        meta_template_id: string | null;
+      };
+    assert.equal(approvalOf("tpl-clinic-rx").status, "APPROVED");
+    assert.equal(approvalOf("tpl-clinic-rx").meta_template_id, "meta_tpl_clinic_custom");
+    assert.equal(approvalOf("tpl-4").status, "APPROVED");
+    assert.equal(approvalOf("tpl-4").meta_template_id, "meta_tpl_983102948103");
+    assert.equal(approvalOf("tpl-1").status, "PENDING");
+    assert.equal(approvalOf("tpl-1").meta_template_id, null);
+    assert.equal(approvalOf("tpl-3").status, "PENDING");
+    assert.equal(approvalOf("tpl-3").meta_template_id, null);
 
     assert.equal(
       (db.prepare("SELECT content AS v FROM whatsapp_messages WHERE id = ?").get("msg-rx") as { v: string }).v,
@@ -637,7 +673,7 @@ describe("unowned domain seed rewrite", () => {
       .prepare("SELECT action, details FROM audit_logs WHERE action = ?")
       .all("Unowned domain migration") as Array<{ action: string; details: string }>;
     assert.equal(migrationAudits.length, 1);
-    assert.match(migrationAudits[0].details, /meta_templates=4/);
+    assert.match(migrationAudits[0].details, /meta_templates=5/);
     assert.doesNotMatch(migrationAudits[0].details, /whatsapp/);
 
     const untouched = neutralizePostConsultationSeed(near);
@@ -651,6 +687,16 @@ describe("unowned domain seed rewrite", () => {
     assert.doesNotMatch(block, /\{\{3\}\}/);
     assert.doesNotMatch(block, /Lumera Portal|Lumera Health|Rx:|Digital Rx|RX-/);
     assert.match(block, /https:\/\/lumera\.health\/portal/);
+    assert.match(block, /status: "PENDING"/);
+    assert.match(block, /meta_template_id: null/);
+    assert.doesNotMatch(block, /APPROVED|meta_tpl_/);
+    const queue = seeded.slice(seeded.indexOf('name: "opd_queue_token_alert"'), seeded.indexOf('name: "otp_login_verification"'));
+    assert.match(queue, /status: "APPROVED"/);
+    assert.match(queue, /meta_template_id: "meta_tpl_983102948105"/);
+    const ui = fs.readFileSync(path.join(root, "src/components/admin/AdminMetaTechProvider.tsx"), "utf8");
+    assert.equal(ui.includes("meta_tpl_verified"), false);
+    assert.match(ui, /tpl\.status === "APPROVED"/);
+    assert.match(ui, /Not submitted to Meta/);
   });
 
   it("reports a row error and keeps going", () => {

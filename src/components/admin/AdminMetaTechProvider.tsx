@@ -718,7 +718,7 @@ export const AdminMetaTechProvider: React.FC = () => {
             <div>
               <h2 className="text-lg font-bold text-slate-900">Registered WhatsApp Cloud Templates</h2>
               <p className="text-sm text-slate-500">
-                Pre-approved clinical notifications, OPD appointment confirmations, and digital prescriptions.
+                Clinic notification templates. A green Approved badge with a Meta ID is a Meta approval. Pending templates are local demo copy.
               </p>
             </div>
             <button
@@ -802,7 +802,11 @@ export const AdminMetaTechProvider: React.FC = () => {
                   </div>
 
                   <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1">
-                    <span>Meta ID: {tpl.metaTemplateId || "meta_tpl_verified"}</span>
+                    <span>
+                      {tpl.status === "APPROVED" && tpl.metaTemplateId
+                        ? `Meta ID: ${tpl.metaTemplateId}`
+                        : "Local demo. Not submitted to Meta."}
+                    </span>
                     <span>Updated {new Date(tpl.updatedAt).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" })}</span>
                   </div>
                 </div>
@@ -844,11 +848,13 @@ export const AdminMetaTechProvider: React.FC = () => {
                     onChange={(e) => setTestTemplate(e.target.value)}
                     className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-emerald-500"
                   >
-                    {templates.map((t) => (
-                      <option key={t.id} value={t.name}>
-                        {t.name} ({t.category})
-                      </option>
-                    ))}
+                    {templates
+                      .filter((t) => t.status === "APPROVED")
+                      .map((t) => (
+                        <option key={t.id} value={t.name}>
+                          {t.name} ({t.category})
+                        </option>
+                      ))}
                   </select>
                 </div>
 

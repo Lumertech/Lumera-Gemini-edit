@@ -183,7 +183,7 @@ export function ensureMetaTechProviderAndPolicies(database: SqlDatabase) {
         name: "appointment_reminder_v1",
         category: "UTILITY",
         language: "en",
-        status: "APPROVED",
+        status: "PENDING",
         components: JSON.stringify([
           { type: "HEADER", format: "TEXT", text: "Appointment Confirmation - Demo clinic" },
           {
@@ -200,7 +200,7 @@ export function ensureMetaTechProviderAndPolicies(database: SqlDatabase) {
             ]
           }
         ]),
-        meta_template_id: "meta_tpl_983102948102",
+        meta_template_id: null,
         rejection_reason: null
       },
       {
@@ -210,7 +210,7 @@ export function ensureMetaTechProviderAndPolicies(database: SqlDatabase) {
         name: "post_consultation_rx",
         category: "UTILITY",
         language: "en",
-        status: "APPROVED",
+        status: "PENDING",
         components: JSON.stringify([
           { type: "HEADER", format: "DOCUMENT" },
           {
@@ -225,7 +225,7 @@ export function ensureMetaTechProviderAndPolicies(database: SqlDatabase) {
             ]
           }
         ]),
-        meta_template_id: "meta_tpl_983102948103",
+        meta_template_id: null,
         rejection_reason: null
       },
       {
@@ -235,7 +235,7 @@ export function ensureMetaTechProviderAndPolicies(database: SqlDatabase) {
         name: "lab_report_ready",
         category: "UTILITY",
         language: "en",
-        status: "APPROVED",
+        status: "PENDING",
         components: JSON.stringify([
           { type: "HEADER", format: "TEXT", text: "Diagnostic Pathology Report" },
           {
@@ -252,7 +252,7 @@ export function ensureMetaTechProviderAndPolicies(database: SqlDatabase) {
             ]
           }
         ]),
-        meta_template_id: "meta_tpl_983102948104",
+        meta_template_id: null,
         rejection_reason: null
       },
       {
@@ -282,7 +282,7 @@ export function ensureMetaTechProviderAndPolicies(database: SqlDatabase) {
         name: "otp_login_verification",
         category: "AUTHENTICATION",
         language: "en",
-        status: "APPROVED",
+        status: "PENDING",
         components: JSON.stringify([
           {
             type: "BODY",
@@ -296,7 +296,7 @@ export function ensureMetaTechProviderAndPolicies(database: SqlDatabase) {
             ]
           }
         ]),
-        meta_template_id: "meta_tpl_983102948106",
+        meta_template_id: null,
         rejection_reason: null
       },
       {
@@ -323,7 +323,7 @@ export function ensureMetaTechProviderAndPolicies(database: SqlDatabase) {
             ]
           }
         ]),
-        meta_template_id: "meta_tpl_983102948107",
+        meta_template_id: null,
         rejection_reason: null
       }
     ];

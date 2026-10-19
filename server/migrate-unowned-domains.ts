@@ -11,7 +11,9 @@ import { reportCaughtError } from "./error-tracker.ts";
  * mailbox defaults, qr_verification_url, and demo-tenant invoices.upi_id.
  * The seeded post_consultation_rx body keeps a doctor variable and a clinic
  * variable. Known Lumera Portal / Lumera Health EMR / Rx-number copies of
- * that seed are replaced only on demo seed template ids.
+ * that seed are replaced only on demo seed template ids. A rewritten demo
+ * seed row, or one that still carries a retired seed Meta id, is stored as
+ * PENDING with a null Meta template id. tpl-4 is unchanged and stays approved.
  * lumera.health and lumeraclinic.in match only as an exact host or as the
  * prefix of an http(s) URL. lumerahealth@icici matches only as a whole value.
  * A note that merely contains those strings is left alone.
@@ -32,6 +34,21 @@ const LANDING_EMAIL = "ravee@lumer.me";
 
 /** Seeded WhatsApp template ids. Link slots are rewritten only on these rows. */
 export const SEED_TEMPLATE_IDS = ["tpl-1", "tpl-2", "tpl-3", "tpl-4", "tpl-5", "tpl-6"] as const;
+
+/** Schema status the template UI already renders as not Meta-approved. */
+export const LOCAL_DEMO_TEMPLATE_STATUS = "PENDING";
+
+/**
+ * Fake Meta ids on seed templates whose wording no longer matches the copy
+ * that was stored as approved. tpl-4's id is absent: that template is unchanged.
+ */
+const RETIRED_SEED_META_IDS = new Set([
+  "meta_tpl_983102948102",
+  "meta_tpl_983102948103",
+  "meta_tpl_983102948104",
+  "meta_tpl_983102948106",
+  "meta_tpl_983102948107",
+]);
 
 const DEMO_TENANT_IDS = [
   "tenant-lumera-main",
@@ -441,14 +458,16 @@ function rewriteSeedTemplates(database: SqlDatabase): number {
   const where = `${demoTenantPredicate("tenant_id")} AND ${seedTemplatePredicate("id")}`;
   const rows = selectRows(
     database,
-    `SELECT id, components AS value FROM meta_templates WHERE ${where}`,
+    `SELECT id, components AS value, status, meta_template_id FROM meta_templates WHERE ${where}`,
     "migrate-unowned-domains meta_templates.components"
   );
   if (!rows) return 0;
   let count = 0;
   const update = prepareOrReport(
     database,
-    `UPDATE meta_templates SET components = ? WHERE id = ? AND ${where}`,
+    `UPDATE meta_templates
+        SET components = ?, status = ?, meta_template_id = NULL
+      WHERE id = ? AND ${where}`,
     "migrate-unowned-domains meta_templates.components"
   );
   if (!update) return 0;
@@ -457,9 +476,11 @@ function rewriteSeedTemplates(database: SqlDatabase): number {
     if (!id) continue;
     const current = asText(row.value);
     const next = neutralizePostConsultationSeed(rewriteSeedPhrases(rewriteSeedTemplateLinks(current)));
-    if (next === current) continue;
+    const wordingChanged = next !== current;
+    const falseMetaId = RETIRED_SEED_META_IDS.has(asText(row.meta_template_id));
+    if (!wordingChanged && !falseMetaId) continue;
     const wrote = runRow(`migrate-unowned-domains meta_templates.components ${id}`, () => {
-      update.run(next, id);
+      update.run(next, LOCAL_DEMO_TEMPLATE_STATUS, id);
     });
     if (wrote) count += 1;
   }
