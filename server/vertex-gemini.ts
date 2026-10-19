@@ -14,13 +14,9 @@ import { GoogleGenAI, type GenerateContentParameters, type GenerateContentRespon
  * https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-5-flash-lite
  * Locations table:
  * https://docs.cloud.google.com/vertex-ai/generative-ai/docs/learn/locations
- * That card's Standard PayGo row is only global, us, and eu. asia-south1 is listed
- * under Provisioned Throughput, not Standard PayGo. No current GA audio model lists
- * Standard PayGo for the asia-south1 regional endpoint, so this pin stays.
- * Mumbai calls need Provisioned Throughput. Do not send them to global or us/eu.
- * gemini-3.5-flash also lists asia-south1 only for Provisioned Throughput, and its
- * card says that region supports Single Zone Provisioned Throughput only:
- * https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-5-flash
+ * Standard PayGo on the asia-south1 regional endpoint was verified live for
+ * gemini-3.5-flash-lite on 2026-10-19. Provisioned Throughput is not required
+ * for this pin. Do not send calls to global or a multi-region endpoint.
  */
 export const VERTEX_DEFAULT_PROJECT = "gen-lang-client-0108182367";
 export const VERTEX_DEFAULT_LOCATION = "asia-south1";
@@ -40,6 +36,9 @@ export const AI_TRANSCRIPTION_UNAVAILABLE_MESSAGE = "Transcription is temporaril
 /** Only Mumbai. There is no fallback to global, us, eu, or any other region. */
 export const VERTEX_REQUIRED_LOCATION = "asia-south1";
 
+/** One rejection log per distinct location for the life of the process. */
+const loggedRejectedLocations = new Set<string>();
+
 export interface VertexSettings {
   project: string;
   location: string;
@@ -55,7 +54,10 @@ export function readVertexSettings(env: NodeJS.ProcessEnv = process.env): Vertex
   const project = String(env.VERTEX_PROJECT || "").trim();
   const location = String(env.VERTEX_LOCATION || "").trim();
   if (location !== VERTEX_REQUIRED_LOCATION) {
-    console.error("vertex location rejected", location);
+    if (!loggedRejectedLocations.has(location)) {
+      loggedRejectedLocations.add(location);
+      console.error("vertex location rejected", location);
+    }
     return null;
   }
   if (!project && env.NODE_ENV === "production") return null;

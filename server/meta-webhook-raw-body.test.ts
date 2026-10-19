@@ -311,6 +311,7 @@ describe("POST /api/meta/webhook through createLumeraApp", () => {
     assertNoSecrets(reserialized.logs.warn);
   });
 
+  // Behavioural guard for mount order: signature verification uses the captured raw body, not a re-parsed JSON body.
   it("accepts a signed text/plain body because HMAC uses the raw buffer, not the JSON parser", async () => {
     useSecrets(SECRET);
     const res = await postRaw(RAW_WEBHOOK, {

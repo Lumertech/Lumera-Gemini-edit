@@ -88,11 +88,33 @@ describe("Vertex PHI client", () => {
       assert.ok(getVertexClient({ NODE_ENV: "test", VERTEX_LOCATION: "asia-south1" }));
       assert.equal(built, 1);
       const rejected = logs.map((args) => String(args[1] ?? ""));
-      assert.ok(rejected.includes("global"));
-      assert.ok(rejected.includes("us-central1"));
-      assert.ok(rejected.includes(""));
+      assert.equal(rejected.filter((value) => value === "global").length, 1);
+      assert.equal(rejected.filter((value) => value === "us-central1").length, 1);
       assert.equal(rejected.includes(VERTEX_DEFAULT_PROJECT), false);
       assert.equal(JSON.stringify(logs).includes("global endpoint"), false);
+    } finally {
+      console.error = original;
+    }
+  });
+
+  it("rejects ASIA-SOUTH1 because the location match is exact", () => {
+    const logs: unknown[][] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => {
+      logs.push(args);
+    };
+    try {
+      const env = {
+        NODE_ENV: "test",
+        VERTEX_PROJECT: VERTEX_DEFAULT_PROJECT,
+        VERTEX_LOCATION: "ASIA-SOUTH1",
+      } as NodeJS.ProcessEnv;
+      assert.equal(readVertexSettings(env), null);
+      assert.equal(readVertexSettings(env), null);
+      assert.equal(getVertexClient(env), null);
+      const rejected = logs.filter((args) => args[0] === "vertex location rejected");
+      assert.equal(rejected.length, 1);
+      assert.equal(String(rejected[0]?.[1]), "ASIA-SOUTH1");
     } finally {
       console.error = original;
     }
