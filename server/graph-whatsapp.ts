@@ -47,8 +47,6 @@ export type CloudDispatchResult =
   | { ok: true; channel: "graph" | "sandbox"; messageId?: string }
   | { ok: false; error: string; channel: "none" | "graph"; status?: number; eventId?: string };
 
-/** Demo and seed clinics may message only these recipients. */
-export const DEMO_WHATSAPP_ALLOWLIST_DEFAULT = "+919999973271";
 export const SKIPPED_NOT_ALLOWLISTED = "skipped_not_allowlisted";
 export const FAILED_FINAL = "failed_final";
 export const DEMO_OUTBOUND_ATTEMPT_CAP = 3;
@@ -297,25 +295,21 @@ export function maskWhatsAppRecipient(phone: string): string {
   return last4 ? `****${last4}` : "****";
 }
 
+/** Comma-separated E.164. Unset or empty means demo tenants send to nobody. */
 export function demoWhatsAppAllowlist(): string[] {
   const raw = String(process.env.DEMO_WHATSAPP_RECIPIENT_ALLOWLIST ?? "").trim();
-  const source = raw || DEMO_WHATSAPP_ALLOWLIST_DEFAULT;
-  return source
+  if (!raw) return [];
+  return raw
     .split(",")
     .map((part) => part.trim())
     .filter(Boolean);
 }
 
+/** Exact normalized E.164 (digits only, country code included). Not a last-10 match. */
 export function isDemoWhatsAppAllowlisted(phone: string): boolean {
   const digits = toWhatsAppRecipient(phone);
   if (!digits) return false;
-  const last10 = digits.slice(-10);
-  return demoWhatsAppAllowlist().some((entry) => {
-    const allow = toWhatsAppRecipient(entry);
-    if (!allow) return false;
-    if (allow === digits) return true;
-    return last10.length >= 10 && allow.slice(-10) === last10;
-  });
+  return demoWhatsAppAllowlist().some((entry) => toWhatsAppRecipient(entry) === digits);
 }
 
 export type GraphMessageResult =

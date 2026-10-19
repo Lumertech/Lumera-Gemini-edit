@@ -248,30 +248,33 @@ function recordCloudDispatch(opts: {
 
 type ReminderFailureRow = { sentAt: string; permanent: boolean };
 
-function reminderFailureRows(appointmentId: string, window: ReminderWindow): ReminderFailureRow[] {
-  const rows = getDb()
+function reminderFailureRows(tenantId: string, appointmentId: string, window: ReminderWindow): ReminderFailureRow[] {
+  const db = getDb();
+  const postgres = (db as { dialect?: string }).dialect === "postgres";
+  const appointmentSql = postgres
+    ? `CASE WHEN action_payload IS NOT NULL AND left(btrim(action_payload), 1) = '{' THEN action_payload::json->>'appointmentId' ELSE NULL END = ?
+       AND CASE WHEN action_payload IS NOT NULL AND left(btrim(action_payload), 1) = '{' THEN action_payload::json->>'window' ELSE NULL END = ?`
+    : `json_extract(action_payload, '$.appointmentId') = ?
+       AND json_extract(action_payload, '$.window') = ?`;
+  const rows = db
     .prepare(
       `SELECT status, action_payload, sent_at FROM whatsapp_outbound_events
        WHERE event_type = 'appointment_reminder'
-         AND status IN ('failed', 'skipped_not_allowlisted', 'failed_final')`
+         AND status IN ('failed', 'skipped_not_allowlisted', 'failed_final')
+         AND TRIM(COALESCE(tenant_id, '')) = ?
+         AND ${appointmentSql}`
     )
-    .all() as { status?: string; action_payload?: string; sent_at?: string }[];
+    .all(tenantId, appointmentId, window) as { status?: string; action_payload?: string; sent_at?: string }[];
   const matched: ReminderFailureRow[] = [];
   for (const row of rows) {
     try {
-      const payload = JSON.parse(String(row.action_payload || "{}")) as {
-        appointmentId?: string;
-        window?: string;
-        permanent?: boolean;
-      };
-      if (payload.appointmentId === appointmentId && payload.window === window) {
-        matched.push({
-          sentAt: String(row.sent_at || ""),
-          permanent: payload.permanent === true || row.status === FAILED_FINAL,
-        });
-      }
+      const payload = JSON.parse(String(row.action_payload || "{}")) as { permanent?: boolean };
+      matched.push({
+        sentAt: String(row.sent_at || ""),
+        permanent: payload.permanent === true || row.status === FAILED_FINAL,
+      });
     } catch {
-      /* ignore malformed payload */
+      matched.push({ sentAt: String(row.sent_at || ""), permanent: row.status === FAILED_FINAL });
     }
   }
   matched.sort((a, b) => a.sentAt.localeCompare(b.sentAt));
@@ -279,11 +282,12 @@ function reminderFailureRows(appointmentId: string, window: ReminderWindow): Rem
 }
 
 function reminderRetryDecision(
+  tenantId: string,
   appointmentId: string,
   window: ReminderWindow,
   now: Date
 ): { action: "send"; attempt: number } | { action: "wait" | "stop" } {
-  const failures = reminderFailureRows(appointmentId, window);
+  const failures = reminderFailureRows(tenantId, appointmentId, window);
   if (failures.length >= REMINDER_MAX_ATTEMPTS || failures.some((row) => row.permanent)) {
     return { action: "stop" };
   }
@@ -319,7 +323,7 @@ export async function dispatchAppointmentReminder(opts: {
     };
   }
   const now = opts.now || new Date();
-  const decision = reminderRetryDecision(opts.appointment.id, opts.window, now);
+  const decision = reminderRetryDecision(opts.tenantId, opts.appointment.id, opts.window, now);
   if (decision.action !== "send") {
     return {
       ok: false,

@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { getDb, initDatabase } from "./db.ts";
 import {
-  DEMO_WHATSAPP_ALLOWLIST_DEFAULT,
   FAILED_FINAL,
   isDemoWhatsAppAllowlisted,
   maskWhatsAppRecipient,
@@ -92,12 +91,53 @@ describe("demo WhatsApp recipient allowlist", () => {
     stopAppointmentReminderScheduler();
   });
 
-  it("defaults the allowlist to +919999973271 and masks log recipients to the last 4 digits", () => {
+  it("sends to nobody when the allowlist is unset and matches exact E.164 only", () => {
     delete process.env.DEMO_WHATSAPP_RECIPIENT_ALLOWLIST;
-    assert.equal(isDemoWhatsAppAllowlisted(DEMO_WHATSAPP_ALLOWLIST_DEFAULT), true);
+    assert.equal(isDemoWhatsAppAllowlisted("+919999973271"), false);
+    assert.equal(isDemoWhatsAppAllowlisted("+91 99999 73271"), false);
+    process.env.DEMO_WHATSAPP_RECIPIENT_ALLOWLIST = "+919999973271";
+    assert.equal(isDemoWhatsAppAllowlisted("+919999973271"), true);
     assert.equal(isDemoWhatsAppAllowlisted("+91 99999 73271"), true);
+    assert.equal(isDemoWhatsAppAllowlisted("+1 9999973271"), false);
+    assert.equal(isDemoWhatsAppAllowlisted("9999973271"), false);
     assert.equal(maskWhatsAppRecipient("+919999973271"), "****3271");
     assert.equal(maskWhatsAppRecipient("+919999973271").includes("9999973271"), false);
+    delete process.env.DEMO_WHATSAPP_RECIPIENT_ALLOWLIST;
+  });
+
+  it("rejects +1 9999973271 when +919999973271 is allowlisted and does not call Graph", async () => {
+    process.env.DEMO_WHATSAPP_RECIPIENT_ALLOWLIST = "+919999973271";
+    process.env.META_ACCESS_TOKEN = LIVE_TOKEN;
+    process.env.META_PHONE_NUMBER_ID = LIVE_PHONE;
+    const clinic = createDemoClinic("us");
+    let calls = 0;
+    try {
+      const sent = await sendPaymentReceipt({
+        to: "+1 9999973271",
+        patientName: "Asha Rao",
+        clinicName: "Cedar us",
+        amount: 500,
+        invoiceId: `inv-us-${clinic.tenantId}`,
+        textBody: "Receipt for Asha Rao",
+        db: getDb(),
+        tenantId: clinic.tenantId,
+        fetchImpl: async () => {
+          calls += 1;
+          return new Response(JSON.stringify({ messages: [{ id: "wamid.US" }] }), { status: 200 });
+        },
+      });
+      assert.equal(calls, 0);
+      assert.equal(sent.ok, false);
+      if (!sent.ok) assert.equal(sent.error, SKIPPED_NOT_ALLOWLISTED);
+      const row = getDb()
+        .prepare(`SELECT status FROM whatsapp_outbound_events WHERE event_type = 'invoice_receipt' AND patient_phone = ?`)
+        .get("+1 9999973271") as { status: string };
+      assert.equal(row.status, SKIPPED_NOT_ALLOWLISTED);
+    } finally {
+      delete process.env.DEMO_WHATSAPP_RECIPIENT_ALLOWLIST;
+      delete process.env.META_ACCESS_TOKEN;
+      delete process.env.META_PHONE_NUMBER_ID;
+    }
   });
 
   it("skips a demo recipient that is not allowlisted and does not call Graph", async () => {
@@ -180,7 +220,7 @@ describe("demo WhatsApp recipient allowlist", () => {
     process.env.DEMO_WHATSAPP_RECIPIENT_ALLOWLIST = phone;
     process.env.META_ACCESS_TOKEN = LIVE_TOKEN;
     process.env.META_PHONE_NUMBER_ID = LIVE_PHONE;
-    assert.equal(isDemoWhatsAppAllowlisted(DEMO_WHATSAPP_ALLOWLIST_DEFAULT), false);
+    assert.equal(isDemoWhatsAppAllowlisted("+919999973271"), false);
     const booked = bookWhatsAppAppointment({
       tenantId: clinic.tenantId,
       patientPhone: phone,

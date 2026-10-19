@@ -783,10 +783,11 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
 
   it("Trigger 24h Reminder for seeded A1 does not require a new booking", async () => {
     const saved: Record<string, string | undefined> = {};
-    for (const key of ["META_ACCESS_TOKEN", "META_PHONE_NUMBER_ID", "WHATSAPP_ACCESS_TOKEN", "WHATSAPP_PHONE_NUMBER_ID"]) {
+    for (const key of ["META_ACCESS_TOKEN", "META_PHONE_NUMBER_ID", "WHATSAPP_ACCESS_TOKEN", "WHATSAPP_PHONE_NUMBER_ID", "DEMO_WHATSAPP_RECIPIENT_ALLOWLIST"]) {
       saved[key] = process.env[key];
       delete process.env[key];
     }
+    process.env.DEMO_WHATSAPP_RECIPIENT_ALLOWLIST = "+919999973271";
     try {
       applyWalletTransaction(DEMO_TENANT_ID, "adjustment", 1000, {
         note: "Clip A reminder test credit",
