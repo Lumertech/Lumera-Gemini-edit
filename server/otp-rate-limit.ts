@@ -146,3 +146,19 @@ export function resetSendOtpRateLimits() {
   ipBuckets.clear();
   userBuckets.clear();
 }
+
+/**
+ * A failed Graph send must not start the 60s cooldown, or the retry cannot
+ * place a new call. The 3-per-10-minute counters stay where they are.
+ */
+export function releaseOtpSendCooldown(phone: string, userKey: string, ip?: string) {
+  const phoneKey = normalizeOtpPhone(phone) || String(phone || "").trim();
+  const clearLast = (store: Map<string, Bucket>, key: string) => {
+    const prev = store.get(key);
+    if (!prev) return;
+    prev.lastAt = 0;
+  };
+  clearLast(phoneBuckets, phoneKey);
+  clearLast(userBuckets, String(userKey || "").trim() || `phone:${phoneKey}`);
+  if (ip && tracksClientIp(ip)) clearLast(ipBuckets, ip);
+}

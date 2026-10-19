@@ -93,6 +93,16 @@ function bookOpted(opts: Parameters<typeof bookWhatsAppAppointment>[0]) {
   return bookWhatsAppAppointment(opts);
 }
 
+function approveTemplate(tenantId: string, name: string, language = "en") {
+  const now = new Date().toISOString();
+  getDb()
+    .prepare(
+      `INSERT INTO meta_templates (id, tenant_id, waba_id, name, category, language, status, components, created_at, updated_at)
+       VALUES (?, ?, '204800000000000', ?, 'UTILITY', ?, 'APPROVED', '[]', ?, ?)`
+    )
+    .run(`tpl-${name}-${tenantId}-${language}`, tenantId, name, language, now, now);
+}
+
 function uniquePhone(): string {
   phoneSeq += 1;
   const n = `${Date.now()}${phoneSeq}${Math.floor(Math.random() * 900 + 100)}`.replace(/\D/g, "").slice(-10);
@@ -351,6 +361,7 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
 
     try {
       const clinic = createClinicUser("remindS");
+      approveTemplate(clinic.tenantId, "clinic_appointment_reminder");
       const booked = bookOpted({
         tenantId: clinic.tenantId,
         patientPhone: uniquePhone(),
@@ -419,21 +430,17 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
         metaWabaName: `Clinic ${clinic.tenantId}`,
         status: "connected",
       });
+      approveTemplate(clinic.tenantId, "clinic_appointment_reminder");
+      approveTemplate(clinic.tenantId, "clinic_booking_confirmation");
 
-      const seededAt = new Date().toISOString();
-      const seedTemplate = getDb().prepare(
-        `INSERT INTO meta_templates (id, tenant_id, waba_id, name, category, language, status, components, created_at, updated_at)
-         VALUES (?, ?, '204800000000000', ?, 'UTILITY', 'en', 'APPROVED', '[]', ?, ?)`
-      );
-      seedTemplate.run(`tpl-rem-${clinic.tenantId}`, clinic.tenantId, "clinic_appointment_reminder", seededAt, seededAt);
-      seedTemplate.run(`tpl-book-${clinic.tenantId}`, clinic.tenantId, "clinic_booking_confirmation", seededAt, seededAt);
-
+      const bodies: Array<Record<string, unknown>> = [];
       const fetchImpl: typeof fetch = async (input, init) => {
         const url = String(input);
         assert.match(url, new RegExp(`/${phoneNumberId}/messages`));
         assert.equal(url.includes(String(process.env.META_PHONE_NUMBER_ID)), false);
         const auth = String((init?.headers as Record<string, string> | undefined)?.Authorization || "");
         assert.match(auth, new RegExp(`Bearer ${tenantToken}`));
+        bodies.push(JSON.parse(String(init?.body || "{}")) as Record<string, unknown>);
         return new Response(JSON.stringify({ messages: [{ id: "wamid.GRAPH_REMINDER_TEST" }] }), {
           status: 200,
           headers: { "Content-Type": "application/json" },
@@ -462,6 +469,15 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
         assert.equal(confirm.channel, "graph");
         assert.equal(confirm.messageId, "wamid.GRAPH_REMINDER_TEST");
       }
+      assert.equal(bodies.length, 2);
+      for (const body of bodies) {
+        assert.equal(body.type, "template");
+        assert.equal(body.text, undefined);
+      }
+      const reminderTemplate = bodies[0].template as { name?: string };
+      const confirmTemplate = bodies[1].template as { name?: string };
+      assert.equal(reminderTemplate.name, "clinic_appointment_reminder");
+      assert.equal(confirmTemplate.name, "clinic_booking_confirmation");
     } finally {
       if (prevToken === undefined) delete process.env.META_ACCESS_TOKEN;
       else process.env.META_ACCESS_TOKEN = prevToken;
@@ -477,6 +493,7 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
 
     try {
       const clinic = createClinicUser("remindP");
+      approveTemplate(clinic.tenantId, "clinic_appointment_reminder");
       const token = await login(clinic.email);
       process.env.NODE_ENV = "production";
       delete process.env.META_ACCESS_TOKEN;
@@ -609,6 +626,7 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
       getDb().prepare("UPDATE appointments SET patient_phone = ? WHERE id = ?").run("+910000000000", appointment.id);
       allowTemplates(clinic.tenantId, "+910000000000");
       allowTemplates(clinic.tenantId, spaced);
+      approveTemplate(clinic.tenantId, "clinic_appointment_reminder");
       const reminded = await jsonRequest(
         port,
         "POST",

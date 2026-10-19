@@ -564,6 +564,30 @@ export function templateConfigForKind(
   return envTemplateConfig(kind);
 }
 
+/** Platform Utility templates. Clinic display names are body variables, never this name. */
+export const PLATFORM_REMINDER_TEMPLATE = { name: "lumera_appointment_reminder", language: "en_US" };
+export const PLATFORM_BOOKING_TEMPLATE = { name: "lumera_appointment_booked", language: "en_US" };
+
+/**
+ * Approved template for a clinic send.
+ * A tenant APPROVED meta_templates row wins. Demo and platform sends may use the
+ * platform template. A real clinic with no APPROVED row has nothing to send.
+ */
+export function resolveApprovedClinicTemplate(
+  kind: "appointment_reminder" | "book_confirmation",
+  db?: DatabaseSync | null,
+  tenantId?: string | null
+): { name: string; language: string } | null {
+  const id = String(tenantId || "").trim();
+  const platform = kind === "appointment_reminder" ? PLATFORM_REMINDER_TEMPLATE : PLATFORM_BOOKING_TEMPLATE;
+  if (!id) return templateConfigForKind(kind) || platform;
+  if (!db) return null;
+  const row = templateConfigForKind(kind, db, id);
+  if (row) return row;
+  if (isSandboxOrDemoTenant(db, id)) return platform;
+  return null;
+}
+
 export type ReminderFields = {
   patientName?: string;
   doctorName?: string;
@@ -788,6 +812,9 @@ export async function dispatchWhatsAppCloudMessage(opts: {
         fetchImpl: opts.fetchImpl,
         failureLabel: kind,
       });
+    } else if (kind === "appointment_reminder" || kind === "book_confirmation") {
+      // Reminders and booking confirmations are template-only. No session text.
+      return { ok: false, error: "no_approved_template", channel: "none", status: 422 };
     } else {
       graph = await sendWhatsAppGraphText({
         credentials: creds,
@@ -968,6 +995,7 @@ export async function sendAppointmentReminder(opts: {
   tokenNumber?: number;
   textBody?: string;
   templateName?: string;
+  templateLanguage?: string;
   templateParameters?: string[];
   db?: DatabaseSync | null;
   fetchImpl?: typeof fetch;
@@ -1008,6 +1036,7 @@ export async function sendBookConfirmation(opts: {
   tokenNumber?: number;
   textBody?: string;
   templateName?: string;
+  templateLanguage?: string;
   templateParameters?: string[];
   db?: DatabaseSync | null;
   fetchImpl?: typeof fetch;

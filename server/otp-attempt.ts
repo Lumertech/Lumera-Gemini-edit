@@ -3,7 +3,7 @@ import type { Request, Response } from "express";
 import { toE164Phone } from "./clinical.ts";
 import { getDb } from "./db.ts";
 import type { SqlDatabase } from "./sql-engine.ts";
-import { consumeSendOtpAttempt, otpSubjectKey, requestClientIp } from "./otp-rate-limit.ts";
+import { consumeSendOtpAttempt, otpSubjectKey, releaseOtpSendCooldown, requestClientIp } from "./otp-rate-limit.ts";
 
 export const OTP_SEND_LIMIT_ERROR = "Too many OTP requests. Try again later.";
 export const OTP_VERIFY_LOCK_ERROR = "Too many incorrect codes. This code is no longer valid. Request a new OTP.";
@@ -80,6 +80,29 @@ export function findPendingOtp(phone: string, purpose: string, email: string): P
     )
     .all(purpose, email, new Date().toISOString(), VERIFY_OTP_MAX_FAILURES, ...forms) as Array<PendingOtp & { phone?: string }>;
   return rows.find((row) => toE164Phone(String(row.phone || "")) === phoneKey) || null;
+}
+
+/** A Graph send that did not return a wamid must not stay pending for reuse. */
+export function consumeFailedOtpVerification(id: string) {
+  const verificationId = String(id || "").trim();
+  if (!verificationId) return;
+  getDb()
+    .prepare(
+      `UPDATE otp_verifications
+       SET failed_attempts = ?, otp = '', verified_at = COALESCE(verified_at, ?)
+       WHERE id = ? AND verified_at IS NULL`
+    )
+    .run(VERIFY_OTP_MAX_FAILURES, new Date().toISOString(), verificationId);
+}
+
+/** Consume the row and clear the cooldown so the next request makes a real Graph call. */
+export function abandonFailedOtpSend(opts: { id: string; phone: string; email?: string; userId?: string; ip?: string }) {
+  consumeFailedOtpVerification(opts.id);
+  releaseOtpSendCooldown(
+    opts.phone,
+    otpSubjectKey({ userId: opts.userId, email: opts.email, phone: opts.phone }),
+    opts.ip
+  );
 }
 
 export function rejectWrongOtp(

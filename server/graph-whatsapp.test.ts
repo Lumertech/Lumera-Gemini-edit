@@ -129,8 +129,16 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
       assert.equal(call.body.to, "919823455667");
     }
     assert.match(String((captured[0].body.text as { body?: string }).body), /123456/);
-    assert.match(String((captured[2].body.text as { body?: string }).body), /Appointment reminder/);
-    assert.match(String((captured[3].body.text as { body?: string }).body), /Appointment confirmed/);
+    assert.equal(captured[2].body.type, "template");
+    assert.equal(captured[2].body.text, undefined);
+    const reminderTemplate = captured[2].body.template as { name?: string; language?: { code?: string } };
+    assert.equal(reminderTemplate.name, "lumera_appointment_reminder");
+    assert.equal(reminderTemplate.language?.code, "en_US");
+    assert.equal(captured[3].body.type, "template");
+    assert.equal(captured[3].body.text, undefined);
+    const confirmTemplate = captured[3].body.template as { name?: string; language?: { code?: string } };
+    assert.equal(confirmTemplate.name, "lumera_appointment_booked");
+    assert.equal(confirmTemplate.language?.code, "en_US");
     assert.match(String((captured[4].body.text as { body?: string }).body), /Payment receipt/);
   });
 

@@ -1,9 +1,11 @@
 import { getDb, mapAppointment } from "./db.ts";
 import {
   isCloudDispatchFailure,
+  resolveApprovedClinicTemplate,
   sandboxBanner,
   sendAppointmentReminder,
   sendBookConfirmation,
+  toWhatsAppRecipient,
   type CloudDispatchResult,
 } from "./graph-whatsapp.ts";
 
@@ -11,6 +13,15 @@ const ACTIVE_APPOINTMENT_SQL = `status NOT IN ('Completed', 'Cancelled', 'No-Sho
 const REMINDABLE_STATUSES = new Set(["Waiting", "Confirmed"]);
 const REMINDER_WINDOWS = ["24h", "2h"] as const;
 export type ReminderWindow = (typeof REMINDER_WINDOWS)[number];
+
+/** Three Graph attempts per appointment per window, then stop. */
+export const REMINDER_MAX_ATTEMPTS = 3;
+/**
+ * Wait before the next try after failure 1 and failure 2.
+ * The third failure is permanent, so the 4h slot is not another send.
+ */
+export const REMINDER_RETRY_BACKOFF_MS = [15 * 60 * 1000, 60 * 60 * 1000, 4 * 60 * 60 * 1000] as const;
+export const NO_APPROVED_TEMPLATE = "no_approved_template";
 
 export function tenantUtcOffsetMinutes(timezone: string): number {
   const match = String(timezone || "").match(/UTC\s*([+-])\s*(\d{1,2})(?::(\d{2}))?/i);
@@ -107,9 +118,10 @@ function recordOutboundEvent(opts: {
   payload: Record<string, unknown>;
   tenantId?: string;
   conversationContent?: string;
+  sentAt?: string;
 }): string {
   const db = getDb();
-  const now = new Date().toISOString();
+  const now = opts.sentAt || new Date().toISOString();
   const eventId = `evt-${crypto.randomUUID().slice(0, 8)}`;
   const tenantId = String(opts.tenantId || opts.payload.tenantId || "").trim();
   db.prepare(
@@ -166,7 +178,7 @@ function recordOutboundEvent(opts: {
 
 export type ReminderDispatchResult =
   | { ok: true; channel: "graph" | "sandbox"; messageId?: string; eventId: string }
-  | { ok: false; error: string; channel: "none" | "graph"; eventId?: string; status?: number };
+  | { ok: false; error: string; channel: "none" | "graph"; eventId?: string; status?: number; skipped?: boolean };
 
 function recordCloudDispatch(opts: {
   eventType: string;
@@ -174,6 +186,7 @@ function recordCloudDispatch(opts: {
   payload: Record<string, unknown>;
   sent: CloudDispatchResult;
   sandboxText: string;
+  sentAt?: string;
 }): ReminderDispatchResult {
   if (opts.sent.ok && opts.sent.channel === "graph") {
     const eventId = recordOutboundEvent({
@@ -184,6 +197,7 @@ function recordCloudDispatch(opts: {
       details: `WhatsApp Cloud API ${opts.eventType} accepted`,
       payload: { ...opts.payload, channel: "graph", messageId: opts.sent.messageId },
       tenantId: String(opts.payload.tenantId || ""),
+      sentAt: opts.sentAt,
     });
     return { ok: true, channel: "graph", messageId: opts.sent.messageId, eventId };
   }
@@ -197,6 +211,7 @@ function recordCloudDispatch(opts: {
       details: `${opts.eventType} not delivered: ${opts.sent.error}`,
       payload: { ...opts.payload, channel: opts.sent.channel, error: opts.sent.error, sandbox: false },
       tenantId: String(opts.payload.tenantId || ""),
+      sentAt: opts.sentAt,
     });
     return { ok: false, error: opts.sent.error, channel: opts.sent.channel, eventId, status: opts.sent.status };
   }
@@ -210,8 +225,60 @@ function recordCloudDispatch(opts: {
     payload: { ...opts.payload, channel: "sandbox", sandbox: true },
     tenantId: String(opts.payload.tenantId || ""),
     conversationContent: sandboxBanner(opts.sandboxText),
+    sentAt: opts.sentAt,
   });
   return { ok: true, channel: "sandbox", eventId };
+}
+
+type ReminderFailureRow = { sentAt: string; permanent: boolean };
+
+function reminderFailureRows(appointmentId: string, window: ReminderWindow): ReminderFailureRow[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT action_payload, sent_at FROM whatsapp_outbound_events
+       WHERE event_type = 'appointment_reminder' AND status = 'failed'`
+    )
+    .all() as { action_payload?: string; sent_at?: string }[];
+  const matched: ReminderFailureRow[] = [];
+  for (const row of rows) {
+    try {
+      const payload = JSON.parse(String(row.action_payload || "{}")) as {
+        appointmentId?: string;
+        window?: string;
+        permanent?: boolean;
+      };
+      if (payload.appointmentId === appointmentId && payload.window === window) {
+        matched.push({ sentAt: String(row.sent_at || ""), permanent: payload.permanent === true });
+      }
+    } catch {
+      /* ignore malformed payload */
+    }
+  }
+  matched.sort((a, b) => a.sentAt.localeCompare(b.sentAt));
+  return matched;
+}
+
+function reminderRetryDecision(
+  appointmentId: string,
+  window: ReminderWindow,
+  now: Date
+): { action: "send"; attempt: number } | { action: "wait" | "stop" } {
+  const failures = reminderFailureRows(appointmentId, window);
+  if (failures.length >= REMINDER_MAX_ATTEMPTS || failures.some((row) => row.permanent)) {
+    return { action: "stop" };
+  }
+  const latest = failures[failures.length - 1];
+  if (latest) {
+    const lastMs = Date.parse(latest.sentAt);
+    const backoff =
+      REMINDER_RETRY_BACKOFF_MS[failures.length - 1] ?? REMINDER_RETRY_BACKOFF_MS[REMINDER_RETRY_BACKOFF_MS.length - 1];
+    // A scheduler clock far behind the recorded attempt (tests that pass a historical `now`
+    // after a wall-clock failure) must not look like it is still inside the backoff window.
+    if (Number.isFinite(lastMs) && now.getTime() + 60_000 >= lastMs && now.getTime() < lastMs + backoff) {
+      return { action: "wait" };
+    }
+  }
+  return { action: "send", attempt: failures.length + 1 };
 }
 
 export async function dispatchAppointmentReminder(opts: {
@@ -219,6 +286,7 @@ export async function dispatchAppointmentReminder(opts: {
   appointment: ReturnType<typeof mapAppointment>;
   window: ReminderWindow;
   fetchImpl?: typeof fetch;
+  now?: Date;
 }): Promise<ReminderDispatchResult> {
   const clinicName = clinicNameForTenant(opts.tenantId);
   const doctorName = String(opts.appointment.doctorName || "").trim();
@@ -229,6 +297,40 @@ export async function dispatchAppointmentReminder(opts: {
       status: 400,
       error: "clinic_name and doctor_name are required.",
     };
+  }
+  const now = opts.now || new Date();
+  const decision = reminderRetryDecision(opts.appointment.id, opts.window, now);
+  if (decision.action !== "send") {
+    return {
+      ok: false,
+      channel: "none",
+      skipped: true,
+      error: decision.action === "stop" ? "retry_cap" : "retry_backoff",
+    };
+  }
+  const attempt = decision.attempt;
+  const permanent = attempt >= REMINDER_MAX_ATTEMPTS;
+  const recordedAt = now.toISOString();
+  const template = resolveApprovedClinicTemplate("appointment_reminder", getDb(), opts.tenantId);
+  if (!template) {
+    const eventId = recordOutboundEvent({
+      eventType: "appointment_reminder",
+      phone: opts.appointment.patientPhone,
+      name: opts.appointment.patientName,
+      status: "failed",
+      details: `appointment_reminder not delivered: ${NO_APPROVED_TEMPLATE}`,
+      payload: {
+        appointmentId: opts.appointment.id,
+        tenantId: opts.tenantId,
+        window: opts.window,
+        attempt,
+        permanent,
+        reason: NO_APPROVED_TEMPLATE,
+      },
+      tenantId: opts.tenantId,
+      sentAt: recordedAt,
+    });
+    return { ok: false, error: NO_APPROVED_TEMPLATE, channel: "none", eventId, status: 422 };
   }
   const text = buildReminderMessage({
     patientName: opts.appointment.patientName,
@@ -248,12 +350,13 @@ export async function dispatchAppointmentReminder(opts: {
     date: opts.appointment.date,
     timeSlot: opts.appointment.timeSlot,
     tokenNumber: opts.appointment.tokenNumber,
-    textBody: text,
+    templateName: template.name,
+    templateLanguage: template.language,
     // lumera_appointment_reminder (Utility, en_US): {{1}} patient, {{2}} clinic, {{3}} doctor, {{4}} date, {{5}} time. No token.
     templateParameters: [
       opts.appointment.patientName,
       clinicName,
-      opts.appointment.doctorName,
+      doctorName,
       opts.appointment.date,
       opts.appointment.timeSlot || "OPD",
     ],
@@ -264,10 +367,103 @@ export async function dispatchAppointmentReminder(opts: {
   return recordCloudDispatch({
     eventType: "appointment_reminder",
     appointment: opts.appointment,
-    payload: { appointmentId: opts.appointment.id, tenantId: opts.tenantId, window: opts.window },
+    payload: {
+      appointmentId: opts.appointment.id,
+      tenantId: opts.tenantId,
+      window: opts.window,
+      attempt,
+      permanent,
+      ...(isCloudDispatchFailure(sent) ? { reason: sent.error } : {}),
+    },
     sent,
     sandboxText: text,
+    sentAt: recordedAt,
   });
+}
+
+export type BookingNotifyResult = { sent: boolean; wamid?: string; reason?: string };
+
+function bookingFailureReason(sent: CloudDispatchResult): string {
+  if (isCloudDispatchFailure(sent)) {
+    if (sent.error === NO_APPROVED_TEMPLATE) return "no template";
+    if (/not connected|not configured|WA_TOKEN_KEY/i.test(sent.error)) return "not connected";
+    return "Graph error";
+  }
+  if (sent.channel === "sandbox") return "not connected";
+  return "Graph error";
+}
+
+/**
+ * Reception booking notify. Sends an approved template only.
+ * Body variables are the clinic display name, doctor, date/time, and patient.
+ * The clinic name is never replaced with a product name.
+ */
+export async function notifyReceptionBooking(opts: {
+  tenantId: string;
+  appointment: ReturnType<typeof mapAppointment>;
+  fetchImpl?: typeof fetch;
+}): Promise<BookingNotifyResult> {
+  const phone = String(opts.appointment.patientPhone || "").trim();
+  const digits = toWhatsAppRecipient(phone);
+  const clinicName = clinicNameForTenant(opts.tenantId);
+  const doctorName = String(opts.appointment.doctorName || "").trim();
+  const patientName = String(opts.appointment.patientName || "").trim();
+  const dateTime = [opts.appointment.date, opts.appointment.timeSlot].filter(Boolean).join(" ").trim();
+
+  const record = (status: "sent" | "failed", reason: string, messageId?: string) => {
+    recordOutboundEvent({
+      eventType: "book_confirmation",
+      phone: phone || "unknown",
+      name: patientName || "Patient",
+      status,
+      details:
+        status === "sent"
+          ? "WhatsApp Cloud API book_confirmation accepted"
+          : `book_confirmation not delivered: ${reason}`,
+      payload: {
+        appointmentId: opts.appointment.id,
+        tenantId: opts.tenantId,
+        ...(messageId ? { messageId, channel: "graph" } : { reason }),
+      },
+      tenantId: opts.tenantId,
+    });
+  };
+
+  if (digits.length < 8) {
+    record("failed", "no phone");
+    return { sent: false, reason: "no phone" };
+  }
+  const template = resolveApprovedClinicTemplate("book_confirmation", getDb(), opts.tenantId);
+  if (!template || !clinicName || !doctorName) {
+    const reason = !template ? "no template" : "Graph error";
+    record("failed", reason);
+    return { sent: false, reason };
+  }
+  const sent = await sendBookConfirmation({
+    to: phone,
+    patientName,
+    doctorName,
+    clinicName,
+    specialty: opts.appointment.specialty,
+    date: opts.appointment.date,
+    timeSlot: opts.appointment.timeSlot,
+    tokenNumber: opts.appointment.tokenNumber,
+    uhid: opts.appointment.uhid,
+    templateName: template.name,
+    templateLanguage: template.language,
+    templateParameters: [clinicName, doctorName, dateTime, patientName],
+    textBody: `${clinicName}: appointment with ${doctorName} on ${dateTime} for ${patientName}`,
+    db: getDb(),
+    fetchImpl: opts.fetchImpl,
+    tenantId: opts.tenantId,
+  });
+  if (sent.ok && sent.channel === "graph" && sent.messageId) {
+    record("sent", "", sent.messageId);
+    return { sent: true, wamid: sent.messageId };
+  }
+  const reason = bookingFailureReason(sent);
+  record("failed", reason);
+  return { sent: false, reason };
 }
 
 export async function dispatchWhatsAppBookConfirmation(opts: {
@@ -378,9 +574,11 @@ export async function runAppointmentReminders(opts?: {
       appointment,
       window,
       fetchImpl: opts?.fetchImpl,
+      now,
     });
     const item = { appointmentId: appointment.id, tenantId, window, result };
     if (result.ok) sent.push(item);
+    else if ("skipped" in result && result.skipped) skipped += 1;
     else failed.push(item);
   }
 

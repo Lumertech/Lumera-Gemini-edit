@@ -32,6 +32,7 @@ import {
 } from './types';
 import { apiFetch } from './api/http';
 import { appointmentIdForBillContext, appointmentsForClinicDay, clinicCalendarDate } from './lib/clinicDay';
+import { type BookingNotify } from './lib/bookingNotify';
 import { useAuth } from './auth/AuthContext';
 import { useNav } from './nav/NavigationContext';
 import { canonicalizeAppView, appViewToPath } from './nav/surfaces';
@@ -467,7 +468,7 @@ export default function ClinicianApp() {
   }, [billPool, currentPatient.id, pinnedBillAppointmentId]);
 
   const persistAppointmentCreate = async (input: Partial<Appointment>) => {
-    const { appointment } = await apiFetch<{ appointment: Appointment }>('/api/appointments', {
+    const body = await apiFetch<{ appointment: Appointment; notify?: BookingNotify }>('/api/appointments', {
       method: 'POST',
       body: JSON.stringify({
         patientId: input.patientId,
@@ -478,11 +479,12 @@ export default function ClinicianApp() {
         ...(input.source ? { source: input.source } : {}),
       }),
     });
+    const appointment = body.appointment;
     setAppointments((prev) => [appointment, ...prev.filter((a) => a.id !== appointment.id && a.id !== input.id)]);
     if (appointment.date === queueDate) {
       setQueueAppointments((prev) => [appointment, ...prev.filter((a) => a.id !== appointment.id)].sort((a, b) => a.tokenNumber - b.tokenNumber));
     }
-    return appointment;
+    return { appointment, notify: body.notify };
   };
 
   const persistPatientCreate = async (input: Patient) => {
@@ -609,10 +611,13 @@ export default function ClinicianApp() {
     });
   };
 
-  const handleBookAppointment = (newApt: Partial<Appointment>) => {
-    void persistAppointmentCreate(newApt).catch((err) => {
+  const handleBookAppointment = async (newApt: Partial<Appointment>) => {
+    try {
+      return await persistAppointmentCreate(newApt);
+    } catch (err) {
       console.error('Failed to persist appointment', err);
-    });
+      throw err;
+    }
   };
 
   const handleSelectDoctor = (doctor: Doctor) => {
@@ -995,7 +1000,7 @@ export default function ClinicianApp() {
                       setCurrentView('billing');
                     }}
                     appointments={appointments}
-                    onBookFollowUp={async (input) => persistAppointmentCreate(input)}
+                    onBookFollowUp={async (input) => (await persistAppointmentCreate(input)).appointment}
                     onAutoSave={handleAutoSaveDraft}
                   />
                 )}

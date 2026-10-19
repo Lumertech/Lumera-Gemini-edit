@@ -35,6 +35,7 @@ import {
   sessionPatientId,
 } from "./patient-tenant.ts";
 import type { PatientTenantExtras } from "./client-serializers.ts";
+import { notifyReceptionBooking } from "./whatsapp-calendar-reminders.ts";
 
 function tenantIdOf(req: Request): string {
   return String(req.user?.tenantId || "").trim();
@@ -1542,7 +1543,7 @@ export function createClinicalRouter(): Router {
     );
   });
 
-  api.post("/appointments", requireAuth, (req, res) => {
+  api.post("/appointments", requireAuth, async (req, res) => {
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     if (requestIsPatient(req)) {
@@ -1562,13 +1563,13 @@ export function createClinicalRouter(): Router {
     }
     try {
       const row = insertAppointment(tenantId, req.body || {}, { id: req.user?.id, name: req.user?.name });
-      const booked = mapAppointment(row);
+      const appointment = mapAppointment(row);
       const optInFlag = (req.body || {}).whatsappOptIn;
       if (optInFlag === true || optInFlag === "true") {
         recordWhatsAppOptIn(getDb(), {
           tenantId,
-          phone: String(booked.patientPhone || ""),
-          patientId: String(booked.patientId || ""),
+          phone: String(appointment.patientPhone || ""),
+          patientId: String(appointment.patientId || ""),
           optedIn: true,
           source: "booking",
           actorId: String(req.user?.id || ""),
@@ -1579,9 +1580,16 @@ export function createClinicalRouter(): Router {
         req.user?.id || null,
         req.user?.name || "Clinician",
         "Appointment created",
-        `${mapAppointment(row).patientName} token ${mapAppointment(row).tokenNumber}`
+        `${appointment.patientName} token ${appointment.tokenNumber}`
       );
-      res.status(201).json(withPatientTenant(req, tenantId, { appointment: mapAppointment(row) }));
+      let notify: { sent: boolean; wamid?: string; reason?: string } = { sent: false, reason: "Graph error" };
+      try {
+        notify = await notifyReceptionBooking({ tenantId, appointment });
+      } catch (notifyErr) {
+        console.error("Appointment booked but WhatsApp notify failed:", notifyErr);
+        notify = { sent: false, reason: "Graph error" };
+      }
+      res.status(201).json(withPatientTenant(req, tenantId, { appointment, notify }));
     } catch (err: unknown) {
       const status = typeof err === "object" && err && "status" in err ? Number((err as { status: number }).status) : 500;
       const message = err instanceof Error ? err.message : "Failed to create appointment";

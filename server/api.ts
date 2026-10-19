@@ -76,7 +76,7 @@ import {
   upsertTenantSubscription,
 } from "./platform-tenants.ts";
 import { generateTemporaryPassword, hashPassword, passwordRuleError, verifyPassword } from "./password.ts";
-import { findPendingOtp, generateNumericOtp, rejectWrongOtp, reserveOtpSend, sendOtpLimited } from "./otp-attempt.ts";
+import { abandonFailedOtpSend, findPendingOtp, generateNumericOtp, rejectWrongOtp, reserveOtpSend, sendOtpLimited } from "./otp-attempt.ts";
 import { consumeForgotPasswordAttempt, requestClientIp } from "./otp-rate-limit.ts";
 import { parseSpecialtyPackInput, resolveSpecialtyPack } from "./specialty-packs.ts";
 import { appPublicUrl, demoLoginEnabled, isProduction } from "./runtime.ts";
@@ -354,6 +354,9 @@ async function dispatchWhatsAppOtpMessage(phone: string, name: string, otp: stri
   });
 
   if (sent.ok && sent.channel === "graph") {
+    if (!sent.messageId) {
+      return { ok: false, error: "WhatsApp Cloud API did not return a message id.", channel: "graph" };
+    }
     recordWhatsAppOtpEvent({
       phone,
       name,
@@ -417,12 +420,33 @@ async function dispatchWhatsAppOtpMessage(phone: string, name: string, otp: stri
   return { ok: true, channel: "sandbox" };
 }
 
-function otpDispatchFailure(res: Response, result: OtpDispatchResult) {
-  if (result.ok === false) {
+function otpWasGraphDelivered(
+  result: OtpDispatchResult
+): result is { ok: true; channel: "graph"; messageId: string } {
+  return result.ok === true && result.channel === "graph" && Boolean(result.messageId);
+}
+
+function otpDispatchFailure(
+  res: Response,
+  result: OtpDispatchResult,
+  verification?: { id: string; phone: string; email?: string; userId?: string },
+  req?: Request
+) {
+  const missingWamid = result.ok === true && result.channel === "graph" && !result.messageId;
+  if (result.ok === false || missingWamid) {
+    if (verification) {
+      abandonFailedOtpSend({
+        id: verification.id,
+        phone: verification.phone,
+        email: verification.email,
+        userId: verification.userId,
+        ip: req ? requestClientIp(req) : undefined,
+      });
+    }
     res.status(503).json({
-      error: result.error,
+      error: result.ok === false ? result.error : "WhatsApp Cloud API did not return a message id.",
       otpDelivered: false,
-      channel: result.channel,
+      channel: result.ok === false ? result.channel : "graph",
     });
     return true;
   }
@@ -538,7 +562,7 @@ export function createApiRouter(): Router {
     );
 
     const sent = await dispatchWhatsAppOtpMessage(phone, user.name, otp, "login");
-    if (otpDispatchFailure(res, sent)) return;
+    if (otpDispatchFailure(res, sent, { id: verificationId, phone, email: user.email, userId: user.id }, req)) return;
 
     return res.json({
       requiresOtp: true,
@@ -549,10 +573,10 @@ export function createApiRouter(): Router {
       expiresAt,
       user: publicUser(user),
       otpChannel: sent.ok ? sent.channel : undefined,
-      message:
-        sent.ok && sent.channel === "graph"
-          ? "Security code dispatched via WhatsApp Cloud API."
-          : "SANDBOX / DEV-ONLY: security code recorded locally (not sent via Graph).",
+      ...(otpWasGraphDelivered(sent) ? { wamid: sent.messageId } : {}),
+      message: otpWasGraphDelivered(sent)
+        ? "Security code dispatched via WhatsApp Cloud API."
+        : "SANDBOX / DEV-ONLY: security code recorded locally (not sent via Graph).",
     });
   });
 
@@ -837,7 +861,7 @@ export function createApiRouter(): Router {
     );
 
     const sent = await dispatchWhatsAppOtpMessage(phone, user.name, otp, "login");
-    if (otpDispatchFailure(res, sent)) return;
+    if (otpDispatchFailure(res, sent, { id: verificationId, phone, email: user.email, userId: user.id }, req)) return;
 
     return res.json({
       requiresOtp: true,
@@ -891,21 +915,22 @@ export function createApiRouter(): Router {
     `).run(verificationId, phone, email, otp, purpose, payload, new Date().toISOString(), expiresAt);
 
     const sent = await dispatchWhatsAppOtpMessage(phone, name, otp, purpose);
-    if (otpDispatchFailure(res, sent)) return;
+    if (otpDispatchFailure(res, sent, { id: verificationId, phone, email, userId: req.user?.id }, req)) return;
 
+    const graphSent = otpWasGraphDelivered(sent);
     return res.json({
       ok: true,
       verificationId,
       phone,
       ...otpEchoPayload(otp),
       expiresAt,
-      status: sent.ok && sent.channel === "graph" ? "sent" : "sandbox_recorded",
-      channel: sent.ok && sent.channel === "graph" ? "WhatsApp Cloud API" : "SANDBOX / DEV-ONLY SQLite",
+      ...(graphSent ? { wamid: sent.messageId, messageId: sent.messageId } : {}),
+      status: graphSent ? "sent" : "sandbox_recorded",
+      channel: graphSent ? "WhatsApp Cloud API" : "SANDBOX / DEV-ONLY SQLite",
       sandbox: sent.ok && sent.channel === "sandbox",
-      message:
-        sent.ok && sent.channel === "graph"
-          ? "6-digit OTP sent via WhatsApp Cloud API."
-          : "SANDBOX / DEV-ONLY: OTP recorded locally (not sent via Graph).",
+      message: graphSent
+        ? "6-digit OTP sent via WhatsApp Cloud API."
+        : "SANDBOX / DEV-ONLY: OTP recorded locally (not sent via Graph).",
     });
   });
 
@@ -1301,7 +1326,7 @@ export function createApiRouter(): Router {
     `).run(verificationId, phone, email, otp, JSON.stringify(otpPayload), now, expiresAt);
 
     const sent = await dispatchWhatsAppOtpMessage(phone, name, otp, "register");
-    if (otpDispatchFailure(res, sent)) return;
+    if (otpDispatchFailure(res, sent, { id: verificationId, phone, email, userId }, req)) return;
 
     return res.json({
       requiresOtp: true,
@@ -1319,10 +1344,10 @@ export function createApiRouter(): Router {
         dhisClaimsLimit: 100,
       },
       otpChannel: sent.ok ? sent.channel : undefined,
-      message:
-        sent.ok && sent.channel === "graph"
-          ? "6-digit OTP sent via WhatsApp Cloud API."
-          : "SANDBOX / DEV-ONLY: OTP recorded locally (not sent via Graph).",
+      ...(otpWasGraphDelivered(sent) ? { wamid: sent.messageId } : {}),
+      message: otpWasGraphDelivered(sent)
+        ? "6-digit OTP sent via WhatsApp Cloud API."
+        : "SANDBOX / DEV-ONLY: OTP recorded locally (not sent via Graph).",
     });
   };
 
@@ -1601,7 +1626,19 @@ export function createApiRouter(): Router {
 
     finishPasswordReset(res, async () => {
       const sent = await dispatchWhatsAppOtpMessage(phone, name, otp, "password_reset");
-      auditPasswordResetAttempt(sent.ok ? "sent" : "not_sent");
+      const missingWamid = sent.ok === true && sent.channel === "graph" && !sent.messageId;
+      if (sent.ok === false || missingWamid) {
+        abandonFailedOtpSend({
+          id: verificationId,
+          phone,
+          email,
+          userId: user.id,
+          ip: requestClientIp(req),
+        });
+        auditPasswordResetAttempt("not_sent");
+        return;
+      }
+      auditPasswordResetAttempt("sent");
     });
   });
 
