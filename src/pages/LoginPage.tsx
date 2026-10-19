@@ -530,7 +530,7 @@ export const LoginPage: React.FC = () => {
       return;
     }
 
-    const targetEmail = (chosenEmail || oauthEmail || "sandbox.oauth@mylumera.in").trim().toLowerCase();
+    const targetEmail = (chosenEmail || oauthEmail || "sandbox.oauth@example.com").trim().toLowerCase();
     const targetName = (
       chosenName ||
       oauthName ||

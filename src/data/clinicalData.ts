@@ -921,7 +921,7 @@ export const DEFAULT_DOCTORS: Doctor[] = [
     availableDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
     opdTiming: '09:00 AM - 02:00 PM',
     phone: '+91 98765 43210',
-    email: 'dr.malhotra@lumera.health',
+    email: 'dr.malhotra@example.com',
     active: true
   },
   {
@@ -936,7 +936,7 @@ export const DEFAULT_DOCTORS: Doctor[] = [
     availableDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
     opdTiming: '08:30 AM - 01:30 PM, 04:30 PM - 08:00 PM',
     phone: '+91 98312 77889',
-    email: 'dr.siddharth@lumera.health',
+    email: 'dr.siddharth@example.com',
     active: true
   },
   {
@@ -951,7 +951,7 @@ export const DEFAULT_DOCTORS: Doctor[] = [
     availableDays: ['Mon', 'Wed', 'Fri', 'Sat'],
     opdTiming: '10:00 AM - 03:00 PM',
     phone: '+91 98112 34567',
-    email: 'dr.ananya@lumera.health',
+    email: 'dr.ananya@example.com',
     active: true
   },
   {
@@ -966,7 +966,7 @@ export const DEFAULT_DOCTORS: Doctor[] = [
     availableDays: ['Tue', 'Thu', 'Sat'],
     opdTiming: '11:00 AM - 04:00 PM',
     phone: '+91 98223 99887',
-    email: 'dr.rajesh@lumera.health',
+    email: 'dr.rajesh@example.com',
     active: true
   },
   {
@@ -981,7 +981,7 @@ export const DEFAULT_DOCTORS: Doctor[] = [
     availableDays: ['Mon', 'Tue', 'Thu', 'Fri'],
     opdTiming: '02:00 PM - 07:00 PM',
     phone: '+91 97334 11223',
-    email: 'dr.meera@lumera.health',
+    email: 'dr.meera@example.com',
     active: true
   },
   {
@@ -996,7 +996,7 @@ export const DEFAULT_DOCTORS: Doctor[] = [
     availableDays: ['Mon', 'Wed', 'Fri'],
     opdTiming: '09:30 AM - 01:30 PM',
     phone: '+91 99445 66778',
-    email: 'dr.harsh@lumera.health',
+    email: 'dr.harsh@example.com',
     active: true
   },
   {
@@ -1011,7 +1011,7 @@ export const DEFAULT_DOCTORS: Doctor[] = [
     availableDays: ['Mon', 'Tue', 'Thu', 'Sat'],
     opdTiming: '10:00 AM - 02:30 PM',
     phone: '+91 98319 88990',
-    email: 'dr.shalini@lumera.health',
+    email: 'dr.shalini@example.com',
     active: true
   },
   {
@@ -1026,7 +1026,7 @@ export const DEFAULT_DOCTORS: Doctor[] = [
     availableDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
     opdTiming: '09:00 AM - 01:00 PM, 05:00 PM - 08:30 PM',
     phone: '+91 98401 22334',
-    email: 'dr.arun@lumera.health',
+    email: 'dr.arun@example.com',
     active: true
   },
   {
@@ -1041,7 +1041,7 @@ export const DEFAULT_DOCTORS: Doctor[] = [
     availableDays: ['Mon', 'Wed', 'Fri', 'Sat'],
     opdTiming: '11:00 AM - 04:30 PM',
     phone: '+91 98109 44332',
-    email: 'dr.alok@lumera.health',
+    email: 'dr.alok@example.com',
     active: true
   }
 ];
@@ -1054,7 +1054,7 @@ export const DEFAULT_PATIENTS: Patient[] = [
     age: 44,
     gender: 'Male',
     phone: '+91 98234 55667',
-    email: 'rajiv.saxena@mylumera.in',
+    email: 'rajiv.saxena@example.com',
     bloodGroup: 'O+',
     allergies: ['None known'],
     chronicConditions: ['Lumbar Disc Herniation (L4-L5)', 'Sedentary IT Posture Strain'],
@@ -1069,7 +1069,7 @@ export const DEFAULT_PATIENTS: Patient[] = [
     age: 52,
     gender: 'Female',
     phone: '+91 98311 44556',
-    email: 'priyanka.m@mylumera.in',
+    email: 'priyanka.m@example.com',
     bloodGroup: 'A+',
     allergies: ['Sulfa drugs'],
     chronicConditions: ['Adhesive Capsulitis (Left Shoulder)', 'Type 2 Diabetes'],
@@ -1084,7 +1084,7 @@ export const DEFAULT_PATIENTS: Patient[] = [
     age: 48,
     gender: 'Female',
     phone: '+91 98301 23456',
-    email: 'sunita.roy@mylumera.in',
+    email: 'sunita.roy@example.com',
     bloodGroup: 'B+',
     allergies: ['Penicillin', 'Sulfa drugs'],
     chronicConditions: ['Type 2 Diabetes', 'Hypertension'],
@@ -1099,7 +1099,7 @@ export const DEFAULT_PATIENTS: Patient[] = [
     age: 32,
     gender: 'Male',
     phone: '+91 98200 45678',
-    email: 'rohan.deshmukh@mylumera.in',
+    email: 'rohan.deshmukh@example.com',
     bloodGroup: 'O+',
     allergies: ['None known'],
     chronicConditions: ['Allergic Rhinitis'],
@@ -1128,7 +1128,7 @@ export const DEFAULT_PATIENTS: Patient[] = [
     age: 58,
     gender: 'Male',
     phone: '+91 98450 78901',
-    email: 'tariq.mohd@mylumera.in',
+    email: 'tariq.mohd@example.com',
     bloodGroup: 'AB+',
     allergies: ['Aspirin (Bronchospasm)'],
     chronicConditions: ['Ischemic Heart Disease (Post-PTCA 2024)', 'Dyslipidemia'],

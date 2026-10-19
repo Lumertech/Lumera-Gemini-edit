@@ -4,8 +4,13 @@ import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   ALLOWED_HOSTS,
+  HOST_SUFFIXES,
   findUnownedHosts,
+  hostAllowed,
   scanUserFacingHosts,
+  scannedFiles,
+  stripComments,
+  unusedPr164Exemptions,
 } from "./owned-host-allowlist.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -17,7 +22,9 @@ describe("owned host allowlist", () => {
       "mylumera.in",
       "lumer.me",
       "example.com",
-      "googleapis.com",
+      "fonts.googleapis.com",
+      "accounts.google.com",
+      "fonts.gstatic.com",
       "facebook.com",
       "whatsapp.com",
       "wa.me",
@@ -28,41 +35,63 @@ describe("owned host allowlist", () => {
       "snomed.info",
       "loinc.org",
       "razorpay.com",
-      "unsplash.com",
     ]) {
       assert.ok(hosts.includes(required), `missing ${required}`);
     }
     assert.ok(hosts.includes("clinic.example"), "missing clinic.example");
-    assert.ok(ALLOWED_HOSTS.length <= 24, `allowlist grew to ${ALLOWED_HOSTS.length}`);
+    assert.ok(ALLOWED_HOSTS.length <= 28, `allowlist grew to ${ALLOWED_HOSTS.length}`);
     for (const entry of ALLOWED_HOSTS) {
       assert.ok(entry.why.length > 20, entry.host);
     }
   });
 
-  it("fails an unowned host and exempts @lumera.me and @lumera.health mailboxes", () => {
+  it("fails an unowned host and exempts only @lumera.me mailboxes", () => {
     const sample = [
       'export const contact = "ravee@lumer.me";',
       'export const demo = "doctor@lumera.me";',
       'export const legacy = "dr.malhotra@lumera.health";',
       'export const clinic = "care@example.com";',
       'export const bad = "https://lumera.health/portal";',
+      'export const bare = "lumera.health/hep/{uhid}";',
       'export const mail = "care@lumeraclinic.in";',
       "https://www.facebook.com/dialog",
       "https://fonts.googleapis.com/css",
       "https://api.razorpay.com/v1",
       "https://images.unsplash.com/photo-1",
+      "https://evil.googleapis.com/token",
     ].join("\n");
     const hits = findUnownedHosts(sample, "src/example.tsx");
     const hosts = hits.map((hit) => `${hit.kind}:${hit.host}`);
     assert.ok(hosts.some((item) => item.includes("lumera.health")), hosts.join(","));
     assert.ok(hosts.some((item) => item.includes("lumeraclinic.in")), hosts.join(","));
+    assert.ok(hosts.some((item) => item.includes("bare:lumera.health")), hosts.join(","));
+    assert.ok(hosts.some((item) => item.includes("unsplash.com")), hosts.join(","));
+    assert.ok(hosts.some((item) => item.includes("evil.googleapis.com")), hosts.join(","));
     assert.equal(hosts.some((item) => item.includes("lumera.me")), false);
     assert.equal(hosts.some((item) => item.includes("lumer.me")), false);
     assert.equal(hosts.some((item) => item.includes("example.com")), false);
     assert.equal(hosts.some((item) => item.includes("facebook.com")), false);
-    assert.equal(hosts.some((item) => item.includes("googleapis.com")), false);
+    assert.equal(hosts.some((item) => item.includes("fonts.googleapis.com")), false);
     assert.equal(hosts.some((item) => item.includes("razorpay.com")), false);
-    assert.equal(hosts.some((item) => item.includes("unsplash.com")), false);
+  });
+
+  it("keeps //host inside strings and only allows suffix families that are listed hosts", () => {
+    const kept = stripComments('const label = "see //lumera.health/hep";\n// lumera.health in a comment\n');
+    assert.match(kept, /lumera\.health\/hep/);
+    assert.doesNotMatch(kept, /in a comment/);
+    const hits = findUnownedHosts(kept, "src/example.tsx");
+    assert.ok(hits.some((hit) => hit.kind === "bare" && hit.host === "lumera.health"));
+    const allowed = new Set(ALLOWED_HOSTS.map((entry) => entry.host));
+    for (const suffix of HOST_SUFFIXES) {
+      assert.equal(allowed.has(suffix), true, suffix);
+      assert.ok(suffix.split(".").filter(Boolean).length >= 2, suffix);
+    }
+    assert.equal(HOST_SUFFIXES.includes("unsplash.com"), false);
+    assert.equal(HOST_SUFFIXES.includes("googleapis.com"), false);
+    assert.equal(hostAllowed("fonts.googleapis.com"), true);
+    assert.equal(hostAllowed("accounts.google.com"), true);
+    assert.equal(hostAllowed("images.unsplash.com"), false);
+    assert.equal(hostAllowed("evil.googleapis.com"), false);
   });
 
   it("does not treat a lumera.me URL as a demo-login exemption", () => {
@@ -91,7 +120,14 @@ describe("owned host allowlist", () => {
     );
   });
 
-  it("scans src and server, excluding tests, and fails closed on any other host", () => {
+  it("scans src, server, public, hosting, server.ts, and index.html, and fails closed on any other host", () => {
+    const files = scannedFiles(root).map((file) => file.replace(/\\/g, "/"));
+    assert.ok(files.some((file) => file.endsWith("/server.ts") || file.endsWith("/index.html")));
+    assert.equal(
+      unusedPr164Exemptions(root).join("\n"),
+      "",
+      "delete PR #164 exemptions that match nothing"
+    );
     const violations = scanUserFacingHosts(root);
     assert.deepEqual(
       violations,
