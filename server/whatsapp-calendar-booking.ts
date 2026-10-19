@@ -210,6 +210,7 @@ export function bookWhatsAppAppointment(opts: {
     { name: "WhatsApp Bot" }
   );
   const appointment = mapAppointment(row);
+  // TODO: this audit's details include the patient name and token, and the call records no tenant.
   writeAudit(
     getDb(),
     null,

@@ -1,13 +1,12 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
 import { after, before, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 import { createApiRouter } from "./api.ts";
 import { getDb, initDatabase } from "./db.ts";
 import { hashPassword } from "./password.ts";
 import { jsonRequest, startTestServer, type TestHttpServer } from "./test-http.ts";
 import { installWhatsAppRouterPatch, protectWhatsAppDashboard } from "./whatsapp-dashboard-guard.ts";
 import { createWhatsAppRouter } from "./whatsapp.ts";
+import { findPatientByPhoneInTenant } from "./whatsapp-tenant-resolve.ts";
 
 function createClinic(label: string) {
   const suffix = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
@@ -320,17 +319,31 @@ describe("WhatsApp bot lookup audit and first-name replies", () => {
     assert.equal(booked.status, 201, String(booked.json.error || ""));
     const bookedBody = JSON.stringify(booked.json);
     for (const secret of secrets) assert.equal(bookedBody.includes(secret), false, `book leaked ${secret}`);
+    const bookDigits = bookPhone.replace(/\D/g, "").slice(-10);
     const bookedRows = getDb()
-      .prepare("SELECT id, tenant_id FROM appointments WHERE patient_phone = ?")
-      .all(bookPhone) as { id: string; tenant_id: string }[];
+      .prepare("SELECT id, tenant_id, patient_phone FROM appointments WHERE tenant_id = ?")
+      .all(clinicB.tenantId) as { id: string; tenant_id: string; patient_phone: string }[];
+    assert.ok(bookedRows.length >= 1);
     for (const row of bookedRows) {
       cleanup.appointments.push(row.id);
       assert.equal(row.tenant_id, clinicB.tenantId);
+      assert.equal(String(row.patient_phone || "").replace(/\D/g, "").endsWith(bookDigits), true);
     }
-    const bookedPatient = getDb().prepare("SELECT id FROM patients WHERE phone = ? AND tenant_id = ?").get(bookPhone, clinicB.tenantId) as
-      | { id: string }
-      | undefined;
-    if (bookedPatient?.id) cleanup.patients.push(bookedPatient.id);
+    const patientsInA = getDb().prepare("SELECT id, phone FROM patients WHERE tenant_id = ?").all(clinicA.tenantId) as {
+      id: string;
+      phone: string;
+    }[];
+    assert.equal(
+      patientsInA.some((row) => row.phone === bookPhone || String(row.phone || "").replace(/\D/g, "").endsWith(bookDigits)),
+      false
+    );
+    const bookedPatients = getDb().prepare("SELECT id, phone FROM patients WHERE tenant_id = ?").all(clinicB.tenantId) as {
+      id: string;
+      phone: string;
+    }[];
+    for (const row of bookedPatients) {
+      if (String(row.phone || "").replace(/\D/g, "").endsWith(bookDigits)) cleanup.patients.push(row.id);
+    }
 
     const queued = await jsonRequest(
       server.port,
@@ -370,9 +383,38 @@ describe("WhatsApp bot lookup audit and first-name replies", () => {
     );
   });
 
-  it("documents that exact E.164 matching is not on main yet", () => {
-    const source = fs.readFileSync(fileURLToPath(new URL("./whatsapp-tenant-resolve.ts", import.meta.url)), "utf8");
-    assert.match(source, /isDemoWhatsAppAllowlisted/);
-    assert.match(source, /phonesMatch\(String\(row\.phone \|\| ""\), phone\)/);
+  it("two patients in one clinic who share the last 10 digits collide", () => {
+    // TODO(#168): exact E.164 matching waits for isDemoWhatsAppAllowlisted
+    // (graph-whatsapp.ts: digits only, country code included). That helper is
+    // not on main. The SELECT has no ORDER BY, so last-10 makes both numbers
+    // resolve to the same row. After #168, each phone should return only its
+    // own patient.
+    const suffix = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    const clinic = createClinic("phiE164");
+    cleanup.tenants.push(clinic.tenantId);
+    cleanup.users.push(clinic.userId);
+    const national = `9${String(Date.now()).slice(-9)}`;
+    const firstId = `pat-e164-a-${suffix}`;
+    const secondId = `pat-e164-b-${suffix}`;
+    cleanup.patients.push(firstId, secondId);
+    insertPatient({
+      id: firstId,
+      tenantId: clinic.tenantId,
+      name: "First Twin",
+      phone: `+91${national}`,
+      uhid: `UHID-E1-${suffix}`,
+    });
+    insertPatient({
+      id: secondId,
+      tenantId: clinic.tenantId,
+      name: "Second Twin",
+      phone: `+1${national}`,
+      uhid: `UHID-E2-${suffix}`,
+    });
+
+    const byIndia = findPatientByPhoneInTenant(clinic.tenantId, `+91${national}`);
+    const byOther = findPatientByPhoneInTenant(clinic.tenantId, `+1${national}`);
+    assert.equal(String(byIndia?.id || ""), String(byOther?.id || ""));
+    assert.ok([firstId, secondId].includes(String(byIndia?.id || "")));
   });
 });
