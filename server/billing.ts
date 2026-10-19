@@ -25,6 +25,9 @@ import { WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
 import { formatINR } from "../src/lib/currency.ts";
 import { denyUnlessPatientRecordRole } from "./patient-access.ts";
 import { loadPatientTenant, requestIsPatient, sessionPatientId } from "./patient-tenant.ts";
+import { dayEndTotals, revenueTotals } from "./collected-revenue.ts";
+import { tenantTimezone } from "./clinical.ts";
+import { resolveQueueDate } from "../src/lib/clinicDay.ts";
 
 function tenantIdOf(req: Request): string {
   return String(req.user?.tenantId || "").trim();
@@ -143,10 +146,8 @@ function yearToken(prefix: string): string {
   return `${prefix}-${year}-${crypto.randomUUID().replace(/-/g, "").slice(0, 6).toUpperCase()}`;
 }
 
-function todayDate(value?: string): string {
-  const raw = String(value || "").trim();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
-  return new Date().toISOString().slice(0, 10);
+function todayDate(value?: string, timezone?: string | null, now = new Date()): string {
+  return resolveQueueDate(value, timezone, now);
 }
 
 function jsonText(value: unknown, fallback: string): string {
@@ -373,7 +374,7 @@ async function dispatchInvoiceReceipt(
     amount: invoice.totalAmount,
     currency: "₹",
     invoiceId: invoice.invoiceNumber,
-    date: invoice.date || todayDate(),
+    date: invoice.date || todayDate("", tenantTimezone(String(invoice.tenantId || ""))),
     textBody: receiptBody(invoice, false),
     previewUrl: Boolean(invoice.payLink),
     db: getDb(),
@@ -481,7 +482,7 @@ function insertInvoice(tenantId: string, body: Record<string, unknown>, actor?: 
   const id = shortId("inv");
   const invoiceNumber = uniqueInvoiceNumber(tenantId, String(body.invoiceNumber || body.invoice_number || ""));
   const now = new Date().toISOString();
-  const date = todayDate(String(body.date || ""));
+  const date = todayDate(String(body.date || ""), tenantTimezone(tenantId));
 
   getDb()
     .prepare(
@@ -545,36 +546,45 @@ export function createBillingRouter(): Router {
     });
   });
 
+  api.get("/billing/revenue", requireAuth, (req, res) => {
+    if (!denyUnlessPatientRecordRole(req, res)) return;
+    const tenantId = requireTenant(req, res);
+    if (!tenantId) return;
+    const tz = tenantTimezone(tenantId);
+    const rows = getDb()
+      .prepare(
+        `SELECT status, total_amount, paid_amount, paid_at, date
+         FROM invoices WHERE tenant_id = ?`
+      )
+      .all(tenantId) as Record<string, unknown>[];
+    res.json({ tenantId, ...revenueTotals(rows, tz) });
+  });
+
   api.get("/billing/day-end", requireAuth, (req, res) => {
     if (!denyUnlessPatientRecordRole(req, res)) return;
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
-    const date = todayDate(String(req.query.date || ""));
+    const tz = tenantTimezone(tenantId);
+    const date = todayDate(String(req.query.date || ""), tz);
     const rows = getDb()
-      .prepare("SELECT * FROM invoices WHERE tenant_id = ? AND date = ? ORDER BY created_at ASC")
-      .all(tenantId, date) as Record<string, unknown>[];
-    let paidCount = 0;
-    let paidAmount = 0;
-    let dueCount = 0;
-    let dueAmount = 0;
-    for (const row of rows) {
-      const total = Number(row.total_amount || 0);
-      if (String(row.status) === "Paid") {
-        paidCount += 1;
-        paidAmount += total;
-      } else if (String(row.status) !== "Cancelled") {
-        dueCount += 1;
-        dueAmount += total;
-      }
-    }
+      .prepare("SELECT * FROM invoices WHERE tenant_id = ? ORDER BY created_at ASC")
+      .all(tenantId) as Record<string, unknown>[];
+    const totals = dayEndTotals(rows, date, tz);
+    const listed = rows.filter((row) => {
+      const status = String(row.status || "");
+      if (status.trim().toLowerCase() === "cancelled") return false;
+      if (String(row.date || "") === date) return true;
+      const paidAt = String(row.paid_at || "");
+      if (!paidAt) return false;
+      const parsed = new Date(paidAt);
+      if (Number.isNaN(parsed.getTime())) return false;
+      return resolveQueueDate(parsed.toISOString(), tz) === date;
+    });
     res.json({
       date,
       tenantId,
-      paidCount,
-      paidAmount,
-      dueCount,
-      dueAmount,
-      invoices: rows.map(mapInvoice),
+      ...totals,
+      invoices: listed.map(mapInvoice),
     });
   });
 

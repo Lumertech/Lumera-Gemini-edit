@@ -1,7 +1,7 @@
 /** Client helpers for Wave 2 clinician billing UX. Consume Platform invoice APIs as-is. */
 
 import { formatINR } from "./currency.ts";
-import { formatClinicDayLabel } from "./clinicDay";
+import { clinicCalendarDate, formatClinicDayLabel } from "./clinicDay";
 
 export type BillingPaymentMode = "UPI" | "Cash" | "Card" | "Insurance";
 
@@ -115,8 +115,9 @@ export type ReceiptHonesty = {
   tone: "graph" | "sandbox" | "failed";
 };
 
-export function todayIsoDate(now = new Date()): string {
-  return now.toISOString().slice(0, 10);
+/** Clinic calendar day. Empty timezone is IST, not the UTC date from toISOString. */
+export function todayIsoDate(now = new Date(), timezone?: string | null): string {
+  return clinicCalendarDate(now, timezone);
 }
 
 /** Desk collections shows day-end totals. An unsaved bill is not rendered beside them. */

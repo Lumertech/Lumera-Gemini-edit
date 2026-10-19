@@ -271,7 +271,15 @@ export const appointments = pgTable(
     vitals: text("vitals"),
     createdAt: text("created_at").notNull(),
   },
-  (t) => [index("idx_appointments_tenant").on(t.tenantId)]
+  (t) => [
+    index("idx_appointments_tenant").on(t.tenantId),
+    uniqueIndex("idx_appointments_tenant_queue_doctor_token").on(
+      t.tenantId,
+      t.date,
+      t.doctorId,
+      t.tokenNumber
+    ),
+  ]
 );
 
 export const prescriptions = pgTable(

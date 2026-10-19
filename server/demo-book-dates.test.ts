@@ -326,4 +326,56 @@ describe("demo book dates", () => {
     );
     assert.equal(today, "2026-10-16");
   });
+
+  it("keeps a QA token on its own day once the individual book is full", () => {
+    const db = memoryDb();
+    insertVisit(db, "ind-apt-1", "tenant-demo-individual", "2026-08-30");
+    spreadDemoBookDates(db, NOW);
+    const today = clinicCalendarDate(NOW);
+    const managed = db
+      .prepare(
+        `SELECT COUNT(*) AS c FROM appointments
+         WHERE tenant_id = ? AND (id LIKE 'demo-book-%' OR id LIKE 'ind-apt-%')`
+      )
+      .get("tenant-demo-individual") as { c: number };
+    assert.ok(managed.c >= INDIVIDUAL_DEMO_WINDOW.month);
+
+    db.prepare(
+      `INSERT INTO appointments (
+         id, tenant_id, token_number, patient_id, patient_name, patient_phone, uhid,
+         doctor_id, doctor_name, specialty, date, time_slot, status, created_at
+       ) VALUES (
+         'qa-token-1010', 'tenant-demo-individual', 1010, 'qa-pat', 'QA Patient', '+91 90000 01010', 'LUM-QA-1010',
+         'doc-persona-gp', 'Dr. Vikram Malhotra', 'General Medicine', ?, '09:15 AM', 'Waiting', ?
+       )`
+    ).run(today, NOW.toISOString());
+    const rajivBefore = db
+      .prepare(`SELECT patient_name, token_number, date, time_slot FROM appointments WHERE id = 'ind-apt-1'`)
+      .get();
+
+    spreadDemoBookDates(db, NOW);
+
+    const qa = db
+      .prepare(`SELECT patient_name, token_number, date, time_slot FROM appointments WHERE id = 'qa-token-1010'`)
+      .get() as { patient_name: string; token_number: number; date: string; time_slot: string };
+    assert.equal(qa.patient_name, "QA Patient");
+    assert.equal(qa.token_number, 1010);
+    assert.equal(qa.date, today);
+    assert.equal(qa.time_slot, "09:15 AM");
+    const rajiv = db
+      .prepare(`SELECT patient_name, token_number, date, time_slot FROM appointments WHERE id = 'ind-apt-1'`)
+      .get() as { patient_name: string };
+    assert.equal(rajiv.patient_name, "Rajiv Saxena");
+    assert.deepEqual(rajiv, rajivBefore);
+    const oct14 = db
+      .prepare(
+        `SELECT id, patient_name FROM appointments
+         WHERE tenant_id = ? AND token_number = 1010 AND date != ?`
+      )
+      .all("tenant-demo-individual", today) as Array<{ id: string; patient_name: string }>;
+    assert.equal(
+      oct14.some((row) => row.id === "qa-token-1010"),
+      false
+    );
+  });
 });

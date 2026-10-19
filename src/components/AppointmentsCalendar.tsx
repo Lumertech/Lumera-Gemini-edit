@@ -15,6 +15,7 @@ import {
   X
 } from 'lucide-react';
 import { Appointment, Doctor, Patient } from '../types';
+import { clinicCalendarDate, shiftIsoDate } from '../lib/clinicDay';
 
 interface AppointmentsCalendarProps {
   appointments: Appointment[];
@@ -38,7 +39,7 @@ export const AppointmentsCalendar: React.FC<AppointmentsCalendarProps> = ({
   // New Booking form state
   const [patientId, setPatientId] = useState(patients[0]?.id || '');
   const [doctorId, setDoctorId] = useState(doctors[0]?.id || '');
-  const [bookingDate, setBookingDate] = useState(new Date().toISOString().split('T')[0]);
+  const [bookingDate, setBookingDate] = useState(() => clinicCalendarDate());
   const [timeSlot, setTimeSlot] = useState('10:00 AM');
   const [consultType, setConsultType] = useState<Appointment['type']>('New Consultation');
   const [source, setSource] = useState<Appointment['source']>('Walk-in');
@@ -49,8 +50,7 @@ export const AppointmentsCalendar: React.FC<AppointmentsCalendarProps> = ({
   });
 
   const handleApplyFollowUpPreset = (days: number) => {
-    const target = new Date(Date.now() + days * 86400000);
-    setBookingDate(target.toISOString().split('T')[0]);
+    setBookingDate(shiftIsoDate(clinicCalendarDate(), days));
   };
 
   const handleSaveBooking = () => {

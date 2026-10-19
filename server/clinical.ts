@@ -18,8 +18,9 @@ import { registerPatientDocumentRoutes } from "./patient-documents.ts";
 import { registerPatientDocumentConsentRoutes } from "./patient-document-consent.ts";
 import { buildPatientTimeline, presentPrescriptionForRole } from "./patient-timeline.ts";
 import { denyUnlessPatientRecordRole, denyUnlessPrescriber, isReceptionRole } from "./patient-access.ts";
-import { clinicCalendarDate, parseAppointmentListDate } from "../src/lib/clinicDay.ts";
+import { clinicCalendarDate, parseAppointmentListDate, resolveQueueDate } from "../src/lib/clinicDay.ts";
 import { HIDDEN_AMBIENT_SOURCES, hiddenVisitSourceSql, isHiddenVisitSource } from "./ambient-walkin.ts";
+import { allocateTokenNumber, isTokenUniqueViolation } from "./queue-tokens.ts";
 import {
   loadPatientClinicPhone,
   loadPatientTenant,
@@ -226,14 +227,24 @@ export function listTenantAppointments(tenantId: string, date?: string | null): 
     .all(tenantId, ...HIDDEN_AMBIENT_SOURCES) as Record<string, unknown>[];
 }
 
-export function nextTokenNumber(tenantId: string, date: string): number {
+/**
+ * Next visible token for this tenant and queue date.
+ * Hidden ambient visits stay out of the sequence. Pass a doctor id to scope one queue.
+ */
+export function nextTokenNumber(tenantId: string, date: string, doctorId?: string): number {
+  const scoped = doctorId !== undefined;
   const row = getDb()
     .prepare(
       `SELECT COALESCE(MAX(token_number), 0) AS max_token
        FROM appointments
-       WHERE tenant_id = ? AND date = ? AND ${hiddenVisitSourceSql()}`
+       WHERE tenant_id = ? AND date = ? AND ${hiddenVisitSourceSql()}
+         ${scoped ? "AND doctor_id = ?" : ""}`
     )
-    .get(tenantId, date, ...HIDDEN_AMBIENT_SOURCES) as { max_token: number };
+    .get(
+      ...(scoped
+        ? [tenantId, date, ...HIDDEN_AMBIENT_SOURCES, String(doctorId)]
+        : [tenantId, date, ...HIDDEN_AMBIENT_SOURCES])
+    ) as { max_token: number };
   return Number(row?.max_token || 0) + 1;
 }
 
@@ -857,53 +868,59 @@ export function insertAppointment(tenantId: string, body: Record<string, unknown
     throw Object.assign(new Error("Patient not found"), { status: 404 });
   }
   const mappedPatient = mapPatient(patient);
-  const requestedDate = String(body.date || "").trim();
-  const date = /^\d{4}-\d{2}-\d{2}$/.test(requestedDate) ? requestedDate : clinicDayForTenant(tenantId);
-  const tokenNumber =
-    body.tokenNumber !== undefined && body.tokenNumber !== null
-      ? Number(body.tokenNumber)
-      : body.token_number !== undefined && body.token_number !== null
-        ? Number(body.token_number)
-        : nextTokenNumber(tenantId, date);
+  const date = resolveQueueDate(body.date, tenantTimezone(tenantId));
   const id = String(body.id || "").trim() || shortId("apt");
   const existing = getDb().prepare("SELECT id FROM appointments WHERE id = ?").get(id);
   if (existing) {
     throw Object.assign(new Error("Appointment id already exists"), { status: 409 });
   }
   const doctorId = String(body.doctorId || body.doctor_id || actor?.id || "");
+  const requestedToken =
+    body.tokenNumber !== undefined && body.tokenNumber !== null
+      ? Number(body.tokenNumber)
+      : body.token_number !== undefined && body.token_number !== null
+        ? Number(body.token_number)
+        : undefined;
   const doctor = getDoctorById(doctorId);
   const now = new Date().toISOString();
   const vitals = body.vitals == null ? null : jsonText(body.vitals, "null");
   const patientPhone = canonicalAppointmentPhone(String(mappedPatient.phone || ""));
-  getDb()
-    .prepare(
-      `INSERT INTO appointments (
-        id, tenant_id, token_number, patient_id, patient_name, patient_phone, uhid,
-        doctor_id, doctor_name, specialty, date, time_slot, type, status, source,
-        consultation_fee, is_paid, vitals, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-    .run(
-      id,
-      tenantId,
-      tokenNumber,
-      mappedPatient.id,
-      mappedPatient.name,
-      patientPhone,
-      mappedPatient.uhid,
-      doctorId,
-      String(body.doctorName || body.doctor_name || doctor?.name || actor?.name || ""),
-      String(body.specialty || doctor?.specialty || "General Medicine"),
-      date,
-      String(body.timeSlot || body.time_slot || ""),
-      String(body.type || "New Consultation"),
-      String(body.status || "Waiting"),
-      String(body.source || "Walk-in"),
-      Number(body.consultationFee ?? body.consultation_fee ?? 0),
-      body.isPaid === false || body.is_paid === 0 || body.is_paid === false ? 0 : body.isPaid || body.is_paid ? 1 : 0,
-      vitals,
-      now
-    );
+  const insert = getDb().prepare(
+    `INSERT INTO appointments (
+      id, tenant_id, token_number, patient_id, patient_name, patient_phone, uhid,
+      doctor_id, doctor_name, specialty, date, time_slot, type, status, source,
+      consultation_fee, is_paid, vitals, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  );
+  let tokenNumber = allocateTokenNumber(getDb(), tenantId, date, doctorId, requestedToken);
+  const insertArgs = () => [
+    id,
+    tenantId,
+    tokenNumber,
+    mappedPatient.id,
+    mappedPatient.name,
+    patientPhone,
+    mappedPatient.uhid,
+    doctorId,
+    String(body.doctorName || body.doctor_name || doctor?.name || actor?.name || ""),
+    String(body.specialty || doctor?.specialty || "General Medicine"),
+    date,
+    String(body.timeSlot || body.time_slot || ""),
+    String(body.type || "New Consultation"),
+    String(body.status || "Waiting"),
+    String(body.source || "Walk-in"),
+    Number(body.consultationFee ?? body.consultation_fee ?? 0),
+    body.isPaid === false || body.is_paid === 0 || body.is_paid === false ? 0 : body.isPaid || body.is_paid ? 1 : 0,
+    vitals,
+    now,
+  ];
+  try {
+    insert.run(...insertArgs());
+  } catch (err) {
+    if (!isTokenUniqueViolation(err)) throw err;
+    tokenNumber = allocateTokenNumber(getDb(), tenantId, date, doctorId);
+    insert.run(...insertArgs());
+  }
   getDb()
     .prepare("UPDATE patients SET last_visit = ? WHERE id = ? AND tenant_id = ?")
     .run(date, mappedPatient.id, tenantId);
@@ -922,12 +939,23 @@ export function updateAppointment(
   }
   const mapped = mapAppointment(existing);
   const status = body.status !== undefined ? String(body.status) : mapped.status;
-  const tokenNumber =
+  const nextDate =
+    body.date !== undefined ? resolveQueueDate(body.date, tenantTimezone(tenantId)) : String(mapped.date || "");
+  const nextDoctor = String(body.doctorId ?? body.doctor_id ?? mapped.doctorId ?? "");
+  const requestedToken =
     body.tokenNumber !== undefined
       ? Number(body.tokenNumber)
       : body.token_number !== undefined
         ? Number(body.token_number)
-        : mapped.tokenNumber;
+        : Number(mapped.tokenNumber);
+  const tokenNumber = allocateTokenNumber(
+    getDb(),
+    tenantId,
+    nextDate,
+    nextDoctor,
+    requestedToken,
+    appointmentId
+  );
   let vitalsText: string | null;
   if (body.vitals === null) {
     vitalsText = null;
@@ -966,8 +994,8 @@ export function updateAppointment(
       Number(isPaid),
       String(body.type ?? mapped.type),
       String(body.timeSlot ?? body.time_slot ?? mapped.timeSlot),
-      String(body.date ?? mapped.date),
-      String(body.doctorId ?? body.doctor_id ?? mapped.doctorId),
+      nextDate,
+      nextDoctor,
       String(body.doctorName ?? body.doctor_name ?? mapped.doctorName),
       String(body.specialty ?? mapped.specialty),
       patientPhone,

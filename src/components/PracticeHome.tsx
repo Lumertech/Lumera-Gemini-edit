@@ -107,6 +107,7 @@ export const PracticeHome: React.FC<PracticeHomeProps> = ({
   const todayRows = appointments.filter((row) => row.date === metrics.today && row.status !== "Cancelled" && row.status !== "No-Show");
   const next = pickNextVisit(appointments, metrics.today);
   const [whatsAppConnected, setWhatsAppConnected] = useState(false);
+  const [collectedToday, setCollectedToday] = useState<number | null>(null);
   const [branches, setBranches] = useState<Array<{ id: string; name?: string; address?: string }>>([]);
   const showBranches = user.role === "CLINIC_ADMIN" || user.role === "polyclinic_admin";
   const checks = setupChecklist({
@@ -118,6 +119,20 @@ export const PracticeHome: React.FC<PracticeHomeProps> = ({
   const progress = setupProgress(checks);
   const showSetup = showsSetupChecklist(user);
   const [setupOpen, setSetupOpen] = useState(!progress.complete);
+  useEffect(() => {
+    let cancelled = false;
+    void apiFetch<{ today?: number }>("/api/billing/revenue")
+      .then((data) => {
+        if (!cancelled) setCollectedToday(Number(data.today) || 0);
+      })
+      .catch(() => {
+        if (!cancelled) setCollectedToday(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user.tenantId, appointments]);
+
   useEffect(() => {
     let cancelled = false;
     void apiFetch<{ tenantNumber?: { status?: string } | null }>("/api/whatsapp-numbers/mine")
@@ -149,7 +164,10 @@ export const PracticeHome: React.FC<PracticeHomeProps> = ({
   }, [showBranches, user.tenantId]);
 
   const timeLabel = next ? formatVisitTime(next) : "";
-  const kpis = homeKpiCards(metrics, patients.length);
+  const kpis = homeKpiCards(metrics, patients.length).map((card) => {
+    if (card.label !== "Revenue" || collectedToday == null || collectedToday <= 0) return card;
+    return { ...card, value: formatHomeInr(collectedToday) };
+  });
   const trend = opdTrend(metrics);
 
   const specialtyTiles = (() => {

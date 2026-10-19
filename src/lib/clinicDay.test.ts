@@ -13,6 +13,7 @@ import {
   formatClinicDayLabel,
   formatClinicMonthLabel,
   parseAppointmentListDate,
+  resolveQueueDate,
   shiftIsoDate,
 } from "./clinicDay";
 
@@ -29,6 +30,10 @@ describe("clinic day queue filter", () => {
     assert.equal(clinicCalendarDate(now), "2026-10-15");
     assert.equal(clinicCalendarDate(now, "UTC (UTC+0:00)"), "2026-10-14");
     assert.equal(shiftIsoDate("2026-10-15", -1), "2026-10-14");
+    assert.equal(resolveQueueDate("2026-10-18T19:00:00.000Z"), "2026-10-19");
+    assert.equal(resolveQueueDate("2026-10-18T19:00:00.000Z", "IST (UTC+5:30)"), "2026-10-19");
+    assert.equal(resolveQueueDate("2026-10-14"), "2026-10-14");
+    assert.equal(resolveQueueDate("", null, new Date("2026-10-18T19:00:00.000Z")), "2026-10-19");
   });
 
   it("keeps the queue on the selected clinic day and leaves other days for history", () => {

@@ -191,6 +191,44 @@ function namedBookFor(tenantId: string): NamedBook | undefined {
   return NAMED_DEMO_BOOKS.find((book) => book.tenantId === tenantId);
 }
 
+/** Rows the demo book itself owns. Staff and QA visits use other ids and are not reshuffled once the book is full. */
+function isDemoManagedAppointmentId(id: string): boolean {
+  return /^(demo-book-|ind-apt-)/.test(String(id || ""));
+}
+
+function demoTokenFree(
+  database: SqlDatabase,
+  tenantId: string,
+  queueDate: string,
+  doctorId: string,
+  token: number
+): boolean {
+  const row = database
+    .prepare(
+      `SELECT id FROM appointments
+       WHERE tenant_id = ? AND date = ? AND doctor_id = ? AND token_number = ?
+       LIMIT 1`
+    )
+    .get(tenantId, queueDate, doctorId, token) as { id?: string } | undefined;
+  return !row?.id;
+}
+
+/** Prefer the demo sequence number, but never reuse a token already held for that queue day and doctor. */
+function freeDemoToken(
+  database: SqlDatabase,
+  tenantId: string,
+  queueDate: string,
+  doctorId: string,
+  preferred: number
+): number {
+  let token = preferred > 0 ? preferred : 1;
+  for (let i = 0; i < 100; i += 1) {
+    if (demoTokenFree(database, tenantId, queueDate, doctorId, token)) return token;
+    token += 1;
+  }
+  return preferred + 100000;
+}
+
 function orderedNamedRows(rows: AppointmentRow[]): AppointmentRow[] {
   const active = rows.filter((row) => isActiveStatus(String(row.status || "")));
   const inactive = rows.filter((row) => !isActiveStatus(String(row.status || "")));
@@ -247,7 +285,7 @@ function ensureNamedDemoBook(database: SqlDatabase, book: NamedBook, today: stri
     insertVisit.run(
       id,
       book.tenantId,
-      1000 + n,
+      freeDemoToken(database, book.tenantId, today, person.doctorId, 1000 + n),
       person.patientId,
       person.patientName,
       person.patientPhone,
@@ -319,7 +357,7 @@ function ensurePhysioPackageHistory(
       insertVisit.run(
         id,
         book.tenantId,
-        3000 + k,
+        freeDemoToken(database, book.tenantId, today, person.doctorId, 3000 + k),
         person.patientId,
         person.patientName,
         person.patientPhone,
@@ -392,7 +430,7 @@ export function spreadDemoBookDates(database: SqlDatabase, now = new Date()): vo
         insert.run(
           id,
           tenantId,
-          1000 + n,
+          freeDemoToken(database, tenantId, today, String(person.doctor_id || ""), 1000 + n),
           person.patient_id,
           person.patient_name,
           person.patient_phone || "",
@@ -412,8 +450,12 @@ export function spreadDemoBookDates(database: SqlDatabase, now = new Date()): vo
       const targets = packageTargets(book.tenantId);
       if (targets) ensurePhysioPackageHistory(database, book, window, today, now, list);
       const refreshed = list.all(tenantId, ...HIDDEN_AMBIENT_SOURCES) as AppointmentRow[];
+      const managed = refreshed.filter((row) => isDemoManagedAppointmentId(row.id));
+      const extras = refreshed.filter((row) => !isDemoManagedAppointmentId(row.id));
+      const planRows =
+        managed.length >= window.month && extras.length > 0 ? orderedNamedRows(managed) : orderedNamedRows(refreshed);
       const completed = new Map<string, number>();
-      orderedNamedRows(refreshed).forEach((row, index) => {
+      planRows.forEach((row, index) => {
         const date = demoBookDateForIndex(index, today, window);
         const slot = CLINIC_SLOTS[index % CLINIC_SLOTS.length];
         const plan = planNamedDemoRow(
@@ -430,10 +472,19 @@ export function spreadDemoBookDates(database: SqlDatabase, now = new Date()): vo
       continue;
     }
 
-    active.sort((a, b) => statusRank(a.status) - statusRank(b.status) || a.id.localeCompare(b.id));
-    const inactive = rows.filter((row) => !isActiveStatus(String(row.status || "")));
-    const ordered = [...active, ...inactive];
-    ordered.forEach((row, index) => {
+    const refreshed = list.all(tenantId, ...HIDDEN_AMBIENT_SOURCES) as AppointmentRow[];
+    const managed = refreshed.filter((row) => isDemoManagedAppointmentId(row.id));
+    const extras = refreshed.filter((row) => !isDemoManagedAppointmentId(row.id));
+    const activeRows = refreshed.filter((row) => isActiveStatus(String(row.status || "")));
+    const inactive = refreshed.filter((row) => !isActiveStatus(String(row.status || "")));
+    activeRows.sort((a, b) => statusRank(a.status) - statusRank(b.status) || a.id.localeCompare(b.id));
+    inactive.sort((a, b) => a.id.localeCompare(b.id));
+    const ordered = [...activeRows, ...inactive];
+    const planRows =
+      managed.length >= window.month && extras.length > 0
+        ? ordered.filter((row) => isDemoManagedAppointmentId(row.id))
+        : ordered;
+    planRows.forEach((row, index) => {
       const date = demoBookDateForIndex(index, today, window);
       const slot = CLINIC_SLOTS[index % CLINIC_SLOTS.length];
       update.run(date, slot, row.id, tenantId);

@@ -95,28 +95,25 @@ export const QueueBoard: React.FC<QueueBoardProps> = ({
 
   // Helper to resolve detailed patient profile from appointment
   const getPatientForAppointment = (apt: Appointment): Patient => {
-    const found = patients.find(
-      (p) => p.id === apt.patientId || p.uhid === apt.uhid || p.name.toLowerCase() === apt.patientName.toLowerCase()
-    );
-    if (found) return found;
+    const found = patients.find((p) => p.id === apt.patientId);
+    if (found) return { ...found, name: apt.patientName || found.name };
 
-    // Deterministic fallback with realistic ABDM profile
     return {
-      id: apt.patientId || `p-${apt.id}`,
+      id: apt.patientId || apt.id,
       name: apt.patientName,
-      uhid: apt.uhid || `LUM-2026-0${100 + apt.tokenNumber}`,
-      age: apt.age || 44,
-      gender: (apt.gender as any) || 'Male',
-      phone: apt.patientPhone || '+91 98234 55667',
-      email: `${apt.patientName.toLowerCase().replace(/[^a-z0-9]/g, '.')}@gmail.com`,
-      bloodGroup: 'B+',
-      abhaAddress: apt.abhaAddress || `${apt.patientName.toLowerCase().replace(/[^a-z0-9]/g, '.')}@abdm`,
-      abhaNumber: apt.abhaNumber || `91-4428-9102-${1000 + apt.tokenNumber}`,
-      kycStatus: 'LINKED_SANDBOX',
-      allergies: ['No known drug allergies (NKDA)'],
-      chronicConditions: ['Hypertension (Stage 1)'],
-      emergencyContact: '+91 98112 33445',
-      address: '74, Indiranagar 100 Feet Rd, Bengaluru, KA',
+      uhid: apt.uhid || '',
+      age: apt.age || 0,
+      gender: (apt.gender as any) || 'Other',
+      phone: apt.patientPhone || '',
+      email: '',
+      bloodGroup: '',
+      abhaAddress: apt.abhaAddress || '',
+      abhaNumber: apt.abhaNumber || '',
+      kycStatus: 'PENDING',
+      allergies: [],
+      chronicConditions: [],
+      emergencyContact: '',
+      address: '',
       vitals: apt.vitals,
     };
   };
@@ -685,7 +682,7 @@ export const QueueBoard: React.FC<QueueBoardProps> = ({
                   </div>
                   <div>
                     <h2 className="text-sm font-bold text-white flex items-center gap-1.5">
-                      {drawerData.patient.name}
+                      {drawerData.appointment.patientName}
                       {isAbhaLinked(drawerData.patient) && (
                         <ShieldCheck className="w-4 h-4 text-emerald-400" />
                       )}
