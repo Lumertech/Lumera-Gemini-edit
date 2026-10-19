@@ -149,7 +149,7 @@ export const AdminMetaTechProvider: React.FC = () => {
 
   const getBaseOrigin = () => {
     if (typeof window !== "undefined") return window.location.origin;
-    return "https://lumera.health";
+    return "";
   };
 
   // Embedded Signup Simulation

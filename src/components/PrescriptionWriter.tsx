@@ -15,7 +15,6 @@ import {
   Download, 
   RefreshCw, 
   Languages, 
-  QrCode, 
   Pill, 
   X,
   Stethoscope,
@@ -603,7 +602,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     clinicName: clinicSettings.name,
     clinicAddress: clinicSettings.address,
     clinicPhone: clinicSettings.phone,
-    qrVerificationUrl: `https://lumera.health/rx/${rxNumber}`,
+    qrVerificationUrl: "",
     whatsappSentStatus: statusOverride || (whatsAppDirectSuccess || whatsappSentSuccess ? 'delivered' : 'unsent'),
     specialtyType: activeSpecialty,
     physiotherapyAssessment: keepModule('physiotherapyAssessment', activeSpecialty === 'Physiotherapy & Rehabilitation') ? physioAssessment : undefined,
@@ -2333,19 +2332,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
           />
         </div>
 
-        {/* Footer with QR Code & Digital Signature Stamp */}
-        <div data-rx-signature="" className="border-t-2 border-slate-900 pt-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 min-w-0 break-words">
-          <div className="flex items-center space-x-3">
-            <div className="w-11 h-11 rounded-lg bg-slate-100 border border-slate-200 p-1 flex items-center justify-center">
-              <QrCode className="w-9 h-9 text-slate-800" />
-            </div>
-            <div className="text-[10px] text-slate-500 space-y-0.5">
-              <p className="font-bold text-slate-800">Scan to Verify Digital Rx</p>
-              <p>URL: https://lumera.health/rx/{rxNumber}</p>
-              <p className="text-slate-400">Designed for ABDM records (sandbox — not yet live)</p>
-            </div>
-          </div>
-
+        <div data-rx-signature="" className="border-t-2 border-slate-900 pt-4 flex justify-end min-w-0 break-words">
           <div className="text-left sm:text-right">
             <div className="inline-block border-b border-dashed border-slate-400 pb-1 px-4 mb-1">
               {(clinicSettings.signatureUrl || currentDoctor.signatureUrl) ? (

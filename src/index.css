@@ -54,6 +54,7 @@
     width: 100% !important;
     max-width: 100% !important;
     box-sizing: border-box !important;
+    padding: 8mm;
     background: #fff !important;
     color: #000 !important;
   }

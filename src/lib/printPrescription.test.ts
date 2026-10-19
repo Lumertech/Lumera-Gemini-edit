@@ -192,6 +192,7 @@ describe("paper Rx print isolation", () => {
     const css = fs.readFileSync(path.join(rootDir, "src/index.css"), "utf8");
     assert.match(css, /@page\s*\{[^}]*size:\s*A4/s);
     assert.match(css, /margin:\s*12mm/);
+    assert.match(css, /body\.printing-rx #rx-print-root\s*\{[^}]*padding:\s*8mm/s);
     assert.match(css, /width:\s*100%/);
     assert.match(css, /box-sizing:\s*border-box/);
     assert.match(css, /page-break-inside:\s*avoid/);
@@ -209,6 +210,9 @@ describe("paper Rx print isolation", () => {
     assert.match(writer, /data-rx-has-content=\{riskLevel \? "true" : "false"\}/);
     assert.match(writer, /data-rx-signature/);
     assert.match(writer, /data-rx-meds/);
+    assert.equal(writer.includes("lumera.health"), false);
+    assert.equal(writer.includes("Scan to Verify"), false);
+    assert.equal(writer.includes("Designed for ABDM"), false);
     assert.match(writer, /Print Paper Rx/);
     assert.match(writer, /Print Prescription/);
     assert.match(writer, /Print Rx/);
