@@ -13,9 +13,11 @@ import path from "node:path";
  * PR #164's server/public-url-hosts.test.ts is the lumera.health / lumera.me
  * host regression. This scan is the broader host and email allowlist. It does
  * not flag the URL strings that test already owns (Rx QR, FHIR systems, the
- * client Rx/pay buttons, and the seeded portal URL). Each of those exemptions
- * must still match source. When #164 removes the URL, this test fails until
- * the exemption is deleted.
+ * client Rx/pay buttons, and the seeded portal URL). The clinicalData.ts
+ * patterns match only those two button URLs. They do not cover
+ * DEFAULT_DOCTORS: those nine roster mailboxes are @example.com and are not
+ * logins. Each of those exemptions must still match source. When #164 removes
+ * the URL, this test fails until the exemption is deleted.
  */
 export const ALLOWED_HOSTS: ReadonlyArray<{ host: string; why: string }> = [
   { host: "mylumera.in", why: "Apex domain Lumera owns. Subdomains such as www are included." },

@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   ALLOWED_HOSTS,
   HOST_SUFFIXES,
+  PR164_OWNED_URLS,
   findUnownedHosts,
   hostAllowed,
   scanUserFacingHosts,
@@ -118,6 +120,41 @@ describe("owned host allowlist", () => {
       clinical.map((hit) => hit.line),
       [2]
     );
+  });
+
+  it("keeps the nine default doctor roster emails on example.com and off the login list", () => {
+    const clinical = fs.readFileSync(path.join(root, "src/data/clinicalData.ts"), "utf8");
+    const start = clinical.indexOf("export const DEFAULT_DOCTORS");
+    const end = clinical.indexOf("export const DEFAULT_PATIENTS");
+    const block = clinical.slice(start, end);
+    const emails = [...block.matchAll(/email:\s*'([^']+)'/g)].map((match) => match[1]);
+    assert.deepEqual(emails, [
+      "dr.malhotra@example.com",
+      "dr.siddharth@example.com",
+      "dr.ananya@example.com",
+      "dr.rajesh@example.com",
+      "dr.meera@example.com",
+      "dr.harsh@example.com",
+      "dr.shalini@example.com",
+      "dr.arun@example.com",
+      "dr.alok@example.com",
+    ]);
+    assert.equal(/lumera\.health|mylumera\.in/.test(block), false);
+    assert.deepEqual(findUnownedHosts(block, "src/data/clinicalData.ts"), []);
+
+    const patterns = PR164_OWNED_URLS["src/data/clinicalData.ts"];
+    for (const email of emails) {
+      for (const pattern of patterns) {
+        pattern.lastIndex = 0;
+        assert.equal(pattern.test(email), false, email);
+      }
+    }
+
+    const seed = fs.readFileSync(path.join(root, "server/db-seed-maps.ts"), "utf8");
+    const userInserts = seed.slice(seed.indexOf("insertUser.run"), seed.indexOf("const insertDoc"));
+    for (const email of emails) assert.equal(userInserts.includes(email), false, email);
+    assert.match(userInserts, /doctor@lumera\.me/);
+    assert.match(seed, /email: "doctor@lumera\.me"/);
   });
 
   it("scans src, server, public, hosting, server.ts, and index.html, and fails closed on any other host", () => {
