@@ -1029,10 +1029,13 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
           <button
             type="button"
             data-testid="consult-ambient-mic"
+            disabled={scribeStatus === 'requesting'}
             onClick={() => {
               setIsAmbientScribeOpen(true);
-              if (scribeStatus === 'listening' || scribeStatus === 'requesting') {
+              if (scribeStatus === 'listening') {
                 ambientScribeRef.current?.stopListening();
+              } else if (scribeStatus === 'requesting') {
+                return;
               } else if (scribeStatus !== 'processing' && scribeStatus !== 'transcribing') {
                 ambientScribeRef.current?.startListening();
               }
@@ -1054,7 +1057,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
               {scribeStatus === 'listening'
                 ? 'Stop listening'
                 : scribeStatus === 'requesting'
-                  ? 'Allow microphone…'
+                  ? 'Starting…'
                   : scribeStatus === 'transcribing'
                     ? 'Transcribing…'
                     : scribeStatus === 'processing'

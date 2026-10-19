@@ -25,18 +25,16 @@ import { apiFetchResponse } from '../api/http';
 import { ABHA_LINKING_STATUS, showsAbhaSandboxStatus } from '../lib/clinicNav';
 import { AmbientRecordingDisclosure, AmbientScribeConsentDialog } from './AmbientScribeConsentDialog';
 import {
-  beginAmbientMicGesture,
-  micErrorMessage,
+  commitAmbientTap,
+  MIC_STOPPED_RESUME,
   microphoneStatusLabel,
   resetAmbientMicrophoneSession,
-  shouldUploadAmbientRecording,
-  startAmbientMic,
+  startAmbientCaptureRun,
   transcriptBadge,
-  transcribeRecordedAudio,
-  type AmbientMicGesture,
+  type AmbientRunSnapshot,
+  type AmbientTapSlot,
   type TranscriptOrigin,
 } from '../lib/ambientMic';
-import { ambientMicStartDecision } from '../lib/ambientScribeConsent';
 import { useAmbientScribeConsent } from '../lib/useAmbientScribeConsent';
 
 interface AmbientAIStudioProps {
@@ -151,13 +149,9 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
   const [audioLevel, setAudioLevel] = useState(0);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [micError, setMicError] = useState<string | null>(null);
-  const sessionRef = React.useRef<{ stop: () => void } | null>(null);
-  const uploadLockRef = React.useRef(false);
+  const slotRef = useRef<AmbientTapSlot>({ phase: 'idle', sessions: 0 });
+  const runRef = useRef<{ stop: () => void } | null>(null);
   const finalTranscriptRef = React.useRef('');
-  const cancelStartRef = React.useRef(false);
-  const startingRef = React.useRef(false);
-  const skipUploadRef = React.useRef(false);
-  const captureStartedAtRef = useRef(0);
   const stopMicRef = useRef<() => void>(() => {});
   const consent = useAmbientScribeConsent({
     appointmentId,
@@ -181,43 +175,35 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
 
   useEffect(() => {
     return () => {
-      sessionRef.current?.stop();
-      sessionRef.current = null;
+      runRef.current?.stop();
+      runRef.current = null;
     };
   }, []);
 
   const shownTranscript = [transcript, interimTranscript].filter(Boolean).join(interimTranscript ? ' ' : '');
 
-  const uploadFallback = async (audioBlob: Blob) => {
-    if (!shouldUploadAmbientRecording()) return;
-    if (uploadLockRef.current) return;
-    if (audioBlob.size < 100) {
-      setMicError('No audio was captured to transcribe. Allow the microphone and speak, or type the consult.');
-      return;
-    }
-    uploadLockRef.current = true;
-    setIsTranscribing(true);
-    try {
-      const elapsed = captureStartedAtRef.current > 0 ? Date.now() - captureStartedAtRef.current : 0;
-      const text = await transcribeRecordedAudio(audioBlob, undefined, elapsed, consent.appointmentId());
-      finalTranscriptRef.current = text;
-      setTranscript(text);
+  const applySnap = (snap: AmbientRunSnapshot) => {
+    slotRef.current.phase = snap.phase;
+    setIsRequesting(snap.phase === 'starting');
+    setIsRecording(snap.phase === 'listening');
+    if (snap.transcript) {
+      finalTranscriptRef.current = snap.transcript;
+      setTranscript(snap.transcript);
       setInterimTranscript('');
       setTranscriptOrigin('server');
+    }
+    if (snap.phase === 'error' || snap.phase === 'stopped') {
+      setMicError(snap.error);
+      setAudioLevel(0);
+    } else if (snap.phase === 'listening') {
       setMicError(null);
-    } catch (err) {
-      setMicError(err instanceof Error ? err.message : 'Server transcription failed.');
-    } finally {
-      uploadLockRef.current = false;
-      setIsTranscribing(false);
     }
   };
 
   const stopMic = () => {
-    cancelStartRef.current = true;
-    startingRef.current = false;
-    sessionRef.current?.stop();
-    sessionRef.current = null;
+    runRef.current?.stop();
+    runRef.current = null;
+    slotRef.current.phase = 'idle';
     setIsRecording(false);
     setIsRequesting(false);
     setInterimTranscript('');
@@ -235,95 +221,42 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
   };
 
   stopMicRef.current = () => {
-    skipUploadRef.current = true;
     stopMic();
     resetAmbientMicrophoneSession();
   };
 
   const handleStartStopRecording = (force?: 'start' | 'stop') => {
-    const decision = ambientMicStartDecision({
+    const armed = commitAmbientTap(slotRef.current, {
       force,
-      listening: isRecording,
-      requesting: isRequesting || startingRef.current,
-      busy: uploadLockRef.current,
       consentGranted: consent.allowsStart(),
     });
-    if (decision === 'stop') {
+    if (armed.decision === 'stop') {
       stopMic();
       return;
     }
-    if (decision === 'ask-consent') {
+    if (armed.decision === 'ask-consent') {
       consent.ask();
       return;
     }
-    if (decision !== 'start') return;
-    consent.acknowledgeSecondTap();
-    startingRef.current = true;
-    let gesture: AmbientMicGesture;
-    try {
-      gesture = beginAmbientMicGesture();
-    } catch (err) {
-      startingRef.current = false;
-      const mapped = micErrorMessage(err);
-      setMicError(mapped.message);
+    if (armed.decision !== 'start' || !armed.gesture) {
+      if (armed.error) setMicError(armed.error);
       return;
     }
-    cancelStartRef.current = false;
-    setMicError(null);
+    consent.acknowledgeSecondTap();
     setIsRequesting(true);
+    setMicError(null);
     if (transcriptOrigin === 'sample') {
       finalTranscriptRef.current = '';
       setTranscript('');
       setInterimTranscript('');
       setTranscriptOrigin('empty');
     }
-    void openStudioMic(gesture);
-  };
-
-  const openStudioMic = async (gesture: AmbientMicGesture) => {
-    try {
-      const session = await startAmbientMic({
-        gesture,
-        lang: 'en-IN',
-        onLevel: setAudioLevel,
-        onError: (message) => {
-          setMicError(message);
-        },
-        onInterrupted: (message) => {
-          skipUploadRef.current = true;
-          setMicError(message);
-        },
-        onAudioRecorded: (blob) => {
-          setIsRecording(false);
-          setIsRequesting(false);
-          setAudioLevel(0);
-          if (skipUploadRef.current) {
-            skipUploadRef.current = false;
-            return;
-          }
-          void uploadFallback(blob);
-        },
-        onStopped: () => {
-          setIsRecording(false);
-          setIsRequesting(false);
-        },
-      });
-      if (cancelStartRef.current) {
-        session.stop();
-        return;
-      }
-      sessionRef.current = session;
-      startingRef.current = false;
-      captureStartedAtRef.current = Date.now();
-      setIsRequesting(false);
-      setIsRecording(true);
-    } catch (err) {
-      const mapped = micErrorMessage(err);
-      setMicError(mapped.message);
-      startingRef.current = false;
-      setIsRequesting(false);
-      setIsRecording(false);
-    }
+    runRef.current = startAmbientCaptureRun({
+      gesture: armed.gesture,
+      appointmentId: consent.appointmentId(),
+      onLevel: setAudioLevel,
+      onUpdate: applySnap,
+    });
   };
 
   const handleGenerateSOAP = async () => {
@@ -475,8 +408,18 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
                 <span>
                   {micError ||
                     consent.notice ||
-                    'Waiting for the browser microphone prompt. If none appears, allow the microphone in the address bar and try again.'}
+                    (isRequesting ? 'Starting…' : 'Waiting for the browser microphone prompt. If none appears, allow the microphone in the address bar and try again.')}
                 </span>
+                {micError ? (
+                  <button
+                    type="button"
+                    data-testid="studio-mic-retry"
+                    onClick={() => handleStartStopRecording('start')}
+                    className="shrink-0 rounded border border-rose-300 bg-white px-2 py-0.5 font-semibold text-rose-800"
+                  >
+                    Retry
+                  </button>
+                ) : null}
               </div>
             )}
 
@@ -496,7 +439,8 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
                 type="button"
                 data-testid="studio-ambient-mic"
                 onClick={() => handleStartStopRecording()}
-                aria-label={isTranscribing ? 'Transcribing…' : isRecording ? 'Stop listening' : isRequesting ? 'Waiting for microphone permission' : 'Start listening'}
+                disabled={isRequesting}
+                aria-label={isTranscribing ? 'Transcribing…' : isRecording ? 'Stop listening' : isRequesting ? 'Starting…' : 'Start listening'}
                 className={`w-12 h-12 rounded-lg flex items-center justify-center transition-all duration-200 shadow-sm ${
                   isRecording
                     ? 'bg-red-600 hover:bg-red-700 text-white ring-2 ring-red-200 scale-105'
@@ -512,12 +456,18 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
               <div className="flex-1 space-y-1 text-center sm:text-left w-full">
                 <div className="flex items-center justify-between text-xs">
                   <span className="font-semibold text-slate-700 text-[11px]" data-testid="studio-mic-status">
-                    {microphoneStatusLabel({
-                      requesting: isRequesting,
-                      recording: isRecording,
-                      transcriptOrigin,
-                      transcribing: isTranscribing,
-                    })}
+                    {isRequesting
+                      ? 'Starting…'
+                      : isRecording
+                        ? 'Listening'
+                        : micError === MIC_STOPPED_RESUME
+                          ? 'Stopped'
+                          : microphoneStatusLabel({
+                              requesting: false,
+                              recording: false,
+                              transcriptOrigin,
+                              transcribing: isTranscribing,
+                            })}
                   </span>
                   <span className="text-slate-400 font-mono text-[10px]">
                     {isRecording ? `${audioLevel}%` : isRequesting ? '…' : 'Idle'}

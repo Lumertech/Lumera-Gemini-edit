@@ -22,9 +22,11 @@ export function ambientMicStartDecision(input: {
   busy: boolean;
   consentGranted: boolean;
 }): AmbientMicStartDecision {
-  const shouldStop = input.force === "stop" || (input.force !== "start" && (input.listening || input.requesting));
+  // A tap while capture is still starting must not open a second session or stop the first one.
+  if (input.requesting) return "ignore";
+  const shouldStop = input.force === "stop" || (input.force !== "start" && input.listening);
   if (shouldStop) return "stop";
-  if (input.listening || input.requesting || input.busy) return "ignore";
+  if (input.listening || input.busy) return "ignore";
   if (!input.consentGranted) return "ask-consent";
   return "start";
 }

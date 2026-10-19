@@ -4,9 +4,14 @@ import path from "node:path";
 import { beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
+  AMBIENT_FIRST_CHUNK_MS,
+  AMBIENT_NO_CHUNK_MESSAGE,
+  AMBIENT_NO_TRANSCRIPT_MESSAGE,
+  AMBIENT_TRANSCRIBE_MS,
   AmbientMicError,
   attachMicrophoneRecovery,
   beginAmbientMicGesture,
+  commitAmbientTap,
   describeMicrophoneRecovery,
   mapAmbientCaptureFailure,
   MAX_AMBIENT_RECORDING_MS,
@@ -19,10 +24,15 @@ import {
   resetAmbientMicrophoneSession,
   shouldUploadAmbientRecording,
   selectRecorderMimeType,
+  startAmbientCaptureRun,
   startAmbientMic,
   transcriptBadge,
   transcribeRecordedAudio,
   transcriptionMimeType,
+  type AmbientGestureDeps,
+  type AmbientRunPhase,
+  type AmbientRunSnapshot,
+  type AmbientTapSlot,
 } from "./ambientMic.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -468,5 +478,286 @@ describe("server transcription fallback", () => {
     const text = await transcribeRecordedAudio(blob, fakeFetch as typeof fetch);
     assert.equal(text, "Doctor: fever for two days.");
     assert.equal(url, "/api/gemini/transcribe");
+  });
+
+  it("maps AI_TRANSCRIPTION_NOT_CONFIGURED and the other non-2xx codes to fixed text", async () => {
+    const blob = new Blob([new Uint8Array(200)], { type: "audio/webm" });
+    const cases: Array<{ status: number; code: string; pattern: RegExp }> = [
+      { status: 503, code: "AI_TRANSCRIPTION_NOT_CONFIGURED", pattern: /not configured/i },
+      { status: 409, code: "consent_required", pattern: /record the patient agreement/i },
+      { status: 413, code: "too_large", pattern: /too long/i },
+      { status: 415, code: "unsupported", pattern: /format cannot be transcribed/i },
+      { status: 429, code: "rate", pattern: /too many transcription/i },
+      { status: 401, code: "unauthorized", pattern: /sign in again/i },
+      { status: 403, code: "forbidden", pattern: /sign in again/i },
+    ];
+    for (const item of cases) {
+      const fakeFetch = async () =>
+        new Response(JSON.stringify({ code: item.code, error: "Gemini secret failure" }), {
+          status: item.status,
+          headers: { "Content-Type": "application/json" },
+        });
+      await assert.rejects(
+        () => transcribeRecordedAudio(blob, fakeFetch as typeof fetch),
+        (err: unknown) => {
+          assert.ok(err instanceof Error);
+          assert.match(err.message, item.pattern);
+          assert.doesNotMatch(err.message, /gemini|secret/i);
+          return true;
+        }
+      );
+    }
+  });
+});
+
+function liveTrackStream() {
+  const track = new EventTarget() as MediaStreamTrack & { readyState: string; stop: () => void };
+  track.readyState = "live";
+  track.stop = () => {
+    track.readyState = "ended";
+  };
+  const stream = {
+    getAudioTracks: () => [track],
+    getTracks: () => [track],
+  } as unknown as MediaStream;
+  return { track, stream };
+}
+
+class FakeRecorder {
+  state = "inactive";
+  ondataavailable: ((event: { data: Blob }) => void) | null = null;
+  onstop: (() => void) | null = null;
+  constructor(
+    readonly stream: MediaStream,
+    readonly mimeType: string
+  ) {}
+  start(_timeslice?: number) {
+    this.state = "recording";
+  }
+  stop() {
+    this.state = "inactive";
+    this.onstop?.();
+  }
+  emit(data: Blob) {
+    this.ondataavailable?.({ data });
+  }
+}
+
+function tapDeps(stream: MediaStream, onCall: () => void): AmbientGestureDeps {
+  return {
+    isSecureContext: true,
+    permissions: { query: () => new Promise(() => {}) },
+    mediaDevices: {
+      getUserMedia: () => {
+        onCall();
+        return Promise.resolve(stream);
+      },
+    },
+    createAudioContext: () => ({
+      state: "running",
+      resume: () => Promise.resolve(),
+      close: () => Promise.resolve(),
+      createMediaStreamSource: () => {
+        throw new Error("meter off");
+      },
+      createAnalyser: () => {
+        throw new Error("meter off");
+      },
+    }),
+  };
+}
+
+async function flushMicrotasks() {
+  for (let i = 0; i < 8; i += 1) await Promise.resolve();
+}
+
+async function settle() {
+  await flushMicrotasks();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await flushMicrotasks();
+}
+
+describe("one tap capture and no silent listening", () => {
+  it("one tap creates one getUserMedia call and one session, and a double tap is ignored", () => {
+    const { stream } = liveTrackStream();
+    let calls = 0;
+    const slot: AmbientTapSlot = { phase: "idle", sessions: 0 };
+    const deps = tapDeps(stream, () => {
+      calls += 1;
+    });
+    const first = commitAmbientTap(slot, { consentGranted: true, deps });
+    const second = commitAmbientTap(slot, { consentGranted: true, deps, force: "start" });
+    const third = commitAmbientTap(slot, { consentGranted: true, deps, force: "stop" });
+    assert.equal(first.decision, "start");
+    assert.equal(second.decision, "ignore");
+    assert.equal(third.decision, "ignore");
+    assert.equal(calls, 1);
+    assert.equal(slot.sessions, 1);
+    assert.equal(slot.phase, "starting");
+    assert.equal(AMBIENT_FIRST_CHUNK_MS, 10_000);
+    assert.equal(AMBIENT_TRANSCRIBE_MS, 10_000);
+  });
+
+  it("stays starting until the first chunk, then listens only after a transcript", async () => {
+    const { stream } = liveTrackStream();
+    const slot: AmbientTapSlot = { phase: "idle", sessions: 0 };
+    let calls = 0;
+    const armed = commitAmbientTap(slot, { consentGranted: true, deps: tapDeps(stream, () => { calls += 1; }) });
+    assert.ok(armed.gesture);
+    let recorder: FakeRecorder | null = null;
+    const phases: AmbientRunPhase[] = [];
+    let snap: AmbientRunSnapshot | null = null;
+    let pendingFetch: ((response: Response) => void) | null = null;
+    let queuedResponse: Response | null = null;
+    const fetchImpl = () =>
+      new Promise<Response>((resolve) => {
+        if (queuedResponse) resolve(queuedResponse);
+        else pendingFetch = resolve;
+      });
+    const respond = (response: Response) => {
+      if (pendingFetch) pendingFetch(response);
+      else queuedResponse = response;
+    };
+    startAmbientCaptureRun({
+      gesture: armed.gesture,
+      fetchImpl: fetchImpl as typeof fetch,
+      onUpdate: (next) => {
+        phases.push(next.phase);
+        snap = next;
+      },
+      createRecorder: (media, mime) => {
+        recorder = new FakeRecorder(media, mime);
+        return recorder as unknown as MediaRecorder;
+      },
+    });
+    await flushMicrotasks();
+    assert.equal(snap?.phase, "starting");
+    assert.equal(phases.includes("listening"), false);
+    assert.ok(recorder);
+    (recorder as FakeRecorder).emit(new Blob([new Uint8Array(200)], { type: "audio/webm" }));
+    await settle();
+    assert.equal(snap?.phase, "starting");
+    assert.equal(phases.includes("listening"), false);
+    respond(new Response(JSON.stringify({ success: true, transcription: "fever for two days" }), { status: 200 }));
+    await settle();
+    assert.equal(snap?.phase, "listening");
+    assert.equal(snap?.transcript, "fever for two days");
+    assert.equal(calls, 1);
+  });
+
+  it("ends in an error and never listening when no chunk arrives", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { stream } = liveTrackStream();
+    const slot: AmbientTapSlot = { phase: "idle", sessions: 0 };
+    const armed = commitAmbientTap(slot, { consentGranted: true, deps: tapDeps(stream, () => {}) });
+    assert.ok(armed.gesture);
+    const phases: AmbientRunPhase[] = [];
+    let snap: AmbientRunSnapshot | null = null;
+    startAmbientCaptureRun({
+      gesture: armed.gesture,
+      onUpdate: (next) => {
+        phases.push(next.phase);
+        snap = next;
+      },
+      createRecorder: (media, mime) => new FakeRecorder(media, mime) as unknown as MediaRecorder,
+    });
+    await flushMicrotasks();
+    assert.equal(snap?.phase, "starting");
+    t.mock.timers.tick(AMBIENT_FIRST_CHUNK_MS);
+    await flushMicrotasks();
+    assert.equal(snap?.phase, "error");
+    assert.equal(snap?.error, AMBIENT_NO_CHUNK_MESSAGE);
+    assert.equal(snap?.canRetry, true);
+    assert.equal(phases.includes("listening"), false);
+    t.mock.timers.reset();
+  });
+
+  it("ends in an error and never listening when transcribe returns 503", async () => {
+    const { stream } = liveTrackStream();
+    const slot: AmbientTapSlot = { phase: "idle", sessions: 0 };
+    const armed = commitAmbientTap(slot, { consentGranted: true, deps: tapDeps(stream, () => {}) });
+    assert.ok(armed.gesture);
+    let recorder: FakeRecorder | null = null;
+    const phases: AmbientRunPhase[] = [];
+    let snap: AmbientRunSnapshot | null = null;
+    startAmbientCaptureRun({
+      gesture: armed.gesture,
+      fetchImpl: async () =>
+        new Response(JSON.stringify({ code: "AI_TRANSCRIPTION_NOT_CONFIGURED", message: "AI transcription not configured" }), {
+          status: 503,
+          headers: { "Content-Type": "application/json" },
+        }),
+      onUpdate: (next) => {
+        phases.push(next.phase);
+        snap = next;
+      },
+      createRecorder: (media, mime) => {
+        recorder = new FakeRecorder(media, mime);
+        return recorder as unknown as MediaRecorder;
+      },
+    });
+    await flushMicrotasks();
+    assert.ok(recorder);
+    (recorder as FakeRecorder).emit(new Blob([new Uint8Array(220)], { type: "audio/webm" }));
+    await settle();
+    assert.equal(snap?.phase, "error");
+    assert.match(snap?.error || "", /not configured/i);
+    assert.equal(snap?.canRetry, true);
+    assert.equal(phases.includes("listening"), false);
+  });
+
+  it("ends in an error and never listening when the first upload does not return", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { stream } = liveTrackStream();
+    const slot: AmbientTapSlot = { phase: "idle", sessions: 0 };
+    const armed = commitAmbientTap(slot, { consentGranted: true, deps: tapDeps(stream, () => {}) });
+    assert.ok(armed.gesture);
+    let recorder: FakeRecorder | null = null;
+    const phases: AmbientRunPhase[] = [];
+    let snap: AmbientRunSnapshot | null = null;
+    startAmbientCaptureRun({
+      gesture: armed.gesture,
+      fetchImpl: () => new Promise<Response>(() => {}),
+      onUpdate: (next) => {
+        phases.push(next.phase);
+        snap = next;
+      },
+      createRecorder: (media, mime) => {
+        recorder = new FakeRecorder(media, mime);
+        return recorder as unknown as MediaRecorder;
+      },
+    });
+    await flushMicrotasks();
+    (recorder as FakeRecorder).emit(new Blob([new Uint8Array(220)], { type: "audio/webm" }));
+    await flushMicrotasks();
+    assert.equal(snap?.phase, "starting");
+    t.mock.timers.tick(AMBIENT_TRANSCRIBE_MS);
+    await flushMicrotasks();
+    assert.equal(snap?.phase, "error");
+    assert.equal(snap?.error, AMBIENT_NO_TRANSCRIPT_MESSAGE);
+    assert.equal(phases.includes("listening"), false);
+    t.mock.timers.reset();
+  });
+
+  it("shows a stopped state when the track ends", async () => {
+    const { track, stream } = liveTrackStream();
+    const slot: AmbientTapSlot = { phase: "idle", sessions: 0 };
+    const armed = commitAmbientTap(slot, { consentGranted: true, deps: tapDeps(stream, () => {}) });
+    assert.ok(armed.gesture);
+    let snap: AmbientRunSnapshot | null = null;
+    startAmbientCaptureRun({
+      gesture: armed.gesture,
+      onUpdate: (next) => {
+        snap = next;
+      },
+      createRecorder: (media, mime) => new FakeRecorder(media, mime) as unknown as MediaRecorder,
+    });
+    await flushMicrotasks();
+    track.readyState = "ended";
+    track.dispatchEvent(new Event("ended"));
+    await flushMicrotasks();
+    assert.equal(snap?.phase, "stopped");
+    assert.equal(snap?.error, MIC_STOPPED_RESUME);
+    assert.equal(snap?.canRetry, true);
   });
 });

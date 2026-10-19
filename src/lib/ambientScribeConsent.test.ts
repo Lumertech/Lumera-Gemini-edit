@@ -44,6 +44,30 @@ describe("per-visit ambient scribe consent", () => {
       ambientMicStartDecision({ listening: true, requesting: false, busy: false, consentGranted: true }),
       "stop"
     );
+    assert.equal(
+      ambientMicStartDecision({ listening: false, requesting: true, busy: false, consentGranted: true }),
+      "ignore"
+    );
+    assert.equal(
+      ambientMicStartDecision({
+        force: "stop",
+        listening: false,
+        requesting: true,
+        busy: false,
+        consentGranted: true,
+      }),
+      "ignore"
+    );
+    assert.equal(
+      ambientMicStartDecision({
+        force: "start",
+        listening: false,
+        requesting: true,
+        busy: false,
+        consentGranted: true,
+      }),
+      "ignore"
+    );
   });
 
   it("uses a queue appointment id and does not invent a walk-in id", () => {
@@ -67,11 +91,17 @@ describe("per-visit ambient scribe consent", () => {
     assert.match(hook, /visitRef\.current = ""/);
     assert.match(hook, /grantedRef\.current = false/);
     assert.doesNotMatch(hook, /getUserMedia|beginAmbientMicGesture/);
+    const helper = fs.readFileSync(path.join(root, "src/lib/ambientMic.ts"), "utf8");
+    const tap = helper.slice(helper.indexOf("export function commitAmbientTap"));
+    const decision = tap.indexOf("ambientMicStartDecision(");
+    const gesture = tap.indexOf("beginAmbientMicGesture(");
+    assert.ok(decision > 0 && gesture > decision);
     for (const rel of ["src/components/CompactAmbientScribe.tsx", "src/components/AmbientAIStudio.tsx"]) {
       const source = fs.readFileSync(path.join(root, rel), "utf8");
       assert.match(source, /void consent\.confirm\(\)/);
-      assert.match(source, /beginAmbientMicGesture\(\)/);
-      assert.doesNotMatch(source, /confirm\(\(\) =>[\s\S]{0,120}beginAmbientMicGesture/);
+      assert.match(source, /commitAmbientTap\(/);
+      assert.doesNotMatch(source, /await[\s\S]{0,40}commitAmbientTap/);
+      assert.doesNotMatch(source, /confirm\(\(\) =>[\s\S]{0,120}commitAmbientTap/);
     }
   });
 
@@ -91,10 +121,15 @@ describe("per-visit ambient scribe consent", () => {
     assert.match(dialog, /AMBIENT_RECORDING_DISCLOSURE/);
     for (const source of [compact, studio]) {
       assert.match(source, /AmbientRecordingDisclosure/);
-      assert.match(source, /ambientMicStartDecision\(/);
-      const decision = source.indexOf("ambientMicStartDecision(");
-      const gesture = source.indexOf("beginAmbientMicGesture()");
-      assert.ok(decision > 0 && gesture > decision);
+      assert.match(source, /commitAmbientTap\(/);
+      assert.match(source, /Starting…/);
+      assert.match(source, /disabled=\{isRequesting\}/);
     }
+    const rx = fs.readFileSync(path.join(root, "src/components/PrescriptionWriter.tsx"), "utf8");
+    assert.match(rx, /startListening\(\)/);
+    assert.match(rx, /Starting…/);
+    assert.match(rx, /disabled=\{scribeStatus === 'requesting'\}/);
+    assert.doesNotMatch(rx, /await[\s\S]{0,40}startListening/);
+    assert.doesNotMatch(rx, /scribeStatus === 'requesting'\) \{\s*ambientScribeRef\.current\?\.stopListening/);
   });
 });

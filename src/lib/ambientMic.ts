@@ -1,4 +1,5 @@
 import { apiFetchResponse } from "../api/http";
+import { ambientMicStartDecision, type AmbientMicStartDecision } from "./ambientScribeConsent";
 
 export type AmbientMicErrorCode =
   | "permission-denied"
@@ -239,7 +240,11 @@ export async function transcribeRecordedAudio(
   if (res.status === 429) {
     throw new Error("Too many transcription requests. Wait a moment, then try again.");
   }
-  if (res.status === 503 || data.code === "transcribe_unavailable") {
+  if (
+    res.status === 503 ||
+    data.code === "AI_TRANSCRIPTION_NOT_CONFIGURED" ||
+    data.code === "transcribe_unavailable"
+  ) {
     throw new Error("Server transcription is not configured. Type the consult.");
   }
   if (res.status === 404) {
@@ -624,4 +629,289 @@ export async function startAmbientMic(options: StartAmbientMicOptions): Promise<
   capTimer = setTimeout(() => stop(), MAX_AMBIENT_RECORDING_MS);
 
   return { stream, stop };
+}
+
+/** Stay on Starting… until a live track has produced a non-empty chunk and that chunk transcribed. */
+export const AMBIENT_FIRST_CHUNK_MS = 10_000;
+export const AMBIENT_TRANSCRIBE_MS = 10_000;
+export const AMBIENT_NO_CHUNK_MESSAGE = "No audio arrived from the microphone. Tap Retry.";
+export const AMBIENT_NO_TRANSCRIPT_MESSAGE = "No transcript arrived from the recording. Tap Retry.";
+
+export type AmbientRunPhase = "idle" | "starting" | "listening" | "error" | "stopped";
+
+export interface AmbientRunSnapshot {
+  phase: AmbientRunPhase;
+  error: string | null;
+  transcript: string;
+  canRetry: boolean;
+}
+
+export interface AmbientTapSlot {
+  phase: AmbientRunPhase;
+  sessions: number;
+}
+
+/**
+ * One tap starts exactly one getUserMedia call and one session.
+ * A second tap while the phase is starting is ignored, so it cannot start another session or tear the first one down.
+ * getUserMedia runs in this call, before the function returns.
+ */
+export function commitAmbientTap(
+  slot: AmbientTapSlot,
+  input: {
+    force?: "start" | "stop";
+    busy?: boolean;
+    consentGranted: boolean;
+    deps?: AmbientGestureDeps;
+  }
+): { decision: AmbientMicStartDecision; gesture?: AmbientMicGesture; error?: string } {
+  const decision = ambientMicStartDecision({
+    force: input.force,
+    listening: slot.phase === "listening",
+    requesting: slot.phase === "starting",
+    busy: Boolean(input.busy),
+    consentGranted: input.consentGranted,
+  });
+  if (decision === "stop") {
+    slot.phase = "idle";
+    return { decision };
+  }
+  if (decision !== "start") return { decision };
+  try {
+    const gesture = beginAmbientMicGesture(input.deps);
+    slot.phase = "starting";
+    slot.sessions += 1;
+    return { decision, gesture };
+  } catch (err) {
+    slot.phase = "error";
+    const mapped = micErrorMessage(err);
+    return { decision, error: mapped.message };
+  }
+}
+
+export interface AmbientCaptureRun {
+  stop: () => void;
+}
+
+/**
+ * Listening is published only after the track is live, a non-empty chunk arrived,
+ * and the first transcribe call returned text. A 503 or a 10s miss stays off Listening.
+ */
+export function startAmbientCaptureRun(options: {
+  gesture: AmbientMicGesture;
+  appointmentId?: string;
+  fetchImpl?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+  onLevel?: (level: number) => void;
+  onUpdate: (snap: AmbientRunSnapshot) => void;
+  firstChunkMs?: number;
+  transcribeMs?: number;
+  streamTimeoutMs?: number;
+  createRecorder?: (stream: MediaStream, mimeType: string) => MediaRecorder;
+  isTypeSupported?: (mime: string) => boolean;
+}): AmbientCaptureRun {
+  const firstChunkMs = options.firstChunkMs ?? AMBIENT_FIRST_CHUNK_MS;
+  const transcribeMs = options.transcribeMs ?? AMBIENT_TRANSCRIBE_MS;
+  const streamTimeoutMs = options.streamTimeoutMs ?? MIC_PROMPT_TIMEOUT_MS;
+  let phase: AmbientRunPhase = "starting";
+  let error: string | null = null;
+  let transcript = "";
+  let finished = false;
+  let sawChunk = false;
+  let recorder: MediaRecorder | null = null;
+  let chunkTimer: ReturnType<typeof setTimeout> | null = null;
+  let transcribeTimer: ReturnType<typeof setTimeout> | null = null;
+  let detachRecovery: () => void = () => {};
+
+  const publish = () => {
+    options.onUpdate({
+      phase,
+      error,
+      transcript,
+      canRetry: phase === "error" || phase === "stopped",
+    });
+  };
+
+  const clearTimers = () => {
+    if (chunkTimer) clearTimeout(chunkTimer);
+    if (transcribeTimer) clearTimeout(transcribeTimer);
+    chunkTimer = null;
+    transcribeTimer = null;
+  };
+
+  const fail = (message: string) => {
+    if (finished) return;
+    finished = true;
+    clearTimers();
+    detachRecovery();
+    phase = "error";
+    error = message;
+    try {
+      if (recorder && recorder.state !== "inactive") recorder.stop();
+    } catch {
+      /* ignore */
+    }
+    void options.gesture.audioContext.close().catch(() => {});
+    options.onLevel?.(0);
+    publish();
+  };
+
+  const stop = () => {
+    if (finished) return;
+    finished = true;
+    clearTimers();
+    detachRecovery();
+    phase = "idle";
+    error = null;
+    try {
+      if (recorder && recorder.state !== "inactive") recorder.stop();
+    } catch {
+      /* ignore */
+    }
+    void options.gesture.audioContext.close().catch(() => {});
+    options.onLevel?.(0);
+    publish();
+  };
+
+  publish();
+
+  chunkTimer = setTimeout(() => {
+    if (!sawChunk) fail(AMBIENT_NO_CHUNK_MESSAGE);
+  }, firstChunkMs);
+
+  const uploadFirst = (blob: Blob) => {
+    const timeoutError = () => new Error(AMBIENT_NO_TRANSCRIPT_MESSAGE);
+    void withTimeout(
+      transcribeRecordedAudio(blob, options.fetchImpl, firstChunkMs, options.appointmentId),
+      transcribeMs,
+      timeoutError
+    )
+      .then((text) => {
+        if (finished) return;
+        if (transcribeTimer) clearTimeout(transcribeTimer);
+        transcribeTimer = null;
+        transcript = text;
+        phase = "listening";
+        error = null;
+        publish();
+      })
+      .catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : "Server transcription failed. Type the consult.";
+        fail(message);
+      });
+  };
+
+  void (async () => {
+    let stream: MediaStream;
+    try {
+      stream = await withTimeout(
+        options.gesture.streamPromise,
+        streamTimeoutMs,
+        () => new AmbientMicError("permission-denied", micPromptTimeoutMessage())
+      );
+    } catch (err) {
+      const mapped = micErrorMessage(err);
+      fail(mapped.message);
+      return;
+    }
+    if (finished) return;
+    const live = stream.getAudioTracks().some((track) => track.readyState === "live");
+    if (!live) {
+      fail(MIC_STOPPED_RESUME);
+      return;
+    }
+
+    if (typeof document !== "undefined") {
+      detachRecovery = attachMicrophoneRecovery(stream, document, () => {
+        if (finished) return;
+        finished = true;
+        clearTimers();
+        phase = "stopped";
+        error = MIC_STOPPED_RESUME;
+        try {
+          if (recorder && recorder.state !== "inactive") recorder.stop();
+        } catch {
+          /* ignore */
+        }
+        options.onLevel?.(0);
+        publish();
+      });
+    } else {
+      const onEnded = () => {
+        if (finished) return;
+        const stillLive = stream.getAudioTracks().some((track) => track.readyState === "live");
+        if (stillLive) return;
+        finished = true;
+        clearTimers();
+        phase = "stopped";
+        error = MIC_STOPPED_RESUME;
+        try {
+          if (recorder && recorder.state !== "inactive") recorder.stop();
+        } catch {
+          /* ignore */
+        }
+        options.onLevel?.(0);
+        publish();
+      };
+      for (const track of stream.getAudioTracks()) track.addEventListener("ended", onEnded);
+      detachRecovery = () => {
+        for (const track of stream.getAudioTracks()) track.removeEventListener("ended", onEnded);
+      };
+    }
+
+    try {
+      options.gesture.audioContext.createMediaStreamSource(stream);
+    } catch {
+      /* The level meter is optional. Capture still proceeds. */
+    }
+
+    const mimeType = selectRecorderMimeType((mime) => {
+      if (options.isTypeSupported) return options.isTypeSupported(mime);
+      if (typeof MediaRecorder !== "undefined" && typeof MediaRecorder.isTypeSupported === "function") {
+        return MediaRecorder.isTypeSupported(mime);
+      }
+      return false;
+    });
+
+    try {
+      recorder = options.createRecorder
+        ? options.createRecorder(stream, mimeType)
+        : mimeType
+          ? new MediaRecorder(stream, { mimeType })
+          : new MediaRecorder(stream);
+    } catch {
+      fail("The microphone could not be started. Tap Retry.");
+      return;
+    }
+
+    const parts: Blob[] = [];
+    let uploadStarted = false;
+    recorder.ondataavailable = (event: BlobEvent) => {
+      if (finished || !event.data || event.data.size <= 0) return;
+      const trackLive = stream.getAudioTracks().some((track) => track.readyState === "live");
+      if (!trackLive) return;
+      if (!sawChunk) {
+        sawChunk = true;
+        if (chunkTimer) clearTimeout(chunkTimer);
+        chunkTimer = null;
+        transcribeTimer = setTimeout(() => {
+          if (phase !== "listening") fail(AMBIENT_NO_TRANSCRIPT_MESSAGE);
+        }, transcribeMs);
+      }
+      if (uploadStarted || phase === "listening") return;
+      parts.push(event.data);
+      const total = parts.reduce((sum, part) => sum + part.size, 0);
+      if (total < 100) return;
+      uploadStarted = true;
+      const blob = new Blob(parts, { type: transcriptionMimeType(mimeType || event.data.type) });
+      parts.length = 0;
+      uploadFirst(blob);
+    };
+    try {
+      recorder.start(1000);
+    } catch {
+      fail("The microphone could not be started. Tap Retry.");
+    }
+  })();
+
+  return { stop };
 }
