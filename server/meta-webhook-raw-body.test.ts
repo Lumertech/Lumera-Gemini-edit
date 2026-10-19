@@ -250,13 +250,14 @@ describe("POST /api/meta/webhook through createLumeraApp", () => {
     return { status: res.status, json, text };
   }
 
-  it("mounts raw-body capture before express.json in the app factory", () => {
+  it("mounts raw-body capture immediately before globalJsonParser in the app factory", () => {
     const src = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "create-app.ts"), "utf8");
     const boot = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "server.ts"), "utf8");
+    const jsonSrc = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "json-body.ts"), "utf8");
     const mountOrder = [
       "attachHttpSecurity(app)",
       "app.use(metaWebhookRawBody)",
-      "express.json(",
+      "app.use(globalJsonParser())",
       "protectWhatsAppDashboard(createWhatsAppRouter())",
       "createLiveRegistrationRouter()",
       "createApiRouter()",
@@ -270,13 +271,17 @@ describe("POST /api/meta/webhook through createLumeraApp", () => {
       assert.ok(at > previous, `${marker} must stay in main's mount order`);
       previous = at;
     }
-    assert.equal(src.indexOf("express.json("), src.lastIndexOf("express.json("));
-    assert.match(src, /if \(Buffer\.isBuffer\(request\.rawBody\)\) return;/);
+    const between = src.slice(src.indexOf("app.use(metaWebhookRawBody)"), src.indexOf("app.use(globalJsonParser())"));
+    assert.equal(between.split("app.use(").length, 2);
+    assert.equal(src.indexOf("app.use(globalJsonParser())"), src.lastIndexOf("app.use(globalJsonParser())"));
+    assert.equal(src.includes("express.json("), false);
+    assert.match(jsonSrc, /if \(Buffer\.isBuffer\(req\.rawBody\)\) return;/);
     const securitySrc = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "meta-security.ts"), "utf8");
     assert.match(securitySrc, /limit: "1mb"/);
     assert.match(boot, /createLumeraApp\(/);
     assert.ok(boot.indexOf("createLumeraApp()") < boot.indexOf("attachProductionSpaFallback(app)"));
     assert.equal(boot.includes("express.json("), false);
+    assert.equal(boot.includes("globalJsonParser("), false);
     const metaSrc = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "meta.ts"), "utf8");
     assert.equal(metaSrc.includes("JSON.stringify(req.body"), false);
   });
