@@ -98,6 +98,9 @@ export const DATABASE_URL_REQUIRED_MESSAGE =
 export const APP_URL_REQUIRED_MESSAGE =
   "APP_URL is required in production (no placeholder). Set APP_URL=https://www.mylumera.in. This process exits before listen(0.0.0.0, PORT); Cloud Run keeps the previous revision.";
 
+export const PATIENT_LINK_OTP_SECRET_REQUIRED_MESSAGE =
+  "PATIENT_LINK_OTP_SECRET is required in production. Set PATIENT_LINK_OTP_SECRET on the Cloud Run service (Secret Manager), then rebuild. This process exits before listen(0.0.0.0, PORT); Cloud Run keeps the previous revision.";
+
 /**
  * Cloud Run / `npm start` entry is `dist/server.cjs` and may omit NODE_ENV.
  * Treat a bundled server start as production unless NODE_ENV is already set.
@@ -122,7 +125,8 @@ export function demoLoginEnabled(env: NodeJS.ProcessEnv = process.env): boolean 
 }
 
 /**
- * Production hosting requires JWT_SECRET and a durable Postgres URL.
+ * Production hosting requires JWT_SECRET, a durable Postgres URL, APP_URL,
+ * and PATIENT_LINK_OTP_SECRET.
  * Meta / Facebook / Razorpay secrets stay optional until the founder provisions them.
  * There is no default JWT and no SQLite fallback: a missing or placeholder value throws
  * before listen.
@@ -140,6 +144,10 @@ export function assertRequiredProductionEnv(env: NodeJS.ProcessEnv = process.env
   const appUrl = String(env.APP_URL || "").trim().replace(/\/$/, "");
   if (!appUrl || isUnsetOrPlaceholder(appUrl)) {
     throw new Error(APP_URL_REQUIRED_MESSAGE);
+  }
+  const otpSecret = String(env.PATIENT_LINK_OTP_SECRET || "").trim();
+  if (!otpSecret || isUnsetOrPlaceholder(otpSecret)) {
+    throw new Error(PATIENT_LINK_OTP_SECRET_REQUIRED_MESSAGE);
   }
 }
 
