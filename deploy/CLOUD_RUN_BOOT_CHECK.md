@@ -21,7 +21,8 @@ Cloud Run logs are checked.
 
 Set a real `JWT_SECRET` **and** `DATABASE_URL` on service `lumera-gemini-edit` (`asia-south1`) via
 Secret Manager or Cloud Run Console. `cloudbuild.yaml` uses `--update-env-vars`
-for `APP_URL` / `NODE_ENV` only and **must not wipe** `JWT_SECRET` or `DATABASE_URL`.
+for `APP_URL`, `NODE_ENV`, `VERTEX_PROJECT`, `VERTEX_LOCATION`, and `VERTEX_GEMINI_MODEL`,
+and **must not wipe** `JWT_SECRET` or `DATABASE_URL`.
 Attach Cloud SQL with `--add-cloudsql-instances` / `_CLOUDSQL_INSTANCE` after the
 founder confirms the instance (`docs/CLOUD_SQL_POSTGRES.md`).
 

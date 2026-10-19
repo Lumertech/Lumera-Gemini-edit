@@ -32,6 +32,7 @@ import {
 } from './types';
 import { apiFetch } from './api/http';
 import { appointmentIdForBillContext, appointmentsForClinicDay, clinicCalendarDate } from './lib/clinicDay';
+import { pickInvoiceForContext, type PersistedInvoice } from './lib/billingCollect';
 import { useAuth } from './auth/AuthContext';
 import { useNav } from './nav/NavigationContext';
 import { canonicalizeAppView, appViewToPath } from './nav/surfaces';
@@ -606,11 +607,49 @@ export default function ClinicianApp() {
     setPinnedBillAppointmentId((prev) => (prev === visit.id ? prev : visit.id));
   }, [recordId, currentView, appointments, queueAppointments, patients]);
 
+  const invoicePatientIdRef = useRef("");
+  useEffect(() => {
+    const patientId = invoicePatientIdRef.current;
+    if (!patientId) return;
+    const match = patients.find((row) => row.id === patientId);
+    if (match) setCurrentPatient((prev) => (prev.id === match.id ? prev : match));
+  }, [patients]);
+
+  const rememberInvoice = (invoice: PersistedInvoice) => {
+    if (invoice.patientId) invoicePatientIdRef.current = invoice.patientId;
+    if (invoice.appointmentId) setPinnedBillAppointmentId(invoice.appointmentId);
+    const match = invoice.patientId ? patients.find((row) => row.id === invoice.patientId) : undefined;
+    if (match) setCurrentPatient((prev) => (prev.id === match.id ? prev : match));
+  };
+
+  const openBillForAppointment = (aptId: string, patientId?: string) => {
+    if (patientId) {
+      const match = patients.find((row) => row.id === patientId);
+      if (match) setCurrentPatient(match);
+    }
+    if (aptId) setPinnedBillAppointmentId(aptId);
+    void (async () => {
+      let invoiceId = "";
+      if (aptId) {
+        try {
+          const list = await apiFetch<{ invoices: PersistedInvoice[] }>(
+            `/api/invoices?appointmentId=${encodeURIComponent(aptId)}`
+          );
+          invoiceId = pickInvoiceForContext(list.invoices || [], { appointmentId: aptId })?.id || "";
+        } catch (err) {
+          console.error("Failed to open bill", err);
+        }
+      }
+      go("app", {
+        appView: "billing",
+        workspaceSlug: sessionWorkspace,
+        ...(invoiceId ? { recordId: invoiceId } : {}),
+      });
+    })();
+  };
+
   const handleOpenBillForAppointment = (apt: Appointment) => {
-    const p = patients.find((pat) => pat.id === apt.patientId) || currentPatient;
-    setCurrentPatient(p);
-    setPinnedBillAppointmentId(apt.id);
-    setCurrentView('billing');
+    openBillForAppointment(apt.id, apt.patientId);
   };
 
   const handleAddNewToken = (newToken: Partial<Appointment>) => {
@@ -941,6 +980,7 @@ export default function ClinicianApp() {
               onTransferToRx={handleTransferToRx}
               onSelectPatient={handleSelectPatient}
               allPatients={patients}
+              appointmentId={draftAppointmentId}
             />
           )}
 
@@ -972,7 +1012,7 @@ export default function ClinicianApp() {
                   {autoSaveStatus === 'saving' && 'Saving draft...'}
                   {autoSaveStatus === 'unsaved' && 'Unsaved changes (auto-saving soon...)'}
                 </span>
-                <span className="text-slate-400">SOAP Notes & Prescription Auto-Sync Active</span>
+                <span className="text-slate-400">Rx draft only — not signed, printed, or sent</span>
               </div>
               <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden flex flex-col">
                 {draftSession.phase === 'loading' && (
@@ -986,6 +1026,7 @@ export default function ClinicianApp() {
                     key={writerKey(draftSession) || currentPatient.id}
                     currentPatient={currentPatient}
                     currentDoctor={currentDoctor}
+                    appointmentId={draftAppointmentId}
                     initialDraft={draftSession.draft}
                     initialSoapData={null}
                     onSavePrescription={handleSavePrescription}
@@ -993,12 +1034,13 @@ export default function ClinicianApp() {
                     isSpecialtyLocked={isSpecialtyLocked}
                     lockedSpecialty={lockedSpecialty}
                     onProceedToBilling={() => {
-                      const id = appointmentIdForBillContext(billPool, {
-                        patientId: currentPatient.id,
-                        day: clinicCalendarDate(),
-                      });
-                      setPinnedBillAppointmentId(id);
-                      setCurrentView('billing');
+                      const id =
+                        recordId ||
+                        appointmentIdForBillContext(billPool, {
+                          patientId: currentPatient.id,
+                          day: clinicCalendarDate(),
+                        });
+                      openBillForAppointment(id, currentPatient.id);
                     }}
                     appointments={appointments}
                     onBookFollowUp={async (input) => persistAppointmentCreate(input)}
@@ -1130,9 +1172,25 @@ export default function ClinicianApp() {
               currentDoctor={currentDoctor}
               clinicSettings={clinicSettings}
               activePrescription={prescriptions.find((p) => p.patientId === currentPatient.id) || null}
+              invoiceId={recordId}
               appointmentId={billingAppointmentId || undefined}
               appointment={billingAppointment}
               appointmentIsPaid={Boolean(billingAppointment?.isPaid)}
+              onInvoiceReady={(invoice, source) => {
+                rememberInvoice(invoice);
+                if (source !== "save" || !invoice.id || invoice.id === recordId) return;
+                go("app", {
+                  appView: "billing",
+                  recordId: invoice.id,
+                  workspaceSlug: sessionWorkspace,
+                  replace: true,
+                });
+              }}
+              onLeaveInvoice={() => {
+                invoicePatientIdRef.current = "";
+                setPinnedBillAppointmentId("");
+                go("app", { appView: "billing", workspaceSlug: sessionWorkspace });
+              }}
               onPaymentSuccess={(_invoiceNumber, _amount) => {
                 void Promise.all([
                   apiFetch<{ appointments: Appointment[] }>('/api/appointments'),

@@ -196,6 +196,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   return (
     <aside
       data-testid="app-sidebar"
+      data-print-chrome=""
       data-pack-kind={pack.kind}
       className={`${
         isCollapsed ? 'w-16' : 'w-60'

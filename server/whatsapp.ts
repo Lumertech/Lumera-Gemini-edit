@@ -7,7 +7,8 @@ import {
   escapeHtml,
   getTenantLetterhead,
 } from "./letterhead.ts";
-import { GoogleGenAI } from "@google/genai";
+import type { GoogleGenAI } from "@google/genai";
+import { getVertexClient, vertexGeminiModel, vertexGenerateContent } from "./vertex-gemini.ts";
 import {
   bookWhatsAppAppointment,
   dispatchAppointmentReminder,
@@ -32,6 +33,8 @@ import { authenticatedLabReportPath, authorizeLabReport, labOwnerTenantId, sendL
 import { WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
 import { formatINR } from "../src/lib/currency.ts";
 import { AI_RUPEE_OUTPUT_RULE } from "./india-currency-copy.ts";
+import { maxTranscribeBase64Chars } from "./json-body.ts";
+import { base64DecodedBytes, canonicalTranscribeMime, transcribeDurationTooLong } from "./transcribe-policy.ts";
 import {
   clinicTenantId,
   getTenantConversation,
@@ -121,19 +124,8 @@ ${AI_RUPEE_OUTPUT_RULE}`,
   };
 }
 
-let defaultGenAIClient: GoogleGenAI | null = null;
 function getDefaultGenAI(): GoogleGenAI | null {
-  if (!defaultGenAIClient && process.env.GEMINI_API_KEY) {
-    defaultGenAIClient = new GoogleGenAI({
-      apiKey: process.env.GEMINI_API_KEY,
-      httpOptions: {
-        headers: {
-          "User-Agent": "aistudio-build",
-        },
-      },
-    });
-  }
-  return defaultGenAIClient;
+  return getVertexClient();
 }
 
 function serializeWhatsAppMessage(m: Record<string, unknown>) {
@@ -574,7 +566,7 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
       // AUTOMATED BOT ENGINE (Runs ONLY if sender === 'user' AND handover_mode === 'bot')
       // ----------------------------------------------------
       if (sender === "user" && !isStaffTakeover) {
-        const botReply = await processBotActionOrQuery(content, patientPhone, patientName, conv, db, getGenAI, {
+        const botReply = await processBotActionOrQuery(content, patientPhone, patientName, conv, db, {
           tenantId: bodyTenantId ? String(bodyTenantId) : undefined,
           sessionTenantId,
           phoneNumberId: phoneNumberId ? String(phoneNumberId) : undefined,
@@ -1064,8 +1056,6 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
         patientPhone = "+91 98234 55667",
       } = req.body;
 
-      const ai = getGenAI();
-
       // If preset audio or prompt selected (e.g. testing in Hindi, Marathi, English)
       let transcription = "";
       let detectedLang = "en";
@@ -1094,8 +1084,24 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
         }
       }
 
-      // If audioBase64 provided, pass to Gemini
-      if (audioBase64 && ai) {
+      // Patient audio goes through Vertex. No API-key client and no invented transcript.
+      if (audioBase64) {
+        const canonicalMime = canonicalTranscribeMime(mimeType);
+        if (!canonicalMime) {
+          return res.status(415).json({ error: "Unsupported audio type." });
+        }
+        const cleanBase64 = String(audioBase64).replace(/^data:audio\/[a-z0-9]+;base64,/, "");
+        if (cleanBase64.length > maxTranscribeBase64Chars()) {
+          return res.status(413).json({ error: "Recording is too long to transcribe." });
+        }
+        const audioBytes = base64DecodedBytes(cleanBase64);
+        if (transcribeDurationTooLong(audioBytes, req.body?.durationMs)) {
+          return res.status(413).json({ error: "Recording is too long to transcribe." });
+        }
+        const ai = getGenAI();
+        if (!ai) {
+          return res.status(503).json({ code: "AI_WHATSAPP_NOT_CONFIGURED", message: "AI transcription not configured" });
+        }
         try {
           const voiceFacing = resolveClinicFacingNames(getDb(), String(req.user?.tenantId || ""));
           const prompt = `You are the clinical audio assistant for ${voiceFacing.clinicName}. The consulting clinician is ${voiceFacing.doctorName}. Transcribe this patient voice note accurately.
@@ -1113,13 +1119,12 @@ Output strictly in JSON:
 }
 ${AI_RUPEE_OUTPUT_RULE}`;
 
-          const cleanBase64 = audioBase64.replace(/^data:audio\/[a-z0-9]+;base64,/, "");
           const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
+            model: vertexGeminiModel(),
             contents: [
               {
                 inlineData: {
-                  mimeType,
+                  mimeType: canonicalMime,
                   data: cleanBase64,
                 },
               },
@@ -1141,7 +1146,12 @@ ${AI_RUPEE_OUTPUT_RULE}`;
             patientIntent: parsed.patientIntent || "consultation",
           });
         } catch (geminiErr: unknown) {
-          console.warn("Gemini audio transcription fallback:", geminiErr);
+          const name = geminiErr && typeof geminiErr === "object" && "name" in geminiErr ? String((geminiErr as { name?: string }).name) : "Error";
+          console.warn("WhatsApp audio transcription failed", name);
+          return res.status(503).json({
+            code: "AI_WHATSAPP_UNAVAILABLE",
+            message: "AI transcription is temporarily unavailable",
+          });
         }
       }
 
@@ -1163,7 +1173,8 @@ ${AI_RUPEE_OUTPUT_RULE}`;
         patientIntent: "prescription",
       });
     } catch (err: unknown) {
-      console.error("Error in /api/whatsapp/voice-process:", err);
+      const name = err && typeof err === "object" && "name" in err ? String((err as { name?: string }).name) : "Error";
+      console.error("Error in /api/whatsapp/voice-process", name);
       res.status(500).json({ error: "Failed to process voice note" });
     }
   });
@@ -1602,7 +1613,6 @@ async function processBotActionOrQuery(
   patientName: string,
   conv: Record<string, unknown>,
   db: any,
-  getGenAI: () => GoogleGenAI | null,
   tenantHints: { tenantId?: string; sessionTenantId?: string; phoneNumberId?: string; wabaId?: string } = {}
 ): Promise<{
   content: string;
@@ -1795,30 +1805,31 @@ async function processBotActionOrQuery(
     };
   }
 
-  // 7. General Clinical or Query - Use Gemini AI if available
-  const ai = getGenAI();
-  if (ai) {
-    try {
-      const assistantCopy = clinicOutboundCopy({
-        ...resolveClinicFacingNames(db, tenantId),
-        patientName,
-        patientText: text,
-      });
-      const prompt = assistantCopy.assistantPrompt;
-
-      const res = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: [{ text: prompt }],
-      });
-
+  // 7. General Clinical or Query — Vertex only. No API-key client and no other endpoint.
+  try {
+    const assistantCopy = clinicOutboundCopy({
+      ...resolveClinicFacingNames(db, tenantId),
+      patientName,
+      patientText: text,
+    });
+    const res = await vertexGenerateContent({
+      model: vertexGeminiModel(),
+      contents: [{ text: assistantCopy.assistantPrompt }],
+    });
+    const reply = String(res.text || "").trim();
+    if (reply) {
       return {
-        content: res.text || assistantCopy.assistantFallback,
+        content: reply,
         buttons: ["📅 Book Doctor Appointment", "💊 Refill Prescription", "🔬 View Lab Reports", "👤 Speak with Receptionist"],
       };
-    } catch (err) {
-      reportCaughtError(err, "whatsapp.gemini.fallback");
-      /* fallback below */
     }
+    return {
+      content: assistantCopy.assistantFallback,
+      buttons: ["📅 Book Doctor Appointment", "💊 Refill Prescription", "🔬 View Lab Reports", "👤 Speak with Receptionist"],
+    };
+  } catch (err: unknown) {
+    const name = err && typeof err === "object" && "name" in err ? String((err as { name?: string }).name) : "Error";
+    console.warn("whatsapp.gemini.fallback", name);
   }
 
   // Default Fallback
@@ -1859,7 +1870,7 @@ async function translateWithGeminiOrFallback(text: string, targetLang: string, a
   if (ai) {
     try {
       const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
+        model: vertexGeminiModel(),
         contents: [
           {
             text: `Translate the following clinical or medical chat message accurately into ${targetName}. Maintain a polite, reassuring medical tone. Only return the translated text:\n\n"${text}"`,

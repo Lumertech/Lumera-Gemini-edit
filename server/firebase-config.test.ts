@@ -39,10 +39,12 @@ describe("Firebase Hosting → Cloud Run config (#26)", () => {
     assert.doesNotMatch(docker, /ENV PORT=3000/);
   });
 
-  it("cloudbuild deploy updates APP_URL/NODE_ENV only and does not wipe JWT_SECRET", () => {
+  it("cloudbuild deploy updates APP_URL, NODE_ENV, and Vertex env without wiping JWT_SECRET", () => {
     const yaml = readRepo("cloudbuild.yaml");
     const withoutComments = yaml.replace(/#.*$/gm, "");
-    assert.match(yaml, /--update-env-vars=NODE_ENV=production,APP_URL=https:\/\/www\.mylumera\.in/);
+    assert.match(yaml, /--update-env-vars=NODE_ENV=production,APP_URL=https:\/\/www\.mylumera\.in,VERTEX_PROJECT=gen-lang-client-0108182367,VERTEX_LOCATION=asia-south1,VERTEX_GEMINI_MODEL=gemini-3\.5-flash-lite/);
+    assert.match(yaml, /_REGION: asia-south1/);
+    assert.match(yaml, /--region="\$\{_REGION\}"/);
     assert.doesNotMatch(withoutComments, /--set-env-vars/);
     assert.doesNotMatch(withoutComments, /--update-env-vars=[^\n]*JWT_SECRET/);
     assert.doesNotMatch(withoutComments, /--update-env-vars=[^\n]*DATABASE_URL/);

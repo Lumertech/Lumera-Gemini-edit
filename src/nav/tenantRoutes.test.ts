@@ -14,6 +14,10 @@ describe("tenant screen routes", () => {
     assert.equal(parseWorkspaceScreen("opd").screen, "opd");
     assert.equal(parseWorkspaceScreen("queue").screen, "opd");
     assert.equal(parseWorkspaceScreen("invoices").appView, "billing");
+    assert.equal(parseWorkspaceScreen("invoices", "inv-194b83").recordId, "inv-194b83");
+    assert.equal(parseWorkspaceScreen("invoices", "inv-194b83").screen, "invoices");
+    assert.equal(parseWorkspaceScreen("billing", "inv-194b83").appView, "billing");
+    assert.equal(parseWorkspaceScreen("billing", "inv-194b83").recordId, "inv-194b83");
     assert.equal(parseWorkspaceScreen("payments").payFocus, true);
     assert.equal(parseWorkspaceScreen("ai-voice").appView, "voicebot");
     assert.equal(parseWorkspaceScreen("consultations").appView, "rx");
@@ -37,6 +41,14 @@ describe("tenant screen routes", () => {
       appViewToWorkspacePath("rx", "physiodoctor-practice", "visit-1"),
       "/w/physiodoctor-practice/rx/visit-1"
     );
+    assert.equal(
+      workspaceScreenPath("malhotra-individual-practice", "invoices", "inv-194b83"),
+      "/w/malhotra-individual-practice/invoices/inv-194b83"
+    );
+    assert.equal(
+      appViewToWorkspacePath("billing", "malhotra-individual-practice", "inv-194b83"),
+      "/w/malhotra-individual-practice/invoices/inv-194b83"
+    );
   });
 
   it("canonicalizes legacy segments and leaves unknown screens on the same URL", () => {
@@ -54,6 +66,11 @@ describe("tenant screen routes", () => {
     );
     assert.equal(canonicalizeTenantScreenPath("/w/physiodoctor-practice/rx"), "/w/physiodoctor-practice/consultations");
     assert.equal(canonicalizeTenantScreenPath("/w/physiodoctor-practice/rx/visit-1"), null);
+    assert.equal(canonicalizeTenantScreenPath("/w/malhotra-individual-practice/invoices/inv-194b83"), null);
+    assert.equal(
+      canonicalizeTenantScreenPath("/w/malhotra-individual-practice/billing/inv-194b83"),
+      "/w/malhotra-individual-practice/invoices/inv-194b83"
+    );
     assert.equal(canonicalizeTenantScreenPath("/w/physiodoctor-practice/patients/pat-42"), null);
     assert.equal(canonicalizeTenantScreenPath("/w/physiodoctor-practice/reception"), null);
     assert.equal(canonicalizeTenantScreenPath("/w/physiodoctor-practice/whatsapp"), null);
