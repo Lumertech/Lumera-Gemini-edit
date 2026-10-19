@@ -22,7 +22,6 @@ import {
 } from "./graph-whatsapp.ts";
 import { isProduction } from "./runtime.ts";
 import { getTenantLetterhead } from "./letterhead.ts";
-import { appPublicUrl, AppPublicUrlError } from "./runtime.ts";
 import { PATIENT_PHONE_MISSING, RX_SEND_FAILED, SAFETY_REVIEW_REQUIRED } from "../src/lib/signedRxWhatsAppSend.ts";
 import { mintPatientLinkToken, revokePatientLinkToken } from "./patient-link-token.ts";
 import { patientOptedIn } from "./whatsapp-opt-in.ts";
@@ -324,18 +323,7 @@ export async function handleSignedRxWhatsAppSend(req: Request, res: Response): P
       res.status(404).json({ code: RX_NOT_FOUND });
       return;
     }
-    let portalUrl = "";
-    try {
-      portalUrl = appPublicUrl(req.get("host") || undefined, req.protocol);
-    } catch (err) {
-      if (err instanceof AppPublicUrlError) {
-        auditRxSend(req, tenantId, rxNumber, "failed", RX_SEND_FAILED);
-        res.status(500).json({ code: RX_SEND_FAILED });
-        return;
-      }
-      throw err;
-    }
-    const resolved = await resolveSignedRxWhatsAppSend(getDb(), tenantId, req.body, portalUrl);
+    const resolved = await resolveSignedRxWhatsAppSend(getDb(), tenantId, req.body, "");
     if (resolved.ok === false) {
       auditRxSend(req, tenantId, rxNumber, "failed", resolved.code);
       res.status(resolved.status).json({ code: resolved.code });

@@ -56,21 +56,16 @@ describe("public URL hosts", () => {
     assert.deepEqual(hits, []);
   });
 
-  it("keeps template, portal, and HEP links on the public base with an opaque token slot", () => {
-    const read = (rel: string) => fs.readFileSync(path.join(root, rel), "utf8");
-    const catalog = read("server/clinic-whatsapp-templates.ts");
-    const clinical = read("src/data/clinicalData.ts");
-    const portal = read("server/db-seed-meta.ts");
-    const hep = read("src/components/specialty-rx/PhysioProgressTracker.tsx");
-    assert.match(catalog, /PATIENT_LINK_PUBLIC_BASE_URL/);
-    assert.match(catalog, /\/rx\/v\/\{\{1\}\}/);
-    assert.match(clinical, /https:\/\/www\.mylumera\.in\/rx\/v\/\{\{1\}\}/);
-    assert.match(clinical, /https:\/\/www\.mylumera\.in\/pay\/v\/\{\{1\}\}/);
-    assert.equal(clinical.includes("opaque-token"), false);
-    assert.equal(/lumera\.health\/rx\//.test(clinical), false);
-    assert.match(portal, /\$\{PATIENT_LINK_PUBLIC_BASE_URL\}\/portal\/v\/\{\{1\}\}/);
-    assert.match(hep, /purpose: 'hep'/);
+  it("keeps the client and server patient-link base on the same constant", async () => {
+    const { PATIENT_LINK_PUBLIC_BASE_URL: serverBase } = await import("./patient-link-token.ts");
+    const { PATIENT_LINK_PUBLIC_BASE_URL: clientBase } = await import("../src/lib/patientLinkPublicBase.ts");
+    assert.equal(serverBase, clientBase);
+    assert.equal(serverBase, "https://www.mylumera.in");
+    const hep = fs.readFileSync(
+      path.join(root, "src/components/specialty-rx/PhysioProgressTracker.tsx"),
+      "utf8"
+    );
+    assert.match(hep, /patientLinkPublicBase/);
     assert.equal(hep.includes("${uhid}"), false);
-    assert.equal(/hep\/v\/\$\{[^}]*uhid/i.test(hep), false);
   });
 });

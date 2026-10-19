@@ -382,7 +382,7 @@ describe("usage-billing Rx WhatsApp send is bound to the signed prescription", (
     assert.notEqual(stored.whatsapp_sent_status, "delivered");
   });
 
-  it("does not send when production has no APP_URL", async () => {
+  it("does not build the patient link from the request host when APP_URL is unset", async () => {
     const clinic = createClinic("appurl");
     const auth = await login(clinic.email);
     const phone = `+91 98216 ${String(Date.now()).slice(-5)}`;
@@ -400,12 +400,16 @@ describe("usage-billing Rx WhatsApp send is bound to the signed prescription", (
         { rxNumber: rx.rxNumber, portal_url: "https://evil.example/phish" },
         auth
       );
-      assert.equal(sent.status, 500);
-      assert.deepEqual(sent.json, { code: RX_SEND_FAILED });
+      assert.equal(sent.status, 409);
+      assert.deepEqual(sent.json, { code: SAFETY_REVIEW_REQUIRED });
       assert.equal(JSON.stringify(sent.json).includes("evil.example"), false);
-      assert.equal(JSON.stringify(sent.json).includes("host"), false);
+      assert.equal(JSON.stringify(sent.json).includes("APP_URL"), false);
       const row = getDb().prepare("SELECT id FROM whatsapp_messages WHERE patient_phone = ?").get(phone);
       assert.equal(row, undefined);
+      const stored = getDb()
+        .prepare("SELECT whatsapp_sent_status FROM prescriptions WHERE rx_number = ? AND tenant_id = ?")
+        .get(rx.rxNumber, clinic.tenantId) as { whatsapp_sent_status: string };
+      assert.notEqual(stored.whatsapp_sent_status, "sent");
     } finally {
       if (previousEnv === undefined) delete process.env.NODE_ENV;
       else process.env.NODE_ENV = previousEnv;

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { 
   TrendingUp, 
   Calendar, 
@@ -24,10 +24,13 @@ import {
 } from 'recharts';
 import { chartCurrencyFormatter } from '../../lib/chartCurrency.ts';
 import { apiFetch } from '../../api/http.ts';
+import { PATIENT_LINK_PUBLIC_BASE_URL } from '../../lib/patientLinkPublicBase.ts';
 import { TherapyPackage, PrescribedExercise } from '../../types';
 
-/** Same origin as PATIENT_LINK_PUBLIC_BASE_URL. The client must not import the server token module. */
-const HEP_LINK_BASE = 'https://www.mylumera.in/hep/v/';
+/** Same origin as the server PATIENT_LINK_PUBLIC_BASE_URL re-export. */
+const HEP_LINK_BASE = `${PATIENT_LINK_PUBLIC_BASE_URL}/hep/v/`;
+
+type HepLink = { patientId: string; url: string; expiresAt: number };
 
 interface PhysioProgressTrackerProps {
   therapyPackage?: TherapyPackage;
@@ -58,23 +61,36 @@ export const PhysioProgressTracker: React.FC<PhysioProgressTrackerProps> = ({
   );
   const [showQrModal, setShowQrModal] = useState(false);
   const [hepUrl, setHepUrl] = useState('');
+  const hepLinkRef = useRef<HepLink | null>(null);
 
   useEffect(() => {
     if (!showQrModal || !patientId) return;
+    const current = hepLinkRef.current;
+    if (current && current.patientId === patientId && current.expiresAt > Date.now() + 5000) {
+      setHepUrl(current.url);
+      return;
+    }
     let cancelled = false;
     setHepUrl('');
-    const resourceId = therapyPackage?.id || patientId;
-    void apiFetch<{ url?: string }>('/api/patient-links', {
+    void apiFetch<{ url?: string; expiresAt?: string }>('/api/patient-links', {
       method: 'POST',
       body: JSON.stringify({
         purpose: 'hep',
         patientId,
-        resourceId,
+        resourceId: patientId,
         ttlHours: 72,
       }),
     })
       .then((data) => {
-        if (!cancelled && data?.url && data.url.startsWith(HEP_LINK_BASE)) setHepUrl(data.url);
+        if (cancelled || !data?.url || !data.url.startsWith(HEP_LINK_BASE)) return;
+        const expiresAt = Date.parse(String(data.expiresAt || ''));
+        const next: HepLink = {
+          patientId,
+          url: data.url,
+          expiresAt: Number.isFinite(expiresAt) ? expiresAt : 0,
+        };
+        hepLinkRef.current = next;
+        setHepUrl(next.url);
       })
       .catch(() => {
         /* the modal stays on the base path until the server issues a token */
@@ -82,7 +98,7 @@ export const PhysioProgressTracker: React.FC<PhysioProgressTrackerProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [showQrModal, patientId, therapyPackage?.id]);
+  }, [showQrModal, patientId]);
 
   // Parse package session log to chart data if available
   const chartData = therapyPackage && therapyPackage.sessionsLog.length > 0

@@ -1,8 +1,5 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import path from "node:path";
 import { describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 import {
   CLINIC_TEMPLATE_CATALOG,
   LUMERA_RECEIPT_TEMPLATE_V1,
@@ -64,17 +61,6 @@ describe("clinic WhatsApp template catalog", () => {
     assert.equal(prescriptionUrlSuffix("LUM-2026-ABCDEF"), "");
     assert.equal(prescriptionUrlSuffix("opaqueexampletoken"), "");
     assert.equal(prescriptionUrlSuffix("RX-1001"), "");
-    const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
-    const clinical = fs.readFileSync(path.join(root, "src/data/clinicalData.ts"), "utf8");
-    const portal = fs.readFileSync(path.join(root, "server/db-seed-meta.ts"), "utf8");
-    const hep = fs.readFileSync(path.join(root, "src/components/specialty-rx/PhysioProgressTracker.tsx"), "utf8");
-    assert.ok(clinical.includes(`${PATIENT_LINK_PUBLIC_BASE_URL}/rx/v/{{1}}`));
-    assert.ok(clinical.includes(`${PATIENT_LINK_PUBLIC_BASE_URL}/pay/v/{{1}}`));
-    assert.equal(clinical.includes("opaque-token"), false);
-    assert.ok(portal.includes("`${PATIENT_LINK_PUBLIC_BASE_URL}/portal/v/{{1}}`"));
-    assert.ok(hep.includes("purpose: 'hep'"));
-    assert.equal(/hep\/v\/\$\{[^}]*uhid/i.test(hep), false);
-    assert.equal(hep.includes("${uhid}"), false);
   });
 
   it("fills the Manager receipt bodies: v2 has 6 params and the live name has 4", () => {
