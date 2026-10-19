@@ -363,6 +363,57 @@ describe("usage-billing Rx WhatsApp send is bound to the signed prescription", (
     }
   });
 
+  it("revokes the patient-link token when Graph rejects the Rx send", async () => {
+    const clinic = createClinic("revoke");
+    const auth = await login(clinic.email);
+    const phone = `+91 98218 ${String(Date.now()).slice(-5)}`;
+    const patient = await createPatient(auth, "Asha Rao", phone);
+    const rx = await createRx(auth, patient.id, {
+      diagnosis: "Viral fever",
+      reviewedBy: clinic.userId,
+    });
+    connectClinicLine(clinic.tenantId, rx.rxNumber);
+    openServiceWindow(clinic.tenantId, phone);
+    allowRxSend(clinic.tenantId, rx.rxNumber, phone);
+    const before = getDb()
+      .prepare(
+        `SELECT token_hash, revoked_at FROM patient_link_tokens WHERE tenant_id = ? AND resource_id = ? AND purpose = 'rx'`
+      )
+      .all(clinic.tenantId, rx.rxNumber) as Array<{ token_hash: string; revoked_at: string | null }>;
+    assert.equal(before.length, 1);
+    assert.equal(before[0].revoked_at, null);
+    const original = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("graph.facebook.com")) {
+        return new Response(JSON.stringify({ error: { message: META_REJECT, code: 131026 } }), { status: 400 });
+      }
+      return original(input, init);
+    }) as typeof fetch;
+    try {
+      const sent = await jsonRequest(port, "POST", "/api/whatsapp/send-rx", { rxNumber: rx.rxNumber }, auth);
+      assert.equal(sent.status >= 400, true, JSON.stringify(sent.json));
+      assert.notEqual(sent.json.success, true);
+      const tokens = getDb()
+        .prepare(
+          `SELECT token_hash, revoked_at FROM patient_link_tokens WHERE tenant_id = ? AND resource_id = ? AND purpose = 'rx'`
+        )
+        .all(clinic.tenantId, rx.rxNumber) as Array<{ token_hash: string; revoked_at: string | null }>;
+      const mintedForSend = tokens.filter((row) => row.token_hash !== before[0].token_hash);
+      assert.equal(mintedForSend.length, 1);
+      assert.equal(Boolean(mintedForSend[0].revoked_at), true);
+      const printLink = tokens.find((row) => row.token_hash === before[0].token_hash);
+      assert.equal(printLink?.revoked_at, null);
+      const stored = getDb()
+        .prepare("SELECT whatsapp_sent_status FROM prescriptions WHERE rx_number = ? AND tenant_id = ?")
+        .get(rx.rxNumber, clinic.tenantId) as { whatsapp_sent_status: string };
+      assert.notEqual(stored.whatsapp_sent_status, "sent");
+      assert.notEqual(stored.whatsapp_sent_status, "delivered");
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
   it("returns 422 when the saved patient has no phone and does not send", async () => {
     const clinic = createClinic("nophone");
     const auth = await login(clinic.email);
