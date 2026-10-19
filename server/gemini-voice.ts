@@ -1,11 +1,15 @@
 import type { Express, Request, Response } from "express";
-import { GoogleGenAI } from "@google/genai";
 import { requireAuth } from "./auth.ts";
 import { getDb } from "./db.ts";
 import { clinicLine, getTenantLetterhead } from "./letterhead.ts";
 import { AI_RUPEE_OUTPUT_RULE } from "./india-currency-copy.ts";
+import { getVertexClient, vertexGeminiModel } from "./vertex-gemini.ts";
 
-export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI | null) {
+function errorName(err: unknown): string {
+  return err && typeof err === "object" && "name" in err ? String((err as { name?: string }).name) : "Error";
+}
+
+export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => ReturnType<typeof getVertexClient>) {
   // 4. Voice Bot & Triage Simulator with Emergency Escalation
   app.post("/api/gemini/voice-bot", async (req: Request, res: Response) => {
     try {
@@ -16,8 +20,15 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
       const isEmergency = lowerMsg.includes("chest pain") || lowerMsg.includes("breathless") || lowerMsg.includes("unconscious") || lowerMsg.includes("bleed") || lowerMsg.includes("heart attack") || lowerMsg.includes("सीने में दर्द") || lowerMsg.includes("सांस");
 
       const ai = getGenAI();
-      if (ai) {
-        try {
+      if (!ai) {
+        return res.status(503).json({
+          code: "AI_VOICE_NOT_CONFIGURED",
+          message: isEmergency
+            ? "AI voice assistant not configured. If this is an emergency, go to the nearest emergency room or call 108."
+            : "AI voice assistant not configured",
+        });
+      }
+      try {
           const prompt = `You are Maya, the voice assistant for Lumera Polyclinic.
   You are speaking over the phone with a patient named ${callerName} in ${language}.
   ${isEmergency ? 'CRITICAL EMERGENCY DETECTED: Advise patient immediately to visit nearest Emergency Room or call 108 / ambulance while remaining calm and reassuring.' : ''}
@@ -38,7 +49,7 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
   ${AI_RUPEE_OUTPUT_RULE}`;
 
           const response = await ai.models.generateContent({
-            model: "gemini-3.7-flash",
+            model: vertexGeminiModel(),
             contents: [{ parts: [{ text: `Patient says: "${message}"` }] }],
             config: {
               systemInstruction: prompt,
@@ -50,28 +61,16 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
           const parsed = JSON.parse(response.text?.trim() || "{}");
           return res.json(parsed);
         } catch (err) {
-          console.error("Voice bot Gemini error:", err);
+          console.error("Voice bot error", errorName(err));
+          return res.status(503).json({
+            code: "AI_VOICE_UNAVAILABLE",
+            message: isEmergency
+              ? "AI voice assistant is temporarily unavailable. If this is an emergency, go to the nearest emergency room or call 108."
+              : "AI voice assistant is temporarily unavailable",
+          });
         }
-      }
-
-      // Fallback response
-      if (isEmergency) {
-        return res.json({
-          speechText: `Urgent: these symptoms need in-person emergency care. Please go to the nearest emergency room now or call 108.`,
-          intent: "EMERGENCY",
-          suggestedAction: "Advise emergency room or 108",
-          isEmergency: true
-        });
-      }
-
-      return res.json({
-        speechText: `Hello ${callerName}, I understand. I can help book you an appointment with Dr. Vikram Malhotra in General Medicine for tomorrow at 10:30 AM. Would you like me to confirm this token?`,
-        intent: "BOOKING",
-        suggestedAction: "Book appointment with Dr. Malhotra at 10:30 AM",
-        isEmergency: false
-      });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
+    } catch {
+      res.status(503).json({ code: "AI_VOICE_UNAVAILABLE", message: "AI voice assistant is temporarily unavailable" });
     }
   });
 
@@ -156,8 +155,10 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
       const { advice = [], medicines = [], targetLanguage = "Hindi" } = req.body;
 
       const ai = getGenAI();
-      if (ai) {
-        try {
+      if (!ai) {
+        return res.status(503).json({ code: "AI_TRANSLATE_NOT_CONFIGURED", message: "AI translation not configured" });
+      }
+      try {
           const prompt = `Translate the following medical prescription advice and medicine timing instructions into natural, easily understandable ${targetLanguage} for a patient to read on WhatsApp.
 
   Medicines:
@@ -178,7 +179,7 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
   ${AI_RUPEE_OUTPUT_RULE}`;
 
           const response = await ai.models.generateContent({
-            model: "gemini-3.7-flash",
+            model: vertexGeminiModel(),
             contents: prompt,
             config: {
               responseMimeType: "application/json",
@@ -188,17 +189,14 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
 
           return res.json(JSON.parse(response.text?.trim() || "{}"));
         } catch (err) {
-          console.error("Translate Rx error:", err);
+          console.error("Translate Rx error", errorName(err));
+          return res.status(503).json({
+            code: "AI_TRANSLATE_UNAVAILABLE",
+            message: "AI translation is temporarily unavailable",
+          });
         }
-      }
-
-      return res.json({
-        language: targetLanguage,
-        translatedAdvice: advice,
-        formattedWhatsAppMessage: `\u092a\u094d\u0930\u093f\u092f \u092e\u0930\u0940\u091c, \u0906\u092a\u0915\u0947 \u0921\u0949\u0915\u094d\u091f\u0930 \u0926\u094d\u0935\u093e\u0930\u093e \u0926\u0940 \u0917\u0908 \u0938\u0932\u093e\u0939:\n${advice.join('\n\u2022 ')}\n\u0915\u0943\u092a\u092f\u093e \u0926\u0935\u093e\u0907\u092f\u093e\u0902 \u0938\u092e\u092f \u092a\u0930 \u0932\u0947\u0902\u0964`
-      });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
+    } catch {
+      res.status(503).json({ code: "AI_TRANSLATE_UNAVAILABLE", message: "AI translation is temporarily unavailable" });
     }
   });
 }

@@ -1,3 +1,4 @@
+import { ensureAmbientWalkInUniqueIndex } from "./ambient-walkin.ts";
 import { type SqlDatabase } from "./sql-engine.ts";
 import { ensurePlatformTenantSchema } from "./platform-tenants.ts";
 import { BOOTSTRAP_DDL } from "./db-bootstrap-ddl.ts";
@@ -498,6 +499,7 @@ export function migrate(database: SqlDatabase) {
       "CREATE INDEX IF NOT EXISTS idx_audit_logs_tenant_patient ON audit_logs(tenant_id, patient_id)"
     );
   } catch {}
+  ensureAmbientWalkInUniqueIndex(database);
 
   backfillLabReportAndBranchTenants(database);
   try {

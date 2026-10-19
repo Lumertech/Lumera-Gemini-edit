@@ -383,12 +383,11 @@ describe("WhatsApp bot lookup audit and first-name replies", () => {
     );
   });
 
-  it("two patients in one clinic who share the last 10 digits collide", () => {
-    // TODO(#168): exact E.164 matching waits for isDemoWhatsAppAllowlisted
+  it("two patients in one clinic who share the last 10 digits resolve to their own rows", { todo: "#168 exact E.164" }, () => {
+    // Exact E.164 matching waits for isDemoWhatsAppAllowlisted
     // (graph-whatsapp.ts: digits only, country code included). That helper is
-    // not on main. The SELECT has no ORDER BY, so last-10 makes both numbers
-    // resolve to the same row. After #168, each phone should return only its
-    // own patient.
+    // not on main, so last-10 still collides. This asserts the correct outcome
+    // and stays a todo until #168, so CI does not record the collision as a pass.
     const suffix = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
     const clinic = createClinic("phiE164");
     cleanup.tenants.push(clinic.tenantId);
@@ -414,7 +413,7 @@ describe("WhatsApp bot lookup audit and first-name replies", () => {
 
     const byIndia = findPatientByPhoneInTenant(clinic.tenantId, `+91${national}`);
     const byOther = findPatientByPhoneInTenant(clinic.tenantId, `+1${national}`);
-    assert.equal(String(byIndia?.id || ""), String(byOther?.id || ""));
-    assert.ok([firstId, secondId].includes(String(byIndia?.id || "")));
+    assert.equal(String(byIndia?.id || ""), firstId);
+    assert.equal(String(byOther?.id || ""), secondId);
   });
 });

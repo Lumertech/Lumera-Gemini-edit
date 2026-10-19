@@ -499,4 +499,130 @@ describe("WhatsApp bot PHI scrub", () => {
       close();
     }
   });
+
+  it("leaves a user or agent preview that only quotes the old words", () => {
+    const { db, close } = tempSqlite();
+    const userQuote = "I asked whether a Prescription Record Found note was filed";
+    const agentQuote = "The agent forwarded the Verified Lab Diagnostic Report wording";
+    const rxOrphan = "💊 *Prescription Record Found (RX-OLD)*";
+    const labOrphan = "🔬 *Verified Lab Diagnostic Report*\n\n*Panel*: CBC";
+    try {
+      createScrubTables(db);
+      db.prepare(
+        `INSERT INTO whatsapp_conversations (id, patient_phone, patient_name, last_message, updated_at, tenant_id)
+         VALUES ('conv-user-quote', '+919800011201', 'Hidden Patient', ?, '2026-10-19T00:00:00.000Z', 'tenant-a')`
+      ).run(userQuote);
+      db.prepare(
+        `INSERT INTO whatsapp_conversations (id, patient_phone, patient_name, last_message, updated_at, tenant_id)
+         VALUES ('conv-agent-quote', '+919800011202', 'Hidden Patient', ?, '2026-10-19T00:00:00.000Z', 'tenant-a')`
+      ).run(agentQuote);
+      db.prepare(
+        `INSERT INTO whatsapp_messages (id, conversation_id, patient_phone, sender, content, translated_content, created_at, tenant_id)
+         VALUES ('msg-user-quote', 'conv-user-quote', '+919800011201', 'user', ?, NULL, '2026-10-19T00:00:01.000Z', 'tenant-a')`
+      ).run(userQuote);
+      db.prepare(
+        `INSERT INTO whatsapp_messages (id, conversation_id, patient_phone, sender, content, translated_content, created_at, tenant_id)
+         VALUES ('msg-agent-quote', 'conv-agent-quote', '+919800011202', 'agent', ?, NULL, '2026-10-19T00:00:01.000Z', 'tenant-a')`
+      ).run(agentQuote);
+      db.prepare(
+        `INSERT INTO whatsapp_conversations (id, patient_phone, patient_name, last_message, updated_at, tenant_id)
+         VALUES ('conv-rx-orphan', '+919800011203', 'Hidden Patient', ?, '2026-10-19T00:00:00.000Z', 'tenant-a')`
+      ).run(rxOrphan);
+      db.prepare(
+        `INSERT INTO whatsapp_conversations (id, patient_phone, patient_name, last_message, updated_at, tenant_id)
+         VALUES ('conv-lab-orphan', '+919800011204', 'Hidden Patient', ?, '2026-10-19T00:00:00.000Z', 'tenant-a')`
+      ).run(labOrphan);
+
+      const result = scrubWhatsAppBotPhi(db);
+      assert.equal(result.skipped, false);
+      assert.equal(
+        (db.prepare("SELECT last_message FROM whatsapp_conversations WHERE id = 'conv-user-quote'").get() as { last_message: string }).last_message,
+        userQuote
+      );
+      assert.equal(
+        (db.prepare("SELECT last_message FROM whatsapp_conversations WHERE id = 'conv-agent-quote'").get() as { last_message: string }).last_message,
+        agentQuote
+      );
+      assert.equal(
+        (db.prepare("SELECT content FROM whatsapp_messages WHERE id = 'msg-user-quote'").get() as { content: string }).content,
+        userQuote
+      );
+      assert.equal(
+        (db.prepare("SELECT content FROM whatsapp_messages WHERE id = 'msg-agent-quote'").get() as { content: string }).content,
+        agentQuote
+      );
+      assert.equal(
+        (db.prepare("SELECT last_message FROM whatsapp_conversations WHERE id = 'conv-rx-orphan'").get() as { last_message: string }).last_message,
+        WHATSAPP_BOT_PHI_SCRUB_NOTICE
+      );
+      assert.equal(
+        (db.prepare("SELECT last_message FROM whatsapp_conversations WHERE id = 'conv-lab-orphan'").get() as { last_message: string }).last_message,
+        WHATSAPP_BOT_PHI_SCRUB_NOTICE
+      );
+      const details = JSON.parse(
+        (db.prepare("SELECT details FROM audit_logs WHERE action = ?").get(WHATSAPP_BOT_PHI_SCRUB_ACTION) as { details: string }).details
+      ) as { orphanConversationIds: string[] };
+      assert.deepEqual(details.orphanConversationIds, ["conv-lab-orphan", "conv-rx-orphan"]);
+      assert.equal(JSON.stringify(details).includes(userQuote), false);
+      assert.equal(JSON.stringify(details).includes(agentQuote), false);
+    } finally {
+      close();
+    }
+  });
+
+  it("scrubs every matching row across more than two id chunks and lists them all", () => {
+    const { db, close } = tempSqlite();
+    const total = 450;
+    const ids = Array.from({ length: total }, (_, index) => `msg-${String(index).padStart(4, "0")}`);
+    try {
+      createScrubTables(db);
+      const insert = db.prepare(
+        `INSERT INTO whatsapp_messages (id, conversation_id, patient_phone, sender, content, translated_content, created_at, tenant_id)
+         VALUES (?, 'conv-chunk', '+919800011450', 'bot', ?, NULL, '2026-10-19T00:00:01.000Z', 'tenant-a')`
+      );
+      for (const id of ids) insert.run(id, `Prescription Record Found ${id}`);
+
+      const chunkSizes: number[] = [];
+      const wrapped: SqlDatabase = {
+        exec(sql: string) {
+          db.exec(sql);
+        },
+        prepare(sql: string) {
+          const stmt = db.prepare(sql);
+          return {
+            run(...params: unknown[]) {
+              if (sql.startsWith("UPDATE whatsapp_messages") && sql.includes("WHERE id IN")) {
+                chunkSizes.push(params.length - 1);
+              }
+              return stmt.run(...(params as SQLInputValue[]));
+            },
+            get(...params: unknown[]) {
+              return stmt.get(...(params as SQLInputValue[]));
+            },
+            all(...params: unknown[]) {
+              return stmt.all(...(params as SQLInputValue[]));
+            },
+          };
+        },
+      };
+
+      const result = scrubWhatsAppBotPhi(wrapped);
+      assert.equal(result.skipped, false);
+      assert.equal(result.messages, total);
+      assert.ok(chunkSizes.length > 2);
+      assert.ok(chunkSizes.every((size) => size > 0 && size <= 200));
+      assert.equal(chunkSizes.reduce((sum, size) => sum + size, 0), total);
+
+      const remaining = db
+        .prepare("SELECT COUNT(*) AS c FROM whatsapp_messages WHERE content != ?")
+        .get(WHATSAPP_BOT_PHI_SCRUB_NOTICE) as { c: number };
+      assert.equal(Number(remaining.c), 0);
+      const details = JSON.parse(
+        (db.prepare("SELECT details FROM audit_logs WHERE action = ?").get(WHATSAPP_BOT_PHI_SCRUB_ACTION) as { details: string }).details
+      ) as { messageIds: string[] };
+      assert.deepEqual(details.messageIds, ids);
+    } finally {
+      close();
+    }
+  });
 });

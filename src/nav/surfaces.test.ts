@@ -104,6 +104,40 @@ describe("public vs app surface routing (founder lock #48)", () => {
     assert.equal(pathToNav("/w/dr-demo-physio/opd").appView, "queue");
     assert.equal(pathToNav("/w/dr-demo-physio/opd").screen, "opd");
     assert.equal(pathToNav("/w/dr-demo-physio/rx/Visit-Keep").recordId, "Visit-Keep");
+    assert.equal(pathToNav("/w/malhotra-individual-practice/invoices/inv-194b83").appView, "billing");
+    assert.equal(pathToNav("/w/malhotra-individual-practice/invoices/inv-194b83").screen, "invoices");
+    assert.equal(pathToNav("/w/malhotra-individual-practice/invoices/inv-194b83").recordId, "inv-194b83");
+    assert.equal(pathToNav("/w/malhotra-individual-practice/invoices/inv-194b83").payFocus, false);
+    assert.equal(pathToNav("/app/billing/inv-194b83").recordId, "inv-194b83");
+    assert.equal(pathToNav("/app/billing/inv-194b83").appView, "billing");
+    assert.equal(
+      surfaceToPath("app", {
+        appView: "billing",
+        workspaceSlug: "malhotra-individual-practice",
+        recordId: "inv-194b83",
+      }),
+      "/w/malhotra-individual-practice/invoices/inv-194b83"
+    );
+    assert.equal(
+      surfaceToPath("app", {
+        appView: "billing",
+        workspaceSlug: "malhotra-individual-practice",
+        recordId: "inv-194b83",
+        payFocus: true,
+      }),
+      "/w/malhotra-individual-practice/payments"
+    );
+    assert.equal(appViewToPath("billing", "malhotra-individual-practice", "inv-194b83"), "/w/malhotra-individual-practice/invoices/inv-194b83");
+    const reloaded = pathToNav("/w/malhotra-individual-practice/invoices/inv-194b83");
+    assert.equal(
+      surfaceToPath("app", {
+        appView: reloaded.appView,
+        workspaceSlug: reloaded.workspaceSlug,
+        recordId: reloaded.recordId,
+        payFocus: reloaded.payFocus,
+      }),
+      "/w/malhotra-individual-practice/invoices/inv-194b83"
+    );
     assert.equal(pathToNav("/w/dr-demo-physio/rx/Visit-Keep").screen, "rx");
     assert.equal(pathToNav("/w/dr-demo-physio/not-a-screen").unrecognized, true);
     assert.equal(pathToNav("/app/queue").appView, "queue");

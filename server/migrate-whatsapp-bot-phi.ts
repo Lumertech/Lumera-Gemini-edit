@@ -27,6 +27,9 @@ const RX_READY = "your prescription is ready";
 const LAB_READY = "your lab report is ready";
 const RX_MARKER = "Prescription Record Found";
 const LAB_MARKER = "Verified Lab Diagnostic Report";
+// Prefixes of the pre-#171 bot replies (whatsapp.ts before 2b13b4f), not a bare substring.
+const RX_ORPHAN_PREFIX = "💊 *Prescription Record Found (%";
+const LAB_ORPHAN_PREFIX = "🔬 *Verified Lab Diagnostic Report*%";
 const PREVIEW_MARKER = "previewData";
 const MARKERS = [PREVIEW_MARKER, RX_MARKER, LAB_MARKER];
 const ID_CHUNK = 200;
@@ -155,7 +158,8 @@ export function scrubWhatsAppBotPhi(database: SqlDatabase): { messages: number; 
     }
   }
 
-  const relabeledIds = sortedUnique(relabeledRows.map((row) => String(row.id || ""))).filter((id) => !markerIds.includes(id));
+  const markerIdSet = new Set(markerIds);
+  const relabeledIds = sortedUnique(relabeledRows.map((row) => String(row.id || ""))).filter((id) => !markerIdSet.has(id));
   const relabeledConversationIds = sortedUnique(relabeledRows.map((row) => String(row.conversation_id || ""))).filter(
     (id) => !laterLiveConversationIds.has(id)
   );
@@ -173,7 +177,7 @@ export function scrubWhatsAppBotPhi(database: SqlDatabase): { messages: number; 
         `SELECT id FROM whatsapp_conversations
          WHERE COALESCE(last_message, '') LIKE ? OR COALESCE(last_message, '') LIKE ?`
       )
-      .all(`%${RX_MARKER}%`, `%${LAB_MARKER}%`) as IdRow[];
+      .all(RX_ORPHAN_PREFIX, LAB_ORPHAN_PREFIX) as IdRow[];
     orphanIds = sortedUnique(orphans.map((row) => String(row.id || ""))).filter((id) => !touched.has(id));
   } catch (err) {
     console.error(errorName(err));
@@ -197,11 +201,12 @@ export function scrubWhatsAppBotPhi(database: SqlDatabase): { messages: number; 
   }
 
   const messageIds = sortedUnique([...markerIds, ...relabeledIds]);
+  const messageIdSet = new Set(messageIds);
   const counted = new Set<string>();
   const countsByTenant: Record<string, number> = {};
   for (const row of [...markerRows, ...relabeledRows]) {
     const id = String(row.id || "");
-    if (!id || counted.has(id) || !messageIds.includes(id)) continue;
+    if (!id || counted.has(id) || !messageIdSet.has(id)) continue;
     counted.add(id);
     const tenantId = String(row.tenant_id || "");
     countsByTenant[tenantId] = (countsByTenant[tenantId] || 0) + 1;
