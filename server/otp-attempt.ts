@@ -12,8 +12,11 @@ export const OTP_PUBLIC_SEND_FAILURE = "WhatsApp code not sent. Try again later.
 export function logOtpSendFailure(phone: string, detail: string) {
   const digits = String(phone || "").replace(/\D/g, "");
   const masked = digits.length >= 4 ? `****${digits.slice(-4)}` : "****";
-  const safe = String(detail || "send failed").replace(/EAA[A-Za-z0-9]+/g, "[redacted]").slice(0, 300);
-  console.error(`[OTP] send failed for ${masked}: ${safe}`);
+  const raw = String(detail || "");
+  const code = /META_|WHATSAPP_ACCESS_TOKEN|WHATSAPP_PHONE_NUMBER_ID|not configured/i.test(raw)
+    ? "otp_not_configured"
+    : raw.replace(/EAA[A-Za-z0-9]+/g, "[redacted]").slice(0, 300) || "otp_send_failed";
+  console.error(`[OTP] send failed for ${masked}: ${code}`);
 }
 export const OTP_VERIFY_LOCK_ERROR = "Too many incorrect codes. This code is no longer valid. Request a new OTP.";
 export const VERIFY_OTP_MAX_FAILURES = 5;

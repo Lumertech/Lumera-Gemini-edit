@@ -788,13 +788,13 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
   ensureClipAReminderFixture(database, now);
 }
 
-const CLIP_A_PHONE = "+919999973271";
-const CLIP_A_PHONE_KEY = "9999973271";
+const CLIP_A_PHONE = "+919000000001";
+const CLIP_A_PHONE_KEY = "9000000001";
 const CLIP_A_PATIENT_ID = "pat-a1-clip";
 const CLIP_A_CONV_ID = "conv-a1-clip";
 const CLIP_A_APPT_ID = "apt-a1-reminder";
 const CLIP_A_NAME = "A1 Test Recipient";
-const CLIP_A_UHID = "LUM-A1-73271";
+const CLIP_A_UHID = "LUM-A1-00001";
 
 function phoneKey(phone: string): string {
   const digits = String(phone || "").replace(/\D/g, "");

@@ -35,6 +35,9 @@ export function phoneDigits(phone: string): string {
   return String(phone || "").replace(/\D/g, "");
 }
 
+/** Staff ticks cannot undo STOP. Only a patient message or an explicit re-consent can. */
+const STAFF_OPT_IN_SOURCES = new Set(["booking", "registration"]);
+
 export function recordWhatsAppOptIn(
   db: DatabaseSync,
   opts: {
@@ -51,6 +54,10 @@ export function recordWhatsAppOptIn(
   const tenantId = String(opts.tenantId || "").trim();
   const digits = phoneDigits(opts.phone);
   if (!tenantId || digits.length < 8) return;
+  const source = String(opts.source || "unspecified").trim().toLowerCase();
+  if (opts.optedIn && STAFF_OPT_IN_SOURCES.has(source) && patientOptedOut(db, tenantId, opts.phone)) {
+    return;
+  }
   db.prepare(
     `INSERT INTO whatsapp_patient_opt_ins (tenant_id, phone_digits, patient_id, opted_in, source, actor_id, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -65,7 +72,7 @@ export function recordWhatsAppOptIn(
     digits,
     String(opts.patientId || "").trim(),
     opts.optedIn ? 1 : 0,
-    String(opts.source || "unspecified").slice(0, 80),
+    source.slice(0, 80),
     String(opts.actorId || "").trim(),
     opts.now || new Date().toISOString()
   );

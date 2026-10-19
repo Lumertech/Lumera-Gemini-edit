@@ -528,7 +528,7 @@ export const LoginPage: React.FC = () => {
       return;
     }
 
-    const targetEmail = (chosenEmail || oauthEmail || "rdp9999973271@gmail.com").trim().toLowerCase();
+    const targetEmail = (chosenEmail || oauthEmail || "demo@example.com").trim().toLowerCase();
     const targetName = (
       chosenName ||
       oauthName ||

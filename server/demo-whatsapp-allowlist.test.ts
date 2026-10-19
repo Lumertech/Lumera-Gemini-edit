@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { getDb, initDatabase } from "./db.ts";
 import {
+  dispatchWhatsAppCloudMessage,
   FAILED_FINAL,
   isDemoWhatsAppAllowlisted,
   maskWhatsAppRecipient,
@@ -94,28 +95,28 @@ describe("demo WhatsApp recipient allowlist", () => {
 
   it("sends to nobody when the allowlist is unset and matches exact E.164 only", () => {
     delete process.env.DEMO_WHATSAPP_RECIPIENT_ALLOWLIST;
-    assert.equal(isDemoWhatsAppAllowlisted("+919999973271"), false);
-    assert.equal(isDemoWhatsAppAllowlisted("+91 99999 73271"), false);
-    process.env.DEMO_WHATSAPP_RECIPIENT_ALLOWLIST = "+919999973271";
-    assert.equal(isDemoWhatsAppAllowlisted("+919999973271"), true);
-    assert.equal(isDemoWhatsAppAllowlisted("+91 99999 73271"), true);
-    assert.equal(isDemoWhatsAppAllowlisted("+1 9999973271"), false);
-    assert.equal(isDemoWhatsAppAllowlisted("9999973271"), false);
-    assert.equal(maskWhatsAppRecipient("+919999973271"), "****3271");
-    assert.equal(maskWhatsAppRecipient("+919999973271").includes("9999973271"), false);
+    assert.equal(isDemoWhatsAppAllowlisted("+919000000001"), false);
+    assert.equal(isDemoWhatsAppAllowlisted("+91 90000 00001"), false);
+    process.env.DEMO_WHATSAPP_RECIPIENT_ALLOWLIST = "+919000000001";
+    assert.equal(isDemoWhatsAppAllowlisted("+919000000001"), true);
+    assert.equal(isDemoWhatsAppAllowlisted("+91 90000 00001"), true);
+    assert.equal(isDemoWhatsAppAllowlisted("+1 9000000001"), false);
+    assert.equal(isDemoWhatsAppAllowlisted("9000000001"), false);
+    assert.equal(maskWhatsAppRecipient("+919000000001"), "****0001");
+    assert.equal(maskWhatsAppRecipient("+919000000001").includes("9000000001"), false);
     delete process.env.DEMO_WHATSAPP_RECIPIENT_ALLOWLIST;
   });
 
-  it("rejects +1 9999973271 when +919999973271 is allowlisted and does not call Graph", async () => {
-    process.env.DEMO_WHATSAPP_RECIPIENT_ALLOWLIST = "+919999973271";
+  it("rejects +1 9000000001 when +919000000001 is allowlisted and does not call Graph", async () => {
+    process.env.DEMO_WHATSAPP_RECIPIENT_ALLOWLIST = "+919000000001";
     process.env.META_ACCESS_TOKEN = LIVE_TOKEN;
     process.env.META_PHONE_NUMBER_ID = LIVE_PHONE;
     const clinic = createDemoClinic("us");
-    recordWhatsAppOptIn(getDb(), { tenantId: clinic.tenantId, phone: "+1 9999973271", optedIn: true, source: "test", actorId: "test" });
+    recordWhatsAppOptIn(getDb(), { tenantId: clinic.tenantId, phone: "+1 9000000001", optedIn: true, source: "test", actorId: "test" });
     let calls = 0;
     try {
       const sent = await sendPaymentReceipt({
-        to: "+1 9999973271",
+        to: "+1 9000000001",
         patientName: "Asha Rao",
         clinicName: "Cedar us",
         amount: 500,
@@ -133,7 +134,7 @@ describe("demo WhatsApp recipient allowlist", () => {
       if (!sent.ok) assert.equal(sent.error, SKIPPED_NOT_ALLOWLISTED);
       const row = getDb()
         .prepare(`SELECT status FROM whatsapp_outbound_events WHERE event_type = 'invoice_receipt' AND patient_phone = ?`)
-        .get("+1 9999973271") as { status: string };
+        .get("+1 9000000001") as { status: string };
       assert.equal(row.status, SKIPPED_NOT_ALLOWLISTED);
     } finally {
       delete process.env.DEMO_WHATSAPP_RECIPIENT_ALLOWLIST;
@@ -223,7 +224,7 @@ describe("demo WhatsApp recipient allowlist", () => {
     process.env.DEMO_WHATSAPP_RECIPIENT_ALLOWLIST = phone;
     process.env.META_ACCESS_TOKEN = LIVE_TOKEN;
     process.env.META_PHONE_NUMBER_ID = LIVE_PHONE;
-    assert.equal(isDemoWhatsAppAllowlisted("+919999973271"), false);
+    assert.equal(isDemoWhatsAppAllowlisted("+919000000001"), false);
     const booked = bookWhatsAppAppointment({
       tenantId: clinic.tenantId,
       patientPhone: phone,
@@ -376,6 +377,44 @@ describe("demo WhatsApp recipient allowlist", () => {
     assert.equal(capAudit?.action, "whatsapp_demo_cap");
     assert.match(String(capAudit?.details || ""), /failed_final/);
     assert.equal(String(capAudit?.details || "").includes(phone.replace(/\D/g, "")), false);
+  });
+
+  it("counts the demo phone cap on the exact number, not the last 10 digits", async () => {
+    delete process.env.DEMO_WHATSAPP_RECIPIENT_ALLOWLIST;
+    const clinic = createDemoClinic("exact-cap");
+    let calls = 0;
+    const fetchImpl: typeof fetch = async () => {
+      calls += 1;
+      return new Response(JSON.stringify({ messages: [{ id: "wamid.CAP" }] }), { status: 200 });
+    };
+    const india = "+919100000099";
+    const statuses: string[] = [];
+    for (let i = 0; i < 4; i += 1) {
+      const sent = await dispatchWhatsAppCloudMessage({
+        to: india,
+        textBody: "hello",
+        kind: "text",
+        db: getDb(),
+        tenantId: clinic.tenantId,
+        fetchImpl,
+        patientName: "Cap Patient",
+      });
+      assert.equal(sent.ok, false);
+      if (!sent.ok) statuses.push(sent.error);
+    }
+    assert.deepEqual(statuses, [SKIPPED_NOT_ALLOWLISTED, SKIPPED_NOT_ALLOWLISTED, FAILED_FINAL, FAILED_FINAL]);
+    const cousin = await dispatchWhatsAppCloudMessage({
+      to: "+19100000099",
+      textBody: "hello",
+      kind: "text",
+      db: getDb(),
+      tenantId: clinic.tenantId,
+      fetchImpl,
+      patientName: "Cap Patient",
+    });
+    assert.equal(cousin.ok, false);
+    if (!cousin.ok) assert.equal(cousin.error, SKIPPED_NOT_ALLOWLISTED);
+    assert.equal(calls, 0);
   });
 
   it("APPOINTMENT_REMINDER_SCHEDULER off, false, and 0 do not start the scheduler", () => {

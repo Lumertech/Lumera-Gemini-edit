@@ -556,17 +556,29 @@ describe("WhatsApp honesty: booking notify, reminder template, OTP wamid", () =>
     process.env.NODE_ENV = "production";
     resetSendOtpRateLimits();
     const barePhone = `+91 95${String(Date.now()).slice(-8)}`;
-    const bare = await jsonRequest(server.port, "POST", "/api/auth/whatsapp/send-otp", {
-      phone: barePhone,
-      email: `bare.${barePhone.replace(/\D/g, "")}@wa-honesty.example`,
-      purpose: "login",
-    });
-    if (prevNode === undefined) delete process.env.NODE_ENV;
-    else process.env.NODE_ENV = prevNode;
+    const otpLogs: string[] = [];
+    const prevError = console.error;
+    console.error = (...args: unknown[]) => {
+      otpLogs.push(args.map((part) => String(part)).join(" "));
+    };
+    let bare: { status: number; json: Record<string, unknown> };
+    try {
+      bare = await jsonRequest(server.port, "POST", "/api/auth/whatsapp/send-otp", {
+        phone: barePhone,
+        email: `bare.${barePhone.replace(/\D/g, "")}@wa-honesty.example`,
+        purpose: "login",
+      });
+    } finally {
+      console.error = prevError;
+      if (prevNode === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = prevNode;
+    }
     assert.equal(bare.status, 503, String(bare.json.error || ""));
     assert.equal(bare.json.error, OTP_PUBLIC_SEND_FAILURE);
     assert.equal(JSON.stringify(bare.json).includes("META_ACCESS_TOKEN"), false);
     assert.equal(JSON.stringify(bare.json).includes("META_PHONE_NUMBER_ID"), false);
+    assert.equal(otpLogs.some((line) => line.includes("otp_not_configured")), true);
+    assert.equal(otpLogs.some((line) => /META_ACCESS_TOKEN|META_PHONE_NUMBER_ID/.test(line)), false);
     resetSendOtpRateLimits();
   });
 
@@ -593,13 +605,78 @@ describe("WhatsApp honesty: booking notify, reminder template, OTP wamid", () =>
     const patientId = String((patientRes.json.patient as { id: string }).id);
     const created = await book(auth, patientId, clinic.doctorId);
     assert.equal(created.status, 201, String(created.json.error || ""));
-    assert.ok((created.json.appointment as { id: string }).id);
+    const createdAppointment = created.json.appointment as { id: string; patientId: string };
+    assert.ok(createdAppointment.id);
+    const createdAudit = getDb()
+      .prepare(`SELECT details FROM audit_logs WHERE action = 'Appointment created' AND details LIKE ? ORDER BY timestamp DESC LIMIT 1`)
+      .get(`%${createdAppointment.id}%`) as { details: string } | undefined;
+    assert.equal(createdAudit?.details, `${createdAppointment.id} ${createdAppointment.patientId}`);
+    assert.equal(String(createdAudit?.details || "").includes("Asha"), false);
     const notify = created.json.notify as { sent?: boolean; wamid?: string; reason?: string };
     assert.equal(notify.sent, false);
     assert.equal(notify.wamid, undefined);
     assert.equal(notify.reason, "no WhatsApp opt-in");
     assert.equal(graphCalls, 0);
     assert.equal(bookingCopy(notify), "Booked, WhatsApp not sent: no WhatsApp opt-in");
+
+    const tickPhone = uniquePhone();
+    const tickPatient = await jsonRequest(
+      server.port,
+      "POST",
+      "/api/patients",
+      { name: "Meera Shah", phone: tickPhone, age: 41, gender: "Female" },
+      auth
+    );
+    assert.equal(tickPatient.status, 201, String(tickPatient.json.error || ""));
+    const tickPatientId = String((tickPatient.json.patient as { id: string }).id);
+    recordWhatsAppOptIn(getDb(), {
+      tenantId: clinic.tenantId,
+      phone: tickPhone,
+      patientId: tickPatientId,
+      optedIn: false,
+      source: "stop",
+      actorId: "patient",
+    });
+    const callsBeforeTick = graphCalls;
+    const ticked = await book(auth, tickPatientId, clinic.doctorId, { whatsappOptIn: true });
+    assert.equal(ticked.status, 201, String(ticked.json.error || ""));
+    const tickNotify = ticked.json.notify as { sent?: boolean; reason?: string };
+    assert.equal(tickNotify.sent, false);
+    assert.equal(tickNotify.reason, "no WhatsApp opt-in");
+    assert.equal(bookingCopy(tickNotify), "Booked, WhatsApp not sent: no WhatsApp opt-in");
+    assert.equal(graphCalls, callsBeforeTick);
+    const tickDigits = tickPhone.replace(/\D/g, "");
+    const kept = getDb()
+      .prepare(`SELECT opted_in, source FROM whatsapp_patient_opt_ins WHERE tenant_id = ? AND phone_digits = ?`)
+      .get(clinic.tenantId, tickDigits) as { opted_in: number; source: string };
+    assert.equal(kept.opted_in, 0);
+    assert.equal(kept.source, "stop");
+    recordWhatsAppOptIn(getDb(), {
+      tenantId: clinic.tenantId,
+      phone: tickPhone,
+      patientId: tickPatientId,
+      optedIn: true,
+      source: "registration",
+      actorId: "staff",
+    });
+    const stillStopped = getDb()
+      .prepare(`SELECT opted_in, source FROM whatsapp_patient_opt_ins WHERE tenant_id = ? AND phone_digits = ?`)
+      .get(clinic.tenantId, tickDigits) as { opted_in: number; source: string };
+    assert.equal(stillStopped.opted_in, 0);
+    assert.equal(stillStopped.source, "stop");
+    recordWhatsAppOptIn(getDb(), {
+      tenantId: clinic.tenantId,
+      phone: tickPhone,
+      patientId: tickPatientId,
+      optedIn: true,
+      source: "reconsent",
+      actorId: "patient",
+    });
+    const cleared = getDb()
+      .prepare(`SELECT opted_in, source FROM whatsapp_patient_opt_ins WHERE tenant_id = ? AND phone_digits = ?`)
+      .get(clinic.tenantId, tickDigits) as { opted_in: number; source: string };
+    assert.equal(cleared.opted_in, 1);
+    assert.equal(cleared.source, "reconsent");
 
     const stoppedPhone = uniquePhone();
     recordWhatsAppOptIn(getDb(), {
@@ -632,6 +709,36 @@ describe("WhatsApp honesty: booking notify, reminder template, OTP wamid", () =>
     assert.equal(run.failed.length, 1);
     assert.equal(run.failed[0].result.ok, false);
     if (!run.failed[0].result.ok) assert.equal(run.failed[0].result.error, "no WhatsApp opt-in");
+    const reminderRows = () =>
+      (
+        getDb()
+          .prepare(
+            `SELECT status, action_payload FROM whatsapp_outbound_events
+             WHERE event_type = 'appointment_reminder' AND patient_phone = ?`
+          )
+          .all(stopped.appointment.patientPhone) as { status: string; action_payload: string }[]
+      ).filter((row) => {
+        const payload = JSON.parse(row.action_payload) as { appointmentId?: string };
+        return payload.appointmentId === stopped.appointment.id;
+      });
+    const firstFailures = reminderRows();
+    assert.equal(firstFailures.length, 1);
+    assert.equal(firstFailures[0].status, "failed");
+    assert.equal((JSON.parse(firstFailures[0].action_payload) as { permanent?: boolean }).permanent, true);
+    const again = await runAppointmentReminders({
+      tenantId: clinic.tenantId,
+      appointmentId: stopped.appointment.id,
+      now: new Date("2026-09-10T06:20:00.000Z"),
+      fetchImpl: async () => {
+        reminderCalls += 1;
+        return new Response(JSON.stringify({ messages: [{ id: "wamid.SHOULD_NOT" }] }), { status: 200 });
+      },
+    });
+    assert.equal(reminderCalls, 0);
+    assert.equal(again.sent.length, 0);
+    assert.equal(again.failed.length, 0);
+    assert.equal(again.skipped, 1);
+    assert.equal(reminderRows().length, 1);
   });
 });
 

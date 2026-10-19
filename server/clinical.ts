@@ -1580,7 +1580,7 @@ export function createClinicalRouter(): Router {
         req.user?.id || null,
         req.user?.name || "Clinician",
         "Appointment created",
-        `${appointment.patientName} token ${appointment.tokenNumber}`
+        `${appointment.id} ${appointment.patientId}`
       );
       let notify: { sent: boolean; wamid?: string; reason?: string } = { sent: false, reason: "Graph error" };
       try {
@@ -1592,8 +1592,8 @@ export function createClinicalRouter(): Router {
       res.status(201).json(withPatientTenant(req, tenantId, { appointment, notify }));
     } catch (err: unknown) {
       const status = typeof err === "object" && err && "status" in err ? Number((err as { status: number }).status) : 500;
-      const message = err instanceof Error ? err.message : "Failed to create appointment";
-      res.status(status || 500).json({ error: message });
+      console.error("Appointment create failed:", err instanceof Error ? err.name : "Error");
+      res.status(status || 500).json({ error: "Failed to create appointment" });
     }
   });
 
