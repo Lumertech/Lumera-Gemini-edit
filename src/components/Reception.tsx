@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { apiFetchResponse } from '../api/http';
 import { formatINR } from '../lib/currency.ts';
 import { 
@@ -27,6 +27,7 @@ import {
 import { Patient, Doctor, Appointment, isAbhaLinked } from '../types';
 import type { SpecialtyWorkflowPack } from '../lib/specialtyWorkflow';
 import { PatientRecordModal } from './PatientRecordModal';
+import { ReceptionIntakeReports, type ReceptionIntakeReportsHandle } from './ReceptionIntakeReports';
 
 interface ReceptionProps {
   patients: Patient[];
@@ -100,6 +101,35 @@ export const Reception: React.FC<ReceptionProps> = ({
   const [savingIntake, setSavingIntake] = useState(false);
   const [intakeError, setIntakeError] = useState<string | null>(null);
   const [selectedRecordPatient, setSelectedRecordPatient] = useState<Patient | null>(null);
+  const [deskPanel, setDeskPanel] = useState<'add' | 'registered'>('add');
+  const [attachedPatientId, setAttachedPatientId] = useState<string | null>(null);
+  const [savedPatientName, setSavedPatientName] = useState('');
+  const [reportSummary, setReportSummary] = useState('');
+  const reportsRef = useRef<ReceptionIntakeReportsHandle>(null);
+
+  const emptyIntake = {
+    name: '',
+    phone: '',
+    age: 35,
+    gender: 'Male' as 'Male' | 'Female' | 'Other',
+    bloodGroup: 'B+',
+    address: '',
+    emergencyContact: '',
+    selectedDoctorId: doctors[0]?.id || '',
+    consultationType: workflow?.consultTypeDefault || 'Walk-in Consultation',
+    extra: {} as Record<string, string>,
+  };
+
+  function clearIntakeForm() {
+    setFormData(emptyIntake);
+    setVerificationSuccess(null);
+    setOtpSentTxnId(null);
+    setAadhaarNumber('');
+    setAttachedPatientId(null);
+    setSavedPatientName('');
+    setReportSummary('');
+    reportsRef.current?.reset();
+  }
 
   useEffect(() => {
     const next = intakeName.trim();
@@ -277,29 +307,39 @@ export const Reception: React.FC<ReceptionProps> = ({
 
     setSavingIntake(true);
     setIntakeError(null);
+    setReportSummary('');
     try {
       const saved = (await onAddNewPatient(newPatient)) || newPatient;
-      await onCheckInPatient(saved, doctor, formData.consultationType);
-      onSelectPatient(saved);
-      if (openRxAfterSave && canStartConsult && onStartConsult) {
-        onStartConsult(saved);
+      const savedId = String(saved.id || '').trim();
+      if (!savedId) throw new Error('Could not save patient. Please try again.');
+      let checkInError = '';
+      try {
+        await onCheckInPatient(saved, doctor, formData.consultationType);
+      } catch (err: any) {
+        checkInError = err?.message || 'Could not issue OPD token.';
       }
-
-      setVerificationSuccess(null);
-      setOtpSentTxnId(null);
-      setAadhaarNumber('');
-      setFormData({
-        name: '',
-        phone: '',
-        age: 35,
-        gender: 'Male',
-        bloodGroup: 'B+',
-        address: '',
-        emergencyContact: '',
-        selectedDoctorId: doctors[0]?.id || '',
-        consultationType: workflow?.consultTypeDefault || 'Walk-in Consultation',
-        extra: {},
-      });
+      onSelectPatient(saved);
+      setAttachedPatientId(savedId);
+      setSavedPatientName(saved.name || formData.name.trim());
+      const queued = reportsRef.current?.fileCount() || 0;
+      if (queued > 0) {
+        const uploaded = await reportsRef.current!.uploadAll(savedId);
+        if (uploaded.blocked) {
+          setReportSummary('Patient saved. Reports stay here until consent is recorded.');
+        } else if (uploaded.failed > 0) {
+          setReportSummary(
+            `Patient saved. ${uploaded.saved} stored, ${uploaded.failed} not stored. Retry a file below — you do not need to enter the patient again.`
+          );
+        } else {
+          setReportSummary(`Patient saved. ${uploaded.saved} ${uploaded.saved === 1 ? 'report' : 'reports'} stored.`);
+        }
+      } else {
+        setReportSummary('Patient saved.');
+        if (!checkInError && openRxAfterSave && canStartConsult && onStartConsult) {
+          onStartConsult(saved);
+        }
+      }
+      if (checkInError) setIntakeError(checkInError);
     } catch (err: any) {
       setIntakeError(err?.message || 'Could not save patient. Please try again.');
     } finally {
@@ -307,8 +347,10 @@ export const Reception: React.FC<ReceptionProps> = ({
     }
   };
 
+  const intakeLocked = Boolean(attachedPatientId);
+
   return (
-    <div className="space-y-6">
+    <div data-testid="reception-desk" className="space-y-6 w-full min-w-0 max-w-full overflow-x-hidden pb-28 lg:pb-0">
       {/* Top Header */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
@@ -327,10 +369,10 @@ export const Reception: React.FC<ReceptionProps> = ({
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 w-full md:w-auto">
           <button
             onClick={() => setShowQrModal(true)}
-            className="px-4 py-2.5 bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold rounded-lg shadow-sm transition-all flex items-center gap-2"
+            className="w-full md:w-auto px-4 py-2.5 bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold rounded-lg shadow-sm transition-all flex items-center justify-center gap-2"
           >
             <QrCode className="w-4 h-4" />
             <span>Scan ABHA QR Code (sandbox)</span>
@@ -361,16 +403,16 @@ export const Reception: React.FC<ReceptionProps> = ({
           </div>
 
           {/* Inline OTP Workflow */}
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto min-w-0">
             {!otpSentTxnId ? (
-              <div className="flex items-center gap-2">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-2 w-full min-w-0">
                 <input
                   type="text"
                   maxLength={12}
                   value={aadhaarNumber}
                   onChange={(e) => setAadhaarNumber(e.target.value)}
                   placeholder="Enter 12-digit Aadhaar #"
-                  className="bg-black/30 border border-white/20 text-white placeholder-purple-300/50 text-xs px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-400 font-mono w-48"
+                  className="bg-black/30 border border-white/20 text-white placeholder-purple-300/50 text-xs px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-400 font-mono w-full sm:w-48 min-w-0"
                 />
                 <button
                   onClick={handleGenerateOtp}
@@ -445,15 +487,42 @@ export const Reception: React.FC<ReceptionProps> = ({
         )}
       </div>
 
+      <div role="tablist" aria-label="Reception" className="flex gap-2 lg:hidden">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={deskPanel === 'add'}
+          data-testid="reception-tab-add-patient"
+          onClick={() => setDeskPanel('add')}
+          className={`flex-1 min-h-11 px-3 py-2 rounded-lg text-sm font-semibold ${
+            deskPanel === 'add' ? 'bg-slate-900 text-white' : 'bg-white text-slate-700 border border-slate-300'
+          }`}
+        >
+          Add Patient
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={deskPanel === 'registered'}
+          data-testid="reception-tab-registered"
+          onClick={() => setDeskPanel('registered')}
+          className={`flex-1 min-h-11 px-3 py-2 rounded-lg text-sm font-semibold ${
+            deskPanel === 'registered' ? 'bg-slate-900 text-white' : 'bg-white text-slate-700 border border-slate-300'
+          }`}
+        >
+          Registered
+        </button>
+      </div>
+
       {/* Main Grid: Registration Form (Left) & Active Intake Queue / Search (Right) */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 min-w-0">
         {/* Left 6 Cols: OPD Intake & Token Dispenser Form */}
-        <div className="lg:col-span-6 bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-            <div className="flex items-center gap-2">
-              <UserPlus className="w-5 h-5 text-purple-600" />
+        <div className={`${deskPanel === 'add' ? '' : 'hidden'} lg:block lg:col-span-6 bg-white rounded-xl border border-slate-200 shadow-sm p-4 sm:p-6 space-y-4 min-w-0 max-w-full`} data-testid="reception-add-patient">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3 gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <UserPlus className="w-5 h-5 text-purple-600 shrink-0" />
               <h3 className="font-bold text-sm text-slate-900">
-                {patients.length === 0 ? 'Add your first patient' : 'Patient Intake & Token Generation'}
+                Add Patient
               </h3>
             </div>
             {verificationSuccess && (
@@ -469,9 +538,10 @@ export const Reception: React.FC<ReceptionProps> = ({
               <input
                 type="text"
                 value={formData.name}
+                disabled={intakeLocked}
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                 placeholder="e.g. Rajiv Saxena"
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                className="w-full min-w-0 px-3 py-2 border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:bg-slate-50"
               />
             </div>
 
@@ -480,9 +550,10 @@ export const Reception: React.FC<ReceptionProps> = ({
               <input
                 type="text"
                 value={formData.phone}
+                disabled={intakeLocked}
                 onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
                 placeholder="+91 98234 55667"
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                className="w-full min-w-0 px-3 py-2 border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:bg-slate-50"
               />
             </div>
 
@@ -577,6 +648,16 @@ export const Reception: React.FC<ReceptionProps> = ({
             ))}
           </div>
 
+          <div className="sm:col-span-2 border-t border-slate-100 pt-3">
+            <ReceptionIntakeReports ref={reportsRef} patientId={attachedPatientId} />
+          </div>
+
+          {savedPatientName && (
+            <div className="sm:col-span-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900 break-words" data-testid="reception-intake-saved" role="status">
+              {reportSummary || `Patient saved: ${savedPatientName}.`}
+            </div>
+          )}
+
           {intakeError && (
             <div className="p-2.5 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-lg flex items-center gap-2">
               <AlertCircle className="w-4 h-4 shrink-0" />
@@ -584,27 +665,42 @@ export const Reception: React.FC<ReceptionProps> = ({
             </div>
           )}
 
-          <div className="pt-4 border-t border-slate-100 flex items-center justify-between">
-            <div className="text-xs text-slate-500">
-              Consultation Fee:{' '}
-              <strong className="text-slate-900 font-mono">
-                {formatINR(doctors.find((d) => d.id === formData.selectedDoctorId)?.consultationFee || 600)}
-              </strong>
-            </div>
+          <div className="sticky bottom-0 z-20 -mx-4 sm:-mx-6 px-4 sm:px-6 py-3 bg-white/95 backdrop-blur border-t border-slate-200 lg:static lg:mx-0 lg:px-0 lg:py-0 lg:bg-transparent lg:backdrop-blur-none lg:border-0">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between min-w-0">
+              <div className="text-xs text-slate-500">
+                Consultation Fee:{' '}
+                <strong className="text-slate-900 font-mono">
+                  {formatINR(doctors.find((d) => d.id === formData.selectedDoctorId)?.consultationFee || 600)}
+                </strong>
+              </div>
 
-            <button
-              onClick={handleCompleteIntake}
-              disabled={savingIntake}
-              className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg shadow-sm transition-all flex items-center gap-2 disabled:opacity-60"
-            >
-              {savingIntake ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CreditCard className="w-4 h-4" />}
-              <span>{savingIntake ? 'Saving…' : 'Issue OPD Token & Check-In'}</span>
-            </button>
+              {intakeLocked ? (
+                <button
+                  type="button"
+                  data-testid="reception-register-another"
+                  onClick={clearIntakeForm}
+                  className="w-full sm:w-auto px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-sm font-bold rounded-lg shadow-sm"
+                >
+                  Register another patient
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  data-testid="reception-save-patient"
+                  onClick={handleCompleteIntake}
+                  disabled={savingIntake}
+                  className="w-full sm:w-auto px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold rounded-lg shadow-sm transition-all flex items-center justify-center gap-2 disabled:opacity-60"
+                >
+                  {savingIntake ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CreditCard className="w-4 h-4" />}
+                  <span>{savingIntake ? 'Saving…' : 'Save patient'}</span>
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
         {/* Right 6 Cols: Patient Directory & Search with ABHA status */}
-        <div className="lg:col-span-6 bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-4">
+        <div className={`${deskPanel === 'registered' ? '' : 'hidden'} lg:block lg:col-span-6 bg-white rounded-xl border border-slate-200 shadow-sm p-4 sm:p-6 space-y-4 min-w-0 max-w-full`}>
           <div className="flex items-center justify-between">
             <div>
               <h3 className="font-bold text-sm text-slate-900">Registered Patients & ABHA Status (sandbox)</h3>
@@ -647,8 +743,8 @@ export const Reception: React.FC<ReceptionProps> = ({
                   className="p-3.5 rounded-lg border border-slate-200 hover:border-purple-300 hover:bg-purple-50/30 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs group"
                 >
                   <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <strong className="font-bold text-slate-900 text-sm">{p.name}</strong>
+                    <div className="flex flex-wrap items-center gap-2 min-w-0">
+                      <strong className="font-bold text-slate-900 text-sm break-words">{p.name}</strong>
                       <span className="text-slate-500 font-mono text-[11px]">{p.uhid}</span>
                       {isKyc ? (
                         <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1">
@@ -674,7 +770,7 @@ export const Reception: React.FC<ReceptionProps> = ({
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <button
                       onClick={() => setSelectedRecordPatient(p)}
                       className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1 cursor-pointer"
