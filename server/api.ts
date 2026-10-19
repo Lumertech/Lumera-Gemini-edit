@@ -54,6 +54,7 @@ import {
   requireRole,
 } from "./auth.ts";
 import { rejectUntrustedTenantClaim } from "./tenant-guard.ts";
+import { sendTenantResolve } from "./tenant-resolve.ts";
 import { publicBranch, publicTenant } from "./client-serializers.ts";
 import { clinicTenantId, upsertScopedConversation } from "./whatsapp-scope.ts";
 import { WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
@@ -1652,6 +1653,9 @@ export function createApiRouter(): Router {
 
   api.get("/me", sendSession);
   api.get("/auth/me", sendSession);
+  api.get("/tenant/resolve", requireAuth, (req, res) => {
+    sendTenantResolve(req, res);
+  });
 
   api.get("/w/:workspaceSlug/patients", requireAuth, (req, res) => {
     const slug = String(req.params.workspaceSlug || "").trim().toLowerCase();

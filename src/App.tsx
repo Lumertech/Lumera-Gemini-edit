@@ -1,9 +1,10 @@
 import { useEffect } from "react";
-import { BrowserRouter } from "react-router-dom";
+import { BrowserRouter, useLocation } from "react-router-dom";
 import { AuthProvider, destinationAfterAuth, homeSurfaceForRole, useAuth } from "./auth/AuthContext";
 import { BrandMark } from "./components/BrandMark";
-import { NavigationProvider, goAfterAuth, useNav } from "./nav/NavigationContext";
-import { decideChrome, nextAuthenticatedSurface, surfaceToPath } from "./nav/surfaces";
+import { NavigationProvider, TenantRouteGuard, goAfterAuth, useNav } from "./nav/NavigationContext";
+import { safeWorkspaceReturnPath } from "./nav/tenantRoutes";
+import { decideChrome, nextAuthenticatedSurface, safeNextPath, surfaceToPath } from "./nav/surfaces";
 import { LandingPage } from "./components/LandingPage";
 import { LoginPage } from "./pages/LoginPage";
 import { PricingPage } from "./pages/PricingPage";
@@ -30,8 +31,47 @@ function PublicBootSplash() {
   );
 }
 
+function UnknownClinic() {
+  const { go, workspaceSlug } = useNav();
+  const { pathname } = useLocation();
+  const slug = pathname.split("/").filter(Boolean)[1] || "";
+  return (
+    <div
+      data-testid="unknown-tenant"
+      className="h-full w-full max-w-full overflow-y-auto overflow-x-hidden flex flex-col items-center justify-center p-6 text-center text-slate-800"
+    >
+      <h1 className="text-lg font-semibold">Clinic link not found</h1>
+      <p className="mt-2 max-w-md text-sm text-slate-600">
+        {slug ? `"${slug}" is not a clinic.` : "This clinic link was not found."} No other clinic was opened.
+      </p>
+      {workspaceSlug && (
+        <button
+          type="button"
+          className="mt-4 px-3 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold"
+          onClick={() => go("app", { appView: "dashboard", workspaceSlug, replace: true })}
+        >
+          Back to your clinic
+        </button>
+      )}
+    </div>
+  );
+}
+
 function SurfaceRoot() {
-  const { surface, policySlug, loginNext, loginNextPath, appView, adminTab, workspaceSlug, go, pathname } = useNav();
+  const {
+    surface,
+    policySlug,
+    loginNext,
+    loginNextPath,
+    appView,
+    adminTab,
+    workspaceSlug,
+    recordId,
+    payFocus,
+    tenantSlugStatus,
+    go,
+    pathname,
+  } = useNav();
   const { user, loading } = useAuth();
   const forceOnboarding = needsOnboarding(user);
   const roleHome = user ? destinationAfterAuth(user, loginNext) : "app";
@@ -49,9 +89,14 @@ function SurfaceRoot() {
 
     if (!user) {
       if (chrome.renderSurface === "login" && surface !== "login") {
+        const built =
+          surface === "app" && (pathname.startsWith("/w/") || pathname === "/w" || pathname.startsWith("/app/") || pathname === "/app")
+            ? safeWorkspaceReturnPath(pathname) || surfaceToPath(surface, { appView, adminTab, workspaceSlug, recordId, payFocus })
+            : surfaceToPath(surface, { appView, adminTab, workspaceSlug, recordId, payFocus });
+        const loginReturn = surface === "app" ? safeWorkspaceReturnPath(built) : safeNextPath(built) || built;
         go("login", {
           loginNext: surface,
-          loginNextPath: surfaceToPath(surface, { appView, adminTab, workspaceSlug }),
+          loginNextPath: loginReturn,
           loginMode: "signin",
           replace: true,
         });
@@ -82,6 +127,9 @@ function SurfaceRoot() {
     loginNextPath,
     appView,
     adminTab,
+    workspaceSlug,
+    recordId,
+    payFocus,
     go,
     pathname,
     chrome.renderSurface,
@@ -104,7 +152,13 @@ function SurfaceRoot() {
   }
   if (view === "app") {
     if (!user) return <LoginPage />;
-    return <ClinicianApp />;
+    if (tenantSlugStatus === "checking") return <PublicBootSplash />;
+    if (tenantSlugStatus === "missing") return <UnknownClinic />;
+    return (
+      <TenantRouteGuard>
+        <ClinicianApp />
+      </TenantRouteGuard>
+    );
   }
   if (view === "portal") {
     if (!user) return <LoginPage />;
