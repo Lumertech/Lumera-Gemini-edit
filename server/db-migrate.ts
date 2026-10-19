@@ -507,6 +507,11 @@ export function migrate(database: SqlDatabase) {
   migrateWhatsAppConversationKey(database);
   enforceWhatsAppTenantNotNull(database);
   rewriteLegacyHonestyCopy(database);
+  try {
+    scrubHistoricalSendRxMessages(database);
+  } catch {
+    /* whatsapp_messages is created earlier; a partial bootstrap skips the scrub */
+  }
 }
 
 /**
@@ -555,4 +560,81 @@ export function backfillLabReportAndBranchTenants(database: SqlDatabase) {
       `UPDATE branches SET tenant_id = '${DEMO_TENANT_ID}' WHERE tenant_id IS NULL OR TRIM(tenant_id) = ''`
     );
   } catch {}
+}
+
+/** Neutral replacement for a historical send-rx WhatsApp row. Not a clinical document. */
+export const SEND_RX_MESSAGE_MARKER = "Prescription notification sent";
+
+const SEND_RX_SCRUB_COLUMNS = ["content", "body", "translated_content", "buttons", "media", "metadata", "metadata_json"] as const;
+
+/**
+ * Old POST /send-rx wrote diagnosis, medicines, UHID, and
+ * /api/whatsapp/prescription/.../pdf into whatsapp_messages content, buttons,
+ * and media. Only rows with that send-rx marker are rewritten. id, tenant_id,
+ * timestamps, direction, status, and wamid are not in the SET list.
+ * The marker does not match the predicate, so a second run changes nothing.
+ */
+export function scrubHistoricalSendRxMessages(database: SqlDatabase): number {
+  const present = new Set(whatsappMessageColumnNames(database));
+  if (!present.has("content")) return 0;
+  const assignments = sendRxScrubAssignments(present);
+  const where = sendRxMessagePredicate(present);
+  if (!assignments || !where) return 0;
+  const result = database.prepare(`UPDATE whatsapp_messages SET ${assignments} WHERE ${where}`).run();
+  return Number(result.changes || 0);
+}
+
+function whatsappMessageColumnNames(database: SqlDatabase): string[] {
+  const rows =
+    database.dialect === "postgres"
+      ? (database
+          .prepare(
+            `SELECT column_name AS name
+             FROM information_schema.columns
+             WHERE table_schema = current_schema()
+               AND table_name = 'whatsapp_messages'`
+          )
+          .all() as Array<{ name?: string }>)
+      : (database.prepare("PRAGMA table_info(whatsapp_messages)").all() as Array<{ name?: string }>);
+  return rows.map((row) => String(row?.name || "").trim()).filter(Boolean);
+}
+
+function sendRxScrubAssignments(present: Set<string>): string {
+  const marker = `'${SEND_RX_MESSAGE_MARKER}'`;
+  const parts: string[] = [];
+  for (const column of SEND_RX_SCRUB_COLUMNS) {
+    if (!present.has(column)) continue;
+    if (column === "translated_content") {
+      parts.push(`translated_content = CASE WHEN translated_content IS NULL THEN NULL ELSE ${marker} END`);
+      continue;
+    }
+    parts.push(`${column} = ${marker}`);
+  }
+  return parts.join(", ");
+}
+
+function sendRxMessagePredicate(present: Set<string>): string {
+  const clauses: string[] = [];
+  if (present.has("content")) {
+    clauses.push(`(
+      COALESCE(content, '') LIKE '%*Official Digital Prescription*%'
+      AND COALESCE(content, '') LIKE '%(UHID:%'
+      AND COALESCE(content, '') LIKE '%/api/whatsapp/prescription/%'
+      AND COALESCE(content, '') LIKE '%/pdf%'
+    )`);
+  }
+  if (present.has("media")) {
+    clauses.push(`(
+      COALESCE(media, '') LIKE '%"type":"document"%'
+      AND COALESCE(media, '') LIKE '%/api/whatsapp/prescription/%'
+      AND COALESCE(media, '') LIKE '%"title":"Prescription-%'
+    )`);
+  }
+  if (present.has("buttons")) {
+    clauses.push(`(
+      COALESCE(buttons, '') LIKE '%View / Download PDF Rx%'
+      AND COALESCE(buttons, '') LIKE '%/api/whatsapp/prescription/%'
+    )`);
+  }
+  return clauses.join(" OR ");
 }

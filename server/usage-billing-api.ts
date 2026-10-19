@@ -3,7 +3,7 @@ import { getDb, writeAudit } from "./db.ts";
 import { requireAuth, requirePlatformAdmin } from "./auth.ts";
 import { rejectUntrustedTenantClaim } from "./tenant-guard.ts";
 import { isCloudDispatchFailure } from "./graph-whatsapp.ts";
-import { getTenantLetterhead } from "./letterhead.ts";
+import { SEND_RX_MESSAGE_MARKER } from "./db-migrate.ts";
 import { appPublicUrl, isProduction, sandboxSimulatorsEnabled } from "./runtime.ts";
 import { WALLET_INSUFFICIENT_ERROR } from "./usage-wallet.ts";
 import { formatINR } from "../src/lib/currency.ts";
@@ -159,31 +159,10 @@ export function createUsageBillingRouter(): Router {
     const body = (req.body || {}) as Record<string, unknown>;
     const patientPhone = String(body.patientPhone || "+91 98234 55667").trim();
     const tenantId = requestTenantId(req, patientPhone);
-    const clinicName =
-      String(body.clinicName || "").trim() ||
-      (tenantId ? getTenantLetterhead(tenantId).clinicName : "") ||
-      "your clinic";
-    const patientName = String(body.patientName || "Patient");
-    const uhid = String(body.uhid || "LUM-2026-0001");
-    const rxNumber = String(body.rxNumber || "RX-2026-0001");
-    const doctorName = String(body.doctorName || "Doctor");
-    const doctorSpecialty = String(body.doctorSpecialty || "General Medicine");
-    const diagnosis = String(body.diagnosis || "Clinical Consultation");
-    const medicines = Array.isArray(body.medicines) ? body.medicines : [];
-    const medsText = medicines
-      .slice(0, 3)
-      .map((m: { drugName?: string; dosage?: string; frequency?: string }, i: number) => {
-        return `  ${i + 1}. *${m.drugName || "Medicine"}* (${m.dosage || ""} - ${m.frequency || ""})`;
-      })
-      .join("\n");
-    const moreMeds = medicines.length > 3 ? `\n  _...and ${medicines.length - 3} more medications_` : "";
-    const pdfUrl = `/api/whatsapp/prescription/${rxNumber}/pdf`;
-    const content = `🩺 *${clinicName}*\n*Official Digital Prescription*\n\nNamaste *${patientName}* (UHID: ${uhid}),\nYour consultation prescription has been finalized and signed by *${doctorName}* (${doctorSpecialty}).\n\n📋 *Diagnosis:* ${diagnosis}\n💊 *Prescribed Medications (${medicines.length}):*\n${medsText}${moreMeds}\n\n📄 *Download Official PDF Prescription:*\n${pdfUrl}\n\n_Please follow the dosage schedule strictly. For emergency follow-up, reply to this chat._`;
     const sent = await dispatchPatientCloudText({
       tenantId: tenantId || undefined,
       to: patientPhone,
-      textBody: content,
-      previewUrl: true,
+      textBody: SEND_RX_MESSAGE_MARKER,
     });
     if (isCloudDispatchFailure(sent)) return walletBlockedJson(res, sent);
     next();
