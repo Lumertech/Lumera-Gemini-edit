@@ -197,7 +197,7 @@ function yearToken(prefix: string): string {
   return `${prefix}-${year}-${crypto.randomUUID().replace(/-/g, "").slice(0, 6).toUpperCase()}`;
 }
 
-function tenantTimezone(tenantId: string): string {
+export function tenantTimezone(tenantId: string): string {
   const row = getDb().prepare("SELECT timezone FROM tenants WHERE id = ?").get(tenantId) as
     | { timezone?: string }
     | undefined;
