@@ -1358,11 +1358,10 @@ export const DEFAULT_WHATSAPP_TEMPLATES: WhatsAppTemplate[] = [
     category: 'PRESCRIPTION_DELIVERY',
     language: 'English (en_IN)',
     headerText: '📄 Digital Rx Ready - Lumera Health',
-    bodyText: 'Dear {{1}},\n\nYour digital prescription from {{2}} has been generated successfully.\n\n📋 Rx No: *{{3}}*\n💊 Medications: {{4}} items\n🗓️ Follow-up: *{{5}}*\n\nTap the button below to view or print your digital prescription anytime.',
+    bodyText: 'Your prescription from {{1}} was reviewed and signed by {{2}}.\n\nTap the button below to view it.',
     footerText: 'Issued under the Telemedicine Practice Guidelines, 2020',
     buttons: [
-      { type: 'URL', text: 'View Digital Rx PDF', payload: 'https://www.mylumera.in/rx/v/opaque-token' },
-      { type: 'QUICK_REPLY', text: 'Order Medicines', payload: 'ORDER_MEDS' }
+      { type: 'URL', text: 'View prescription', payload: 'https://www.mylumera.in/rx/v/opaque-token' }
     ],
     status: 'APPROVED'
   },

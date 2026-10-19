@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { DEFAULT_WHATSAPP_TEMPLATES } from "../src/data/clinicalData.ts";
 import {
   CLINIC_TEMPLATE_CATALOG,
   LUMERA_RECEIPT_TEMPLATE_V1,
   LUMERA_RECEIPT_TEMPLATE_V2,
   graphComponentsForClinicTemplate,
+  patientFirstName,
+  prescriptionReadyTemplateParameters,
   receiptTemplateParameters,
 } from "./clinic-whatsapp-templates.ts";
 
@@ -47,6 +50,30 @@ describe("clinic WhatsApp template catalog", () => {
     assert.ok(rx);
     assert.match(rx.body, /reviewed and signed/);
     assert.match(rx.body, /\{\{3\}\}/);
+    assert.equal(/Rx No|Medications/i.test(rx.body), false);
+    assert.deepEqual(rx.example, ["Asha Rao", "Sunrise Clinic", "Dr Mehta"]);
+    assert.deepEqual(
+      prescriptionReadyTemplateParameters({
+        patientName: rx.example[0],
+        clinicName: rx.example[1],
+        doctorName: rx.example[2],
+      }),
+      [patientFirstName(rx.example[0]), rx.example[1], rx.example[2]]
+    );
+    assert.equal(rx.urlButton?.url, "https://www.mylumera.in/rx/v/{{1}}");
+  });
+
+  it("keeps the seed prescription template to clinic, doctor, and the view link", () => {
+    const seed = DEFAULT_WHATSAPP_TEMPLATES.find((template) => template.name === "digital_prescription_ready");
+    assert.ok(seed);
+    assert.equal(seed.bodyText.includes("Rx No"), false);
+    assert.equal(seed.bodyText.includes("Medications"), false);
+    assert.deepEqual(placeholderNumbers(seed.bodyText), [1, 2]);
+    assert.match(seed.bodyText, /from \{\{1\}\}/);
+    assert.match(seed.bodyText, /signed by \{\{2\}\}/);
+    assert.equal(seed.buttons?.length, 1);
+    assert.equal(seed.buttons?.[0]?.type, "URL");
+    assert.equal(seed.buttons?.[0]?.payload, "https://www.mylumera.in/rx/v/opaque-token");
   });
 
   it("fills the Manager receipt bodies: v2 has 6 params and the live name has 4", () => {
