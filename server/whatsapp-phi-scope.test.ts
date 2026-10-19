@@ -309,4 +309,43 @@ describe("WhatsApp bot PHI tenant scope", () => {
       else process.env.NODE_ENV = prev;
     }
   });
+
+  it("booking bot reply and its stored row omit the patient UHID", async () => {
+    const clinic = createClinic("phiBook");
+    cleanupIds.tenants.push(clinic.tenantId);
+    cleanupIds.users.push(clinic.userId);
+    const phone = `+91 93${String(Date.now()).slice(-8)}`;
+    const token = await login(clinic.email);
+    const booked = await jsonRequest(
+      server.port,
+      "POST",
+      "/api/whatsapp/send",
+      {
+        patientPhone: phone,
+        patientName: "Booked Patient",
+        sender: "user",
+        content: "book dr. siddharth",
+      },
+      auth(token)
+    );
+    assert.equal(booked.status, 201, String(booked.json.error || ""));
+    const reply = booked.json.botReply as { content?: string } | undefined;
+    assert.match(String(reply?.content || ""), /Appointment Confirmed|Existing booking found/);
+    const patient = getDb()
+      .prepare("SELECT id, uhid FROM patients WHERE tenant_id = ? AND phone = ?")
+      .get(clinic.tenantId, phone) as { id: string; uhid: string };
+    assert.ok(patient?.uhid);
+    cleanupIds.patients.push(patient.id);
+    const replyText = String(reply?.content || "");
+    assert.equal(replyText.includes("UHID"), false);
+    assert.equal(replyText.includes(patient.uhid), false);
+    const stored = getDb()
+      .prepare("SELECT content FROM whatsapp_messages WHERE patient_phone = ? AND sender = 'bot'")
+      .all(phone) as { content: string }[];
+    assert.ok(stored.length >= 1);
+    for (const row of stored) {
+      assert.equal(row.content.includes("UHID"), false);
+      assert.equal(row.content.includes(patient.uhid), false);
+    }
+  });
 });
