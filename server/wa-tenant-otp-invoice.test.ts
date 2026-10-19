@@ -724,26 +724,52 @@ describe("WhatsApp tenant scope, send validation, OTP limit, invoice UHID", () =
     const rxPhone = `+91 95${String(Date.now()).slice(-8)}`;
     const rxId = `conv-${tailOf(rxPhone)}`;
     plant(rxPhone, rxId);
-    const rx = await jsonRequest(
+    const rxPatient = await jsonRequest(
       server.port,
       "POST",
-      "/api/whatsapp/send-rx",
+      "/api/patients",
+      { name: "Rx Patient", phone: rxPhone, age: 40, gender: "Female" },
+      authA
+    );
+    assert.equal(rxPatient.status, 201, String(rxPatient.json.error || ""));
+    const rxCreated = await jsonRequest(
+      server.port,
+      "POST",
+      "/api/prescriptions",
       {
-        patientPhone: rxPhone,
-        patientName: "Rx Patient",
-        uhid: "UHID-ISO",
-        rxNumber: `RX-ISO-${tailOf(rxPhone)}`,
+        patientId: String((rxPatient.json.patient as { id: string }).id),
+        diagnosis: "Isolation check",
         doctorName: "Dr Iso",
         medicines: [],
       },
       authA
     );
-    assert.equal(rx.status, 200, String(rx.json.error || ""));
+    assert.equal(rxCreated.status, 201, String(rxCreated.json.error || ""));
+    const rx = await jsonRequest(
+      server.port,
+      "POST",
+      "/api/whatsapp/send-rx",
+      {
+        patientPhone: "+91 98234 55667",
+        rxNumber: String((rxCreated.json.prescription as { rxNumber: string }).rxNumber),
+        diagnosis: "client text must not overwrite",
+      },
+      authA
+    );
+    assert.equal(rx.status, 200, String(rx.json.code || rx.json.error || ""));
+    assert.equal(rx.json.channel, "sandbox");
+    assert.notEqual(rx.json.success, true);
     assertForeign(rxId);
     const rxMessage = db
-      .prepare("SELECT tenant_id FROM whatsapp_messages WHERE patient_phone = ? AND tenant_id = ? LIMIT 1")
-      .get(rxPhone, clinicA.tenantId) as { tenant_id: string } | undefined;
-    assert.equal(rxMessage?.tenant_id, clinicA.tenantId);
+      .prepare("SELECT tenant_id, status FROM whatsapp_messages WHERE patient_phone = ? LIMIT 1")
+      .get(rxPhone) as { tenant_id: string; status: string } | undefined;
+    assert.equal(rxMessage, undefined);
+    const rxStatus = db
+      .prepare("SELECT whatsapp_sent_status FROM prescriptions WHERE tenant_id = ? AND rx_number = ?")
+      .get(clinicA.tenantId, String((rxCreated.json.prescription as { rxNumber: string }).rxNumber)) as {
+      whatsapp_sent_status: string;
+    };
+    assert.notEqual(rxStatus.whatsapp_sent_status, "delivered");
     resetSendOtpRateLimits();
   });
 

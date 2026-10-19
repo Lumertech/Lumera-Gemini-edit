@@ -21,6 +21,12 @@ import { apiFetch, apiFetchResponse } from "../../api/http";
 import { META_TECH_PROVIDER_STATEMENT, WHATSAPP_PERMISSIONS_STATUS_SENTENCE } from "../../lib/metaStatus.ts";
 import { useNav } from "../../nav/NavigationContext";
 import { MetaWhatsAppTemplate } from "../../types";
+import {
+  TREATMENT_FOLLOWUP_FORM_DEFAULT,
+  draftTemplateSpec,
+  matchingBodyExample,
+  templateContractErrors,
+} from "../../lib/whatsappMetaTemplates";
 
 interface MetaOverview {
   providerName: string;
@@ -106,14 +112,14 @@ export const AdminMetaTechProvider: React.FC = () => {
 
   // New Template Form State
   const [newTemplateForm, setNewTemplateForm] = useState({
-    name: "treatment_followup_reminder",
-    category: "UTILITY" as "UTILITY" | "MARKETING" | "AUTHENTICATION",
-    language: "en",
-    headerText: "Clinical Follow-up Reminder",
-    bodyText: "Hello {{1}}, Dr. {{2}} has scheduled your post-op review for {{3}}. Please let us know if you need assistance.",
-    footerText: "Lumera Clinical Care Team",
-    button1Text: "Confirm Attendance",
-    button2Text: "Request Reschedule",
+    name: TREATMENT_FOLLOWUP_FORM_DEFAULT.name,
+    category: TREATMENT_FOLLOWUP_FORM_DEFAULT.category,
+    language: TREATMENT_FOLLOWUP_FORM_DEFAULT.language,
+    headerText: TREATMENT_FOLLOWUP_FORM_DEFAULT.headerText,
+    bodyText: TREATMENT_FOLLOWUP_FORM_DEFAULT.bodyText,
+    footerText: TREATMENT_FOLLOWUP_FORM_DEFAULT.footerText,
+    button1Text: TREATMENT_FOLLOWUP_FORM_DEFAULT.button1Text,
+    button2Text: TREATMENT_FOLLOWUP_FORM_DEFAULT.button2Text,
   });
 
   const loadData = async () => {
@@ -218,21 +224,17 @@ export const AdminMetaTechProvider: React.FC = () => {
   const handleCreateTemplate = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const components: any[] = [
-        { type: "HEADER", format: "TEXT", text: newTemplateForm.headerText },
-        {
-          type: "BODY",
-          text: newTemplateForm.bodyText,
-          example: { body_text: [["Patient", "Doctor", "Tomorrow at 10:00 AM"]] },
-        },
-        { type: "FOOTER", text: newTemplateForm.footerText },
-      ];
-      if (newTemplateForm.button1Text || newTemplateForm.button2Text) {
-        const buttons: any[] = [];
-        if (newTemplateForm.button1Text) buttons.push({ type: "QUICK_REPLY", text: newTemplateForm.button1Text });
-        if (newTemplateForm.button2Text) buttons.push({ type: "QUICK_REPLY", text: newTemplateForm.button2Text });
-        components.push({ type: "BUTTONS", buttons });
+      const bodyExample = matchingBodyExample(
+        newTemplateForm.bodyText,
+        TREATMENT_FOLLOWUP_FORM_DEFAULT.bodyExample || []
+      );
+      const spec = draftTemplateSpec({ ...newTemplateForm, bodyExample });
+      const contractErrors = templateContractErrors(spec);
+      if (contractErrors.length > 0) {
+        alert("This template cannot be submitted until its placeholders, examples, footer, and buttons match the Meta rules.");
+        return;
       }
+      const components = spec.components;
 
       const res = await apiFetchResponse("/api/meta/templates", {
         method: "POST",

@@ -105,6 +105,16 @@ export function applyWhatsAppOutboundStatus(
     }
   }
 
+  if (messageId) {
+    try {
+      db.prepare(
+        `UPDATE whatsapp_messages SET status = ? WHERE id = ? AND ${tenantSql}`
+      ).run(status, messageId, tenantId);
+    } catch {
+      /* inbox row is optional; the outbound event is what the webhook matches */
+    }
+  }
+
   if (matchedIds.size === 0) return 0;
 
   let changes = 0;

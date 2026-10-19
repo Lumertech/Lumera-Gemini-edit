@@ -864,7 +864,11 @@ describe("legacy honesty copy migration", () => {
       { type: "FOOTER", text: "Lumera Health EMR System • Certified Digital Rx — edited" },
     ]);
     const insertTpl = db.prepare("INSERT INTO meta_templates (id, name, components) VALUES (?, ?, ?)");
+    const intermediateComponents = JSON.stringify([
+      { type: "FOOTER", text: "Lumera Health EMR System • Digital Rx" },
+    ]);
     insertTpl.run("tpl-2", "post_consultation_rx", oldComponents);
+    insertTpl.run("tpl-intermediate", "post_consultation_rx", intermediateComponents);
     insertTpl.run("tpl-3", "lab_report_ready", labComponents);
     insertTpl.run("tpl-custom", "clinic_branded_rx", customComponents);
     insertTpl.run("tpl-near", "post_consultation_rx", nearComponents);
@@ -884,10 +888,12 @@ describe("legacy honesty copy migration", () => {
       (db.prepare("SELECT components AS v FROM meta_templates WHERE id = ?").get(id) as { v: string }).v;
     const tpl2 = componentsOf("tpl-2");
     assert.equal(tpl2.includes("Certified Digital Rx"), false);
-    assert.match(tpl2, /Lumera Health EMR System • Digital Rx/);
+    assert.equal(tpl2.includes("Lumera Health EMR System"), false);
     const parsed = JSON.parse(tpl2) as { type: string; text?: string }[];
     assert.equal(parsed[0].text, "Dear {{1}}");
-    assert.equal(parsed.find((part) => part.type === "FOOTER")?.text, "Lumera Health EMR System • Digital Rx");
+    assert.equal(parsed.find((part) => part.type === "FOOTER")?.text, "Digital prescription");
+    const intermediate = JSON.parse(componentsOf("tpl-intermediate")) as { type: string; text?: string }[];
+    assert.equal(intermediate.find((part) => part.type === "FOOTER")?.text, "Digital prescription");
 
     assert.equal(componentsOf("tpl-3"), labComponents);
     assert.equal(componentsOf("tpl-custom"), customComponents);
