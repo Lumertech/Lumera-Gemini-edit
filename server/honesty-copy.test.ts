@@ -17,8 +17,21 @@ const PHRASES: { re: RegExp; label: string }[] = [
   { re: /Certified Digital Rx/, label: "Certified Digital Rx" },
   { re: /\bgemini\b/i, label: "Gemini" },
   { re: /(valid|verified) under (the )?NHA/i, label: "(valid|verified) under NHA" },
+  { re: /lumera\.health/i, label: "lumera.health" },
   ...RETIRED_USER_COPY,
 ];
+
+const LUMERA_HEALTH_HOST = /lumera\.health/i;
+
+/** A mailbox at this host is an identifier. A URL or bare host is a public claim. */
+function namesLumeraHealthHost(content: string): boolean {
+  return LUMERA_HEALTH_HOST.test(content.replace(/[\w.+-]+@lumera\.health/gi, ""));
+}
+
+/** FHIR `system` URIs are identifiers, the same way `@abdm` addresses are. */
+function isFhirSystemIdentifier(lookbackText: string): boolean {
+  return /(?:^|[^\w$])system\s*:\s*$/.test(lookbackText.trimEnd());
+}
 
 function lineOf(source: string, index: number): number {
   return source.slice(0, index).split("\n").length;
@@ -163,7 +176,8 @@ function maskNonJsxText(source: string): string {
   while (i < source.length) {
     const ch = source[i];
     const next = source[i + 1];
-    if (ch === "/" && next === "/") {
+    // `https://` in JSX text is a URL, not a line comment.
+    if (ch === "/" && next === "/" && source[i - 1] !== ":") {
       out += "  ";
       i += 2;
       while (i < source.length && source[i] !== "\n") {
@@ -515,15 +529,19 @@ export function findHonestyViolations(source: string, file = "src/components/Exa
 
   const ui = isSrcUiFile(file);
   for (const hit of stringLiterals(source)) {
-    const labels = phraseHits(hit.content);
+    const labels = phraseHits(hit.content).filter((label) => label !== "lumera.health");
     const retired = retiredUserCopyLabels(hit.content);
-    if (labels.length === 0 && retired.length === 0) continue;
     const before = lookback(source, hit.index);
     if (allowListed(hit.content, before)) continue;
     const footer = isFooterDefault(before);
     const response = isResponseLabel(before);
     const instruction = isAiInstruction(before);
     const facing = ui && isUserFacingString(before);
+    const emailOnly = LUMERA_HEALTH_HOST.test(hit.content) && !namesLumeraHealthHost(hit.content);
+    const hostClaim = namesLumeraHealthHost(hit.content) && !isFhirSystemIdentifier(before) && !isConsoleCall(before);
+    const emailClaim = emailOnly && (footer || response || instruction || facing);
+    if (hostClaim || emailClaim) push(hit.index, ["lumera.health"]);
+    if (labels.length === 0 && retired.length === 0) continue;
     if (labels.length && (footer || response || instruction || facing)) push(hit.index, labels);
     // Retired labels are banned in every shipped string, not only JSX props.
     // Console lines stay allowed; comments never reach this parser.
@@ -795,6 +813,50 @@ describe("honesty copy scan", () => {
       "server/letterhead.ts"
     );
     assert.deepEqual(custom, []);
+  });
+
+  it("fails when copy names the lumera.health host", () => {
+    const jsx = findHonestyViolations(
+      `export function Rx(){ return <p>URL: https://lumera.health/rx/RX-1</p>; }\n`,
+      "src/components/Rx.tsx"
+    );
+    assert.ok(jsx.some((item) => item.message.includes("lumera.health")));
+
+    const bare = findHonestyViolations(
+      `export function Hep(){ return <strong>lumera.health/hep/UHID</strong>; }\n`,
+      "src/components/Hep.tsx"
+    );
+    assert.ok(bare.some((item) => item.message.includes("lumera.health")));
+
+    const stored = findHonestyViolations(
+      "const url = `https://lumera.health/rx/${id}`;\n",
+      "server/clinical.ts"
+    );
+    assert.ok(stored.some((item) => item.message.includes("lumera.health")));
+
+    const placeholder = findHonestyViolations(
+      `export function Form(){ return <input placeholder="doctor@lumera.health" />; }\n`,
+      "src/components/Form.tsx"
+    );
+    assert.ok(placeholder.some((item) => item.message.includes("lumera.health")));
+
+    const email = findHonestyViolations(
+      `email: "dr.meera@lumera.health"\n`,
+      "server/db-seed-maps.ts"
+    );
+    assert.deepEqual(email.filter((item) => item.message.includes("lumera.health")), []);
+
+    const system = findHonestyViolations(
+      `system: "https://lumera.health/uhid"\n`,
+      "server/fhir.ts"
+    );
+    assert.deepEqual(system.filter((item) => item.message.includes("lumera.health")), []);
+
+    const marked = findHonestyViolations(
+      `export function Foot(){ return <p>Designed for ABDM records (sandbox — not yet live)</p>; }\n`,
+      "src/components/Foot.tsx"
+    );
+    assert.deepEqual(marked.filter((item) => item.message.includes("not-live marker")), []);
   });
 
   it("scans src and server user-facing copy", () => {

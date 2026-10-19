@@ -490,6 +490,80 @@ describe("Wave 2 Razorpay UPI collect", () => {
     assert.ok(demoTenant.c >= 0);
   });
 
+  it("keeps an invoice GET inside the owning tenant and leaves reception off Rx", async () => {
+    const clinic = createClinicUser("invlink");
+    const other = createClinicUser("invlinkb");
+    const tokenA = await login(clinic.email);
+    const tokenB = await login(other.email);
+    const authA = { Authorization: `Bearer ${tokenA}` };
+    const authB = { Authorization: `Bearer ${tokenB}` };
+    const { patient } = await seedVisit(authA, clinic.tenantId.slice(-4));
+    const secret = `Only-${clinic.tenantId.slice(-6)}-Patient`;
+    const created = await jsonRequest(
+      port,
+      "POST",
+      "/api/invoices",
+      {
+        patientId: patient.id,
+        patientName: secret,
+        patientPhone: patient.phone,
+        items: [{ description: "Consult", quantity: 1, unitPrice: 641, total: 641 }],
+      },
+      authA
+    );
+    assert.equal(created.status, 201, String(created.json.error || ""));
+    const invoice = created.json.invoice as { id: string; patientName: string; totalAmount: number };
+    assert.equal(invoice.patientName, secret);
+    assert.equal(invoice.totalAmount, 641);
+
+    const own = await jsonRequest(port, "GET", `/api/invoices/${invoice.id}`, undefined, authA);
+    assert.equal(own.status, 200);
+    assert.equal((own.json.invoice as { patientName: string }).patientName, secret);
+    assert.equal((own.json.invoice as { totalAmount: number }).totalAmount, 641);
+
+    const stolen = await jsonRequest(port, "GET", `/api/invoices/${invoice.id}`, undefined, authB);
+    assert.equal(stolen.status, 404);
+    const stolenBody = JSON.stringify(stolen.json);
+    assert.equal(stolenBody.includes(secret), false);
+    assert.equal(stolenBody.includes("641"), false);
+    assert.equal((stolen.json as { invoice?: unknown }).invoice, undefined);
+
+    const now = new Date().toISOString();
+    const receptionEmail = `desk.${clinic.tenantId.slice(-6)}@billing-test.example`;
+    getDb()
+      .prepare(
+        `INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, clinic_name, onboarding_completed, practice_type, specialty, last_login, created_at)
+         VALUES (?, ?, ?, ?, 'Desk Clerk', 'receptionist', 'active', '+91 90000 55555', ?, 1, 'individual', 'General Medicine', ?, ?)`
+      )
+      .run(
+        `user-desk-${clinic.tenantId.slice(-6)}`,
+        clinic.tenantId,
+        receptionEmail,
+        hashPassword("Lumera@2026"),
+        `Clinic invlink`,
+        now,
+        now
+      );
+    const desk = { Authorization: `Bearer ${await login(receptionEmail)}` };
+    const deskGet = await jsonRequest(port, "GET", `/api/invoices/${invoice.id}`, undefined, desk);
+    assert.equal(deskGet.status, 200);
+    assert.equal((deskGet.json.invoice as { id: string }).id, invoice.id);
+    assert.equal((deskGet.json.invoice as { patientName: string }).patientName, secret);
+
+    const signed = await jsonRequest(port, "POST", "/api/prescriptions", { patientId: patient.id }, desk);
+    assert.equal(signed.status, 403);
+    const draft = await jsonRequest(port, "POST", "/api/prescriptions/draft", { patientId: patient.id }, desk);
+    assert.equal(draft.status, 403);
+    const draftRead = await jsonRequest(
+      port,
+      "GET",
+      `/api/prescriptions/draft/${encodeURIComponent(patient.id)}`,
+      undefined,
+      desk
+    );
+    assert.equal(draftRead.status, 403);
+  });
+
   it("desk collect cannot mark UPI invoices paid", async () => {
     const clinic = createClinicUser("desk");
     const token = await login(clinic.email);

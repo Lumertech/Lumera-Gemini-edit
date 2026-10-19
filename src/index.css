@@ -29,12 +29,66 @@
   min-width: 0;
 }
 
+#rx-print-root {
+  display: none;
+}
+
 @media print {
+  @page {
+    size: A4;
+    margin: 12mm;
+  }
   body {
     background-color: white !important;
     color: black !important;
   }
   .no-print {
+    display: none !important;
+  }
+  /* Paper Rx: the print root is the only page. Modal, nav, and toasts stay off it. */
+  body.printing-rx > *:not(#rx-print-root) {
+    display: none !important;
+  }
+  body.printing-rx #rx-print-root {
+    display: block !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+    padding: 8mm;
+    background: #fff !important;
+    color: #000 !important;
+  }
+  body.printing-rx #rx-print-root,
+  body.printing-rx #rx-print-root * {
+    box-sizing: border-box;
+  }
+  body.printing-rx #rx-print-root [data-rx-letterhead] > .rx-letterhead-row {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+  body.printing-rx #rx-print-root [data-rx-letterhead] .rx-letterhead-id {
+    flex: 1 1 12rem;
+    min-width: 0 !important;
+    max-width: 100% !important;
+  }
+  body.printing-rx #rx-print-root [data-rx-letterhead] .rx-letterhead-id,
+  body.printing-rx #rx-print-root [data-rx-letterhead] .rx-letterhead-id *,
+  body.printing-rx #rx-print-root [data-rx-signature],
+  body.printing-rx #rx-print-root [data-rx-signature] * {
+    min-width: 0;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+  body.printing-rx #rx-print-root [data-rx-meds] tr,
+  body.printing-rx #rx-print-root [data-rx-signature] {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  [data-rx-modal],
+  [data-print-chrome] {
     display: none !important;
   }
   .print-only {
@@ -56,6 +110,65 @@
 .sample-tax-banner {
   print-color-adjust: exact;
   -webkit-print-color-adjust: exact;
+}
+
+/* Invoice detail must stay inside a phone width. Tailwind utilities still style it;
+   these rules stop a nowrap toolbar from widening the page. */
+.invoice-fit {
+  width: 100%;
+  max-width: 72rem;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.invoice-fit,
+.invoice-fit * {
+  box-sizing: border-box;
+}
+.invoice-title,
+.invoice-chip,
+.invoice-number {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.invoice-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  max-width: 100%;
+  min-width: 0;
+}
+.invoice-tabs {
+  display: flex;
+  flex-wrap: nowrap;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.invoice-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.5rem;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+.invoice-actions > .invoice-collect,
+.invoice-actions > .invoice-print {
+  width: 100%;
+}
+@media (min-width: 640px) {
+  .invoice-actions {
+    flex-direction: row;
+    align-items: center;
+    width: auto;
+  }
+  .invoice-actions > .invoice-collect,
+  .invoice-actions > .invoice-print {
+    width: auto;
+  }
 }
 
 /* Custom smooth scrollbars */

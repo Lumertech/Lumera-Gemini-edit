@@ -67,7 +67,7 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({ docu
               <h2 className="text-xl font-black text-blue-900 tracking-tight">LUMERA HEALTHCARE POLYCLINIC</h2>
               <p className="text-xs text-slate-500">
                 Integrated Multispecialty OPD, Diagnostic Pathology & Rehabilitation<br />
-                Indiranagar, Bengaluru • Phone: +91 80 4123 4567 • emr@lumera.health
+                Indiranagar, Bengaluru • Phone: +91 80 4123 4567
               </p>
             </div>
             <div className="text-right">

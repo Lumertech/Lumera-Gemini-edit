@@ -112,6 +112,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   return (
     <header
       data-testid="app-topbar"
+      data-print-chrome=""
       className="h-14 bg-white border-b border-slate-200 text-slate-900 flex items-center justify-between gap-2 px-3 sm:px-5 shrink-0 select-none z-50 min-w-0 overflow-hidden"
     >
       {/* Left: Sidebar Toggle + Brand Logo + View Breadcrumb */}

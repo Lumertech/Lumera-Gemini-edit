@@ -101,7 +101,6 @@ export function clinicOutboundCopy(opts: {
 } {
   const clinic = String(opts.clinicName || "").trim() || "your clinic";
   const doctor = String(opts.doctorName || "").trim() || "your doctor";
-  const patientName = String(opts.patientName || "Patient").trim() || "Patient";
   const patientText = String(opts.patientText || "");
   return {
     handoverRestored: `🤖 Automated AI Assistant Restored: ${clinic} assistant is now handling routine patient inquiries.`,
@@ -111,7 +110,6 @@ export function clinicOutboundCopy(opts: {
     roster: `⏰ *${clinic} OPD Roster & Timings*:\n\n${opts.roster || ""}\n\nEmergency care & triage desk operates 24/7.`,
     assistantPrompt: `You are the WhatsApp medical assistant for ${clinic}. The consulting clinician is ${doctor}.
 The patient is asking: "${patientText}".
-Patient Name: ${patientName}.
 Respond in friendly WhatsApp tone with emojis, medical accuracy, and clear next steps. Keep response within 80-120 words.
 Suggest relevant quick actions (booking appointment, checking timings, viewing lab report, or talking to staff).
 ${AI_RUPEE_OUTPUT_RULE}`,

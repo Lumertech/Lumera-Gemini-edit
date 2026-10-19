@@ -37,6 +37,7 @@ import {
 import { Link } from "react-router-dom";
 import { LEGAL_ENTITY_NAME, PRODUCT_NAME } from "../brand";
 import { META_TECH_PROVIDER_STATEMENT } from "../lib/metaStatus";
+import { CONTACT_EMAIL } from "../lib/pricingCopy";
 import { BrandMark } from "./BrandMark";
 import { destinationAfterAuth, useAuth } from "../auth/AuthContext";
 import { goAfterAuth, useNav } from "../nav/NavigationContext";
@@ -106,7 +107,7 @@ const FALLBACK: SitePayload = {
     heroTitle: "Next-Gen AI Receptionist & Ambient Clinical Scribe",
     heroSubtitle:
       "Automate patient call answering, 3-click WhatsApp appointment scheduling, and ambient consultation SOAP notes across regional Indian languages.",
-    contactEmail: "contact@lumera.health",
+    contactEmail: CONTACT_EMAIL,
     ctaPrimary: "Experience Doctor EHR",
     ctaSecondary: "Open Clinical Demo",
     ctaBannerTitle: "Ready to Supercharge Your Practice?",

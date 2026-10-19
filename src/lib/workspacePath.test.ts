@@ -73,6 +73,18 @@ describe("workspace URL slug", () => {
       reconcileWorkspacePath("/w/other-clinic/rx/Visit-9", "iyer-city-polyclinic", "doctor"),
       "/w/iyer-city-polyclinic/rx/Visit-9"
     );
+    assert.equal(
+      reconcileWorkspacePath("/w/other-clinic/invoices/inv-194b83", "malhotra-individual-practice", "doctor"),
+      "/w/malhotra-individual-practice/invoices/inv-194b83"
+    );
+    assert.equal(
+      reconcileWorkspacePath("/w/malhotra-individual-practice/invoices/inv-194b83", "malhotra-individual-practice", "receptionist"),
+      null
+    );
+    assert.equal(
+      reconcileWorkspacePath("/app/billing/inv-194b83", "malhotra-individual-practice", "receptionist"),
+      "/w/malhotra-individual-practice/billing/inv-194b83"
+    );
     assert.equal(reconcileWorkspacePath("/w/iyer-city-polyclinic/branches", "iyer-city-polyclinic", "super_admin"), "/admin");
     assert.equal(reconcileWorkspacePath("/admin/tenants", "lumera-apex-polyclinic", "super_admin"), null);
   });
