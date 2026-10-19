@@ -906,8 +906,10 @@ export function insertAppointment(tenantId: string, body: Record<string, unknown
     patientPhone,
     mappedPatient.uhid,
     doctorId,
-    String(body.doctorName || body.doctor_name || doctor?.name || actor?.name || ""),
-    String(body.specialty || doctor?.specialty || "General Medicine"),
+    doctor
+      ? String(doctor.name ?? "")
+      : String(body.doctorName || body.doctor_name || actor?.name || ""),
+    doctor ? String(doctor.specialty || "General Medicine") : String(body.specialty || "General Medicine"),
     date,
     String(body.timeSlot || body.time_slot || ""),
     String(body.type || "New Consultation"),

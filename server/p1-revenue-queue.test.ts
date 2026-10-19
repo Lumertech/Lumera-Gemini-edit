@@ -674,6 +674,8 @@ describe("P1 revenue and queue integrity", () => {
     );
     assert.equal(created.status, 201, String(created.json.error || ""));
     const visit = created.json.appointment as { id: string; doctorName: string; specialty: string };
+    assert.equal(visit.doctorName, "Dr Home");
+    assert.equal(visit.specialty, "General Medicine");
     const renamed = await jsonRequest(
       port,
       "PATCH",
