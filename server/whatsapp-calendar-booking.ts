@@ -87,7 +87,7 @@ function assertWhatsAppFutureBookingCap(tenantId: string, patientId: string, tod
        WHERE tenant_id = ? AND patient_id = ? AND date >= ?
          AND source = 'WhatsApp Bot' AND ${ACTIVE_APPOINTMENT_SQL}`
     )
-    .get(tenantId, patientId, today) as { n: number };
+    .get(tenantId, patientId, today, ...HIDDEN_AMBIENT_SOURCES) as { n: number };
   if (Number(row?.n || 0) >= cap) {
     throw Object.assign(new Error(`This patient already has ${cap} upcoming WhatsApp bookings`), { status: 409 });
   }
