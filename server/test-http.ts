@@ -2,6 +2,7 @@ import type { Server } from "node:http";
 import express, { type Express } from "express";
 import { attachUser } from "./auth.ts";
 import { globalJsonParser } from "./json-body.ts";
+import { metaWebhookRawBody } from "./meta-security.ts";
 
 export type TestHttpServer = {
   port: number;
@@ -9,15 +10,16 @@ export type TestHttpServer = {
 };
 
 /**
- * Live Express app for HTTP tests — same baseline stack as production `server.ts`
- * (`express.json` 10mb + rawBody, `urlencoded`, `attachUser`). cookie-parser is
- * not used in production (`auth.ts` parses `Cookie` itself). Ambient
+ * Live Express app for HTTP tests — same baseline stack as production `createLumeraApp`
+ * (Meta webhook raw body, `globalJsonParser` 10mb + rawBody, `urlencoded`, `attachUser`).
+ * cookie-parser is not used in production (`auth.ts` parses `Cookie` itself). Ambient
  * transcription skips this parser and uses its own 11.5mb limit. Callers mount
  * routes after that stack so missing `attachUser` cannot test a different path.
  */
 export async function startTestServer(mountRoutes: (app: Express) => void): Promise<TestHttpServer> {
   const app = express();
   app.set("trust proxy", 1);
+  app.use(metaWebhookRawBody);
   app.use(globalJsonParser());
   app.use(express.urlencoded({ extended: true, limit: "10mb" }));
   app.use(attachUser);

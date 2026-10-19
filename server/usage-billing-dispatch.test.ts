@@ -289,6 +289,7 @@ describe("Usage wallet billing dispatch paths", () => {
     assert.match(usageApiSrc, /\/whatsapp\/send-rx/);
     assert.match(metaSrc, /dispatchWhatsAppCloudMessage/);
     const serverSrc = fs.readFileSync(path.join(__dirname, "../server.ts"), "utf8");
+    const appSrc = fs.readFileSync(path.join(__dirname, "create-app.ts"), "utf8");
     const clinicalSrc = fs.readFileSync(path.join(__dirname, "gemini-clinical.ts"), "utf8");
     const restSrc = fs.readFileSync(path.join(__dirname, "gemini-clinical-rest.ts"), "utf8");
     const helperSrc = fs.readFileSync(path.join(__dirname, "gemini-clinical-helpers.ts"), "utf8");
@@ -301,7 +302,7 @@ describe("Usage wallet billing dispatch paths", () => {
     assert.match(clinicalSrc, /blockedAiScribeResponse/);
     assert.match(clinicalSrc, /meterSuccessfulGeminiScribe/);
     assert.match(clinicalSrc, /ai\.models\.generateContent/);
-    assert.match(serverSrc, /createUsageBillingRouter/);
+    assert.match(appSrc, /createUsageBillingRouter/);
     assert.match(clinicalSrc, /AI_SOAP_NOT_CONFIGURED/);
   });
 

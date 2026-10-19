@@ -172,8 +172,11 @@ describe("POST /api/gemini/transcribe auth and body limit", () => {
     assert.equal(GLOBAL_JSON_BODY_LIMIT, "10mb");
     assert.equal(TRANSCRIBE_JSON_BODY_LIMIT, "11.5mb");
     assert.equal(MAX_TRANSCRIBE_AUDIO_BYTES, 8 * 1024 * 1024);
+    const appSource = fs.readFileSync(path.join(root, "server/create-app.ts"), "utf8");
     const serverSource = fs.readFileSync(path.join(root, "server.ts"), "utf8");
-    assert.match(serverSource, /globalJsonParser\(\)/);
+    assert.match(appSource, /globalJsonParser\(\)/);
+    assert.doesNotMatch(serverSource, /globalJsonParser\(\)/);
+    assert.doesNotMatch(appSource, /limit:\s*["'](?:11\.5|12)mb["']/);
     assert.doesNotMatch(serverSource, /limit:\s*["'](?:11\.5|12)mb["']/);
 
     const token = await login(clinicA.email);

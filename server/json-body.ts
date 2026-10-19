@@ -23,7 +23,8 @@ export function isAmbientTranscribePost(req: Request): boolean {
 }
 
 function rememberRawBody(req: Request, _res: Response, buf: Buffer): void {
-  (req as Request & { rawBody?: Buffer }).rawBody = buf;
+  if (Buffer.isBuffer(req.rawBody)) return;
+  req.rawBody = buf;
 }
 
 function jsonParser(limit: string) {

@@ -1,18 +1,8 @@
-import express from "express";
-import path from "path";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
 import { getDb, initDatabase } from "./server/db.ts";
 import { startAppointmentReminderScheduler } from "./server/whatsapp-calendar.ts";
-import { attachUser, requireAuth } from "./server/auth.ts";
-import { createApiRouter } from "./server/api.ts";
-import { createWhatsAppNumbersRouter, practitionerLinkMiddleware, bootWhatsAppOwnershipSchema } from "./server/whatsapp-numbers-routes.ts";
-import { wrapAbdmRegistryJson } from "./server/abdm-registry-public.ts";
-import { createWhatsAppRouter } from "./server/whatsapp.ts";
-import { createUsageBillingRouter } from "./server/usage-billing-api.ts";
-import { createMetaRouter } from "./server/meta.ts";
-import { createAbdmRouter } from "./server/abdm.ts";
-import { attachHttpSecurity } from "./server/http-security.ts";
+import { bootWhatsAppOwnershipSchema } from "./server/whatsapp-numbers-routes.ts";
 import { applyBundledServerNodeEnv, failFastRequiredProductionEnv, resolveListenPort } from "./server/runtime.ts";
 import {
   expressErrorHandler,
@@ -21,15 +11,10 @@ import {
   installProcessErrorHandlers,
   reportError,
 } from "./server/error-tracker.ts";
-import { attachProductionSpaFallback, attachUnknownApiJsonNotFound } from "./server/spa-fallback.ts";
-import { attachPublicPolicyHtml } from "./server/policy-html.ts";
-import { attachPublicPricingHtml } from "./server/pricing-html.ts";
-import { isDedicatedPublicHtmlPath } from "./server/spa-fallback.ts";
-import { mountGeminiClinicalRoutes } from "./server/gemini-clinical.ts";
-import { globalJsonParser } from "./server/json-body.ts";
-import { installWhatsAppRouterPatch, protectWhatsAppDashboard } from "./server/whatsapp-dashboard-guard.ts";
-import { createLiveRegistrationRouter } from "./server/live-registration-routes.ts";
+import { attachProductionSpaFallback, isDedicatedPublicHtmlPath } from "./server/spa-fallback.ts";
+import { installWhatsAppRouterPatch } from "./server/whatsapp-dashboard-guard.ts";
 import { ensureUsageWalletSchema, seedDemoUsageWallet } from "./server/usage-billing.ts";
+import { createLumeraApp } from "./server/create-app.ts";
 
 dotenv.config();
 applyBundledServerNodeEnv();
@@ -41,43 +26,8 @@ installProcessErrorHandlers();
 
 installWhatsAppRouterPatch();
 
-const app = express();
+const app = createLumeraApp();
 const PORT = resolveListenPort();
-app.disable("x-powered-by");
-app.set("trust proxy", 1);
-attachHttpSecurity(app);
-
-app.use(globalJsonParser());
-app.use(express.urlencoded({ extended: true, limit: "10mb" }));
-app.get("/healthz", (_req, res) => {
-  res.type("text/plain").send("ok");
-});
-app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
-app.use(attachUser);
-app.use("/api/gemini", requireAuth);
-app.use("/api/v3", createAbdmRouter());
-app.use("/v3", createAbdmRouter());
-app.use("/api", practitionerLinkMiddleware);
-app.use("/api", createWhatsAppNumbersRouter());
-// Wallet intercepts /whatsapp/send and /whatsapp/send-rx before the inbox router.
-app.use("/api", createUsageBillingRouter());
-// Mount protected inbox before createApiRouter so GitHub's unpatched whatsapp.ts
-// (MCP cannot rewrite the 70KB file) still gets auth + tenant filters.
-app.use("/api/whatsapp", protectWhatsAppDashboard(createWhatsAppRouter()));
-// Own live signup before createApiRouter so api.ts demo-seed fallbacks are dead
-// in dist/server.cjs (esbuild stacks are server.cjs, not api.ts:LINE:COL).
-app.use("/api", createLiveRegistrationRouter());
-app.use("/api", wrapAbdmRegistryJson(createApiRouter()));
-app.use("/meta", createMetaRouter());
-app.post("/data-deletion-callback", (req, res, next) => {
-  req.url = "/data-deletion";
-  createMetaRouter()(req, res, next);
-});
-attachPublicPolicyHtml(app);
-attachPublicPricingHtml(app);
-mountGeminiClinicalRoutes(app);
-attachUnknownApiJsonNotFound(app);
-
 
 // ----------------------------------------------------
 // Start Server with Vite Middleware
