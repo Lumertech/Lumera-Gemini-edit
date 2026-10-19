@@ -1,10 +1,12 @@
 import { getDb, mapAppointment } from "./db.ts";
 import {
+  FAILED_FINAL,
   isCloudDispatchFailure,
   resolveApprovedClinicTemplate,
   sandboxBanner,
   sendAppointmentReminder,
   sendBookConfirmation,
+  SKIPPED_NOT_ALLOWLISTED,
   toWhatsAppRecipient,
   type CloudDispatchResult,
 } from "./graph-whatsapp.ts";
@@ -202,6 +204,20 @@ function recordCloudDispatch(opts: {
     return { ok: true, channel: "graph", messageId: opts.sent.messageId, eventId };
   }
 
+  if (
+    isCloudDispatchFailure(opts.sent) &&
+    (opts.sent.error === SKIPPED_NOT_ALLOWLISTED || opts.sent.error === FAILED_FINAL)
+  ) {
+    return {
+      ok: false,
+      error: opts.sent.error,
+      channel: "none",
+      eventId: opts.sent.eventId,
+      status: opts.sent.status,
+      skipped: true,
+    };
+  }
+
   if (isCloudDispatchFailure(opts.sent)) {
     const eventId = recordOutboundEvent({
       eventType: opts.eventType,
@@ -235,10 +251,11 @@ type ReminderFailureRow = { sentAt: string; permanent: boolean };
 function reminderFailureRows(appointmentId: string, window: ReminderWindow): ReminderFailureRow[] {
   const rows = getDb()
     .prepare(
-      `SELECT action_payload, sent_at FROM whatsapp_outbound_events
-       WHERE event_type = 'appointment_reminder' AND status = 'failed'`
+      `SELECT status, action_payload, sent_at FROM whatsapp_outbound_events
+       WHERE event_type = 'appointment_reminder'
+         AND status IN ('failed', 'skipped_not_allowlisted', 'failed_final')`
     )
-    .all() as { action_payload?: string; sent_at?: string }[];
+    .all() as { status?: string; action_payload?: string; sent_at?: string }[];
   const matched: ReminderFailureRow[] = [];
   for (const row of rows) {
     try {
@@ -248,7 +265,10 @@ function reminderFailureRows(appointmentId: string, window: ReminderWindow): Rem
         permanent?: boolean;
       };
       if (payload.appointmentId === appointmentId && payload.window === window) {
-        matched.push({ sentAt: String(row.sent_at || ""), permanent: payload.permanent === true });
+        matched.push({
+          sentAt: String(row.sent_at || ""),
+          permanent: payload.permanent === true || row.status === FAILED_FINAL,
+        });
       }
     } catch {
       /* ignore malformed payload */
@@ -363,6 +383,9 @@ export async function dispatchAppointmentReminder(opts: {
     db: getDb(),
     fetchImpl: opts.fetchImpl,
     tenantId: opts.tenantId,
+    appointmentId: opts.appointment.id,
+    reminderWindow: opts.window,
+    sentAt: recordedAt,
   });
   return recordCloudDispatch({
     eventType: "appointment_reminder",
@@ -456,7 +479,11 @@ export async function notifyReceptionBooking(opts: {
     db: getDb(),
     fetchImpl: opts.fetchImpl,
     tenantId: opts.tenantId,
+    appointmentId: opts.appointment.id,
   });
+  if (isCloudDispatchFailure(sent) && (sent.error === SKIPPED_NOT_ALLOWLISTED || sent.error === FAILED_FINAL)) {
+    return { sent: false, reason: "not allowlisted" };
+  }
   if (sent.ok && sent.channel === "graph" && sent.messageId) {
     record("sent", "", sent.messageId);
     return { sent: true, wamid: sent.messageId };
@@ -501,6 +528,7 @@ export async function dispatchWhatsAppBookConfirmation(opts: {
     db: getDb(),
     fetchImpl: opts.fetchImpl,
     tenantId: opts.tenantId,
+    appointmentId: opts.appointment.id,
   });
   return recordCloudDispatch({
     eventType: "book_confirmation",
@@ -602,6 +630,10 @@ export function startAppointmentReminderScheduler(): void {
   if (typeof reminderTimer === "object" && reminderTimer && "unref" in reminderTimer) {
     reminderTimer.unref();
   }
+}
+
+export function appointmentReminderSchedulerActive(): boolean {
+  return reminderTimer !== null;
 }
 
 export function stopAppointmentReminderScheduler(): void {

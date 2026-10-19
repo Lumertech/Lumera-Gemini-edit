@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { graphApiVersion, isProduction, readSecret } from "./runtime.ts";
 import { isUsableGraphToken, isUsablePhoneNumberId } from "./meta-security.ts";
@@ -44,7 +45,13 @@ export type CloudMessageKind =
 
 export type CloudDispatchResult =
   | { ok: true; channel: "graph" | "sandbox"; messageId?: string }
-  | { ok: false; error: string; channel: "none" | "graph"; status?: number };
+  | { ok: false; error: string; channel: "none" | "graph"; status?: number; eventId?: string };
+
+/** Demo and seed clinics may message only these recipients. */
+export const DEMO_WHATSAPP_ALLOWLIST_DEFAULT = "+919999973271";
+export const SKIPPED_NOT_ALLOWLISTED = "skipped_not_allowlisted";
+export const FAILED_FINAL = "failed_final";
+export const DEMO_OUTBOUND_ATTEMPT_CAP = 3;
 
 export const CLINIC_WHATSAPP_NOT_CONNECTED = "Clinic WhatsApp not connected";
 export const READ_ONLY_WHATSAPP_SEND_ERROR =
@@ -282,6 +289,33 @@ function isPlatformAuthOtp(kind: CloudMessageKind, purpose: string | undefined, 
 
 export function toWhatsAppRecipient(phone: string): string {
   return phone.replace(/[^\d]/g, "");
+}
+
+/** Last 4 digits only. Logs must not carry a full WhatsApp recipient. */
+export function maskWhatsAppRecipient(phone: string): string {
+  const last4 = toWhatsAppRecipient(phone).slice(-4);
+  return last4 ? `****${last4}` : "****";
+}
+
+export function demoWhatsAppAllowlist(): string[] {
+  const raw = String(process.env.DEMO_WHATSAPP_RECIPIENT_ALLOWLIST ?? "").trim();
+  const source = raw || DEMO_WHATSAPP_ALLOWLIST_DEFAULT;
+  return source
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+export function isDemoWhatsAppAllowlisted(phone: string): boolean {
+  const digits = toWhatsAppRecipient(phone);
+  if (!digits) return false;
+  const last10 = digits.slice(-10);
+  return demoWhatsAppAllowlist().some((entry) => {
+    const allow = toWhatsAppRecipient(entry);
+    if (!allow) return false;
+    if (allow === digits) return true;
+    return last10.length >= 10 && allow.slice(-10) === last10;
+  });
 }
 
 export type GraphMessageResult =
@@ -673,6 +707,150 @@ export function buildReceiptText(receipt: ReceiptFields): string {
 const CLOUD_NOT_CONFIGURED =
   "WhatsApp Cloud API is not configured. Set META_ACCESS_TOKEN and META_PHONE_NUMBER_ID (or a real tenant phone_number_id + token). Message was not delivered.";
 
+function demoOutboundEventType(kind: CloudMessageKind): string {
+  if (kind === "payment_receipt") return "invoice_receipt";
+  if (kind === "otp") return "otp_verification";
+  return kind;
+}
+
+function demoCapRows(db: DatabaseSync, eventType: string, tenantId: string): Array<{ status?: string; action_payload?: string; patient_phone?: string }> {
+  try {
+    return db
+      .prepare(
+        `SELECT status, action_payload, patient_phone FROM whatsapp_outbound_events
+         WHERE event_type = ? AND TRIM(COALESCE(tenant_id, '')) = ?
+           AND status IN ('skipped_not_allowlisted', 'failed_final')`
+      )
+      .all(eventType, tenantId) as Array<{ status?: string; action_payload?: string; patient_phone?: string }>;
+  } catch {
+    return [];
+  }
+}
+
+function demoCapRowMatches(
+  row: { action_payload?: string; patient_phone?: string },
+  key: { phone: string; appointmentId?: string; reminderWindow?: string; invoiceId?: string }
+): boolean {
+  let payload: { appointmentId?: string; window?: string; invoiceId?: string } = {};
+  try {
+    payload = JSON.parse(String(row.action_payload || "{}")) as typeof payload;
+  } catch {
+    payload = {};
+  }
+  if (key.appointmentId) {
+    if (payload.appointmentId !== key.appointmentId) return false;
+    if (key.reminderWindow && payload.window !== key.reminderWindow) return false;
+    return true;
+  }
+  if (key.invoiceId) return String(payload.invoiceId || "") === key.invoiceId;
+  const want = toWhatsAppRecipient(key.phone).slice(-10);
+  const have = toWhatsAppRecipient(String(row.patient_phone || "")).slice(-10);
+  return Boolean(want) && want === have;
+}
+
+function recordDemoAllowlistEvent(opts: {
+  db: DatabaseSync;
+  eventType: string;
+  phone: string;
+  patientName?: string;
+  tenantId: string;
+  status: typeof SKIPPED_NOT_ALLOWLISTED | typeof FAILED_FINAL;
+  appointmentId?: string;
+  reminderWindow?: string;
+  invoiceId?: string;
+  attempt: number;
+  sentAt?: string;
+}): string | undefined {
+  try {
+    const eventId = `evt-${crypto.randomUUID().slice(0, 8)}`;
+    const sentAt = opts.sentAt || new Date().toISOString();
+    opts.db
+      .prepare(
+        `INSERT INTO whatsapp_outbound_events (id, event_type, patient_phone, patient_name, status, details, action_payload, sent_at, tenant_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        eventId,
+        opts.eventType,
+        opts.phone,
+        opts.patientName || "Patient",
+        opts.status,
+        `Demo WhatsApp recipient ${maskWhatsAppRecipient(opts.phone)} ${opts.status}`,
+        JSON.stringify({
+          appointmentId: opts.appointmentId,
+          tenantId: opts.tenantId,
+          window: opts.reminderWindow,
+          invoiceId: opts.invoiceId,
+          attempt: opts.attempt,
+          reason: SKIPPED_NOT_ALLOWLISTED,
+          channel: "none",
+        }),
+        sentAt,
+        opts.tenantId
+      );
+    return eventId;
+  } catch (err) {
+    console.error("[WhatsApp] failed to record demo allowlist outcome:", err instanceof Error ? err.message : "error");
+    return undefined;
+  }
+}
+
+/**
+ * Demo and seed tenants never call Graph for a recipient outside the allowlist.
+ * Returns null when the send may proceed.
+ */
+function demoAllowlistGate(opts: {
+  to: string;
+  kind: CloudMessageKind;
+  db?: DatabaseSync | null;
+  tenantId?: string;
+  platformSend?: boolean;
+  patientName?: string;
+  appointmentId?: string;
+  reminderWindow?: string;
+  invoiceId?: string;
+  sentAt?: string;
+}): CloudDispatchResult | null {
+  if (opts.platformSend) return null;
+  const tenantId = String(opts.tenantId || "").trim();
+  if (!opts.db || !tenantId || !isSandboxOrDemoTenant(opts.db, tenantId)) return null;
+  const masked = maskWhatsAppRecipient(opts.to);
+  if (isDemoWhatsAppAllowlisted(opts.to)) {
+    console.info(`[WhatsApp] demo recipient ${masked} allowlisted`);
+    return null;
+  }
+  const eventType = demoOutboundEventType(opts.kind);
+  const matched = demoCapRows(opts.db, eventType, tenantId).filter((row) =>
+    demoCapRowMatches(row, {
+      phone: opts.to,
+      appointmentId: opts.appointmentId,
+      reminderWindow: opts.reminderWindow,
+      invoiceId: opts.invoiceId,
+    })
+  );
+  if (matched.some((row) => row.status === FAILED_FINAL) || matched.length >= DEMO_OUTBOUND_ATTEMPT_CAP) {
+    console.warn(`[WhatsApp] demo recipient ${masked} ${FAILED_FINAL}`);
+    return { ok: false, error: FAILED_FINAL, channel: "none", status: 422 };
+  }
+  const attempt = matched.length + 1;
+  const status = attempt >= DEMO_OUTBOUND_ATTEMPT_CAP ? FAILED_FINAL : SKIPPED_NOT_ALLOWLISTED;
+  console.warn(`[WhatsApp] demo recipient ${masked} ${status}`);
+  const eventId = recordDemoAllowlistEvent({
+    db: opts.db,
+    eventType,
+    phone: opts.to,
+    patientName: opts.patientName,
+    tenantId,
+    status,
+    appointmentId: opts.appointmentId,
+    reminderWindow: opts.reminderWindow,
+    invoiceId: opts.invoiceId,
+    attempt,
+    sentAt: opts.sentAt,
+  });
+  return { ok: false, error: status, channel: "none", status: 422, eventId };
+}
+
 /**
  * Dual-path Cloud send for Platform to import (reminders, book confirmations, receipts, OTP).
  * Does not schedule, look up appointments, or own invoice rows.
@@ -697,6 +875,11 @@ export async function dispatchWhatsAppCloudMessage(opts: {
   platformSend?: boolean;
   /** Staff typed this reply. Lapsed clinics may send it only inside the 24h window. */
   isManual?: boolean;
+  patientName?: string;
+  appointmentId?: string;
+  reminderWindow?: string;
+  invoiceId?: string;
+  sentAt?: string;
 }): Promise<CloudDispatchResult> {
   const kind: CloudMessageKind = opts.kind || (opts.otp ? "otp" : "text");
   const explicitTenantId = String(opts.tenantId || "").trim();
@@ -735,6 +918,20 @@ export async function dispatchWhatsAppCloudMessage(opts: {
   ) {
     return { ok: false, channel: "none", error: WA_TOKEN_KEY_UNSET_ERROR, status: 503 };
   }
+
+  const allowlist = demoAllowlistGate({
+    to: opts.to,
+    kind,
+    db: opts.db,
+    tenantId,
+    platformSend,
+    patientName: opts.patientName,
+    appointmentId: opts.appointmentId,
+    reminderWindow: opts.reminderWindow,
+    invoiceId: opts.invoiceId,
+    sentAt: opts.sentAt,
+  });
+  if (allowlist) return allowlist;
 
   const creds = resolveGraphCredentials(opts.db, platformSend ? undefined : tenantId || undefined, {
     platformSend,
@@ -1000,6 +1197,9 @@ export async function sendAppointmentReminder(opts: {
   db?: DatabaseSync | null;
   fetchImpl?: typeof fetch;
   tenantId?: string;
+  appointmentId?: string;
+  reminderWindow?: string;
+  sentAt?: string;
 }): Promise<CloudDispatchResult> {
   const names = requireClinicAndDoctor(opts);
   if ("channel" in names) {
@@ -1014,6 +1214,10 @@ export async function sendAppointmentReminder(opts: {
   const sent = await dispatchWhatsAppCloudMessage({
     to: opts.to,
     kind: "appointment_reminder",
+    patientName: opts.patientName,
+    appointmentId: opts.appointmentId,
+    reminderWindow: opts.reminderWindow,
+    sentAt: opts.sentAt,
     textBody: opts.textBody || buildReminderText({ ...opts, clinicName, doctorName }),
     templateName: opts.templateName,
     templateParameters: parameters,
@@ -1041,6 +1245,8 @@ export async function sendBookConfirmation(opts: {
   db?: DatabaseSync | null;
   fetchImpl?: typeof fetch;
   tenantId?: string;
+  appointmentId?: string;
+  sentAt?: string;
 }): Promise<CloudDispatchResult> {
   const names = requireClinicAndDoctor(opts);
   if ("channel" in names) {
@@ -1055,6 +1261,9 @@ export async function sendBookConfirmation(opts: {
   const sent = await dispatchWhatsAppCloudMessage({
     to: opts.to,
     kind: "book_confirmation",
+    patientName: opts.patientName,
+    appointmentId: opts.appointmentId,
+    sentAt: opts.sentAt,
     textBody: opts.textBody || buildBookConfirmationText({ ...opts, clinicName, doctorName }),
     templateName: opts.templateName,
     templateParameters: parameters,
@@ -1129,6 +1338,8 @@ export async function sendPaymentReceipt(opts: {
   const sent = await dispatchWhatsAppCloudMessage({
     to: opts.to,
     kind: "payment_receipt",
+    patientName: opts.patientName,
+    invoiceId: opts.invoiceId,
     textBody: opts.textBody || buildReceiptText({ ...opts, clinicName }),
     previewUrl: opts.previewUrl,
     templateName: opts.templateName,

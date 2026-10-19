@@ -7,7 +7,7 @@ import {
 } from "./db.ts";
 import { getTenantLetterhead } from "./letterhead.ts";
 import { isSampleTaxInvoice, sampleTaxInvoiceReceiptText, scrubSeedBillingIds } from "./seed-branding.ts";
-import { cloudDispatchHttpStatus, isCloudDispatchFailure, sendPaymentReceipt } from "./graph-whatsapp.ts";
+import { cloudDispatchHttpStatus, FAILED_FINAL, isCloudDispatchFailure, sendPaymentReceipt, SKIPPED_NOT_ALLOWLISTED } from "./graph-whatsapp.ts";
 import {
   createRazorpayCollectOrder,
   decideRazorpayWebhookSignature,
@@ -377,6 +377,14 @@ async function dispatchInvoiceReceipt(
     db: getDb(),
     tenantId: invoice.tenantId,
   });
+
+  if (isCloudDispatchFailure(sent) && (sent.error === SKIPPED_NOT_ALLOWLISTED || sent.error === FAILED_FINAL)) {
+    const status = sent.error === FAILED_FINAL ? FAILED_FINAL : SKIPPED_NOT_ALLOWLISTED;
+    getDb()
+      .prepare(`UPDATE invoices SET receipt_whatsapp_status = ?, receipt_whatsapp_channel = ? WHERE id = ?`)
+      .run(status, "none", invoice.id);
+    return { ok: false, error: sent.error, channel: "none", status: sent.status };
+  }
 
   if (isCloudDispatchFailure(sent)) {
     recordReceiptEvent({

@@ -313,19 +313,26 @@ describe("WhatsApp honesty: booking notify, reminder template, OTP wamid", () =>
     process.env.META_PHONE_NUMBER_ID = LIVE_PHONE;
     const clinic = createClinic("demo", "Cedar Clinic");
     ensureTenantSubscription(getDb(), clinic.tenantId, { billingSource: "demo" });
-    const token = await login(clinic.email);
-    const auth = { Authorization: `Bearer ${token}` };
-    const patientRes = await jsonRequest(
-      server.port,
-      "POST",
-      "/api/patients",
-      { name: "Asha Rao", phone: uniquePhone(), age: 34, gender: "Female" },
-      auth
-    );
-    const patientId = String((patientRes.json.patient as { id: string }).id);
-    const created = await book(auth, patientId, clinic.doctorId);
-    delete process.env.META_ACCESS_TOKEN;
-    delete process.env.META_PHONE_NUMBER_ID;
+    const phone = uniquePhone();
+    process.env.DEMO_WHATSAPP_RECIPIENT_ALLOWLIST = phone;
+    let created: Awaited<ReturnType<typeof book>>;
+    try {
+      const token = await login(clinic.email);
+      const auth = { Authorization: `Bearer ${token}` };
+      const patientRes = await jsonRequest(
+        server.port,
+        "POST",
+        "/api/patients",
+        { name: "Asha Rao", phone, age: 34, gender: "Female" },
+        auth
+      );
+      const patientId = String((patientRes.json.patient as { id: string }).id);
+      created = await book(auth, patientId, clinic.doctorId);
+    } finally {
+      delete process.env.META_ACCESS_TOKEN;
+      delete process.env.META_PHONE_NUMBER_ID;
+      delete process.env.DEMO_WHATSAPP_RECIPIENT_ALLOWLIST;
+    }
     assert.equal(created.status, 201, String(created.json.error || ""));
     const notify = created.json.notify as { sent?: boolean; wamid?: string };
     assert.equal(notify.sent, true);
