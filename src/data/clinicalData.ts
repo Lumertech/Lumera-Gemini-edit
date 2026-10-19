@@ -921,7 +921,7 @@ export const DEFAULT_DOCTORS: Doctor[] = [
     availableDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
     opdTiming: '09:00 AM - 02:00 PM',
     phone: '+91 98765 43210',
-    email: 'dr.malhotra@lumera.health',
+    email: 'dr.malhotra@mylumera.in',
     active: true
   },
   {
@@ -936,7 +936,7 @@ export const DEFAULT_DOCTORS: Doctor[] = [
     availableDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
     opdTiming: '08:30 AM - 01:30 PM, 04:30 PM - 08:00 PM',
     phone: '+91 98312 77889',
-    email: 'dr.siddharth@lumera.health',
+    email: 'dr.siddharth@mylumera.in',
     active: true
   },
   {
@@ -951,7 +951,7 @@ export const DEFAULT_DOCTORS: Doctor[] = [
     availableDays: ['Mon', 'Wed', 'Fri', 'Sat'],
     opdTiming: '10:00 AM - 03:00 PM',
     phone: '+91 98112 34567',
-    email: 'dr.ananya@lumera.health',
+    email: 'dr.ananya@mylumera.in',
     active: true
   },
   {
@@ -966,7 +966,7 @@ export const DEFAULT_DOCTORS: Doctor[] = [
     availableDays: ['Tue', 'Thu', 'Sat'],
     opdTiming: '11:00 AM - 04:00 PM',
     phone: '+91 98223 99887',
-    email: 'dr.rajesh@lumera.health',
+    email: 'dr.rajesh@mylumera.in',
     active: true
   },
   {
@@ -981,7 +981,7 @@ export const DEFAULT_DOCTORS: Doctor[] = [
     availableDays: ['Mon', 'Tue', 'Thu', 'Fri'],
     opdTiming: '02:00 PM - 07:00 PM',
     phone: '+91 97334 11223',
-    email: 'dr.meera@lumera.health',
+    email: 'dr.meera@mylumera.in',
     active: true
   },
   {
@@ -996,7 +996,7 @@ export const DEFAULT_DOCTORS: Doctor[] = [
     availableDays: ['Mon', 'Wed', 'Fri'],
     opdTiming: '09:30 AM - 01:30 PM',
     phone: '+91 99445 66778',
-    email: 'dr.harsh@lumera.health',
+    email: 'dr.harsh@mylumera.in',
     active: true
   },
   {
@@ -1011,7 +1011,7 @@ export const DEFAULT_DOCTORS: Doctor[] = [
     availableDays: ['Mon', 'Tue', 'Thu', 'Sat'],
     opdTiming: '10:00 AM - 02:30 PM',
     phone: '+91 98319 88990',
-    email: 'dr.shalini@lumera.health',
+    email: 'dr.shalini@mylumera.in',
     active: true
   },
   {
@@ -1026,7 +1026,7 @@ export const DEFAULT_DOCTORS: Doctor[] = [
     availableDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
     opdTiming: '09:00 AM - 01:00 PM, 05:00 PM - 08:30 PM',
     phone: '+91 98401 22334',
-    email: 'dr.arun@lumera.health',
+    email: 'dr.arun@mylumera.in',
     active: true
   },
   {
@@ -1041,7 +1041,7 @@ export const DEFAULT_DOCTORS: Doctor[] = [
     availableDays: ['Mon', 'Wed', 'Fri', 'Sat'],
     opdTiming: '11:00 AM - 04:30 PM',
     phone: '+91 98109 44332',
-    email: 'dr.alok@lumera.health',
+    email: 'dr.alok@mylumera.in',
     active: true
   }
 ];
@@ -1054,7 +1054,7 @@ export const DEFAULT_PATIENTS: Patient[] = [
     age: 44,
     gender: 'Male',
     phone: '+91 98234 55667',
-    email: 'rajiv.saxena@gmail.com',
+    email: 'rajiv.saxena@mylumera.in',
     bloodGroup: 'O+',
     allergies: ['None known'],
     chronicConditions: ['Lumbar Disc Herniation (L4-L5)', 'Sedentary IT Posture Strain'],
@@ -1069,7 +1069,7 @@ export const DEFAULT_PATIENTS: Patient[] = [
     age: 52,
     gender: 'Female',
     phone: '+91 98311 44556',
-    email: 'priyanka.m@gmail.com',
+    email: 'priyanka.m@mylumera.in',
     bloodGroup: 'A+',
     allergies: ['Sulfa drugs'],
     chronicConditions: ['Adhesive Capsulitis (Left Shoulder)', 'Type 2 Diabetes'],
@@ -1084,7 +1084,7 @@ export const DEFAULT_PATIENTS: Patient[] = [
     age: 48,
     gender: 'Female',
     phone: '+91 98301 23456',
-    email: 'sunita.roy@gmail.com',
+    email: 'sunita.roy@mylumera.in',
     bloodGroup: 'B+',
     allergies: ['Penicillin', 'Sulfa drugs'],
     chronicConditions: ['Type 2 Diabetes', 'Hypertension'],
@@ -1099,7 +1099,7 @@ export const DEFAULT_PATIENTS: Patient[] = [
     age: 32,
     gender: 'Male',
     phone: '+91 98200 45678',
-    email: 'rohan.deshmukh@outlook.com',
+    email: 'rohan.deshmukh@mylumera.in',
     bloodGroup: 'O+',
     allergies: ['None known'],
     chronicConditions: ['Allergic Rhinitis'],
@@ -1128,7 +1128,7 @@ export const DEFAULT_PATIENTS: Patient[] = [
     age: 58,
     gender: 'Male',
     phone: '+91 98450 78901',
-    email: 'tariq.mohd@gmail.com',
+    email: 'tariq.mohd@mylumera.in',
     bloodGroup: 'AB+',
     allergies: ['Aspirin (Bronchospasm)'],
     chronicConditions: ['Ischemic Heart Disease (Post-PTCA 2024)', 'Dyslipidemia'],
@@ -1324,11 +1324,11 @@ export const DEFAULT_CLINIC_SETTINGS: ClinicSettings = {
   address: 'Suite 401-405, Healthcare Towers, 14 Park Circus Avenue',
   city: 'Kolkata, West Bengal - 700017',
   phone: '+91 (033) 2289-9000 / +91 98000 12345',
-  email: 'care@lumeraclinic.in',
-  website: 'https://lumeraclinic.in',
+  email: 'ravee@lumer.me',
+  website: 'https://www.mylumera.in',
   gstin: '19AABCL8899K1Z5',
   regId: 'WB-CLINIC-REG-2023/8892',
-  upiId: 'lumerahealth@icici',
+  upiId: 'demo-clinic@upi-sample',
   whatsappNumber: '+91 98000 12345',
   headerBgColor: '#0f172a',
   accentColor: '#0d9488',
@@ -1344,7 +1344,7 @@ export const DEFAULT_WHATSAPP_TEMPLATES: WhatsAppTemplate[] = [
     name: 'appointment_confirmation_v2',
     category: 'APPOINTMENT_REMINDER',
     language: 'English (en_IN)',
-    headerText: '🏥 Lumera Polyclinic - Appointment Confirmed',
+    headerText: '🏥 Demo clinic - Appointment Confirmed',
     bodyText: 'Hello {{1}},\n\nYour appointment with {{2}} ({{3}}) has been confirmed for *{{4}} at {{5}}*.\n\n📍 Token No: *{{6}}*\n🏥 Room: {{7}}\n\nPlease arrive 10 minutes prior for vitals check.',
     footerText: 'Reply CANCEL to cancel or RESCHEDULE to change time',
     buttons: [
@@ -1358,11 +1358,11 @@ export const DEFAULT_WHATSAPP_TEMPLATES: WhatsAppTemplate[] = [
     name: 'digital_prescription_ready',
     category: 'PRESCRIPTION_DELIVERY',
     language: 'English (en_IN)',
-    headerText: '📄 Digital Rx Ready - Lumera Health',
+    headerText: '📄 Digital Rx Ready',
     bodyText: 'Dear {{1}},\n\nYour digital prescription from {{2}} has been generated successfully.\n\n📋 Rx No: *{{3}}*\n💊 Medications: {{4}} items\n🗓️ Follow-up: *{{5}}*\n\nTap the button below to view or print your digital prescription anytime.',
     footerText: 'Issued under the Telemedicine Practice Guidelines, 2020',
     buttons: [
-      { type: 'URL', text: 'View Digital Rx PDF', payload: 'https://lumera.health/rx/{{3}}' },
+      { type: 'URL', text: 'View Digital Rx PDF', payload: 'https://www.mylumera.in/rx/{{3}}' },
       { type: 'QUICK_REPLY', text: 'Order Medicines', payload: 'ORDER_MEDS' }
     ],
     status: 'APPROVED'
@@ -1376,7 +1376,7 @@ export const DEFAULT_WHATSAPP_TEMPLATES: WhatsAppTemplate[] = [
     bodyText: 'Dear {{1}},\n\nInvoice *{{2}}* for {{3}} has been generated for total amount *₹{{4}}*.\n\nYou can pay securely via UPI, Cards, or NetBanking using the link below.',
     footerText: 'Instant GST Receipt provided on payment',
     buttons: [
-      { type: 'URL', text: 'Pay ₹{{4}} via UPI/Card', payload: 'https://lumera.health/pay/{{2}}' }
+      { type: 'URL', text: 'Pay ₹{{4}} via UPI/Card', payload: 'https://www.mylumera.in/pay/{{2}}' }
     ],
     status: 'APPROVED'
   },
@@ -1386,8 +1386,8 @@ export const DEFAULT_WHATSAPP_TEMPLATES: WhatsAppTemplate[] = [
     category: 'FOLLOWUP_CHECK',
     language: 'English (en_IN)',
     headerText: '💊 Daily Medication Check-in',
-    bodyText: 'Hi {{1}},\n\nThis is your automated health buddy from Lumera Clinic. Did you take your prescribed medicines today?\n\n1. Morning dose\n2. Afternoon dose\n3. Night dose',
-    footerText: 'Lumera Patient Adherence Program',
+    bodyText: 'Hi {{1}},\n\nThis is your automated health buddy from Demo clinic. Did you take your prescribed medicines today?\n\n1. Morning dose\n2. Afternoon dose\n3. Night dose',
+    footerText: 'Demo clinic adherence check-in',
     buttons: [
       { type: 'QUICK_REPLY', text: '✅ All Taken', payload: 'MEDS_TAKEN' },
       { type: 'QUICK_REPLY', text: '⚠️ Experiencing Side Effect', payload: 'SIDE_EFFECT' }

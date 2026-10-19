@@ -2,13 +2,12 @@
 export const LOGIN_EMAIL_PLACEHOLDER = "Work email";
 export const LOGIN_PASSWORD_PLACEHOLDER = "Password";
 export const LOGIN_WHATSAPP_PLACEHOLDER = "WhatsApp number";
-export const REGISTER_EMAIL_PLACEHOLDER = "doctor@clinic.com";
+export const REGISTER_EMAIL_PLACEHOLDER = "doctor@mylumera.in";
 export const REGISTER_PASSWORD_PLACEHOLDER = "Minimum 6 characters";
 
 const SEEDED_DEMO_EMAILS = new Set([
   "doctor@lumera.me",
   "admin@lumera.me",
-  "rdp9999973271@gmail.com",
 ]);
 
 const SEEDED_DEMO_PASSWORDS = new Set(["Lumera@2026"]);

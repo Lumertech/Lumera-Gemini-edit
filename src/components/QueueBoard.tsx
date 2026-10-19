@@ -108,7 +108,7 @@ export const QueueBoard: React.FC<QueueBoardProps> = ({
       age: apt.age || 44,
       gender: (apt.gender as any) || 'Male',
       phone: apt.patientPhone || '+91 98234 55667',
-      email: `${apt.patientName.toLowerCase().replace(/[^a-z0-9]/g, '.')}@gmail.com`,
+      email: `${apt.patientName.toLowerCase().replace(/[^a-z0-9]/g, '.')}@mylumera.in`,
       bloodGroup: 'B+',
       abhaAddress: apt.abhaAddress || `${apt.patientName.toLowerCase().replace(/[^a-z0-9]/g, '.')}@abdm`,
       abhaNumber: apt.abhaNumber || `91-4428-9102-${1000 + apt.tokenNumber}`,
@@ -789,7 +789,7 @@ export const QueueBoard: React.FC<QueueBoardProps> = ({
                       <span className="text-slate-500 font-medium">Email:</span>
                       <span className="text-slate-700 flex items-center gap-1 font-mono">
                         <Mail className="w-3 h-3 text-slate-400" />
-                        {drawerData.patient.email || `${drawerData.patient.name.toLowerCase().replace(/\s+/g, '.')}@gmail.com`}
+                        {drawerData.patient.email || `${drawerData.patient.name.toLowerCase().replace(/\s+/g, '.')}@mylumera.in`}
                       </span>
                     </div>
 

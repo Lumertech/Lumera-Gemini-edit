@@ -21,7 +21,7 @@ import {
 import { BillItem, Patient, Doctor, ClinicSettings, PharmacyBatchItem, TherapyPackage, Prescription, Appointment } from '../types';
 import { MOCK_PHARMACY_BATCHES, MOCK_THERAPY_PACKAGES } from '../data/clinicalData';
 import { BLANK_CLINIC_SETTINGS } from '../lib/letterhead';
-import { isSampleTaxInvoice, SAMPLE_TAX_INVOICE_BANNER } from '../lib/sampleTaxInvoice';
+import { isSampleTaxInvoice, isSeedUpi, SAMPLE_TAX_INVOICE_BANNER, SAMPLE_UPI_DO_NOT_PAY } from '../lib/sampleTaxInvoice';
 import { apiFetch } from '../api/http';
 import { formatINR } from '../lib/currency.ts';
 import {
@@ -50,6 +50,20 @@ import { clinicCalendarDate } from '../lib/clinicDay';
 import { useAuth } from '../auth/AuthContext';
 import { workflowForUser } from '../lib/specialtyWorkflow';
 import { resolveConsultingDoctor } from '../lib/consultingDoctor';
+
+function DemoUpiPlaceholder({ size }: { size: "sm" | "lg" }) {
+  const box = size === "lg" ? "w-24 h-24" : "w-14 h-14";
+  return (
+    <div
+      data-testid="sample-upi-placeholder"
+      role="img"
+      aria-label={SAMPLE_UPI_DO_NOT_PAY}
+      className={`${box} bg-amber-50 border border-dashed border-amber-500 rounded-lg flex items-center justify-center text-center p-1 shrink-0`}
+    >
+      <span className="text-[9px] font-black leading-tight text-amber-950">{SAMPLE_UPI_DO_NOT_PAY}</span>
+    </div>
+  );
+}
 
 function SampleTaxBanner({ show }: { show: boolean }) {
   if (!show) return null;
@@ -732,7 +746,9 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
               <p className="text-xs text-slate-500 font-mono">
                 {[
                   `GSTIN: ${billingIds.gstinLabel}`,
-                  `UPI: ${billingIds.upiLabel}`,
+                  isSeedUpi(billingIds.upiId)
+                    ? `UPI: ${billingIds.upiLabel} — ${SAMPLE_UPI_DO_NOT_PAY}`
+                    : `UPI: ${billingIds.upiLabel}`,
                   clinicSettings.regId ? `Clinic Reg: ${clinicSettings.regId}` : null,
                   clinicSettings.phone ? `Tel: ${clinicSettings.phone}` : null,
                   clinicSettings.email || null,
@@ -894,13 +910,21 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
               </div>
 
               <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 flex items-center space-x-3 w-fit max-w-full">
-                <div className="w-14 h-14 bg-white p-1 rounded-lg border border-slate-200 flex items-center justify-center shrink-0">
-                  <QrCode className="w-12 h-12 text-slate-900" />
-                </div>
+                {isSeedUpi(billingIds.upiId) ? (
+                  <DemoUpiPlaceholder size="sm" />
+                ) : (
+                  <div className="w-14 h-14 bg-white p-1 rounded-lg border border-slate-200 flex items-center justify-center shrink-0">
+                    <QrCode className="w-12 h-12 text-slate-900" />
+                  </div>
+                )}
                 <div className="text-xs min-w-0">
                   <strong className="text-slate-900 block font-mono">UPI: {billingIds.upiLabel}</strong>
                   <span className="text-slate-500 text-[11px] block">
-                    {payLink ? 'Razorpay UPI / cards / netbanking pay link' : 'Scan via GPay, PhonePe, Paytm, BHIM'}
+                    {isSeedUpi(billingIds.upiId)
+                      ? SAMPLE_UPI_DO_NOT_PAY
+                      : payLink
+                        ? 'Razorpay UPI / cards / netbanking pay link'
+                        : 'Scan via GPay, PhonePe, Paytm, BHIM'}
                   </span>
                   {payLink && !paid && (
                     <a href={payLink} target="_blank" rel="noreferrer" className="text-teal-800 font-semibold text-[11px] underline break-all">
@@ -1151,11 +1175,17 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
                 {paymentMode === 'UPI' && (
                   <div className="p-4 bg-teal-50/60 rounded-xl border border-teal-200 space-y-3">
                     <div className="flex items-center gap-4">
-                      <div className="w-24 h-24 bg-white p-1.5 rounded-xl border border-teal-200 flex items-center justify-center shrink-0 shadow-xs">
-                        <QrCode className="w-20 h-20 text-slate-900" />
-                      </div>
+                      {isSeedUpi(billingIds.upiId) ? (
+                        <DemoUpiPlaceholder size="lg" />
+                      ) : (
+                        <div className="w-24 h-24 bg-white p-1.5 rounded-xl border border-teal-200 flex items-center justify-center shrink-0 shadow-xs">
+                          <QrCode className="w-20 h-20 text-slate-900" />
+                        </div>
+                      )}
                       <div className="text-xs space-y-1 min-w-0">
-                        <span className="text-teal-900 font-bold block text-sm">Razorpay UPI collect</span>
+                        <span className="text-teal-900 font-bold block text-sm">
+                          {isSeedUpi(billingIds.upiId) ? SAMPLE_UPI_DO_NOT_PAY : 'Razorpay UPI collect'}
+                        </span>
                         <p className="font-mono text-[11px] text-slate-700 font-semibold">VPA: {billingIds.upiLabel}</p>
                         <p className="text-[11px] text-slate-600">Amount: <strong>{formatINR(totalAmount)}</strong></p>
                         <p className="text-[10px] text-amber-800 font-semibold">Invoice stays Unpaid until webhook (or SANDBOX pay).</p>
@@ -1332,6 +1362,9 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
                     <div>
                       <span className="text-slate-500 block">UPI:</span>
                       <strong className="text-slate-800 font-mono">{billingIds.upiLabel}</strong>
+                      {isSeedUpi(billingIds.upiId) ? (
+                        <span className="text-amber-900 font-bold block">{SAMPLE_UPI_DO_NOT_PAY}</span>
+                      ) : null}
                     </div>
                   </div>
                 </div>
