@@ -470,13 +470,13 @@ describe("WhatsApp Cloud API outbound status matching", () => {
     const wamid = `wamid.STATUS_TEST_${crypto.randomUUID().slice(0, 8)}`;
     insertOutbound({
       id: eventId,
-      phone: "+919999973271",
+      phone: "+919000000001",
       payload: { channel: "graph", messageId: wamid },
     });
     try {
       const updated = applyWhatsAppOutboundStatus(getDb(), {
         messageId: wamid,
-        recipientId: "919999973271",
+        recipientId: "919000000001",
         status: "delivered",
         sentAt: new Date().toISOString(),
         tenantId: statusTenantId,
@@ -496,18 +496,18 @@ describe("WhatsApp Cloud API outbound status matching", () => {
     const missWamid = `wamid.MISS_${crypto.randomUUID().slice(0, 8)}`;
     insertOutbound({
       id: hitId,
-      phone: "+919999973271",
+      phone: "+919000000001",
       payload: { channel: "graph", messageId: hitWamid },
     });
     insertOutbound({
       id: missId,
-      phone: "+919999973271",
+      phone: "+919000000001",
       payload: { channel: "graph", messageId: missWamid },
     });
     try {
       applyWhatsAppOutboundStatus(getDb(), {
         messageId: hitWamid,
-        recipientId: "919999973271",
+        recipientId: "919000000001",
         status: "read",
         sentAt: new Date().toISOString(),
         tenantId: statusTenantId,
@@ -631,7 +631,7 @@ describe("WhatsApp Cloud API outbound status matching", () => {
     const wamid = `wamid.HTTP_${crypto.randomUUID().slice(0, 8)}`;
     insertOutbound({
       id: eventId,
-      phone: "+919999973271",
+      phone: "+919000000001",
       payload: { channel: "graph", messageId: wamid },
     });
 
@@ -655,7 +655,7 @@ describe("WhatsApp Cloud API outbound status matching", () => {
                     {
                       id: wamid,
                       status: "delivered",
-                      recipient_id: "919999973271",
+                      recipient_id: "919000000001",
                     },
                   ],
                 },

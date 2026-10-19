@@ -737,8 +737,8 @@ function demoCapRowMatches(
     return true;
   }
   if (key.invoiceId) return String(payload.invoiceId || "") === key.invoiceId;
-  const want = toWhatsAppRecipient(key.phone).slice(-10);
-  const have = toWhatsAppRecipient(String(row.patient_phone || "")).slice(-10);
+  const want = toWhatsAppRecipient(key.phone);
+  const have = toWhatsAppRecipient(String(row.patient_phone || ""));
   return Boolean(want) && want === have;
 }
 
