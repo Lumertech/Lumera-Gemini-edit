@@ -89,7 +89,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
         body: JSON.stringify({
           query: text,
           patientContext: currentPatient ? {
-            name: currentPatient.name,
+            name: "Patient",
             age: currentPatient.age,
             gender: currentPatient.gender,
             allergies: currentPatient.allergies,
@@ -178,7 +178,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
             <Stethoscope className="w-3 h-3 text-cyan-400" /> Active Context:
           </span>
           <span className="text-cyan-300 font-medium text-[11px] truncate max-w-[280px]">
-            {currentPatient.name} ({currentPatient.age}y/{currentPatient.gender.charAt(0)}) • Allergies: {currentPatient.allergies.join(', ') || 'None'}
+            Patient ({currentPatient.age}y/{currentPatient.gender.charAt(0)}) • Allergies: {currentPatient.allergies.join(', ') || 'None'}
           </span>
         </div>
       )}

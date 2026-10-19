@@ -56,6 +56,17 @@ function errorName(err: unknown): string {
   return err && typeof err === "object" && "name" in err ? String((err as { name?: string }).name) : "Error";
 }
 
+/** The model sees the label Patient. Chart names are dropped before the prompt is built. */
+export function patientProfileForModel(patientContext: unknown): string {
+  const source =
+    patientContext && typeof patientContext === "object" && !Array.isArray(patientContext)
+      ? { ...(patientContext as Record<string, unknown>) }
+      : {};
+  delete source.name;
+  delete source.patientName;
+  return JSON.stringify({ ...source, name: "Patient" });
+}
+
 /** Clinical Gemini HTTP routes. PHI calls use Vertex AI in asia-south1. There is no API-key fallback. */
 export function mountGeminiClinicalRoutes(app: Express) {
   // DATA USE: patient audio, transcripts, and clinical text go through Vertex AI (asia-south1). No API key.
@@ -69,7 +80,6 @@ export function mountGeminiClinicalRoutes(app: Express) {
     async (req: Request, res: Response) => {
     try {
       const {
-        patientName = "Patient",
         patientAge = 40,
         patientGender = "Unknown",
         transcript = "",
@@ -111,7 +121,7 @@ export function mountGeminiClinicalRoutes(app: Express) {
         return res.status(503).json({ code: "AI_SOAP_NOT_CONFIGURED", message: "AI note generation not configured" });
       }
       try {
-        const prompt = `You are Lumera AI, an expert Clinical AI Medical Scribe. Generate a structured SOAP note.\nPATIENT: ${patientName} ${patientAge} / ${patientGender}, Doctor ${doctorName} (${doctorSpecialty}).\nTRANSCRIPT:\n${transcript}\nReturn JSON SOAP with subjective, objective, assessment, plan.\n${AI_RUPEE_OUTPUT_RULE}`;
+        const prompt = `You are Lumera AI, an expert Clinical AI Medical Scribe. Generate a structured SOAP note.\nPATIENT: Patient ${patientAge} / ${patientGender}, Doctor ${doctorName} (${doctorSpecialty}).\nTRANSCRIPT:\n${transcript}\nReturn JSON SOAP with subjective, objective, assessment, plan.\n${AI_RUPEE_OUTPUT_RULE}`;
         const response = await ai.models.generateContent({
           model: vertexGeminiModel(),
           contents: prompt,
@@ -162,7 +172,7 @@ export function mountGeminiClinicalRoutes(app: Express) {
         const systemInstruction = `You are Pulse AI, an advanced enterprise clinical decision support copilot.\n${AI_RUPEE_OUTPUT_RULE}`;
         const contents: any[] = [];
         if (patientContext && Object.keys(patientContext).length > 0) {
-          contents.push({ role: "user", parts: [{ text: `Current Patient Profile: ${JSON.stringify(patientContext)}` }] });
+          contents.push({ role: "user", parts: [{ text: `Current Patient Profile: ${patientProfileForModel(patientContext)}` }] });
           contents.push({ role: "model", parts: [{ text: "Understood." }] });
         }
         for (const h of history.slice(-6)) {

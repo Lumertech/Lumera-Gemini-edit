@@ -1114,7 +1114,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
             ) : (
               <ShieldAlert className="w-3.5 h-3.5 text-amber-700" />
             )}
-            <span>AI Safety Audit</span>
+            <span>AI safety check (suggestion)</span>
           </button>
           {safetyCheckError && (
             <p role="alert" className="w-full text-[11px] font-medium text-rose-800">
@@ -1166,7 +1166,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-2 text-amber-800">
               <AlertTriangle className="w-5 h-5 text-amber-600" />
-              <h3 className="font-bold text-sm">AI Clinical Drug Safety Audit</h3>
+              <h3 className="font-bold text-sm">AI safety check (suggestion)</h3>
             </div>
             <span className="flex items-center gap-2">
               {safetyResult.source && (

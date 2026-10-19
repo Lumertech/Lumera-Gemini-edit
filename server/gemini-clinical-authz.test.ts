@@ -18,6 +18,7 @@ import {
 } from "./gemini-clinical-rate-limit.ts";
 import { hashPassword } from "./password.ts";
 import { jsonRequest, startTestServer } from "./test-http.ts";
+import { setVertexClientFactoryForTests, setVertexClientForTests } from "./vertex-gemini.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -90,6 +91,7 @@ describe("clinical Gemini route auth", () => {
     setGeminiCopilotGeneratorForTests(undefined);
     setGeminiSafetyCheckGeneratorForTests(undefined);
     setGeminiSoapGeneratorForTests(undefined);
+    setVertexClientForTests(undefined);
     await close?.();
   });
 
@@ -430,5 +432,78 @@ describe("clinical Gemini route auth", () => {
     assert.doesNotMatch(soapSrc, /details/);
     setGeminiSoapGeneratorForTests(undefined);
     resetClinicalGeminiRateLimits();
+  });
+
+  it("keeps the patient name out of the SOAP and copilot prompts", async () => {
+    resetClinicalGeminiRateLimits();
+    setGeminiSoapGeneratorForTests(undefined);
+    setGeminiCopilotGeneratorForTests(undefined);
+    const previousLocation = process.env.VERTEX_LOCATION;
+    const previousProject = process.env.VERTEX_PROJECT;
+    process.env.VERTEX_LOCATION = "asia-south1";
+    process.env.VERTEX_PROJECT = "test-project";
+    const captured: Array<{ contents?: unknown }> = [];
+    setVertexClientForTests(undefined);
+    setVertexClientFactoryForTests(() => ({
+      models: {
+        generateContent: async (request: { contents?: unknown }) => {
+          captured.push(request);
+          return { text: JSON.stringify({ subjective: "cough", objective: "", assessment: "", plan: "" }) };
+        },
+      },
+    }) as never);
+    try {
+      const token = await login(doctor.email);
+      const soap = await jsonRequest(
+        port,
+        "POST",
+        "/api/gemini/generate-soap",
+        {
+          transcript: "Fever and a dry cough for two days.",
+          patientName: PATIENT_MARKER,
+          patientAge: 42,
+          patientGender: "Female",
+        },
+        auth(token)
+      );
+      assert.equal(soap.status, 200, JSON.stringify(soap.json));
+      const soapPrompt = String(captured[0]?.contents || "");
+      assert.equal(soapPrompt.includes(PATIENT_MARKER), false);
+      assert.match(soapPrompt, /PATIENT: Patient 42 \/ Female/);
+
+      captured.length = 0;
+      const copilot = await jsonRequest(
+        port,
+        "POST",
+        "/api/gemini/copilot",
+        {
+          query: "What is a typical adult dose of paracetamol?",
+          patientContext: {
+            name: PATIENT_MARKER,
+            patientName: PATIENT_MARKER,
+            age: 42,
+            gender: "Female",
+            allergies: ["Dust"],
+          },
+        },
+        auth(token)
+      );
+      assert.equal(copilot.status, 200, JSON.stringify(copilot.json));
+      const contents = captured[0]?.contents as Array<{ parts?: Array<{ text?: string }> }>;
+      const profile = String(contents?.[0]?.parts?.[0]?.text || "");
+      assert.match(profile, /^Current Patient Profile: /);
+      assert.equal(profile.includes(PATIENT_MARKER), false);
+      assert.match(profile, /"name":"Patient"/);
+      assert.match(profile, /"age":42/);
+      assert.match(profile, /"gender":"Female"/);
+      assert.match(profile, /Dust/);
+    } finally {
+      setVertexClientForTests(undefined);
+      if (previousLocation === undefined) delete process.env.VERTEX_LOCATION;
+      else process.env.VERTEX_LOCATION = previousLocation;
+      if (previousProject === undefined) delete process.env.VERTEX_PROJECT;
+      else process.env.VERTEX_PROJECT = previousProject;
+      resetClinicalGeminiRateLimits();
+    }
   });
 });
