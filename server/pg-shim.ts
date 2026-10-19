@@ -124,7 +124,19 @@ export function createPgShim(connectionString: string): SqlDatabase {
     });
   };
 
-  return { prepare, exec, dialect: "postgres" };
+  const transaction = (statements: { sql: string; params?: unknown[] }[]): void => {
+    if (!statements.length) return;
+    callWorker(connectionString, {
+      type: "exec",
+      skipTransaction: statements.length < 2,
+      statements: statements.map((statement) => ({
+        sql: toPostgresSql(statement.sql),
+        params: normalizeBindParams(statement.params || []),
+      })),
+    });
+  };
+
+  return { prepare, exec, dialect: "postgres", transaction };
 }
 
 export function isPgShimAvailable(): boolean {

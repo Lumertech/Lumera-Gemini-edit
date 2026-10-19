@@ -86,11 +86,13 @@ describe("WhatsApp bot fallback uses Vertex", () => {
 
     modelCalls = 0;
     seenModel = "";
+    let seenPrompt = "";
     setVertexClientForTests({
       models: {
-        generateContent: async (params: { model?: string }) => {
+        generateContent: async (params: { model?: string; contents?: unknown }) => {
           modelCalls += 1;
           seenModel = String(params.model || "");
+          seenPrompt = JSON.stringify(params.contents || "");
           return { text: MODEL_TEXT };
         },
       },
@@ -107,6 +109,9 @@ describe("WhatsApp bot fallback uses Vertex", () => {
     assert.equal(modelCalls, 1);
     assert.equal(seenModel, vertexGeminiModel());
     assert.equal((res.json.botReply as { content?: string } | undefined)?.content, MODEL_TEXT);
+    assert.equal(seenPrompt.includes(PATIENT), false);
+    assert.equal(seenPrompt.includes("Nair"), false);
+    assert.equal(seenPrompt.includes("Patient Name:"), false);
   });
 
   it("returns the non-AI fallback and no model text when Vertex is unset", async () => {
@@ -127,14 +132,186 @@ describe("WhatsApp bot fallback uses Vertex", () => {
       );
       assert.equal(res.status, 201, JSON.stringify(res.json));
       const content = String((res.json.botReply as { content?: string } | undefined)?.content || "");
-      assert.match(content, new RegExp(`Namaste ${PATIENT}`));
-      assert.match(content, new RegExp(QUESTION));
+      assert.match(content, /Namaste Asha!/);
+      assert.equal(content.includes(PATIENT), false);
+      assert.equal(content.includes("Nair"), false);
+      assert.equal(content.includes(QUESTION), false);
       assert.equal(content.includes(MODEL_TEXT), false);
       assert.equal(modelCalls, before);
       const logged = warns.filter((line) => line.includes("whatsapp.gemini.fallback")).join("\n");
       assert.match(logged, /whatsapp\.gemini\.fallback Error/);
       assert.equal(logged.includes(PATIENT), false);
       assert.equal(logged.includes(QUESTION), false);
+    } finally {
+      console.warn = original;
+      setVertexClientForTests(undefined);
+    }
+  });
+
+  it("returns the fixed non-AI reply when the Vertex fallback call errors", async () => {
+    let seenPrompt = "";
+    setVertexClientForTests({
+      models: {
+        generateContent: async (params: { contents?: unknown }) => {
+          seenPrompt = JSON.stringify(params.contents || "");
+          const err = new Error(`phi leak ${QUESTION}`);
+          err.name = "ForcedVertexError";
+          throw err;
+        },
+      },
+    } as unknown as GoogleGenAI);
+    const warns: string[] = [];
+    const original = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warns.push(args.map((part) => String(part)).join(" "));
+    };
+    try {
+      const res = await jsonRequest(
+        port,
+        "POST",
+        "/api/whatsapp/send",
+        { patientPhone, patientName: PATIENT, sender: "user", content: QUESTION },
+        { Authorization: `Bearer ${token}` }
+      );
+      assert.equal(res.status, 201, JSON.stringify(res.json));
+      const content = String((res.json.botReply as { content?: string } | undefined)?.content || "");
+      assert.match(content, /Namaste Asha!/);
+      assert.equal(content.includes(PATIENT), false);
+      assert.equal(content.includes("Nair"), false);
+      assert.equal(seenPrompt.includes(PATIENT), false);
+      assert.equal(seenPrompt.includes("Nair"), false);
+      assert.equal(content.includes(QUESTION), false);
+      assert.equal(content.includes(MODEL_TEXT), false);
+      const logged = warns.filter((line) => line.includes("whatsapp.gemini.fallback")).join("\n");
+      assert.match(logged, /whatsapp\.gemini\.fallback ForcedVertexError/);
+      assert.equal(logged.includes(QUESTION), false);
+      assert.equal(logged.includes(PATIENT), false);
+    } finally {
+      console.warn = original;
+      setVertexClientForTests(undefined);
+    }
+  });
+
+  it("sends voice audio through the Vertex client and fails closed when it errors", async () => {
+    let calls = 0;
+    setVertexClientForTests({
+      models: {
+        generateContent: async () => {
+          calls += 1;
+          return {
+            text: JSON.stringify({
+              transcription: "VERTEX_TRANSCRIPT",
+              englishTranslation: "VERTEX_TRANSCRIPT",
+              detectedLanguage: "en",
+              clinicalSummary: "summary",
+              symptoms: [],
+              patientIntent: "consultation",
+            }),
+          };
+        },
+      },
+    } as unknown as GoogleGenAI);
+    const ok = await jsonRequest(
+      port,
+      "POST",
+      "/api/whatsapp/voice-process",
+      { audioBase64: "AAAA", mimeType: "audio/webm" },
+      { Authorization: `Bearer ${token}` }
+    );
+    assert.equal(ok.status, 200, JSON.stringify(ok.json));
+    assert.equal(calls, 1);
+    assert.equal(ok.json.transcription, "VERTEX_TRANSCRIPT");
+
+    setVertexClientForTests({
+      models: {
+        generateContent: async () => {
+          calls += 1;
+          const err = new Error("audio phi SECRET_AUDIO");
+          err.name = "ForcedVoiceError";
+          throw err;
+        },
+      },
+    } as unknown as GoogleGenAI);
+    const warns: string[] = [];
+    const original = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warns.push(args.map((part) => String(part)).join(" "));
+    };
+    try {
+      const failed = await jsonRequest(
+        port,
+        "POST",
+        "/api/whatsapp/voice-process",
+        { audioBase64: "AAAA", mimeType: "audio/webm" },
+        { Authorization: `Bearer ${token}` }
+      );
+      assert.equal(failed.status, 503);
+      assert.equal(failed.json.message, "AI transcription is temporarily unavailable");
+      assert.equal(JSON.stringify(failed.json).includes("SECRET_AUDIO"), false);
+      assert.equal(JSON.stringify(failed.json).includes("VERTEX_TRANSCRIPT"), false);
+      assert.equal(JSON.stringify(failed.json).includes("back pain"), false);
+      assert.equal(calls, 2);
+      const logged = warns.join("\n");
+      assert.match(logged, /ForcedVoiceError/);
+      assert.equal(logged.includes("SECRET_AUDIO"), false);
+    } finally {
+      console.warn = original;
+      setVertexClientForTests(undefined);
+    }
+  });
+
+  it("translates through the Vertex client and uses fixed text when it errors", async () => {
+    const secret = "SECRET_TRANSLATE_PHI";
+    let calls = 0;
+    setVertexClientForTests({
+      models: {
+        generateContent: async () => {
+          calls += 1;
+          return { text: "VERTEX_TRANSLATION" };
+        },
+      },
+    } as unknown as GoogleGenAI);
+    const ok = await jsonRequest(
+      port,
+      "POST",
+      "/api/whatsapp/translate",
+      { text: `hello ${secret}`, targetLanguage: "hi" },
+      { Authorization: `Bearer ${token}` }
+    );
+    assert.equal(ok.status, 200, JSON.stringify(ok.json));
+    assert.equal(calls, 1);
+    assert.equal(ok.json.translatedText, "VERTEX_TRANSLATION");
+
+    setVertexClientForTests({
+      models: {
+        generateContent: async () => {
+          calls += 1;
+          const err = new Error(`translate phi ${secret}`);
+          err.name = "ForcedTranslateError";
+          throw err;
+        },
+      },
+    } as unknown as GoogleGenAI);
+    const warns: string[] = [];
+    const original = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warns.push(args.map((part) => String(part)).join(" "));
+    };
+    try {
+      const failed = await jsonRequest(
+        port,
+        "POST",
+        "/api/whatsapp/translate",
+        { text: `hello ${secret}`, targetLanguage: "hi" },
+        { Authorization: `Bearer ${token}` }
+      );
+      assert.equal(failed.status, 200, JSON.stringify(failed.json));
+      assert.equal(calls, 2);
+      assert.equal(failed.json.translatedText, "नमस्ते, आपकी पूछताछ दर्ज कर ली गई है। हमारा स्टाफ जल्द ही आपसे संपर्क करेगा।");
+      assert.equal(String(failed.json.translatedText).includes(secret), false);
+      const logged = warns.join("\n");
+      assert.match(logged, /whatsapp\.translate\.gemini ForcedTranslateError/);
+      assert.equal(logged.includes(secret), false);
     } finally {
       console.warn = original;
       setVertexClientForTests(undefined);

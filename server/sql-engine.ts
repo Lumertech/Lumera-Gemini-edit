@@ -18,6 +18,11 @@ export interface SqlDatabase {
   exec(sql: string): void;
   /** Present on the Postgres shim. SQLite connections omit it. */
   dialect?: "postgres";
+  /**
+   * Run parameterized statements in one transaction. Present on the Postgres
+   * shim, where each prepare() call autocommits on its own connection.
+   */
+  transaction?(statements: { sql: string; params?: unknown[] }[]): void;
 }
 
 /**

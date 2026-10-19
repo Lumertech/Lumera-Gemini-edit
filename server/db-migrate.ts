@@ -9,6 +9,7 @@ import {
 } from "./migrate-patients-phone.ts";
 import { backfillWhatsAppTenantIds } from "./whatsapp-tenant-backfill.ts";
 import { migratePrescriptionDraftKey } from "./migrate-prescription-drafts.ts";
+import { scrubWhatsAppBotPhi } from "./migrate-whatsapp-bot-phi.ts";
 
 const DEMO_LETTERHEAD_SEED = {
   name: "Lumera Healthcare & Polyclinic Institute",
@@ -509,6 +510,7 @@ export function migrate(database: SqlDatabase) {
   migrateWhatsAppConversationKey(database);
   enforceWhatsAppTenantNotNull(database);
   rewriteLegacyHonestyCopy(database);
+  scrubWhatsAppBotPhi(database);
 }
 
 /**

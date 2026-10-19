@@ -7,7 +7,6 @@ import {
   escapeHtml,
   getTenantLetterhead,
 } from "./letterhead.ts";
-import type { GoogleGenAI } from "@google/genai";
 import { getVertexClient, vertexGeminiModel, vertexGenerateContent } from "./vertex-gemini.ts";
 import {
   bookWhatsAppAppointment,
@@ -22,9 +21,10 @@ import {
   runAppointmentReminders,
 } from "./whatsapp-calendar.ts";
 import { cloudDispatchHttpStatus, isCloudDispatchFailure } from "./graph-whatsapp.ts";
+import { rejectProductionSimulator } from "./meta-security.ts";
 import { dispatchPatientCloudText } from "./whatsapp-patient-dispatch.ts";
+import { findPatientByPhoneInTenant } from "./whatsapp-tenant-resolve.ts";
 import { isProduction } from "./runtime.ts";
-import { reportCaughtError } from "./error-tracker.ts";
 import { CLINICIAN_ROLES, requireAuth, requireRole } from "./auth.ts";
 import { rejectUntrustedTenantClaim } from "./tenant-guard.ts";
 import { authenticatedLabReportPath, authorizeLabReport, labOwnerTenantId, sendLabReportDenied } from "./lab-report-access.ts";
@@ -120,8 +120,18 @@ ${AI_RUPEE_OUTPUT_RULE}`,
   };
 }
 
-function getDefaultGenAI(): GoogleGenAI | null {
+function getDefaultGenAI() {
   return getVertexClient();
+}
+
+function vertexErrorName(err: unknown): string {
+  return err && typeof err === "object" && "name" in err && (err as { name?: string }).name
+    ? String((err as { name?: string }).name)
+    : "Error";
+}
+
+function patientFirstName(name: string): string {
+  return String(name || "").trim().split(/\s+/).filter(Boolean)[0] || "";
 }
 
 function serializeWhatsAppMessage(m: Record<string, unknown>) {
@@ -186,7 +196,7 @@ function respondWhatsAppMessages(res: Response, tenantId: string, convId?: strin
   res.json({ messages: rows.map(serializeWhatsAppMessage) });
 }
 
-export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null): Router {
+export function createWhatsAppRouter(customGetGenAI?: () => ReturnType<typeof getDefaultGenAI>): Router {
   const getGenAI = customGetGenAI || getDefaultGenAI;
   const router = Router();
   router.use(...requireClinicWhatsApp, rejectUntrustedTenantClaim);
@@ -414,6 +424,16 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
         return res.status(400).json({ error: "No tenant associated with this account." });
       }
 
+      // Patient-impersonation sends (sender !== "agent", including the default "user")
+      // drive the sandbox bot. Production staff replies stay on sender "agent".
+      if (sender !== "agent") {
+        let simulatorAllowed = false;
+        rejectProductionSimulator(req, res, () => {
+          simulatorAllowed = true;
+        });
+        if (!simulatorAllowed) return;
+      }
+
       if (sender === "agent") {
         const staffTenantId = resolveWhatsAppTenantId({
           tenantId: bodyTenantId,
@@ -477,9 +497,9 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
       // If sent by staff and translation requested
       if (sender === "agent" && targetLanguage && targetLanguage !== "en") {
         try {
-          translatedContent = await translateWithGeminiOrFallback(content, String(targetLanguage), getGenAI());
-        } catch (err) {
-          reportCaughtError(err, "whatsapp.translate.outbound");
+          translatedContent = await translateWithGeminiOrFallback(content, String(targetLanguage));
+        } catch (err: unknown) {
+          console.warn("whatsapp.translate.outbound", vertexErrorName(err));
           translatedContent = null;
         }
       }
@@ -489,9 +509,9 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
         detectedLanguage = detectLanguageSimple(content);
         if (detectedLanguage !== "en") {
           try {
-            translatedContent = await translateWithGeminiOrFallback(content, "en", getGenAI());
-          } catch (err) {
-            reportCaughtError(err, "whatsapp.translate.inbound");
+            translatedContent = await translateWithGeminiOrFallback(content, "en");
+          } catch (err: unknown) {
+            console.warn("whatsapp.translate.inbound", vertexErrorName(err));
             translatedContent = null;
           }
         }
@@ -1171,7 +1191,7 @@ ${AI_RUPEE_OUTPUT_RULE}`;
       const { text, targetLanguage = "en", sourceLanguage } = req.body;
       if (!text) return res.status(400).json({ error: "Text is required" });
 
-      const translated = await translateWithGeminiOrFallback(text, targetLanguage, getGenAI());
+      const translated = await translateWithGeminiOrFallback(text, targetLanguage);
       res.json({
         originalText: text,
         translatedText: translated,
@@ -1286,9 +1306,9 @@ ${AI_RUPEE_OUTPUT_RULE}`;
         status: 'delivered',
         message: 'Prescription PDF dispatched successfully via WhatsApp Graph API'
       });
-    } catch (err: any) {
-      console.error("WhatsApp Rx dispatch error:", err);
-      return res.status(500).json({ error: "Failed to dispatch WhatsApp Rx: " + err.message });
+    } catch (err: unknown) {
+      console.error("WhatsApp Rx dispatch error", vertexErrorName(err));
+      return res.status(500).json({ error: "Failed to dispatch WhatsApp Rx" });
     }
   });
 
@@ -1584,6 +1604,15 @@ ${AI_RUPEE_OUTPUT_RULE}`;
 // BOT INTELLIGENCE & EMR LOGIC HELPERS
 // ----------------------------------------------------
 
+/** Patient id for this clinic's phone only. Never match on name, never leave the tenant. */
+function patientIdForSessionPhone(tenantId: string, phone: string): string {
+  const id = String(tenantId || "").trim();
+  const from = String(phone || "").trim();
+  if (!id || !from) return "";
+  const patient = findPatientByPhoneInTenant(id, from);
+  return String(patient?.id || "").trim();
+}
+
 async function processBotActionOrQuery(
   text: string,
   phone: string,
@@ -1597,6 +1626,7 @@ async function processBotActionOrQuery(
   media?: Record<string, unknown>;
 } | null> {
   const q = text.toLowerCase().trim();
+  const sessionTenantId = String(tenantHints.sessionTenantId || "").trim();
   const tenantId = resolveWhatsAppTenantId({
     tenantId: tenantHints.tenantId,
     sessionTenantId: tenantHints.sessionTenantId,
@@ -1607,59 +1637,38 @@ async function processBotActionOrQuery(
 
   // 1. Prescription Request
   if (q.includes("prescription") || q.includes("rx") || q.includes("refill") || q.includes("medicine") || q.includes("दवा") || q.includes("औषध")) {
-    const rx = db.prepare(`
-      SELECT * FROM prescriptions
-      WHERE patient_phone = ? OR patient_name = ?
-      ORDER BY created_at DESC LIMIT 1
-    `).get(phone, patientName) as Record<string, unknown> | undefined;
+    const rxTenant = String(tenantHints.sessionTenantId || "").trim();
+    const patientId = patientIdForSessionPhone(rxTenant, phone);
+    const rx = rxTenant && patientId
+      ? (db.prepare(`
+          SELECT id FROM prescriptions
+          WHERE tenant_id = ? AND patient_id = ?
+          ORDER BY created_at DESC LIMIT 1
+        `).get(rxTenant, patientId) as { id?: string } | undefined)
+      : undefined;
 
-    if (rx) {
-      const meds = JSON.parse((rx.medicines as string) || "[]");
-      const medList = meds.slice(0, 3).map((m: any) => `• *${m.drugName}* (${m.dosage}) - ${m.frequency} [${m.timing}]`).join("\n");
-
-      return {
-        content: `💊 *Prescription Record Found (${rx.rx_number})*\n\n*Consultant*: ${rx.doctor_name}\n*Diagnosis*: ${rx.diagnosis}\n*Date*: ${rx.date}\n\n*Active Medications*:\n${medList}\n\nTap below to view the signed prescription slip or download PDF:`,
-        buttons: ["📄 Preview Prescription", "📥 Download PDF", "💊 Request Pharmacy Refill"],
-        media: {
-          type: "pdf",
-          title: `Prescription_${rx.rx_number}.pdf`,
-          url: `/api/emr/prescription/${rx.id}/pdf`,
-          size: "210 KB",
-          previewData: rx,
-        },
-      };
+    if (rx?.id) {
+      // TODO(#164): server/patient-link-token.ts is not on main (PR #164 is open).
+      // When mintPatientLinkToken lands, attach only that opaque OTP-gated URL
+      // (purpose "rx", resourceId = this row). Do not invent a second token.
+      return { content: "your prescription is ready" };
     }
   }
 
   // 2. Lab Reports Request
   if (q.includes("lab") || q.includes("report") || q.includes("test") || q.includes("blood") || q.includes("जांच") || q.includes("रिपोर्ट")) {
-    const labTenant = String(tenantId || "").trim();
-    const lab = labTenant
+    const labTenant = String(tenantHints.sessionTenantId || "").trim();
+    const patientId = patientIdForSessionPhone(labTenant, phone);
+    const lab = labTenant && patientId
       ? (db.prepare(`
-          SELECT * FROM lab_reports
-          WHERE tenant_id = ? AND patient_name = ?
+          SELECT id FROM lab_reports
+          WHERE tenant_id = ? AND patient_id = ?
           ORDER BY created_at DESC LIMIT 1
-        `).get(labTenant, patientName) as Record<string, unknown> | undefined)
+        `).get(labTenant, patientId) as { id?: string } | undefined)
       : undefined;
 
-    if (lab) {
-      const results = JSON.parse((lab.results as string) || "[]");
-      const flagged = results
-        .filter((r: any) => r.status !== "Normal")
-        .map((r: any) => `• *${r.param}*: ${r.value} ${r.unit} (${r.status})`)
-        .join("\n");
-
-      return {
-        content: `🔬 *Verified Lab Diagnostic Report*\n\n*Panel*: ${lab.category}\n*Date*: ${lab.date}\n*Facility*: ${lab.lab_name}\n\n*Flagged Out-of-Range Parameters*:\n${flagged || "All tested parameters within normal reference ranges."}\n\n*Doctor's Interpretation*:\n"${lab.doctor_interpretation}"`,
-        buttons: ["🔬 Preview Lab Sheet", "📥 Download PDF", "🩺 Consult Doctor"],
-        media: {
-          type: "pdf",
-          title: `Lab_Report_${lab.id}.pdf`,
-          url: authenticatedLabReportPath(String(lab.id)),
-          size: "185 KB",
-          previewData: lab,
-        },
-      };
+    if (lab?.id) {
+      return { content: "your lab report is ready" };
     }
   }
 
@@ -1697,7 +1706,7 @@ async function processBotActionOrQuery(
         await dispatchWhatsAppBookConfirmation({ tenantId, appointment: appt });
       }
       return {
-        content: `${booked.reused ? "📌 *Existing booking found*" : "🎉 *Appointment Confirmed!*"}\n\n*Token*: *#${appt.tokenNumber}*\n*Doctor*: ${appt.doctorName}\n*Specialty*: ${appt.specialty}\n*Date*: ${appt.date}\n*Slot*: ${appt.timeSlot || "OPD hours"}\n*UHID*: ${appt.uhid}\n*Source*: ${appt.source}\n\nThis token is on the clinician OPD calendar for your clinic.`,
+        content: `${booked.reused ? "📌 *Existing booking found*" : "🎉 *Appointment Confirmed!*"}\n\n*Token*: *#${appt.tokenNumber}*\n*Doctor*: ${appt.doctorName}\n*Specialty*: ${appt.specialty}\n*Date*: ${appt.date}\n*Slot*: ${appt.timeSlot || "OPD hours"}\n*Source*: ${appt.source}\n\nThis token is on the clinician OPD calendar for your clinic.`,
         buttons: ["🎫 View My Queue", "🔄 Reschedule Slot", "❌ Cancel Appointment"],
       };
     } catch (err: unknown) {
@@ -1709,7 +1718,17 @@ async function processBotActionOrQuery(
   }
 
   if (q.includes("book") || q.includes("appointment") || q.includes("schedule") || q.includes("अपॉइंटमेंट") || q.includes("डॉक्टर")) {
-    const doctors = db.prepare("SELECT * FROM doctors WHERE active = 1 LIMIT 4").all() as Record<string, unknown>[];
+    const doctors = sessionTenantId
+      ? (db
+          .prepare(
+            `SELECT d.name, d.specialty, d.opd_room, d.consultation_fee
+             FROM doctors d
+             INNER JOIN users u ON u.id = d.user_id
+             WHERE u.tenant_id = ? AND d.active = 1
+             LIMIT 4`
+          )
+          .all(sessionTenantId) as Record<string, unknown>[])
+      : [];
     const docOptions = doctors.map((d) => `• *${d.name}* (${d.specialty}) - OPD Room ${d.opd_room}, Fee ${formatINR(Number(d.consultation_fee || 0))}`).join("\n");
 
     const bookingCopy = clinicOutboundCopy({
@@ -1724,7 +1743,17 @@ async function processBotActionOrQuery(
 
   // 4. Check Doctor Timings
   if (q.includes("timing") || q.includes("hours") || q.includes("doctor timing") || q.includes("roster") || q.includes("समय")) {
-    const doctors = db.prepare("SELECT * FROM doctors WHERE active = 1 LIMIT 5").all() as Record<string, unknown>[];
+    const doctors = sessionTenantId
+      ? (db
+          .prepare(
+            `SELECT d.name, d.specialty, d.opd_timing, d.opd_room
+             FROM doctors d
+             INNER JOIN users u ON u.id = d.user_id
+             WHERE u.tenant_id = ? AND d.active = 1
+             LIMIT 5`
+          )
+          .all(sessionTenantId) as Record<string, unknown>[])
+      : [];
     const roster = doctors.map((d) => `👨‍⚕️ *${d.name}* (${d.specialty})\n  🕒 ${d.opd_timing} | 🚪 ${d.opd_room}`).join("\n\n");
 
     const rosterCopy = clinicOutboundCopy({
@@ -1739,13 +1768,13 @@ async function processBotActionOrQuery(
 
   // 5. Queue Status
   if (q.includes("queue") || q.includes("token") || q.includes("wait") || q.includes("कतार") || q.includes("नंबर")) {
-    if (!tenantId) {
+    if (!sessionTenantId) {
       return {
         content: "We could not match this chat to a clinic calendar. Please ask reception to link your WhatsApp number.",
         buttons: ["📅 Book Appointment", "👤 Speak with Receptionist"],
       };
     }
-    const queue = getWhatsAppQueue({ tenantId, patientPhone: phone });
+    const queue = getWhatsAppQueue({ tenantId: sessionTenantId, patientPhone: phone });
     if (queue.hasAppointment && queue.appointment) {
       const appt = queue.appointment;
       return {
@@ -1756,10 +1785,10 @@ async function processBotActionOrQuery(
   }
 
   // 6. Cancel / reschedule — same appointments row as ClinicianApp PATCH
-  if (tenantId && (q.includes("cancel appointment") || q.includes("cancel my appointment") || q.includes("❌ cancel"))) {
+  if (sessionTenantId && (q.includes("cancel appointment") || q.includes("cancel my appointment") || q.includes("❌ cancel"))) {
     try {
       const appointment = patchWhatsAppAppointment({
-        tenantId,
+        tenantId: sessionTenantId,
         patientPhone: phone,
         body: { status: "Cancelled" },
       });
@@ -1786,7 +1815,6 @@ async function processBotActionOrQuery(
   try {
     const assistantCopy = clinicOutboundCopy({
       ...resolveClinicFacingNames(db, tenantId),
-      patientName,
       patientText: text,
     });
     const res = await vertexGenerateContent({
@@ -1805,13 +1833,12 @@ async function processBotActionOrQuery(
       buttons: ["📅 Book Doctor Appointment", "💊 Refill Prescription", "🔬 View Lab Reports", "👤 Speak with Receptionist"],
     };
   } catch (err: unknown) {
-    const name = err && typeof err === "object" && "name" in err ? String((err as { name?: string }).name) : "Error";
-    console.warn("whatsapp.gemini.fallback", name);
+    console.warn("whatsapp.gemini.fallback", vertexErrorName(err));
   }
 
-  // Default Fallback
+  // Fixed non-AI reply. The patient's message is not copied back into the chat.
   return {
-    content: `Namaste ${patientName}! 🙏 We have received your query: "${text}".\n\nOur clinic team is available to assist you. You can use the quick actions below to book consultations, view clinical prescriptions, or check diagnostic test reports:`,
+    content: `Namaste ${patientFirstName(patientName)}! 🙏 We have received your query.\n\nOur clinic team is available to assist you. You can use the quick actions below to book consultations, view clinical prescriptions, or check diagnostic test reports:`,
     buttons: ["📅 Book Doctor Appointment", "💊 Refill / View Prescription", "🔬 Download Lab Reports", "⏰ Check Doctor Timings"],
   };
 }
@@ -1833,7 +1860,7 @@ function detectLanguageSimple(text: string): string {
   return "en";
 }
 
-async function translateWithGeminiOrFallback(text: string, targetLang: string, ai: GoogleGenAI | null): Promise<string> {
+async function translateWithGeminiOrFallback(text: string, targetLang: string): Promise<string> {
   const langNames: Record<string, string> = {
     en: "English",
     hi: "Hindi",
@@ -1844,21 +1871,18 @@ async function translateWithGeminiOrFallback(text: string, targetLang: string, a
   };
   const targetName = langNames[targetLang] || targetLang;
 
-  if (ai) {
-    try {
-      const response = await ai.models.generateContent({
-        model: vertexGeminiModel(),
-        contents: [
-          {
-            text: `Translate the following clinical or medical chat message accurately into ${targetName}. Maintain a polite, reassuring medical tone. Only return the translated text:\n\n"${text}"`,
-          },
-        ],
-      });
-      if (response.text) return response.text.trim();
-    } catch (err) {
-      reportCaughtError(err, "whatsapp.translate.gemini");
-      /* fallback */
-    }
+  try {
+    const response = await vertexGenerateContent({
+      model: vertexGeminiModel(),
+      contents: [
+        {
+          text: `Translate the following clinical or medical chat message accurately into ${targetName}. Maintain a polite, reassuring medical tone. Only return the translated text:\n\n"${text}"`,
+        },
+      ],
+    });
+    if (response.text) return response.text.trim();
+  } catch (err: unknown) {
+    console.warn("whatsapp.translate.gemini", vertexErrorName(err));
   }
 
   // Common clinical translations dictionary fallback
