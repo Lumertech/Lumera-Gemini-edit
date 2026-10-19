@@ -7,6 +7,7 @@ import {
 } from "./db.ts";
 import { getTenantLetterhead } from "./letterhead.ts";
 import { isSampleTaxInvoice, isSeedUpi, sampleTaxInvoiceReceiptText, scrubSeedBillingIds } from "./seed-branding.ts";
+import { SAMPLE_UPI_DO_NOT_PAY } from "../src/lib/sampleTaxInvoice.ts";
 import { cloudDispatchHttpStatus, isCloudDispatchFailure, sendPaymentReceipt } from "./graph-whatsapp.ts";
 import {
   createRazorpayCollectOrder,
@@ -349,7 +350,7 @@ function recordReceiptEvent(opts: {
 export function receiptBody(invoice: ReturnType<typeof mapInvoice>, sandbox: boolean): string {
   const gstinLine = invoice.gstin ? `\nGSTIN: ${invoice.gstin}` : "";
   const upiLine = invoice.upiId
-    ? `\nUPI: ${invoice.upiId}${isSeedUpi(invoice.upiId) ? " (Sample, do not pay)" : ""}`
+    ? `\nUPI: ${invoice.upiId}${isSeedUpi(invoice.upiId) ? ` (${SAMPLE_UPI_DO_NOT_PAY})` : ""}`
     : "";
   const sandboxLine = sandbox
     ? "\n\nSANDBOX / DEV-ONLY — recorded locally, not sent via WhatsApp Cloud API."

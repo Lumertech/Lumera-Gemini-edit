@@ -5,12 +5,13 @@
  */
 
 export const SEED_CLINIC_GSTIN = "19AABCL8899K1Z5";
-/** Previous demo VPA. Still recognized so stored rows and real-tenant scrubbing keep working. */
+/** Previous demo VPAs. Still recognized so stored rows and real-tenant scrubbing keep working. */
 export const LEGACY_SEED_CLINIC_UPI = "lumerahealth@icici";
+export const PREVIOUS_SEED_CLINIC_UPI = "demo-clinic@upi-sample";
 /** Obviously fake. Not a bank VPA and not payable. */
-export const SEED_CLINIC_UPI = "demo-clinic@upi-sample";
+export const SEED_CLINIC_UPI = "demo@upi-sandbox";
 /** Shown beside the demo letterhead UPI and in place of a payment QR. */
-export const SAMPLE_UPI_DO_NOT_PAY = "Sample, do not pay";
+export const SAMPLE_UPI_DO_NOT_PAY = "Demo, do not pay";
 
 /** Meta review clinic and Sunrise. Demo workspaces use the tenant-demo- prefix below. */
 export const DEMO_SAMPLE_TENANT_IDS = ["tenant-lumera-main", "tenant-543feff7"] as const;
@@ -31,7 +32,11 @@ export function isSeedGstin(value: string): boolean {
 
 export function isSeedUpi(value: string): boolean {
   const id = String(value || "").trim().toLowerCase();
-  return id === SEED_CLINIC_UPI.toLowerCase() || id === LEGACY_SEED_CLINIC_UPI.toLowerCase();
+  return (
+    id === SEED_CLINIC_UPI.toLowerCase() ||
+    id === LEGACY_SEED_CLINIC_UPI.toLowerCase() ||
+    id === PREVIOUS_SEED_CLINIC_UPI.toLowerCase()
+  );
 }
 
 /**

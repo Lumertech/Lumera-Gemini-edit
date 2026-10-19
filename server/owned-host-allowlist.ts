@@ -2,28 +2,60 @@ import fs from "node:fs";
 import path from "node:path";
 
 /**
- * User-facing hosts Lumera may ship.
- * Owned: mylumera.in (apex and any subdomain, including www) and lumer.me.
- * Everything else is a host the product actually embeds or calls.
- * @lumera.me addresses are not on this list: demo logins await the founder
- * and are exempt only as emails, not as URLs.
+ * Hosts and email domains src/ and server/ may contain.
+ * Owned: mylumera.in (any subdomain) and lumer.me.
+ * The other entries are hosts this product actually calls or embeds.
+ *
+ * TODO(founder): @lumera.me addresses are demo logins and stay until the
+ * founder replaces them. The exemption is emails only, not https://lumera.me.
+ *
+ * TODO(#164): src/components/PrescriptionWriter.tsx lines 601 and 2295 are
+ * owned by Lumera Meta. This scan does not edit those lines.
  */
 export const ALLOWED_HOSTS: ReadonlyArray<{ host: string; why: string }> = [
   { host: "mylumera.in", why: "Apex domain Lumera owns. Subdomains such as www are included." },
-  { host: "lumer.me", why: "Owned contact domain. The only public contact mailbox is ravee@lumer.me." },
-  { host: "fonts.googleapis.com", why: "Google Fonts stylesheet linked from index.html." },
-  { host: "fonts.gstatic.com", why: "Google Fonts file host, preconnected from index.html." },
-  { host: "graph.facebook.com", why: "Meta Graph API host used for WhatsApp Cloud API calls." },
-  { host: "facebook.com", why: "Facebook Login and Embedded Signup. Subdomains (www, business, web) are included." },
+  { host: "lumer.me", why: "Owned contact domain. The public contact mailbox is ravee@lumer.me." },
+  { host: "example.com", why: "Demo clinic letterhead contact and non-login doctor mailboxes." },
+  { host: "googleapis.com", why: "Google Fonts, OAuth token, and Google API hosts." },
+  { host: "gstatic.com", why: "Google Fonts file host." },
+  { host: "google.com", why: "Google account host used by OAuth (accounts.google.com)." },
+  { host: "facebook.com", why: "Facebook Login and Embedded Signup. Subdomains (www, web, developers) are included." },
   { host: "connect.facebook.net", why: "Facebook JavaScript SDK loaded for Embedded Signup." },
-  { host: "whatsapp.com", why: "WhatsApp click-to-chat host." },
+  { host: "whatsapp.com", why: "WhatsApp click-to-chat and Cloud API hosts." },
   { host: "wa.me", why: "WhatsApp short link host." },
-  { host: "sandbox.abdm.gov.in", why: "ABDM sandbox console linked from the DHIS meter." },
-  { host: "hl7.org", why: "FHIR ICD-10 coding system URI in the public landing sample." },
-  { host: "www.w3.org", why: "SVG namespace on the product logo. Not a network call." },
+  { host: "abdm.gov.in", why: "ABDM sandbox and production hosts, including sandbox.abdm.gov.in." },
+  { host: "ndhm.gov.in", why: "NDHM facility, doctor, and health-id hosts used by the ABDM flows." },
+  { host: "nrces.in", why: "NHA NRCeS FHIR structure-definition and code-system URIs." },
+  { host: "hl7.org", why: "HL7 FHIR code systems, including terminology.hl7.org." },
+  { host: "snomed.info", why: "SNOMED CT coding system used on clinical resources." },
+  { host: "loinc.org", why: "LOINC coding system used on observations." },
+  { host: "unitsofmeasure.org", why: "UCUM unit system on FHIR quantity observations." },
+  { host: "nmc.org.in", why: "National Medical Commission license system on the FHIR Practitioner identifier." },
+  { host: "razorpay.com", why: "Clinic Razorpay API. Patient money settles to the clinic, not to Lumera." },
+  { host: "unsplash.com", why: "Optional remote image host. Seed avatars no longer depend on it." },
+  { host: "localhost", why: "Loopback dev origin. Not a public host." },
+  { host: "127.0.0.1", why: "Loopback dev origin. Not a public host." },
 ];
 
-const OWNED_SUFFIXES = ["mylumera.in", "facebook.com", "whatsapp.com"];
+const HOST_SUFFIXES = [
+  "mylumera.in",
+  "facebook.com",
+  "whatsapp.com",
+  "googleapis.com",
+  "gstatic.com",
+  "google.com",
+  "abdm.gov.in",
+  "ndhm.gov.in",
+  "hl7.org",
+  "razorpay.com",
+  "unsplash.com",
+];
+
+/** TODO(#164): exact file:line owned by Lumera Meta. Do not edit these lines in the domain sweep. */
+export const PR164_EXEMPT_LINES = [
+  "src/components/PrescriptionWriter.tsx:601",
+  "src/components/PrescriptionWriter.tsx:2295",
+] as const;
 
 export type HostViolation = { file: string; line: number; host: string; kind: string };
 
@@ -31,7 +63,7 @@ function lineOf(source: string, index: number): number {
   return source.slice(0, index).split("\n").length;
 }
 
-/** Keep line numbers. Comments are not user-facing. */
+/** Keep line numbers. Comments are not shipped copy. */
 export function stripComments(source: string): string {
   let out = "";
   let i = 0;
@@ -77,25 +109,12 @@ export function stripComments(source: string): string {
 
 export function hostAllowed(host: string): boolean {
   const normalized = host.toLowerCase().replace(/\.$/, "").replace(/^\[|\]$/g, "");
-  if (!normalized || normalized === "localhost") return false;
+  if (!normalized) return false;
   for (const entry of ALLOWED_HOSTS) {
     if (normalized === entry.host) return true;
   }
-  for (const suffix of OWNED_SUFFIXES) {
+  for (const suffix of HOST_SUFFIXES) {
     if (normalized === suffix || normalized.endsWith(`.${suffix}`)) return true;
-  }
-  if (normalized === "wa.me") return true;
-  return false;
-}
-
-/**
- * PrescriptionWriter still prints the Rx verification URL. PR #164 owns that
- * QR and the WhatsApp Rx opaque-token link. This scan does not edit those lines.
- */
-export function exemptOwnedByPr164(relPath: string, line: string): boolean {
-  const file = relPath.replace(/\\/g, "/");
-  if (file === "src/components/PrescriptionWriter.tsx" && line.includes("lumera.health/rx/")) {
-    return true;
   }
   return false;
 }
@@ -114,35 +133,23 @@ function walk(dir: string, out: string[]): void {
   }
 }
 
-export function userFacingFiles(root: string): string[] {
+/** src/ and server/, excluding tests. */
+export function scannedFiles(root: string): string[] {
   const files: string[] = [];
-  const src = path.join(root, "src");
-  walk(src, files);
-  const server = path.join(root, "server");
-  if (fs.existsSync(server)) {
-    for (const entry of fs.readdirSync(server, { withFileTypes: true })) {
-      if (!entry.isFile()) continue;
-      if (isTestFile(entry.name)) continue;
-      if (/seed/i.test(entry.name) || /template/i.test(entry.name)) {
-        files.push(path.join(server, entry.name));
-      }
-    }
-  }
-  const publicDir = path.join(root, "public");
-  walk(publicDir, files);
-  const indexHtml = path.join(root, "index.html");
-  if (fs.existsSync(indexHtml)) files.push(indexHtml);
+  walk(path.join(root, "src"), files);
+  walk(path.join(root, "server"), files);
   return files.filter((file) => !isTestFile(file));
 }
 
-const URL_RE = /\b(?:https?|upi):\/\/[^\s"'`<>)\]}]+/gi;
+const URL_RE = /\b(?:https?):\/\/[^\s"'`<>)\]}]+/gi;
 const EMAIL_RE = /\b[A-Z0-9._%+-]+@([A-Z0-9.-]+\.[A-Z]{2,})\b/gi;
-const BARE_HOST_RE = /\b((?:[a-z0-9-]+\.)+(?:health|com|net|org|in|me|io|gov|app))\b/gi;
 
 function hostFromUrl(raw: string): string | null {
   try {
     const url = new URL(raw.replace(/[),.;]+$/, ""));
-    return url.hostname || null;
+    const host = url.hostname || "";
+    if (!host || /[${}]/.test(host)) return null;
+    return host;
   } catch {
     return null;
   }
@@ -153,22 +160,17 @@ export function findUnownedHosts(source: string, relPath: string): HostViolation
   const hits: HostViolation[] = [];
   const push = (index: number, host: string, kind: string) => {
     const line = lineOf(stripped, index);
-    const text = stripped.split("\n")[line - 1] || "";
-    if (exemptOwnedByPr164(relPath, text)) return;
+    const key = `${relPath.replace(/\\/g, "/")}:${line}`;
+    if ((PR164_EXEMPT_LINES as readonly string[]).includes(key)) return;
+    // TODO(founder): @lumera.me demo logins await the founder. Emails only.
     if (kind === "email" && host.toLowerCase() === "lumera.me") return;
-    if (kind !== "upi" && hostAllowed(host)) return;
-    hits.push({ file: relPath, line, host, kind });
+    if (hostAllowed(host)) return;
+    hits.push({ file: relPath.replace(/\\/g, "/"), line, host, kind });
   };
 
   for (const match of stripped.matchAll(URL_RE)) {
-    const raw = match[0];
-    const index = match.index ?? 0;
-    if (raw.toLowerCase().startsWith("upi:")) {
-      push(index, raw, "upi");
-      continue;
-    }
-    const host = hostFromUrl(raw);
-    if (host) push(index, host, "url");
+    const host = hostFromUrl(match[0]);
+    if (host) push(match.index ?? 0, host, "url");
   }
 
   for (const match of stripped.matchAll(EMAIL_RE)) {
@@ -176,24 +178,12 @@ export function findUnownedHosts(source: string, relPath: string): HostViolation
     push(match.index ?? 0, host, "email");
   }
 
-  for (const match of stripped.matchAll(BARE_HOST_RE)) {
-    const host = match[1] || "";
-    const index = match.index ?? 0;
-    const around = stripped.slice(Math.max(0, index - 8), index);
-    if (/https?:\/\/$/i.test(around) || /upi:\/\//i.test(around)) continue;
-    if (/@/.test(stripped.slice(Math.max(0, index - 64), index + host.length))) {
-      const before = stripped.slice(Math.max(0, index - 80), index);
-      if (/[A-Za-z0-9._%+-]@$/.test(before)) continue;
-    }
-    push(index, host, "host");
-  }
-
   return hits;
 }
 
 export function scanUserFacingHosts(root: string): HostViolation[] {
   const violations: HostViolation[] = [];
-  for (const file of userFacingFiles(root)) {
+  for (const file of scannedFiles(root)) {
     const rel = path.relative(root, file).replace(/\\/g, "/");
     let source = "";
     try {

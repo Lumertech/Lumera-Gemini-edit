@@ -13,17 +13,22 @@ describe("unowned domain seed rewrite", () => {
     const portal = rewriteUnownedSeedText(
       '[{"type":"URL","url":"https://lumera.health/portal","text":"Open"}]'
     );
-    assert.match(portal, /https:\/\/www\.mylumera\.in\/portal/);
+    assert.equal(portal, '[{"type":"URL","url":"https://www.mylumera.in/portal/v/{{1}}","text":"Open"}]');
     assert.doesNotMatch(portal, /lumera\.health/);
 
     const again = rewriteUnownedSeedText(portal);
     assert.equal(again, portal);
 
-    assert.equal(rewriteUnownedSeedText("lumerahealth@icici"), "demo-clinic@upi-sample");
-    assert.equal(rewriteUnownedSeedText("LumeraHealth@ICICI"), "demo-clinic@upi-sample");
-    assert.equal(rewriteUnownedSeedText("demo-clinic@upi-sample"), "demo-clinic@upi-sample");
-    assert.equal(rewriteUnownedSeedText("care@lumeraclinic.in"), "ravee@lumer.me");
-    assert.equal(rewriteUnownedSeedText("dr.meera@lumera.health"), "dr.meera@mylumera.in");
+    assert.equal(rewriteUnownedSeedText("lumerahealth@icici"), "demo@upi-sandbox");
+    assert.equal(rewriteUnownedSeedText("LumeraHealth@ICICI"), "demo@upi-sandbox");
+    assert.equal(rewriteUnownedSeedText("demo-clinic@upi-sample"), "demo@upi-sandbox");
+    assert.equal(rewriteUnownedSeedText("demo@upi-sandbox"), "demo@upi-sandbox");
+    assert.equal(rewriteUnownedSeedText("care@lumeraclinic.in"), "care@example.com");
+    assert.equal(rewriteUnownedSeedText("dr.meera@lumera.health"), "dr.meera@example.com");
+    assert.equal(
+      rewriteUnownedSeedText("https://www.mylumera.in/rx/RX-9"),
+      "https://www.mylumera.in/rx/v/{{1}}"
+    );
     assert.equal(rewriteUnownedSeedText("doctor@lumera.me"), "doctor@lumera.me");
     assert.equal(
       rewriteUnownedSeedText("Welcome to *Lumera Polyclinic WhatsApp Health Desk*."),
@@ -112,9 +117,9 @@ describe("unowned domain seed rewrite", () => {
     const tenant = db.prepare("SELECT email, website, upi_id, name FROM tenants WHERE id = ?").get(
       "tenant-lumera-main"
     ) as { email: string; website: string; upi_id: string; name: string };
-    assert.equal(tenant.email, "ravee@lumer.me");
-    assert.equal(tenant.website, "https://www.mylumera.in");
-    assert.equal(tenant.upi_id, "demo-clinic@upi-sample");
+    assert.equal(tenant.email, "care@example.com");
+    assert.equal(tenant.website, "https://example.com");
+    assert.equal(tenant.upi_id, "demo@upi-sandbox");
     assert.equal(tenant.name, "Lumera Healthcare & Polyclinic Institute");
 
     const real = db.prepare("SELECT email, website, upi_id FROM tenants WHERE id = ?").get("tenant-real") as {
@@ -130,7 +135,7 @@ describe("unowned domain seed rewrite", () => {
       email: string;
       avatar_url: string;
     };
-    assert.equal(doctor.email, "dr.siddharth@mylumera.in");
+    assert.equal(doctor.email, "dr.siddharth@example.com");
     assert.equal(doctor.avatar_url, "/lumera-logo.svg");
     assert.equal(
       (db.prepare("SELECT email FROM users WHERE id = ?").get("user-doctor") as { email: string }).email,
@@ -141,7 +146,7 @@ describe("unowned domain seed rewrite", () => {
       (db.prepare("SELECT components AS v FROM meta_templates WHERE id = ?").get("tpl-2") as { v: string }).v
     ) as Array<{ text?: string; buttons?: Array<{ url?: string }> }>;
     assert.equal(components[0].text, "See your patient portal");
-    assert.equal(components[1].buttons?.[0].url, "https://www.mylumera.in/portal");
+    assert.equal(components[1].buttons?.[0].url, "https://www.mylumera.in/portal/v/{{1}}");
     assert.equal(components[2].text, "Demo clinic • Digital Rx");
     assert.equal(
       (db.prepare("SELECT components AS v FROM meta_templates WHERE id = ?").get("tpl-custom") as { v: string }).v.includes(
@@ -158,8 +163,8 @@ describe("unowned domain seed rewrite", () => {
       /Demo clinic/
     );
     assert.equal(
-      (db.prepare("SELECT qr_verification_url AS v FROM prescriptions WHERE id = ?").get("rx-1") as { v: string }).v,
-      "https://www.mylumera.in/rx/RX-1"
+      (db.prepare("SELECT qr_verification_url AS v FROM prescriptions WHERE id = ?").get("rx-1") as { v: string | null }).v,
+      null
     );
     assert.equal(
       (db.prepare("SELECT email AS v FROM patients WHERE id = ?").get("pat-6") as { v: string }).v,

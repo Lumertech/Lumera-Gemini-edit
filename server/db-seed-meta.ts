@@ -8,6 +8,7 @@ import {
   resolveSpecialtyPack,
 } from "./specialty-packs.ts";
 import { CMS_POLICY_UPSERTS } from "./cms-policy-seed.ts";
+import { PATIENT_LINK_PUBLIC_BASE_URL } from "./patient-link-token.ts";
 
 function backfillUserSpecialtyEnum(database: SqlDatabase) {
   try {
@@ -222,7 +223,7 @@ export function ensureMetaTechProviderAndPolicies(database: SqlDatabase) {
           {
             type: "BUTTONS",
             buttons: [
-              { type: "URL", text: "Open Patient Portal", url: "https://www.mylumera.in/portal" }
+              { type: "URL", text: "Open Patient Portal", url: `${PATIENT_LINK_PUBLIC_BASE_URL}/portal/v/{{1}}` }
             ]
           }
         ]),

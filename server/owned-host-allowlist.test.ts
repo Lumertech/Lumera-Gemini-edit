@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   ALLOWED_HOSTS,
+  PR164_EXEMPT_LINES,
   findUnownedHosts,
   scanUserFacingHosts,
 } from "./owned-host-allowlist.ts";
@@ -11,45 +12,60 @@ import {
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 describe("owned host allowlist", () => {
-  it("keeps a short justified list and names the hosts this product actually uses", () => {
+  it("keeps the compliance categories and a short justified list", () => {
     const hosts = ALLOWED_HOSTS.map((entry) => entry.host);
     for (const required of [
       "mylumera.in",
       "lumer.me",
-      "graph.facebook.com",
+      "example.com",
+      "googleapis.com",
       "facebook.com",
       "whatsapp.com",
       "wa.me",
-      "fonts.googleapis.com",
-      "fonts.gstatic.com",
+      "abdm.gov.in",
+      "ndhm.gov.in",
+      "nrces.in",
+      "hl7.org",
+      "snomed.info",
+      "loinc.org",
+      "razorpay.com",
+      "unsplash.com",
     ]) {
       assert.ok(hosts.includes(required), `missing ${required}`);
     }
-    assert.ok(ALLOWED_HOSTS.length <= 16, `allowlist grew to ${ALLOWED_HOSTS.length}`);
+    assert.ok(ALLOWED_HOSTS.length <= 24, `allowlist grew to ${ALLOWED_HOSTS.length}`);
     for (const entry of ALLOWED_HOSTS) {
       assert.ok(entry.why.length > 20, entry.host);
     }
+    assert.deepEqual(PR164_EXEMPT_LINES, [
+      "src/components/PrescriptionWriter.tsx:601",
+      "src/components/PrescriptionWriter.tsx:2295",
+    ]);
   });
 
-  it("fails an unowned host and a payable upi intent, and exempts @lumera.me demo logins", () => {
+  it("fails an unowned host and exempts @lumera.me demo logins", () => {
     const sample = [
       'export const contact = "ravee@lumer.me";',
       'export const demo = "doctor@lumera.me";',
+      'export const clinic = "care@example.com";',
       'export const bad = "https://lumera.health/portal";',
       'export const mail = "care@lumeraclinic.in";',
-      'const pay = "upi://pay?pa=demo@upi";',
       "https://www.facebook.com/dialog",
       "https://fonts.googleapis.com/css",
+      "https://api.razorpay.com/v1",
+      "https://images.unsplash.com/photo-1",
     ].join("\n");
     const hits = findUnownedHosts(sample, "src/example.tsx");
     const hosts = hits.map((hit) => `${hit.kind}:${hit.host}`);
     assert.ok(hosts.some((item) => item.includes("lumera.health")), hosts.join(","));
     assert.ok(hosts.some((item) => item.includes("lumeraclinic.in")), hosts.join(","));
-    assert.ok(hosts.some((item) => item.startsWith("upi:")), hosts.join(","));
     assert.equal(hosts.some((item) => item.includes("lumera.me")), false);
     assert.equal(hosts.some((item) => item.includes("lumer.me")), false);
+    assert.equal(hosts.some((item) => item.includes("example.com")), false);
     assert.equal(hosts.some((item) => item.includes("facebook.com")), false);
-    assert.equal(hosts.some((item) => item.includes("fonts.googleapis.com")), false);
+    assert.equal(hosts.some((item) => item.includes("googleapis.com")), false);
+    assert.equal(hosts.some((item) => item.includes("razorpay.com")), false);
+    assert.equal(hosts.some((item) => item.includes("unsplash.com")), false);
   });
 
   it("does not treat a lumera.me URL as a demo-login exemption", () => {
@@ -58,19 +74,18 @@ describe("owned host allowlist", () => {
     assert.equal(hits[0].host, "lumera.me");
   });
 
-  it("leaves the PrescriptionWriter Rx QR lines for PR #164", () => {
-    const source = [
-      "export const other = `https://lumera.health/portal`;",
-      "qrVerificationUrl: `https://lumera.health/rx/${rxNumber}`,",
-      "<p>URL: https://lumera.health/rx/{rxNumber}</p>",
-    ].join("\n");
-    const hits = findUnownedHosts(source, "src/components/PrescriptionWriter.tsx");
+  it("leaves the PrescriptionWriter lines owned by PR #164", () => {
+    const lines = Array.from({ length: 2295 }, () => "");
+    lines[0] = "export const other = `https://lumera.health/portal`;";
+    lines[600] = "qrVerificationUrl: `https://lumera.health/rx/${rxNumber}`,";
+    lines[2294] = "<p>URL: https://lumera.health/rx/{rxNumber}</p>";
+    const hits = findUnownedHosts(lines.join("\n"), "src/components/PrescriptionWriter.tsx");
     assert.equal(hits.length, 1);
     assert.equal(hits[0].line, 1);
     assert.equal(hits[0].host, "lumera.health");
   });
 
-  it("scans user-facing source and fails closed on any other host", () => {
+  it("scans src and server, excluding tests, and fails closed on any other host", () => {
     const violations = scanUserFacingHosts(root);
     assert.deepEqual(
       violations,

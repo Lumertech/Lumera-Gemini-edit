@@ -282,7 +282,7 @@ export const PhysioProgressTracker: React.FC<PhysioProgressTrackerProps> = ({
             </div>
 
             <div className="bg-blue-50 p-2.5 rounded-lg text-[11px] text-blue-900 font-medium">
-              🔗 <strong>www.mylumera.in/hep/{uhid}</strong>
+              🔗 <strong>https://www.mylumera.in/hep/v/</strong> expiring token. The UHID is not in the link.
             </div>
 
             <button

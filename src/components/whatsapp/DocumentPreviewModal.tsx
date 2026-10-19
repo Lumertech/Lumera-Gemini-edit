@@ -20,6 +20,7 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({ docu
 
   const isRx = document.type === 'prescription';
   const rawData = document.data || {};
+  const clinicContact = String(rawData.clinicEmail || rawData.contactEmail || "care@example.com");
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 backdrop-blur-xs p-4 overflow-y-auto">
@@ -67,7 +68,7 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({ docu
               <h2 className="text-xl font-black text-blue-900 tracking-tight">LUMERA HEALTHCARE POLYCLINIC</h2>
               <p className="text-xs text-slate-500">
                 Integrated Multispecialty OPD, Diagnostic Pathology & Rehabilitation<br />
-                Indiranagar, Bengaluru • Phone: +91 80 4123 4567 • www.mylumera.in
+                Indiranagar, Bengaluru • Phone: +91 80 4123 4567 • <InertText value={clinicContact} />
               </p>
             </div>
             <div className="text-right">
