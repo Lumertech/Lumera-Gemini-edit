@@ -127,7 +127,8 @@ describe("WhatsApp bot fallback uses Vertex", () => {
       );
       assert.equal(res.status, 201, JSON.stringify(res.json));
       const content = String((res.json.botReply as { content?: string } | undefined)?.content || "");
-      assert.match(content, new RegExp(`Namaste ${PATIENT}`));
+      assert.match(content, /Namaste Asha!/);
+      assert.equal(content.includes(PATIENT), false);
       assert.equal(content.includes(QUESTION), false);
       assert.equal(content.includes(MODEL_TEXT), false);
       assert.equal(modelCalls, before);

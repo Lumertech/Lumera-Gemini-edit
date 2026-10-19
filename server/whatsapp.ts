@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from "express";
 import type { DatabaseSync } from "node:sqlite";
-import { getDb, mapAppointment } from "./db.ts";
+import { getDb, mapAppointment, writeAudit } from "./db.ts";
 import {
   clinicLine,
   doctorSignatureByDoctorId,
@@ -571,10 +571,12 @@ export function createWhatsAppRouter(customGetGenAI?: () => ReturnType<typeof ge
       // ----------------------------------------------------
       if (sender === "user" && !isStaffTakeover) {
         const botReply = await processBotActionOrQuery(content, patientPhone, patientName, conv, db, {
-          tenantId: bodyTenantId ? String(bodyTenantId) : undefined,
           sessionTenantId,
           phoneNumberId: phoneNumberId ? String(phoneNumberId) : undefined,
           wabaId: wabaId ? String(wabaId) : undefined,
+          actorUserId: String(req.user?.id || ""),
+          actorName: String(req.user?.name || ""),
+          actorRole: String(req.user?.role || ""),
         });
         if (botReply) {
           const botMsgId = `bot-${crypto.randomUUID().slice(0, 8)}`;
@@ -1602,6 +1604,38 @@ ${AI_RUPEE_OUTPUT_RULE}`;
 // BOT INTELLIGENCE & EMR LOGIC HELPERS
 // ----------------------------------------------------
 
+/** First whitespace token only. Queue and fallback replies do not print the rest of the name. */
+function patientFirstName(name: string): string {
+  return String(name || "").trim().split(/\s+/).filter(Boolean)[0] || "";
+}
+
+type BotTenantHints = {
+  sessionTenantId?: string;
+  phoneNumberId?: string;
+  wabaId?: string;
+  actorUserId?: string;
+  actorName?: string;
+  actorRole?: string;
+};
+
+function auditBotLookup(
+  db: Parameters<typeof writeAudit>[0],
+  hints: BotTenantHints,
+  action: string,
+  tenantId: string,
+  patientId: string,
+  found: boolean,
+  entityType: string
+) {
+  writeAudit(db, hints.actorUserId || null, hints.actorName || "WhatsApp Bot", action, found ? "found" : "not_found", {
+    tenantId,
+    patientId,
+    actorRole: hints.actorRole || "",
+    entityType,
+    entityId: "",
+  });
+}
+
 /** Patient id for this clinic's phone only. Never match on name, never leave the tenant. */
 function patientIdForSessionPhone(tenantId: string, phone: string): string {
   const id = String(tenantId || "").trim();
@@ -1617,7 +1651,7 @@ async function processBotActionOrQuery(
   patientName: string,
   conv: Record<string, unknown>,
   db: any,
-  tenantHints: { tenantId?: string; sessionTenantId?: string; phoneNumberId?: string; wabaId?: string } = {}
+  tenantHints: BotTenantHints = {}
 ): Promise<{
   content: string;
   buttons?: string[];
@@ -1625,13 +1659,6 @@ async function processBotActionOrQuery(
 } | null> {
   const q = text.toLowerCase().trim();
   const sessionTenantId = String(tenantHints.sessionTenantId || "").trim();
-  const tenantId = resolveWhatsAppTenantId({
-    tenantId: tenantHints.tenantId,
-    sessionTenantId: tenantHints.sessionTenantId,
-    phoneNumberId: tenantHints.phoneNumberId,
-    wabaId: tenantHints.wabaId,
-    patientPhone: phone,
-  });
 
   // 1. Prescription Request
   if (q.includes("prescription") || q.includes("rx") || q.includes("refill") || q.includes("medicine") || q.includes("दवा") || q.includes("औषध")) {
@@ -1644,6 +1671,7 @@ async function processBotActionOrQuery(
           ORDER BY created_at DESC LIMIT 1
         `).get(rxTenant, patientId) as { id?: string } | undefined)
       : undefined;
+    auditBotLookup(db, tenantHints, "WhatsApp bot Rx lookup", rxTenant, patientId, Boolean(rx?.id), "prescription");
 
     if (rx?.id) {
       // TODO(#164): server/patient-link-token.ts is not on main (PR #164 is open).
@@ -1664,6 +1692,7 @@ async function processBotActionOrQuery(
           ORDER BY created_at DESC LIMIT 1
         `).get(labTenant, patientId) as { id?: string } | undefined)
       : undefined;
+    auditBotLookup(db, tenantHints, "WhatsApp bot lab lookup", labTenant, patientId, Boolean(lab?.id), "lab_report");
 
     if (lab?.id) {
       return { content: "your lab report is ready" };
@@ -1679,7 +1708,7 @@ async function processBotActionOrQuery(
     q.includes("dr. ananya") ||
     (q.includes("book") && q.includes("slot"));
   if (specificBook) {
-    if (!tenantId) {
+    if (!sessionTenantId) {
       return {
         content: "We could not match this chat to a clinic calendar, so the booking was not created.",
         buttons: ["👤 Speak with Receptionist"],
@@ -1694,14 +1723,14 @@ async function processBotActionOrQuery(
             ? "Ananya"
             : undefined;
       const booked = bookWhatsAppAppointment({
-        tenantId,
+        tenantId: sessionTenantId,
         patientPhone: phone,
         patientName,
         doctorName,
       });
       const appt = booked.appointment;
       if (!booked.reused) {
-        await dispatchWhatsAppBookConfirmation({ tenantId, appointment: appt });
+        await dispatchWhatsAppBookConfirmation({ tenantId: sessionTenantId, appointment: appt });
       }
       return {
         content: `${booked.reused ? "📌 *Existing booking found*" : "🎉 *Appointment Confirmed!*"}\n\n*Token*: *#${appt.tokenNumber}*\n*Doctor*: ${appt.doctorName}\n*Specialty*: ${appt.specialty}\n*Date*: ${appt.date}\n*Slot*: ${appt.timeSlot || "OPD hours"}\n*Source*: ${appt.source}\n\nThis token is on the clinician OPD calendar for your clinic.`,
@@ -1730,7 +1759,7 @@ async function processBotActionOrQuery(
     const docOptions = doctors.map((d) => `• *${d.name}* (${d.specialty}) - OPD Room ${d.opd_room}, Fee ${formatINR(Number(d.consultation_fee || 0))}`).join("\n");
 
     const bookingCopy = clinicOutboundCopy({
-      ...resolveClinicFacingNames(db, tenantId),
+      ...resolveClinicFacingNames(db, sessionTenantId),
       docOptions,
     });
     return {
@@ -1755,7 +1784,7 @@ async function processBotActionOrQuery(
     const roster = doctors.map((d) => `👨‍⚕️ *${d.name}* (${d.specialty})\n  🕒 ${d.opd_timing} | 🚪 ${d.opd_room}`).join("\n\n");
 
     const rosterCopy = clinicOutboundCopy({
-      ...resolveClinicFacingNames(db, tenantId),
+      ...resolveClinicFacingNames(db, sessionTenantId),
       roster,
     });
     return {
@@ -1776,7 +1805,7 @@ async function processBotActionOrQuery(
     if (queue.hasAppointment && queue.appointment) {
       const appt = queue.appointment;
       return {
-        content: `🎫 *Live OPD Token & Queue Status*\n\n*Patient*: ${appt.patientName}\n*Token Number*: *#${appt.tokenNumber}*\n*Consultant*: ${appt.doctorName} (${appt.specialty})\n*Status*: ${appt.status}\n\n👥 *Patients Ahead of You*: *${appt.patientsAhead}*\n⏳ *Estimated Wait*: *~${appt.estimatedWaitMins} minutes*\n\nPlease remain in the waiting lounge. We will notify you on WhatsApp when you are next.`,
+        content: `🎫 *Live OPD Token & Queue Status*\n\n*Patient*: ${patientFirstName(String(appt.patientName || ""))}\n*Token Number*: *#${appt.tokenNumber}*\n*Consultant*: ${appt.doctorName} (${appt.specialty})\n*Status*: ${appt.status}\n\n👥 *Patients Ahead of You*: *${appt.patientsAhead}*\n⏳ *Estimated Wait*: *~${appt.estimatedWaitMins} minutes*\n\nPlease remain in the waiting lounge. We will notify you on WhatsApp when you are next.`,
         buttons: ["🔄 Refresh Queue", "🔄 Reschedule Slot", "❌ Cancel Appointment"],
       };
     }
@@ -1802,7 +1831,7 @@ async function processBotActionOrQuery(
     }
   }
 
-  if (tenantId && q.includes("reschedule")) {
+  if (sessionTenantId && q.includes("reschedule")) {
     return {
       content: "Please share your preferred date (YYYY-MM-DD) and time slot, or ask reception to reschedule on the clinic calendar.",
       buttons: ["📅 Book Appointment", "👤 Speak with Receptionist"],
@@ -1812,7 +1841,7 @@ async function processBotActionOrQuery(
   // 7. General Clinical or Query — Vertex only. No API-key client and no other endpoint.
   try {
     const assistantCopy = clinicOutboundCopy({
-      ...resolveClinicFacingNames(db, tenantId),
+      ...resolveClinicFacingNames(db, sessionTenantId),
       patientName,
       patientText: text,
     });
@@ -1837,7 +1866,7 @@ async function processBotActionOrQuery(
 
   // Fixed non-AI reply. The patient's message is not copied back into the chat.
   return {
-    content: `Namaste ${patientName}! 🙏 We have received your query.\n\nOur clinic team is available to assist you. You can use the quick actions below to book consultations, view clinical prescriptions, or check diagnostic test reports:`,
+    content: `Namaste ${patientFirstName(patientName)}! 🙏 We have received your query.\n\nOur clinic team is available to assist you. You can use the quick actions below to book consultations, view clinical prescriptions, or check diagnostic test reports:`,
     buttons: ["📅 Book Doctor Appointment", "💊 Refill / View Prescription", "🔬 Download Lab Reports", "⏰ Check Doctor Timings"],
   };
 }

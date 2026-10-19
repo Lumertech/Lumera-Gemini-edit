@@ -213,6 +213,12 @@ function findPatientsByPhone(phone: string): Record<string, unknown>[] {
   }
 }
 
+/**
+ * Last-10 match via phonesMatch.
+ * TODO(#168): exact E.164 matching waits for isDemoWhatsAppAllowlisted
+ * (graph-whatsapp.ts: digits only, country code included). That helper is
+ * not on main, so this lookup still compares the last 10 digits.
+ */
 export function findPatientByPhoneInTenant(tenantId: string, phone: string): Record<string, unknown> | undefined {
   const rows = getDb()
     .prepare("SELECT * FROM patients WHERE tenant_id = ?")
