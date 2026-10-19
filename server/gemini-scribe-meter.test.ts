@@ -331,7 +331,7 @@ describe("Gemini ambient-scribe usage meter", () => {
     assert.match(clinicalSrc, /blockedAiScribeResponse/);
     assert.match(clinicalSrc, /meterSuccessfulGeminiScribe/);
     assert.match(clinicalSrc, /ai\.models\.generateContent/);
-    assert.match(clinicalSrc, /clinical-synthesis-engine/);
+    assert.match(clinicalSrc, /AI_SOAP_NOT_CONFIGURED/);
     assert.match(serverSrc, /createUsageBillingRouter/);
     assert.match(restSrc, /\/api\/gemini\/copilot/);
     assert.match(restSrc, /startLumeraServer/);

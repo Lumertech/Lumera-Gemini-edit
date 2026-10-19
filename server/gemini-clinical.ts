@@ -1,5 +1,4 @@
 import type { Express, Request, Response } from "express";
-import { GoogleGenAI } from "@google/genai";
 import { requireAuth } from "./auth.ts";
 import { hasAmbientScribeConsent, mountAmbientScribeConsentRoutes, transcribeAppointmentId } from "./ambient-scribe-consent.ts";
 import { maxTranscribeBase64Chars, transcribeJsonParser } from "./json-body.ts";
@@ -8,9 +7,14 @@ import { rejectUntrustedTenantClaim } from "./tenant-guard.ts";
 import { transcribeRateLimit } from "./transcribe-rate-limit.ts";
 import { base64DecodedBytes, canonicalTranscribeMime, resolveTranscribeDurationMs, transcribeDurationTooLong } from "./transcribe-policy.ts";
 import { mountGeminiVoiceRoutes } from "./gemini-voice.ts";
-import { generateRuleBasedSoap, getPulseFallbackAnswer } from "./gemini-fallbacks.ts";
-import { aiScribeTenantIdFromRequest, blockedAiScribeResponse, meterSuccessfulGeminiScribe, meterSuccessfulTranscription } from "./gemini-scribe-meter.ts";
 import { AI_RUPEE_OUTPUT_RULE } from "./india-currency-copy.ts";
+import { aiScribeTenantIdFromRequest, blockedAiScribeResponse, meterSuccessfulGeminiScribe, meterSuccessfulTranscription } from "./gemini-scribe-meter.ts";
+import {
+  AI_TRANSCRIPTION_NOT_CONFIGURED,
+  AI_TRANSCRIPTION_NOT_CONFIGURED_MESSAGE,
+  getVertexClient,
+  VERTEX_GEMINI_MODEL,
+} from "./vertex-gemini.ts";
 import type { NextFunction } from "express";
 
 let testSoapGenerator: ((body: Record<string, unknown>) => Promise<unknown>) | undefined;
@@ -33,24 +37,13 @@ function prescriberOnly(req: Request, res: Response, next: NextFunction): void {
   next();
 }
 
-/** Clinical Gemini HTTP routes. Split from server.ts so MCP can upload both files intact. */
+function errorName(err: unknown): string {
+  return err && typeof err === "object" && "name" in err ? String((err as { name?: string }).name) : "Error";
+}
+
+/** Clinical Gemini HTTP routes. PHI calls use Vertex AI in asia-south1. There is no API-key fallback. */
 export function mountGeminiClinicalRoutes(app: Express) {
-  // DATA USE: production must use a paid, billing-enabled Gemini API project (no training on data) or Vertex AI in an India region. Founder confirmation pending.
-  // Lazy Google GenAI initialization
-  let genAIClient: GoogleGenAI | null = null;
-  function getGenAI(): GoogleGenAI | null {
-    if (!genAIClient && process.env.GEMINI_API_KEY) {
-      genAIClient = new GoogleGenAI({
-        apiKey: process.env.GEMINI_API_KEY,
-        httpOptions: {
-          headers: {
-            "User-Agent": "aistudio-build",
-          },
-        },
-      });
-    }
-    return genAIClient;
-  }
+  // DATA USE: patient audio, transcripts, and clinical text go through Vertex AI (asia-south1). No API key.
 
   app.post("/api/gemini/generate-soap", requireAuth, async (req: Request, res: Response) => {
     try {
@@ -59,7 +52,6 @@ export function mountGeminiClinicalRoutes(app: Express) {
         patientAge = 40,
         patientGender = "Unknown",
         transcript = "",
-        vitals = {},
         doctorSpecialty = "General Medicine",
         doctorName = "Doctor",
       } = req.body;
@@ -80,35 +72,35 @@ export function mountGeminiClinicalRoutes(app: Express) {
           tenantId,
           durationMinutes: req.body?.durationMinutes,
           transcript,
-          metadata: { source: "gemini-3.7-flash", endpoint: "generate-soap" },
+          metadata: { source: VERTEX_GEMINI_MODEL, endpoint: "generate-soap" },
         });
         return res.json({ success: true, soap, source: "Pulse AI" });
       }
 
-      const ai = getGenAI();
-      if (ai) {
-        try {
-          const prompt = `You are Lumera AI, an expert Clinical AI Medical Scribe. Generate a structured SOAP note.\nPATIENT: ${patientName} ${patientAge} / ${patientGender}, Doctor ${doctorName} (${doctorSpecialty}).\nTRANSCRIPT:\n${transcript}\nReturn JSON SOAP with subjective, objective, assessment, plan.\n${AI_RUPEE_OUTPUT_RULE}`;
-          const response = await ai.models.generateContent({
-            model: "gemini-3.7-flash",
-            contents: prompt,
-            config: { responseMimeType: "application/json", temperature: 0.2 },
-          });
-          const text = response.text?.trim() || "";
-          const parsed = JSON.parse(text);
-          meterSuccessfulGeminiScribe({
-            tenantId,
-            durationMinutes: req.body?.durationMinutes,
-            transcript,
-            metadata: { source: "gemini-3.7-flash", endpoint: "generate-soap" },
-          });
-          return res.json({ success: true, soap: parsed, source: "Pulse AI" });
-        } catch (geminiError: any) {
-          console.error("Gemini SOAP generation error, using fallback clinical synthesis:", geminiError?.message);
-        }
+      const ai = getVertexClient();
+      if (!ai) {
+        return res.status(503).json({ code: "AI_SOAP_NOT_CONFIGURED", message: "AI note generation not configured" });
       }
-      const fallbackSoap = generateRuleBasedSoap(patientName, patientAge, patientGender, transcript, vitals);
-      return res.json({ success: true, soap: fallbackSoap, source: "clinical-synthesis-engine" });
+      try {
+        const prompt = `You are Lumera AI, an expert Clinical AI Medical Scribe. Generate a structured SOAP note.\nPATIENT: ${patientName} ${patientAge} / ${patientGender}, Doctor ${doctorName} (${doctorSpecialty}).\nTRANSCRIPT:\n${transcript}\nReturn JSON SOAP with subjective, objective, assessment, plan.\n${AI_RUPEE_OUTPUT_RULE}`;
+        const response = await ai.models.generateContent({
+          model: VERTEX_GEMINI_MODEL,
+          contents: prompt,
+          config: { responseMimeType: "application/json", temperature: 0.2 },
+        });
+        const text = response.text?.trim() || "";
+        const parsed = JSON.parse(text);
+        meterSuccessfulGeminiScribe({
+          tenantId,
+          durationMinutes: req.body?.durationMinutes,
+          transcript,
+          metadata: { source: VERTEX_GEMINI_MODEL, endpoint: "generate-soap" },
+        });
+        return res.json({ success: true, soap: parsed, source: "Pulse AI" });
+      } catch (geminiError: unknown) {
+        console.error("SOAP generation error", errorName(geminiError));
+        return res.status(500).json({ error: "Could not generate the note", code: "soap_failed" });
+      }
     } catch {
       console.error("SOAP endpoint error");
       res.status(500).json({ error: "Could not generate the note", code: "soap_failed" });
@@ -119,32 +111,33 @@ export function mountGeminiClinicalRoutes(app: Express) {
     try {
       const { query, patientContext = {}, history = [] } = req.body;
       if (!query) return res.status(400).json({ error: "Query is required" });
-      const ai = getGenAI();
-      if (ai) {
-        try {
-          const systemInstruction = `You are Pulse AI, an advanced enterprise clinical decision support copilot.\n${AI_RUPEE_OUTPUT_RULE}`;
-          const contents: any[] = [];
-          if (patientContext && Object.keys(patientContext).length > 0) {
-            contents.push({ role: "user", parts: [{ text: `Current Patient Profile: ${JSON.stringify(patientContext)}` }] });
-            contents.push({ role: "model", parts: [{ text: "Understood." }] });
-          }
-          for (const h of history.slice(-6)) {
-            contents.push({ role: h.sender === "user" ? "user" : "model", parts: [{ text: h.text }] });
-          }
-          contents.push({ role: "user", parts: [{ text: query }] });
-          const response = await ai.models.generateContent({
-            model: "gemini-3.8-flash",
-            contents,
-            config: { systemInstruction, temperature: 0.2 },
-          });
-          return res.json({ response: response.text, source: "Pulse AI" });
-        } catch (err: any) {
-          console.error("Pulse AI / Gemini Copilot API error:", err?.message);
-        }
+      const ai = getVertexClient();
+      if (!ai) {
+        return res.status(503).json({ code: "AI_COPILOT_NOT_CONFIGURED", message: "AI assistant not configured" });
       }
-      return res.json({ response: getPulseFallbackAnswer(query, patientContext), source: "Pulse AI Knowledge Base (Offline Fallback)" });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      try {
+        const systemInstruction = `You are Pulse AI, an advanced enterprise clinical decision support copilot.\n${AI_RUPEE_OUTPUT_RULE}`;
+        const contents: any[] = [];
+        if (patientContext && Object.keys(patientContext).length > 0) {
+          contents.push({ role: "user", parts: [{ text: `Current Patient Profile: ${JSON.stringify(patientContext)}` }] });
+          contents.push({ role: "model", parts: [{ text: "Understood." }] });
+        }
+        for (const h of history.slice(-6)) {
+          contents.push({ role: h.sender === "user" ? "user" : "model", parts: [{ text: h.text }] });
+        }
+        contents.push({ role: "user", parts: [{ text: query }] });
+        const response = await ai.models.generateContent({
+          model: VERTEX_GEMINI_MODEL,
+          contents,
+          config: { systemInstruction, temperature: 0.2 },
+        });
+        return res.json({ response: response.text, source: "Pulse AI" });
+      } catch (err: unknown) {
+        console.error("Copilot generation error", errorName(err));
+        return res.status(503).json({ code: "AI_COPILOT_NOT_CONFIGURED", message: "AI assistant not configured" });
+      }
+    } catch {
+      res.status(500).json({ error: "Could not answer", code: "AI_COPILOT_NOT_CONFIGURED" });
     }
   };
 
@@ -155,31 +148,27 @@ export function mountGeminiClinicalRoutes(app: Express) {
   app.post("/api/gemini/safety-check", async (req: Request, res: Response) => {
     try {
       const { patientAllergies = [], chronicConditions = [], medicines = [], patientAge, patientGender } = req.body;
-      const ai = getGenAI();
-      if (ai && medicines.length > 0) {
-        try {
-          const prompt = `Analyze clinical safety for Age ${patientAge || 40}, ${patientGender || "Adult"}, Allergies: ${(patientAllergies || []).join(", ") || "None"}, Conditions: ${(chronicConditions || []).join(", ") || "None"}, Medicines: ${JSON.stringify(medicines)}. Return JSON { hasHighRiskAlert, alerts }.`;
-          const response = await ai.models.generateContent({
-            model: "gemini-3.7-flash",
-            contents: prompt,
-            config: { responseMimeType: "application/json", temperature: 0.1 },
-          });
-          return res.json(JSON.parse(response.text?.trim() || "{}"));
-        } catch (err: any) {
-          console.error("Safety check Gemini error:", err?.message);
-        }
+      if (!Array.isArray(medicines) || medicines.length === 0) {
+        return res.json({ hasHighRiskAlert: false, alerts: [] });
       }
-      const alerts: any[] = [];
-      const drugNames = medicines.map((m: any) => (m.drugName + " " + (m.composition || "")).toLowerCase());
-      for (const allergy of patientAllergies) {
-        const allgLower = String(allergy).toLowerCase();
-        if (allgLower.includes("penicillin") && drugNames.some((d: string) => d.includes("amoxicillin") || d.includes("augmentin") || d.includes("ampicillin"))) {
-          alerts.push({ type: "ALLERGY", severity: "Severe", drugsInvolved: ["Amoxicillin/Clavulanate"], description: "Patient is allergic to Penicillin.", clinicalRecommendation: "Switch to a Macrolide." });
-        }
+      const ai = getVertexClient();
+      if (!ai) {
+        return res.status(503).json({ code: "AI_SAFETY_NOT_CONFIGURED", message: "AI safety check not configured" });
       }
-      return res.json({ hasHighRiskAlert: alerts.some((a) => a.severity === "Severe" || a.severity === "Critical"), alerts });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      try {
+        const prompt = `Analyze clinical safety for Age ${patientAge || 40}, ${patientGender || "Adult"}, Allergies: ${(patientAllergies || []).join(", ") || "None"}, Conditions: ${(chronicConditions || []).join(", ") || "None"}, Medicines: ${JSON.stringify(medicines)}. Return JSON { hasHighRiskAlert, alerts }.`;
+        const response = await ai.models.generateContent({
+          model: VERTEX_GEMINI_MODEL,
+          contents: prompt,
+          config: { responseMimeType: "application/json", temperature: 0.1 },
+        });
+        return res.json(JSON.parse(response.text?.trim() || "{}"));
+      } catch (err: unknown) {
+        console.error("Safety check error", errorName(err));
+        return res.status(503).json({ code: "AI_SAFETY_NOT_CONFIGURED", message: "AI safety check not configured" });
+      }
+    } catch {
+      res.status(500).json({ error: "Could not check safety", code: "AI_SAFETY_NOT_CONFIGURED" });
     }
   });
   app.post(
@@ -203,7 +192,7 @@ export function mountGeminiClinicalRoutes(app: Express) {
           return res.status(415).json({ error: "Unsupported audio type." });
         }
         const cleanBase64 = String(audioBase64).replace(/^data:audio\/[a-z0-9]+;base64,/, "");
-        // Size and duration before the API key, so an over-long clip is 413 even when the key is missing.
+        // Size and duration before any model client, so an over-long clip is 413 even when Vertex is missing.
         // The clip is not stored.
         if (cleanBase64.length > maxTranscribeBase64Chars()) {
           return res.status(413).json({ error: "Recording is too long to transcribe." });
@@ -224,10 +213,15 @@ export function mountGeminiClinicalRoutes(app: Express) {
         if (testTranscribeGenerator) {
           transcription = (await testTranscribeGenerator()).trim();
         } else {
-          const ai = getGenAI();
-          if (!ai) return res.status(503).json({ code: "transcribe_unavailable" });
+          const ai = getVertexClient();
+          if (!ai) {
+            return res.status(503).json({
+              code: AI_TRANSCRIPTION_NOT_CONFIGURED,
+              message: AI_TRANSCRIPTION_NOT_CONFIGURED_MESSAGE,
+            });
+          }
           const response = await ai.models.generateContent({
-            model: "gemini-3.5-transcribe",
+            model: VERTEX_GEMINI_MODEL,
             contents: [
               {
                 inlineData: {
@@ -246,13 +240,12 @@ export function mountGeminiClinicalRoutes(app: Express) {
         meterSuccessfulTranscription({ tenantId, durationMs: duration, audioBytes });
         return res.json({ success: true, transcription });
       } catch (err: unknown) {
-        const name = err && typeof err === "object" && "name" in err ? String((err as { name?: string }).name) : "Error";
-        console.error("Ambient transcribe failed:", name);
+        console.error("Ambient transcribe failed:", errorName(err));
         return res.status(500).json({ code: "transcribe_failed" });
       }
     }
   );
 
   mountAmbientScribeConsentRoutes(app);
-  mountGeminiVoiceRoutes(app, getGenAI);
+  mountGeminiVoiceRoutes(app, getVertexClient);
 }

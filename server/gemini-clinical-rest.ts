@@ -8,6 +8,7 @@ import { applyBundledServerNodeEnv, failFastRequiredProductionEnv } from "./runt
 import { attachProductionSpaFallback, isDedicatedPublicHtmlPath } from "./spa-fallback.ts";
 import { generateRuleBasedSoap, getPulseFallbackAnswer } from "./gemini-clinical-helpers.ts";
 import { AI_RUPEE_OUTPUT_RULE } from "./india-currency-copy.ts";
+import { VERTEX_GEMINI_MODEL } from "./vertex-gemini.ts";
 
 export { generateRuleBasedSoap, getPulseFallbackAnswer } from "./gemini-clinical-helpers.ts";
 
@@ -21,6 +22,7 @@ export function attachGeminiClinicalRest(app: Express, getGenAI: () => GoogleGen
       }
 
       const ai = getGenAI();
+      if (!ai) return res.status(503).json({ code: "AI_NOT_CONFIGURED", message: "AI not configured" });
       if (ai) {
         try {
           const systemInstruction = `You are Pulse AI, an advanced enterprise clinical decision support copilot.
@@ -60,7 +62,7 @@ export function attachGeminiClinicalRest(app: Express, getGenAI: () => GoogleGen
           });
 
           const response = await ai.models.generateContent({
-            model: "gemini-3.8-flash",
+            model: VERTEX_GEMINI_MODEL,
             contents: contents,
             config: {
               systemInstruction: systemInstruction,
@@ -92,6 +94,7 @@ export function attachGeminiClinicalRest(app: Express, getGenAI: () => GoogleGen
       const { patientAllergies = [], chronicConditions = [], medicines = [], patientAge, patientGender } = req.body;
 
       const ai = getGenAI();
+      if (!ai) return res.status(503).json({ code: "AI_NOT_CONFIGURED", message: "AI not configured" });
       if (ai && medicines.length > 0) {
         try {
           const prompt = `Analyze clinical safety and drug interactions for this prescription:
@@ -121,7 +124,7 @@ export function attachGeminiClinicalRest(app: Express, getGenAI: () => GoogleGen
   ${AI_RUPEE_OUTPUT_RULE}`;
 
           const response = await ai.models.generateContent({
-            model: "gemini-3.7-flash",
+            model: VERTEX_GEMINI_MODEL,
             contents: prompt,
             config: {
               responseMimeType: "application/json",
@@ -206,6 +209,7 @@ export function attachGeminiClinicalRest(app: Express, getGenAI: () => GoogleGen
       if (!message) return res.status(400).json({ error: "Message is required" });
 
       const ai = getGenAI();
+      if (!ai) return res.status(503).json({ code: "AI_NOT_CONFIGURED", message: "AI not configured" });
       if (ai) {
         try {
           const prompt = `You are Maya, the voice assistant for Lumera Polyclinic.
@@ -226,7 +230,7 @@ export function attachGeminiClinicalRest(app: Express, getGenAI: () => GoogleGen
   ${AI_RUPEE_OUTPUT_RULE}`;
 
           const response = await ai.models.generateContent({
-            model: "gemini-3.7-flash",
+            model: VERTEX_GEMINI_MODEL,
             contents: [{ parts: [{ text: `Patient says: "${message}"` }] }],
             config: {
               systemInstruction: prompt,
@@ -259,6 +263,7 @@ export function attachGeminiClinicalRest(app: Express, getGenAI: () => GoogleGen
       const { advice = [], medicines = [], targetLanguage = "Hindi" } = req.body;
 
       const ai = getGenAI();
+      if (!ai) return res.status(503).json({ code: "AI_NOT_CONFIGURED", message: "AI not configured" });
       if (ai) {
         try {
           const prompt = `Translate the following medical prescription advice and medicine timing instructions into natural, easily understandable ${targetLanguage} for a patient to read on WhatsApp.
@@ -281,7 +286,7 @@ export function attachGeminiClinicalRest(app: Express, getGenAI: () => GoogleGen
   ${AI_RUPEE_OUTPUT_RULE}`;
 
           const response = await ai.models.generateContent({
-            model: "gemini-3.7-flash",
+            model: VERTEX_GEMINI_MODEL,
             contents: prompt,
             config: {
               responseMimeType: "application/json",

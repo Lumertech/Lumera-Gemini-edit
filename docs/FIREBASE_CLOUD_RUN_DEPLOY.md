@@ -165,7 +165,9 @@ Leave unset for the URL-hosting stage. Production **does not fake** Graph delive
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Live Google Sign-in (Web application OAuth client) |
 | `GOOGLE_REDIRECT_URI` | Override; default is `{APP_URL}/api/auth/google/callback` |
 | `META_ACCESS_TOKEN` / `META_PHONE_NUMBER_ID` | Live Graph send |
-| `GEMINI_API_KEY` | Pulse AI / SOAP (landing + policy pages work without it; AI Studio often injects this) |
+| `VERTEX_PROJECT` | Vertex AI project for patient audio and other PHI. Default documented as `gen-lang-client-0108182367`. Production fails closed when unset. |
+| `VERTEX_LOCATION` | Vertex region. Default documented as `asia-south1` (Mumbai). Production fails closed when unset. |
+| `GEMINI_API_KEY` | Not used for patient audio or other PHI. Do not rely on it for transcription or SOAP. |
 | Razorpay keys | Payments — not required to host Review URLs |
 
 ---

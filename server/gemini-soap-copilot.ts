@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import type { GoogleGenAI } from "@google/genai";
 import { generateRuleBasedSoap, getPulseFallbackAnswer } from "./gemini-clinical-helpers.ts";
 import { AI_RUPEE_OUTPUT_RULE } from "./india-currency-copy.ts";
+import { VERTEX_GEMINI_MODEL } from "./vertex-gemini.ts";
 
 export function attachGeminiSoapAndCopilot(
   app: Express,
@@ -25,6 +26,7 @@ app.post("/api/gemini/generate-soap", async (req: Request, res: Response) => {
     }
 
     const ai = getGenAI();
+    if (!ai) return res.status(503).json({ code: "AI_NOT_CONFIGURED", message: "AI not configured" });
 
     if (ai) {
       try {
@@ -102,7 +104,7 @@ Return STRICTLY a JSON object with this exact schema:
 ${AI_RUPEE_OUTPUT_RULE}`;
 
         const response = await ai.models.generateContent({
-          model: "gemini-3.7-flash",
+          model: VERTEX_GEMINI_MODEL,
           contents: prompt,
           config: {
             responseMimeType: "application/json",
@@ -136,6 +138,7 @@ const handleGeminiCopilot = async (req: Request, res: Response) => {
     }
 
     const ai = getGenAI();
+    if (!ai) return res.status(503).json({ code: "AI_NOT_CONFIGURED", message: "AI not configured" });
     if (ai) {
       try {
         const systemInstruction = `You are Pulse AI, an advanced enterprise clinical decision support copilot.
@@ -175,7 +178,7 @@ ${AI_RUPEE_OUTPUT_RULE}`;
         });
 
         const response = await ai.models.generateContent({
-          model: "gemini-3.8-flash",
+          model: VERTEX_GEMINI_MODEL,
           contents: contents,
           config: {
             systemInstruction: systemInstruction,

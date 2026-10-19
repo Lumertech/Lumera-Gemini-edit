@@ -7,7 +7,8 @@ import {
   escapeHtml,
   getTenantLetterhead,
 } from "./letterhead.ts";
-import { GoogleGenAI } from "@google/genai";
+import type { GoogleGenAI } from "@google/genai";
+import { getVertexClient, VERTEX_GEMINI_MODEL } from "./vertex-gemini.ts";
 import {
   bookWhatsAppAppointment,
   dispatchAppointmentReminder,
@@ -119,19 +120,8 @@ ${AI_RUPEE_OUTPUT_RULE}`,
   };
 }
 
-let defaultGenAIClient: GoogleGenAI | null = null;
 function getDefaultGenAI(): GoogleGenAI | null {
-  if (!defaultGenAIClient && process.env.GEMINI_API_KEY) {
-    defaultGenAIClient = new GoogleGenAI({
-      apiKey: process.env.GEMINI_API_KEY,
-      httpOptions: {
-        headers: {
-          "User-Agent": "aistudio-build",
-        },
-      },
-    });
-  }
-  return defaultGenAIClient;
+  return getVertexClient();
 }
 
 function serializeWhatsAppMessage(m: Record<string, unknown>) {
@@ -1082,8 +1072,11 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
         }
       }
 
-      // If audioBase64 provided, pass to Gemini
-      if (audioBase64 && ai) {
+      // Patient audio goes through Vertex. No API-key client and no invented transcript.
+      if (audioBase64) {
+        if (!ai) {
+          return res.status(503).json({ code: "AI_WHATSAPP_NOT_CONFIGURED", message: "AI transcription not configured" });
+        }
         try {
           const voiceFacing = resolveClinicFacingNames(getDb(), String(req.user?.tenantId || ""));
           const prompt = `You are the clinical audio assistant for ${voiceFacing.clinicName}. The consulting clinician is ${voiceFacing.doctorName}. Transcribe this patient voice note accurately.
@@ -1103,7 +1096,7 @@ ${AI_RUPEE_OUTPUT_RULE}`;
 
           const cleanBase64 = audioBase64.replace(/^data:audio\/[a-z0-9]+;base64,/, "");
           const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
+            model: VERTEX_GEMINI_MODEL,
             contents: [
               {
                 inlineData: {
@@ -1129,7 +1122,9 @@ ${AI_RUPEE_OUTPUT_RULE}`;
             patientIntent: parsed.patientIntent || "consultation",
           });
         } catch (geminiErr: unknown) {
-          console.warn("Gemini audio transcription fallback:", geminiErr);
+          const name = geminiErr && typeof geminiErr === "object" && "name" in geminiErr ? String((geminiErr as { name?: string }).name) : "Error";
+          console.warn("WhatsApp audio transcription failed", name);
+          return res.status(503).json({ code: "AI_WHATSAPP_NOT_CONFIGURED", message: "AI transcription not configured" });
         }
       }
 
@@ -1786,7 +1781,7 @@ async function processBotActionOrQuery(
       const prompt = assistantCopy.assistantPrompt;
 
       const res = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
+        model: VERTEX_GEMINI_MODEL,
         contents: [{ text: prompt }],
       });
 
@@ -1838,7 +1833,7 @@ async function translateWithGeminiOrFallback(text: string, targetLang: string, a
   if (ai) {
     try {
       const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
+        model: VERTEX_GEMINI_MODEL,
         contents: [
           {
             text: `Translate the following clinical or medical chat message accurately into ${targetName}. Maintain a polite, reassuring medical tone. Only return the translated text:\n\n"${text}"`,

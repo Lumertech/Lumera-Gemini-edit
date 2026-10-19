@@ -1,6 +1,7 @@
 import type { Express, Request, Response } from "express";
 import type { GoogleGenAI } from "@google/genai";
 import { AI_RUPEE_OUTPUT_RULE } from "./india-currency-copy.ts";
+import { VERTEX_GEMINI_MODEL } from "./vertex-gemini.ts";
 
 export function attachGeminiSafetyVoiceAndTranslate(
   app: Express,
@@ -12,6 +13,7 @@ app.post("/api/gemini/safety-check", async (req: Request, res: Response) => {
     const { patientAllergies = [], chronicConditions = [], medicines = [], patientAge, patientGender } = req.body;
 
     const ai = getGenAI();
+    if (!ai) return res.status(503).json({ code: "AI_NOT_CONFIGURED", message: "AI not configured" });
     if (ai && medicines.length > 0) {
       try {
         const prompt = `Analyze clinical safety and drug interactions for this prescription:
@@ -41,7 +43,7 @@ Return JSON with format:
 ${AI_RUPEE_OUTPUT_RULE}`;
 
         const response = await ai.models.generateContent({
-          model: "gemini-3.7-flash",
+          model: VERTEX_GEMINI_MODEL,
           contents: prompt,
           config: {
             responseMimeType: "application/json",
@@ -126,6 +128,7 @@ app.post("/api/gemini/voice-bot", async (req: Request, res: Response) => {
     if (!message) return res.status(400).json({ error: "Message is required" });
 
     const ai = getGenAI();
+    if (!ai) return res.status(503).json({ code: "AI_NOT_CONFIGURED", message: "AI not configured" });
     if (ai) {
       try {
         const prompt = `You are Maya, the voice assistant for Lumera Polyclinic.
@@ -146,7 +149,7 @@ Output JSON:
 ${AI_RUPEE_OUTPUT_RULE}`;
 
         const response = await ai.models.generateContent({
-          model: "gemini-3.7-flash",
+          model: VERTEX_GEMINI_MODEL,
           contents: [{ parts: [{ text: `Patient says: "${message}"` }] }],
           config: {
             systemInstruction: prompt,
@@ -179,6 +182,7 @@ app.post("/api/gemini/translate-rx", async (req: Request, res: Response) => {
     const { advice = [], medicines = [], targetLanguage = "Hindi" } = req.body;
 
     const ai = getGenAI();
+    if (!ai) return res.status(503).json({ code: "AI_NOT_CONFIGURED", message: "AI not configured" });
     if (ai) {
       try {
         const prompt = `Translate the following medical prescription advice and medicine timing instructions into natural, easily understandable ${targetLanguage} for a patient to read on WhatsApp.
@@ -201,7 +205,7 @@ Return JSON:
 ${AI_RUPEE_OUTPUT_RULE}`;
 
         const response = await ai.models.generateContent({
-          model: "gemini-3.7-flash",
+          model: VERTEX_GEMINI_MODEL,
           contents: prompt,
           config: {
             responseMimeType: "application/json",

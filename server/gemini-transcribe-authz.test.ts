@@ -9,6 +9,7 @@ import { AMBIENT_SCRIBE_CONSENT_ACTION, istClinicDay } from "./ambient-scribe-co
 import { getDb, initDatabase } from "./db.ts";
 import { writeAudit } from "./db-seed-maps.ts";
 import { mountGeminiClinicalRoutes, setGeminiTranscribeGeneratorForTests } from "./gemini-clinical.ts";
+import { setVertexClientForTests } from "./vertex-gemini.ts";
 import {
   GLOBAL_JSON_BODY_LIMIT,
   MAX_TRANSCRIBE_AUDIO_BYTES,
@@ -55,6 +56,7 @@ describe("POST /api/gemini/transcribe auth and body limit", () => {
     delete process.env.GEMINI_API_KEY;
     resetTranscribeRateLimits();
     setGeminiTranscribeGeneratorForTests(undefined);
+    setVertexClientForTests(null);
     try {
       getDb();
     } catch {
@@ -83,6 +85,7 @@ describe("POST /api/gemini/transcribe auth and body limit", () => {
     else process.env.GEMINI_API_KEY = previousKey;
     resetTranscribeRateLimits();
     setGeminiTranscribeGeneratorForTests(undefined);
+    setVertexClientForTests(undefined);
     await close?.();
   });
 
@@ -160,7 +163,8 @@ describe("POST /api/gemini/transcribe auth and body limit", () => {
       { Authorization: `Bearer ${token}` }
     );
     assert.equal(own.status, 503, String(own.json.error || JSON.stringify(own.json)));
-    assert.equal(own.json.code, "transcribe_unavailable");
+    assert.equal(own.json.code, "AI_TRANSCRIPTION_NOT_CONFIGURED");
+    assert.equal(own.json.message, "AI transcription not configured");
     assert.doesNotMatch(JSON.stringify(own.json), /gemini/i);
   });
 
@@ -260,13 +264,13 @@ describe("POST /api/gemini/transcribe auth and body limit", () => {
     );
     assert.equal(tooLong.status, 413);
     assert.match(String(tooLong.json.error || ""), /too long to transcribe/i);
-    assert.notEqual(tooLong.json.code, "transcribe_unavailable");
+    assert.notEqual(tooLong.json.code, "AI_TRANSCRIPTION_NOT_CONFIGURED");
   });
 
   it("meters duration and bytes only, and rate limits the user and the tenant", async () => {
     resetTranscribeRateLimits();
     const clinical = fs.readFileSync(path.join(root, "server/gemini-clinical.ts"), "utf8");
-    assert.match(clinical, /DATA USE: production must use a paid, billing-enabled Gemini API project/);
+    assert.match(clinical, /DATA USE: patient audio, transcripts, and clinical text go through Vertex AI \(asia-south1\)/);
     assert.match(clinical, /function prescriberOnly[\s\S]*denyUnlessPrescriber/);
     const route = clinical.slice(clinical.indexOf('"/api/gemini/transcribe"'));
     assert.match(route, /prescriberOnly/);
@@ -421,7 +425,8 @@ describe("POST /api/gemini/transcribe auth and body limit", () => {
       auth
     );
     assert.equal(open.status, 503);
-    assert.equal(open.json.code, "transcribe_unavailable");
+    assert.equal(open.json.code, "AI_TRANSCRIPTION_NOT_CONFIGURED");
+    assert.equal(open.json.message, "AI transcription not configured");
     assert.equal(usageCount(clinicA.tenantId), before);
   });
 });

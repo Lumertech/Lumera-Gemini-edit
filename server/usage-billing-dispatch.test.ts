@@ -302,7 +302,7 @@ describe("Usage wallet billing dispatch paths", () => {
     assert.match(clinicalSrc, /meterSuccessfulGeminiScribe/);
     assert.match(clinicalSrc, /ai\.models\.generateContent/);
     assert.match(serverSrc, /createUsageBillingRouter/);
-    assert.match(clinicalSrc, /clinical-synthesis-engine/);
+    assert.match(clinicalSrc, /AI_SOAP_NOT_CONFIGURED/);
   });
 
 });
