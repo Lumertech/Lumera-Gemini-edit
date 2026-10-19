@@ -82,6 +82,7 @@ import { CompactAmbientScribe, AmbientScribeStatus } from './CompactAmbientScrib
 import { FollowUpSlotPicker, ReservedFollowUp } from './FollowUpSlotPicker';
 import { clonePresetExercises, presetHepToastMessage } from '../lib/rxPresetHep';
 import { followUpBookingRef } from '../lib/followUpSlots';
+import { installPrescriptionPrintHooks, printPrescriptionDocument } from '../lib/printPrescription';
 import { resolveRxModule } from '../lib/specialtyWorkflow';
 import { PatientRecordModal } from './PatientRecordModal';
 import {
@@ -494,12 +495,16 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     }
   };
 
+  useEffect(() => installPrescriptionPrintHooks(document), []);
+
   const handlePrintRx = () => {
     if (isSafetyGateBlocking) {
       window.alert(safetyGateMessage || 'Run the AI Safety Audit before printing this prescription.');
       return;
     }
-    window.print();
+    setShowFinalizeModal(false);
+    setShowWhatsAppModal(false);
+    void printPrescriptionDocument(document);
   };
 
   const handleOpenWhatsAppModal = async () => {
@@ -914,6 +919,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
       {hepToast && (
         <div
           role="status"
+          data-print-chrome=""
           className="no-print fixed top-4 right-4 z-50 px-4 py-2.5 rounded-lg bg-teal-700 text-white text-xs font-bold shadow-lg"
         >
           {hepToast}
@@ -1241,7 +1247,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
       )}
 
       {/* MAIN PRESCRIPTION LETTERHEAD & CLINICAL FORM */}
-      <div className="bg-white rounded-xl border border-slate-200 p-4 sm:p-6 shadow-xs space-y-5 print:border-none print:shadow-none print:p-0 min-w-0">
+      <div data-rx-document="" className="bg-white rounded-xl border border-slate-200 p-4 sm:p-6 shadow-xs space-y-5 print:border-none print:shadow-none print:p-0 min-w-0">
         {/* Letterhead Header */}
         <div className="border-b-2 border-slate-900 pb-4">
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -1319,7 +1325,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
         <div className="flex justify-end">
           <button
             onClick={() => setIsPatientRecordModalOpen(true)}
-            className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
+            className="no-print px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
           >
             <FileText className="w-3.5 h-3.5" />
             <span>View Full Patient Record, History, Uploads & Photos</span>
@@ -2407,7 +2413,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
 
       {/* Prescription Finalized & Signed Modal */}
       {showFinalizeModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+        <div data-rx-modal="" data-print-chrome="" className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-lg w-full p-6 space-y-5 shadow-2xl border border-slate-200">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div className="flex items-center space-x-2 text-emerald-700">
@@ -2542,7 +2548,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
 
       {/* WhatsApp Dispatch & Language Translation Modal */}
       {showWhatsAppModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+        <div data-print-chrome="" className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-xl max-w-lg w-full p-5 space-y-4 shadow-2xl border border-slate-200">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div className="flex items-center space-x-2 text-emerald-700">

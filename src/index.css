@@ -29,12 +29,34 @@
   min-width: 0;
 }
 
+#rx-print-root {
+  display: none;
+}
+
 @media print {
+  @page {
+    size: A4;
+    margin: 12mm;
+  }
   body {
     background-color: white !important;
     color: black !important;
   }
   .no-print {
+    display: none !important;
+  }
+  /* Paper Rx: the print root is the only page. Modal, nav, and toasts stay off it. */
+  body.printing-rx > *:not(#rx-print-root) {
+    display: none !important;
+  }
+  body.printing-rx #rx-print-root {
+    display: block !important;
+    width: auto !important;
+    background: #fff !important;
+    color: #000 !important;
+  }
+  [data-rx-modal],
+  [data-print-chrome] {
     display: none !important;
   }
   .print-only {
