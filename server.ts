@@ -26,6 +26,7 @@ import { attachPublicPolicyHtml } from "./server/policy-html.ts";
 import { attachPublicPricingHtml } from "./server/pricing-html.ts";
 import { isDedicatedPublicHtmlPath } from "./server/spa-fallback.ts";
 import { mountGeminiClinicalRoutes } from "./server/gemini-clinical.ts";
+import { createPatientDocumentLinkRouter } from "./server/patient-document-links.ts";
 import { installWhatsAppRouterPatch, protectWhatsAppDashboard } from "./server/whatsapp-dashboard-guard.ts";
 import { createLiveRegistrationRouter } from "./server/live-registration-routes.ts";
 import { ensureUsageWalletSchema, seedDemoUsageWallet } from "./server/usage-billing.ts";
@@ -75,6 +76,7 @@ app.use("/api/whatsapp", protectWhatsAppDashboard(createWhatsAppRouter()));
 app.use("/api", createLiveRegistrationRouter());
 app.use("/api", wrapAbdmRegistryJson(createApiRouter()));
 app.use("/meta", createMetaRouter());
+app.use(createPatientDocumentLinkRouter());
 app.post("/data-deletion-callback", (req, res, next) => {
   req.url = "/data-deletion";
   createMetaRouter()(req, res, next);

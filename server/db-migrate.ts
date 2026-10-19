@@ -507,6 +507,50 @@ export function migrate(database: SqlDatabase) {
   migrateWhatsAppConversationKey(database);
   enforceWhatsAppTenantNotNull(database);
   rewriteLegacyHonestyCopy(database);
+  try {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS patient_link_tokens (
+        token_hash TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        patient_id TEXT NOT NULL,
+        purpose TEXT NOT NULL,
+        resource_id TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        max_uses INTEGER NOT NULL,
+        use_count INTEGER NOT NULL DEFAULT 0,
+        revoked_at TEXT,
+        created_by TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_patient_link_tokens_subject
+        ON patient_link_tokens (tenant_id, resource_id, purpose);
+      CREATE TABLE IF NOT EXISTS rx_signed_safety (
+        tenant_id TEXT NOT NULL,
+        rx_number TEXT NOT NULL,
+        signature TEXT NOT NULL,
+        safety_status TEXT NOT NULL,
+        has_high_risk INTEGER NOT NULL DEFAULT 0,
+        source TEXT NOT NULL DEFAULT '',
+        alert_count INTEGER NOT NULL DEFAULT 0,
+        override_user_id TEXT,
+        override_user_name TEXT,
+        override_at TEXT,
+        override_reason TEXT,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (tenant_id, rx_number)
+      );
+      CREATE TABLE IF NOT EXISTS whatsapp_patient_opt_ins (
+        tenant_id TEXT NOT NULL,
+        phone_digits TEXT NOT NULL,
+        patient_id TEXT NOT NULL DEFAULT '',
+        opted_in INTEGER NOT NULL,
+        source TEXT NOT NULL,
+        actor_id TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (tenant_id, phone_digits)
+      );
+    `);
+  } catch {}
 }
 
 /**
