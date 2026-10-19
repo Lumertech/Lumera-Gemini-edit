@@ -61,7 +61,7 @@ export function metaWebhookRawBody(req: Request, res: Response, next: NextFuncti
   }
   express.raw({
     type: () => true,
-    limit: "10mb",
+    limit: "1mb",
     verify: (inner, _res, buf) => {
       (inner as Request).rawBody = Buffer.from(buf);
     },
@@ -178,8 +178,7 @@ export function decideWebhookSignature(opts: {
     return {
       ok: false,
       status: 500,
-      error:
-        "META_APP_SECRET is not configured (also checked FACEBOOK_APP_SECRET and WHATSAPP_APP_SECRET); webhook signatures cannot be verified.",
+      error: "Webhook signature verification is unavailable.",
       reason: "secret_missing",
       secretEnvNames,
     };
@@ -226,6 +225,23 @@ export function decideWebhookSignature(opts: {
     reason: "mismatch",
     secretEnvNames,
   };
+}
+
+const verifiedWebhookSecretEnvs = new Set<string>();
+
+/**
+ * One stdout line per process per secret env name.
+ * Node's console.debug writes stdout, so the set is what keeps this off the per-request path.
+ * The line names the env var only — never the secret or the body.
+ */
+export function logMetaWebhookSignatureVerified(envName: string): void {
+  if (verifiedWebhookSecretEnvs.has(envName)) return;
+  verifiedWebhookSecretEnvs.add(envName);
+  console.debug(`[Meta Webhook] Signature verified. secretEnv=${envName}`);
+}
+
+export function resetMetaWebhookSignatureVerifiedLogForTests(): void {
+  verifiedWebhookSecretEnvs.clear();
 }
 
 export function rejectProductionSimulator(req: Request, res: Response, next: NextFunction) {

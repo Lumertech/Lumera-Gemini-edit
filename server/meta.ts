@@ -9,6 +9,7 @@ import {
   buildMetaReadinessOverview,
   decideWebhookSignature,
   getMetaVerifyToken,
+  logMetaWebhookSignatureVerified,
   metaHubSignatureHeader,
   metaWebhookSecretCandidates,
   rejectProductionSimulator,
@@ -320,7 +321,7 @@ export function createMetaRouter(): Router {
       return res.status(signatureDecision.status).json({ error: signatureDecision.error });
     }
     if (signatureDecision.secretEnvName) {
-      console.info(`[Meta Webhook] Signature verified. secretEnv=${signatureDecision.secretEnvName}`);
+      logMetaWebhookSignatureVerified(signatureDecision.secretEnvName);
     }
     if (signatureDecision.unsignedDevBypass) {
       console.warn(

@@ -11,7 +11,9 @@ import { initDatabase } from "./db.ts";
 import {
   classifyHubSignatureHeader,
   decideWebhookSignature,
+  logMetaWebhookSignatureVerified,
   metaHubSignatureHeader,
+  resetMetaWebhookSignatureVerifiedLogForTests,
   verifyMetaHubSignature,
 } from "./meta-security.ts";
 
@@ -43,25 +45,32 @@ function saveEnv(names: string[]): () => void {
   };
 }
 
-type LogCapture = { warn: string; info: string };
+type LogCapture = { warn: string; info: string; debug: string };
 
 async function withLogs<T>(fn: () => Promise<T>): Promise<{ result: T; logs: LogCapture }> {
+  resetMetaWebhookSignatureVerifiedLogForTests();
   const warn: string[] = [];
   const info: string[] = [];
+  const debug: string[] = [];
   const origWarn = console.warn;
   const origInfo = console.info;
+  const origDebug = console.debug;
   console.warn = (...args: unknown[]) => {
     warn.push(args.map((part) => String(part)).join(" "));
   };
   console.info = (...args: unknown[]) => {
     info.push(args.map((part) => String(part)).join(" "));
   };
+  console.debug = (...args: unknown[]) => {
+    debug.push(args.map((part) => String(part)).join(" "));
+  };
   try {
     const result = await fn();
-    return { result, logs: { warn: warn.join("\n"), info: info.join("\n") } };
+    return { result, logs: { warn: warn.join("\n"), info: info.join("\n"), debug: debug.join("\n") } };
   } finally {
     console.warn = origWarn;
     console.info = origInfo;
+    console.debug = origDebug;
   }
 }
 
@@ -133,7 +142,36 @@ describe("Meta webhook signature unit", () => {
       allowUnsignedDevFlag: true,
     });
     assert.equal(noSecret.ok, false);
-    if (!noSecret.ok) assert.equal(noSecret.status, 500);
+    if (!noSecret.ok) {
+      assert.equal(noSecret.status, 500);
+      assert.equal(noSecret.error, "Webhook signature verification is unavailable.");
+      assert.doesNotMatch(noSecret.error, /META_APP_SECRET|FACEBOOK_APP_SECRET|WHATSAPP_APP_SECRET/);
+    }
+  });
+
+  it("logs a verified signature at debug once per secret env name", () => {
+    resetMetaWebhookSignatureVerifiedLogForTests();
+    const lines: string[] = [];
+    const origDebug = console.debug;
+    console.debug = (...args: unknown[]) => {
+      lines.push(args.map((part) => String(part)).join(" "));
+    };
+    try {
+      logMetaWebhookSignatureVerified("META_APP_SECRET");
+      logMetaWebhookSignatureVerified("META_APP_SECRET");
+      logMetaWebhookSignatureVerified("FACEBOOK_APP_SECRET");
+    } finally {
+      console.debug = origDebug;
+      resetMetaWebhookSignatureVerifiedLogForTests();
+    }
+    assert.deepEqual(
+      lines,
+      [
+        "[Meta Webhook] Signature verified. secretEnv=META_APP_SECRET",
+        "[Meta Webhook] Signature verified. secretEnv=FACEBOOK_APP_SECRET",
+      ]
+    );
+    assert.equal(lines.join("\n").includes(SECRET), false);
   });
 });
 
@@ -215,10 +253,30 @@ describe("POST /api/meta/webhook through createLumeraApp", () => {
   it("mounts raw-body capture before express.json in the app factory", () => {
     const src = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "create-app.ts"), "utf8");
     const boot = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "server.ts"), "utf8");
-    const rawUse = src.indexOf("app.use(metaWebhookRawBody)");
-    const jsonUse = src.indexOf("express.json(");
-    assert.ok(rawUse > 0 && jsonUse > rawUse, "meta webhook raw body must be mounted before express.json");
+    const mountOrder = [
+      "attachHttpSecurity(app)",
+      "app.use(metaWebhookRawBody)",
+      "express.json(",
+      "protectWhatsAppDashboard(createWhatsAppRouter())",
+      "createLiveRegistrationRouter()",
+      "createApiRouter()",
+      "attachPublicPricingHtml(app)",
+      "mountGeminiClinicalRoutes(app)",
+      "attachUnknownApiJsonNotFound(app)",
+    ];
+    let previous = -1;
+    for (const marker of mountOrder) {
+      const at = src.indexOf(marker);
+      assert.ok(at > previous, `${marker} must stay in main's mount order`);
+      previous = at;
+    }
+    assert.equal(src.indexOf("express.json("), src.lastIndexOf("express.json("));
+    assert.match(src, /if \(Buffer\.isBuffer\(request\.rawBody\)\) return;/);
+    const securitySrc = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "meta-security.ts"), "utf8");
+    assert.match(securitySrc, /limit: "1mb"/);
     assert.match(boot, /createLumeraApp\(/);
+    assert.ok(boot.indexOf("createLumeraApp()") < boot.indexOf("attachProductionSpaFallback(app)"));
+    assert.equal(boot.includes("express.json("), false);
     const metaSrc = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "meta.ts"), "utf8");
     assert.equal(metaSrc.includes("JSON.stringify(req.body"), false);
   });
@@ -231,9 +289,10 @@ describe("POST /api/meta/webhook through createLumeraApp", () => {
     const good = await withLogs(() => postRaw(RAW_WEBHOOK, { "X-Hub-Signature-256": sign(SECRET, RAW_WEBHOOK) }));
     assert.equal(good.result.status, 200, good.result.text);
     assert.equal(good.result.json.status, "EVENT_RECEIVED");
-    assert.match(good.logs.info, /secretEnv=META_APP_SECRET/);
+    assert.match(good.logs.debug, /secretEnv=META_APP_SECRET/);
+    assert.equal(good.logs.info.includes("Signature verified"), false);
     assert.match(good.logs.warn, /Unknown phone_number_id/);
-    assertNoSecrets(`${good.logs.warn}\n${good.logs.info}`);
+    assertNoSecrets(`${good.logs.warn}\n${good.logs.info}\n${good.logs.debug}`);
 
     const alias = await postRaw(RAW_WEBHOOK, { "X-Hub-Signature-256": sign(SECRET, RAW_WEBHOOK) }, "/meta/webhook");
     assert.equal(alias.status, 200, alias.text);
@@ -302,12 +361,12 @@ describe("POST /api/meta/webhook through createLumeraApp", () => {
       postRaw(RAW_WEBHOOK, { "X-Hub-Signature-256": sign(FACEBOOK_SECRET, RAW_WEBHOOK) })
     );
     assert.equal(viaFacebook.result.status, 200, viaFacebook.result.text);
-    assert.match(viaFacebook.logs.info, /secretEnv=FACEBOOK_APP_SECRET/);
-    assertNoSecrets(`${viaFacebook.logs.warn}\n${viaFacebook.logs.info}`);
+    assert.match(viaFacebook.logs.debug, /secretEnv=FACEBOOK_APP_SECRET/);
+    assertNoSecrets(`${viaFacebook.logs.warn}\n${viaFacebook.logs.info}\n${viaFacebook.logs.debug}`);
 
     const viaMeta = await withLogs(() => postRaw(RAW_WEBHOOK, { "X-Hub-Signature-256": sign(WRONG_SECRET, RAW_WEBHOOK) }));
     assert.equal(viaMeta.result.status, 200, viaMeta.result.text);
-    assert.match(viaMeta.logs.info, /secretEnv=META_APP_SECRET/);
+    assert.match(viaMeta.logs.debug, /secretEnv=META_APP_SECRET/);
 
     const neither = await withLogs(() => postRaw(RAW_WEBHOOK, { "X-Hub-Signature-256": sign(SECRET, RAW_WEBHOOK) }));
     assert.equal(neither.result.status, 403);
@@ -321,8 +380,8 @@ describe("POST /api/meta/webhook through createLumeraApp", () => {
       postRaw(RAW_WEBHOOK, { "X-Hub-Signature-256": sign(FACEBOOK_SECRET, RAW_WEBHOOK) })
     );
     assert.equal(onlyFacebook.result.status, 200, onlyFacebook.result.text);
-    assert.match(onlyFacebook.logs.info, /secretEnv=FACEBOOK_APP_SECRET/);
-    assertNoSecrets(onlyFacebook.logs.info);
+    assert.match(onlyFacebook.logs.debug, /secretEnv=FACEBOOK_APP_SECRET/);
+    assertNoSecrets(onlyFacebook.logs.debug);
   });
 
   it("does not let a missing Origin or a session cookie through, except the exempt webhook", async () => {
@@ -363,11 +422,61 @@ describe("POST /api/meta/webhook through createLumeraApp", () => {
     useSecrets();
     const unsigned = await withLogs(() => postRaw(RAW_WEBHOOK, {}));
     assert.equal(unsigned.result.status, 500);
+    assert.equal(unsigned.result.json.error, "Webhook signature verification is unavailable.");
+    assert.doesNotMatch(JSON.stringify(unsigned.result.json), /META_APP_SECRET|FACEBOOK_APP_SECRET|WHATSAPP_APP_SECRET/);
+    assert.doesNotMatch(unsigned.logs.warn, /META_APP_SECRET|FACEBOOK_APP_SECRET|WHATSAPP_APP_SECRET/);
     assert.match(unsigned.logs.warn, /reason=secret_missing/);
     assert.notEqual(unsigned.result.status, 200);
 
     useSecrets(SECRET);
     const signedButUnsignedHeader = await postRaw(RAW_WEBHOOK, {});
     assert.equal(signedButUnsignedHeader.status, 403);
+  });
+
+  it("rejects a webhook body above the 1mb raw limit", async () => {
+    useSecrets(SECRET);
+    const big = Buffer.alloc(1024 * 1024 + 64, 0x61);
+    const res = await postRaw(big, { "X-Hub-Signature-256": sign(SECRET, big) });
+    assert.equal(res.status, 413, res.text);
+    assert.equal(res.text.includes(SECRET), false);
+  });
+
+  it("still mounts pricing, unknown /api JSON 404, WhatsApp auth, Gemini, and live registration", async () => {
+    const origin = { Origin: "https://www.mylumera.in" };
+
+    const pricing = await fetch(`http://127.0.0.1:${port}/pricing`);
+    const pricingHtml = await pricing.text();
+    assert.equal(pricing.status, 200, pricingHtml.slice(0, 200));
+    assert.match(pricing.headers.get("content-type") || "", /html/);
+    assert.match(pricingHtml, /<title>[^<]*Lumera<\/title>/);
+
+    const missing = await fetch(`http://127.0.0.1:${port}/api/not-a-mounted-route`, { headers: origin });
+    const missingText = await missing.text();
+    assert.equal(missing.status, 404, missingText);
+    assert.match(missing.headers.get("content-type") || "", /json/);
+    assert.equal(missingText, JSON.stringify({ error: "Not found" }));
+
+    const inbox = await fetch(`http://127.0.0.1:${port}/api/whatsapp/conversations`, { headers: origin });
+    const inboxJson = (await inbox.json()) as { error?: string };
+    assert.equal(inbox.status, 401);
+    assert.equal(inboxJson.error, "Authentication required");
+
+    const gemini = await fetch(`http://127.0.0.1:${port}/api/gemini/generate-soap`, {
+      method: "POST",
+      headers: { ...origin, "Content-Type": "application/json" },
+      body: JSON.stringify({ transcript: "patient reports fever for two days" }),
+    });
+    const geminiJson = (await gemini.json()) as { error?: string };
+    assert.equal(gemini.status, 401);
+    assert.equal(geminiJson.error, "Authentication required");
+
+    const register = await fetch(`http://127.0.0.1:${port}/api/auth/register-practice`, {
+      method: "POST",
+      headers: { ...origin, "Content-Type": "application/json" },
+      body: "{}",
+    });
+    const registerJson = (await register.json()) as { error?: string };
+    assert.equal(register.status, 400, JSON.stringify(registerJson));
+    assert.match(String(registerJson.error), /Practice Name, Director Name, Email, and WhatsApp Phone are required/);
   });
 });
