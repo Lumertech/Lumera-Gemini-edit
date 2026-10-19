@@ -4,6 +4,8 @@ import { after, before, describe, it } from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { jsonRequest, startTestServer } from "./test-http.ts";
 import { createApiRouter } from "./api.ts";
+import { AMBIENT_WALKIN_DUP_SOURCE, AMBIENT_WALKIN_SOURCE, ensureAmbientWalkInUniqueIndex } from "./ambient-walkin.ts";
+import { insertAppointment } from "./clinical.ts";
 import { getDb, initDatabase } from "./db.ts";
 import { hashPassword } from "./password.ts";
 import { clinicCalendarDate, shiftIsoDate } from "../src/lib/clinicDay.ts";
@@ -702,5 +704,91 @@ describe("P1 revenue and queue integrity", () => {
     assert.equal(cardio.doctorId, cardioId);
     assert.equal(cardio.doctorName, "Dr Cardio");
     assert.equal(cardio.specialty, "Cardiology");
+  });
+
+  it("rejects hidden ambient sources from staff and hides non-token unique clashes", async () => {
+    const clinic = createClinicUser("source");
+    const token = await login(clinic.email);
+    const auth = { Authorization: `Bearer ${token}` };
+    const patient = await createPatient(auth, "Source Patient");
+    const date = "2099-04-15";
+    const denied = "Appointment source is not allowed";
+
+    for (const source of [AMBIENT_WALKIN_SOURCE, AMBIENT_WALKIN_DUP_SOURCE, "ambient_walkin ", "not-a-real-source"]) {
+      const rejected = await jsonRequest(
+        port,
+        "POST",
+        "/api/appointments",
+        { patientId: patient.id, doctorId: clinic.userId, date, timeSlot: "09:00 AM", source },
+        auth
+      );
+      assert.equal(rejected.status, 400, source);
+      assert.equal(rejected.json.error, denied);
+      assert.equal(String(rejected.json.error).includes(source.trim()), false);
+    }
+
+    const allowed = await jsonRequest(
+      port,
+      "POST",
+      "/api/appointments",
+      { patientId: patient.id, doctorId: clinic.userId, date, timeSlot: "09:15 AM", source: "Online Portal" },
+      auth
+    );
+    assert.equal(allowed.status, 201, String(allowed.json.error || ""));
+    assert.equal((allowed.json.appointment as { source: string }).source, "Online Portal");
+
+    const hidden = getDb()
+      .prepare(`SELECT COUNT(*) AS n FROM appointments WHERE tenant_id = ? AND source IN (?, ?)`)
+      .get(clinic.tenantId, AMBIENT_WALKIN_SOURCE, AMBIENT_WALKIN_DUP_SOURCE) as { n: number };
+    assert.equal(Number(hidden.n), 0);
+
+    const minted = insertAppointment(
+      clinic.tenantId,
+      {
+        patientId: patient.id,
+        doctorId: clinic.userId,
+        date,
+        timeSlot: "09:30 AM",
+        source: AMBIENT_WALKIN_SOURCE,
+        status: "Waiting",
+      },
+      { name: "Ambient scribe" },
+      { internalAmbient: true }
+    );
+    assert.equal(String(minted.source), AMBIENT_WALKIN_SOURCE);
+    ensureAmbientWalkInUniqueIndex(getDb());
+
+    const logs: string[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => {
+      logs.push(args.map((part) => String(part)).join(" "));
+    };
+    try {
+      assert.throws(
+        () =>
+          insertAppointment(
+            clinic.tenantId,
+            {
+              patientId: patient.id,
+              doctorId: clinic.userId,
+              date,
+              timeSlot: "09:45 AM",
+              source: AMBIENT_WALKIN_SOURCE,
+              status: "Open",
+            },
+            { name: "Ambient scribe" },
+            { internalAmbient: true }
+          ),
+        (err: Error & { status?: number }) => {
+          assert.equal(err.status, 409);
+          assert.equal(err.message, "Could not save this appointment");
+          assert.equal(/idx_|token_number|tenant_id|UNIQUE|duplicate key|ambient_walkin/i.test(err.message), false);
+          return true;
+        }
+      );
+    } finally {
+      console.error = original;
+    }
+    assert.match(logs.join("\n"), /unique constraint|duplicate key|idx_appointments_ambient_walkin/i);
   });
 });

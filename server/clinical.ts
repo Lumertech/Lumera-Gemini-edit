@@ -19,8 +19,8 @@ import { registerPatientDocumentConsentRoutes } from "./patient-document-consent
 import { buildPatientTimeline, presentPrescriptionForRole } from "./patient-timeline.ts";
 import { denyUnlessPatientRecordRole, denyUnlessPrescriber, isReceptionRole } from "./patient-access.ts";
 import { clinicCalendarDate, parseAppointmentListDate, resolveQueueDate } from "../src/lib/clinicDay.ts";
-import { HIDDEN_AMBIENT_SOURCES, hiddenVisitSourceSql, isHiddenVisitSource } from "./ambient-walkin.ts";
-import { allocateTokenNumber, writeAllocatedToken } from "./queue-tokens.ts";
+import { HIDDEN_AMBIENT_SOURCES, hiddenVisitSourceSql, isHiddenVisitSource, isUniqueViolation } from "./ambient-walkin.ts";
+import { allocateTokenNumber, isTokenUniqueViolation, tokenClashError, writeAllocatedToken } from "./queue-tokens.ts";
 import {
   loadPatientClinicPhone,
   loadPatientTenant,
@@ -229,23 +229,26 @@ export function listTenantAppointments(tenantId: string, date?: string | null): 
 
 /**
  * Next visible token for this tenant and queue date.
- * Hidden ambient visits stay out of the sequence. Pass a doctor id to scope one queue.
+ * Delegates to the queue allocator so hidden ambient visits and taken numbers
+ * follow the same rules as the unique index. Pass a doctor id to scope one queue.
  */
 export function nextTokenNumber(tenantId: string, date: string, doctorId?: string): number {
-  const scoped = doctorId !== undefined;
-  const row = getDb()
+  if (doctorId !== undefined) {
+    return allocateTokenNumber(getDb(), tenantId, date, String(doctorId));
+  }
+  const doctors = getDb()
     .prepare(
-      `SELECT COALESCE(MAX(token_number), 0) AS max_token
+      `SELECT DISTINCT doctor_id AS doctor_id
        FROM appointments
-       WHERE tenant_id = ? AND date = ? AND ${hiddenVisitSourceSql()}
-         ${scoped ? "AND doctor_id = ?" : ""}`
+       WHERE tenant_id = ? AND date = ? AND ${hiddenVisitSourceSql()}`
     )
-    .get(
-      ...(scoped
-        ? [tenantId, date, ...HIDDEN_AMBIENT_SOURCES, String(doctorId)]
-        : [tenantId, date, ...HIDDEN_AMBIENT_SOURCES])
-    ) as { max_token: number };
-  return Number(row?.max_token || 0) + 1;
+    .all(tenantId, date, ...HIDDEN_AMBIENT_SOURCES) as Array<{ doctor_id?: string | null }>;
+  if (doctors.length === 0) return 1;
+  let next = 1;
+  for (const doctor of doctors) {
+    next = Math.max(next, allocateTokenNumber(getDb(), tenantId, date, String(doctor.doctor_id ?? "")));
+  }
+  return next;
 }
 
 export function getTenantPatient(tenantId: string, id: string) {
@@ -863,7 +866,67 @@ export function linkPatientAbha(
   };
 }
 
-export function insertAppointment(tenantId: string, body: Record<string, unknown>, actor?: { id?: string; name?: string }) {
+/** Sources a staff or patient booking may store. Hidden ambient sources are not in this set. */
+const APPOINTMENT_SOURCES = new Set(["Walk-in", "WhatsApp Bot", "Online Portal", "Call Desk", "Portal"]);
+
+const APPOINTMENT_SOURCE_DENIED = "Appointment source is not allowed";
+
+const APPOINTMENT_SAVE_CONFLICT = "Could not save this appointment";
+
+/**
+ * Staff and portal bookings store only the fixed source list.
+ * ambient_walkin and ambient_walkin_dup are accepted only when the internal ambient path opts in.
+ */
+export function appointmentSource(body: Record<string, unknown>, options?: { internalAmbient?: boolean }): string {
+  const raw = String(body.source ?? "").trim();
+  const source = raw || "Walk-in";
+  if (isHiddenVisitSource(source)) {
+    if (options?.internalAmbient) return source;
+    throw Object.assign(new Error(APPOINTMENT_SOURCE_DENIED), { status: 400 });
+  }
+  if (!APPOINTMENT_SOURCES.has(source)) {
+    throw Object.assign(new Error(APPOINTMENT_SOURCE_DENIED), { status: 400 });
+  }
+  return source;
+}
+
+/**
+ * Token clashes keep their own 409. Any other unique-key clash is a fixed 409
+ * with the database text logged here and never returned.
+ */
+function appointmentWriteConflict(err: unknown): (Error & { status: number }) | null {
+  if (isTokenUniqueViolation(err)) return tokenClashError() as Error & { status: number };
+  const message = err instanceof Error ? err.message : String(err || "");
+  const unique = isUniqueViolation(err) || /unique constraint|duplicate key/i.test(message);
+  if (!unique) return null;
+  reportCaughtError(err, "clinical.appointment.unique");
+  return Object.assign(new Error(APPOINTMENT_SAVE_CONFLICT), { status: 409 });
+}
+
+function rethrowAppointmentWrite(err: unknown): never {
+  const conflict = appointmentWriteConflict(err);
+  if (conflict) throw conflict;
+  throw err;
+}
+
+function sendAppointmentError(res: Response, err: unknown, fallback: string): void {
+  const conflict = appointmentWriteConflict(err);
+  if (conflict) {
+    res.status(conflict.status).json({ error: conflict.message });
+    return;
+  }
+  const status = typeof err === "object" && err && "status" in err ? Number((err as { status: number }).status) : 500;
+  const message = err instanceof Error ? err.message : fallback;
+  res.status(status || 500).json({ error: message });
+}
+
+export function insertAppointment(
+  tenantId: string,
+  body: Record<string, unknown>,
+  actor?: { id?: string; name?: string },
+  options?: { internalAmbient?: boolean }
+) {
+  const source = appointmentSource(body, options);
   const patientId = String(body.patientId || body.patient_id || "").trim();
   if (!patientId) {
     throw Object.assign(new Error("patientId is required"), { status: 400 });
@@ -914,19 +977,23 @@ export function insertAppointment(tenantId: string, body: Record<string, unknown
     String(body.timeSlot || body.time_slot || ""),
     String(body.type || "New Consultation"),
     String(body.status || "Waiting"),
-    String(body.source || "Walk-in"),
+    source,
     Number(body.consultationFee ?? body.consultation_fee ?? 0),
     body.isPaid === false || body.is_paid === 0 || body.is_paid === false ? 0 : body.isPaid || body.is_paid ? 1 : 0,
     vitals,
     now,
   ];
-  writeAllocatedToken(
-    (tokenNumber) => {
-      insert.run(...insertArgs(tokenNumber));
-    },
-    (requested) => allocateTokenNumber(getDb(), tenantId, date, doctorId, requested),
-    requestedToken
-  );
+  try {
+    writeAllocatedToken(
+      (tokenNumber) => {
+        insert.run(...insertArgs(tokenNumber));
+      },
+      (requested) => allocateTokenNumber(getDb(), tenantId, date, doctorId, requested),
+      requestedToken
+    );
+  } catch (err) {
+    rethrowAppointmentWrite(err);
+  }
   getDb()
     .prepare("UPDATE patients SET last_visit = ? WHERE id = ? AND tenant_id = ?")
     .run(date, mappedPatient.id, tenantId);
@@ -1005,14 +1072,18 @@ export function updateAppointment(
         tenantId
       );
   };
-  if (dateChanged || doctorChanged || tokenChanged) {
-    writeAllocatedToken(
-      applyUpdate,
-      (requested) => allocateTokenNumber(getDb(), tenantId, nextDate, nextDoctor, requested, appointmentId),
-      requestedToken
-    );
-  } else {
-    applyUpdate(Number(mapped.tokenNumber) || 0);
+  try {
+    if (dateChanged || doctorChanged || tokenChanged) {
+      writeAllocatedToken(
+        applyUpdate,
+        (requested) => allocateTokenNumber(getDb(), tenantId, nextDate, nextDoctor, requested, appointmentId),
+        requestedToken
+      );
+    } else {
+      applyUpdate(Number(mapped.tokenNumber) || 0);
+    }
+  } catch (err) {
+    rethrowAppointmentWrite(err);
   }
   if (body.status !== undefined && (status === "Completed" || status === "Cancelled")) {
     deletePrescriptionDraft({
@@ -1489,9 +1560,7 @@ export function createClinicalRouter(): Router {
       );
       res.status(201).json(withPatientTenant(req, tenantId, { appointment: mapAppointment(row) }));
     } catch (err: unknown) {
-      const status = typeof err === "object" && err && "status" in err ? Number((err as { status: number }).status) : 500;
-      const message = err instanceof Error ? err.message : "Failed to create appointment";
-      res.status(status || 500).json({ error: message });
+      sendAppointmentError(res, err, "Failed to create appointment");
     }
   });
 
@@ -1519,9 +1588,7 @@ export function createClinicalRouter(): Router {
       });
       res.json(withPatientTenant(req, tenantId, { appointment: mapAppointment(row) }));
     } catch (err: unknown) {
-      const status = typeof err === "object" && err && "status" in err ? Number((err as { status: number }).status) : 500;
-      const message = err instanceof Error ? err.message : "Failed to update appointment";
-      res.status(status || 500).json({ error: message });
+      sendAppointmentError(res, err, "Failed to update appointment");
     }
   });
 
