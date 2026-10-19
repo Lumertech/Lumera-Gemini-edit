@@ -2,7 +2,8 @@ import { Router, type NextFunction, type Request, type Response } from "express"
 import { persistSpecialtyPackId } from "../src/lib/specialtyPack.ts";
 import { assignedRoleForPracticeType, getDb, normalizePracticeType } from "./db.ts";
 import { otpEchoPayload } from "./auth.ts";
-import { generateNumericOtp, reserveOtpSend, sendOtpLimited } from "./otp-attempt.ts";
+import { abandonFailedOtpSend, generateNumericOtp, logOtpSendFailure, OTP_PUBLIC_SEND_FAILURE, reserveOtpSend, sendOtpLimited } from "./otp-attempt.ts";
+import { requestClientIp } from "./otp-rate-limit.ts";
 import { liveRegistrationPasswordHash } from "./live-registration-password.ts";
 import { ensureTenantSubscription } from "./platform-tenants.ts";
 import { dispatchWhatsAppCloudMessage, isCloudDispatchFailure } from "./graph-whatsapp.ts";
@@ -27,9 +28,30 @@ async function dispatchRegisterOtp(phone: string, name: string, otp: string, pur
   });
 }
 
-function otpDispatchFailure(res: Response, result: Awaited<ReturnType<typeof dispatchWhatsAppCloudMessage>>): boolean {
-  if (isCloudDispatchFailure(result)) {
-    res.status(503).json({ error: result.error, otpDelivered: false, channel: result.channel });
+function otpDispatchFailure(
+  res: Response,
+  result: Awaited<ReturnType<typeof dispatchWhatsAppCloudMessage>>,
+  verification?: { id: string; phone: string; email?: string; userId?: string },
+  req?: Request
+): boolean {
+  const missingWamid = result.ok === true && result.channel === "graph" && !result.messageId;
+  if (isCloudDispatchFailure(result) || missingWamid) {
+    if (verification) {
+      abandonFailedOtpSend({
+        id: verification.id,
+        phone: verification.phone,
+        email: verification.email,
+        userId: verification.userId,
+        ip: req ? requestClientIp(req) : undefined,
+      });
+    }
+    const detail = result.ok === false ? result.error : "graph response had no message id";
+    logOtpSendFailure(verification?.phone || "", detail);
+    res.status(503).json({
+      error: OTP_PUBLIC_SEND_FAILURE,
+      otpDelivered: false,
+      channel: result.ok === false ? result.channel : "graph",
+    });
     return true;
   }
   return false;
@@ -159,7 +181,7 @@ async function handleRegisterPractice(req: Request, res: Response) {
     .run(verificationId, phone, email, otp, JSON.stringify(otpPayload), now, expiresAt);
 
   const sent = await dispatchRegisterOtp(phone, name, otp, "register", tenantId);
-  if (otpDispatchFailure(res, sent)) return;
+  if (otpDispatchFailure(res, sent, { id: verificationId, phone, email, userId }, req)) return;
 
   return res.json({
     requiresOtp: true,
@@ -178,8 +200,9 @@ async function handleRegisterPractice(req: Request, res: Response) {
       dhisClaimsLimit: 100,
     },
     otpChannel: sent.ok ? sent.channel : undefined,
+    ...(sent.ok && sent.channel === "graph" && sent.messageId ? { wamid: sent.messageId } : {}),
     message:
-      sent.ok && sent.channel === "graph"
+      sent.ok && sent.channel === "graph" && sent.messageId
         ? "6-digit OTP sent via WhatsApp Cloud API."
         : "SANDBOX / DEV-ONLY: OTP recorded locally (not sent via Graph).",
   });

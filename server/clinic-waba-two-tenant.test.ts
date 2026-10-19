@@ -52,6 +52,7 @@ describe("two-tenant clinic WhatsApp Graph path", () => {
     META_REMINDER_TEMPLATE_NAME: process.env.META_REMINDER_TEMPLATE_NAME,
     META_RECEIPT_TEMPLATE_NAME: process.env.META_RECEIPT_TEMPLATE_NAME,
     META_UTILITY_TEMPLATE_LANGUAGE: process.env.META_UTILITY_TEMPLATE_LANGUAGE,
+    DEMO_WHATSAPP_RECIPIENT_ALLOWLIST: process.env.DEMO_WHATSAPP_RECIPIENT_ALLOWLIST,
     META_APP_SECRET: process.env.META_APP_SECRET,
     NODE_ENV: process.env.NODE_ENV,
   };
@@ -68,6 +69,7 @@ describe("two-tenant clinic WhatsApp Graph path", () => {
     process.env.META_REMINDER_TEMPLATE_NAME = "lumera_appointment_reminder";
     process.env.META_RECEIPT_TEMPLATE_NAME = "lumera_payment_receipt_v2";
     process.env.META_UTILITY_TEMPLATE_LANGUAGE = "en";
+    process.env.DEMO_WHATSAPP_RECIPIENT_ALLOWLIST = "+919811100002";
     process.env.META_APP_SECRET = secret;
     try {
       getDb();
@@ -329,10 +331,9 @@ describe("two-tenant clinic WhatsApp Graph path", () => {
       tenantId: tenantA,
       fetchImpl,
     });
-    assert.equal(textSend.ok, true, JSON.stringify(textSend));
-    assert.equal(calls.length, beforeText + 1);
-    assert.equal(calls.at(-1)?.body.type, "text");
-    assert.match(String(calls.at(-1)?.url), new RegExp(`/${A_PHONE}/messages`));
+    assert.equal(textSend.ok, false, JSON.stringify(textSend));
+    if (!textSend.ok) assert.equal(textSend.error, "no_approved_template");
+    assert.equal(calls.length, beforeText);
 
     const fromA = "919800000001";
     const fromB = "919800000002";

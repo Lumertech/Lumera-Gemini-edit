@@ -1,6 +1,6 @@
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { isPlatformAdminRole, requireAuth } from "./auth.ts";
-import { isWhatsAppOptOutMessage, recordWhatsAppOptIn } from "./whatsapp-opt-in.ts";
+import { confirmPatientWhatsAppReconsent, isWhatsAppOptInMessage, isWhatsAppOptOutMessage, recordWhatsAppOptIn } from "./whatsapp-opt-in.ts";
 import { findDataDeletionRequest, getDb } from "./db.ts";
 import { appPublicUrl, isProduction, sandboxSimulatorsEnabled } from "./runtime.ts";
 import { reportCaughtError } from "./error-tracker.ts";
@@ -420,12 +420,21 @@ export function createMetaRouter(): Router {
               if (val?.messages && Array.isArray(val.messages)) {
                 for (const msg of val.messages) {
                   const textBody = msg.text?.body || msg.interactive?.button_reply?.title || "[Media/Attachment]";
-                  if (isWhatsAppOptOutMessage(String(textBody || ""))) {
+                  const inboundText = String(textBody || "");
+                  const fromPhone = String(msg.from || "");
+                  if (isWhatsAppOptOutMessage(inboundText)) {
                     recordWhatsAppOptIn(db, {
                       tenantId: inboundTenantId,
-                      phone: String(msg.from || ""),
+                      phone: fromPhone,
                       optedIn: false,
                       source: "stop",
+                    });
+                  } else if (isWhatsAppOptInMessage(inboundText)) {
+                    confirmPatientWhatsAppReconsent(db, {
+                      tenantId: inboundTenantId,
+                      phone: fromPhone,
+                      source: "start",
+                      patientConfirmed: true,
                     });
                   }
                   recordInboundWhatsAppMessage(db, {

@@ -7,7 +7,8 @@ import {
 } from "./db.ts";
 import { getTenantLetterhead } from "./letterhead.ts";
 import { isSampleTaxInvoice, sampleTaxInvoiceReceiptText, scrubSeedBillingIds } from "./seed-branding.ts";
-import { cloudDispatchHttpStatus, isCloudDispatchFailure, sendPaymentReceipt } from "./graph-whatsapp.ts";
+import { cloudDispatchHttpStatus, FAILED_FINAL, isCloudDispatchFailure, sendPaymentReceipt, SKIPPED_NOT_ALLOWLISTED } from "./graph-whatsapp.ts";
+import { WHATSAPP_OPT_IN_REQUIRED } from "./whatsapp-opt-in.ts";
 import {
   createRazorpayCollectOrder,
   decideRazorpayWebhookSignature,
@@ -377,6 +378,14 @@ async function dispatchInvoiceReceipt(
     db: getDb(),
     tenantId: invoice.tenantId,
   });
+
+  if (isCloudDispatchFailure(sent) && (sent.error === SKIPPED_NOT_ALLOWLISTED || sent.error === FAILED_FINAL)) {
+    const status = sent.error === FAILED_FINAL ? FAILED_FINAL : SKIPPED_NOT_ALLOWLISTED;
+    getDb()
+      .prepare(`UPDATE invoices SET receipt_whatsapp_status = ?, receipt_whatsapp_channel = ? WHERE id = ?`)
+      .run(status, "none", invoice.id);
+    return { ok: false, error: sent.error, channel: "none", status: sent.status };
+  }
 
   if (isCloudDispatchFailure(sent)) {
     recordReceiptEvent({
@@ -762,11 +771,20 @@ export function createBillingRouter(): Router {
     const updated = invoiceForClient(req, getTenantInvoice(tenantId, String(row.id))!);
     if (result.ok === false) {
       const status = cloudDispatchHttpStatus(result.error, result.status);
+      const error =
+        status === 402
+          ? "WhatsApp could not send this receipt. Meta needs a payment method on the clinic number."
+          : result.error.startsWith(WHATSAPP_OPT_IN_REQUIRED)
+            ? "WhatsApp receipt not sent: no WhatsApp opt-in"
+            : result.error === SKIPPED_NOT_ALLOWLISTED || result.error === FAILED_FINAL
+              ? "WhatsApp receipt not sent: not allowlisted"
+              : /not connected|not configured|WA_TOKEN_KEY/i.test(result.error)
+                ? "WhatsApp receipt not sent: not connected"
+                : /TEMPLATE_NOT_APPROVED|no_approved_template/i.test(result.error)
+                  ? "WhatsApp receipt not sent: no template"
+                  : "WhatsApp receipt not sent. Try again later.";
       return res.status(status).json({
-        error:
-          status === 402
-            ? "WhatsApp could not send this receipt. Meta needs a payment method on the clinic number."
-            : result.error,
+        error,
         code: status === 402 ? "META_PAYMENT_REQUIRED" : undefined,
         ...updated,
         channel: result.channel,

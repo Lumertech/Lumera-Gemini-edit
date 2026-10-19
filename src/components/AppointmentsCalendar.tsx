@@ -15,12 +15,15 @@ import {
   X
 } from 'lucide-react';
 import { Appointment, Doctor, Patient } from '../types';
+import { bookingNotifyMessage, type BookingNotify } from '../lib/bookingNotify';
 
 interface AppointmentsCalendarProps {
   appointments: Appointment[];
   doctors: Doctor[];
   patients: Patient[];
-  onBookAppointment: (apt: Partial<Appointment>) => void;
+  onBookAppointment: (
+    apt: Partial<Appointment>
+  ) => void | Promise<{ notify?: BookingNotify } | void>;
   onCheckIn?: (apt: Appointment) => void;
 }
 
@@ -42,6 +45,8 @@ export const AppointmentsCalendar: React.FC<AppointmentsCalendarProps> = ({
   const [timeSlot, setTimeSlot] = useState('10:00 AM');
   const [consultType, setConsultType] = useState<Appointment['type']>('New Consultation');
   const [source, setSource] = useState<Appointment['source']>('Walk-in');
+  const [bookingNotice, setBookingNotice] = useState('');
+  const [bookingError, setBookingError] = useState('');
 
   const filteredAppointments = appointments.filter((a) => {
     if (selectedDoctorId !== 'All' && a.doctorId !== selectedDoctorId) return false;
@@ -53,9 +58,13 @@ export const AppointmentsCalendar: React.FC<AppointmentsCalendarProps> = ({
     setBookingDate(target.toISOString().split('T')[0]);
   };
 
-  const handleSaveBooking = () => {
+  const handleSaveBooking = async () => {
     const pat = patients.find((p) => p.id === patientId) || patients[0];
     const doc = doctors.find((d) => d.id === doctorId) || doctors[0];
+    if (!pat || !doc) {
+      setBookingError('Choose a patient and a doctor before booking.');
+      return;
+    }
     const maxToken = appointments.reduce((max, a) => Math.max(max, a.tokenNumber), 0);
 
     const newApt: Partial<Appointment> = {
@@ -77,8 +86,15 @@ export const AppointmentsCalendar: React.FC<AppointmentsCalendarProps> = ({
       isPaid: false,
     };
 
-    onBookAppointment(newApt);
-    setShowBookModal(false);
+    setBookingError('');
+    try {
+      const saved = await onBookAppointment(newApt);
+      const notify = saved && typeof saved === 'object' ? saved.notify : undefined;
+      setBookingNotice(bookingNotifyMessage(notify));
+      setShowBookModal(false);
+    } catch {
+      setBookingError('Could not book the appointment.');
+    }
   };
 
   return (
@@ -95,6 +111,16 @@ export const AppointmentsCalendar: React.FC<AppointmentsCalendarProps> = ({
             </span>
           </div>
           <h1 className="text-lg font-bold text-slate-900 mt-1">Appointments & Follow-up Scheduler</h1>
+          {bookingNotice ? (
+            <p data-testid="booking-notify" role="status" className="mt-2 text-xs font-semibold text-slate-800">
+              {bookingNotice}
+            </p>
+          ) : null}
+          {bookingError ? (
+            <p data-testid="booking-error" role="alert" className="mt-2 text-xs font-semibold text-rose-700">
+              {bookingError}
+            </p>
+          ) : null}
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">

@@ -154,6 +154,13 @@ describe("Usage wallet billing dispatch paths", () => {
       .get(tenantId) as { c: number };
 
     recordWhatsAppOptIn(getDb(), { tenantId, phone: patientPhone, optedIn: true, source: "test", actorId: "test" });
+    const stamped = new Date().toISOString();
+    getDb()
+      .prepare(
+        `INSERT INTO meta_templates (id, tenant_id, waba_id, name, category, language, status, components, created_at, updated_at)
+         VALUES (?, ?, '204800000000000', 'clinic_appointment_reminder', 'UTILITY', 'en', 'APPROVED', '[]', ?, ?)`
+      )
+      .run(`tpl-usage-${tenantId}`, tenantId, stamped, stamped);
     const reminder = await dispatchAppointmentReminder({
       tenantId,
       appointment: booked.appointment,

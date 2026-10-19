@@ -28,10 +28,12 @@ export {
   buildReminderMessage,
   dispatchAppointmentReminder,
   dispatchWhatsAppBookConfirmation,
+  notifyReceptionBooking,
   runAppointmentReminders,
   startAppointmentReminderScheduler,
   stopAppointmentReminderScheduler,
   type ReminderWindow,
   type ReminderDispatchResult,
   type ReminderRunItem,
+  type BookingNotifyResult,
 } from "./whatsapp-calendar-reminders.ts";
