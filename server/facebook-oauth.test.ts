@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { META_TECH_PROVIDER_STATEMENT } from "../src/lib/metaStatus.ts";
 import fs from "node:fs";
 import path from "node:path";
 import { after, describe, it } from "node:test";
@@ -99,7 +100,7 @@ describe("Facebook OAuth founder docs", () => {
     assert.match(envEx, /https:\/\/www\.mylumera\.in\/api\/auth\/facebook\/callback/);
     assert.match(runbook, /https:\/\/www\.mylumera\.in\/api\/auth\/facebook\/callback/);
     assert.match(runbook, /Client OAuth Login/);
-    assert.match(runbook, /not a certified Meta Tech Provider/i);
+    assert.equal(runbook.includes(META_TECH_PROVIDER_STATEMENT), true);
   });
 });
 

@@ -16,6 +16,7 @@ import { handleMetaDataDeletionPost, handleMetaDeauthorizePost } from "./meta-si
 import { normalizePhoneDigits, phonesMatch } from "./whatsapp-calendar-booking.ts";
 import { tenantIdFromReceivingPhoneNumberId } from "./whatsapp-tenant-resolve.ts";
 import { WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
+import { SANDBOX_FAKE_WABA_MESSAGE } from "../src/lib/metaStatus.ts";
 import type { SqlDatabase } from "./sql-engine.ts";
 
 /** read and failed are terminal. delivered can still become read. */
@@ -656,7 +657,7 @@ export function createMetaRouter(): Router {
         success: true,
         sandbox: true,
         notice: "SANDBOX / DEV-ONLY simulator — not live Meta Embedded Signup.",
-        message: "SANDBOX / DEV-ONLY: fake WABA ids stored locally. This is not Meta Embedded Signup and Lumera is not a certified Tech Provider.",
+        message: SANDBOX_FAKE_WABA_MESSAGE,
         wabaId: randomWaba,
         phoneNumberId: randomPhoneId,
         qualityRating: "UNKNOWN",

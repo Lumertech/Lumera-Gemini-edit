@@ -2,6 +2,12 @@ import React, { useEffect, useState } from "react";
 import { Smartphone, CheckCircle2, ArrowRight } from "lucide-react";
 import { apiFetch } from "../api/http";
 import {
+  META_TECH_PROVIDER_STATEMENT,
+  WHATSAPP_CLINIC_STATUS_LINE,
+  WHATSAPP_CONNECTION_UNAVAILABLE_SENTENCE,
+  WHATSAPP_PERMISSIONS_STATUS_SENTENCE,
+} from "../lib/metaStatus";
+import {
   launchEmbeddedSignupV4,
   loadFacebookSdk,
   type EmbeddedSignupConfig,
@@ -78,10 +84,7 @@ export const PersonalWabaConnect: React.FC<PersonalWabaConnectProps> = ({ varian
         config || (await apiFetch<EmbeddedSignupConfig>("/api/meta/embedded-signup-config"));
       setConfig(signup);
       if (!signup.appId || !signup.configId) {
-        throw new Error(
-          signup.notice ||
-            "Embedded Signup is not configured. Set FACEBOOK_APP_ID and META_EMBEDDED_SIGNUP_CONFIG_ID. Contact ravee@lumer.me."
-        );
+        throw new Error(signup.notice || `${WHATSAPP_CONNECTION_UNAVAILABLE_SENTENCE} ${WHATSAPP_CLINIC_STATUS_LINE}`);
       }
       await loadFacebookSdk(signup.appId, signup.graphVersion || "v21.0");
       const session = await launchEmbeddedSignupV4(signup);
@@ -137,8 +140,8 @@ export const PersonalWabaConnect: React.FC<PersonalWabaConnectProps> = ({ varian
       </div>
       <p className={bodyClass}>
         Optional. Use this if you practice at more than one clinic and want inbound WhatsApp on a personal number.
-        Real Meta Embedded Signup v4 (JS SDK + config_id) is wired; Lumera is not a certified Tech Provider and App Review
-        is not claimed. Contact ravee@lumer.me.
+        Real Meta Embedded Signup v4 (JS SDK + config_id) is wired. {META_TECH_PROVIDER_STATEMENT}{" "}
+        {WHATSAPP_PERMISSIONS_STATUS_SENTENCE} Contact ravee@lumer.me.
       </p>
       {connected ? (
         <p className={`text-xs flex items-center gap-1.5 ${variant === "onboarding" ? "text-emerald-300" : "text-emerald-700"}`}>

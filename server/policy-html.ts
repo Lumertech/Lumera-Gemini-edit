@@ -1,4 +1,5 @@
 import type { Express, Request, Response } from "express";
+import { POLICY_HTML_STATUS_LINE } from "../src/lib/metaStatus.ts";
 import { getDb } from "./db.ts";
 import { reportCaughtError } from "./error-tracker.ts";
 import { applyHtmlDocumentSecurityHeaders } from "./html-security-headers.ts";
@@ -48,7 +49,7 @@ export function renderPolicyDocumentHtml(title: string, body: string, updatedAt?
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${safeTitle} · Lumera</title>
-  <meta name="description" content="Lumera clinic software. Lumera is not a certified Meta Tech Provider. Meta App Review is not submitted.">
+  <meta name="description" content="Lumera clinic software. ${POLICY_HTML_STATUS_LINE}">
   <meta property="og:title" content="${safeTitle} · Lumera Polyclinic Suite">
   <meta property="og:description" content="Lumera clinic software platform: secure OPD management, EMR, and WhatsApp Cloud API patient communications.">
   <meta property="og:image" content="https://www.mylumera.in/og-image.png">
@@ -66,7 +67,7 @@ export function renderPolicyDocumentHtml(title: string, body: string, updatedAt?
 </head>
 <body>
   <header>
-    <p class="notice"><strong>Lumera Solutions LLP</strong> — clinic software. Lumera is not a certified Meta Tech Provider. Meta App Review is not submitted.</p>
+    <p class="notice"><strong>Lumera Solutions LLP</strong> — clinic software. ${POLICY_HTML_STATUS_LINE}</p>
     <nav>
       <a href="/" data-testid="policy-back">Back</a>
       <a href="/">Home</a>
@@ -98,7 +99,7 @@ function sendPolicyHtml(res: Response, slug: string): void {
         .send(
           renderPolicyDocumentHtml(
             "Policy not found",
-            "This policy document is not available. Lumera is not a certified Meta Tech Provider. Meta App Review is not submitted."
+            `This policy document is not available. ${POLICY_HTML_STATUS_LINE}`
           )
         );
       return;
@@ -114,7 +115,7 @@ function sendPolicyHtml(res: Response, slug: string): void {
       .send(
         renderPolicyDocumentHtml(
           "Policy temporarily unavailable",
-          "Unable to load this policy. Lumera is not a certified Meta Tech Provider. Meta App Review is not submitted."
+          `Unable to load this policy. ${POLICY_HTML_STATUS_LINE}`
         )
       );
   }

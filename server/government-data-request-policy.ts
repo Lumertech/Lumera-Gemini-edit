@@ -1,4 +1,5 @@
 /** Canonical public body for Meta Data Handling (government / public-authority requests). */
+import { META_TECH_PROVIDER_STATEMENT } from "../src/lib/metaStatus.ts";
 export const GOVERNMENT_DATA_REQUEST_POLICY_SLUG = "government-data-request-policy";
 
 export const GOVERNMENT_DATA_REQUEST_POLICY_TITLE =
@@ -11,7 +12,7 @@ export const GOVERNMENT_DATA_REQUEST_POLICY_BODY = `# Government & Public Author
 **Public URL:** https://www.mylumera.in/government-data-request-policy  
 **Designated Compliance Officer:** ravee@lumer.me  
 
-Lumera provides clinic software that may process personal data of patients, clinicians, and clinic staff, including data received through WhatsApp Cloud API and Facebook Login. **Lumera is not a certified Meta Tech Provider.** We do not grant any government or public authority bulk, direct, or unmediated access to user personal data.
+Lumera provides clinic software that may process personal data of patients, clinicians, and clinic staff, including data received through WhatsApp Cloud API and Facebook Login. **${META_TECH_PROVIDER_STATEMENT}** We do not grant any government or public authority bulk, direct, or unmediated access to user personal data.
 
 This policy is binding on all Lumera personnel, contractors, and subprocessors acting on our instructions. No employee may disclose user personal data to a government or public authority except as set out below.
 

@@ -18,6 +18,7 @@ import {
   Info,
 } from "lucide-react";
 import { apiFetch, apiFetchResponse } from "../../api/http";
+import { META_TECH_PROVIDER_STATEMENT, WHATSAPP_PERMISSIONS_STATUS_SENTENCE } from "../../lib/metaStatus.ts";
 import { useNav } from "../../nav/NavigationContext";
 import { MetaWhatsAppTemplate } from "../../types";
 
@@ -25,6 +26,8 @@ interface MetaOverview {
   providerName: string;
   providerType: string;
   certificationStatus?: string;
+  techProviderStatus?: string;
+  techProviderLabel?: string;
   environment?: string;
   simulatorsEnabled?: boolean;
   notice?: string;
@@ -34,6 +37,8 @@ interface MetaOverview {
     passedCount?: number;
     totalCount?: number;
   };
+  appReviewManuallyConfirmed?: boolean;
+  appReviewManualConfirmationNote?: string;
   connectedWabasCount: number;
   totalClinics: number;
   approvedTemplatesCount: number;
@@ -279,13 +284,15 @@ export const AdminMetaTechProvider: React.FC = () => {
             </div>
             <div>
               <div className="flex items-center gap-2.5 flex-wrap">
-                <h1 className="text-2xl font-bold font-manrope tracking-tight">Meta WhatsApp Cloud API (sandbox readiness)</h1>
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-500/20 text-amber-200 border border-amber-500/40">
-                  <AlertCircle className="w-3.5 h-3.5" /> SANDBOX — not a Tech Provider
+                <h1 className="text-2xl font-bold font-manrope tracking-tight">Meta WhatsApp Cloud API readiness</h1>
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-200 border border-emerald-500/40">
+                  {overview?.techProviderStatus || "TECH_PROVIDER"}
                 </span>
               </div>
               <p className="text-sm text-slate-300 mt-1 max-w-2xl">
-                Inventory of WhatsApp Cloud API wiring. This screen does not mean Lumera is a Meta Tech Provider or that App Review is approved.
+                {overview?.techProviderLabel || META_TECH_PROVIDER_STATEMENT} {WHATSAPP_PERMISSIONS_STATUS_SENTENCE}
+                {overview?.certificationStatus ? ` Certification status: ${overview.certificationStatus}.` : ""}
+                {overview?.providerType ? ` Provider type: ${overview.providerType}.` : ""}
               </p>
             </div>
           </div>
@@ -312,10 +319,10 @@ export const AdminMetaTechProvider: React.FC = () => {
           <div className="bg-slate-900/60 p-3 rounded-xl border border-slate-800/80">
             <div className="text-xs text-slate-400 font-medium">App Review status</div>
             <div className="text-lg font-bold text-amber-300 flex items-center gap-1.5 mt-0.5">
-              <AlertCircle className="w-4 h-4" /> {overview?.appReviewStatus?.status || "NOT_SUBMITTED"}
+              <AlertCircle className="w-4 h-4" /> {overview?.appReviewStatus?.status || "APPROVED"}
             </div>
             <div className="text-[11px] text-slate-400 mt-0.5">
-              {overview?.appReviewStatus?.passedCount ?? 0}/{overview?.appReviewStatus?.totalCount ?? 0} readiness items true — not a Tech Provider
+              {overview?.appReviewStatus?.passedCount ?? 0}/{overview?.appReviewStatus?.totalCount ?? 0} readiness items true. Tech Provider status: {overview?.techProviderStatus || "TECH_PROVIDER"}. {overview?.appReviewManualConfirmationNote}
             </div>
           </div>
           <div className="bg-slate-900/60 p-3 rounded-xl border border-slate-800/80">
@@ -394,11 +401,11 @@ export const AdminMetaTechProvider: React.FC = () => {
               <div>
                 <h2 className="text-lg font-bold text-slate-900">Meta App Review submission parameters</h2>
                 <p className="text-sm text-slate-500">
-                  URLs for a future App Review packet. Presence of a page is not approval. Status: <strong>{overview?.appReviewStatus?.status || "NOT_SUBMITTED"}</strong>.
+                  Policy URLs for the submitted Meta App Review packet. Presence of a page is not an approval. Status: <strong>{overview?.appReviewStatus?.status || "APPROVED"}</strong>. {WHATSAPP_PERMISSIONS_STATUS_SENTENCE}
                 </p>
               </div>
-              <span className="px-3 py-1 bg-amber-50 text-amber-800 font-semibold text-xs rounded-full border border-amber-200 flex items-center gap-1.5">
-                <AlertCircle className="w-3.5 h-3.5" /> SANDBOX — not a Tech Provider
+              <span className="px-3 py-1 bg-emerald-50 text-emerald-800 font-semibold text-xs rounded-full border border-emerald-200 max-w-sm">
+                {overview?.techProviderLabel || META_TECH_PROVIDER_STATEMENT}
               </span>
             </div>
 
@@ -444,7 +451,7 @@ export const AdminMetaTechProvider: React.FC = () => {
                     <span className="text-[11px] bg-emerald-100 text-emerald-800 font-semibold px-2 py-0.5 rounded">Meta Required</span>
                   </div>
                   <p className="text-xs text-slate-500">
-                    Details WhatsApp Acceptable Use, anti-spam policies, and patient prior consent. Not a Tech Provider certification.
+                    Details WhatsApp Acceptable Use, anti-spam policies, and patient prior consent. {WHATSAPP_PERMISSIONS_STATUS_SENTENCE}
                   </p>
                   <code className="text-xs text-slate-700 font-mono bg-white px-2 py-1 rounded border border-slate-300 inline-block break-all">
                     {termsUrl}
@@ -831,7 +838,7 @@ export const AdminMetaTechProvider: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Select Meta Approved Template</label>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Select an approved WhatsApp template</label>
                   <select
                     value={testTemplate}
                     onChange={(e) => setTestTemplate(e.target.value)}
