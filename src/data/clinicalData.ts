@@ -1361,7 +1361,8 @@ export const DEFAULT_WHATSAPP_TEMPLATES: WhatsAppTemplate[] = [
     bodyText: 'Dear {{1}},\n\nYour digital prescription from {{2}} has been generated successfully.\n\n📋 Rx No: *{{3}}*\n💊 Medications: {{4}} items\n🗓️ Follow-up: *{{5}}*\n\nTap the button below to view or print your digital prescription anytime.',
     footerText: 'Issued under the Telemedicine Practice Guidelines, 2020',
     buttons: [
-      { type: 'URL', text: 'View Digital Rx PDF', payload: 'https://www.mylumera.in/rx/v/opaque-token' },
+      // {{1}} is the opaque token minted for purpose "rx". Never an rx number.
+      { type: 'URL', text: 'View Digital Rx PDF', payload: 'https://www.mylumera.in/rx/v/{{1}}' },
       { type: 'QUICK_REPLY', text: 'Order Medicines', payload: 'ORDER_MEDS' }
     ],
     status: 'APPROVED'
@@ -1375,7 +1376,8 @@ export const DEFAULT_WHATSAPP_TEMPLATES: WhatsAppTemplate[] = [
     bodyText: 'Dear {{1}},\n\nInvoice *{{2}}* for {{3}} has been generated for total amount *₹{{4}}*.\n\nYou can pay securely via UPI, Cards, or NetBanking using the link below.',
     footerText: 'Instant GST Receipt provided on payment',
     buttons: [
-      { type: 'URL', text: 'Pay via UPI/Card', payload: 'https://www.mylumera.in/pay/v/opaque-token' }
+      // {{1}} is the opaque token minted for purpose "receipt". The page may only hand off to the clinic's own Razorpay or UPI.
+      { type: 'URL', text: 'Pay via UPI/Card', payload: 'https://www.mylumera.in/pay/v/{{1}}' }
     ],
     status: 'APPROVED'
   },

@@ -15,7 +15,14 @@
 
 import crypto from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
+import { PATIENT_LINK_PUBLIC_BASE_URL } from "./patient-link-token.ts";
 import { graphApiVersion } from "./runtime.ts";
+
+const PATIENT_LINK_BASE = PATIENT_LINK_PUBLIC_BASE_URL.replace(/\/$/, "");
+/** URL button base. {{1}} is the opaque token from mintPatientLinkToken, never an rx number or UHID. */
+const RX_BUTTON_URL = `${PATIENT_LINK_BASE}/rx/v/{{1}}`;
+const RX_BUTTON_EXAMPLE = `${PATIENT_LINK_BASE}/rx/v/opaqueexampletoken`;
+const RECEIPT_LINK_EXAMPLE = `${PATIENT_LINK_BASE}/pay/v/opaqueexampletoken`;
 
 export type ReceiptParameterFields = {
   patientName?: string;
@@ -85,7 +92,7 @@ export const CLINIC_TEMPLATE_CATALOG: readonly ClinicTemplateSpec[] = [
     language: CLINIC_TEMPLATE_LANGUAGE,
     label: "Payment receipt",
     body: "Hi {{1}}, your payment of {{2}} was received by {{3}} ({{4}}). Ref {{5}}. View your receipt here: {{6}}. Thank you.",
-    example: ["Asha", "INR 700", "Sunrise Clinic", "Dr Mehta", "RCP-1001", "https://www.mylumera.in/pay/v/opaqueexampletoken"],
+    example: ["Asha", "INR 700", "Sunrise Clinic", "Dr Mehta", "RCP-1001", RECEIPT_LINK_EXAMPLE],
     footer: "Reply to this chat if you need a copy of this receipt.",
   },
   {
@@ -99,8 +106,8 @@ export const CLINIC_TEMPLATE_CATALOG: readonly ClinicTemplateSpec[] = [
     footer: "Follow the dose your doctor wrote. Reply to this chat if you need help.",
     urlButton: {
       text: "View prescription",
-      url: "https://www.mylumera.in/rx/v/{{1}}",
-      example: "https://www.mylumera.in/rx/v/opaqueexampletoken",
+      url: RX_BUTTON_URL,
+      example: RX_BUTTON_EXAMPLE,
     },
   },
 ] as const;
@@ -121,7 +128,7 @@ const HINDI_BODIES: Record<ClinicTemplateKind, { body: string; example: string[]
   },
   payment_receipt: {
     body: "नमस्ते {{1}}, {{2}} का भुगतान {{3}} ({{4}}) को मिला। संदर्भ {{5}}। रसीद यहाँ देखें: {{6}}। धन्यवाद।",
-    example: ["Asha", "INR 700", "Sunrise Clinic", "Dr Mehta", "RCP-1001", "https://www.mylumera.in/pay/v/opaqueexampletoken"],
+    example: ["Asha", "INR 700", "Sunrise Clinic", "Dr Mehta", "RCP-1001", RECEIPT_LINK_EXAMPLE],
     footer: "रसीद की प्रति चाहिए तो इस चैट में जवाब दें।",
   },
   prescription_ready: {
@@ -249,9 +256,15 @@ export function prescriptionReadyTemplateParameters(fields: {
   ];
 }
 
-/** Trailing URL variable. Slashes would change the path Meta already fixed. */
-export function prescriptionUrlSuffix(rxNumber: string): string {
-  return String(rxNumber || "").replace(/[^A-Za-z0-9_-]/g, "");
+/**
+ * Trailing URL-button variable. Mint returns 32 bytes as base64url (43 characters).
+ * An rx number or UHID is rejected so it cannot be substituted into {{1}}.
+ */
+const MINTED_PATIENT_LINK_TOKEN = /^[A-Za-z0-9_-]{43}$/;
+
+export function prescriptionUrlSuffix(token: string): string {
+  const value = String(token || "").trim();
+  return MINTED_PATIENT_LINK_TOKEN.test(value) ? value : "";
 }
 
 export function graphComponentsForClinicTemplate(spec: ClinicTemplateSpec): Array<Record<string, unknown>> {

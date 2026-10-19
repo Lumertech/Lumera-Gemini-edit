@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   TrendingUp, 
   Calendar, 
@@ -23,12 +23,17 @@ import {
   Legend 
 } from 'recharts';
 import { chartCurrencyFormatter } from '../../lib/chartCurrency.ts';
+import { apiFetch } from '../../api/http.ts';
 import { TherapyPackage, PrescribedExercise } from '../../types';
+
+/** Same origin as PATIENT_LINK_PUBLIC_BASE_URL. The client must not import the server token module. */
+const HEP_LINK_BASE = 'https://www.mylumera.in/hep/v/';
 
 interface PhysioProgressTrackerProps {
   therapyPackage?: TherapyPackage;
   exercises?: PrescribedExercise[];
   patientName: string;
+  patientId?: string;
   uhid: string;
 }
 
@@ -45,12 +50,39 @@ export const PhysioProgressTracker: React.FC<PhysioProgressTrackerProps> = ({
   therapyPackage,
   exercises = [],
   patientName,
+  patientId,
   uhid,
 }) => {
   const [selectedExerciseForVideo, setSelectedExerciseForVideo] = useState<PrescribedExercise | null>(
     exercises[0] || null
   );
   const [showQrModal, setShowQrModal] = useState(false);
+  const [hepUrl, setHepUrl] = useState('');
+
+  useEffect(() => {
+    if (!showQrModal || !patientId) return;
+    let cancelled = false;
+    setHepUrl('');
+    const resourceId = therapyPackage?.id || patientId;
+    void apiFetch<{ url?: string }>('/api/patient-links', {
+      method: 'POST',
+      body: JSON.stringify({
+        purpose: 'hep',
+        patientId,
+        resourceId,
+        ttlHours: 72,
+      }),
+    })
+      .then((data) => {
+        if (!cancelled && data?.url && data.url.startsWith(HEP_LINK_BASE)) setHepUrl(data.url);
+      })
+      .catch(() => {
+        /* the modal stays on the base path until the server issues a token */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [showQrModal, patientId, therapyPackage?.id]);
 
   // Parse package session log to chart data if available
   const chartData = therapyPackage && therapyPackage.sessionsLog.length > 0
@@ -282,7 +314,7 @@ export const PhysioProgressTracker: React.FC<PhysioProgressTrackerProps> = ({
             </div>
 
             <div className="bg-blue-50 p-2.5 rounded-lg text-[11px] text-blue-900 font-medium">
-              🔗 <strong>www.mylumera.in/hep/v/…</strong>
+              🔗 <strong>{hepUrl || HEP_LINK_BASE}</strong> expiring token. The UHID is not in the link.
             </div>
 
             <button

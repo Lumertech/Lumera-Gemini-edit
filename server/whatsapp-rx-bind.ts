@@ -195,7 +195,8 @@ export async function dispatchSignedRxCloudMessage(opts: {
   clinicName: string;
   doctorName: string;
   rxNumber: string;
-  urlSuffix?: string;
+  /** Opaque token from mintPatientLinkToken. Never the rx number or a UHID. */
+  linkToken?: string;
   fetchImpl?: typeof fetch;
 }): Promise<CloudDispatchResult> {
   const db = getDb();
@@ -217,7 +218,7 @@ export async function dispatchSignedRxCloudMessage(opts: {
       textBody: opts.textBody,
       templateLanguage: approved.language,
       templateParameters: prescriptionReadyTemplateParameters(opts),
-      urlButtonParameter: prescriptionUrlSuffix(opts.urlSuffix || ""),
+      urlButtonParameter: prescriptionUrlSuffix(opts.linkToken || ""),
       db,
       tenantId: opts.tenantId,
       fetchImpl: opts.fetchImpl,
@@ -374,7 +375,7 @@ export async function handleSignedRxWhatsAppSend(req: Request, res: Response): P
       clinicName: resolved.clinicName,
       doctorName: resolved.doctorName,
       rxNumber: resolved.rxNumber,
-      urlSuffix: link.token,
+      linkToken: link.token,
     });
     const messageId = sent.ok === true ? String(sent.messageId || "").trim() : "";
     const delivered = sent.ok === true && sent.channel === "graph" && META_MESSAGE_ID.test(messageId);

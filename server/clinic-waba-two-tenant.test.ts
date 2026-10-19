@@ -502,7 +502,7 @@ describe("two-tenant clinic WhatsApp Graph path", () => {
       clinicName: "Sunrise Clinic",
       doctorName: "Dr Mehta",
       rxNumber: "RX-1001",
-      urlSuffix: "opaqueexampletoken",
+      linkToken: "a".repeat(43),
       fetchImpl,
     });
     assert.equal(sent.ok, true, JSON.stringify(sent));
@@ -522,7 +522,8 @@ describe("two-tenant clinic WhatsApp Graph path", () => {
     const buttonParams = template.components
       ?.find((part) => part.type === "button")
       ?.parameters?.map((parameter) => parameter.text);
-    assert.deepEqual(buttonParams, ["opaqueexampletoken"]);
+    assert.deepEqual(buttonParams, ["a".repeat(43)]);
+    assert.equal(JSON.stringify(calls[0].body).includes("RX-1001"), false);
 
     getDb()
       .prepare(`UPDATE meta_templates SET status = 'PENDING' WHERE tenant_id = ? AND name = 'clinic_prescription_ready'`)
