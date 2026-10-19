@@ -131,7 +131,7 @@ export const PracticeHome: React.FC<PracticeHomeProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [user.tenantId, appointments]);
+  }, [user.tenantId]);
 
   useEffect(() => {
     let cancelled = false;

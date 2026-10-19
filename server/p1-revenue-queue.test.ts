@@ -8,7 +8,13 @@ import { getDb, initDatabase } from "./db.ts";
 import { hashPassword } from "./password.ts";
 import { clinicCalendarDate, shiftIsoDate } from "../src/lib/clinicDay.ts";
 import { collectedRupees, dayEndTotals, revenueTotals } from "./collected-revenue.ts";
-import { ensureAppointmentTokenIndex } from "./queue-tokens.ts";
+import {
+  allocateTokenNumber,
+  ensureAppointmentTokenIndex,
+  MAX_STAFF_TOKEN,
+  staffTokenRequest,
+  writeAllocatedToken,
+} from "./queue-tokens.ts";
 
 const IST = "IST (UTC+5:30)";
 
@@ -112,8 +118,19 @@ describe("appointment tokens stay inside one queue day", () => {
     );
     insert.run("row-rajiv", "Rajiv Saxena");
     insert.run("row-qa", "QA Patient");
-    const result = ensureAppointmentTokenIndex(db);
+    const warnings: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (message?: unknown) => {
+      warnings.push(String(message ?? ""));
+    };
+    let result: ReturnType<typeof ensureAppointmentTokenIndex>;
+    try {
+      result = ensureAppointmentTokenIndex(db);
+    } finally {
+      console.warn = originalWarn;
+    }
     assert.equal(result.created, false);
+    assert.match(warnings.join("\n"), /skipped for tenant\(s\): tenant-qa/);
     assert.equal(result.duplicates.length, 1);
     assert.equal(result.duplicates[0].token_number, 1010);
     assert.equal(result.duplicates[0].n, 2);
@@ -158,6 +175,45 @@ describe("appointment tokens stay inside one queue day", () => {
     );
     const kept = db.prepare(`SELECT patient_name FROM appointments WHERE id = 'a'`).get() as { patient_name: string };
     assert.equal(kept.patient_name, "QA Patient");
+  });
+
+  it("accepts staff tokens 1 through 99999 and allocates anything else", () => {
+    const db = memoryAppointments();
+    const insert = (id: string, token: number) =>
+      db
+        .prepare(
+          `INSERT INTO appointments (id, tenant_id, date, doctor_id, token_number, patient_name)
+           VALUES (?, 'tenant-qa', '2026-10-19', 'doc-1', ?, 'QA')`
+        )
+        .run(id, token);
+    insert("keep", 12);
+    assert.equal(staffTokenRequest(12), 12);
+    assert.equal(staffTokenRequest(MAX_STAFF_TOKEN), MAX_STAFF_TOKEN);
+    assert.equal(staffTokenRequest(0), undefined);
+    assert.equal(staffTokenRequest(1.5), undefined);
+    assert.equal(staffTokenRequest(MAX_STAFF_TOKEN + 1), undefined);
+    assert.equal(allocateTokenNumber(db, "tenant-qa", "2026-10-19", "doc-1", 99999), 99999);
+    assert.equal(allocateTokenNumber(db, "tenant-qa", "2026-10-19", "doc-1", 100000), 13);
+    assert.equal(allocateTokenNumber(db, "tenant-qa", "2026-10-19", "doc-1", 1.5), 13);
+    const unique = Object.assign(new Error("UNIQUE constraint failed: appointments.token_number"), {});
+    let attempts = 0;
+    assert.throws(
+      () =>
+        writeAllocatedToken(
+          () => {
+            attempts += 1;
+            throw unique;
+          },
+          (requested) => requested ?? 4
+        ),
+      (err: Error & { status?: number }) => {
+        assert.equal(err.status, 409);
+        assert.equal(err.message, "That token is already in use for this queue");
+        assert.equal(/UNIQUE|duplicate key|token_number/i.test(err.message), false);
+        return true;
+      }
+    );
+    assert.equal(attempts, 2);
   });
 });
 
@@ -491,5 +547,97 @@ describe("P1 revenue and queue integrity", () => {
     );
     assert.equal(omitted.status, 201, String(omitted.json.error || ""));
     assert.equal((omitted.json.appointment as { date: string }).date, clinicCalendarDate(new Date(), IST));
+  });
+
+  it("keeps a status-only token, rejects a foreign doctor, and caps staff token numbers", async () => {
+    const clinic = createClinicUser("guard");
+    const other = createClinicUser("guard-other");
+    const token = await login(clinic.email);
+    const auth = { Authorization: `Bearer ${token}` };
+    const patient = await createPatient(auth, "QA Patient");
+    const db = getDb();
+    db.prepare(`INSERT INTO doctors (id, user_id, name, specialty) VALUES (?, ?, 'Dr Foreign', 'General Medicine')`).run(
+      `doc-foreign-${other.tenantId}`,
+      other.userId
+    );
+    db.prepare(`INSERT INTO doctors (id, user_id, name, specialty) VALUES (?, ?, 'Dr Home', 'General Medicine')`).run(
+      `doc-home-${clinic.tenantId}`,
+      clinic.userId
+    );
+
+    const foreign = await jsonRequest(
+      port,
+      "POST",
+      "/api/appointments",
+      {
+        patientId: patient.id,
+        doctorId: `doc-foreign-${other.tenantId}`,
+        date: clinicCalendarDate(new Date(), IST),
+        timeSlot: "10:00 AM",
+      },
+      auth
+    );
+    assert.equal(foreign.status, 400);
+    assert.equal(foreign.json.error, "Consulting doctor is not in this clinic");
+    assert.equal(/UNIQUE|duplicate key/i.test(String(foreign.json.error || "")), false);
+
+    const home = await jsonRequest(
+      port,
+      "POST",
+      "/api/appointments",
+      {
+        patientId: patient.id,
+        doctorId: `doc-home-${clinic.tenantId}`,
+        date: clinicCalendarDate(new Date(), IST),
+        timeSlot: "10:15 AM",
+        tokenNumber: 100000,
+      },
+      auth
+    );
+    assert.equal(home.status, 201, String(home.json.error || ""));
+    const visit = home.json.appointment as { id: string; tokenNumber: number; doctorId: string };
+    assert.equal(visit.doctorId, `doc-home-${clinic.tenantId}`);
+    assert.equal(visit.tokenNumber, 1);
+
+    const capped = await jsonRequest(
+      port,
+      "POST",
+      "/api/appointments",
+      {
+        patientId: patient.id,
+        doctorId: `doc-cap-${clinic.tenantId}`,
+        date: clinicCalendarDate(new Date(), IST),
+        timeSlot: "10:30 AM",
+        tokenNumber: 99999,
+      },
+      auth
+    );
+    assert.equal(capped.status, 201, String(capped.json.error || ""));
+    const cappedVisit = capped.json.appointment as { id: string; tokenNumber: number };
+    assert.equal(cappedVisit.tokenNumber, 99999);
+
+    db.prepare(`UPDATE appointments SET token_number = 100000 WHERE id = ?`).run(cappedVisit.id);
+    const statusOnly = await jsonRequest(
+      port,
+      "PATCH",
+      `/api/appointments/${cappedVisit.id}`,
+      { status: "In Consultation" },
+      auth
+    );
+    assert.equal(statusOnly.status, 200, String(statusOnly.json.error || ""));
+    assert.equal((statusOnly.json.appointment as { tokenNumber: number; status: string }).tokenNumber, 100000);
+    assert.equal((statusOnly.json.appointment as { status: string }).status, "In Consultation");
+
+    const movedDoctor = await jsonRequest(
+      port,
+      "PATCH",
+      `/api/appointments/${visit.id}`,
+      { doctorId: `doc-foreign-${other.tenantId}` },
+      auth
+    );
+    assert.equal(movedDoctor.status, 400);
+    assert.equal(movedDoctor.json.error, "Consulting doctor is not in this clinic");
+    const stillHome = await jsonRequest(port, "GET", `/api/appointments/${visit.id}`, undefined, auth);
+    assert.equal((stillHome.json.appointment as { doctorId: string }).doctorId, `doc-home-${clinic.tenantId}`);
   });
 });

@@ -48,7 +48,16 @@ export function tokenInUse(
   return Boolean(row?.id);
 }
 
-/** Use the requested token when it is free in this bucket. Otherwise the next free number. */
+/** Staff-chosen tokens. Anything else (missing, fractional, 0, above the cap) is allocated. */
+export const MAX_STAFF_TOKEN = 99999;
+
+export function staffTokenRequest(requested: unknown): number | undefined {
+  const ask = Number(requested);
+  if (!Number.isInteger(ask) || ask < 1 || ask > MAX_STAFF_TOKEN) return undefined;
+  return ask;
+}
+
+/** Use the requested token when it is a free staff token in this bucket. Otherwise the next free number. */
 export function allocateTokenNumber(
   database: SqlDatabase,
   tenantId: string,
@@ -58,13 +67,43 @@ export function allocateTokenNumber(
   exceptId = ""
 ): number {
   const doctor = String(doctorId || "");
-  const ask = Number(requested);
-  if (Number.isInteger(ask) && ask > 0 && !tokenInUse(database, tenantId, queueDate, doctor, ask, exceptId)) {
+  const ask = staffTokenRequest(requested);
+  if (ask !== undefined && !tokenInUse(database, tenantId, queueDate, doctor, ask, exceptId)) {
     return ask;
   }
   let token = nextTokenNumber(database, tenantId, queueDate, doctor);
   while (tokenInUse(database, tenantId, queueDate, doctor, token, exceptId)) token += 1;
   return token;
+}
+
+export function tokenClashError(): Error {
+  return Object.assign(new Error("That token is already in use for this queue"), { status: 409 });
+}
+
+/**
+ * Write the allocated token. One unique-index clash retries with a fresh number.
+ * A second clash is a generic 409. The database error text is not returned.
+ */
+export function writeAllocatedToken(
+  write: (token: number) => void,
+  allocate: (requested?: number) => number,
+  requested?: number
+): number {
+  let token = allocate(requested);
+  try {
+    write(token);
+    return token;
+  } catch (err) {
+    if (!isTokenUniqueViolation(err)) throw err;
+  }
+  token = allocate(undefined);
+  try {
+    write(token);
+    return token;
+  } catch (err) {
+    if (isTokenUniqueViolation(err)) throw tokenClashError();
+    throw err;
+  }
 }
 
 export function isTokenUniqueViolation(err: unknown): boolean {
@@ -106,12 +145,13 @@ export function ensureAppointmentTokenIndex(database: SqlDatabase): {
 } {
   const duplicates = appointmentTokenDuplicates(database);
   if (duplicates.length > 0) {
+    const skippedTenants = [...new Set(duplicates.map((row) => row.tenant_id).filter(Boolean))];
     const sample = duplicates
       .slice(0, 20)
       .map((row) => `${row.tenant_id} ${row.date} doctor=${row.doctor_id || "—"} token=${row.token_number} ×${row.n}`)
       .join("; ");
     console.warn(
-      `[Lumera] ${duplicates.length} duplicate appointment token group(s) on (tenant, queue date, doctor). Unique index was not created. Rows were not modified. ${sample}`
+      `[Lumera] unique appointment token index skipped for tenant(s): ${skippedTenants.join(", ") || "—"}. ${duplicates.length} duplicate group(s). Rows were not modified. ${sample}`
     );
     return { created: false, duplicates };
   }

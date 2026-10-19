@@ -273,12 +273,11 @@ export const appointments = pgTable(
   },
   (t) => [
     index("idx_appointments_tenant").on(t.tenantId),
-    uniqueIndex("idx_appointments_tenant_queue_doctor_token").on(
-      t.tenantId,
-      t.date,
-      t.doctorId,
-      t.tokenNumber
-    ),
+    // idx_appointments_tenant_queue_doctor_token is NOT declared here.
+    // ensureAppointmentTokenIndex creates that UNIQUE index only when the
+    // database has no duplicate (tenant, date, doctor, token) groups, and
+    // logs the skipped tenants otherwise. An unconditional unique index in
+    // this schema would make drizzle apply it on boot and crash-loop.
   ]
 );
 

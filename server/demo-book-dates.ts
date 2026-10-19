@@ -3,6 +3,7 @@ import type { SqlDatabase } from "./sql-engine.ts";
 import { tableExists } from "./sql-catalog.ts";
 import { clinicCalendarDate, shiftIsoDate } from "../src/lib/clinicDay.ts";
 import { DEMO_PHYSIO_PACKAGES } from "../src/lib/demoPhysioBook.ts";
+import { allocateTokenNumber, isTokenUniqueViolation } from "./queue-tokens.ts";
 
 /** How many active visits land on today, inside the week, and inside the month. */
 export interface DemoBookWindow {
@@ -196,37 +197,44 @@ function isDemoManagedAppointmentId(id: string): boolean {
   return /^(demo-book-|ind-apt-)/.test(String(id || ""));
 }
 
-function demoTokenFree(
-  database: SqlDatabase,
-  tenantId: string,
-  queueDate: string,
-  doctorId: string,
-  token: number
-): boolean {
-  const row = database
-    .prepare(
-      `SELECT id FROM appointments
-       WHERE tenant_id = ? AND date = ? AND doctor_id = ? AND token_number = ?
-       LIMIT 1`
-    )
-    .get(tenantId, queueDate, doctorId, token) as { id?: string } | undefined;
-  return !row?.id;
+function warnDemoTokenSkip(tenantId: string, id: string, queueDate: string): void {
+  console.warn(
+    `[Lumera] demo book skipped ${tenantId} appointment ${id} on ${queueDate} after a token collision. Row left unchanged.`
+  );
 }
 
-/** Prefer the demo sequence number, but never reuse a token already held for that queue day and doctor. */
-function freeDemoToken(
+function insertDemoVisit(run: () => void, tenantId: string, id: string, queueDate: string): void {
+  try {
+    run();
+  } catch (err) {
+    if (!isTokenUniqueViolation(err)) throw err;
+    warnDemoTokenSkip(tenantId, id, queueDate);
+  }
+}
+
+/** Move one demo row onto its target clinic day and a token that is free there. */
+function moveDemoVisit(
   database: SqlDatabase,
   tenantId: string,
-  queueDate: string,
-  doctorId: string,
-  preferred: number
-): number {
-  let token = preferred > 0 ? preferred : 1;
-  for (let i = 0; i < 100; i += 1) {
-    if (demoTokenFree(database, tenantId, queueDate, doctorId, token)) return token;
-    token += 1;
+  row: AppointmentRow,
+  date: string,
+  slot: string,
+  apply: (token: number) => void
+): void {
+  const token = allocateTokenNumber(
+    database,
+    tenantId,
+    date,
+    String(row.doctor_id || ""),
+    Number(row.token_number),
+    row.id
+  );
+  try {
+    apply(token);
+  } catch (err) {
+    if (!isTokenUniqueViolation(err)) throw err;
+    warnDemoTokenSkip(tenantId, row.id, date);
   }
-  return preferred + 100000;
 }
 
 function orderedNamedRows(rows: AppointmentRow[]): AppointmentRow[] {
@@ -282,10 +290,12 @@ function ensureNamedDemoBook(database: SqlDatabase, book: NamedBook, today: stri
     const person = book.people[n % book.people.length];
     const plan = namedDemoVisitPlan(n, book.sessionType, window);
     const id = `demo-book-${book.tenantId}-${String(n).padStart(3, "0")}`;
-    insertVisit.run(
+    insertDemoVisit(
+      () =>
+        insertVisit.run(
       id,
       book.tenantId,
-      freeDemoToken(database, book.tenantId, today, person.doctorId, 1000 + n),
+      allocateTokenNumber(database, book.tenantId, today, person.doctorId, 1000 + n),
       person.patientId,
       person.patientName,
       person.patientPhone,
@@ -301,6 +311,10 @@ function ensureNamedDemoBook(database: SqlDatabase, book: NamedBook, today: stri
       plan.isPaid,
       stamp,
       id
+    ),
+      book.tenantId,
+      id,
+      today
     );
   }
 }
@@ -315,6 +329,8 @@ interface AppointmentRow {
   doctor_id: string;
   doctor_name: string;
   specialty: string;
+  token_number: number;
+  date: string;
 }
 
 /** Insert the done sessions a physio package still needs. Existing tail rows count, so a second pass inserts nothing. */
@@ -354,10 +370,12 @@ function ensurePhysioPackageHistory(
     const deficit = (targets.get(person.patientId) ?? 0) - (completed.get(person.patientId) ?? 0);
     for (let k = 0; k < deficit; k += 1) {
       const id = `demo-book-${book.tenantId}-pkg-${person.patientId}-${String(k).padStart(2, "0")}`;
-      insertVisit.run(
+      insertDemoVisit(
+        () =>
+          insertVisit.run(
         id,
         book.tenantId,
-        freeDemoToken(database, book.tenantId, today, person.doctorId, 3000 + k),
+        allocateTokenNumber(database, book.tenantId, today, person.doctorId, 3000 + k),
         person.patientId,
         person.patientName,
         person.patientPhone,
@@ -373,6 +391,10 @@ function ensurePhysioPackageHistory(
         0,
         stamp,
         id
+      ),
+        book.tenantId,
+        id,
+        today
       );
     }
   }
@@ -384,6 +406,17 @@ function ensurePhysioPackageHistory(
  * Empty books are filled only for the physio and polyclinic demo workspaces.
  */
 export function spreadDemoBookDates(database: SqlDatabase, now = new Date()): void {
+  try {
+    spreadDemoBookDatesUnsafe(database, now);
+  } catch (err) {
+    console.warn(
+      "[Lumera] demo book date spread failed. Boot continues.",
+      err instanceof Error ? err.message : err
+    );
+  }
+}
+
+function spreadDemoBookDatesUnsafe(database: SqlDatabase, now = new Date()): void {
   const today = clinicCalendarDate(now);
   const tenantIds = (
     database.prepare(`SELECT DISTINCT tenant_id AS id FROM appointments`).all() as Array<{ id: string }>
@@ -395,7 +428,8 @@ export function spreadDemoBookDates(database: SqlDatabase, now = new Date()): vo
   }
 
   const list = database.prepare(
-    `SELECT id, status, patient_id, patient_name, patient_phone, uhid, doctor_id, doctor_name, specialty
+    `SELECT id, status, patient_id, patient_name, patient_phone, uhid, doctor_id, doctor_name, specialty,
+            token_number, date
      FROM appointments WHERE tenant_id = ? AND ${hiddenVisitSourceSql()}`
   );
   const insert = database.prepare(
@@ -406,15 +440,36 @@ export function spreadDemoBookDates(database: SqlDatabase, now = new Date()): vo
      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'New Consultation', 'Waiting', 'Walk-in', 500, 0, ?)`
   );
   const update = database.prepare(
-    `UPDATE appointments SET date = ?, time_slot = ? WHERE id = ? AND tenant_id = ?`
+    `UPDATE appointments SET date = ?, time_slot = ?, token_number = ? WHERE id = ? AND tenant_id = ?`
   );
   const updateNamed = database.prepare(
     `UPDATE appointments
-     SET date = ?, time_slot = ?, status = ?, is_paid = ?, type = ?, consultation_fee = ?
+     SET date = ?, time_slot = ?, token_number = ?, status = ?, is_paid = ?, type = ?, consultation_fee = ?
      WHERE id = ? AND tenant_id = ?`
   );
 
   for (const tenantId of tenantIds) {
+    try {
+      spreadOneDemoTenant(database, tenantId, today, now, list, insert, update, updateNamed);
+    } catch (err) {
+      console.warn(
+        `[Lumera] demo book spread skipped tenant ${tenantId}.`,
+        err instanceof Error ? err.message : err
+      );
+    }
+  }
+}
+
+function spreadOneDemoTenant(
+  database: SqlDatabase,
+  tenantId: string,
+  today: string,
+  now: Date,
+  list: { all: (...params: unknown[]) => unknown },
+  insert: { run: (...params: unknown[]) => unknown },
+  update: { run: (...params: unknown[]) => unknown },
+  updateNamed: { run: (...params: unknown[]) => unknown }
+): void {
     const book = namedBookFor(tenantId);
     if (book) ensureNamedDemoBook(database, book, today, now);
     const window = demoBookWindowFor(tenantId);
@@ -427,10 +482,12 @@ export function spreadDemoBookDates(database: SqlDatabase, now = new Date()): vo
       for (let n = active.length; n < window.month; n += 1) {
         const person = people[n % people.length] || sample;
         const id = `demo-book-${tenantId}-${String(n).padStart(3, "0")}`;
-        insert.run(
+        insertDemoVisit(
+          () =>
+            insert.run(
           id,
           tenantId,
-          freeDemoToken(database, tenantId, today, String(person.doctor_id || ""), 1000 + n),
+          allocateTokenNumber(database, tenantId, today, String(person.doctor_id || ""), 1000 + n),
           person.patient_id,
           person.patient_name,
           person.patient_phone || "",
@@ -441,8 +498,12 @@ export function spreadDemoBookDates(database: SqlDatabase, now = new Date()): vo
           today,
           CLINIC_SLOTS[n % CLINIC_SLOTS.length],
           stamp
+        ),
+          tenantId,
+          id,
+          today
         );
-        active.push({ ...person, id, status: "Waiting" });
+        active.push({ ...person, id, status: "Waiting", token_number: 0, date: today });
       }
     }
 
@@ -467,9 +528,11 @@ export function spreadDemoBookDates(database: SqlDatabase, now = new Date()): vo
           completed,
           isActiveStatus(String(row.status || ""))
         );
-        updateNamed.run(date, slot, plan.status, plan.isPaid, plan.type, book.fee, row.id, tenantId);
+        moveDemoVisit(database, tenantId, row, date, slot, (token) => {
+          updateNamed.run(date, slot, token, plan.status, plan.isPaid, plan.type, book.fee, row.id, tenantId);
+        });
       });
-      continue;
+      return;
     }
 
     const refreshed = list.all(tenantId, ...HIDDEN_AMBIENT_SOURCES) as AppointmentRow[];
@@ -487,7 +550,8 @@ export function spreadDemoBookDates(database: SqlDatabase, now = new Date()): vo
     planRows.forEach((row, index) => {
       const date = demoBookDateForIndex(index, today, window);
       const slot = CLINIC_SLOTS[index % CLINIC_SLOTS.length];
-      update.run(date, slot, row.id, tenantId);
+      moveDemoVisit(database, tenantId, row, date, slot, (token) => {
+        update.run(date, slot, token, row.id, tenantId);
+      });
     });
-  }
 }

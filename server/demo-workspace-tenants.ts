@@ -260,5 +260,12 @@ export function ensureDemoWorkspaceTenants(database: SqlDatabase) {
   }
 
   seedIndividualChart(database, now);
-  spreadDemoBookDates(database);
+  try {
+    spreadDemoBookDates(database);
+  } catch (err) {
+    console.warn(
+      "[Lumera] demo book date spread failed. Boot continues.",
+      err instanceof Error ? err.message : err
+    );
+  }
 }

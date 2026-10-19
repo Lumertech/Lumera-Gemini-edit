@@ -43,6 +43,17 @@ export function resolveQueueDate(requested: unknown, timezone?: string | null, n
   return clinicCalendarDate(now, timezone);
 }
 
+/** UTC instants [start, end) covering one clinic YYYY-MM-DD. Empty when the date is not ISO. */
+export function clinicDayUtcBounds(isoDate: string, timezone?: string | null): { start: string; end: string } {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(isoDate || "").trim());
+  if (!match) return { start: "", end: "" };
+  const startMs = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])) - utcOffsetMinutes(timezone) * 60_000;
+  return {
+    start: new Date(startMs).toISOString(),
+    end: new Date(startMs + 86_400_000).toISOString(),
+  };
+}
+
 export function shiftIsoDate(isoDate: string, days: number): string {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(isoDate || "").trim());
   if (!match) return "";

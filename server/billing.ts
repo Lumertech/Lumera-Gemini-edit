@@ -27,7 +27,7 @@ import { denyUnlessPatientRecordRole } from "./patient-access.ts";
 import { loadPatientTenant, requestIsPatient, sessionPatientId } from "./patient-tenant.ts";
 import { dayEndTotals, revenueTotals } from "./collected-revenue.ts";
 import { tenantTimezone } from "./clinical.ts";
-import { resolveQueueDate } from "../src/lib/clinicDay.ts";
+import { clinicCalendarDate, clinicDayUtcBounds, resolveQueueDate, shiftIsoDate } from "../src/lib/clinicDay.ts";
 
 function tenantIdOf(req: Request): string {
   return String(req.user?.tenantId || "").trim();
@@ -551,12 +551,23 @@ export function createBillingRouter(): Router {
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     const tz = tenantTimezone(tenantId);
+    const today = clinicCalendarDate(new Date(), tz);
+    const weekStart = shiftIsoDate(today, -6);
+    const monthStart = `${today.slice(0, 7)}-01`;
+    const from = weekStart < monthStart ? weekStart : monthStart;
+    const fromBounds = clinicDayUtcBounds(from, tz);
+    const todayBounds = clinicDayUtcBounds(today, tz);
     const rows = getDb()
       .prepare(
         `SELECT status, total_amount, paid_amount, paid_at, date
-         FROM invoices WHERE tenant_id = ?`
+         FROM invoices
+         WHERE tenant_id = ?
+           AND (
+             (paid_at >= ? AND paid_at < ?)
+             OR ((paid_at IS NULL OR paid_at = '') AND date >= ? AND date <= ?)
+           )`
       )
-      .all(tenantId) as Record<string, unknown>[];
+      .all(tenantId, fromBounds.start, todayBounds.end, from, today) as Record<string, unknown>[];
     res.json({ tenantId, ...revenueTotals(rows, tz) });
   });
 
@@ -566,9 +577,18 @@ export function createBillingRouter(): Router {
     if (!tenantId) return;
     const tz = tenantTimezone(tenantId);
     const date = todayDate(String(req.query.date || ""), tz);
+    const bounds = clinicDayUtcBounds(date, tz);
     const rows = getDb()
-      .prepare("SELECT * FROM invoices WHERE tenant_id = ? ORDER BY created_at ASC")
-      .all(tenantId) as Record<string, unknown>[];
+      .prepare(
+        `SELECT * FROM invoices
+         WHERE tenant_id = ?
+           AND (
+             date = ?
+             OR (paid_at >= ? AND paid_at < ?)
+           )
+         ORDER BY created_at ASC`
+      )
+      .all(tenantId, date, bounds.start, bounds.end) as Record<string, unknown>[];
     const totals = dayEndTotals(rows, date, tz);
     const listed = rows.filter((row) => {
       const status = String(row.status || "");
