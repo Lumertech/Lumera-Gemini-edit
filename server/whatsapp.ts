@@ -21,7 +21,9 @@ import {
   runAppointmentReminders,
 } from "./whatsapp-calendar.ts";
 import { cloudDispatchHttpStatus, isCloudDispatchFailure } from "./graph-whatsapp.ts";
+import { rejectProductionSimulator } from "./meta-security.ts";
 import { dispatchPatientCloudText } from "./whatsapp-patient-dispatch.ts";
+import { findPatientByPhoneInTenant } from "./whatsapp-tenant-resolve.ts";
 import { isProduction } from "./runtime.ts";
 import { reportCaughtError } from "./error-tracker.ts";
 import { CLINICIAN_ROLES, requireAuth, requireRole } from "./auth.ts";
@@ -422,6 +424,16 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
       }
       if (!sessionTenantId) {
         return res.status(400).json({ error: "No tenant associated with this account." });
+      }
+
+      // Patient-impersonation sends (sender !== "agent", including the default "user")
+      // drive the sandbox bot. Production staff replies stay on sender "agent".
+      if (sender !== "agent") {
+        let simulatorAllowed = false;
+        rejectProductionSimulator(req, res, () => {
+          simulatorAllowed = true;
+        });
+        if (!simulatorAllowed) return;
       }
 
       if (sender === "agent") {
@@ -1575,6 +1587,15 @@ ${AI_RUPEE_OUTPUT_RULE}`;
 // BOT INTELLIGENCE & EMR LOGIC HELPERS
 // ----------------------------------------------------
 
+/** Patient id for this clinic's phone only. Never match on name, never leave the tenant. */
+function patientIdForSessionPhone(tenantId: string, phone: string): string {
+  const id = String(tenantId || "").trim();
+  const from = String(phone || "").trim();
+  if (!id || !from) return "";
+  const patient = findPatientByPhoneInTenant(id, from);
+  return String(patient?.id || "").trim();
+}
+
 async function processBotActionOrQuery(
   text: string,
   phone: string,
@@ -1599,59 +1620,38 @@ async function processBotActionOrQuery(
 
   // 1. Prescription Request
   if (q.includes("prescription") || q.includes("rx") || q.includes("refill") || q.includes("medicine") || q.includes("दवा") || q.includes("औषध")) {
-    const rx = db.prepare(`
-      SELECT * FROM prescriptions
-      WHERE patient_phone = ? OR patient_name = ?
-      ORDER BY created_at DESC LIMIT 1
-    `).get(phone, patientName) as Record<string, unknown> | undefined;
+    const rxTenant = String(tenantHints.sessionTenantId || "").trim();
+    const patientId = patientIdForSessionPhone(rxTenant, phone);
+    const rx = rxTenant && patientId
+      ? (db.prepare(`
+          SELECT id FROM prescriptions
+          WHERE tenant_id = ? AND patient_id = ?
+          ORDER BY created_at DESC LIMIT 1
+        `).get(rxTenant, patientId) as { id?: string } | undefined)
+      : undefined;
 
-    if (rx) {
-      const meds = JSON.parse((rx.medicines as string) || "[]");
-      const medList = meds.slice(0, 3).map((m: any) => `• *${m.drugName}* (${m.dosage}) - ${m.frequency} [${m.timing}]`).join("\n");
-
-      return {
-        content: `💊 *Prescription Record Found (${rx.rx_number})*\n\n*Consultant*: ${rx.doctor_name}\n*Diagnosis*: ${rx.diagnosis}\n*Date*: ${rx.date}\n\n*Active Medications*:\n${medList}\n\nTap below to view the signed prescription slip or download PDF:`,
-        buttons: ["📄 Preview Prescription", "📥 Download PDF", "💊 Request Pharmacy Refill"],
-        media: {
-          type: "pdf",
-          title: `Prescription_${rx.rx_number}.pdf`,
-          url: `/api/emr/prescription/${rx.id}/pdf`,
-          size: "210 KB",
-          previewData: rx,
-        },
-      };
+    if (rx?.id) {
+      // TODO(#164): server/patient-link-token.ts is not on main (PR #164 is open).
+      // When mintPatientLinkToken lands, attach only that opaque OTP-gated URL
+      // (purpose "rx", resourceId = this row). Do not invent a second token.
+      return { content: "your prescription is ready" };
     }
   }
 
   // 2. Lab Reports Request
   if (q.includes("lab") || q.includes("report") || q.includes("test") || q.includes("blood") || q.includes("जांच") || q.includes("रिपोर्ट")) {
-    const labTenant = String(tenantId || "").trim();
-    const lab = labTenant
+    const labTenant = String(tenantHints.sessionTenantId || "").trim();
+    const patientId = patientIdForSessionPhone(labTenant, phone);
+    const lab = labTenant && patientId
       ? (db.prepare(`
-          SELECT * FROM lab_reports
-          WHERE tenant_id = ? AND patient_name = ?
+          SELECT id FROM lab_reports
+          WHERE tenant_id = ? AND patient_id = ?
           ORDER BY created_at DESC LIMIT 1
-        `).get(labTenant, patientName) as Record<string, unknown> | undefined)
+        `).get(labTenant, patientId) as { id?: string } | undefined)
       : undefined;
 
-    if (lab) {
-      const results = JSON.parse((lab.results as string) || "[]");
-      const flagged = results
-        .filter((r: any) => r.status !== "Normal")
-        .map((r: any) => `• *${r.param}*: ${r.value} ${r.unit} (${r.status})`)
-        .join("\n");
-
-      return {
-        content: `🔬 *Verified Lab Diagnostic Report*\n\n*Panel*: ${lab.category}\n*Date*: ${lab.date}\n*Facility*: ${lab.lab_name}\n\n*Flagged Out-of-Range Parameters*:\n${flagged || "All tested parameters within normal reference ranges."}\n\n*Doctor's Interpretation*:\n"${lab.doctor_interpretation}"`,
-        buttons: ["🔬 Preview Lab Sheet", "📥 Download PDF", "🩺 Consult Doctor"],
-        media: {
-          type: "pdf",
-          title: `Lab_Report_${lab.id}.pdf`,
-          url: authenticatedLabReportPath(String(lab.id)),
-          size: "185 KB",
-          previewData: lab,
-        },
-      };
+    if (lab?.id) {
+      return { content: "your lab report is ready" };
     }
   }
 
