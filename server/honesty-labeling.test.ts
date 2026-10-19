@@ -4,6 +4,12 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { buildAbdmStatusPayload, createAbdmRouter } from "./abdm.ts";
+import {
+  DATA_DELETION_INSTRUCTIONS_BODY,
+  PRIVACY_POLICY_BODY,
+  TERMS_OF_SERVICE_BODY,
+} from "./cms-policy-seed.ts";
+import { META_TECH_PROVIDER_STATEMENT } from "../src/lib/metaStatus.ts";
 import { jsonRequest, startTestServer } from "./test-http.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -49,10 +55,13 @@ describe("Compliance #18 honesty labeling (LandingPage / Admin Meta)", () => {
     assert.doesNotMatch(landing, /NHA sandbox/);
     assert.match(landing, /ABDM sandbox milestone path/);
     assert.match(landing, /Built for DPDP Act 2023/);
-    assert.match(landing, /WhatsApp Cloud API · Meta Tech Provider path/);
-    assert.match(landing, /building toward Meta Tech Provider/i);
+    assert.match(landing, /WhatsApp Cloud API from Meta/);
+    assert.match(landing, /\{META_TECH_PROVIDER_STATEMENT\}/);
+    assert.equal(
+      META_TECH_PROVIDER_STATEMENT,
+      "Lumera Solutions LLP is a Meta Tech Provider for the WhatsApp Business Platform."
+    );
     assert.match(landing, /Designed for ABDM M1–M3/);
-    assert.match(landing, /App Review is not submitted/);
 
     assert.equal(/ABDM certified/i.test(landing), false);
     assert.equal(/HIPAA/i.test(landing), false);
@@ -84,8 +93,9 @@ describe("Compliance #18 honesty labeling (LandingPage / Admin Meta)", () => {
       readRepo("server/db-seed-meta.ts"),
     ].join("\n");
     assert.match(seed, /replying \*\*STOP\*\*/);
-    assert.match(seed, /not a certified Meta Tech Provider/i);
-    assert.match(seed, /App Review is not submitted/);
+    assert.equal(PRIVACY_POLICY_BODY.includes(META_TECH_PROVIDER_STATEMENT), true);
+    assert.equal(TERMS_OF_SERVICE_BODY.includes(META_TECH_PROVIDER_STATEMENT), true);
+    assert.equal(DATA_DELETION_INSTRUCTIONS_BODY.includes(META_TECH_PROVIDER_STATEMENT), true);
     assert.match(seed, /https:\/\/www\.mylumera\.in\/api\/meta\/data-deletion/);
     assert.match(db, /ON CONFLICT\(slug\) DO UPDATE/);
     assert.equal(/\bHIPAA\b/i.test(seed), false);

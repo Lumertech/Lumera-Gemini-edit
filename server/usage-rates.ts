@@ -15,7 +15,8 @@
  * US dollar). That OTHER row is not an official Meta INR card — re-verify
  * before using it for production invoicing.
  *
- * Lumera is not a certified Meta Tech Provider. This table is a cost estimate
+ * See META_TECH_PROVIDER_STATEMENT. Meta has approved Lumera's WhatsApp permission
+ * requests in App Review. This table is a cost estimate
  * for platform-to-tenant usage billing, not a Meta partnership claim.
  */
 
