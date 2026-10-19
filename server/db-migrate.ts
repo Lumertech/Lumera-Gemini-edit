@@ -549,7 +549,22 @@ export function migrate(database: SqlDatabase) {
         updated_at TEXT NOT NULL,
         PRIMARY KEY (tenant_id, phone_digits)
       );
+      CREATE TABLE IF NOT EXISTS patient_link_otps (
+        token_hash TEXT PRIMARY KEY,
+        otp_hash TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        send_count INTEGER NOT NULL DEFAULT 0,
+        recent_sends TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL
+      );
     `);
+    try {
+      database.exec("ALTER TABLE patient_link_otps ADD COLUMN send_count INTEGER NOT NULL DEFAULT 0");
+    } catch {}
+    try {
+      database.exec("ALTER TABLE patient_link_otps ADD COLUMN recent_sends TEXT NOT NULL DEFAULT '[]'");
+    } catch {}
   } catch {}
 }
 

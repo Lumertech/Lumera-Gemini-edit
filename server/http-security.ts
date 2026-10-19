@@ -447,6 +447,57 @@ function isMutating(method: string): boolean {
   return !["GET", "HEAD", "OPTIONS"].includes(String(method || "GET").toUpperCase());
 }
 
+const PATIENT_DOCUMENT_LINK = /^\/(rx|pay|portal|hep)\/v\/[^/]+$/;
+
+/** HTML OTP forms for a patient document link. Not an API mutation. */
+export function isPatientDocumentLinkPost(req: Request): boolean {
+  if (!isMutating(req.method)) return false;
+  const candidates = [csrfRequestPath(req), String(req.path || "").split("?")[0]];
+  return candidates.some((value) => {
+    const path = value.length > 1 && value.endsWith("/") ? value.slice(0, -1) : value;
+    return PATIENT_DOCUMENT_LINK.test(path);
+  });
+}
+
+function originMatchesRequestHost(origin: string, req: Request): boolean {
+  try {
+    const host = new URL(origin).host.toLowerCase();
+    const requestHost = String(req.get?.("host") || req.headers.host || "")
+      .split(",")[0]
+      .trim()
+      .toLowerCase();
+    return Boolean(host) && host === requestHost;
+  } catch {
+    return false;
+  }
+}
+
+function documentOriginAllowed(origin: string, req: Request): boolean {
+  if (!origin || isMissingOrNullOrigin(origin)) return false;
+  return originAllowed(origin) || originMatchesRequestHost(origin, req);
+}
+
+/**
+ * A session cookie on these pages still needs an allowlisted Origin or Referer
+ * (or the same host as the request). Cookieless posts stay open so a patient
+ * without a Lumera session can submit the form.
+ */
+function documentLinkCsrfAllows(req: Request): boolean {
+  const origin = typeof req.headers.origin === "string" ? req.headers.origin : "";
+  if (origin && !isMissingOrNullOrigin(origin)) return documentOriginAllowed(origin, req);
+  const referer = headerOne(req, "referer");
+  if (referer) {
+    try {
+      if (documentOriginAllowed(new URL(referer).origin, req)) return true;
+    } catch {
+      return false;
+    }
+    return false;
+  }
+  const cookieHeader = typeof req.headers.cookie === "string" ? req.headers.cookie : "";
+  return !hasSessionCookie(cookieHeader);
+}
+
 /**
  * Session JWT in login JSON, and as `Authorization: Bearer` or `X-Session-Token`.
  *
@@ -563,6 +614,7 @@ function hasSessionCookie(cookieHeader: string | undefined): boolean {
 export function csrfShouldReject(req: Request): boolean {
   if (isSecurityExemptPath(req.path) || isSecurityExemptPath(req.originalUrl || "")) return false;
   if (!isMutating(req.method)) return false;
+  if (isPatientDocumentLinkPost(req)) return !documentLinkCsrfAllows(req);
   if (hasBearerOrSessionHeader(req)) return false;
   const cookieHeader = typeof req.headers.cookie === "string" ? req.headers.cookie : "";
   const headerToken = csrfHeaderValue(req);
@@ -630,6 +682,13 @@ export function csrfRefreshAllowed(req: Request, env: NodeJS.ProcessEnv = proces
  */
 export function csrfProtectionMiddleware(env: NodeJS.ProcessEnv = process.env) {
   return (req: Request, res: Response, next: NextFunction) => {
+    // The document OTP form is a plain HTML POST. A logged-in patient still
+    // has __session, so the session CSRF header would 403 the form. Allow it
+    // only when Origin or Referer is on the allow-list (or the request host).
+    if (isPatientDocumentLinkPost(req)) {
+      if (!csrfShouldReject(req)) return next();
+      return csrfReject(res);
+    }
     // Login and the other pre-auth posts still accept the __session whose
     // secret matches the header (#133), even if another cookie authenticates.
     if (

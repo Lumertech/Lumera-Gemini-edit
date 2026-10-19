@@ -128,6 +128,19 @@ function tracksClientIp(ip: string): boolean {
   return ip !== "127.0.0.1" && ip !== "::1" && ip !== "::ffff:127.0.0.1";
 }
 
+/** Same IP window as send-otp. Loopback is not counted. Shares `ipBuckets` with OTP sends. */
+export function consumeClientIpAttempt(
+  ip: string,
+  now = Date.now()
+): { ok: true } | { ok: false; retryAfterSec: number } {
+  const ipKey = String(ip || "unknown");
+  if (!tracksClientIp(ipKey)) return { ok: true };
+  const ipLimit = atLimit(ipBuckets, ipKey, SEND_OTP_MAX_PER_IP, now);
+  if (ipLimit.limited) return { ok: false, retryAfterSec: ipLimit.retryAfterSec || 1 };
+  bump(ipBuckets, ipKey, now);
+  return { ok: true };
+}
+
 export function resetSendOtpRateLimits() {
   phoneBuckets.clear();
   ipBuckets.clear();

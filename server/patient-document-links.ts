@@ -3,6 +3,10 @@
  * The token helper returns only ids. This page sends an OTP to the phone
  * registered for that patient and shows diagnosis, medicines, or receipt
  * amounts only after the code matches.
+ *
+ * Sends are capped per token (3 / 15 min, 10 lifetime), and per phone and
+ * IP through the shared OTP limiter. A resend never clears failed guesses.
+ * Ten failures revoke the link.
  */
 
 import crypto from "node:crypto";
@@ -11,12 +15,24 @@ import express from "express";
 import type { DatabaseSync } from "node:sqlite";
 import { getDb } from "./db.ts";
 import { dispatchWhatsAppCloudMessage } from "./graph-whatsapp.ts";
-import { resolvePatientLinkToken, type PatientLinkPurpose } from "./patient-link-token.ts";
+import { consumeClientIpAttempt, consumeHashedOtpAttempt, normalizeOtpPhone, requestClientIp } from "./otp-rate-limit.ts";
+import { revokePatientLinkToken, resolvePatientLinkToken, type PatientLinkPurpose } from "./patient-link-token.ts";
 
 const OTP_TTL_MS = 10 * 60 * 1000;
-const OTP_ATTEMPT_LIMIT = 5;
+const SEND_WINDOW_MS = 15 * 60 * 1000;
+const SEND_WINDOW_MAX = 3;
+const SEND_LIFETIME_MAX = 10;
+const FAILURE_REVOKE_AT = 10;
 
 type SendOtp = (opts: { to: string; code: string; tenantId: string }) => Promise<{ ok: boolean }>;
+
+type OtpRow = {
+  otp_hash?: string;
+  expires_at?: string;
+  attempts?: number;
+  send_count?: number;
+  recent_sends?: string;
+};
 
 function ensureOtpSchema(db: DatabaseSync) {
   db.exec(`
@@ -25,9 +41,21 @@ function ensureOtpSchema(db: DatabaseSync) {
       otp_hash TEXT NOT NULL,
       expires_at TEXT NOT NULL,
       attempts INTEGER NOT NULL DEFAULT 0,
+      send_count INTEGER NOT NULL DEFAULT 0,
+      recent_sends TEXT NOT NULL DEFAULT '[]',
       created_at TEXT NOT NULL
     )
   `);
+  try {
+    db.exec("ALTER TABLE patient_link_otps ADD COLUMN send_count INTEGER NOT NULL DEFAULT 0");
+  } catch {
+    /* column already exists */
+  }
+  try {
+    db.exec("ALTER TABLE patient_link_otps ADD COLUMN recent_sends TEXT NOT NULL DEFAULT '[]'");
+  } catch {
+    /* column already exists */
+  }
 }
 
 function tokenHash(token: string): string {
@@ -44,6 +72,13 @@ function escapeHtml(value: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+function protect(res: Response) {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("X-Robots-Tag", "noindex");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("Content-Security-Policy", "frame-ancestors 'none'");
 }
 
 function page(opts: { title: string; clinic: string; doctor: string; body: string }): string {
@@ -149,6 +184,67 @@ function form(action: "send" | "verify"): string {
   </form>`;
 }
 
+function otpRow(db: DatabaseSync, hash: string): OtpRow | undefined {
+  ensureOtpSchema(db);
+  return db
+    .prepare(`SELECT otp_hash, expires_at, attempts, send_count, recent_sends FROM patient_link_otps WHERE token_hash = ?`)
+    .get(hash) as OtpRow | undefined;
+}
+
+function recentSendTimes(raw: string | undefined, now: number): number[] {
+  try {
+    const parsed = JSON.parse(String(raw || "[]")) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((value) => Number(value)).filter((value) => Number.isFinite(value) && now - value < SEND_WINDOW_MS);
+  } catch {
+    return [];
+  }
+}
+
+function tokenSendBlock(row: OtpRow | undefined, now: number): "lifetime" | "window" | "locked" | null {
+  if (Number(row?.attempts || 0) >= FAILURE_REVOKE_AT) return "locked";
+  if (Number(row?.send_count || 0) >= SEND_LIFETIME_MAX) return "lifetime";
+  if (recentSendTimes(row?.recent_sends, now).length >= SEND_WINDOW_MAX) return "window";
+  return null;
+}
+
+function rememberSend(db: DatabaseSync, hash: string, code: string, now: Date) {
+  const existing = otpRow(db, hash);
+  const recent = recentSendTimes(existing?.recent_sends, now.getTime());
+  recent.push(now.getTime());
+  const expires = new Date(now.getTime() + OTP_TTL_MS).toISOString();
+  if (!existing) {
+    db.prepare(
+      `INSERT INTO patient_link_otps (token_hash, otp_hash, expires_at, attempts, send_count, recent_sends, created_at)
+       VALUES (?, ?, ?, 0, 1, ?, ?)`
+    ).run(hash, hashCode(code), expires, JSON.stringify(recent), now.toISOString());
+    return;
+  }
+  db.prepare(
+    `UPDATE patient_link_otps
+     SET otp_hash = ?, expires_at = ?, send_count = send_count + 1, recent_sends = ?, created_at = ?
+     WHERE token_hash = ?`
+  ).run(hashCode(code), expires, JSON.stringify(recent), now.toISOString(), hash);
+}
+
+function undoSend(db: DatabaseSync, hash: string, previous: OtpRow | undefined) {
+  if (!previous) {
+    db.prepare(`DELETE FROM patient_link_otps WHERE token_hash = ? AND attempts = 0`).run(hash);
+    return;
+  }
+  db.prepare(
+    `UPDATE patient_link_otps
+     SET otp_hash = ?, expires_at = ?, send_count = ?, recent_sends = ?
+     WHERE token_hash = ?`
+  ).run(
+    String(previous.otp_hash || ""),
+    String(previous.expires_at || new Date(0).toISOString()),
+    Number(previous.send_count || 0),
+    String(previous.recent_sends || "[]"),
+    hash
+  );
+}
+
 async function defaultSendOtp(opts: { to: string; code: string; tenantId: string }): Promise<{ ok: boolean }> {
   const sent = await dispatchWhatsAppCloudMessage({
     to: opts.to,
@@ -164,7 +260,21 @@ async function defaultSendOtp(opts: { to: string; code: string; tenantId: string
 
 function handle(kind: PatientLinkPurpose, sendOtp: SendOtp) {
   return async (req: Request, res: Response) => {
+    protect(res);
     const token = String(req.params.token || "").trim();
+    const db = getDb();
+    const action = String((req.body as { action?: string } | undefined)?.action || "");
+    if (req.method === "POST" && action === "verify") {
+      const ipLimit = consumeClientIpAttempt(requestClientIp(req));
+      if (ipLimit.ok === false) {
+        res.setHeader("Retry-After", String(ipLimit.retryAfterSec));
+        res
+          .status(429)
+          .type("html")
+          .send(page({ title: "Link", clinic: "Clinic", doctor: "", body: "<p>Too many attempts. Try again later.</p>" }));
+        return;
+      }
+    }
     const resolved = await resolvePatientLinkToken(token, { purpose: kind });
     if (resolved.ok === false) {
       const status = resolved.reason === "not_found" || resolved.reason === "wrong_purpose" ? 404 : 410;
@@ -174,29 +284,35 @@ function handle(kind: PatientLinkPurpose, sendOtp: SendOtp) {
         .send(page({ title: "Link", clinic: "Clinic", doctor: "", body: "<p>This link is not valid.</p>" }));
       return;
     }
-    const db = getDb();
     const clinic = clinicName(db, resolved.tenantId);
     const doctor = doctorName(db, resolved.tenantId, kind, resolved.resourceId);
     const shell = (status: number, body: string) => {
       res.status(status).type("html").send(page({ title: clinic || "Clinic", clinic, doctor, body }));
     };
-    const action = String((req.body as { action?: string } | undefined)?.action || "");
     const otp = String((req.body as { otp?: string } | undefined)?.otp || "").trim();
+    const hash = tokenHash(token);
     if (req.method === "POST" && action === "verify" && otp) {
-      ensureOtpSchema(db);
-      const row = db.prepare(`SELECT otp_hash, expires_at, attempts FROM patient_link_otps WHERE token_hash = ?`).get(tokenHash(token)) as
-        | { otp_hash?: string; expires_at?: string; attempts?: number }
-        | undefined;
+      const row = otpRow(db, hash);
       const attempts = Number(row?.attempts || 0);
+      if (attempts >= FAILURE_REVOKE_AT) {
+        await revokePatientLinkToken(token);
+        shell(410, "<p>This link is not valid.</p>");
+        return;
+      }
       const expired = !row?.expires_at || Date.parse(String(row.expires_at)) <= Date.now();
       const digest = hashCode(otp);
+      const stored = String(row?.otp_hash || "");
       const matches =
-        Boolean(row?.otp_hash) &&
-        digest.length === String(row?.otp_hash).length &&
-        crypto.timingSafeEqual(Buffer.from(digest), Buffer.from(String(row?.otp_hash)));
-      if (!row || expired || attempts >= OTP_ATTEMPT_LIMIT || !matches) {
+        Boolean(stored) && digest.length === stored.length && crypto.timingSafeEqual(Buffer.from(digest), Buffer.from(stored));
+      if (!row || expired || !matches) {
         if (row && !expired) {
-          db.prepare(`UPDATE patient_link_otps SET attempts = attempts + 1 WHERE token_hash = ?`).run(tokenHash(token));
+          const next = attempts + 1;
+          db.prepare(`UPDATE patient_link_otps SET attempts = ? WHERE token_hash = ?`).run(next, hash);
+          if (next >= FAILURE_REVOKE_AT) {
+            await revokePatientLinkToken(token);
+            shell(410, "<p>This link is not valid.</p>");
+            return;
+          }
         }
         shell(403, `<p>That code does not match.</p>${form("verify")}`);
         return;
@@ -206,7 +322,7 @@ function handle(kind: PatientLinkPurpose, sendOtp: SendOtp) {
         shell(410, "<p>This link is not valid.</p>");
         return;
       }
-      db.prepare(`DELETE FROM patient_link_otps WHERE token_hash = ?`).run(tokenHash(token));
+      db.prepare(`DELETE FROM patient_link_otps WHERE token_hash = ?`).run(hash);
       shell(200, reveal(db, kind, consumed.tenantId, consumed.resourceId));
       return;
     }
@@ -216,17 +332,30 @@ function handle(kind: PatientLinkPurpose, sendOtp: SendOtp) {
         shell(409, "<p>This clinic does not have a phone number that can receive a code.</p>");
         return;
       }
-      const code = String(crypto.randomInt(0, 1_000_000)).padStart(6, "0");
-      ensureOtpSchema(db);
       const now = new Date();
-      db.prepare(
-        `INSERT INTO patient_link_otps (token_hash, otp_hash, expires_at, attempts, created_at)
-         VALUES (?, ?, ?, 0, ?)
-         ON CONFLICT(token_hash) DO UPDATE SET otp_hash = excluded.otp_hash, expires_at = excluded.expires_at, attempts = 0, created_at = excluded.created_at`
-      ).run(tokenHash(token), hashCode(code), new Date(now.getTime() + OTP_TTL_MS).toISOString(), now.toISOString());
+      const existing = otpRow(db, hash);
+      const blocked = tokenSendBlock(existing, now.getTime());
+      if (blocked === "locked") {
+        await revokePatientLinkToken(token);
+        shell(410, "<p>This link is not valid.</p>");
+        return;
+      }
+      if (blocked) {
+        shell(429, "<p>Too many codes for this link. Try again later.</p>");
+        return;
+      }
+      const phoneKey = normalizeOtpPhone(phone) || phone;
+      const decision = consumeHashedOtpAttempt(phoneKey, requestClientIp(req), `patient-link:${phoneKey}`);
+      if (!decision.ok) {
+        res.setHeader("Retry-After", String(decision.retryAfterSec));
+        shell(429, "<p>Too many OTP requests. Try again later.</p>");
+        return;
+      }
+      const code = String(crypto.randomInt(0, 1_000_000)).padStart(6, "0");
+      rememberSend(db, hash, code, now);
       const sent = await sendOtp({ to: phone, code, tenantId: resolved.tenantId });
       if (!sent.ok) {
-        db.prepare(`DELETE FROM patient_link_otps WHERE token_hash = ?`).run(tokenHash(token));
+        undoSend(db, hash, existing);
         shell(503, "<p>The code could not be sent. Try again later.</p>");
         return;
       }
@@ -251,20 +380,4 @@ export function createPatientDocumentLinkRouter(deps?: { sendOtp?: SendOtp }): R
   router.get("/hep/v/:token", handle("hep", sendOtp));
   router.post("/hep/v/:token", handle("hep", sendOtp));
   return router;
-}
-
-export function patientIdForPhone(db: DatabaseSync, tenantId: string, phone: string): string {
-  const digits = String(phone || "").replace(/\D/g, "");
-  if (!digits) return "";
-  const tail = digits.slice(-10);
-  try {
-    const row = db
-      .prepare(
-        `SELECT id FROM patients WHERE tenant_id = ? AND REPLACE(REPLACE(REPLACE(phone, '+', ''), ' ', ''), '-', '') LIKE ? LIMIT 1`
-      )
-      .get(tenantId, `%${tail}`) as { id?: string } | undefined;
-    return String(row?.id || "").trim();
-  } catch {
-    return "";
-  }
 }

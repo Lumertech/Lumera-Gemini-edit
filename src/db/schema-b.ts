@@ -272,6 +272,67 @@ export const tenantSubscriptions = pgTable("tenant_subscriptions", {
   updatedAt: text("updated_at").notNull(),
 });
 
+export const patientLinkTokens = pgTable(
+  "patient_link_tokens",
+  {
+    tokenHash: text("token_hash").primaryKey(),
+    tenantId: text("tenant_id").notNull(),
+    patientId: text("patient_id").notNull(),
+    purpose: text("purpose").notNull(),
+    resourceId: text("resource_id").notNull(),
+    expiresAt: text("expires_at").notNull(),
+    maxUses: integer("max_uses").notNull(),
+    useCount: integer("use_count").notNull().default(0),
+    revokedAt: text("revoked_at"),
+    createdBy: text("created_by").notNull().default(""),
+    createdAt: text("created_at").notNull(),
+  },
+  (t) => [index("idx_patient_link_tokens_subject").on(t.tenantId, t.resourceId, t.purpose)]
+);
+
+export const rxSignedSafety = pgTable(
+  "rx_signed_safety",
+  {
+    tenantId: text("tenant_id").notNull(),
+    rxNumber: text("rx_number").notNull(),
+    signature: text("signature").notNull(),
+    safetyStatus: text("safety_status").notNull(),
+    hasHighRisk: integer("has_high_risk").notNull().default(0),
+    source: text("source").notNull().default(""),
+    alertCount: integer("alert_count").notNull().default(0),
+    overrideUserId: text("override_user_id"),
+    overrideUserName: text("override_user_name"),
+    overrideAt: text("override_at"),
+    overrideReason: text("override_reason"),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (t) => [unique("rx_signed_safety_pk").on(t.tenantId, t.rxNumber)]
+);
+
+export const whatsappPatientOptIns = pgTable(
+  "whatsapp_patient_opt_ins",
+  {
+    tenantId: text("tenant_id").notNull(),
+    phoneDigits: text("phone_digits").notNull(),
+    patientId: text("patient_id").notNull().default(""),
+    optedIn: integer("opted_in").notNull(),
+    source: text("source").notNull(),
+    actorId: text("actor_id").notNull().default(""),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (t) => [unique("whatsapp_patient_opt_ins_pk").on(t.tenantId, t.phoneDigits)]
+);
+
+export const patientLinkOtps = pgTable("patient_link_otps", {
+  tokenHash: text("token_hash").primaryKey(),
+  otpHash: text("otp_hash").notNull(),
+  expiresAt: text("expires_at").notNull(),
+  attempts: integer("attempts").notNull().default(0),
+  sendCount: integer("send_count").notNull().default(0),
+  recentSends: text("recent_sends").notNull().default("[]"),
+  createdAt: text("created_at").notNull(),
+});
+
 /** Table names present after migrate() — used by schema-contract tests. */
 export const LUMERA_TABLE_NAMES = [
   "users",
@@ -306,4 +367,8 @@ export const LUMERA_TABLE_NAMES = [
   "abdm_consent_artefacts",
   "plans",
   "tenant_subscriptions",
+  "patient_link_tokens",
+  "rx_signed_safety",
+  "whatsapp_patient_opt_ins",
+  "patient_link_otps",
 ] as const;
