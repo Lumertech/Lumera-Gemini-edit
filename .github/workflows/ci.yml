@@ -106,4 +106,4 @@ jobs:
           if [ -f package-lock.json ]; then npm ci; else npm install; fi
 
       - name: Boot initDatabase twice on Postgres
-        run: npx tsx --test --test-concurrency=1 server/postgres-double-boot.test.ts server/sql-catalog.test.ts
+        run: npx tsx --test --test-concurrency=1 server/postgres-double-boot.test.ts server/sql-catalog.test.ts server/patient-link-otp-pg.test.ts
