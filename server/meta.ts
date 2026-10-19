@@ -1,5 +1,6 @@
 import { Router, type NextFunction, type Request, type Response } from "express";
-import { CLINIC_MANAGER_ROLES, isPlatformAdminRole, requireAuth, requireRole } from "./auth.ts";
+import { isPlatformAdminRole, requireAuth } from "./auth.ts";
+import { isWhatsAppOptOutMessage, recordWhatsAppOptIn } from "./whatsapp-opt-in.ts";
 import { findDataDeletionRequest, getDb } from "./db.ts";
 import { appPublicUrl, isProduction, sandboxSimulatorsEnabled } from "./runtime.ts";
 import { reportCaughtError } from "./error-tracker.ts";
@@ -226,6 +227,32 @@ export function requireMetaCatalog(req: Request, res: Response, next: NextFuncti
 
 const metaCatalogGuards = [requireAuth, requireMetaCatalog] as const;
 
+function tenantPracticeType(tenantId: string): string {
+  try {
+    const row = getDb().prepare(`SELECT practice_type FROM tenants WHERE id = ?`).get(tenantId) as
+      | { practice_type?: string }
+      | undefined;
+    return String(row?.practice_type || "").trim().toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+/** Clinic admins, platform admins, and an individual-practice owner whose role is doctor. */
+export function allowClinicWhatsAppStatus(req: Request, res: Response, next: NextFunction) {
+  if (!req.user) return res.status(401).json({ error: "Authentication required" });
+  const role = String(req.user.role || "");
+  if ((META_CATALOG_ROLES as readonly string[]).includes(role) || isPlatformAdminRole(role)) {
+    next();
+    return;
+  }
+  if (role === "doctor" && tenantPracticeType(String(req.user.tenantId || "")) === "individual") {
+    next();
+    return;
+  }
+  return res.status(403).json({ error: "Insufficient permissions" });
+}
+
 function claimStrings(value: unknown): string[] {
   if (typeof value === "string") {
     const trimmed = value.trim();
@@ -392,9 +419,18 @@ export function createMetaRouter(): Router {
               // Handle inbound user message. Tenant comes only from the receiving phone_number_id.
               if (val?.messages && Array.isArray(val.messages)) {
                 for (const msg of val.messages) {
+                  const textBody = msg.text?.body || msg.interactive?.button_reply?.title || "[Media/Attachment]";
+                  if (isWhatsAppOptOutMessage(String(textBody || ""))) {
+                    recordWhatsAppOptIn(db, {
+                      tenantId: inboundTenantId,
+                      phone: String(msg.from || ""),
+                      optedIn: false,
+                      source: "stop",
+                    });
+                  }
                   recordInboundWhatsAppMessage(db, {
                     fromPhone: String(msg.from || "").trim(),
-                    textBody: msg.text?.body || msg.interactive?.button_reply?.title || "[Media/Attachment]",
+                    textBody,
                     tenantId: inboundTenantId,
                     phoneNumberId,
                     wabaId,
@@ -757,7 +793,7 @@ export function createMetaRouter(): Router {
   // 4. META WHATSAPP TEMPLATES MANAGEMENT
   // ----------------------------------------------------
 
-  router.get("/whatsapp-clinic-status", requireAuth, requireRole(...CLINIC_MANAGER_ROLES), (req: Request, res: Response) => {
+  router.get("/whatsapp-clinic-status", requireAuth, allowClinicWhatsAppStatus, (req: Request, res: Response) => {
     try {
       const tenantId = sessionMetaTenant(req, res);
       if (!tenantId) return;

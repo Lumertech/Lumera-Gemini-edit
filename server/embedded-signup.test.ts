@@ -245,7 +245,7 @@ describe("Embedded Signup v4 handshake", () => {
       .prepare(`SELECT name, status FROM meta_templates WHERE tenant_id = ? ORDER BY name`)
       .all(clinic.tenantId) as Array<{ name: string; status: string }>;
     assert.deepEqual(
-      templates.map((row) => row.name),
+      [...new Set(templates.map((row) => row.name))],
       [
         "clinic_appointment_reminder",
         "clinic_booking_confirmation",
@@ -253,6 +253,7 @@ describe("Embedded Signup v4 handshake", () => {
         "clinic_prescription_ready",
       ]
     );
+    assert.equal(templates.length, 8);
     assert.equal(templates.every((row) => row.status === "PENDING"), true);
     assert.equal(templates.some((row) => row.name.startsWith("lumera_")), false);
   });

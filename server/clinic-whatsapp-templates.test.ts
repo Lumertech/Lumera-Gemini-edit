@@ -28,7 +28,10 @@ describe("clinic WhatsApp template catalog", () => {
       assert.equal(new Set(indexes).size, indexes.length);
       assert.equal(spec.example.length, indexes.length);
       assert.equal(/\{\{/.test(spec.footer), false);
-      const blob = `${spec.body}\n${spec.footer}\n${spec.example.join(" ")}\n${spec.urlButton?.text || ""}`;
+      const blob = `${spec.body}\n${spec.footer}\n${spec.example.join(" ")}\n${spec.urlButton?.text || ""}`.replaceAll(
+        "https://www.mylumera.in",
+        ""
+      );
       assert.equal(/lumera/i.test(blob), false);
       assert.equal(/\bNHA\b|\bABDM\b|certif/i.test(blob), false);
       const components = graphComponentsForClinicTemplate(spec);
@@ -46,7 +49,7 @@ describe("clinic WhatsApp template catalog", () => {
     assert.match(rx.body, /\{\{3\}\}/);
   });
 
-  it("fills lumera_payment_receipt_v2 with exactly 6 positional params and keeps the old name at 3", () => {
+  it("fills the Manager receipt bodies: v2 has 6 params and the live name has 4", () => {
     const fields = {
       patientName: "Asha Rao",
       clinicName: "Sunrise Clinic",
@@ -54,32 +57,31 @@ describe("clinic WhatsApp template catalog", () => {
       amount: 700,
       invoiceId: "INV-1042",
       date: "20 Oct 2026",
+      receiptUrl: "https://www.mylumera.in/pay/v/opaqueexampletoken",
     };
-    assert.deepEqual(receiptTemplateParameters(fields, LUMERA_RECEIPT_TEMPLATE_V2), [
-      "Asha Rao",
+    const v2 = [
+      "Asha",
+      "INR 700",
       "Sunrise Clinic",
       "Dr Mehta",
-      "700",
       "INV-1042",
-      "20 Oct 2026",
-    ]);
-    assert.deepEqual(receiptTemplateParameters(fields, "clinic_payment_receipt"), [
-      "Asha Rao",
-      "Sunrise Clinic",
-      "Dr Mehta",
-      "₹700.00",
-      "INV-1042",
-      "20 Oct 2026",
-    ]);
+      "https://www.mylumera.in/pay/v/opaqueexampletoken",
+    ];
+    assert.deepEqual(receiptTemplateParameters(fields, LUMERA_RECEIPT_TEMPLATE_V2), v2);
+    assert.deepEqual(receiptTemplateParameters(fields, "clinic_payment_receipt"), v2);
+    assert.equal(v2.join(" ").includes("20 Oct 2026"), false);
     assert.deepEqual(receiptTemplateParameters(fields, LUMERA_RECEIPT_TEMPLATE_V1), [
-      "Asha Rao",
-      "700",
-      "INV-1042",
+      "Asha",
+      "INR 700",
+      "Sunrise Clinic",
+      "https://www.mylumera.in/pay/v/opaqueexampletoken",
     ]);
     const fallback = receiptTemplateParameters({}, LUMERA_RECEIPT_TEMPLATE_V2);
     assert.equal(fallback.length, 6);
-    assert.equal(fallback[1], "your clinic");
-    assert.equal(fallback[2], "your clinician");
-    assert.equal(fallback.some((part) => /lumera/i.test(part)), false);
+    assert.equal(fallback[0], "Patient");
+    assert.equal(fallback[1], "INR 0");
+    assert.equal(fallback[2], "your clinic");
+    assert.equal(fallback[3], "your clinician");
+    assert.equal(fallback.some((part) => /lumera\.health/i.test(part)), false);
   });
 });

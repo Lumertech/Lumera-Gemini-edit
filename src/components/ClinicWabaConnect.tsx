@@ -29,7 +29,7 @@ type ClinicWhatsAppStatus = {
   displayName: string;
   templates: TemplateStatus[];
   graphErrors: Array<{ code: string; guidance: string }>;
-  lastGraphError: { code: string; guidance: string; at: string; detail: string } | null;
+  lastGraphError: { code: string; guidance: string; at: string } | null;
 };
 
 export const ClinicWabaConnect: React.FC = () => {
@@ -90,7 +90,7 @@ export const ClinicWabaConnect: React.FC = () => {
       if (!signup.appId || !signup.configId) {
         throw new Error(
           signup.notice ||
-            "Embedded Signup is not configured. Set FACEBOOK_APP_ID and META_EMBEDDED_SIGNUP_CONFIG_ID. Contact ravee@lumer.me."
+            "WhatsApp connection isn't available on this environment yet. Contact ravee@lumer.me. Lumera Solutions LLP is a Meta Tech Provider for the WhatsApp Business Platform. WhatsApp permissions submitted for Meta App Review in September 2026; not yet granted."
         );
       }
       await loadFacebookSdk(signup.appId, signup.graphVersion || "v21.0");
@@ -140,8 +140,8 @@ export const ClinicWabaConnect: React.FC = () => {
         </span>
       </div>
       <p className="text-xs text-slate-600">
-        Optional clinic-owned WABA (one per tenant). Real Meta Embedded Signup v4 is wired; Lumera is not a certified
-        Tech Provider. Contact ravee@lumer.me.
+        Optional clinic-owned WABA (one per tenant). Lumera Solutions LLP is a Meta Tech Provider for the WhatsApp
+        Business Platform. WhatsApp permissions submitted for Meta App Review in September 2026; not yet granted.
       </p>
       {connected ? (
         <div className="space-y-2" data-testid="clinic-whatsapp-status">
