@@ -393,15 +393,21 @@ export const ReceptionIntakeReports = forwardRef<ReceptionIntakeReportsHandle, {
                   />
                 </label>
                 {(item.status === "uploading" || item.progress > 0) && (
-                  <div
-                    data-testid="reception-report-progress"
-                    role="progressbar"
-                    aria-valuemin={0}
-                    aria-valuemax={100}
-                    aria-valuenow={item.progress}
-                    className="h-2 w-full rounded-full bg-slate-200 overflow-hidden"
-                  >
-                    <div className="h-full bg-blue-600" style={{ width: `${item.progress}%` }} />
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-xs text-slate-600">
+                      <span>Uploading</span>
+                      <span data-testid="reception-report-progress-label">{item.progress}%</span>
+                    </div>
+                    <div
+                      data-testid="reception-report-progress"
+                      role="progressbar"
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={item.progress}
+                      className="h-2.5 w-full rounded-full bg-slate-200 overflow-hidden"
+                    >
+                      <div className="h-full bg-blue-600" style={{ width: `${item.progress}%` }} />
+                    </div>
                   </div>
                 )}
                 {item.status === "done" && (
