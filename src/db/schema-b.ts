@@ -61,7 +61,6 @@ export const whatsappMessages = pgTable(
     timeDisplay: text("time_display").notNull(),
     buttons: text("buttons"),
     media: text("media"),
-    audioUrl: text("audio_url"),
     voiceTranscript: text("voice_transcript"),
     status: text("status").notNull().default("delivered"),
     createdAt: text("created_at").notNull(),
