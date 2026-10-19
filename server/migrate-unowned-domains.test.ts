@@ -4,8 +4,11 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
+import { rewriteLegacyHonestyCopy } from "./db-migrate.ts";
 import {
+  POST_CONSULTATION_BODY,
   migrateUnownedDomains,
+  neutralizePostConsultationSeed,
   rewriteSeedTemplateLinks,
   rewriteUnownedSeedText,
 } from "./migrate-unowned-domains.ts";
@@ -382,7 +385,10 @@ describe("unowned domain seed rewrite", () => {
     assert.equal(components[0].text, "See your patient portal");
     assert.equal(components[1].buttons?.[0].url, "https://www.mylumera.in/portal/v/{{1}}");
     assert.equal(components[2].buttons?.[0].url, "https://www.mylumera.in/payments");
-    assert.equal(components[3].text, "Demo clinic • Digital Rx");
+    assert.equal(
+      components.some((part) => String(part.text || "").includes("Digital Rx") || String(part.text || "").includes("Lumera")),
+      false
+    );
     const custom = JSON.parse(
       (db.prepare("SELECT components AS v FROM meta_templates WHERE id = ?").get("tpl-custom") as { v: string }).v
     ) as Array<{ text?: string; buttons?: Array<{ url?: string }> }>;
@@ -476,6 +482,175 @@ describe("unowned domain seed rewrite", () => {
       (db.prepare("SELECT upi_id AS v FROM invoices WHERE id = ?").get("inv-real") as { v: string }).v,
       "lumerahealth@icici"
     );
+  });
+
+  it("neutralizes demo post_consultation_rx seed rows and leaves sent history", () => {
+    const originalBody =
+      "Dear {{1}}, thank you for consulting Dr. {{2}}. Your digital prescription (Rx: {{3}}) and itemized consultation receipt are attached above. You can view dosage schedules anytime on your Lumera Portal.";
+    const intermediateBody =
+      "Dear {{1}}, thank you for consulting Dr. {{2}}. Your digital prescription (Rx: {{3}}) and itemized consultation receipt are attached above. You can view dosage schedules anytime on your patient portal.";
+    const nearBody = `${originalBody} Thanks for visiting.`;
+    const legacyExample = { body_text: [["Sunita Roy", "Vikram Malhotra", "RX-2026-0101"]] };
+    const original = JSON.stringify([
+      { type: "HEADER", format: "DOCUMENT" },
+      { type: "BODY", text: originalBody, example: legacyExample },
+      { type: "FOOTER", text: "Lumera Health EMR System • Digital Rx" },
+      { type: "BUTTONS", buttons: [{ type: "URL", text: "Open Patient Portal", url: "https://lumera.health/portal" }] },
+    ]);
+    const intermediate = JSON.stringify([
+      { type: "BODY", text: intermediateBody, example: legacyExample },
+      { type: "FOOTER", text: "Demo clinic • Digital Rx" },
+    ]);
+    const certified = JSON.stringify([
+      { type: "BODY", text: originalBody, example: legacyExample },
+      { type: "FOOTER", text: "Lumera Health EMR System • Certified Digital Rx" },
+    ]);
+    const near = JSON.stringify([
+      { type: "BODY", text: nearBody },
+      { type: "FOOTER", text: "City Clinic • Digital Rx" },
+    ]);
+
+    const db = new DatabaseSync(":memory:");
+    db.exec(`
+      CREATE TABLE tenants (id TEXT PRIMARY KEY, email TEXT, website TEXT, upi_id TEXT, name TEXT);
+      CREATE TABLE doctors (id TEXT PRIMARY KEY, user_id TEXT, email TEXT, avatar_url TEXT);
+      CREATE TABLE staff (id TEXT PRIMARY KEY, user_id TEXT, email TEXT);
+      CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT, tenant_id TEXT);
+      CREATE TABLE patients (id TEXT PRIMARY KEY, tenant_id TEXT, email TEXT);
+      CREATE TABLE invoices (id TEXT PRIMARY KEY, tenant_id TEXT, upi_id TEXT);
+      CREATE TABLE cms_settings (key TEXT PRIMARY KEY, value TEXT);
+      CREATE TABLE prescriptions (id TEXT PRIMARY KEY, tenant_id TEXT, qr_verification_url TEXT);
+      CREATE TABLE meta_templates (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT DEFAULT '',
+        name TEXT DEFAULT '',
+        components TEXT DEFAULT '[]'
+      );
+      CREATE TABLE whatsapp_messages (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT DEFAULT '',
+        content TEXT DEFAULT ''
+      );
+      CREATE TABLE audit_logs (
+        id TEXT PRIMARY KEY,
+        timestamp TEXT NOT NULL,
+        user_id TEXT,
+        user_name TEXT NOT NULL,
+        action TEXT NOT NULL,
+        details TEXT NOT NULL DEFAULT '',
+        tenant_id TEXT NOT NULL DEFAULT '',
+        patient_id TEXT NOT NULL DEFAULT '',
+        actor_role TEXT NOT NULL DEFAULT '',
+        entity_type TEXT NOT NULL DEFAULT '',
+        entity_id TEXT NOT NULL DEFAULT ''
+      );
+    `);
+    const insert = db.prepare(
+      "INSERT INTO meta_templates (id, tenant_id, name, components) VALUES (?, ?, ?, ?)"
+    );
+    insert.run("tpl-2", "tenant-lumera-main", "post_consultation_rx", original);
+    insert.run("tpl-6", "tenant-demo-physio", "post_consultation_rx", intermediate);
+    insert.run("tpl-5", "tenant-rehab-mumbai", "post_consultation_rx", certified);
+    insert.run("tpl-3", "tenant-lumera-main", "post_consultation_rx", near);
+    insert.run("tpl-clinic-rx", "tenant-lumera-main", "post_consultation_rx", original);
+    insert.run("tpl-4", "tenant-real", "post_consultation_rx", original);
+    db.prepare("INSERT INTO whatsapp_messages (id, tenant_id, content) VALUES (?, ?, ?)").run(
+      "msg-rx",
+      "tenant-lumera-main",
+      originalBody
+    );
+    const priorAudit = `Sent template ${originalBody}`;
+    db.prepare(
+      `INSERT INTO audit_logs (
+        id, timestamp, user_id, user_name, action, details,
+        tenant_id, patient_id, actor_role, entity_type, entity_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      "audit-sent-rx",
+      "2026-10-01T00:00:00.000Z",
+      "user-demo-doctor",
+      "Dr Demo",
+      "whatsapp_sent",
+      priorAudit,
+      "tenant-lumera-main",
+      "pat-6",
+      "doctor",
+      "whatsapp_message",
+      "msg-rx"
+    );
+
+    migrateUnownedDomains(db);
+    rewriteLegacyHonestyCopy(db);
+    migrateUnownedDomains(db);
+
+    const componentsOf = (id: string, tenantId: string) =>
+      JSON.parse(
+        (
+          db.prepare("SELECT components AS v FROM meta_templates WHERE id = ? AND tenant_id = ?").get(id, tenantId) as {
+            v: string;
+          }
+        ).v
+      ) as Array<{ type?: string; text?: string; example?: { body_text?: string[][] }; buttons?: Array<{ text?: string; url?: string }> }>;
+
+    for (const [id, tenantId] of [
+      ["tpl-2", "tenant-lumera-main"],
+      ["tpl-6", "tenant-demo-physio"],
+      ["tpl-5", "tenant-rehab-mumbai"],
+    ] as const) {
+      const parts = componentsOf(id, tenantId);
+      const body = parts.find((part) => part.type === "BODY");
+      assert.equal(body?.text, POST_CONSULTATION_BODY);
+      assert.deepEqual(body?.example?.body_text, [["Vikram Malhotra", "City Clinic"]]);
+      assert.equal(parts.some((part) => part.type === "FOOTER"), false);
+      const serialized = JSON.stringify(parts);
+      assert.equal(serialized.includes("Lumera"), false);
+      assert.equal(serialized.includes("Rx"), false);
+    }
+
+    const portal = componentsOf("tpl-2", "tenant-lumera-main").find((part) => part.type === "BUTTONS");
+    assert.equal(portal?.buttons?.[0].text, "Open Patient Portal");
+    assert.equal(portal?.buttons?.[0].url, "https://www.mylumera.in/portal/v/{{1}}");
+
+    const customNear = componentsOf("tpl-3", "tenant-lumera-main");
+    assert.match(customNear.find((part) => part.type === "BODY")?.text || "", /Rx: \{\{3\}\}/);
+    assert.match(customNear.find((part) => part.type === "BODY")?.text || "", /your patient portal/);
+    assert.equal(customNear.find((part) => part.type === "FOOTER")?.text, "City Clinic • Digital Rx");
+
+    const stored = (id: string, tenantId: string) =>
+      (db.prepare("SELECT components AS v FROM meta_templates WHERE id = ? AND tenant_id = ?").get(id, tenantId) as {
+        v: string;
+      }).v;
+    assert.equal(stored("tpl-clinic-rx", "tenant-lumera-main"), original);
+    assert.equal(stored("tpl-4", "tenant-real"), original);
+
+    assert.equal(
+      (db.prepare("SELECT content AS v FROM whatsapp_messages WHERE id = ?").get("msg-rx") as { v: string }).v,
+      originalBody
+    );
+    const kept = db.prepare("SELECT action, details FROM audit_logs WHERE id = ?").get("audit-sent-rx") as {
+      action: string;
+      details: string;
+    };
+    assert.equal(kept.action, "whatsapp_sent");
+    assert.equal(kept.details, priorAudit);
+    const migrationAudits = db
+      .prepare("SELECT action, details FROM audit_logs WHERE action = ?")
+      .all("Unowned domain migration") as Array<{ action: string; details: string }>;
+    assert.equal(migrationAudits.length, 1);
+    assert.match(migrationAudits[0].details, /meta_templates=4/);
+    assert.doesNotMatch(migrationAudits[0].details, /whatsapp/);
+
+    const untouched = neutralizePostConsultationSeed(near);
+    assert.equal(untouched, near);
+    const seeded = fs.readFileSync(path.join(root, "server/db-seed-meta.ts"), "utf8");
+    const block = seeded.slice(
+      seeded.indexOf('name: "post_consultation_rx"'),
+      seeded.indexOf('name: "lab_report_ready"')
+    );
+    assert.match(block, /Dr\. \{\{1\}\} at \{\{2\}\}/);
+    assert.doesNotMatch(block, /\{\{3\}\}/);
+    assert.doesNotMatch(block, /Lumera Portal|Lumera Health|Rx:|Digital Rx|RX-/);
+    assert.match(block, /https:\/\/lumera\.health\/portal/);
   });
 
   it("reports a row error and keeps going", () => {

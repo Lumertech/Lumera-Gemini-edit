@@ -215,10 +215,9 @@ export function ensureMetaTechProviderAndPolicies(database: SqlDatabase) {
           { type: "HEADER", format: "DOCUMENT" },
           {
             type: "BODY",
-            text: "Dear {{1}}, thank you for consulting Dr. {{2}}. Your digital prescription (Rx: {{3}}) and itemized consultation receipt are attached above. You can view dosage schedules anytime on your patient portal.",
-            example: { body_text: [["Sunita Roy", "Vikram Malhotra", "RX-2026-0101"]] }
+            text: "Thank you for consulting Dr. {{1}} at {{2}}. Your consultation summary and receipt are attached above.",
+            example: { body_text: [["Vikram Malhotra", "City Clinic"]] }
           },
-          { type: "FOOTER", text: "Demo clinic • Digital Rx" },
           {
             type: "BUTTONS",
             buttons: [

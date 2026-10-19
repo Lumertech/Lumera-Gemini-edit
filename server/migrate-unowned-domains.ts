@@ -9,6 +9,9 @@ import { reportCaughtError } from "./error-tracker.ts";
  *
  * Updates letterhead, contact fields, seeded template definitions, seed
  * mailbox defaults, qr_verification_url, and demo-tenant invoices.upi_id.
+ * The seeded post_consultation_rx body keeps a doctor variable and a clinic
+ * variable. Known Lumera Portal / Lumera Health EMR / Rx-number copies of
+ * that seed are replaced only on demo seed template ids.
  * lumera.health and lumeraclinic.in match only as an exact host or as the
  * prefix of an http(s) URL. lumerahealth@icici matches only as a whole value.
  * A note that merely contains those strings is left alone.
@@ -66,6 +69,28 @@ const SEEDED_PATIENT_LOCALS = [
 ] as const;
 
 const SEEDED_PATIENT_FROM_HOSTS = ["gmail.com", "outlook.com", "mylumera.in"] as const;
+
+/**
+ * Doctor {{1}} and clinic {{2}}. No product name and no prescription number.
+ * Existing demo seed rows are rewritten onto this sentence.
+ */
+export const POST_CONSULTATION_BODY =
+  "Thank you for consulting Dr. {{1}} at {{2}}. Your consultation summary and receipt are attached above.";
+
+const POST_CONSULTATION_EXAMPLE = ["Vikram Malhotra", "City Clinic"] as const;
+
+const LEGACY_POST_CONSULTATION_BODIES = new Set([
+  "Dear {{1}}, thank you for consulting Dr. {{2}}. Your digital prescription (Rx: {{3}}) and itemized consultation receipt are attached above. You can view dosage schedules anytime on your Lumera Portal.",
+  "Dear {{1}}, thank you for consulting Dr. {{2}}. Your digital prescription (Rx: {{3}}) and itemized consultation receipt are attached above. You can view dosage schedules anytime on your patient portal.",
+]);
+
+const LEGACY_POST_CONSULTATION_EXAMPLE = ["Sunita Roy", "Vikram Malhotra", "RX-2026-0101"];
+
+const LEGACY_POST_CONSULTATION_FOOTERS = new Set([
+  "Lumera Health EMR System • Digital Rx",
+  "Lumera Health EMR System • Certified Digital Rx",
+  "Demo clinic • Digital Rx",
+]);
 
 const PHRASES: ReadonlyArray<readonly [string, string]> = [
   ["Lumera Health EMR System • Digital Rx", "Demo clinic • Digital Rx"],
@@ -184,6 +209,53 @@ export function rewriteSeedPhrases(value: string): string {
     if (next.includes(from)) next = next.split(from).join(to);
   }
   return next;
+}
+
+function sameStrings(value: unknown, expected: readonly string[]): boolean {
+  return Array.isArray(value) && value.length === expected.length && value.every((item, index) => item === expected[index]);
+}
+
+/**
+ * Exact body and footer replacements for the seeded post-consultation template.
+ * A longer custom sentence that merely contains one of those phrases is kept.
+ * The branded footer is removed; WhatsApp footers cannot carry a clinic variable.
+ */
+export function neutralizePostConsultationSeed(value: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return value;
+  }
+  if (!Array.isArray(parsed)) return value;
+  let changed = false;
+  const next = [];
+  for (const part of parsed) {
+    if (!part || typeof part !== "object") {
+      next.push(part);
+      continue;
+    }
+    const component = part as Record<string, unknown>;
+    if (component.type === "BODY" && LEGACY_POST_CONSULTATION_BODIES.has(String(component.text ?? ""))) {
+      changed = true;
+      const example = component.example;
+      let nextExample = example;
+      if (example && typeof example === "object") {
+        const bodyText = (example as { body_text?: unknown }).body_text;
+        if (Array.isArray(bodyText) && bodyText.length === 1 && sameStrings(bodyText[0], LEGACY_POST_CONSULTATION_EXAMPLE)) {
+          nextExample = { ...(example as object), body_text: [POST_CONSULTATION_EXAMPLE] };
+        }
+      }
+      next.push({ ...component, text: POST_CONSULTATION_BODY, ...(nextExample !== undefined ? { example: nextExample } : {}) });
+      continue;
+    }
+    if (component.type === "FOOTER" && LEGACY_POST_CONSULTATION_FOOTERS.has(String(component.text ?? ""))) {
+      changed = true;
+      continue;
+    }
+    next.push(part);
+  }
+  return changed ? JSON.stringify(next) : value;
 }
 
 /**
@@ -384,7 +456,7 @@ function rewriteSeedTemplates(database: SqlDatabase): number {
     const id = asText(row.id);
     if (!id) continue;
     const current = asText(row.value);
-    const next = rewriteSeedPhrases(rewriteSeedTemplateLinks(current));
+    const next = neutralizePostConsultationSeed(rewriteSeedPhrases(rewriteSeedTemplateLinks(current)));
     if (next === current) continue;
     const wrote = runRow(`migrate-unowned-domains meta_templates.components ${id}`, () => {
       update.run(next, id);
