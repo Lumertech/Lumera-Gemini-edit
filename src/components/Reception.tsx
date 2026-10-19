@@ -101,7 +101,6 @@ export const Reception: React.FC<ReceptionProps> = ({
   const [savingIntake, setSavingIntake] = useState(false);
   const [intakeError, setIntakeError] = useState<string | null>(null);
   const [selectedRecordPatient, setSelectedRecordPatient] = useState<Patient | null>(null);
-  const [deskPanel, setDeskPanel] = useState<'add' | 'registered'>('add');
   const [attachedPatientId, setAttachedPatientId] = useState<string | null>(null);
   const [savedPatientName, setSavedPatientName] = useState('');
   const [reportSummary, setReportSummary] = useState('');
@@ -487,37 +486,10 @@ export const Reception: React.FC<ReceptionProps> = ({
         )}
       </div>
 
-      <div role="tablist" aria-label="Reception" className="flex gap-2 lg:hidden">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={deskPanel === 'add'}
-          data-testid="reception-tab-add-patient"
-          onClick={() => setDeskPanel('add')}
-          className={`flex-1 min-h-11 px-3 py-2 rounded-lg text-sm font-semibold ${
-            deskPanel === 'add' ? 'bg-slate-900 text-white' : 'bg-white text-slate-700 border border-slate-300'
-          }`}
-        >
-          Add Patient
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={deskPanel === 'registered'}
-          data-testid="reception-tab-registered"
-          onClick={() => setDeskPanel('registered')}
-          className={`flex-1 min-h-11 px-3 py-2 rounded-lg text-sm font-semibold ${
-            deskPanel === 'registered' ? 'bg-slate-900 text-white' : 'bg-white text-slate-700 border border-slate-300'
-          }`}
-        >
-          Registered
-        </button>
-      </div>
-
       {/* Main Grid: Registration Form (Left) & Active Intake Queue / Search (Right) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 min-w-0">
         {/* Left 6 Cols: OPD Intake & Token Dispenser Form */}
-        <div className={`${deskPanel === 'add' ? '' : 'hidden'} lg:block lg:col-span-6 bg-white rounded-xl border border-slate-200 shadow-sm p-4 sm:p-6 space-y-4 min-w-0 max-w-full`} data-testid="reception-add-patient">
+        <div className="lg:col-span-6 bg-white rounded-xl border border-slate-200 shadow-sm p-4 sm:p-6 space-y-4 min-w-0 max-w-full" data-testid="reception-add-patient">
           <div className="flex items-center justify-between border-b border-slate-100 pb-3 gap-2">
             <div className="flex items-center gap-2 min-w-0">
               <UserPlus className="w-5 h-5 text-purple-600 shrink-0" />
@@ -714,7 +686,7 @@ export const Reception: React.FC<ReceptionProps> = ({
         </div>
 
         {/* Right 6 Cols: Patient Directory & Search with ABHA status */}
-        <div className={`${deskPanel === 'registered' ? '' : 'hidden'} lg:block lg:col-span-6 bg-white rounded-xl border border-slate-200 shadow-sm p-4 sm:p-6 space-y-4 min-w-0 max-w-full`}>
+        <div className="lg:col-span-6 bg-white rounded-xl border border-slate-200 shadow-sm p-4 sm:p-6 space-y-4 min-w-0 max-w-full">
           <div className="flex items-center justify-between">
             <div>
               <h3 className="font-bold text-sm text-slate-900">Registered Patients & ABHA Status (sandbox)</h3>
