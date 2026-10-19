@@ -17,19 +17,26 @@ export interface TokenDuplicate {
   n: number;
 }
 
+/** Hidden ambient rows share token 0 and must not move the visible sequence when `source` exists. */
+function visibleTokenClause(database: SqlDatabase): { sql: string; params: readonly string[] } {
+  if (!appointmentsHaveSource(database)) return { sql: "", params: [] };
+  return { sql: " AND COALESCE(source, '') NOT IN (?, ?)", params: HIDDEN_AMBIENT_SOURCES };
+}
+
 export function nextTokenNumber(
   database: SqlDatabase,
   tenantId: string,
   queueDate: string,
   doctorId: string
 ): number {
+  const hidden = visibleTokenClause(database);
   const row = database
     .prepare(
       `SELECT COALESCE(MAX(token_number), 0) AS max_token
        FROM appointments
-       WHERE tenant_id = ? AND date = ? AND doctor_id = ?`
+       WHERE tenant_id = ? AND date = ? AND doctor_id = ?${hidden.sql}`
     )
-    .get(tenantId, queueDate, doctorId) as { max_token?: number } | undefined;
+    .get(tenantId, queueDate, doctorId, ...hidden.params) as { max_token?: number } | undefined;
   return Number(row?.max_token || 0) + 1;
 }
 
@@ -41,13 +48,14 @@ export function tokenInUse(
   tokenNumber: number,
   exceptId = ""
 ): boolean {
+  const hidden = visibleTokenClause(database);
   const row = database
     .prepare(
       `SELECT id FROM appointments
-       WHERE tenant_id = ? AND date = ? AND doctor_id = ? AND token_number = ? AND id != ?
+       WHERE tenant_id = ? AND date = ? AND doctor_id = ? AND token_number = ? AND id != ?${hidden.sql}
        LIMIT 1`
     )
-    .get(tenantId, queueDate, doctorId, tokenNumber, exceptId) as { id?: string } | undefined;
+    .get(tenantId, queueDate, doctorId, tokenNumber, exceptId, ...hidden.params) as { id?: string } | undefined;
   return Boolean(row?.id);
 }
 
