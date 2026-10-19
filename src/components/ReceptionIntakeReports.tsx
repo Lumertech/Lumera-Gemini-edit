@@ -67,8 +67,10 @@ function formatBytes(size: number): string {
 const CONSENT_BLOCK =
   "Record consent before storing a health document. The patient is already saved.";
 
-export const ReceptionIntakeReports = forwardRef<ReceptionIntakeReportsHandle, { patientId: string | null }>(
-  function ReceptionIntakeReports({ patientId }, ref) {
+export const ReceptionIntakeReports = forwardRef<
+  ReceptionIntakeReportsHandle,
+  { patientId: string | null; onUploaded?: (result: IntakeUploadResult) => void }
+>(function ReceptionIntakeReports({ patientId, onUploaded }, ref) {
     const [items, setItems] = useState<IntakeReport[]>([]);
     const [dragOver, setDragOver] = useState(false);
     const [consent, setConsent] = useState<DocumentConsentStatus | null>(null);
@@ -216,7 +218,9 @@ export const ReceptionIntakeReports = forwardRef<ReceptionIntakeReportsHandle, {
           break;
         }
       }
-      return { saved, failed, blocked };
+      const result = { saved, failed, blocked };
+      onUploaded?.(result);
+      return result;
     }
 
     useImperativeHandle(ref, () => ({

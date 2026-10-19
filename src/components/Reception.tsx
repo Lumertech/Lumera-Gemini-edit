@@ -649,7 +649,21 @@ export const Reception: React.FC<ReceptionProps> = ({
           </div>
 
           <div className="sm:col-span-2 border-t border-slate-100 pt-3">
-            <ReceptionIntakeReports ref={reportsRef} patientId={attachedPatientId} />
+            <ReceptionIntakeReports
+              ref={reportsRef}
+              patientId={attachedPatientId}
+              onUploaded={(uploaded) => {
+                if (uploaded.blocked) {
+                  setReportSummary('Patient saved. Reports stay here until consent is recorded.');
+                } else if (uploaded.failed > 0) {
+                  setReportSummary(
+                    `Patient saved. ${uploaded.saved} stored, ${uploaded.failed} not stored. Retry a file below — you do not need to enter the patient again.`
+                  );
+                } else if (uploaded.saved > 0) {
+                  setReportSummary(`Patient saved. ${uploaded.saved} ${uploaded.saved === 1 ? 'report' : 'reports'} stored.`);
+                }
+              }}
+            />
           </div>
 
           {savedPatientName && (
