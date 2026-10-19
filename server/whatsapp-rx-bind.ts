@@ -2,14 +2,25 @@ import type { Request, Response } from "express";
 import { getDb, writeAudit } from "./db.ts";
 import { reportCaughtError } from "./error-tracker.ts";
 import {
+  approvedClinicTemplate,
+  prescriptionReadyTemplateParameters,
+  prescriptionUrlSuffix,
+  TEMPLATE_NOT_APPROVED_ERROR,
+} from "./clinic-whatsapp-templates.ts";
+import {
   CLINIC_DOCTOR_NAME_REQUIRED,
   CLINIC_WHATSAPP_NOT_CONNECTED,
   READ_ONLY_WHATSAPP_SEND_ERROR,
   WA_TOKEN_KEY_UNSET_ERROR,
   WHATSAPP_WINDOW_CLOSED_ERROR,
   cloudDispatchHttpStatus,
+  dispatchWhatsAppCloudMessage,
   isCloudDispatchFailure,
+  isWithinCustomerServiceWindow,
+  resolveGraphCredentials,
+  type CloudDispatchResult,
 } from "./graph-whatsapp.ts";
+import { isProduction } from "./runtime.ts";
 import { getTenantLetterhead } from "./letterhead.ts";
 import { appPublicUrl, AppPublicUrlError } from "./runtime.ts";
 import { PATIENT_PHONE_MISSING, RX_SEND_FAILED } from "../src/lib/signedRxWhatsAppSend.ts";
@@ -36,6 +47,7 @@ export type SignedRxSend =
       doctorName: string;
       text: string;
       pdfUrl: string;
+      clinicName: string;
     };
 
 function fail(status: number, code: string): SignedRxSend {
@@ -168,10 +180,11 @@ export function resolveSignedRxWhatsAppSend(
     rxNumber: storedRxNumber,
     phone,
     patientName: String(patient.name || "").trim() || "Patient",
-    doctorName: signerName || "your doctor",
-    text,
-    pdfUrl,
-  };
+      doctorName: signerName || "your doctor",
+      clinicName,
+      text,
+      pdfUrl,
+    };
 }
 
 const META_MESSAGE_ID = /^wamid\.\S+$/;
@@ -188,6 +201,7 @@ function rxFailureCode(error: string): string {
   ) {
     return "WHATSAPP_NOT_CONNECTED";
   }
+  if (text.includes("TEMPLATE_NOT_APPROVED")) return "TEMPLATE_NOT_APPROVED";
   if (
     text === READ_ONLY_WHATSAPP_SEND_ERROR ||
     text === WHATSAPP_WINDOW_CLOSED_ERROR ||
@@ -197,6 +211,58 @@ function rxFailureCode(error: string): string {
     return "WHATSAPP_POLICY_BLOCKED";
   }
   return RX_SEND_FAILED;
+}
+
+/**
+ * Inside the 24h window this stays the signed-Rx text send.
+ * Outside that window it uses clinic_prescription_ready when that template is APPROVED.
+ */
+export async function dispatchSignedRxCloudMessage(opts: {
+  tenantId: string;
+  to: string;
+  textBody: string;
+  patientName: string;
+  clinicName: string;
+  doctorName: string;
+  rxNumber: string;
+  fetchImpl?: typeof fetch;
+}): Promise<CloudDispatchResult> {
+  const db = getDb();
+  const windowOpen = isWithinCustomerServiceWindow(db, opts.tenantId, opts.to);
+  if (windowOpen) {
+    return dispatchPatientCloudText({
+      tenantId: opts.tenantId,
+      to: opts.to,
+      textBody: opts.textBody,
+      previewUrl: true,
+      fetchImpl: opts.fetchImpl,
+    });
+  }
+  const approved = approvedClinicTemplate(db, opts.tenantId, "prescription_ready");
+  if (approved) {
+    return dispatchWhatsAppCloudMessage({
+      to: opts.to,
+      kind: "prescription_ready",
+      textBody: opts.textBody,
+      templateLanguage: approved.language,
+      templateParameters: prescriptionReadyTemplateParameters(opts),
+      urlButtonParameter: prescriptionUrlSuffix(opts.rxNumber),
+      db,
+      tenantId: opts.tenantId,
+      fetchImpl: opts.fetchImpl,
+    });
+  }
+  const creds = resolveGraphCredentials(db, opts.tenantId);
+  if (!creds && !isProduction()) {
+    return dispatchPatientCloudText({
+      tenantId: opts.tenantId,
+      to: opts.to,
+      textBody: opts.textBody,
+      previewUrl: true,
+      fetchImpl: opts.fetchImpl,
+    });
+  }
+  return { ok: false, error: TEMPLATE_NOT_APPROVED_ERROR, channel: "none", status: 409 };
 }
 
 function auditRxSend(req: Request, tenantId: string, rxNumber: string, outcome: "sent" | "failed", code: string) {
@@ -302,11 +368,14 @@ export async function handleSignedRxWhatsAppSend(req: Request, res: Response): P
       res.status(resolved.status).json({ code: resolved.code });
       return;
     }
-    const sent = await dispatchPatientCloudText({
+    const sent = await dispatchSignedRxCloudMessage({
       tenantId,
       to: resolved.phone,
       textBody: resolved.text,
-      previewUrl: true,
+      patientName: resolved.patientName,
+      clinicName: resolved.clinicName,
+      doctorName: resolved.doctorName,
+      rxNumber: resolved.rxNumber,
     });
     if (isCloudDispatchFailure(sent)) {
       const code = rxFailureCode(sent.error);

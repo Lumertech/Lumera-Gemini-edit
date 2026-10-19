@@ -89,6 +89,12 @@ function mockGraphFetch(
       assert.match(auth, /^Bearer /);
       return new Response(JSON.stringify({ success: true }), { status: 200 });
     }
+    if (url.includes("/message_templates")) {
+      if (method === "POST") {
+        return new Response(JSON.stringify({ id: `tpl_${Date.now()}`, status: "PENDING" }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    }
     if (url.includes("/register")) {
       assert.equal(method, "POST");
       const parsed = JSON.parse(body) as { messaging_product?: string; pin?: string };
@@ -235,6 +241,20 @@ describe("Embedded Signup v4 handshake", () => {
     const registers = calls.filter((c) => c.method === "POST" && c.url.includes("/register"));
     assert.equal(registers.length, 1);
     assert.match(registers[0].url, new RegExp(`/${phoneId}/register`));
+    const templates = getDb()
+      .prepare(`SELECT name, status FROM meta_templates WHERE tenant_id = ? ORDER BY name`)
+      .all(clinic.tenantId) as Array<{ name: string; status: string }>;
+    assert.deepEqual(
+      templates.map((row) => row.name),
+      [
+        "clinic_appointment_reminder",
+        "clinic_booking_confirmation",
+        "clinic_payment_receipt",
+        "clinic_prescription_ready",
+      ]
+    );
+    assert.equal(templates.every((row) => row.status === "PENDING"), true);
+    assert.equal(templates.some((row) => row.name.startsWith("lumera_")), false);
   });
 
   it("registers the phone again when Embedded Signup is completed a second time", async () => {

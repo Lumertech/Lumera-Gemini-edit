@@ -143,6 +143,18 @@ describe("usage-billing Rx WhatsApp send is bound to the signed prescription", (
     ).run(secretId, numberId, GRAPH_TOKEN, now, now);
   }
 
+  function openServiceWindow(tenantId: string, phone: string) {
+    const now = new Date().toISOString();
+    getDb()
+      .prepare(
+        `INSERT INTO whatsapp_conversations (
+          id, patient_phone, patient_name, handover_mode, assigned_staff, tags, preferred_language,
+          unread_count, last_message, last_message_time, updated_at, tenant_id, last_inbound_at
+        ) VALUES (?, ?, 'Asha Rao', 'bot', 'Clinic', '[]', 'en', 0, 'hello', ?, ?, ?, ?)`
+      )
+      .run(`conv-window-${phone.replace(/\D/g, "").slice(-8)}`, phone, now, now, tenantId, now);
+  }
+
   function leakBody(rxNumber: string, attackerPhone: string) {
     return {
       rxNumber,
@@ -219,6 +231,7 @@ describe("usage-billing Rx WhatsApp send is bound to the signed prescription", (
       drugName: "Paracetamol",
     });
     connectClinicLine(clinic.tenantId, rx.rxNumber);
+    openServiceWindow(clinic.tenantId, phone);
     const attackerPhone = `+91 92222 ${String(Date.now()).slice(-5)}`;
     const wamid = `wamid.RX_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
     const original = globalThis.fetch;
@@ -268,6 +281,7 @@ describe("usage-billing Rx WhatsApp send is bound to the signed prescription", (
       reviewedBy: clinic.userId,
     });
     connectClinicLine(clinic.tenantId, rx.rxNumber);
+    openServiceWindow(clinic.tenantId, phone);
     const original = globalThis.fetch;
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);

@@ -330,7 +330,7 @@ describe("Meta Tech Provider audit", () => {
     getDb()
       .prepare(
         `INSERT INTO meta_templates (id, tenant_id, waba_id, name, category, language, status, components, created_at, updated_at)
-         VALUES (?, ?, '204800000000000', 'sunrise_visit_reminder', 'UTILITY', 'en', 'APPROVED', '[]', ?, ?)`
+         VALUES (?, ?, '204800000000000', 'clinic_appointment_reminder', 'UTILITY', 'en', 'APPROVED', '[]', ?, ?)`
       )
       .run(`tpl-${tenantId}`, tenantId, now, now);
 
@@ -352,7 +352,7 @@ describe("Meta Tech Provider audit", () => {
     });
     assert.equal(sent.ok, true);
     assert.equal(/lumera/i.test(payload), false);
-    assert.match(payload, /sunrise_visit_reminder/);
+    assert.match(payload, /clinic_appointment_reminder/);
     assert.match(payload, /Sunrise Ortho/);
     assert.match(payload, /Dr Mehta/);
     assert.equal(payload.includes("lumera_appointment_reminder"), false);

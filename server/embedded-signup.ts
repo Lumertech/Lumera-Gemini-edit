@@ -21,10 +21,13 @@
 
 import crypto from "node:crypto";
 import { envFlag, graphApiVersion, isProduction, isUnsetOrPlaceholder, readSecret, sandboxSimulatorsEnabled } from "./runtime.ts";
+import { getDb } from "./db.ts";
+import { provisionClinicMessageTemplates } from "./clinic-whatsapp-templates.ts";
 import {
   getWhatsAppNumberByPhoneNumberId,
   getWhatsAppRegistrationPin,
   publicWhatsAppNumber,
+  rememberWhatsAppLineDisplay,
   upsertWhatsAppNumber,
   type WabaActor,
   type WhatsAppOwnerType,
@@ -242,7 +245,7 @@ export async function confirmWabaAndPhoneGrants(opts: {
   phoneNumberId: string;
   debugToken?: DebugTokenPayload;
   fetchImpl?: FetchImpl;
-}): Promise<{ wabaName: string }> {
+}): Promise<{ wabaName: string; displayPhoneNumber: string; verifiedName: string }> {
   const wabaId = String(opts.wabaId || "").trim();
   const phoneNumberId = String(opts.phoneNumberId || "").trim();
   if (!wabaId || !phoneNumberId) {
@@ -282,7 +285,7 @@ export async function confirmWabaAndPhoneGrants(opts: {
   }
 
   const phones = await graphCall({
-    url: `https://graph.facebook.com/${version}/${encodeURIComponent(wabaId)}/phone_numbers?fields=id,display_phone_number&${tokenQ.toString()}`,
+    url: `https://graph.facebook.com/${version}/${encodeURIComponent(wabaId)}/phone_numbers?fields=id,display_phone_number,verified_name&${tokenQ.toString()}`,
     fetchImpl,
   });
   if (!phones.ok || (phones.data && typeof phones.data === "object" && phones.data.error)) {
@@ -302,7 +305,11 @@ export async function confirmWabaAndPhoneGrants(opts: {
     );
   }
 
-  return { wabaName: String(waba.data?.name || "").trim() };
+  return {
+    wabaName: String(waba.data?.name || "").trim(),
+    displayPhoneNumber: String(match.display_phone_number || "").trim(),
+    verifiedName: String(match.verified_name || "").trim(),
+  };
 }
 
 export function generateWhatsAppRegistrationPin(): string {
@@ -428,13 +435,28 @@ export async function completeEmbeddedSignup(opts: {
     ownerId: opts.ownerId,
     wabaId: opts.wabaId,
     phoneNumberId: opts.phoneNumberId,
-    metaWabaName: grants.wabaName || opts.displayName || "",
+    metaWabaName: grants.verifiedName || grants.wabaName || opts.displayName || "",
     metaAccessToken: exchanged.accessToken,
     metaTokenExpiresAt: tokenExpiryIso(debug),
     registrationPin,
     status: "connected",
     connectedVia: "embedded_signup",
   });
+  rememberWhatsAppLineDisplay(getDb(), opts.phoneNumberId, {
+    displayPhoneNumber: grants.displayPhoneNumber,
+    verifiedName: grants.verifiedName || grants.wabaName || opts.displayName || "",
+  });
+
+  let clinicTemplates: Awaited<ReturnType<typeof provisionClinicMessageTemplates>> | undefined;
+  if (opts.ownerType === "tenant") {
+    clinicTemplates = await provisionClinicMessageTemplates({
+      db: getDb(),
+      tenantId: opts.ownerId,
+      wabaId: opts.wabaId,
+      accessToken: exchanged.accessToken,
+      fetchImpl,
+    });
+  }
 
   return {
     whatsappNumber: publicWhatsAppNumber(row),
@@ -445,6 +467,7 @@ export async function completeEmbeddedSignup(opts: {
       note: "Business token stored on whatsapp_number_secrets (AES-256-GCM when WA_TOKEN_KEY is set). tenants.meta_access_token is left null. Not Secret Manager.",
     },
     registrationPinStored: true,
+    clinicTemplates,
     sandbox: !isProduction(),
     notice:
       "Embedded Signup v4 handshake completed. The phone number was registered with the stored 6-digit PIN. Reconnect reuses that PIN and generates a new one only when none is stored. Contact ravee@lumer.me.",

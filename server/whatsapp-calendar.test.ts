@@ -409,6 +409,14 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
         status: "connected",
       });
 
+      const seededAt = new Date().toISOString();
+      const seedTemplate = getDb().prepare(
+        `INSERT INTO meta_templates (id, tenant_id, waba_id, name, category, language, status, components, created_at, updated_at)
+         VALUES (?, ?, '204800000000000', ?, 'UTILITY', 'en', 'APPROVED', '[]', ?, ?)`
+      );
+      seedTemplate.run(`tpl-rem-${clinic.tenantId}`, clinic.tenantId, "clinic_appointment_reminder", seededAt, seededAt);
+      seedTemplate.run(`tpl-book-${clinic.tenantId}`, clinic.tenantId, "clinic_booking_confirmation", seededAt, seededAt);
+
       const fetchImpl: typeof fetch = async (input, init) => {
         const url = String(input);
         assert.match(url, new RegExp(`/${phoneNumberId}/messages`));
@@ -809,7 +817,7 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
       getDb()
         .prepare(
           `INSERT INTO meta_templates (id, tenant_id, waba_id, name, category, language, status, components, created_at, updated_at)
-           VALUES (?, ?, '204800000000000', 'lumera_appointment_reminder', 'UTILITY', 'en_US', 'APPROVED', '[]', ?, ?)`
+           VALUES (?, ?, '204800000000000', 'clinic_appointment_reminder', 'UTILITY', 'en_US', 'APPROVED', '[]', ?, ?)`
         )
         .run(`tpl-${clinic.tenantId}`, clinic.tenantId, now, now);
       const booked = bookWhatsAppAppointment({
@@ -840,7 +848,7 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
         language?: { code?: string };
         components?: Array<{ type?: string; parameters?: Array<{ text?: string }> }>;
       };
-      assert.equal(template.name, "lumera_appointment_reminder");
+      assert.equal(template.name, "clinic_appointment_reminder");
       assert.equal(template.language?.code, "en_US");
       const body = template.components?.find((component) => component.type === "body");
       const clinicRow = getDb().prepare("SELECT name FROM tenants WHERE id = ?").get(clinic.tenantId) as { name: string };

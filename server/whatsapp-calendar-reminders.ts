@@ -297,10 +297,11 @@ export async function dispatchWhatsAppBookConfirmation(opts: {
     uhid: opts.appointment.uhid,
     templateParameters: [
       opts.appointment.patientName,
+      clinicName,
       opts.appointment.doctorName,
       opts.appointment.date,
       opts.appointment.timeSlot || "OPD",
-      String(opts.appointment.tokenNumber),
+      String(opts.appointment.tokenNumber || ""),
     ],
     db: getDb(),
     fetchImpl: opts.fetchImpl,

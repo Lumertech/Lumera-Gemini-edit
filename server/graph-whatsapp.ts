@@ -6,6 +6,15 @@ import { getTenantWabaNumber, getWhatsAppNumberSecret } from "./whatsapp-numbers
 import { waTokenKeyBytes } from "./wa-token-crypto.ts";
 import { formatINR } from "../src/lib/currency.ts";
 import { isSampleTaxInvoice, sampleTaxInvoiceReceiptText } from "../src/lib/sampleTaxInvoice.ts";
+import {
+  approvedClinicTemplate,
+  bookConfirmationTemplateParameters,
+  clinicTemplateName,
+  formatGraphSendError,
+  receiptTemplateParameters,
+  reminderTemplateParameters,
+  TEMPLATE_NOT_APPROVED_ERROR,
+} from "./clinic-whatsapp-templates.ts";
 
 /**
  * Shared Meta WhatsApp Cloud API send module (Wave 1B OTP + Wave 2 utilities).
@@ -28,6 +37,7 @@ export type CloudMessageKind =
   | "appointment_reminder"
   | "book_confirmation"
   | "payment_receipt"
+  | "prescription_ready"
   | "text";
 
 export type CloudDispatchResult =
@@ -52,6 +62,7 @@ export function cloudDispatchHttpStatus(error: string, status?: number): number 
   if (error === READ_ONLY_WHATSAPP_SEND_ERROR || error === WHATSAPP_WINDOW_CLOSED_ERROR) return 403;
   if (/not permitted|24 hours after the patient/i.test(error)) return 403;
   if (String(error || "").includes("Top up now")) return 402;
+  if (String(error || "").includes("TEMPLATE_NOT_APPROVED")) return 409;
   return isProduction() ? 503 : 502;
 }
 
@@ -306,9 +317,12 @@ export async function postGraphWhatsAppMessage(opts: {
     ).trim();
 
     if (!res.ok || !messageId) {
-      const graphError =
-        (graphResponse as { error?: { message?: string } })?.error?.message ||
-        `Graph API rejected the ${opts.failureLabel || "message"} send (HTTP ${res.status}).`;
+      const graphErr = (graphResponse as { error?: { message?: string; code?: number | string } })?.error;
+      const code = graphErr?.code != null ? String(graphErr.code) : "";
+      const graphError = formatGraphSendError(
+        code,
+        graphErr?.message || `Graph API rejected the ${opts.failureLabel || "message"} send (HTTP ${res.status}).`
+      );
       return { ok: false, error: graphError, graphResponse };
     }
 
@@ -355,6 +369,8 @@ export async function sendWhatsAppGraphTemplate(opts: {
   authOtpButtonParameter?: string;
   /** Marketing/utility coupon COPY_CODE button. Not used for AUTH OTP. */
   couponCodeButtonParameter?: string;
+  /** Utility URL button suffix. The template URL is a fixed base plus this one trailing value. */
+  urlButtonParameter?: string;
   fetchImpl?: typeof fetch;
   failureLabel?: string;
 }): Promise<GraphMessageResult> {
@@ -384,6 +400,14 @@ export async function sendWhatsAppGraphTemplate(opts: {
       sub_type: "url",
       index: "0",
       parameters: [{ type: "text", text: String(opts.authOtpButtonParameter) }],
+    });
+  }
+  if (opts.urlButtonParameter && !opts.authOtpButtonParameter) {
+    components.push({
+      type: "button",
+      sub_type: "url",
+      index: "0",
+      parameters: [{ type: "text", text: String(opts.urlButtonParameter) }],
     });
   }
   if (opts.couponCodeButtonParameter) {
@@ -458,21 +482,39 @@ function utilityTemplateLanguage(): string {
   return envTrim("META_UTILITY_TEMPLATE_LANGUAGE") || envTrim("META_OTP_TEMPLATE_LANGUAGE") || "en";
 }
 
+function envTemplateConfig(kind: CloudMessageKind): { name: string; language: string } | null {
+  const envName =
+    kind === "otp"
+      ? "META_OTP_TEMPLATE_NAME"
+      : kind === "appointment_reminder"
+        ? "META_REMINDER_TEMPLATE_NAME"
+        : kind === "book_confirmation"
+          ? "META_BOOK_CONFIRMATION_TEMPLATE_NAME"
+          : kind === "payment_receipt"
+            ? "META_RECEIPT_TEMPLATE_NAME"
+            : kind === "prescription_ready"
+              ? "META_PRESCRIPTION_READY_TEMPLATE_NAME"
+              : "";
+  if (!envName) return null;
+  const name = envTrim(envName);
+  if (!name) return null;
+  const language =
+    kind === "otp" ? envTrim("META_OTP_TEMPLATE_LANGUAGE") || "en" : utilityTemplateLanguage();
+  return { name, language };
+}
+
 function approvedTenantTemplate(
   db: DatabaseSync,
   tenantId: string,
   kind: CloudMessageKind
 ): { name: string; language: string; category: string } | null {
+  if (kind !== "otp" && clinicTemplateName(kind)) {
+    return approvedClinicTemplate(db, tenantId, kind);
+  }
   const clause =
     kind === "otp"
       ? "(UPPER(category) = 'AUTHENTICATION' OR LOWER(name) LIKE '%otp%' OR LOWER(name) LIKE '%verification%')"
-      : kind === "appointment_reminder"
-        ? "LOWER(name) LIKE '%reminder%'"
-        : kind === "book_confirmation"
-          ? "(LOWER(name) LIKE '%confirm%' OR LOWER(name) LIKE '%booking%')"
-          : kind === "payment_receipt"
-            ? "(LOWER(name) LIKE '%receipt%' OR LOWER(name) LIKE '%payment%')"
-            : "";
+      : "";
   if (!clause) return null;
   try {
     const row = db
@@ -508,24 +550,16 @@ export function templateConfigForKind(
   if (id) {
     if (!db) return null;
     const row = approvedTenantTemplate(db, id, kind);
-    return row ? { name: row.name, language: row.language } : null;
+    if (row) return { name: row.name, language: row.language };
+    // Lumera's own number: a demo/sandbox clinic with no connected line uses the
+    // platform template name. A real clinic does not.
+    if (kind !== "otp" && isSandboxOrDemoTenant(db, id)) {
+      const own = tenantNumberCredentials(db, id);
+      if (!own) return envTemplateConfig(kind);
+    }
+    return null;
   }
-  const envName =
-    kind === "otp"
-      ? "META_OTP_TEMPLATE_NAME"
-      : kind === "appointment_reminder"
-        ? "META_REMINDER_TEMPLATE_NAME"
-        : kind === "book_confirmation"
-          ? "META_BOOK_CONFIRMATION_TEMPLATE_NAME"
-          : kind === "payment_receipt"
-            ? "META_RECEIPT_TEMPLATE_NAME"
-            : "";
-  if (!envName) return null;
-  const name = envTrim(envName);
-  if (!name) return null;
-  const language =
-    kind === "otp" ? envTrim("META_OTP_TEMPLATE_LANGUAGE") || "en" : utilityTemplateLanguage();
-  return { name, language };
+  return envTemplateConfig(kind);
 }
 
 export type ReminderFields = {
@@ -541,6 +575,7 @@ export type ReminderFields = {
 export type ReceiptFields = {
   patientName?: string;
   clinicName?: string;
+  doctorName?: string;
   amount?: number | string;
   currency?: string;
   invoiceId?: string;
@@ -625,6 +660,8 @@ export async function dispatchWhatsAppCloudMessage(opts: {
   templateName?: string;
   templateLanguage?: string;
   templateParameters?: string[];
+  urlButtonParameter?: string;
+  receiptFields?: ReceiptFields;
   previewUrl?: boolean;
   db?: DatabaseSync | null;
   fetchImpl?: typeof fetch;
@@ -646,7 +683,11 @@ export async function dispatchWhatsAppCloudMessage(opts: {
   const configuredTemplate = platformSend || !tenantId
     ? templateConfigForKind(kind)
     : templateConfigForKind(kind, opts.db, tenantId);
-  const templateName = (opts.templateName || "").trim() || configuredTemplate?.name || "";
+  const requestedName = (opts.templateName || "").trim();
+  // A clinic send uses the approved clinic_* row, or the platform template when
+  // the clinic is on Lumera's number. A caller-supplied name cannot swap that.
+  const templateName =
+    platformSend || !tenantId ? requestedName || configuredTemplate?.name || "" : configuredTemplate?.name || "";
   const templateLanguage = (opts.templateLanguage || "").trim() || configuredTemplate?.language || "en";
   const isManual = Boolean(opts.isManual) && kind === "text" && !templateName;
 
@@ -673,8 +714,23 @@ export async function dispatchWhatsAppCloudMessage(opts: {
     platformSend,
   });
 
+  const catalogKind = clinicTemplateName(kind);
+  const clinicPlan: "template" | "text" | "blocked" | "default" =
+    platformSend || !tenantId || !catalogKind
+      ? "default"
+      : templateName
+        ? "template"
+        : inCustomerServiceWindow
+          ? "text"
+          : "blocked";
+
+  if (creds && clinicPlan === "blocked") {
+    return { ok: false, error: TEMPLATE_NOT_APPROVED_ERROR, channel: "none", status: 409 };
+  }
+
   if (creds) {
     let graph: GraphMessageResult;
+    const sendAsText = clinicPlan === "text";
     if (kind === "otp" && opts.otp && platformSend) {
       graph = await sendWhatsAppGraphMessage({
         credentials: creds,
@@ -702,13 +758,18 @@ export async function dispatchWhatsAppCloudMessage(opts: {
         body: `Verification code: ${opts.otp}\nAction: ${opts.purpose || "verify"}\nValid for 5 minutes. Do not share this code.`,
         fetchImpl: opts.fetchImpl,
       });
-    } else if (templateName) {
+    } else if (templateName && !sendAsText) {
+      const bodyParameters =
+        kind === "payment_receipt"
+          ? receiptTemplateParameters(opts.receiptFields || {}, templateName)
+          : opts.templateParameters;
       graph = await sendWhatsAppGraphTemplate({
         credentials: creds,
         to: opts.to,
         name: templateName,
         language: templateLanguage,
-        bodyParameters: opts.templateParameters,
+        bodyParameters,
+        urlButtonParameter: opts.urlButtonParameter,
         fetchImpl: opts.fetchImpl,
         failureLabel: kind,
       });
@@ -860,12 +921,17 @@ export async function sendAppointmentReminder(opts: {
 }): Promise<CloudDispatchResult> {
   const names = requireClinicAndDoctor(opts);
   if ("channel" in names) return names;
+  const clinicName = names.clinicName;
+  const doctorName = names.doctorName;
+  const parameters = opts.tenantId
+    ? reminderTemplateParameters({ ...opts, clinicName, doctorName })
+    : opts.templateParameters;
   return dispatchWhatsAppCloudMessage({
     to: opts.to,
     kind: "appointment_reminder",
-    textBody: opts.textBody || buildReminderText({ ...opts, clinicName: names.clinicName, doctorName: names.doctorName }),
+    textBody: opts.textBody || buildReminderText({ ...opts, clinicName, doctorName }),
     templateName: opts.templateName,
-    templateParameters: opts.templateParameters,
+    templateParameters: parameters,
     db: opts.db,
     fetchImpl: opts.fetchImpl,
     tenantId: opts.tenantId,
@@ -891,14 +957,17 @@ export async function sendBookConfirmation(opts: {
 }): Promise<CloudDispatchResult> {
   const names = requireClinicAndDoctor(opts);
   if ("channel" in names) return names;
+  const clinicName = names.clinicName;
+  const doctorName = names.doctorName;
+  const parameters = opts.tenantId
+    ? bookConfirmationTemplateParameters({ ...opts, clinicName, doctorName })
+    : opts.templateParameters;
   return dispatchWhatsAppCloudMessage({
     to: opts.to,
     kind: "book_confirmation",
-    textBody:
-      opts.textBody ||
-      buildBookConfirmationText({ ...opts, clinicName: names.clinicName, doctorName: names.doctorName }),
+    textBody: opts.textBody || buildBookConfirmationText({ ...opts, clinicName, doctorName }),
     templateName: opts.templateName,
-    templateParameters: opts.templateParameters,
+    templateParameters: parameters,
     db: opts.db,
     fetchImpl: opts.fetchImpl,
     tenantId: opts.tenantId,
@@ -910,6 +979,7 @@ export async function sendPaymentReceipt(opts: {
   to: string;
   patientName?: string;
   clinicName?: string;
+  doctorName?: string;
   amount?: number | string;
   currency?: string;
   invoiceId?: string;
@@ -926,13 +996,22 @@ export async function sendPaymentReceipt(opts: {
   if (opts.tenantId && !opts.textBody && !clinicName) {
     return { ok: false, channel: "none", error: CLINIC_DOCTOR_NAME_REQUIRED, status: 400 };
   }
+  const receiptFields: ReceiptFields = {
+    patientName: opts.patientName,
+    clinicName,
+    doctorName: opts.doctorName,
+    amount: opts.amount,
+    invoiceId: opts.invoiceId,
+    date: opts.date,
+  };
   return dispatchWhatsAppCloudMessage({
     to: opts.to,
     kind: "payment_receipt",
     textBody: opts.textBody || buildReceiptText({ ...opts, clinicName }),
     previewUrl: opts.previewUrl,
     templateName: opts.templateName,
-    templateParameters: opts.templateParameters,
+    templateParameters: opts.templateParameters || receiptTemplateParameters(receiptFields),
+    receiptFields,
     db: opts.db,
     fetchImpl: opts.fetchImpl,
     tenantId: opts.tenantId,
