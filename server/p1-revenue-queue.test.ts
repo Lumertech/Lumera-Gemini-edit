@@ -640,4 +640,67 @@ describe("P1 revenue and queue integrity", () => {
     const stillHome = await jsonRequest(port, "GET", `/api/appointments/${visit.id}`, undefined, auth);
     assert.equal((stillHome.json.appointment as { doctorId: string }).doctorId, `doc-home-${clinic.tenantId}`);
   });
+
+  it("takes doctor name and specialty from the tenant roster, not the request body", async () => {
+    const clinic = createClinicUser("roster");
+    const token = await login(clinic.email);
+    const auth = { Authorization: `Bearer ${token}` };
+    const patient = await createPatient(auth, "Roster Patient");
+    const db = getDb();
+    const homeId = `doc-roster-home-${clinic.tenantId}`;
+    const cardioId = `doc-roster-cardio-${clinic.tenantId}`;
+    db.prepare(`INSERT INTO doctors (id, user_id, name, specialty) VALUES (?, ?, 'Dr Home', 'General Medicine')`).run(
+      homeId,
+      clinic.userId
+    );
+    db.prepare(`INSERT INTO doctors (id, user_id, name, specialty) VALUES (?, ?, 'Dr Cardio', 'Cardiology')`).run(
+      cardioId,
+      clinic.userId
+    );
+
+    const created = await jsonRequest(
+      port,
+      "POST",
+      "/api/appointments",
+      {
+        patientId: patient.id,
+        doctorId: homeId,
+        doctorName: "Dr Imposter",
+        specialty: "Neurosurgery",
+        date: clinicCalendarDate(new Date(), IST),
+        timeSlot: "11:00 AM",
+      },
+      auth
+    );
+    assert.equal(created.status, 201, String(created.json.error || ""));
+    const visit = created.json.appointment as { id: string; doctorName: string; specialty: string };
+    assert.equal(visit.doctorName, "Dr Home");
+    assert.equal(visit.specialty, "General Medicine");
+    const renamed = await jsonRequest(
+      port,
+      "PATCH",
+      `/api/appointments/${visit.id}`,
+      { doctorName: "Dr Imposter", specialty: "Neurosurgery", status: "Waiting" },
+      auth
+    );
+    assert.equal(renamed.status, 200, String(renamed.json.error || ""));
+    const kept = renamed.json.appointment as { doctorId: string; doctorName: string; specialty: string; status: string };
+    assert.equal(kept.doctorId, homeId);
+    assert.equal(kept.doctorName, "Dr Home");
+    assert.equal(kept.specialty, "General Medicine");
+    assert.equal(kept.status, "Waiting");
+
+    const moved = await jsonRequest(
+      port,
+      "PATCH",
+      `/api/appointments/${visit.id}`,
+      { doctorId: cardioId, doctorName: "Still Imposter", specialty: "Dermatology" },
+      auth
+    );
+    assert.equal(moved.status, 200, String(moved.json.error || ""));
+    const cardio = moved.json.appointment as { doctorId: string; doctorName: string; specialty: string };
+    assert.equal(cardio.doctorId, cardioId);
+    assert.equal(cardio.doctorName, "Dr Cardio");
+    assert.equal(cardio.specialty, "Cardiology");
+  });
 });

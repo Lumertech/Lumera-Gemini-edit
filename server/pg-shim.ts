@@ -127,6 +127,26 @@ export function createPgShim(connectionString: string): SqlDatabase {
   return { prepare, exec, dialect: "postgres" };
 }
 
+/** End the shared worker so the next open uses a new connection string. */
+export function closePgShim(): void {
+  const current = worker;
+  const currentSignal = signal;
+  worker = null;
+  signal = null;
+  if (!current || !currentSignal) return;
+  try {
+    const { port1, port2 } = new MessageChannel();
+    Atomics.store(currentSignal, 0, 0);
+    current.postMessage({ type: "close", port: port2 }, [port2]);
+    const wait = Atomics.wait(currentSignal, 0, 0, 5000);
+    if (wait !== "timed-out") receiveMessageOnPort(port1);
+    port1.close();
+  } catch {
+    /* the worker may already be gone */
+  }
+  void current.terminate();
+}
+
 export function isPgShimAvailable(): boolean {
   try {
     resolveWorkerPath();

@@ -906,8 +906,10 @@ export function insertAppointment(tenantId: string, body: Record<string, unknown
     patientPhone,
     mappedPatient.uhid,
     doctorId,
-    String(body.doctorName || body.doctor_name || doctor?.name || actor?.name || ""),
-    String(body.specialty || doctor?.specialty || "General Medicine"),
+    doctor
+      ? String(doctor.name ?? "")
+      : String(body.doctorName || body.doctor_name || actor?.name || ""),
+    doctor ? String(doctor.specialty || "General Medicine") : String(body.specialty || "General Medicine"),
     date,
     String(body.timeSlot || body.time_slot || ""),
     String(body.type || "New Consultation"),
@@ -951,6 +953,9 @@ export function updateAppointment(
     ? String(body.doctorId ?? body.doctor_id ?? "")
     : String(mapped.doctorId ?? "");
   if (doctorChanged) doctorForVisit(tenantId, nextDoctor);
+  const roster = tenantDoctor(tenantId, nextDoctor);
+  const nextDoctorName = roster ? String(roster.name ?? "") : String(mapped.doctorName || "");
+  const nextSpecialty = roster ? String(roster.specialty ?? "") : String(mapped.specialty || "");
   const requestedToken = tokenChanged ? Number(body.tokenNumber ?? body.token_number) : Number(mapped.tokenNumber);
   let vitalsText: string | null;
   if (body.vitals === null) {
@@ -993,8 +998,8 @@ export function updateAppointment(
         String(body.timeSlot ?? body.time_slot ?? mapped.timeSlot),
         nextDate,
         nextDoctor,
-        String(body.doctorName ?? body.doctor_name ?? mapped.doctorName),
-        String(body.specialty ?? mapped.specialty),
+        nextDoctorName,
+        nextSpecialty,
         patientPhone,
         appointmentId,
         tenantId

@@ -233,6 +233,64 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
     assert.equal(count.c, 1);
   });
 
+  it("an IST instant and the clinic YYYY-MM-DD are one WhatsApp booking", () => {
+    const clinic = createClinicUser("istDedupe");
+    const phone = uniquePhone();
+    const shared = {
+      tenantId: clinic.tenantId,
+      patientPhone: phone,
+      patientName: "IST Duplicate",
+      doctorId: clinic.doctorId,
+      timeSlot: "09:00 AM",
+    };
+    const first = bookWhatsAppAppointment({ ...shared, date: "2026-10-19" });
+    const second = bookWhatsAppAppointment({ ...shared, date: "2026-10-18T19:00:00.000Z" });
+    assert.equal(first.reused, false);
+    assert.equal(first.appointment.date, "2026-10-19");
+    assert.equal(second.reused, true);
+    assert.equal(second.appointment.id, first.appointment.id);
+    assert.equal(second.appointment.date, "2026-10-19");
+    const count = getDb()
+      .prepare("SELECT COUNT(*) AS c FROM appointments WHERE tenant_id = ? AND patient_id = ?")
+      .get(clinic.tenantId, first.patient.id) as { c: number };
+    assert.equal(Number(count.c), 1);
+  });
+
+  it("caps upcoming WhatsApp bookings per patient and still reuses the same day", () => {
+    const clinic = createClinicUser("capBook");
+    const phone = uniquePhone();
+    const prev = process.env.WHATSAPP_MAX_FUTURE_BOOKINGS;
+    process.env.WHATSAPP_MAX_FUTURE_BOOKINGS = "2";
+    const book = (date: string, patientPhone = phone) =>
+      bookWhatsAppAppointment({
+        tenantId: clinic.tenantId,
+        patientPhone,
+        patientName: "Cap Patient",
+        doctorId: clinic.doctorId,
+        date,
+        timeSlot: "09:00 AM",
+      });
+    try {
+      const first = book("2099-03-01");
+      const second = book("2099-03-02");
+      assert.equal(first.reused, false);
+      assert.equal(second.reused, false);
+      const reused = book("2099-03-01");
+      assert.equal(reused.reused, true);
+      assert.equal(reused.appointment.id, first.appointment.id);
+      assert.throws(() => book("2099-03-03"), /2 upcoming WhatsApp bookings/);
+      const other = book("2099-03-03", uniquePhone());
+      assert.equal(other.reused, false);
+      const count = getDb()
+        .prepare("SELECT COUNT(*) AS c FROM appointments WHERE tenant_id = ? AND patient_phone = ?")
+        .get(clinic.tenantId, canonicalAppointmentPhone(phone)) as { c: number };
+      assert.equal(Number(count.c), 2);
+    } finally {
+      if (prev === undefined) delete process.env.WHATSAPP_MAX_FUTURE_BOOKINGS;
+      else process.env.WHATSAPP_MAX_FUTURE_BOOKINGS = prev;
+    }
+  });
+
   it("clinic B cannot see clinic A's WhatsApp-booked token", async () => {
     const clinicA = createClinicUser("isoWA");
     const clinicB = createClinicUser("isoWB");

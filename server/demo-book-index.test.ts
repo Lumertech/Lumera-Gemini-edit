@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import { describe, it } from "node:test";
 import { DatabaseSync } from "node:sqlite";
@@ -6,8 +7,12 @@ import { clinicCalendarDate, shiftIsoDate } from "../src/lib/clinicDay.ts";
 import { INDIVIDUAL_DEMO_WINDOW, demoBookDateForIndex, spreadDemoBookDates } from "./demo-book-dates.ts";
 import { ensureDemoWorkspaceTenants } from "./demo-workspace-tenants.ts";
 import { migrate } from "./db-migrate.ts";
-import { createPgShim } from "./pg-shim.ts";
+import { Pool } from "pg";
+import { closePgShim, createPgShim } from "./pg-shim.ts";
 import type { SqlDatabase } from "./sql-engine.ts";
+
+/** CI service database from .github/workflows/ci.yml. Also matches the `_test` suffix rule. */
+const CI_SERVICE_DATABASE = "lumera_sunrise_test";
 
 const APPOINTMENTS_DDL = `
   CREATE TABLE appointments (
@@ -34,12 +39,49 @@ const APPOINTMENTS_DDL = `
 `;
 
 function spreadPostgresUrl(): string | null {
+  const sunrise = String(process.env.SUNRISE_TEST_DATABASE_URL || "").trim();
+  if (sunrise) return sunrise;
   const fromEnv = String(process.env.SPREAD_TEST_DATABASE_URL || "").trim();
   if (fromEnv) return fromEnv;
   if (fs.existsSync("/var/run/postgresql/.s.PGSQL.5432")) {
     return "postgres://ubuntu@/lumera_spread_test?host=/var/run/postgresql";
   }
   return null;
+}
+
+function postgresDatabaseName(url: string): string {
+  const trimmed = String(url || "").trim();
+  if (!/^postgres(ql)?:\/\//i.test(trimmed)) return "";
+  try {
+    const parsed = new URL(trimmed.replace(/^postgres(ql)?:\/\//i, "http://"));
+    return decodeURIComponent(parsed.pathname.replace(/^\//, "").split("/")[0] || "");
+  } catch {
+    return "";
+  }
+}
+
+function assertSpreadDatabaseAllowed(url: string, env: NodeJS.ProcessEnv = process.env): void {
+  if (String(env.NODE_ENV || "") === "production") {
+    throw new Error("Indexed demo spread refuses to run when NODE_ENV is production");
+  }
+  const name = postgresDatabaseName(url);
+  if (!name.endsWith("_test") && name !== CI_SERVICE_DATABASE) {
+    throw new Error(`Indexed demo spread refuses database ${name || "(empty)"}; the name must end in _test`);
+  }
+  const appUrl = String(env.DATABASE_URL || "").trim();
+  if (!appUrl) return;
+  if (appUrl === url.trim()) {
+    throw new Error("Indexed demo spread refuses to run against DATABASE_URL");
+  }
+  const appName = postgresDatabaseName(appUrl);
+  if (appName && appName === name) {
+    throw new Error("Indexed demo spread refuses to run against DATABASE_URL");
+  }
+}
+
+function withSearchPath(url: string, schema: string): string {
+  const joiner = url.includes("?") ? "&" : "?";
+  return `${url}${joiner}options=${encodeURIComponent(`-c search_path=${schema}`)}`;
 }
 
 function duplicateTokens(db: SqlDatabase): Array<{ n: number }> {
@@ -134,12 +176,71 @@ describe("indexed demo book spread", () => {
     assert.deepEqual(duplicateTokens(db), []);
   });
 
-  it("reallocates tokens on the target day for postgres, including a month boundary", { timeout: 120_000 }, () => {
+  it("refuses a production environment, a non-test database, and DATABASE_URL", () => {
+    const safe = "postgres://lumera:ci-only-db@127.0.0.1:5432/lumera_sunrise_test";
+    assert.throws(
+      () => assertSpreadDatabaseAllowed(safe, { NODE_ENV: "production" }),
+      /production/
+    );
+    assert.throws(
+      () => assertSpreadDatabaseAllowed("postgres://lumera@127.0.0.1:5432/lumera", { NODE_ENV: "test" }),
+      /_test/
+    );
+    assert.throws(
+      () => assertSpreadDatabaseAllowed(safe, { NODE_ENV: "test", DATABASE_URL: safe }),
+      /DATABASE_URL/
+    );
+    assert.throws(
+      () =>
+        assertSpreadDatabaseAllowed(safe, {
+          NODE_ENV: "test",
+          DATABASE_URL: "postgres://other:secret@127.0.0.1:5432/lumera_sunrise_test",
+        }),
+      /DATABASE_URL/
+    );
+    assert.doesNotThrow(() =>
+      assertSpreadDatabaseAllowed(safe, { NODE_ENV: "test", DATABASE_URL: "file:data/lumera.db" })
+    );
+  });
+
+  it("reallocates tokens on the target day for postgres, including a month boundary", { timeout: 120_000 }, async () => {
     const url = spreadPostgresUrl();
-    if (!url) return;
-    const db = createPgShim(url);
-    db.exec("DROP TABLE IF EXISTS appointments");
-    db.exec(APPOINTMENTS_DDL);
-    walkIndexedBook(db);
+    if (!url) {
+      if (process.env.CI) {
+        throw new Error("SUNRISE_TEST_DATABASE_URL is required so CI can run the indexed demo spread on Postgres");
+      }
+      return;
+    }
+    assertSpreadDatabaseAllowed(url);
+    const schema = `spread_${crypto.randomBytes(8).toString("hex")}`;
+    assert.match(schema, /^spread_[0-9a-f]+$/);
+    const pool = new Pool({ connectionString: url, max: 1, connectionTimeoutMillis: 8000 });
+    let shimOpen = false;
+    try {
+      await pool.query(`CREATE SCHEMA ${schema}`);
+      closePgShim();
+      shimOpen = true;
+      const db = createPgShim(withSearchPath(url, schema));
+      db.exec(APPOINTMENTS_DDL);
+      const placed = db.prepare(`SELECT current_schema() AS schema`).get() as { schema?: string };
+      assert.equal(String(placed?.schema || ""), schema);
+      walkIndexedBook(db);
+      const located = await pool.query(
+        `SELECT n.nspname
+         FROM pg_class c
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE c.relname = 'appointments' AND n.nspname = $1`,
+        [schema]
+      );
+      assert.equal(located.rowCount, 1);
+    } finally {
+      if (shimOpen) closePgShim();
+      await pool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+      const dropped = await pool.query(`SELECT 1 FROM pg_namespace WHERE nspname = $1`, [schema]);
+      const publicSchema = await pool.query(`SELECT 1 FROM pg_namespace WHERE nspname = 'public'`);
+      await pool.end();
+      assert.equal(dropped.rowCount, 0);
+      assert.equal(publicSchema.rowCount, 1);
+    }
   });
 });

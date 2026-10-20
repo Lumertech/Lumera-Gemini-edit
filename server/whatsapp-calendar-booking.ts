@@ -1,6 +1,6 @@
 import { HIDDEN_AMBIENT_SOURCES, hiddenVisitSourceSql, isHiddenVisitSource } from "./ambient-walkin.ts";
 import { getDb, mapAppointment, mapPatient, writeAudit } from "./db.ts";
-import { clinicCalendarDate } from "../src/lib/clinicDay.ts";
+import { clinicCalendarDate, resolveQueueDate } from "../src/lib/clinicDay.ts";
 import {
   appointmentPhoneFromPatient,
   getTenantAppointment,
@@ -68,6 +68,31 @@ export function findOrCreateWhatsAppPatient(opts: {
 
 const ACTIVE_APPOINTMENT_SQL = `status NOT IN ('Completed', 'Cancelled', 'No-Show') AND ${hiddenVisitSourceSql()}`;
 
+/** Upcoming WhatsApp visits one patient may hold. Override with WHATSAPP_MAX_FUTURE_BOOKINGS. */
+export const DEFAULT_WHATSAPP_FUTURE_BOOKING_CAP = 3;
+
+export function whatsAppFutureBookingCap(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = String(env.WHATSAPP_MAX_FUTURE_BOOKINGS || "").trim();
+  if (!raw) return DEFAULT_WHATSAPP_FUTURE_BOOKING_CAP;
+  const cap = Number(raw);
+  if (!Number.isInteger(cap) || cap < 1) return DEFAULT_WHATSAPP_FUTURE_BOOKING_CAP;
+  return cap;
+}
+
+function assertWhatsAppFutureBookingCap(tenantId: string, patientId: string, today: string): void {
+  const cap = whatsAppFutureBookingCap();
+  const row = getDb()
+    .prepare(
+      `SELECT COUNT(*) AS n FROM appointments
+       WHERE tenant_id = ? AND patient_id = ? AND date >= ?
+         AND source = 'WhatsApp Bot' AND ${ACTIVE_APPOINTMENT_SQL}`
+    )
+    .get(tenantId, patientId, today, ...HIDDEN_AMBIENT_SOURCES) as { n: number };
+  if (Number(row?.n || 0) >= cap) {
+    throw Object.assign(new Error(`This patient already has ${cap} upcoming WhatsApp bookings`), { status: 409 });
+  }
+}
+
 function withLivePatientPhone(
   tenantId: string,
   row: Record<string, unknown> | undefined
@@ -118,7 +143,7 @@ export function findActiveAppointment(opts: {
              ORDER BY created_at DESC LIMIT 1`
           )
           .get(opts.tenantId, opts.patientId, opts.date, ...HIDDEN_AMBIENT_SOURCES) as Record<string, unknown> | undefined);
-    if (row) return withLivePatientPhone(opts.tenantId, row);
+    return withLivePatientPhone(opts.tenantId, row);
   }
 
   if (opts.patientId) {
@@ -184,7 +209,7 @@ export function bookWhatsAppAppointment(opts: {
     name: opts.patientName,
   });
   const mappedPatient = mapPatient(patient);
-  const date = String(opts.date || "").trim() || clinicCalendarDate(new Date(), tenantTimezone(tenantId));
+  const date = resolveQueueDate(opts.date, tenantTimezone(tenantId));
   const timeSlot = String(opts.timeSlot || "").trim() || defaultTimeSlot();
 
   const existing = findActiveAppointment({
@@ -196,6 +221,8 @@ export function bookWhatsAppAppointment(opts: {
   if (existing) {
     return { appointment: mapAppointment(existing), reused: true, patient: mappedPatient };
   }
+
+  assertWhatsAppFutureBookingCap(tenantId, mappedPatient.id, clinicCalendarDate(new Date(), tenantTimezone(tenantId)));
 
   const row = insertAppointment(
     tenantId,
