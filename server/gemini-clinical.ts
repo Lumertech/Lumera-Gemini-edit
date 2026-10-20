@@ -1,6 +1,7 @@
-import type { Express, Request, Response } from "express";
+import type { Express, NextFunction, Request, Response } from "express";
 import { requireAuth } from "./auth.ts";
 import { hasAmbientScribeConsent, mountAmbientScribeConsentRoutes, transcribeAppointmentId } from "./ambient-scribe-consent.ts";
+import { clinicalGeminiRateLimit, safetyCheckRateLimit } from "./gemini-clinical-rate-limit.ts";
 import { maxTranscribeBase64Chars, transcribeJsonParser } from "./json-body.ts";
 import { denyUnlessPrescriber } from "./patient-access.ts";
 import { rejectUntrustedTenantClaim } from "./tenant-guard.ts";
@@ -9,6 +10,7 @@ import { base64DecodedBytes, canonicalTranscribeMime, resolveTranscribeDurationM
 import { mountGeminiVoiceRoutes } from "./gemini-voice.ts";
 import { AI_RUPEE_OUTPUT_RULE } from "./india-currency-copy.ts";
 import { aiScribeTenantIdFromRequest, blockedAiScribeResponse, meterSuccessfulGeminiScribe, meterSuccessfulTranscription } from "./gemini-scribe-meter.ts";
+import { pulseSafetyFromModel } from "../src/lib/safetyCheckGate.ts";
 import {
   AI_TRANSCRIPTION_NOT_CONFIGURED,
   AI_TRANSCRIPTION_NOT_CONFIGURED_MESSAGE,
@@ -17,9 +19,10 @@ import {
   getVertexClient,
   vertexGeminiModel,
 } from "./vertex-gemini.ts";
-import type { NextFunction } from "express";
 
 let testSoapGenerator: ((body: Record<string, unknown>) => Promise<unknown>) | undefined;
+let testCopilotGenerator: (() => Promise<unknown>) | undefined;
+let testSafetyCheckGenerator: (() => Promise<unknown>) | undefined;
 let testTranscribeGenerator: (() => Promise<string>) | undefined;
 
 /** Test-only Gemini mock so HTTP tests do not need live API keys. */
@@ -27,6 +30,16 @@ export function setGeminiSoapGeneratorForTests(
   fn?: ((body: Record<string, unknown>) => Promise<unknown>) | undefined
 ) {
   testSoapGenerator = fn;
+}
+
+/** Test-only copilot stand-in. It does not receive the prompt or patientContext. */
+export function setGeminiCopilotGeneratorForTests(fn?: (() => Promise<unknown>) | undefined) {
+  testCopilotGenerator = fn;
+}
+
+/** Test-only safety-check stand-in. It does not receive medicines or allergies. */
+export function setGeminiSafetyCheckGeneratorForTests(fn?: (() => Promise<unknown>) | undefined) {
+  testSafetyCheckGenerator = fn;
 }
 
 /** Test-only transcription stand-in. It does not receive audio or a transcript. */
@@ -43,14 +56,30 @@ function errorName(err: unknown): string {
   return err && typeof err === "object" && "name" in err ? String((err as { name?: string }).name) : "Error";
 }
 
+/** The model sees the label Patient. Chart names are dropped before the prompt is built. */
+export function patientProfileForModel(patientContext: unknown): string {
+  const source =
+    patientContext && typeof patientContext === "object" && !Array.isArray(patientContext)
+      ? { ...(patientContext as Record<string, unknown>) }
+      : {};
+  delete source.name;
+  delete source.patientName;
+  return JSON.stringify({ ...source, name: "Patient" });
+}
+
 /** Clinical Gemini HTTP routes. PHI calls use Vertex AI in asia-south1. There is no API-key fallback. */
 export function mountGeminiClinicalRoutes(app: Express) {
   // DATA USE: patient audio, transcripts, and clinical text go through Vertex AI (asia-south1). No API key.
 
-  app.post("/api/gemini/generate-soap", requireAuth, async (req: Request, res: Response) => {
+  app.post(
+    "/api/gemini/generate-soap",
+    requireAuth,
+    prescriberOnly,
+    clinicalGeminiRateLimit,
+    rejectUntrustedTenantClaim,
+    async (req: Request, res: Response) => {
     try {
       const {
-        patientName = "Patient",
         patientAge = 40,
         patientGender = "Unknown",
         transcript = "",
@@ -92,7 +121,7 @@ export function mountGeminiClinicalRoutes(app: Express) {
         return res.status(503).json({ code: "AI_SOAP_NOT_CONFIGURED", message: "AI note generation not configured" });
       }
       try {
-        const prompt = `You are Lumera AI, an expert Clinical AI Medical Scribe. Generate a structured SOAP note.\nPATIENT: ${patientName} ${patientAge} / ${patientGender}, Doctor ${doctorName} (${doctorSpecialty}).\nTRANSCRIPT:\n${transcript}\nReturn JSON SOAP with subjective, objective, assessment, plan.\n${AI_RUPEE_OUTPUT_RULE}`;
+        const prompt = `You are Lumera AI, an expert Clinical AI Medical Scribe. Generate a structured SOAP note.\nPATIENT: Patient ${patientAge} / ${patientGender}, Doctor ${doctorName} (${doctorSpecialty}).\nTRANSCRIPT:\n${transcript}\nReturn JSON SOAP with subjective, objective, assessment, plan.\n${AI_RUPEE_OUTPUT_RULE}`;
         const response = await ai.models.generateContent({
           model: vertexGeminiModel(),
           contents: prompt,
@@ -122,6 +151,17 @@ export function mountGeminiClinicalRoutes(app: Express) {
 
   const handleGeminiCopilot = async (req: Request, res: Response) => {
     try {
+      if (testCopilotGenerator) {
+        try {
+          return res.json(await testCopilotGenerator());
+        } catch (err: unknown) {
+          console.error("Copilot generation error", errorName(err));
+          return res.status(503).json({
+            code: "AI_COPILOT_UNAVAILABLE",
+            message: "AI assistant is temporarily unavailable",
+          });
+        }
+      }
       const { query, patientContext = {}, history = [] } = req.body;
       if (!query) return res.status(400).json({ error: "Query is required" });
       const ai = getVertexClient();
@@ -132,7 +172,7 @@ export function mountGeminiClinicalRoutes(app: Express) {
         const systemInstruction = `You are Pulse AI, an advanced enterprise clinical decision support copilot.\n${AI_RUPEE_OUTPUT_RULE}`;
         const contents: any[] = [];
         if (patientContext && Object.keys(patientContext).length > 0) {
-          contents.push({ role: "user", parts: [{ text: `Current Patient Profile: ${JSON.stringify(patientContext)}` }] });
+          contents.push({ role: "user", parts: [{ text: `Current Patient Profile: ${patientProfileForModel(patientContext)}` }] });
           contents.push({ role: "model", parts: [{ text: "Understood." }] });
         }
         for (const h of history.slice(-6)) {
@@ -152,33 +192,79 @@ export function mountGeminiClinicalRoutes(app: Express) {
           message: "AI assistant is temporarily unavailable",
         });
       }
-    } catch {
+    } catch (err: unknown) {
+      console.error("Copilot endpoint error", errorName(err));
       res.status(503).json({ code: "AI_COPILOT_UNAVAILABLE", message: "AI assistant is temporarily unavailable" });
     }
   };
 
-  app.post("/api/gemini/copilot", handleGeminiCopilot);
-  app.post("/api/gemini/pulse-assistant", handleGeminiCopilot);
-  app.post("/api/gemini/hexa-assistant", handleGeminiCopilot);
+  app.post(
+    "/api/gemini/copilot",
+    requireAuth,
+    prescriberOnly,
+    clinicalGeminiRateLimit,
+    rejectUntrustedTenantClaim,
+    handleGeminiCopilot
+  );
+  app.post(
+    "/api/gemini/pulse-assistant",
+    requireAuth,
+    prescriberOnly,
+    clinicalGeminiRateLimit,
+    rejectUntrustedTenantClaim,
+    handleGeminiCopilot
+  );
+  app.post(
+    "/api/gemini/hexa-assistant",
+    requireAuth,
+    prescriberOnly,
+    clinicalGeminiRateLimit,
+    rejectUntrustedTenantClaim,
+    handleGeminiCopilot
+  );
 
-  app.post("/api/gemini/safety-check", async (req: Request, res: Response) => {
-    try {
-      const { patientAllergies = [], chronicConditions = [], medicines = [], patientAge, patientGender } = req.body;
-      if (!Array.isArray(medicines) || medicines.length === 0) {
-        return res.json({ hasHighRiskAlert: false, alerts: [] });
-      }
-      const ai = getVertexClient();
-      if (!ai) {
-        return res.status(503).json({ code: "AI_SAFETY_NOT_CONFIGURED", message: "AI safety check not configured" });
-      }
+  app.post(
+    "/api/gemini/safety-check",
+    requireAuth,
+    prescriberOnly,
+    safetyCheckRateLimit,
+    rejectUntrustedTenantClaim,
+    async (req: Request, res: Response) => {
       try {
-        const prompt = `Analyze clinical safety for Age ${patientAge || 40}, ${patientGender || "Adult"}, Allergies: ${(patientAllergies || []).join(", ") || "None"}, Conditions: ${(chronicConditions || []).join(", ") || "None"}, Medicines: ${JSON.stringify(medicines)}. Return JSON { hasHighRiskAlert, alerts }.`;
-        const response = await ai.models.generateContent({
-          model: vertexGeminiModel(),
-          contents: prompt,
-          config: { responseMimeType: "application/json", temperature: 0.1 },
-        });
-        return res.json(JSON.parse(response.text?.trim() || "{}"));
+        const { patientAllergies = [], chronicConditions = [], medicines = [], patientAge, patientGender } = req.body;
+        if (testSafetyCheckGenerator) {
+          try {
+            return res.json(pulseSafetyFromModel(await testSafetyCheckGenerator()));
+          } catch (err: unknown) {
+            console.error("Safety check error", errorName(err));
+            return res.status(503).json({
+              code: "AI_SAFETY_UNAVAILABLE",
+              message: "AI safety check is temporarily unavailable",
+            });
+          }
+        }
+        if (!Array.isArray(medicines) || medicines.length === 0) {
+          return res.json(pulseSafetyFromModel({ hasHighRiskAlert: false, alerts: [] }));
+        }
+        const ai = getVertexClient();
+        if (!ai) {
+          return res.status(503).json({ code: "AI_SAFETY_NOT_CONFIGURED", message: "AI safety check not configured" });
+        }
+        try {
+          const prompt = `Analyze clinical safety for Age ${patientAge || 40}, ${patientGender || "Adult"}, Allergies: ${(patientAllergies || []).join(", ") || "None"}, Conditions: ${(chronicConditions || []).join(", ") || "None"}, Medicines: ${JSON.stringify(medicines)}. Return JSON { hasHighRiskAlert, alerts }.`;
+          const response = await ai.models.generateContent({
+            model: vertexGeminiModel(),
+            contents: prompt,
+            config: { responseMimeType: "application/json", temperature: 0.1 },
+          });
+          return res.json(pulseSafetyFromModel(JSON.parse(response.text?.trim() || "")));
+        } catch (err: unknown) {
+          console.error("Safety check error", errorName(err));
+          return res.status(503).json({
+            code: "AI_SAFETY_UNAVAILABLE",
+            message: "AI safety check is temporarily unavailable",
+          });
+        }
       } catch (err: unknown) {
         console.error("Safety check error", errorName(err));
         return res.status(503).json({
@@ -186,10 +272,9 @@ export function mountGeminiClinicalRoutes(app: Express) {
           message: "AI safety check is temporarily unavailable",
         });
       }
-    } catch {
-      res.status(503).json({ code: "AI_SAFETY_UNAVAILABLE", message: "AI safety check is temporarily unavailable" });
     }
-  });
+  );
+
   app.post(
     "/api/gemini/transcribe",
     requireAuth,

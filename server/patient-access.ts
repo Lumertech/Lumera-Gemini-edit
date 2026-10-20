@@ -1,4 +1,5 @@
 import type { Request, Response } from "express";
+import { isPrescriberRole } from "../src/lib/prescriberRoles.ts";
 
 /** Clinic staff who may read a patient chart. Super Admin, admin, and patient are denied. */
 export const PATIENT_RECORD_ROLES = ["doctor", "receptionist", "polyclinic_admin", "CLINIC_ADMIN"] as const;
@@ -18,12 +19,9 @@ export function denyUnlessPatientRecordRole(req: Request, res: Response): boolea
   return false;
 }
 
-/** Reception may read a redacted chart. It may not open or write a prescription. */
+/** Doctor, polyclinic admin, and clinic admin. Reception, patients, and platform admins are denied. */
 export function denyUnlessPrescriber(req: Request, res: Response): boolean {
-  if (!denyUnlessPatientRecordRole(req, res)) return false;
-  if (isReceptionRole(req.user?.role)) {
-    res.status(403).json({ error: "Insufficient permissions", code: "ROLE_DENIED" });
-    return false;
-  }
-  return true;
+  if (isPrescriberRole(req.user?.role)) return true;
+  res.status(403).json({ error: "Insufficient permissions", code: "ROLE_DENIED" });
+  return false;
 }
