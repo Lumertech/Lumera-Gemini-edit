@@ -3,7 +3,7 @@ import { clinicCalendarDate } from "./clinicDay";
 
 /** Exact attestation. Do not paraphrase. */
 export const AMBIENT_SCRIBE_CONSENT_TEXT =
-  "I have told the patient that this consult will be recorded and transcribed by an AI service to draft notes, and the patient agreed. Audio is not stored.";
+  "I have told the patient that this consult will be recorded and transcribed by Google Cloud Vertex AI (India) to draft notes, and the patient agreed. Audio is not stored.";
 
 /** Shown under the microphone. Do not name the transcription vendor. */
 export const AMBIENT_RECORDING_DISCLOSURE =

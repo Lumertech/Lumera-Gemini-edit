@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { Express, NextFunction, Request, Response } from "express";
 import { clinicCalendarDate } from "../src/lib/clinicDay.ts";
 import { AMBIENT_WALKIN_SOURCE, isUniqueViolation, openVisitStatusSql, visitStatusIsOpen } from "./ambient-walkin.ts";
@@ -16,7 +16,49 @@ export { AMBIENT_WALKIN_SOURCE };
  * Separate from the #141 health-document consent gate. That gate stays as it is.
  */
 export const AMBIENT_SCRIBE_CONSENT_TEXT =
+  "I have told the patient that this consult will be recorded and transcribed by Google Cloud Vertex AI (India) to draft notes, and the patient agreed. Audio is not stored.";
+
+const PRIOR_AMBIENT_SCRIBE_CONSENT_TEXT_V1 =
   "I have told the patient that this consult will be recorded and transcribed by an AI service to draft notes, and the patient agreed. Audio is not stored.";
+
+/**
+ * Sentences already shown to clinicians. A recorded consent is the audit row
+ * (action + fixed details), not this string, so older rows stay valid.
+ * New writes may still send a previous sentence from an in-flight client.
+ * TODO: remove after 2026-11-18 (30 days after merge)
+ */
+const PRIOR_AMBIENT_SCRIBE_CONSENT_TEXTS = new Set([PRIOR_AMBIENT_SCRIBE_CONSENT_TEXT_V1]);
+
+/** Version and hash come from the statement the clinician submitted. */
+export function ambientScribeConsentNotice(statement: string): {
+  consentTextVersion: string;
+  consentTextSha256: string;
+} {
+  const consentTextVersion =
+    statement === AMBIENT_SCRIBE_CONSENT_TEXT
+      ? "v2-vertex-india"
+      : statement === PRIOR_AMBIENT_SCRIBE_CONSENT_TEXT_V1
+        ? "v1-generic-ai"
+        : "";
+  return {
+    consentTextVersion,
+    consentTextSha256: createHash("sha256").update(statement).digest("hex"),
+  };
+}
+
+function ambientScribeConsentAuditDetails(statement: string): string {
+  return JSON.stringify({
+    notice: AUDIT_DETAILS,
+    ...ambientScribeConsentNotice(statement),
+  });
+}
+
+export function ambientScribeConsentStatementAccepted(statement: unknown): boolean {
+  return (
+    statement === AMBIENT_SCRIBE_CONSENT_TEXT ||
+    (typeof statement === "string" && PRIOR_AMBIENT_SCRIBE_CONSENT_TEXTS.has(statement))
+  );
+}
 
 export const AMBIENT_SCRIBE_CONSENT_ACTION = "ambient_scribe_consent";
 
@@ -268,7 +310,7 @@ export function mountAmbientScribeConsentRoutes(app: Express): void {
       const body = (req.body || {}) as Record<string, unknown>;
       const patientId = cleanVisitId(body.patientId);
       if (!patientId) return res.status(400).json({ error: "patientId is required" });
-      if (body.attested !== true || body.statement !== AMBIENT_SCRIBE_CONSENT_TEXT) {
+      if (body.attested !== true || !ambientScribeConsentStatementAccepted(body.statement)) {
         return res.status(400).json({ error: "Confirm the patient agreement before recording." });
       }
       if (!patientInTenant(tenantId, patientId)) {
@@ -293,13 +335,21 @@ export function mountAmbientScribeConsentRoutes(app: Express): void {
       }
       const existing = consentRow(tenantId, appointmentId);
       if (!existing) {
-        writeAudit(getDb(), req.user?.id || null, req.user?.name || "Clinician", AMBIENT_SCRIBE_CONSENT_ACTION, AUDIT_DETAILS, {
-          tenantId,
-          patientId,
-          actorRole: req.user?.role || "",
-          entityType: "appointment",
-          entityId: appointmentId,
-        });
+        const submittedStatement = String(body.statement);
+        writeAudit(
+          getDb(),
+          req.user?.id || null,
+          req.user?.name || "Clinician",
+          AMBIENT_SCRIBE_CONSENT_ACTION,
+          ambientScribeConsentAuditDetails(submittedStatement),
+          {
+            tenantId,
+            patientId,
+            actorRole: req.user?.role || "",
+            entityType: "appointment",
+            entityId: appointmentId,
+          }
+        );
       }
       const row = consentRow(tenantId, appointmentId);
       return res.status(existing ? 200 : 201).json({
