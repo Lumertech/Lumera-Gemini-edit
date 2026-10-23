@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import {
   LayoutDashboard,
   Users,
@@ -18,6 +18,8 @@ import {
   Settings,
   Network,
   Wallet,
+  Menu,
+  X,
 } from "lucide-react";
 import { useAuth } from "../../auth/AuthContext";
 import { Link } from "react-router-dom";
@@ -73,6 +75,7 @@ const AdminShellInner: React.FC = () => {
   const { user, logout } = useAuth();
   const { go, adminTab } = useNav();
   const { scope, clearScope } = useTenantScope();
+  const [isMobileOpen, setIsMobileOpen] = useState(false);
 
   const isAdmin = user && (user.role === "super_admin" || user.role === "polyclinic_admin" || user.role === "CLINIC_ADMIN");
   const isPlatformAdmin = user?.role === "super_admin";
@@ -134,23 +137,74 @@ const AdminShellInner: React.FC = () => {
   }[safeTab];
 
   return (
-    <div className="h-dvh max-h-dvh w-full max-w-full overflow-hidden flex bg-slate-50 text-slate-900">
-      <aside className="w-64 max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-30 md:relative bg-gradient-to-b from-slate-900 to-slate-800 text-slate-200 flex flex-col shrink-0 overflow-y-auto">
-        <div className="px-5 py-6 flex items-center gap-3 border-b border-slate-700/80">
-          <div className="w-10 h-10 bg-purple-600 rounded-lg flex items-center justify-center shadow-lg shadow-purple-500/30">
-            <Shield className="h-5 w-5 text-white" />
-          </div>
-          <div>
-            <div className="font-manrope text-sm font-bold text-white">
-              {isPlatformAdmin ? "Lumera Platform" : "Lumera Admin"}
+    <div className="h-dvh max-h-dvh w-full max-w-full overflow-hidden flex flex-col md:flex-row bg-slate-50 text-slate-900">
+      {/* Mobile Topbar */}
+      <header className="md:hidden h-14 bg-slate-900 text-white flex items-center justify-between px-4 shrink-0 border-b border-slate-800 z-30">
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setIsMobileOpen(true)}
+            className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition-colors"
+            title="Open Admin Navigation"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 bg-purple-600 rounded-lg flex items-center justify-center text-white">
+              <Shield className="h-4 w-4" />
             </div>
-            <div className="text-[11px] text-slate-400 truncate max-w-[140px]">{user?.email}</div>
-            {isPlatformAdmin && (
-              <div className="text-[10px] text-slate-500" data-testid="platform-console-caption">
-                Super Admin · not clinic admin
-              </div>
-            )}
+            <span className="font-manrope text-sm font-bold text-white truncate max-w-[150px]">
+              {isPlatformAdmin ? "Lumera Platform" : "Lumera Admin"}
+            </span>
           </div>
+        </div>
+        <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">
+          {navItems.find((n) => n.id === safeTab)?.label || "Admin"}
+        </span>
+      </header>
+
+      {/* Mobile Drawer Backdrop */}
+      {isMobileOpen && (
+        <div
+          className="fixed inset-0 bg-black/60 backdrop-blur-xs z-40 md:hidden"
+          onClick={() => setIsMobileOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+
+      {/* Sidebar: Mobile overlay drawer or Desktop docked sidebar */}
+      <aside
+        className={`${
+          isMobileOpen
+            ? "fixed inset-y-0 left-0 z-50 w-72 shadow-2xl"
+            : "hidden md:flex md:w-64"
+        } bg-gradient-to-b from-slate-900 to-slate-800 text-slate-200 flex flex-col shrink-0 transition-all duration-200`}
+      >
+        <div className="px-5 py-5 flex items-center justify-between border-b border-slate-700/80 shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-purple-600 rounded-lg flex items-center justify-center shadow-lg shadow-purple-500/30">
+              <Shield className="h-5 w-5 text-white" />
+            </div>
+            <div>
+              <div className="font-manrope text-sm font-bold text-white">
+                {isPlatformAdmin ? "Lumera Platform" : "Lumera Admin"}
+              </div>
+              <div className="text-[11px] text-slate-400 truncate max-w-[140px]">{user?.email}</div>
+              {isPlatformAdmin && (
+                <div className="text-[10px] text-slate-500" data-testid="platform-console-caption">
+                  Super Admin · not clinic admin
+                </div>
+              )}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setIsMobileOpen(false)}
+            className="md:hidden p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
+            title="Close menu"
+          >
+            <X className="w-5 h-5" />
+          </button>
         </div>
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
           {(["desk", "superadmin", "platform"] as const).map((group) => {
@@ -175,6 +229,7 @@ const AdminShellInner: React.FC = () => {
                     <Link
                       key={item.id}
                       to={adminTabToPath(item.id)}
+                      onClick={() => setIsMobileOpen(false)}
                       data-testid={`admin-nav-${item.id}`}
                       className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium text-left ${
                         isActive ? "bg-purple-600 text-white" : "text-slate-300 hover:bg-slate-700"
@@ -220,7 +275,7 @@ const AdminShellInner: React.FC = () => {
           </button>
         </div>
       </aside>
-      <main className="flex-1 min-w-0 w-full overflow-y-auto overflow-x-hidden p-4 sm:p-8">
+      <main className="flex-1 min-w-0 w-full overflow-y-auto overflow-x-hidden p-4 sm:p-6 lg:p-8">
         {isPlatformAdmin && scope && (
           <div
             className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-purple-200 bg-purple-50 px-4 py-2.5 text-xs"

@@ -84,7 +84,12 @@ export default function ClinicianApp() {
   };
   const [currentDoctor, setCurrentDoctor] = useState<Doctor>(() => sessionDoctor);
   const [currentPatient, setCurrentPatient] = useState<Patient>(() => UNASSIGNED_PATIENT);
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return window.innerWidth < 1024;
+    }
+    return false;
+  });
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [intakeName, setIntakeName] = useState('');
 
@@ -281,9 +286,32 @@ export default function ClinicianApp() {
         const nextPrescriptions = prescriptionRes.prescriptions || [];
 
         setPatients(nextPatients);
-        setCurrentPatient((prev) => nextPatients.find((p) => p.id === prev.id) || UNASSIGNED_PATIENT);
         setAppointments(nextAppointments);
         setPrescriptions(nextPrescriptions);
+
+        setCurrentPatient((prev) => {
+          if (prev?.id) {
+            const keep = nextPatients.find((p) => p.id === prev.id);
+            if (keep) return keep;
+          }
+          if (recordId) {
+            const byRecord = nextPatients.find((p) => p.id === recordId);
+            if (byRecord) return byRecord;
+            const appt = nextAppointments.find((a) => a.id === recordId);
+            if (appt) {
+              const byAppt = nextPatients.find((p) => p.id === appt.patientId);
+              if (byAppt) return byAppt;
+            }
+          }
+          try {
+            const savedPatientId = sessionStorage.getItem('lumera_active_patient_id');
+            if (savedPatientId) {
+              const bySession = nextPatients.find((p) => p.id === savedPatientId);
+              if (bySession) return bySession;
+            }
+          } catch {}
+          return UNASSIGNED_PATIENT;
+        });
       } catch (err) {
         if (cancelled) return;
         const fallback = doctorFromUser(user);
@@ -347,6 +375,16 @@ export default function ClinicianApp() {
     }
     setPinnedBillAppointmentId('');
     setCurrentPatient(patient);
+    if (patient?.id) {
+      try {
+        sessionStorage.setItem('lumera_active_patient_id', patient.id);
+      } catch {}
+      if (currentView === 'patients') {
+        go('app', { appView: 'patients', recordId: patient.id, workspaceSlug: sessionWorkspace, replace: true });
+      } else if (currentView === 'rx' || currentView === 'smart-rx') {
+        go('app', { appView: 'rx', recordId: patient.id, workspaceSlug: sessionWorkspace, replace: true });
+      }
+    }
   };
 
   const handleAutoSaveDraft = (rx: Prescription, options?: { immediate?: boolean }) => {
@@ -593,19 +631,38 @@ export default function ClinicianApp() {
     const d = resolveSessionDoctor(user, doctors);
     const selected = doctors.find((doc) => doc.id === apt.doctorId);
     setCurrentPatient(p);
+    if (p?.id) {
+      try {
+        sessionStorage.setItem('lumera_active_patient_id', p.id);
+      } catch {}
+    }
     setCurrentDoctor(user?.role === 'doctor' ? d : selected || d);
     handleUpdateAppointmentStatus(apt.id, 'In Consultation');
     go('app', { appView: 'rx', recordId: apt.id, workspaceSlug: sessionWorkspace });
   };
 
   useEffect(() => {
-    if (!recordId || (currentView !== 'rx' && currentView !== 'smart-rx')) return;
+    if (!recordId) return;
     const visit = [...appointments, ...queueAppointments].find((row) => row.id === recordId);
-    if (!visit) return;
-    const patient = patients.find((row) => row.id === visit.patientId);
-    if (patient) setCurrentPatient((prev) => (prev.id === patient.id ? prev : patient));
-    setPinnedBillAppointmentId((prev) => (prev === visit.id ? prev : visit.id));
-  }, [recordId, currentView, appointments, queueAppointments, patients]);
+    if (visit) {
+      const patient = patients.find((row) => row.id === visit.patientId);
+      if (patient) {
+        setCurrentPatient((prev) => (prev.id === patient.id ? prev : patient));
+        try {
+          sessionStorage.setItem('lumera_active_patient_id', patient.id);
+        } catch {}
+      }
+      setPinnedBillAppointmentId((prev) => (prev === visit.id ? prev : visit.id));
+      return;
+    }
+    const directPatient = patients.find((row) => row.id === recordId);
+    if (directPatient) {
+      setCurrentPatient((prev) => (prev.id === directPatient.id ? prev : directPatient));
+      try {
+        sessionStorage.setItem('lumera_active_patient_id', directPatient.id);
+      } catch {}
+    }
+  }, [recordId, appointments, queueAppointments, patients]);
 
   const invoicePatientIdRef = useRef("");
   useEffect(() => {
@@ -930,7 +987,7 @@ export default function ClinicianApp() {
               canStartConsult={allowedViews.includes('rx') || allowedViews.includes('smart-rx')}
               openRxAfterSave={intakeIntent === 'start-consult' && (allowedViews.includes('rx') || allowedViews.includes('smart-rx'))}
               intakeName={intakeName}
-              onSelectPatient={setCurrentPatient}
+              onSelectPatient={handleSelectPatient}
               onAddNewPatient={async (newPat) => {
                 try {
                   return await persistPatientCreate(newPat);
@@ -960,7 +1017,7 @@ export default function ClinicianApp() {
               onStartConsult={
                 allowedViews.includes('rx') || allowedViews.includes('smart-rx')
                   ? (pat) => {
-                      setCurrentPatient(pat);
+                      handleSelectPatient(pat);
                       setIntakeIntent('none');
                       setCurrentView('rx');
                     }

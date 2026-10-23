@@ -208,6 +208,7 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
     setIsRequesting(false);
     setInterimTranscript('');
     setAudioLevel(0);
+    resetAmbientMicrophoneSession();
   };
 
   const loadSample = (sample: (typeof SAMPLE_CONSULTATIONS)[number]) => {

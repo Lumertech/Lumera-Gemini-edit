@@ -168,12 +168,10 @@ export function ensureMetaTechProviderAndPolicies(database: SqlDatabase) {
   }
 
   // 4. Ensure Meta WhatsApp Templates exist in meta_templates
-  const templateCount = (database.prepare("SELECT COUNT(*) AS c FROM meta_templates").get() as { c: number }).c;
-  if (templateCount === 0) {
-    const insertTemplate = database.prepare(`
-      INSERT INTO meta_templates (id, tenant_id, waba_id, name, category, language, status, components, meta_template_id, rejection_reason, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
+  const insertTemplate = database.prepare(`
+    INSERT OR IGNORE INTO meta_templates (id, tenant_id, waba_id, name, category, language, status, components, meta_template_id, rejection_reason, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
 
     const standardTemplates = [
       {
@@ -320,6 +318,87 @@ export function ensureMetaTechProviderAndPolicies(database: SqlDatabase) {
         ]),
         meta_template_id: "meta_tpl_983102948107",
         rejection_reason: null
+      },
+      {
+        id: "tpl-7",
+        tenant_id: "tenant-lumera-main",
+        waba_id: "waba_398249018247019",
+        name: "appointment_confirmation_v1",
+        category: "UTILITY",
+        language: "en",
+        status: "APPROVED",
+        components: JSON.stringify([
+          { type: "HEADER", format: "TEXT", text: "Appointment Confirmed - Lumera Health" },
+          {
+            type: "BODY",
+            text: "Namaste {{1}}, your consultation with {{2}} ({{3}}) at {{4}} is confirmed for {{5}} at {{6}}. OPD Token #{{7}}. Please arrive 10 minutes prior to your slot.",
+            example: { body_text: [["Rajiv Saxena", "Dr. Vikram Malhotra", "Internal Medicine", "Lumera Clinic", "Tomorrow", "09:30 AM", "04"]] }
+          },
+          { type: "FOOTER", text: "Lumera Health OPD System" },
+          {
+            type: "BUTTONS",
+            buttons: [
+              { type: "QUICK_REPLY", text: "View Token" },
+              { type: "QUICK_REPLY", text: "Reschedule Slot" }
+            ]
+          }
+        ]),
+        meta_template_id: "meta_tpl_983102948108",
+        rejection_reason: null
+      },
+      {
+        id: "tpl-8",
+        tenant_id: "tenant-lumera-main",
+        waba_id: "waba_398249018247019",
+        name: "follow_up_consultation_reminder",
+        category: "UTILITY",
+        language: "en",
+        status: "APPROVED",
+        components: JSON.stringify([
+          { type: "HEADER", format: "TEXT", text: "Care Follow-up Reminder" },
+          {
+            type: "BODY",
+            text: "Dear {{1}}, Dr. {{2}} has scheduled your clinical follow-up regarding {{3}} for {{4}}. Regular follow-ups ensure your recovery stays on track. Tap below to confirm or pick an alternate slot.",
+            example: { body_text: [["Sunita Roy", "Dr. Vikram Malhotra", "Hypertension Review", "Next Monday"]] }
+          },
+          { type: "FOOTER", text: "Lumera Clinical Care Continuity" },
+          {
+            type: "BUTTONS",
+            buttons: [
+              { type: "QUICK_REPLY", text: "Book Follow-up" },
+              { type: "QUICK_REPLY", text: "Speak with Reception" }
+            ]
+          }
+        ]),
+        meta_template_id: "meta_tpl_983102948109",
+        rejection_reason: null
+      },
+      {
+        id: "tpl-9",
+        tenant_id: "tenant-lumera-main",
+        waba_id: "waba_398249018247019",
+        name: "appointment_reminder_2h",
+        category: "UTILITY",
+        language: "en",
+        status: "APPROVED",
+        components: JSON.stringify([
+          { type: "HEADER", format: "TEXT", text: "Urgent Visit Reminder" },
+          {
+            type: "BODY",
+            text: "Namaste {{1}}, your consultation with {{2}} at {{3}} is scheduled in 2 hours ({{4}}). Your OPD Token is #{{5}}. Please proceed to the clinic waiting area.",
+            example: { body_text: [["Priyanka Mukherjee", "Dr. Siddharth Varma", "Lumera Rehab Suite", "02:00 PM", "02"]] }
+          },
+          { type: "FOOTER", text: "Live OPD Triage System" },
+          {
+            type: "BUTTONS",
+            buttons: [
+              { type: "QUICK_REPLY", text: "I'm on My Way" },
+              { type: "QUICK_REPLY", text: "Need Directions" }
+            ]
+          }
+        ]),
+        meta_template_id: "meta_tpl_983102948110",
+        rejection_reason: null
       }
     ];
 
@@ -340,7 +419,6 @@ export function ensureMetaTechProviderAndPolicies(database: SqlDatabase) {
       );
     }
   }
-}
 
 /**
  * Ensures existing clinical patients have verified ABHA numbers & addresses,

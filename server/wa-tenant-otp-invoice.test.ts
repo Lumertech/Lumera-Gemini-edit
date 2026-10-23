@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { after, before, describe, it } from "node:test";
 import { createApiRouter, otpEventTenantId, uniqueOtpClinicId } from "./api.ts";
@@ -847,7 +848,7 @@ describe("OTP subject buckets", () => {
 
 describe("guard files stay in place", () => {
   it("does not drop JWT fail-fast, CSP frame-ancestors, demo login, or the Sunrise OTP allowlist", () => {
-    const root = path.join(path.dirname(new URL(import.meta.url).pathname), "..");
+    const root = fileURLToPath(new URL("..", import.meta.url));
     const auth = fs.readFileSync(path.join(root, "server/auth.ts"), "utf8");
     const headers = fs.readFileSync(path.join(root, "server/html-security-headers.ts"), "utf8");
     const runtime = fs.readFileSync(path.join(root, "server/runtime.ts"), "utf8");

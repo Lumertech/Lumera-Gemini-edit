@@ -1,6 +1,6 @@
 import { HIDDEN_AMBIENT_SOURCES, hiddenVisitSourceSql } from "./ambient-walkin.ts";
 import { DEMO_TENANT_ID, getDb } from "./db.ts";
-import { isProduction } from "./runtime.ts";
+import { isProduction, readSecret } from "./runtime.ts";
 import {
   getWhatsAppNumberByPhoneNumberId,
   getWhatsAppNumberByWabaId,
@@ -189,6 +189,10 @@ export function tenantIdFromReceivingPhoneNumberId(phoneNumberId?: string): stri
     if (tenantId) return tenantId;
   } catch {
     /* schema not ready */
+  }
+  const envPhoneId = readSecret("META_PHONE_NUMBER_ID", "WHATSAPP_PHONE_NUMBER_ID");
+  if (envPhoneId && id === envPhoneId) {
+    return "tenant-lumera-main";
   }
   return "";
 }

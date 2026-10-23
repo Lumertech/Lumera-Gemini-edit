@@ -215,7 +215,7 @@ function clinicWhatsAppRestricted(db: DatabaseSync, tenantId: string): boolean {
     if (!sub) return false;
     const status = String(sub.status || "").trim().toLowerCase();
     if (status === "past_due" || status === "canceled" || status === "cancelled") return true;
-    if ((status === "trial" || status === "expired") && sub.ends_at) {
+    if (!isSandboxOrDemoTenant(db, tenantId) && (status === "trial" || status === "expired") && sub.ends_at) {
       const ends = Date.parse(String(sub.ends_at));
       if (Number.isFinite(ends) && ends < Date.now()) return true;
     }
@@ -238,7 +238,6 @@ export function assertTenantMaySendWhatsApp(
   to?: string
 ): { ok: true } | { ok: false; error: string; status: 403 } {
   const id = String(tenantId || "").trim();
-  if (!id || !db) return { ok: true };
   if (!clinicWhatsAppRestricted(db, id)) return { ok: true };
   if (!isManual || kind !== "text") {
     return { ok: false, error: READ_ONLY_WHATSAPP_SEND_ERROR, status: 403 };
@@ -269,7 +268,11 @@ function isPlatformAuthOtp(kind: CloudMessageKind, purpose: string | undefined, 
 }
 
 export function toWhatsAppRecipient(phone: string): string {
-  return phone.replace(/[^\d]/g, "");
+  let digits = String(phone || "").replace(/[^\d]/g, "");
+  if (digits.length === 10 && /^[6-9]/.test(digits)) {
+    digits = `91${digits}`;
+  }
+  return digits;
 }
 
 export type GraphMessageResult =

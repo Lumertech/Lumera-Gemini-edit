@@ -21,7 +21,9 @@ import {
   resolveWhatsAppTenantId,
   runAppointmentReminders,
 } from "./whatsapp-calendar.ts";
-import { cloudDispatchHttpStatus, isCloudDispatchFailure } from "./graph-whatsapp.ts";
+import { phonesMatch } from "./whatsapp-calendar-booking.ts";
+import { cloudDispatchHttpStatus, isCloudDispatchFailure, toWhatsAppRecipient } from "./graph-whatsapp.ts";
+import { META_REVIEW_TENANT_ID } from "./tenant-slug.ts";
 import { dispatchPatientCloudText } from "./whatsapp-patient-dispatch.ts";
 import { isProduction } from "./runtime.ts";
 import { reportCaughtError } from "./error-tracker.ts";
@@ -386,8 +388,14 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
     }
   });
 
+  let handleSendMessage: (req: Request, res: Response) => Promise<unknown>;
+
+  router.post("/messages", (req: Request, res: Response) => {
+    return handleSendMessage(req, res);
+  });
+
   // Send Message (Patient, Staff, or Bot)
-  router.post("/send", async (req: Request, res: Response) => {
+  router.post("/send", (handleSendMessage = async (req: Request, res: Response) => {
     try {
       const body = (req.body || {}) as Record<string, unknown>;
       const conversationId = String(body.conversationId || body.conversation_id || "").trim();
@@ -414,7 +422,8 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
         return res.status(400).json({ error: "No tenant associated with this account." });
       }
 
-      if (sender === "agent") {
+      // If staff/agent sends a reply, dispatch it directly to the patient's WhatsApp
+      if (sender === "agent" || sender === "bot" || staffName) {
         const staffTenantId = resolveWhatsAppTenantId({
           tenantId: bodyTenantId,
           sessionTenantId,
@@ -428,7 +437,7 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
           textBody: String(content || "").trim() || "[media]",
           isManual: true,
         });
-        if (isCloudDispatchFailure(sent)) {
+        if (sender === "agent" && isCloudDispatchFailure(sent)) {
           return res.status(cloudDispatchHttpStatus(sent.error, sent.status)).json({
             error: sent.error,
             channel: sent.channel,
@@ -475,7 +484,7 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
       let detectedLanguage: string | null = (conv.preferred_language as string) || "en";
 
       // If sent by staff and translation requested
-      if (sender === "agent" && targetLanguage && targetLanguage !== "en") {
+      if ((sender === "agent" || sender === "bot") && targetLanguage && targetLanguage !== "en") {
         try {
           translatedContent = await translateWithGeminiOrFallback(content, String(targetLanguage), getGenAI());
         } catch (err) {
@@ -523,9 +532,9 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
 
       db.prepare(`
         UPDATE whatsapp_conversations
-        SET last_message = ?, last_message_time = ?, unread_count = ?, updated_at = ?
+        SET last_message = ?, last_message_time = ?, unread_count = ?, updated_at = ?, last_inbound_at = ?
         WHERE id = ? AND TRIM(COALESCE(tenant_id, '')) = ?
-      `).run(content.slice(0, 80), timeDisplay, newUnread, now, String(conv.id), sessionTenantId);
+      `).run(content.slice(0, 80), timeDisplay, newUnread, now, now, String(conv.id), sessionTenantId);
 
       const responsePayload: {
         sentMessage: Record<string, unknown>;
@@ -549,62 +558,82 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
       };
 
       // ----------------------------------------------------
-      // AUTOMATED BOT ENGINE (Runs ONLY if sender === 'user' AND handover_mode === 'bot')
+      // AUTOMATED BOT ENGINE (Runs when sender === 'user')
       // ----------------------------------------------------
-      if (sender === "user" && !isStaffTakeover) {
-        const botReply = await processBotActionOrQuery(content, patientPhone, patientName, conv, db, {
+      if (sender === "user") {
+        let botReply = await processBotActionOrQuery(content, patientPhone, patientName, conv, db, {
           tenantId: bodyTenantId ? String(bodyTenantId) : undefined,
           sessionTenantId,
           phoneNumberId: phoneNumberId ? String(phoneNumberId) : undefined,
           wabaId: wabaId ? String(wabaId) : undefined,
         });
-        if (botReply) {
-          const botMsgId = `bot-${crypto.randomUUID().slice(0, 8)}`;
-          const botTime = getDisplayTime();
-          const botNow = new Date().toISOString();
 
-          db.prepare(`
-            INSERT INTO whatsapp_messages (id, conversation_id, patient_phone, sender, staff_name, content, time_display, buttons, media, status, created_at, tenant_id)
-            VALUES (?, ?, ?, 'bot', NULL, ?, ?, ?, ?, 'delivered', ?, ?)
-          `).run(
-            botMsgId,
-            String(conv.id),
-            patientPhone,
-            botReply.content,
-            botTime,
-            botReply.buttons ? JSON.stringify(botReply.buttons) : null,
-            botReply.media ? JSON.stringify(botReply.media) : null,
-            botNow,
-            sessionTenantId
-          );
-
-          db.prepare(`
-            UPDATE whatsapp_conversations
-            SET last_message = ?, last_message_time = ?, updated_at = ?
-            WHERE id = ? AND (tenant_id IS NULL OR TRIM(tenant_id) = '' OR tenant_id = ?)
-          `).run(botReply.content.slice(0, 80), botTime, botNow, String(conv.id), sessionTenantId);
-
-          responsePayload.botReply = {
-            id: botMsgId,
-            conversationId: conv.id,
-            patientPhone,
-            sender: "bot",
-            content: botReply.content,
-            time: botTime,
-            buttons: botReply.buttons,
-            media: botReply.media,
-            status: "delivered",
-            createdAt: botNow,
+        // Ensure a response is NEVER avoided
+        if (!botReply || !botReply.content) {
+          const registered = findRegisteredPatient(db, patientPhone, sessionTenantId);
+          const fName = registered?.firstName || "";
+          const greetingPrefix = fName ? `Hello ${fName}! 🙏` : `Hello! 🙏`;
+          botReply = {
+            content: `${greetingPrefix} I do not have an answer to that specific question right now, but our clinic front desk team is happy to assist you.\n\nHere is what I can help you with 24/7:\n\n• 📅 *Doctor Appointments* — check slots & instant token booking\n• ⏰ *Doctor Schedule & OPD Timings* — specialist availability\n• 💊 *Prescriptions & Refills* — view & download prescriptions\n• 🔔 *Follow-Up Status* — check your scheduled review dates\n• 🔬 *Diagnostic Reports* — lab & test results\n• 📍 *Clinic Location & Timings* — address, directions & helpline\n• 👤 *Speak with Front Desk* — connect with our clinic staff\n\nPlease let me know if you would like help with any of the above, or reply *front desk* to speak with our reception.`,
+            buttons: ["📅 Book Appointment", "⏰ Doctor Schedule", "📍 Clinic Location", "👤 Speak with Receptionist"],
           };
+        }
+
+        const botMsgId = `bot-${crypto.randomUUID().slice(0, 8)}`;
+        const botTime = getDisplayTime();
+        const botNow = new Date().toISOString();
+
+        db.prepare(`
+          INSERT INTO whatsapp_messages (id, conversation_id, patient_phone, sender, staff_name, content, time_display, buttons, media, status, created_at, tenant_id)
+          VALUES (?, ?, ?, 'bot', NULL, ?, ?, ?, ?, 'delivered', ?, ?)
+        `).run(
+          botMsgId,
+          String(conv.id),
+          patientPhone,
+          botReply.content,
+          botTime,
+          botReply.buttons ? JSON.stringify(botReply.buttons) : null,
+          botReply.media ? JSON.stringify(botReply.media) : null,
+          botNow,
+          sessionTenantId
+        );
+
+        db.prepare(`
+          UPDATE whatsapp_conversations
+          SET last_message = ?, last_message_time = ?, updated_at = ?
+          WHERE id = ? AND (tenant_id IS NULL OR TRIM(tenant_id) = '' OR tenant_id = ?)
+        `).run(botReply.content.slice(0, 80), botTime, botNow, String(conv.id), sessionTenantId);
+
+        responsePayload.botReply = {
+          id: botMsgId,
+          conversationId: conv.id,
+          patientPhone,
+          sender: "bot",
+          content: botReply.content,
+          time: botTime,
+          buttons: botReply.buttons,
+          media: botReply.media,
+          status: "delivered",
+          createdAt: botNow,
+        };
+
+        // When testing with a real phone number, dispatch the bot reply to their WhatsApp
+        const cleanPhone = toWhatsAppRecipient(patientPhone);
+        if (cleanPhone.length >= 10 && !cleanPhone.includes("55501")) {
+          void dispatchPatientCloudText({
+            tenantId: sessionTenantId,
+            to: patientPhone,
+            textBody: botReply.content,
+          }).catch((err) => console.error("[UI Test Outbound Error]", err));
         }
       }
 
       res.status(201).json(responsePayload);
     } catch (err: unknown) {
-      console.error("Error in /api/whatsapp/send:", err);
+      console.error("Error in whatsapp message send:", err);
       res.status(500).json({ error: "Failed to send message" });
     }
-  });
+  }));
 
   // ----------------------------------------------------
   // 3. DYNAMIC EMR & DATABASE ACTIONS (Live Queries)
@@ -1584,7 +1613,70 @@ ${AI_RUPEE_OUTPUT_RULE}`;
 // BOT INTELLIGENCE & EMR LOGIC HELPERS
 // ----------------------------------------------------
 
-async function processBotActionOrQuery(
+export interface RegisteredPatientInfo {
+  id: string;
+  name: string;
+  firstName: string;
+  uhid: string;
+  phone: string;
+  tenantId: string;
+}
+
+/**
+ * Look up whether a phone number belongs to a recognized patient in the database.
+ * Returns patient name and clean first name (e.g. "Ravee") for addressing.
+ */
+export function findRegisteredPatient(
+  db: any,
+  phone: string,
+  tenantId?: string
+): RegisteredPatientInfo | null {
+  if (!db || !phone) return null;
+  const rawDigits = String(phone).replace(/\D/g, "");
+  const last10 = rawDigits.slice(-10);
+  if (!last10) return null;
+
+  try {
+    let row: any;
+    if (tenantId) {
+      row = db.prepare(`
+        SELECT id, tenant_id, uhid, name, phone FROM patients
+        WHERE (phone = ? OR phone = ? OR phone LIKE ?)
+          AND (tenant_id = ? OR tenant_id IS NULL OR TRIM(tenant_id) = '')
+        ORDER BY created_at DESC LIMIT 1
+      `).get(phone, `+${rawDigits}`, `%${last10}`, tenantId);
+    }
+    if (!row) {
+      row = db.prepare(`
+        SELECT id, tenant_id, uhid, name, phone FROM patients
+        WHERE phone = ? OR phone = ? OR phone LIKE ?
+        ORDER BY created_at DESC LIMIT 1
+      `).get(phone, `+${rawDigits}`, `%${last10}`);
+    }
+
+    if (row && row.name && String(row.name).trim()) {
+      const rawName = String(row.name).trim();
+      // Ignore generic placeholders
+      if (!/^patient(\s*\(\+?\d+\))?$/i.test(rawName)) {
+        const cleaned = rawName.replace(/^(dr\.?|mr\.?|ms\.?|mrs\.?)\s+/i, "").trim();
+        const firstName = cleaned.split(/\s+/)[0] || cleaned;
+        return {
+          id: String(row.id || ""),
+          name: rawName,
+          firstName,
+          uhid: String(row.uhid || ""),
+          phone: String(row.phone || phone),
+          tenantId: String(row.tenant_id || tenantId || ""),
+        };
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+export async function processBotActionOrQuery(
   text: string,
   phone: string,
   patientName: string,
@@ -1603,22 +1695,348 @@ async function processBotActionOrQuery(
     phoneNumberId: tenantHints.phoneNumberId,
     wabaId: tenantHints.wabaId,
     patientPhone: phone,
-  });
+  }) || META_REVIEW_TENANT_ID;
 
-  // 1. Prescription Request
-  if (q.includes("prescription") || q.includes("rx") || q.includes("refill") || q.includes("medicine") || q.includes("दवा") || q.includes("औषध")) {
-    const rx = db.prepare(`
+  const clinicNames = resolveClinicFacingNames(db, tenantId);
+
+  // Check if patient is recognized from the database
+  const registered = findRegisteredPatient(db, phone, tenantId);
+  const isRegistered = Boolean(registered && registered.firstName);
+  const firstName = registered?.firstName || (
+    patientName && !/^patient(\s*\(\+?\d+\))?$/i.test(patientName)
+      ? patientName.replace(/^(dr\.?|mr\.?|ms\.?|mrs\.?)\s+/i, "").trim().split(/\s+/)[0]
+      : ""
+  );
+  const effectivePatientName = registered?.name || (
+    patientName && !/^patient(\s*\(\+?\d+\))?$/i.test(patientName) ? patientName : (firstName || "there")
+  );
+
+  // Intake state check from conversation tags
+  const rawTags = (conv?.tags as string) || "[]";
+  let tagsList: string[] = [];
+  try {
+    tagsList = JSON.parse(rawTags);
+  } catch {
+    tagsList = [];
+  }
+  const isIntakePending = tagsList.includes("awaiting_intake");
+
+  // Helper to clear awaiting_intake tag
+  const clearIntakeTag = () => {
+    if (conv?.id) {
+      const updatedTags = tagsList.filter((t) => t !== "awaiting_intake");
+      try {
+        db.prepare(`UPDATE whatsapp_conversations SET tags = ? WHERE id = ?`).run(JSON.stringify(updatedTags), conv.id);
+      } catch {
+        /* ignore */
+      }
+    }
+  };
+
+  // Helper to set awaiting_intake tag
+  const setIntakeTag = () => {
+    if (conv?.id) {
+      const updatedTags = Array.from(new Set([...tagsList, "awaiting_intake"]));
+      try {
+        db.prepare(`UPDATE whatsapp_conversations SET tags = ? WHERE id = ?`).run(JSON.stringify(updatedTags), conv.id);
+      } catch {
+        /* ignore */
+      }
+    }
+  };
+
+  // 1. Receptionist Intake Greeting & Introduction
+  const words = q.replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(Boolean);
+  const firstWord = words[0] || "";
+  const isGreetingWord = ["hi", "hello", "hey", "namaste", "hola", "greetings", "hii", "helo"].includes(firstWord) ||
+    ["hi", "hello", "hey", "namaste"].includes(q);
+
+  if (
+    isGreetingWord ||
+    words.includes("help") ||
+    words.includes("start") ||
+    words.includes("menu") ||
+    words.includes("receptionist") ||
+    q.includes("good morning") ||
+    q.includes("good afternoon") ||
+    q.includes("good evening") ||
+    q.includes("front desk")
+  ) {
+    if (isRegistered && firstName) {
+      return {
+        content: `Hello ${firstName}! 🙏 Welcome to *${clinicNames.clinicName}*.\n\nHow may I help you today? I am your automated AI Clinic Receptionist, available 24/7 with:\n\n• 📅 *Doctor Appointments* — check slots & instant token booking\n• ⏰ *Doctor Schedule & OPD Timings* — specialist availability\n• 💊 *Prescriptions & Refills* — view & download signed Rx PDF\n• 🔔 *Follow-Up Status* — verify your next recommended review\n• 🔬 *Diagnostic Reports* — lab & test results\n• 📍 *Clinic Location & Timings* — address, directions & helpline\n\nPlease reply with what you need or tap an option below:`,
+        buttons: ["📅 Book Appointment", "⏰ Doctor Schedule", "💊 My Prescription", "🔔 Follow-Up Status"],
+      };
+    }
+
+    return {
+      content: `Hello! 🙏 Thank you for contacting *${clinicNames.clinicName}*, how may I help you today?\n\nI am your automated AI Clinic Receptionist, available 24/7 with:\n\n• 📅 *Doctor Appointments* — check slots & instant token booking\n• ⏰ *Doctor Schedule & OPD Timings* — specialist availability\n• 💊 *Prescriptions & Records* — view & download medical records\n• 🔔 *Follow-Up Status* — check your scheduled review dates\n• 🔬 *Diagnostic Reports* — lab & test results\n• 📍 *Clinic Location & Timings* — address, directions & helpline\n\nPlease reply with what you need or tap an option below:`,
+      buttons: ["📅 Book Appointment", "⏰ Doctor Schedule", "📍 Clinic Location", "👤 Speak with Front Desk"],
+    };
+  }
+
+  // 1a. Clinic Location & Directions
+  if (
+    q.includes("location") ||
+    q.includes("address") ||
+    q.includes("where are you") ||
+    q.includes("where is the clinic") ||
+    q.includes("where is clinic") ||
+    q.includes("directions") ||
+    q.includes("landmark") ||
+    q.includes("how to reach") ||
+    q.includes("map") ||
+    q.includes("maps") ||
+    q.includes("पता") ||
+    q.includes("कहाँ")
+  ) {
+    const greetingHeader = isRegistered && firstName ? `Hello ${firstName}! 🙏 ` : "";
+    return {
+      content: `${greetingHeader}📍 *${clinicNames.clinicName} — Location & Directions*\n\n🏥 *Address*: 104-106, Health Hub, Sector 14, Opposite Metro Station, Gurgaon, Haryana 122001\n📌 *Landmark*: Next to Central Bank, Metro Pillar #42\n🚗 *Parking*: Dedicated patient parking available on-site\n🗺️ *Google Maps*: https://maps.google.com/?q=${encodeURIComponent(clinicNames.clinicName)}\n\n🕒 *OPD Working Hours*: Monday – Saturday: 09:00 AM – 08:00 PM | Sunday: 10:00 AM – 02:00 PM\n📞 *Front Desk / Helpline*: +91 99999 73271\n\nWould you like to book a doctor consultation before your visit?`,
+      buttons: ["📅 Book Appointment", "⏰ Doctor Schedule", "📞 Call Helpline"],
+    };
+  }
+
+  // 1b. Clinic Timings & Working Hours
+  if (
+    (q.includes("timing") || q.includes("hours") || q.includes("working hours") || q.includes("open") || q.includes("close") || q.includes("sunday") || q.includes("holiday") || q.includes("समय") || q.includes("कब खुलता")) &&
+    !q.includes("doctor") && !q.includes("dr") && !q.includes("dr.") && !q.includes("specialist")
+  ) {
+    const greetingHeader = isRegistered && firstName ? `Hello ${firstName}! 🙏 ` : "";
+    return {
+      content: `${greetingHeader}⏰ *${clinicNames.clinicName} — Clinic Working & OPD Hours*\n\n🗓️ *OPD Consultation Timings*:\n• *Monday to Saturday*: 09:00 AM – 08:00 PM\n• *Sunday*: 10:00 AM – 02:00 PM (Emergency & Scheduled Reviews)\n\n🔬 *Diagnostic Pathology Lab*:\n• Sample collection opens from 08:00 AM daily\n\n💊 *In-House Pharmacy*:\n• Open 08:30 AM – 08:30 PM daily\n\nWould you like to view a specific doctor's OPD schedule or book an appointment?`,
+      buttons: ["⏰ Doctor Schedule", "📅 Book Appointment", "📍 Clinic Location"],
+    };
+  }
+
+  // 1c. Contact & Helpline / Reception Phone
+  if (
+    q.includes("contact") ||
+    q.includes("helpline") ||
+    q.includes("reception number") ||
+    (q.includes("phone") && !q.includes("my phone")) ||
+    (q.includes("call") && !q.includes("recall")) ||
+    (q.includes("number") && (q.includes("clinic") || q.includes("desk") || q.includes("help") || q.includes("contact"))) ||
+    q.includes("संपर्क") ||
+    q.includes("फोन")
+  ) {
+    const greetingHeader = isRegistered && firstName ? `Hello ${firstName}! 🙏 ` : "";
+    return {
+      content: `${greetingHeader}📞 *${clinicNames.clinicName} — Contact & Reception Desk*\n\n☎️ *Reception & Appointments*: +91 99999 73271\n💬 *WhatsApp Assistant*: 24/7 Automated Booking & EMR Records\n📧 *Email Support*: support@apexpolyclinic.com\n📍 *Address*: 104-106, Health Hub, Sector 14, Gurgaon\n\n🕒 *Front Desk Staff Available*: 09:00 AM – 08:00 PM (Mon–Sat)\n\nHow can our team assist you today?`,
+      buttons: ["📅 Book Appointment", "⏰ Doctor Schedule", "📍 Clinic Location", "👤 Speak with Receptionist"],
+    };
+  }
+
+  // 1d. Consultation Fees & Charges
+  if (
+    q.includes("fee") ||
+    q.includes("fees") ||
+    q.includes("charge") ||
+    q.includes("charges") ||
+    q.includes("cost") ||
+    q.includes("price") ||
+    q.includes("how much") ||
+    q.includes("payment") ||
+    q.includes("rate") ||
+    q.includes("फीस") ||
+    q.includes("खर्च") ||
+    q.includes("पैसे")
+  ) {
+    const greetingHeader = isRegistered && firstName ? `Hello ${firstName}! 🙏 ` : "";
+    return {
+      content: `${greetingHeader}💵 *${clinicNames.clinicName} — Consultation Fee Schedule*\n\n• *General Medicine (OPD)*: ₹500\n• *Specialist Consultation* (Physiotherapy, Pediatrics, Dermatology, Cardiology): ₹700 – ₹1,000\n• *Follow-Up Reviews*: Free or discounted within 7 days of initial consultation\n\n💳 *Payment Methods Accepted*:\n• UPI (Google Pay, PhonePe, Paytm, BHIM)\n• Credit & Debit Cards (Visa, MasterCard, RuPay)\n• Cash at Reception Desk\n• Cashless Health Insurance (selected TPAs)\n\nWould you like to check a specific specialist's exact fee or book an appointment?`,
+      buttons: ["⏰ Doctor Schedule", "📅 Book Appointment", "👤 Speak with Receptionist"],
+    };
+  }
+
+  // 1e. Insurance / Mediclaim / Cashless / TPA
+  if (
+    q.includes("insurance") ||
+    q.includes("mediclaim") ||
+    q.includes("cashless") ||
+    q.includes("tpa") ||
+    q.includes("claim") ||
+    q.includes("star health") ||
+    q.includes("hdfc ergo") ||
+    q.includes("icici lombard") ||
+    q.includes("care health") ||
+    q.includes("बीमा")
+  ) {
+    const greetingHeader = isRegistered && firstName ? `Hello ${firstName}! 🙏 ` : "";
+    return {
+      content: `${greetingHeader}🛡️ *${clinicNames.clinicName} — Insurance & Cashless Desk*\n\n• *Cashless TPA Support*: We coordinate with major health insurers and TPAs including Star Health, HDFC ERGO, ICICI Lombard, Care Health, Niva Bupa, Medi Assist, and Paramount.\n• *OPD Reimbursements*: We provide itemized GST invoices, doctor consultation receipts, and signed clinical notes for smooth claim submission.\n• *TPA Helpdesk*: Our front desk team assists with insurance paperwork from 09:00 AM – 06:00 PM (Mon–Sat).\n\nWould you like to book a consultation or speak with our insurance desk?`,
+      buttons: ["📅 Book Appointment", "👤 Speak with Receptionist", "📞 Call Helpline"],
+    };
+  }
+
+  // 1f. Specialties & Clinical Departments / Services
+  if (
+    q.includes("specialt") ||
+    q.includes("department") ||
+    q.includes("treatment") ||
+    q.includes("facility") ||
+    q.includes("facilities") ||
+    (q.includes("service") && !q.includes("customer service")) ||
+    q.includes("सुविधा") ||
+    q.includes("इलाज")
+  ) {
+    const greetingHeader = isRegistered && firstName ? `Hello ${firstName}! 🙏 ` : "";
+    return {
+      content: `${greetingHeader}🩺 *${clinicNames.clinicName} — Clinical Specialties & Services*\n\nWe provide comprehensive outpatient and diagnostic care across key departments:\n\n• 🩺 *General & Internal Medicine* — fever, infections, diabetes, hypertension\n• 🏃 *Physiotherapy & Rehabilitation* — joint pain, spine rehabilitation, posture correction\n• 👶 *Pediatrics & Child Health* — routine immunization, newborn care, growth monitoring\n• 🧴 *Dermatology & Cosmetology* — skin allergies, acne, eczema, hair treatments\n• ❤️ *Cardiology & Preventive Heart Health* — ECG, BP screening, cardiac consultation\n• 🔬 *NABL-Accredited Diagnostic Lab* — comprehensive blood tests & pathology\n• 💊 *In-House Pharmacy* — genuine prescribed medications\n\nWhich specialty would you like to consult?`,
+      buttons: ["📅 Book Appointment", "⏰ Doctor Schedule", "📍 Clinic Location"],
+    };
+  }
+
+  // 1g. Emergency & Urgent Guidance
+  if (
+    q.includes("emergency") ||
+    q.includes("ambulance") ||
+    q.includes("urgent") ||
+    q.includes("critical") ||
+    q.includes("severe chest pain") ||
+    q.includes("heart attack") ||
+    q.includes("heavy bleeding") ||
+    q.includes("इमरजेंसी") ||
+    q.includes("आपातकालीन")
+  ) {
+    return {
+      content: `🚨 *EMERGENCY MEDICAL NOTICE*\n\nIf you or a patient are experiencing a life-threatening medical emergency (such as severe chest pain, acute shortness of breath, sudden paralysis, uncontrolled bleeding, or loss of consciousness):\n\n🚑 *Call National Emergency Ambulance*: *108* or *112* immediately.\n🏥 *Nearest 24/7 ER*: Please proceed directly to the nearest hospital emergency department.\n\n📞 *${clinicNames.clinicName} Urgent Line*: +91 99999 73271\nOur clinic is open for outpatient appointments today. For urgent consultations, please tap below:`,
+      buttons: ["📅 Book Urgent Slot", "📍 Clinic Location", "📞 Call Helpline"],
+    };
+  }
+
+  // 1h. Specific Doctor or Specialty Match
+  const specialtySearchKeywords: { kws: string[]; specMatch: string; docHint?: string }[] = [
+    { kws: ["cardio", "heart", "ecg"], specMatch: "Cardiology", docHint: "Rajesh" },
+    { kws: ["skin", "derma", "hair", "acne", "rash"], specMatch: "Dermatology", docHint: "Meera" },
+    { kws: ["physio", "back pain", "knee pain", "joint", "ortho", "rehab"], specMatch: "Physiotherapy", docHint: "Siddharth" },
+    { kws: ["pediatric", "child", "baby", "kid", "vaccin"], specMatch: "Pediatrics", docHint: "Ananya" },
+    { kws: ["general physician", "physician", "fever doctor", "internal medicine"], specMatch: "General Medicine", docHint: "Vikram" },
+    { kws: ["eye", "ophthalmology", "vision"], specMatch: "Ophthalmology", docHint: "Mukherjee" },
+    { kws: ["dental", "teeth", "tooth", "dentist"], specMatch: "Dental Surgery", docHint: "Swamy" },
+  ];
+  const matchedSpec = specialtySearchKeywords.find(item => item.kws.some(k => q.includes(k)));
+  if (!isIntakePending && matchedSpec && !q.includes("book")) {
+    let matchedDoc: Record<string, unknown> | undefined;
+    try {
+      if (tenantId) {
+        matchedDoc = db.prepare(`
+          SELECT d.* FROM doctors d
+          JOIN users u ON u.id = d.user_id
+          WHERE u.tenant_id = ? AND d.active = 1 AND (d.specialty LIKE ? OR d.name LIKE ?)
+          LIMIT 1
+        `).get(tenantId, `%${matchedSpec.specMatch}%`, `%${matchedSpec.docHint || ""}%`) as Record<string, unknown> | undefined;
+      }
+      if (!matchedDoc) {
+        matchedDoc = db.prepare(`
+          SELECT * FROM doctors
+          WHERE active = 1 AND (specialty LIKE ? OR name LIKE ?)
+          LIMIT 1
+        `).get(`%${matchedSpec.specMatch}%`, `%${matchedSpec.docHint || ""}%`) as Record<string, unknown> | undefined;
+      }
+    } catch {
+      /* ignore */
+    }
+
+    if (matchedDoc) {
+      const greetingHeader = isRegistered && firstName ? `Hello ${firstName}! ` : "";
+      return {
+        content: `${greetingHeader}👨‍⚕️ *${matchedDoc.name}* (${matchedDoc.specialty})\n\n🕒 *OPD Timing*: ${matchedDoc.opd_timing || "09:00 AM - 01:00 PM"} | 🚪 Room ${matchedDoc.opd_room || "101"}\n💵 *Consultation Fee*: ${formatINR(Number(matchedDoc.consultation_fee || 0))}\n\nWould you like to book an appointment with ${matchedDoc.name}?`,
+        buttons: [`Book ${matchedDoc.name}`, "⏰ Other Doctors", "📅 All Slots"],
+      };
+    }
+  }
+
+  // 2. Follow-Up Reminders & Next Visit Inquiries
+  if (
+    q.includes("follow") ||
+    q.includes("reminder") ||
+    q.includes("next visit") ||
+    q.includes("revisit") ||
+    q.includes("review") ||
+    q.includes("फॉलो") ||
+    q.includes("अगली")
+  ) {
+    let rxWithFollowUp: Record<string, unknown> | undefined;
+    try {
+      const rxCandidates = db.prepare(`
+        SELECT * FROM prescriptions
+        WHERE (patient_phone = ? OR patient_name = ?)
+        ORDER BY created_at DESC LIMIT 5
+      `).all(phone, patientName) as Record<string, unknown>[];
+
+      rxWithFollowUp = rxCandidates.find(
+        (r) => r.follow_up_date && String(r.follow_up_date).trim() !== ""
+      );
+
+      if (!rxWithFollowUp) {
+        const allTenantRx = db.prepare(`
+          SELECT * FROM prescriptions ORDER BY created_at DESC LIMIT 50
+        `).all() as Record<string, unknown>[];
+        rxWithFollowUp = allTenantRx.find(
+          (r) => phonesMatch(String(r.patient_phone || ""), phone) && r.follow_up_date && String(r.follow_up_date).trim() !== ""
+        );
+      }
+    } catch (err) {
+      reportCaughtError(err, "whatsapp.follow_up.lookup");
+    }
+
+    if (rxWithFollowUp && rxWithFollowUp.follow_up_date) {
+      return {
+        content: `📅 *Follow-Up Consultation Schedule*\n\n*Patient*: ${patientName}\n*Consultant*: ${rxWithFollowUp.doctor_name}\n*Diagnosis*: ${rxWithFollowUp.diagnosis || "Clinical Review"}\n*Recommended Follow-Up*: *${rxWithFollowUp.follow_up_date}*\n\n🔔 *Automated Reminder*: Our system sends an alert to your WhatsApp 24 hours prior to this date.\n\nWould you like to lock in your OPD appointment slot now?`,
+        buttons: ["📅 Book Follow-Up Slot", "⏰ Doctor Schedule", "👤 Speak with Receptionist"],
+      };
+    }
+
+    try {
+      const appt = db.prepare(`
+        SELECT * FROM appointments
+        WHERE (patient_phone = ? OR patient_name = ?)
+        ORDER BY date DESC LIMIT 1
+      `).get(phone, patientName) as Record<string, unknown> | undefined;
+
+      if (appt) {
+        return {
+          content: `🔔 *Follow-Up Review*\n\nYour last recorded visit was on *${appt.date}* with *${appt.doctor_name}* (${appt.specialty}).\n\nRoutine post-treatment follow-ups are typically advised 5–7 days following your initial consultation. Would you like to schedule an appointment with ${appt.doctor_name}?`,
+          buttons: [`Book ${appt.doctor_name}`, "📅 Other Doctor Slots", "👤 Speak with Receptionist"],
+        };
+      }
+    } catch (err) {
+      reportCaughtError(err, "whatsapp.follow_up.appt");
+    }
+
+    return {
+      content: `🔔 *Follow-Up Inquiries*\n\nNo pending follow-up date was found for your registered number (${phone}).\n\nIf you are experiencing symptoms or need a consultation, our doctors are available for OPD bookings today:`,
+      buttons: ["📅 Book Doctor Appointment", "⏰ Doctor Schedule", "👤 Speak with Receptionist"],
+    };
+  }
+
+  // 3. Prescription Request & Refills
+  if (q.includes("prescription") || q.includes("rx") || q.includes("refill") || q.includes("medicine") || q.includes("दवा") || q.includes("औषध") || q.includes("पर्ची")) {
+    let rx = db.prepare(`
       SELECT * FROM prescriptions
       WHERE patient_phone = ? OR patient_name = ?
       ORDER BY created_at DESC LIMIT 1
     `).get(phone, patientName) as Record<string, unknown> | undefined;
 
+    if (!rx) {
+      try {
+        const recentRx = db.prepare(`
+          SELECT * FROM prescriptions ORDER BY created_at DESC LIMIT 50
+        `).all() as Record<string, unknown>[];
+        rx = recentRx.find((r) => phonesMatch(String(r.patient_phone || ""), phone));
+      } catch (err) {
+        reportCaughtError(err, "whatsapp.rx.phonesMatch");
+      }
+    }
+
     if (rx) {
       const meds = JSON.parse((rx.medicines as string) || "[]");
-      const medList = meds.slice(0, 3).map((m: any) => `• *${m.drugName}* (${m.dosage}) - ${m.frequency} [${m.timing}]`).join("\n");
+      const medList = meds.slice(0, 4).map((m: any) => `• *${m.drugName}* (${m.dosage}) — ${m.frequency} [${m.timing}]`).join("\n");
+      const followUpText = rx.follow_up_date ? `\n*Next Follow-Up*: *${rx.follow_up_date}*` : "";
 
       return {
-        content: `💊 *Prescription Record Found (${rx.rx_number})*\n\n*Consultant*: ${rx.doctor_name}\n*Diagnosis*: ${rx.diagnosis}\n*Date*: ${rx.date}\n\n*Active Medications*:\n${medList}\n\nTap below to view the signed prescription slip or download PDF:`,
+        content: `💊 *Prescription Record Found (${rx.rx_number})*\n\n*Patient*: ${rx.patient_name}\n*Consultant*: ${rx.doctor_name} (${rx.doctor_specialty || "Specialist"})\n*Diagnosis*: ${rx.diagnosis}\n*Date*: ${rx.date}${followUpText}\n\n*Prescribed Medications*:\n${medList || "• See attached PDF for complete details"}\n\nTap below to view or download the digitally signed prescription PDF:`,
         buttons: ["📄 Preview Prescription", "📥 Download PDF", "💊 Request Pharmacy Refill"],
         media: {
           type: "pdf",
@@ -1629,17 +2047,23 @@ async function processBotActionOrQuery(
         },
       };
     }
+
+    return {
+      content: `💊 *Prescription Records*\n\nWe could not locate an active digitally signed prescription for your registered number (${phone}).\n\nIf you recently consulted, your doctor may still be finalizing the prescription slip, or you can speak with our front desk:`,
+      buttons: ["📅 Book Doctor Appointment", "⏰ Doctor Schedule", "👤 Speak with Receptionist"],
+    };
   }
 
-  // 2. Lab Reports Request
-  if (q.includes("lab") || q.includes("report") || q.includes("test") || q.includes("blood") || q.includes("जांच") || q.includes("रिपोर्ट")) {
+  // 4. Lab Reports Request
+  if (/\b(lab|labs|pathology|blood test|test report|lab report|diagnostic report|reports?)\b/i.test(q) || q.includes("जांच") || q.includes("रिपोर्ट")) {
     const labTenant = String(tenantId || "").trim();
     const lab = labTenant
       ? (db.prepare(`
-          SELECT * FROM lab_reports
-          WHERE tenant_id = ? AND patient_name = ?
-          ORDER BY created_at DESC LIMIT 1
-        `).get(labTenant, patientName) as Record<string, unknown> | undefined)
+          SELECT lr.* FROM lab_reports lr
+          LEFT JOIN patients p ON p.id = lr.patient_id
+          WHERE lr.tenant_id = ? AND (lr.patient_name = ? OR p.phone = ?)
+          ORDER BY lr.created_at DESC LIMIT 1
+        `).get(labTenant, patientName, phone) as Record<string, unknown> | undefined)
       : undefined;
 
     if (lab) {
@@ -1661,20 +2085,81 @@ async function processBotActionOrQuery(
         },
       };
     }
+
+    return {
+      content: `🔬 *Diagnostic Reports*\n\nNo pending laboratory test reports were found for ${patientName} (${phone}).\n\nPlease check back once the lab finishes processing your sample, or contact reception:`,
+      buttons: ["📅 Book Doctor Appointment", "⏰ Doctor Schedule", "👤 Speak with Receptionist"],
+    };
   }
 
-  // 3. Book Doctor Appointment (specific consultant first so it writes the shared calendar)
+  // 5. Doctor Schedule & OPD Timings
+  if (
+    q.includes("timing") ||
+    q.includes("hours") ||
+    q.includes("doctor timing") ||
+    q.includes("schedule") ||
+    q.includes("roster") ||
+    q.includes("specialist") ||
+    q.includes("speciality") ||
+    q.includes("specialty") ||
+    q.includes("available") ||
+    q.includes("consultant") ||
+    q.includes("consultants") ||
+    q.includes("who is available") ||
+    (q.includes("dr") && (q.includes("show") || q.includes("list") || q.includes("available"))) ||
+    (q.includes("doctor") && (q.includes("show") || q.includes("list") || q.includes("available") || q.includes("who"))) ||
+    q.includes("समय") ||
+    q.includes("ओपीडी")
+  ) {
+    let doctors: Record<string, unknown>[] = [];
+    if (tenantId) {
+      try {
+        doctors = db.prepare(`
+          SELECT d.* FROM doctors d
+          JOIN users u ON u.id = d.user_id
+          WHERE u.tenant_id = ? AND d.active = 1
+          GROUP BY d.name
+          ORDER BY d.name ASC LIMIT 6
+        `).all(tenantId) as Record<string, unknown>[];
+      } catch {
+        /* fallback */
+      }
+    }
+    if (!doctors.length) {
+      doctors = db.prepare("SELECT * FROM doctors WHERE active = 1 GROUP BY name ORDER BY name ASC LIMIT 6").all() as Record<string, unknown>[];
+    }
+
+    const roster = doctors.map((d) => `👨‍⚕️ *${d.name}* (${d.specialty})\n  🕒 ${d.opd_timing || "09:00 AM - 01:00 PM"} | 🚪 Room ${d.opd_room || "101"}\n  💵 Fee: ${formatINR(Number(d.consultation_fee || 0))}`).join("\n\n");
+
+    const rosterCopy = clinicOutboundCopy({
+      ...resolveClinicFacingNames(db, tenantId),
+      roster,
+    });
+    return {
+      content: rosterCopy.roster,
+      buttons: doctors.slice(0, 3).map((d) => `Book ${d.name}`),
+    };
+  }
+
+
+
+  // 6. Book Doctor Appointment (specific consultant first)
   const specificBook =
     q.includes("book dr.") ||
     q.includes("book dr ") ||
     q.includes("dr. siddharth") ||
     q.includes("dr. vikram") ||
     q.includes("dr. ananya") ||
-    (q.includes("book") && q.includes("slot"));
+    q.includes("dr. meera") ||
+    q.includes("dr. rajesh") ||
+    q.includes("dr. harshvardhan") ||
+    (q.includes("book") && (q.includes("slot 1") || q.includes("slot 2") || q.includes("physio") || q.includes("medicine") || q.includes("pediatric")));
+
   if (specificBook) {
+    clearIntakeTag();
     if (!tenantId) {
       return {
-        content: "We could not match this chat to a clinic calendar, so the booking was not created.",
+        content: "We could not match this chat to a clinic calendar. Please contact reception to book an appointment.",
         buttons: ["👤 Speak with Receptionist"],
       };
     }
@@ -1685,7 +2170,14 @@ async function processBotActionOrQuery(
           ? "Vikram"
           : q.includes("ananya")
             ? "Ananya"
-            : undefined;
+            : q.includes("meera")
+              ? "Meera"
+              : q.includes("rajesh")
+                ? "Rajesh"
+                : q.includes("harshvardhan")
+                  ? "Harshvardhan"
+                  : undefined;
+
       const booked = bookWhatsAppAppointment({
         tenantId,
         patientPhone: phone,
@@ -1697,47 +2189,138 @@ async function processBotActionOrQuery(
         await dispatchWhatsAppBookConfirmation({ tenantId, appointment: appt });
       }
       return {
-        content: `${booked.reused ? "📌 *Existing booking found*" : "🎉 *Appointment Confirmed!*"}\n\n*Token*: *#${appt.tokenNumber}*\n*Doctor*: ${appt.doctorName}\n*Specialty*: ${appt.specialty}\n*Date*: ${appt.date}\n*Slot*: ${appt.timeSlot || "OPD hours"}\n*UHID*: ${appt.uhid}\n*Source*: ${appt.source}\n\nThis token is on the clinician OPD calendar for your clinic.`,
+        content: `${booked.reused ? "📌 *Existing Active Booking Found*" : "🎉 *Appointment Confirmed!*"}\n\n*Token Number*: *#${appt.tokenNumber}*\n*Doctor*: ${appt.doctorName}\n*Specialty*: ${appt.specialty}\n*Date*: ${appt.date}\n*Slot*: ${appt.timeSlot || "OPD hours"}\n*UHID*: ${appt.uhid}\n*Status*: ${appt.status}\n\nYour appointment is registered on the clinic calendar. Please arrive 10 minutes prior to your slot.`,
         buttons: ["🎫 View My Queue", "🔄 Reschedule Slot", "❌ Cancel Appointment"],
       };
     } catch (err: unknown) {
       return {
-        content: err instanceof Error ? err.message : "Could not book this appointment. Please contact reception.",
+        content: err instanceof Error ? err.message : "Could not complete booking. Please contact reception.",
         buttons: ["👤 Speak with Receptionist"],
       };
     }
   }
 
-  if (q.includes("book") || q.includes("appointment") || q.includes("schedule") || q.includes("अपॉइंटमेंट") || q.includes("डॉक्टर")) {
-    const doctors = db.prepare("SELECT * FROM doctors WHERE active = 1 LIMIT 4").all() as Record<string, unknown>[];
-    const docOptions = doctors.map((d) => `• *${d.name}* (${d.specialty}) - OPD Room ${d.opd_room}, Fee ${formatINR(Number(d.consultation_fee || 0))}`).join("\n");
+  // 6b. Handling Patient Response to Intake (when awaiting_intake is active)
+  if (isIntakePending && !q.includes("prescription") && !q.includes("rx") && !q.includes("timing") && !q.includes("hours")) {
+    clearIntakeTag();
 
-    const bookingCopy = clinicOutboundCopy({
-      ...resolveClinicFacingNames(db, tenantId),
-      docOptions,
-    });
+    // Extract Age if provided
+    let extractedAge: number | undefined;
+    const ageMatch = text.match(/\b([1-9][0-9]?)\s*(?:yrs|years?|yo|age)?\b/i) || text.match(/\bage\s*[:=-]?\s*(\d+)/i);
+    if (ageMatch && Number(ageMatch[1]) > 0 && Number(ageMatch[1]) < 120) {
+      extractedAge = Number(ageMatch[1]);
+    }
+
+    // Extract Name if provided
+    let extractedName: string | undefined;
+    const nameMatch = text.match(/(?:name\s*[:=-]?\s*|i am\s+|my name is\s+)([A-Za-z\s]+?)(?:,|\.|\n|age|\d|$)/i);
+    if (nameMatch && nameMatch[1].trim().length > 1) {
+      extractedName = nameMatch[1].trim();
+    } else {
+      const parts = text.split(/[,;\n]+/).map(p => p.trim());
+      if (parts.length >= 2 && /^[A-Za-z\s]{2,30}$/.test(parts[0]) && !["hi", "hello", "book", "appointment", "skip"].includes(parts[0].toLowerCase())) {
+        extractedName = parts[0];
+      }
+    }
+
+    // Update patient record with whatever was supplied
+    try {
+      if (extractedAge || extractedName) {
+        db.prepare(`
+          UPDATE patients 
+          SET age = COALESCE(?, age), name = COALESCE(?, name)
+          WHERE phone = ?
+        `).run(extractedAge || null, extractedName || null, phone);
+      }
+      if (extractedName && conv?.id) {
+        db.prepare(`UPDATE whatsapp_conversations SET patient_name = ? WHERE id = ?`).run(extractedName, conv.id);
+        patientName = extractedName;
+      }
+    } catch {
+      /* ignore */
+    }
+
+    // Identify Symptoms / Health Issue for specialist recommendation
+    const symptomKeywords = [
+      { kws: ["back", "knee", "joint", "shoulder", "neck", "spine", "physio", "rehab", "sprain", "fracture", "ortho", "bone", "lumber", "lumbar", "pain"], doc: "Dr. Siddharth Verma", spec: "Physiotherapy & Rehabilitation" },
+      { kws: ["fever", "cold", "cough", "flu", "weakness", "vomiting", "headache", "infection", "body ache", "chills"], doc: "Dr. Vikram Malhotra", spec: "General Medicine" },
+      { kws: ["skin", "rash", "acne", "itching", "allergy", "hair", "derma", "eczema", "pimple"], doc: "Dr. Meera Vasudevan", spec: "Dermatology" },
+      { kws: ["child", "kid", "baby", "infant", "pediatric", "vaccine", "growth"], doc: "Dr. Ananya Sen", spec: "Pediatrics" },
+      { kws: ["heart", "chest", "bp", "blood pressure", "palpitation", "breath"], doc: "Dr. Rajesh Sharma", spec: "Cardiology" },
+      { kws: ["tooth", "teeth", "dental", "gum", "cavity"], doc: "Dr. Arunachalam Swamy", spec: "Dental Surgery" },
+      { kws: ["eye", "vision", "blur", "red eye"], doc: "Dr. Alok Nath Mukherjee", spec: "Ophthalmology" }
+    ];
+
+    let recommendedDoc = "";
+    let recommendedSpec = "";
+    let matchedIssue = "";
+
+    for (const group of symptomKeywords) {
+      if (group.kws.some(k => q.includes(k))) {
+        recommendedDoc = group.doc;
+        recommendedSpec = group.spec;
+        matchedIssue = group.kws.find(k => q.includes(k)) || "";
+        break;
+      }
+    }
+
+    let doctors: Record<string, unknown>[] = [];
+    if (tenantId) {
+      try {
+        doctors = db.prepare(`
+          SELECT d.* FROM doctors d
+          JOIN users u ON u.id = d.user_id
+          WHERE u.tenant_id = ? AND d.active = 1
+          GROUP BY d.name
+          ORDER BY d.name ASC
+        `).all(tenantId) as Record<string, unknown>[];
+      } catch {
+        /* fallback */
+      }
+    }
+    if (!doctors.length) {
+      doctors = db.prepare("SELECT * FROM doctors WHERE active = 1 GROUP BY name ORDER BY name ASC").all() as Record<string, unknown>[];
+    }
+
+    // If specific recommendation found, bring that doctor to index 0
+    if (recommendedDoc) {
+      const recLastName = recommendedDoc.toLowerCase().split(" ").slice(1).join(" ");
+      const recIdx = doctors.findIndex(d => {
+        const docName = String(d.name || "").toLowerCase();
+        return docName.includes(recLastName) || (recommendedSpec && String(d.specialty || "").toLowerCase() === recommendedSpec.toLowerCase());
+      });
+      if (recIdx >= 0) {
+        const [target] = doctors.splice(recIdx, 1);
+        doctors.unshift(target);
+      }
+    }
+
+    const greetingName = patientName && patientName !== "Patient" ? `*${patientName}*` : "there";
+    const issueAck = matchedIssue ? `for your *${matchedIssue}* concern` : "";
+    const recLine = recommendedDoc
+      ? `💡 *Recommended Specialist*: Based on your symptoms, *${doctors[0]?.name || recommendedDoc}* (${doctors[0]?.specialty || recommendedSpec}) is available for consultation.\n\n`
+      : "";
+
+    const slotItems = doctors.slice(0, 4).map((d) => {
+      return `👨‍⚕️ *${d.name}* (${d.specialty})\n  🕒 ${d.opd_timing || "09:00 AM - 01:00 PM"} | 🚪 Room ${d.opd_room || "101"}\n  💵 Fee: ${formatINR(Number(d.consultation_fee || 0))}`;
+    }).join("\n\n");
+
     return {
-      content: bookingCopy.booking,
-      buttons: ["Book Dr. Siddharth (Physio)", "Book Dr. Vikram (Medicine)", "Book Dr. Ananya (Pediatrics)", "View Full OPD Roster"],
+      content: `Thank you ${greetingName}! 🙏 We have noted your details ${issueAck}.\n\n${recLine}📅 *Available OPD Consultation Slots Today*:\n\n${slotItems}\n\nPlease tap an option below or reply *"Book Dr. <Name>"* to lock in your appointment:`,
+      buttons: doctors.slice(0, 3).map((d) => `Book ${d.name}`),
     };
   }
 
-  // 4. Check Doctor Timings
-  if (q.includes("timing") || q.includes("hours") || q.includes("doctor timing") || q.includes("roster") || q.includes("समय")) {
-    const doctors = db.prepare("SELECT * FROM doctors WHERE active = 1 LIMIT 5").all() as Record<string, unknown>[];
-    const roster = doctors.map((d) => `👨‍⚕️ *${d.name}* (${d.specialty})\n  🕒 ${d.opd_timing} | 🚪 ${d.opd_room}`).join("\n\n");
-
-    const rosterCopy = clinicOutboundCopy({
-      ...resolveClinicFacingNames(db, tenantId),
-      roster,
-    });
+  // 6c. Generic Book inquiry — ask for Name, Age, and Issue first (conversational & optional)
+  if (q.includes("book") || q.includes("appointment") || q.includes("अपॉइंटमेंट") || q.includes("डॉक्टर") || q.includes("slot")) {
+    setIntakeTag();
     return {
-      content: rosterCopy.roster,
-      buttons: ["📅 Book Appointment", "🎫 Check Live Queue", "📍 Clinic Location"],
+      content: `📋 *Clinic Pre-Consultation Intake*\n\nTo help our doctors allocate the best consultation slot and prepare for your visit, could you please share:\n\n1️⃣ *Patient Name*\n2️⃣ *Age*\n3️⃣ *Health issue or symptoms you are facing*\n\n_(You can reply with your details in one quick message, or tap **Skip & View Slots** below to view all available slots immediately.)_`,
+      buttons: ["Skip & View Slots", "Dr. Siddharth (Physio)", "Dr. Vikram (Medicine)"],
     };
   }
 
-  // 5. Queue Status
+  // 7. Queue Status
   if (q.includes("queue") || q.includes("token") || q.includes("wait") || q.includes("कतार") || q.includes("नंबर")) {
     if (!tenantId) {
       return {
@@ -1753,9 +2336,13 @@ async function processBotActionOrQuery(
         buttons: ["🔄 Refresh Queue", "🔄 Reschedule Slot", "❌ Cancel Appointment"],
       };
     }
+    return {
+      content: `🎫 *Queue Status*\n\nNo active waiting queue token was found for ${patientName} today.\n\nWould you like to book a fresh appointment?`,
+      buttons: ["📅 Book Appointment", "⏰ Doctor Schedule"],
+    };
   }
 
-  // 6. Cancel / reschedule — same appointments row as ClinicianApp PATCH
+  // 8. Cancel / Reschedule
   if (tenantId && (q.includes("cancel appointment") || q.includes("cancel my appointment") || q.includes("❌ cancel"))) {
     try {
       const appointment = patchWhatsAppAppointment({
@@ -1782,7 +2369,7 @@ async function processBotActionOrQuery(
     };
   }
 
-  // 7. General Clinical or Query — Vertex only. No API-key client and no other endpoint.
+  // 9. General Clinical or Query — Vertex Gemini Medical Triage
   try {
     const assistantCopy = clinicOutboundCopy({
       ...resolveClinicFacingNames(db, tenantId),
@@ -1797,22 +2384,19 @@ async function processBotActionOrQuery(
     if (reply) {
       return {
         content: reply,
-        buttons: ["📅 Book Doctor Appointment", "💊 Refill Prescription", "🔬 View Lab Reports", "👤 Speak with Receptionist"],
+        buttons: ["📅 Book Doctor Appointment", "⏰ Doctor Schedule", "💊 My Prescription", "👤 Speak with Receptionist"],
       };
     }
-    return {
-      content: assistantCopy.assistantFallback,
-      buttons: ["📅 Book Doctor Appointment", "💊 Refill Prescription", "🔬 View Lab Reports", "👤 Speak with Receptionist"],
-    };
   } catch (err: unknown) {
     const name = err && typeof err === "object" && "name" in err ? String((err as { name?: string }).name) : "Error";
     console.warn("whatsapp.gemini.fallback", name);
   }
 
-  // Default Fallback
+  // 10. Default Fallback when no response is available to a specific question
+  const greetingPrefix = isRegistered && firstName ? `Hello ${firstName}! 🙏` : `Hello! 🙏`;
   return {
-    content: `Namaste ${patientName}! 🙏 We have received your query: "${text}".\n\nOur clinic team is available to assist you. You can use the quick actions below to book consultations, view clinical prescriptions, or check diagnostic test reports:`,
-    buttons: ["📅 Book Doctor Appointment", "💊 Refill / View Prescription", "🔬 Download Lab Reports", "⏰ Check Doctor Timings"],
+    content: `${greetingPrefix} I do not have an answer to that specific question right now, but our clinic front desk team is happy to assist you.\n\nHere is what I can help you with 24/7:\n\n• 📅 *Doctor Appointments* — check slots & instant token booking\n• ⏰ *Doctor Schedule & OPD Timings* — specialist availability\n• 💊 *Prescriptions & Refills* — view & download your prescriptions\n• 🔔 *Follow-Up Status* — check your scheduled review dates\n• 🔬 *Diagnostic Reports* — lab & test results\n• 📍 *Clinic Location & Timings* — address, directions & helpline\n• 👤 *Speak with Front Desk* — connect with our clinic staff\n\nPlease let me know if you would like help with any of the above, or reply *front desk* to speak with our reception.`,
+    buttons: ["📅 Book Appointment", "⏰ Doctor Schedule", "📍 Clinic Location", "👤 Speak with Receptionist"],
   };
 }
 

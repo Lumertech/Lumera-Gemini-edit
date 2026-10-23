@@ -297,28 +297,30 @@ export const AdminUsageBilling: React.FC = () => {
           </div>
         )}
         {usage.length > 0 && (
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="text-left text-slate-500">
-                <th>Resource</th>
-                <th>Qty</th>
-                <th>Raw</th>
-                <th>Billed</th>
-                <th>Margin</th>
-              </tr>
-            </thead>
-            <tbody>
-              {usage.map((u) => (
-                <tr key={`${u.tenantId}-${u.resource}`}>
-                  <td>{u.resource}</td>
-                  <td>{u.quantity}</td>
-                  <td>{formatINR(u.rawCost)}</td>
-                  <td>{formatINR(u.billedAmount)}</td>
-                  <td>{formatINR(u.margin)}</td>
+          <div className="overflow-x-auto w-full">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-left text-slate-500">
+                  <th>Resource</th>
+                  <th>Qty</th>
+                  <th>Raw</th>
+                  <th>Billed</th>
+                  <th>Margin</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {usage.map((u) => (
+                  <tr key={`${u.tenantId}-${u.resource}`}>
+                    <td>{u.resource}</td>
+                    <td>{u.quantity}</td>
+                    <td>{formatINR(u.rawCost)}</td>
+                    <td>{formatINR(u.billedAmount)}</td>
+                    <td>{formatINR(u.margin)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
         <div className="flex flex-wrap gap-2 items-center">
           <IndianRupee className="w-4 h-4 text-slate-500" />

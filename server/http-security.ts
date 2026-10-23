@@ -125,6 +125,22 @@ export function isSecurityExemptPath(path: string): boolean {
 export function originAllowed(origin: string | undefined, env: NodeJS.ProcessEnv = process.env): boolean {
   if (!origin) return false;
   const normalized = origin.trim().replace(/\/$/, "");
+  if (!isProductionFromEnv(env)) {
+    if (
+      /^https?:\/\/localhost(:\d+)?$/i.test(normalized) ||
+      /^https?:\/\/127\.0\.0\.1(:\d+)?$/i.test(normalized) ||
+      /^vscode-webview:\/\//i.test(normalized) ||
+      /^cursor-webview:\/\//i.test(normalized) ||
+      /^vscode-file:\/\//i.test(normalized) ||
+      normalized.endsWith(".vscode-cdn.net") ||
+      normalized.includes(".webview.localhost") ||
+      normalized.endsWith(".cloudworkstations.dev") ||
+      normalized.endsWith(".google.internal") ||
+      normalized.endsWith(".usercontent.goog")
+    ) {
+      return true;
+    }
+  }
   return parseAllowedOrigins(env).includes(normalized);
 }
 

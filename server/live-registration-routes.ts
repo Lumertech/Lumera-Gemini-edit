@@ -4,8 +4,9 @@ import { assignedRoleForPracticeType, getDb, normalizePracticeType } from "./db.
 import { otpEchoPayload } from "./auth.ts";
 import { reserveOtpSend, sendOtpLimited } from "./otp-attempt.ts";
 import { liveRegistrationPasswordHash } from "./live-registration-password.ts";
-import { ensureTenantSubscription } from "./platform-tenants.ts";
 import { dispatchWhatsAppCloudMessage, isCloudDispatchFailure } from "./graph-whatsapp.ts";
+import { ensureTenantSlugColumn, generateUniqueTenantSlug } from "./tenant-slug.ts";
+import { ensureTenantSubscription } from "./platform-tenants-schema.ts";
 
 /**
  * Production-safe live clinic registration. Mounted in server.ts before
@@ -73,13 +74,14 @@ async function handleRegisterPractice(req: Request, res: Response) {
   const userId = `user-${crypto.randomUUID().slice(0, 8)}`;
   const hprId = `IN-HPR-${Math.floor(10000000 + Math.random() * 90000000)}`;
   const { passwordHash, generatedPassword } = liveRegistrationPasswordHash(password);
-
+  ensureTenantSlugColumn(getDb());
+  const tenantSlug = generateUniqueTenantSlug(getDb(), practiceName);
   getDb()
     .prepare(
-      `INSERT INTO tenants (id, name, specialty, country, timezone, phone, trial_ends_at, ai_scribe_minutes_limit, ai_scribe_minutes_used, active_status, hfr_id, created_at, updated_at, practice_type, lifecycle_status, owner_name, owner_email, owner_phone, email)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 500, 0, 1, ?, ?, ?, ?, 'trial', ?, ?, ?, ?)`
+      `INSERT INTO tenants (id, name, specialty, country, timezone, phone, trial_ends_at, ai_scribe_minutes_limit, ai_scribe_minutes_used, active_status, hfr_id, created_at, updated_at, practice_type, lifecycle_status, owner_name, owner_email, owner_phone, email, slug)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 500, 0, 1, ?, ?, ?, ?, 'trial', ?, ?, ?, ?, ?)`
     )
-    .run(tenantId, practiceName, specialty, country, timezone, phone, trialEndsAt, hfrId, now, now, practiceType, name, email, phone, email);
+    .run(tenantId, practiceName, specialty, country, timezone, phone, trialEndsAt, hfrId, now, now, practiceType, name, email, phone, email, tenantSlug);
 
   getDb()
     .prepare(

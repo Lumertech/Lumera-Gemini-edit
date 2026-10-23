@@ -12,3 +12,6 @@ coverage/
 # clinicalData.ts" commits in this repo's history.
 /data/
 uploads/
+*.db
+.vscode/
+scratch/

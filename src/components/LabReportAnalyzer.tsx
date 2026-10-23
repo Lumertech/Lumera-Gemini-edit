@@ -283,7 +283,7 @@ export const LabReportAnalyzer: React.FC<LabReportAnalyzerProps> = ({
               </div>
 
               {/* Table */}
-              <div className="border border-slate-200 rounded-lg overflow-hidden">
+              <div className="border border-slate-200 rounded-lg overflow-x-auto">
                 <table className="w-full text-left text-xs border-collapse">
                   <thead className="bg-slate-50 border-b border-slate-200 text-slate-700 font-bold">
                     <tr>

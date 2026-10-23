@@ -78,7 +78,7 @@ export const AdminOverview: React.FC = () => {
             : "Pulse AI is not configured. Clinician AI will use local synthesis."}
         </p>
       </div>
-      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+      <div className="bg-white border border-slate-200 rounded-xl overflow-x-auto">
         <div className="px-4 py-3 border-b text-xs font-bold uppercase text-slate-500">Recent admin activity</div>
         <table className="w-full text-xs">
           <tbody>

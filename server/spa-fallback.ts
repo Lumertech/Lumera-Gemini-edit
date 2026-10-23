@@ -72,7 +72,11 @@ export function resolveClientDist(cwd = process.cwd()): string {
   return path.join(cwd, "dist");
 }
 
-export function attachProductionSpaFallback(app: Express, distPath = resolveClientDist()): void {
+export function attachProductionSpaFallback(
+  app: Express,
+  distPath = resolveClientDist(),
+  env: NodeJS.ProcessEnv = { ...process.env, NODE_ENV: "production" }
+): void {
   const indexFile = path.join(distPath, "index.html");
   app.use(
     express.static(distPath, {
@@ -91,7 +95,7 @@ export function attachProductionSpaFallback(app: Express, distPath = resolveClie
     if (!fs.existsSync(indexFile)) {
       return res.status(500).send("Client build missing (dist/index.html). Run npm run build.");
     }
-    applyHtmlDocumentSecurityHeaders(res);
+    applyHtmlDocumentSecurityHeaders(res, env);
     res.sendFile(indexFile);
   });
   attachUnknownApiJsonNotFound(app);

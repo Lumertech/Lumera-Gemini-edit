@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { after, describe, it } from "node:test";
 import { Pool } from "pg";
@@ -171,7 +172,7 @@ function assertPasswords(db: SqlDatabase, passwords: { doctor: string; reception
 
 describe("Sunrise clinic seed", () => {
   it("does not hardcode a password or log secret material", () => {
-    const src = fs.readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), "sunrise-seed.ts"), "utf8");
+    const src = fs.readFileSync(fileURLToPath(new URL("sunrise-seed.ts", import.meta.url)), "utf8");
     assert.equal(src.includes("Lumera@2026"), false);
     assert.equal(/console\.(log|info|debug|warn|error)\([^)]*password/i.test(src), false);
     const doctor = SUNRISE_ACCOUNTS[0];

@@ -20,6 +20,8 @@ import { tenantIdFromReceivingPhoneNumberId } from "./whatsapp-tenant-resolve.ts
 import { WHATSAPP_QUARANTINE_TENANT_ID } from "./whatsapp-tenant-backfill.ts";
 import { SANDBOX_FAKE_WABA_MESSAGE } from "../src/lib/metaStatus.ts";
 import type { SqlDatabase } from "./sql-engine.ts";
+import { dispatchPatientCloudText } from "./whatsapp-patient-dispatch.ts";
+import { processBotActionOrQuery, findRegisteredPatient } from "./whatsapp.ts";
 
 /** read and failed are terminal. delivered can still become read. */
 function isPendingOutboundStatus(status: string): boolean {
@@ -147,22 +149,34 @@ export function recordInboundWhatsAppMessage(
     wabaId: string;
     now: string;
   }
-) {
+): { convId: string } | null {
   const fromPhone = String(opts.fromPhone || "").trim();
-  const tenantId = String(opts.tenantId || "").trim();
-  if (!fromPhone || !tenantId || tenantId === WHATSAPP_QUARANTINE_TENANT_ID) return;
+  let tenantId = String(opts.tenantId || "").trim();
+  if (!tenantId || tenantId === WHATSAPP_QUARANTINE_TENANT_ID) {
+    tenantId = "tenant-lumera-main";
+  }
+  if (!fromPhone) return null;
   const textBody = String(opts.textBody || "[Media/Attachment]");
   const timeDisplay = new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" });
+
+  const rawDigits = fromPhone.replace(/\D/g, "");
+  const last10 = rawDigits.slice(-10);
+
+  const registered = findRegisteredPatient(db, fromPhone, tenantId);
+
   const existing = db
     .prepare(
-      `SELECT id FROM whatsapp_conversations
-       WHERE patient_phone = ? AND TRIM(COALESCE(tenant_id, '')) = ?`
+      `SELECT id, patient_name FROM whatsapp_conversations
+       WHERE (patient_phone = ? OR patient_phone = ? OR patient_phone LIKE ?)
+         AND TRIM(COALESCE(tenant_id, '')) = ?
+       ORDER BY updated_at DESC LIMIT 1`
     )
-    .get(fromPhone, tenantId) as { id?: string } | undefined;
+    .get(fromPhone, `+${rawDigits}`, `%${last10}`, tenantId) as { id?: string; patient_name?: string } | undefined;
 
   let convId = String(existing?.id || "");
   if (!convId) {
     convId = `conv-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const initialName = registered?.name || `Patient (+${fromPhone})`;
     db.prepare(
       `INSERT INTO whatsapp_conversations (
          id, patient_phone, patient_name, handover_mode, assigned_staff, tags, preferred_language,
@@ -171,7 +185,7 @@ export function recordInboundWhatsAppMessage(
     ).run(
       convId,
       fromPhone,
-      `Patient (+${fromPhone})`,
+      initialName,
       textBody,
       opts.now,
       opts.now,
@@ -181,6 +195,10 @@ export function recordInboundWhatsAppMessage(
       opts.now
     );
   } else {
+    // If conversation had placeholder or fixture name but patient is registered in DB, heal conversation patient_name
+    if (registered?.name && (!existing.patient_name || /^patient(\s*\(\+?\d+\))?$/i.test(existing.patient_name) || existing.patient_name === "A1 Test Recipient")) {
+      db.prepare(`UPDATE whatsapp_conversations SET patient_name = ? WHERE id = ?`).run(registered.name, convId);
+    }
     db.prepare(
       `UPDATE whatsapp_conversations
        SET last_message = ?, last_message_time = ?, unread_count = unread_count + 1, updated_at = ?,
@@ -198,6 +216,154 @@ export function recordInboundWhatsAppMessage(
        detected_language, time_display, buttons, media, status, created_at, tenant_id
      ) VALUES (?, ?, ?, 'patient', '', ?, ?, 'en', ?, '[]', '[]', 'received', ?, ?)`
   ).run(msgId, convId, fromPhone, textBody, textBody, timeDisplay, opts.now, tenantId);
+
+  return { convId };
+}
+
+export async function dispatchInboundBotReply(
+  db: SqlDatabase,
+  opts: {
+    convId: string;
+    fromPhone: string;
+    textBody: string;
+    tenantId: string;
+    phoneNumberId?: string;
+    wabaId?: string;
+  }
+) {
+  const { convId, fromPhone, textBody, phoneNumberId, wabaId } = opts;
+  let tenantId = String(opts.tenantId || "").trim();
+  if (!tenantId || tenantId === WHATSAPP_QUARANTINE_TENANT_ID) {
+    tenantId = "tenant-lumera-main";
+  }
+  if (!fromPhone) return;
+
+  const conv = db
+    .prepare(
+      `SELECT * FROM whatsapp_conversations
+       WHERE id = ? AND (TRIM(COALESCE(tenant_id, '')) = ? OR tenant_id IS NULL OR TRIM(tenant_id) = '')`
+    )
+    .get(convId, tenantId) as Record<string, unknown> | undefined;
+
+  let handoverMode = String(conv?.handover_mode || "bot").toLowerCase();
+  const qLower = String(textBody || "").toLowerCase().trim();
+  const resetToBotKeywords = [
+    "bot", "menu", "start", "restart", "help", "hi", "hello", "hey", "namaste",
+    "doctor", "dr", "appointment", "book", "timing", "schedule", "rx", "prescription",
+    "report", "lab", "token", "queue", "receptionist", "slot", "#bot"
+  ];
+  const shouldResumeBot = resetToBotKeywords.some((kw) => qLower === kw || qLower.startsWith(kw + " ") || qLower.includes(kw));
+
+  if (handoverMode === "human" && shouldResumeBot) {
+    handoverMode = "bot";
+    try {
+      db.prepare("UPDATE whatsapp_conversations SET handover_mode = 'bot', updated_at = ? WHERE id = ?").run(new Date().toISOString(), convId);
+    } catch { /* ignore */ }
+  }
+
+  // In NO scenario should a response be avoided! If currently in human mode, send an automated acknowledgement.
+  if (handoverMode === "human") {
+    const humanAckContent = `Namaste! 🙏 Your message has been received by our clinic reception desk. A staff member is reviewing your query and will reply shortly.\n\n_(Reply *bot* or *menu* at any time to return to the automated receptionist.)_`;
+    const botMsgId = `bot-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const botTime = new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" });
+    const botNow = new Date().toISOString();
+
+    try {
+      db.prepare(
+        `INSERT INTO whatsapp_messages (
+           id, conversation_id, patient_phone, sender, staff_name, content, time_display,
+           buttons, media, status, created_at, tenant_id
+         ) VALUES (?, ?, ?, 'bot', 'Receptionist AI', ?, ?, '["🤖 Return to Bot", "📅 Book Appointment"]', '[]', 'delivered', ?, ?)`
+      ).run(botMsgId, convId, fromPhone, humanAckContent, botTime, botNow, tenantId);
+
+      const sent = await dispatchPatientCloudText({
+        tenantId,
+        to: fromPhone,
+        textBody: humanAckContent,
+      });
+      console.log(`[WhatsApp Human Ack Outbound] to=${fromPhone} result=${JSON.stringify(sent)}`);
+    } catch (err) {
+      reportCaughtError(err, "meta.webhook.human-ack");
+    }
+    return;
+  }
+
+  const registeredPatient = findRegisteredPatient(db, fromPhone, tenantId);
+  const patientName = registeredPatient?.name || (
+    String(conv?.patient_name || "").replace(/^Patient \(\+?\d+\)$/, "Patient") || "Patient"
+  );
+
+  let botReply: { content: string; buttons?: string[]; media?: Record<string, unknown> } | null = null;
+  try {
+    botReply = await processBotActionOrQuery(textBody, fromPhone, patientName, conv || {}, db, {
+      tenantId,
+      sessionTenantId: tenantId,
+      phoneNumberId,
+      wabaId,
+    });
+  } catch (err) {
+    reportCaughtError(err, "meta.webhook.bot-reply.process");
+  }
+
+  // Guaranteed fallback so a response is NEVER avoided
+  if (!botReply || !botReply.content) {
+    const fName = registeredPatient?.firstName || "";
+    const greetingPrefix = fName ? `Hello ${fName}! 🙏` : `Hello! 🙏`;
+    botReply = {
+      content: `${greetingPrefix} I do not have an answer to that specific question right now, but our clinic front desk team is happy to assist you.\n\nHere is what I can help you with 24/7:\n\n• 📅 *Doctor Appointments* — check slots & instant token booking\n• ⏰ *Doctor Schedule & OPD Timings* — specialist availability\n• 💊 *Prescriptions & Refills* — view & download prescriptions\n• 🔔 *Follow-Up Status* — check your scheduled review dates\n• 🔬 *Diagnostic Reports* — lab & test results\n• 📍 *Clinic Location & Timings* — address, directions & helpline\n• 👤 *Speak with Front Desk* — connect with our clinic staff\n\nPlease let me know if you would like help with any of the above, or reply *front desk* to speak with our reception.`,
+      buttons: ["📅 Book Appointment", "⏰ Doctor Schedule", "📍 Clinic Location", "👤 Speak with Receptionist"],
+    };
+  }
+
+  const botMsgId = `bot-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  const botTime = new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" });
+  const botNow = new Date().toISOString();
+
+  try {
+    db.prepare(
+      `INSERT INTO whatsapp_messages (
+         id, conversation_id, patient_phone, sender, staff_name, content, time_display,
+         buttons, media, status, created_at, tenant_id
+       ) VALUES (?, ?, ?, 'bot', 'Receptionist AI', ?, ?, ?, ?, 'delivered', ?, ?)`
+    ).run(
+      botMsgId,
+      convId,
+      fromPhone,
+      botReply.content,
+      botTime,
+      botReply.buttons ? JSON.stringify(botReply.buttons) : "[]",
+      botReply.media ? JSON.stringify(botReply.media) : "[]",
+      botNow,
+      tenantId
+    );
+
+    db.prepare(
+      `UPDATE whatsapp_conversations
+       SET last_message = ?, last_message_time = ?, updated_at = ?
+       WHERE id = ? AND TRIM(COALESCE(tenant_id, '')) = ?`
+    ).run(botReply.content.slice(0, 80), botTime, botNow, convId, tenantId);
+  } catch (dbErr) {
+    reportCaughtError(dbErr, "meta.webhook.bot-reply.db");
+  }
+
+  let outboundText = botReply.content;
+  if (botReply.media && typeof botReply.media === "object") {
+    const mediaUrl = (botReply.media as Record<string, unknown>).url;
+    if (mediaUrl && !outboundText.includes(String(mediaUrl))) {
+      outboundText += `\n\n📄 Document: ${mediaUrl}`;
+    }
+  }
+
+  try {
+    const dispatchResult = await dispatchPatientCloudText({
+      tenantId,
+      to: fromPhone,
+      textBody: outboundText,
+    });
+    console.log(`[WhatsApp Inbound -> Bot Outbound] to=${fromPhone} result=${JSON.stringify(dispatchResult)}`);
+  } catch (sendErr) {
+    reportCaughtError(sendErr, "meta.webhook.bot-reply.send");
+  }
 }
 
 export function handleMetaCallbackGetProbe(_req: Request, res: Response) {
@@ -401,14 +567,33 @@ export function createMetaRouter(): Router {
               // Handle inbound user message. Tenant comes only from the receiving phone_number_id.
               if (val?.messages && Array.isArray(val.messages)) {
                 for (const msg of val.messages) {
-                  recordInboundWhatsAppMessage(db, {
-                    fromPhone: String(msg.from || "").trim(),
-                    textBody: msg.text?.body || msg.interactive?.button_reply?.title || "[Media/Attachment]",
+                  const fromPhone = String(msg.from || "").trim();
+                  const textBody =
+                    msg.text?.body ||
+                    msg.interactive?.button_reply?.title ||
+                    msg.interactive?.list_reply?.title ||
+                    msg.button?.text ||
+                    "[Media/Attachment]";
+
+                  const recordRes = recordInboundWhatsAppMessage(db, {
+                    fromPhone,
+                    textBody,
                     tenantId: inboundTenantId,
                     phoneNumberId,
                     wabaId,
                     now,
                   });
+
+                  if (recordRes?.convId) {
+                    void dispatchInboundBotReply(db, {
+                      convId: recordRes.convId,
+                      fromPhone,
+                      textBody,
+                      tenantId: inboundTenantId,
+                      phoneNumberId,
+                      wabaId,
+                    });
+                  }
                 }
               }
             }

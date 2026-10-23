@@ -67,7 +67,7 @@ export const HTML_PERMISSIONS_POLICY = "camera=(self), geolocation=(), microphon
  */
 export const HTML_DOCUMENT_CACHE_CONTROL = "private, no-cache";
 
-function isProductionFromEnv(env: NodeJS.ProcessEnv): boolean {
+export function isProductionFromEnv(env: NodeJS.ProcessEnv): boolean {
   return String(env.NODE_ENV || "") === "production";
 }
 

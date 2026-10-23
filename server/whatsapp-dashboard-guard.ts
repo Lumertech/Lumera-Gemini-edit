@@ -167,13 +167,13 @@ export function protectWhatsAppDashboard(inner: Router): Router {
     const needsConv =
       /^\/conversations\/[^/]+\/(handover|assign|tags)$/.test(path) ||
       /^\/messages\/[^/]+$/.test(path) ||
-      (path === "/messages" && Boolean(convId));
+      (req.method === "GET" && path === "/messages" && Boolean(convId));
     if (needsConv && convId && tenantId) {
       const conv = getTenantConversation(tenantId, convId);
       if (!conv) return res.status(404).json({ error: "Conversation not found" });
     }
 
-    if (req.method === "POST" && path === "/send" && tenantId) {
+    if (req.method === "POST" && (path === "/send" || path === "/messages") && tenantId) {
       const origStatus = res.status.bind(res);
       (res as Response & { status: (code: number) => Response }).status = (code: number) => {
         const chain = origStatus(code);
@@ -226,11 +226,11 @@ function wrapRegistered(path: string, method: string, handler: unknown) {
     stampSessionTenant(req);
     const tenantId = clinicTenantId(req);
     const convId = conversationIdFromPath(path, req);
-    if ((path.startsWith("/messages") || /\/(handover|assign|tags)$/.test(path)) && convId && tenantId) {
+    if ((path.startsWith("/messages/") || (method === "get" && path === "/messages") || /\/(handover|assign|tags)$/.test(path)) && convId && tenantId) {
       const conv = getTenantConversation(tenantId, convId);
       if (!conv) return res.status(404).json({ error: "Conversation not found" });
     }
-    if (method === "post" && path === "/send" && tenantId) {
+    if (method === "post" && (path === "/send" || path === "/messages") && tenantId) {
       const origStatus = res.status.bind(res);
       (res as Response & { status: (code: number) => Response }).status = (code: number) => {
         const chain = origStatus(code);

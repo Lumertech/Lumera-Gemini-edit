@@ -242,6 +242,7 @@ export const CompactAmbientScribe = React.forwardRef<CompactAmbientScribeHandle,
     setIsRequesting(false);
     setInterimTranscript("");
     setAudioLevel(0);
+    resetAmbientMicrophoneSession();
   };
 
   const handleToggleRecording = (force?: "start" | "stop") => {

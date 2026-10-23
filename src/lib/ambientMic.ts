@@ -704,6 +704,7 @@ export function startAmbientCaptureRun(options: {
   fetchImpl?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
   onLevel?: (level: number) => void;
   onUpdate: (snap: AmbientRunSnapshot) => void;
+  onAudioRecorded?: (blob: Blob) => void;
   firstChunkMs?: number;
   transcribeMs?: number;
   streamTimeoutMs?: number;
@@ -721,7 +722,10 @@ export function startAmbientCaptureRun(options: {
   let recorder: MediaRecorder | null = null;
   let chunkTimer: ReturnType<typeof setTimeout> | null = null;
   let transcribeTimer: ReturnType<typeof setTimeout> | null = null;
+  let periodicTimer: ReturnType<typeof setInterval> | null = null;
   let detachRecovery: () => void = () => {};
+  let mimeType = "";
+  const allChunks: Blob[] = [];
 
   const publish = () => {
     options.onUpdate({
@@ -735,8 +739,10 @@ export function startAmbientCaptureRun(options: {
   const clearTimers = () => {
     if (chunkTimer) clearTimeout(chunkTimer);
     if (transcribeTimer) clearTimeout(transcribeTimer);
+    if (periodicTimer) clearInterval(periodicTimer);
     chunkTimer = null;
     transcribeTimer = null;
+    periodicTimer = null;
   };
 
   const fail = (message: string) => {
@@ -770,6 +776,22 @@ export function startAmbientCaptureRun(options: {
     }
     void options.gesture.audioContext.close().catch(() => {});
     options.onLevel?.(0);
+
+    // If audio chunks were captured, finalize and transcribe the consult recording
+    if (allChunks.length > 0) {
+      const fullBlob = new Blob(allChunks, { type: transcriptionMimeType(mimeType) });
+      if (fullBlob.size >= 100) {
+        options.onAudioRecorded?.(fullBlob);
+        void transcribeRecordedAudio(fullBlob, options.fetchImpl, undefined, options.appointmentId, true)
+          .then((text) => {
+            if (text && text.trim()) {
+              transcript = text.trim();
+              publish();
+            }
+          })
+          .catch(() => {});
+      }
+    }
     publish();
   };
 
@@ -790,7 +812,7 @@ export function startAmbientCaptureRun(options: {
         if (finished) return;
         if (transcribeTimer) clearTimeout(transcribeTimer);
         transcribeTimer = null;
-        transcript = text;
+        if (text) transcript = text;
         phase = "listening";
         error = null;
         publish();
@@ -865,7 +887,7 @@ export function startAmbientCaptureRun(options: {
       /* The level meter is optional. Capture still proceeds. */
     }
 
-    const mimeType = selectRecorderMimeType((mime) => {
+    mimeType = selectRecorderMimeType((mime) => {
       if (options.isTypeSupported) return options.isTypeSupported(mime);
       if (typeof MediaRecorder !== "undefined" && typeof MediaRecorder.isTypeSupported === "function") {
         return MediaRecorder.isTypeSupported(mime);
@@ -898,14 +920,17 @@ export function startAmbientCaptureRun(options: {
           if (phase !== "listening") fail(AMBIENT_NO_TRANSCRIPT_MESSAGE);
         }, transcribeMs);
       }
-      if (uploadStarted || phase === "listening") return;
-      parts.push(event.data);
-      const total = parts.reduce((sum, part) => sum + part.size, 0);
-      if (total < 100) return;
-      uploadStarted = true;
-      const blob = new Blob(parts, { type: transcriptionMimeType(mimeType || event.data.type) });
-      parts.length = 0;
-      uploadFirst(blob);
+      allChunks.push(event.data);
+      if (!uploadStarted && phase !== "listening") {
+        parts.push(event.data);
+        const total = parts.reduce((sum, part) => sum + part.size, 0);
+        if (total >= 100) {
+          uploadStarted = true;
+          const blob = new Blob(parts, { type: transcriptionMimeType(mimeType || event.data.type) });
+          parts.length = 0;
+          uploadFirst(blob);
+        }
+      }
     };
     try {
       recorder.start(1000);

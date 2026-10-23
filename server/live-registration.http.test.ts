@@ -8,6 +8,8 @@ import { getDb, initDatabase } from "./db.ts";
 import { verifyPassword } from "./password.ts";
 import { createLiveRegistrationRouter } from "./live-registration-routes.ts";
 
+import { startTestServer, type TestHttpServer } from "./test-http.ts";
+
 /**
  * HTTP coverage for the production live-registration override.
  * Mount order matches server.ts (override before createApiRouter).
@@ -30,7 +32,7 @@ async function jsonRequest(
 
 describe("live registration override HTTP", () => {
   let port = 0;
-  let server: Server | undefined;
+  let testServer: TestHttpServer | undefined;
 
   before(async () => {
     if (!process.env.JWT_SECRET) {
@@ -42,24 +44,16 @@ describe("live registration override HTTP", () => {
       initDatabase();
     }
 
-    const app = express();
-    app.use(express.json());
-    app.use(attachUser);
-    app.use("/api", createLiveRegistrationRouter());
-    app.use("/api", createApiRouter());
-
-    server = app.listen(0, "127.0.0.1");
-    await new Promise<void>((resolve) => server!.once("listening", () => resolve()));
-    const addr = server.address();
-    if (!addr || typeof addr === "string") throw new Error("server did not bind a port");
-    port = addr.port;
+    testServer = await startTestServer((app) => {
+      app.use("/api", createLiveRegistrationRouter());
+      app.use("/api", createApiRouter());
+    });
+    port = testServer.port;
   });
 
   after(async () => {
-    if (!server) return;
-    await new Promise<void>((resolve, reject) => {
-      server!.close((err) => (err ? reject(err) : resolve()));
-    });
+    if (!testServer) return;
+    await testServer.close();
   });
 
   it("empty-password register-practice does not hash the demo seed and returns temporaryPassword", async () => {

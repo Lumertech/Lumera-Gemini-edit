@@ -17,10 +17,13 @@ describe("moduleAnchorUrl (CJS bundle has no import.meta.url)", () => {
   it("does not hand undefined to createRequire when import.meta.url is missing", () => {
     const script = "/tmp/lumera-anchor/dist/server.cjs";
     const anchor = moduleAnchorUrl(undefined, { cwd: "/tmp/lumera-anchor", argv1: script });
-    assert.equal(anchor, pathToFileURL(script).href);
+    assert.equal(anchor, pathToFileURL(path.resolve(script)).href);
     assert.equal(typeof anchor, "string");
-    assert.equal(fileURLToPath(anchor), script);
-    assert.equal(path.join(path.dirname(fileURLToPath(anchor)), "pg-sync-worker.cjs"), "/tmp/lumera-anchor/dist/pg-sync-worker.cjs");
+    assert.equal(fileURLToPath(anchor), path.resolve(script));
+    assert.equal(
+      path.join(path.dirname(fileURLToPath(anchor)), "pg-sync-worker.cjs"),
+      path.resolve("/tmp/lumera-anchor/dist/pg-sync-worker.cjs")
+    );
     const sqlite = createRequire(anchor)("node:sqlite") as { DatabaseSync: unknown };
     assert.equal(typeof sqlite.DatabaseSync, "function");
   });

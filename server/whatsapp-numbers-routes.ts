@@ -39,6 +39,32 @@ export function bootWhatsAppOwnershipSchema() {
   ensureWhatsAppOwnershipSchema(database);
   migrateTenantWabasToWhatsAppNumbers(database);
   migrateWhatsAppSecretEncryption(database);
+
+  try {
+    const envPhoneId = process.env.META_PHONE_NUMBER_ID || process.env.WHATSAPP_PHONE_NUMBER_ID;
+    const envToken = process.env.META_ACCESS_TOKEN || process.env.WHATSAPP_ACCESS_TOKEN;
+    if (envPhoneId && String(envPhoneId).trim()) {
+      database.prepare(`
+        UPDATE whatsapp_numbers
+        SET phone_number_id = ?, status = 'connected', updated_at = datetime('now')
+        WHERE owner_type = 'tenant' AND owner_id = 'tenant-lumera-main'
+      `).run(String(envPhoneId).trim());
+      database.prepare(`
+        UPDATE tenants
+        SET phone_number_id = ?
+        WHERE id = 'tenant-lumera-main'
+      `).run(String(envPhoneId).trim());
+      if (envToken && String(envToken).trim()) {
+        database.prepare(`
+          UPDATE whatsapp_number_secrets
+          SET meta_access_token = ?, updated_at = datetime('now')
+          WHERE whatsapp_number_id = 'wan-tenant-lumera-main'
+        `).run(String(envToken).trim());
+      }
+    }
+  } catch {
+    /* ignore during isolated test runs */
+  }
 }
 
 function handleWabaError(res: Response, err: unknown, fallback: string) {

@@ -64,3 +64,19 @@ export function ensureUniqueTenantSlugs(database: SqlDatabase) {
     /* partial index already present, or this engine enforces uniqueness in the backfill above */
   }
 }
+
+export function generateUniqueTenantSlug(database: SqlDatabase, name: string): string {
+  const base = slugifyTenant(name) || "practice";
+  let candidate = base;
+  let n = 2;
+  while (true) {
+    try {
+      const existing = database.prepare("SELECT id FROM tenants WHERE slug = ?").get(candidate);
+      if (!existing) return candidate;
+    } catch {
+      return candidate;
+    }
+    const suffix = `-${n++}`;
+    candidate = `${base.slice(0, Math.max(1, 48 - suffix.length))}${suffix}`;
+  }
+}

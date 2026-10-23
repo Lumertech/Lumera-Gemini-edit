@@ -72,7 +72,7 @@ export const AdminPractitionerWabas: React.FC = () => {
         </button>
       </div>
 
-      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+      <div className="bg-white rounded-xl border border-slate-200 overflow-x-auto shadow-sm">
         <table className="w-full text-left text-sm">
           <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 text-xs font-semibold">
             <tr>
