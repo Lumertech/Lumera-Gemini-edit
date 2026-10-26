@@ -56,6 +56,8 @@ export interface TenantRow {
   owner_email?: string;
   owner_phone?: string;
   deleted_at?: string | null;
+  slug?: string;
+  custom_domain?: string;
   created_at: string;
   updated_at: string;
 }
@@ -120,6 +122,8 @@ export interface PublicTenant {
   phone?: string;
   email?: string;
   deletedAt?: string | null;
+  slug?: string;
+  customDomain?: string;
 }
 
 function addDays(iso: string, days: number) {

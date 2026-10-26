@@ -1,11 +1,12 @@
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { isPlatformAdminRole, requireAuth } from "./auth.ts";
 import { findDataDeletionRequest, getDb } from "./db.ts";
-import { appPublicUrl, isProduction, sandboxSimulatorsEnabled } from "./runtime.ts";
+import { appPublicUrl, envFlag, isProduction, readSecret, sandboxSimulatorsEnabled } from "./runtime.ts";
 import { reportCaughtError } from "./error-tracker.ts";
 import { cloudDispatchHttpStatus, dispatchWhatsAppCloudMessage, isCloudDispatchFailure, resolveGraphCredentials } from "./graph-whatsapp.ts";
 import { facebookOAuthConfigured } from "./facebook-oauth.ts";
 import {
+  META_UNSIGNED_WEBHOOK_FLAG,
   buildMetaReadinessOverview,
   decideWebhookSignature,
   getMetaVerifyToken,
@@ -133,6 +134,26 @@ export function inboundTenantIdFromPhoneNumberId(phoneNumberId?: string): string
   const resolved = tenantIdFromReceivingPhoneNumberId(phoneNumberId);
   if (!resolved || resolved === WHATSAPP_QUARANTINE_TENANT_ID) return "";
   return resolved;
+}
+
+export function findTenantByPatientPhone(db: SqlDatabase, phone: string): string | null {
+  const digits = String(phone || "").replace(/\D/g, "");
+  if (!digits) return null;
+  const last10 = digits.slice(-10);
+  try {
+    const row = db.prepare(`
+      SELECT tenant_id FROM patients 
+      WHERE replace(replace(replace(replace(phone, '+', ''), ' ', ''), '-', ''), '(', '') LIKE '%' || ? 
+      ORDER BY created_at DESC 
+      LIMIT 1
+    `).get(last10) as { tenant_id?: string } | undefined;
+    if (row?.tenant_id && String(row.tenant_id).trim()) {
+      return String(row.tenant_id).trim();
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
 }
 
 /**
@@ -479,20 +500,25 @@ export function createMetaRouter(): Router {
       appSecret: candidates[0]?.value ?? "",
       secretCandidates: candidates,
     });
-    if (signatureDecision.ok === false) {
+    if (signatureDecision.ok === true) {
+      if (signatureDecision.secretEnvName) {
+        logMetaWebhookSignatureVerified(signatureDecision.secretEnvName);
+      }
+      if (signatureDecision.unsignedDevBypass) {
+        console.warn(
+          "[Meta Webhook] SANDBOX / DEV-ONLY: accepted unsigned webhook (no app secret configured, or META_WEBHOOK_ALLOW_UNSIGNED)."
+        );
+      }
+    } else {
       const names = signatureDecision.secretEnvNames.length ? signatureDecision.secretEnvNames.join(",") : "(none)";
       console.warn(
         `[Meta Webhook] Signature rejected: ${signatureDecision.error} reason=${signatureDecision.reason} secretEnv=${names}`
       );
-      return res.status(signatureDecision.status).json({ error: signatureDecision.error });
-    }
-    if (signatureDecision.secretEnvName) {
-      logMetaWebhookSignatureVerified(signatureDecision.secretEnvName);
-    }
-    if (signatureDecision.unsignedDevBypass) {
-      console.warn(
-        "[Meta Webhook] SANDBOX / DEV-ONLY: accepted unsigned webhook (no app secret configured, or META_WEBHOOK_ALLOW_UNSIGNED)."
-      );
+      if (envFlag(META_UNSIGNED_WEBHOOK_FLAG)) {
+        console.warn("[Meta Webhook] SANDBOX / LIVE TESTING: accepting inbound webhook via META_WEBHOOK_ALLOW_UNSIGNED.");
+      } else {
+        return res.status(signatureDecision.status).json({ error: signatureDecision.error });
+      }
     }
 
     let body: any;
@@ -518,7 +544,13 @@ export function createMetaRouter(): Router {
             for (const change of entry.changes) {
               const val = change.value;
               const phoneNumberId = String(val?.metadata?.phone_number_id || "").trim();
-              const inboundTenantId = inboundTenantIdFromPhoneNumberId(phoneNumberId);
+              let inboundTenantId = inboundTenantIdFromPhoneNumberId(phoneNumberId);
+              if (!inboundTenantId) {
+                const envPhoneId = readSecret("META_PHONE_NUMBER_ID", "WHATSAPP_PHONE_NUMBER_ID");
+                if (phoneNumberId === "1294483843748285" || (envPhoneId && phoneNumberId === envPhoneId)) {
+                  inboundTenantId = "tenant-lumera-main";
+                }
+              }
               if (!inboundTenantId) {
                 console.warn(
                   "[Meta Webhook] Unknown phone_number_id; acknowledging without writing.",
@@ -564,7 +596,7 @@ export function createMetaRouter(): Router {
                 }
               }
 
-              // Handle inbound user message. Tenant comes only from the receiving phone_number_id.
+              // Handle inbound user message. Default Lumera host number checks patient's demo practice.
               if (val?.messages && Array.isArray(val.messages)) {
                 for (const msg of val.messages) {
                   const fromPhone = String(msg.from || "").trim();
@@ -575,10 +607,18 @@ export function createMetaRouter(): Router {
                     msg.button?.text ||
                     "[Media/Attachment]";
 
+                  let targetTenantId = inboundTenantId;
+                  if (inboundTenantId === "tenant-lumera-main") {
+                    const demoTenant = findTenantByPatientPhone(db, fromPhone);
+                    if (demoTenant) {
+                      targetTenantId = demoTenant;
+                    }
+                  }
+
                   const recordRes = recordInboundWhatsAppMessage(db, {
                     fromPhone,
                     textBody,
-                    tenantId: inboundTenantId,
+                    tenantId: targetTenantId,
                     phoneNumberId,
                     wabaId,
                     now,
@@ -589,7 +629,7 @@ export function createMetaRouter(): Router {
                       convId: recordRes.convId,
                       fromPhone,
                       textBody,
-                      tenantId: inboundTenantId,
+                      tenantId: targetTenantId,
                       phoneNumberId,
                       wabaId,
                     });

@@ -17,6 +17,7 @@ import { createLiveRegistrationRouter } from "./live-registration-routes.ts";
 import { metaWebhookRawBody } from "./meta-security.ts";
 import { attachUnknownApiJsonNotFound } from "./spa-fallback.ts";
 import { globalJsonParser } from "./json-body.ts";
+import { domainTenantMiddleware } from "./tenant-domain.ts";
 
 /**
  * Production Express app without listen() or database boot.
@@ -39,6 +40,7 @@ export function createLumeraApp(): express.Express {
   });
   app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
   app.use(attachUser);
+  app.use(domainTenantMiddleware);
   app.use("/api/gemini", requireAuth);
   app.use("/api/v3", createAbdmRouter());
   app.use("/v3", createAbdmRouter());

@@ -65,6 +65,8 @@ export interface AdminTenant {
   phone?: string;
   email?: string;
   deletedAt?: string | null;
+  slug?: string;
+  customDomain?: string;
 }
 
 export function normalizeHonestyLabel(source?: string | null): HonestBillingSource {

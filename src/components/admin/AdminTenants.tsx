@@ -262,10 +262,23 @@ export const AdminTenants: React.FC = () => {
             </div>
 
             <div className="bg-white border rounded-xl p-4 text-xs space-y-1">
-              <div className="text-[11px] uppercase text-slate-500 font-bold">Owner</div>
+              <div className="text-[11px] uppercase text-slate-500 font-bold">Owner & Practice Domain</div>
               <div className="font-semibold">{detail.owner.name || "—"}</div>
               <div className="text-slate-600">{detail.owner.email || "—"}</div>
               <div className="text-slate-600">{detail.owner.phone || "—"}</div>
+              {detail.customDomain && (
+                <div className="mt-2 pt-1 border-t text-slate-700">
+                  <span className="font-medium text-slate-500">Domain: </span>
+                  <span className="text-indigo-600 font-semibold">
+                    {detail.customDomain}
+                  </span>
+                </div>
+              )}
+              {detail.slug && (
+                <div className="text-slate-500 text-[11px]">
+                  Workspace: <code className="bg-slate-100 px-1 py-0.5 rounded text-slate-700">/w/{detail.slug}</code>
+                </div>
+              )}
               <div className="text-slate-500">Created {formatAdminDate(detail.createdAt)}</div>
             </div>
 

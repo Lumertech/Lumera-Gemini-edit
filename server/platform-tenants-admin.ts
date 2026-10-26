@@ -95,6 +95,8 @@ function mapPublicTenant(database: SqlDatabase, row: TenantRow, opts?: { detail?
     phone: row.phone || "",
     email: row.email || "",
     deletedAt: row.deleted_at || null,
+    slug: row.slug || "",
+    customDomain: row.custom_domain || "",
   };
   tenant.usersCount = usersCount(database, row.id);
   tenant.branchesCount = branchesCount(database, row.id, type);
