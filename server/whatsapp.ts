@@ -1748,8 +1748,9 @@ export async function processBotActionOrQuery(
   // 1. Receptionist Intake Greeting & Introduction
   const words = q.replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(Boolean);
   const firstWord = words[0] || "";
-  const isGreetingWord = ["hi", "hello", "hey", "namaste", "hola", "greetings", "hii", "helo"].includes(firstWord) ||
-    ["hi", "hello", "hey", "namaste"].includes(q);
+  const isGreetingWord =
+    ["hi", "hello", "hey", "namaste", "hola", "greetings", "hii", "helo"].includes(q) ||
+    (words.length <= 4 && ["hi", "hello", "hey", "namaste", "hola", "greetings", "hii", "helo"].includes(firstWord));
 
   if (
     isGreetingWord ||
@@ -2393,9 +2394,14 @@ export async function processBotActionOrQuery(
   }
 
   // 10. Default Fallback when no response is available to a specific question
-  const greetingPrefix = isRegistered && firstName ? `Hello ${firstName}! 🙏` : `Hello! 🙏`;
+  const greetingPrefix = isRegistered && firstName
+    ? `Hello ${firstName}! 🙏`
+    : (patientName && !patientName.startsWith("Patient (") && patientName !== "Patient"
+        ? `Namaste ${patientName}! 🙏`
+        : `Hello! 🙏`);
+  const queryAck = text ? ` We have received your query: "${text}".` : "";
   return {
-    content: `${greetingPrefix} I do not have an answer to that specific question right now, but our clinic front desk team is happy to assist you.\n\nHere is what I can help you with 24/7:\n\n• 📅 *Doctor Appointments* — check slots & instant token booking\n• ⏰ *Doctor Schedule & OPD Timings* — specialist availability\n• 💊 *Prescriptions & Refills* — view & download your prescriptions\n• 🔔 *Follow-Up Status* — check your scheduled review dates\n• 🔬 *Diagnostic Reports* — lab & test results\n• 📍 *Clinic Location & Timings* — address, directions & helpline\n• 👤 *Speak with Front Desk* — connect with our clinic staff\n\nPlease let me know if you would like help with any of the above, or reply *front desk* to speak with our reception.`,
+    content: `${greetingPrefix}${queryAck} I do not have an answer to that specific question right now, but our clinic front desk team is happy to assist you.\n\nHere is what I can help you with 24/7:\n\n• 📅 *Doctor Appointments* — check slots & instant token booking\n• ⏰ *Doctor Schedule & OPD Timings* — specialist availability\n• 💊 *Prescriptions & Refills* — view & download your prescriptions\n• 🔔 *Follow-Up Status* — check your scheduled review dates\n• 🔬 *Diagnostic Reports* — lab & test results\n• 📍 *Clinic Location & Timings* — address, directions & helpline\n• 👤 *Speak with Front Desk* — connect with our clinic staff\n\nPlease let me know if you would like help with any of the above, or reply *front desk* to speak with our reception.`,
     buttons: ["📅 Book Appointment", "⏰ Doctor Schedule", "📍 Clinic Location", "👤 Speak with Receptionist"],
   };
 }

@@ -190,8 +190,7 @@ export function tenantIdFromReceivingPhoneNumberId(phoneNumberId?: string): stri
   } catch {
     /* schema not ready */
   }
-  const envPhoneId = readSecret("META_PHONE_NUMBER_ID", "WHATSAPP_PHONE_NUMBER_ID");
-  if ((envPhoneId && id === envPhoneId) || id === "1294483843748285") {
+  if (id === "1294483843748285") {
     return "tenant-lumera-main";
   }
   return "";

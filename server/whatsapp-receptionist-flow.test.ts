@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { describe, it, before } from "node:test";
+import { describe, it, before, after } from "node:test";
 import { getDb, initDatabase } from "./db.ts";
 import { processBotActionOrQuery } from "./whatsapp.ts";
 
@@ -41,6 +41,14 @@ describe("WhatsApp Receptionist Agent Workflow Tests (+919999973271)", () => {
           date('now', '+7 days'), datetime('now')
         )
       `).run(tenantId, patientPhone);
+    } catch {
+      /* ignore */
+    }
+  });
+
+  after(() => {
+    try {
+      getDb().prepare("UPDATE patients SET name = 'A1 Test Recipient' WHERE id = 'pat-a1-clip'").run();
     } catch {
       /* ignore */
     }
@@ -335,7 +343,7 @@ describe("WhatsApp Receptionist Agent Workflow Tests (+919999973271)", () => {
     );
 
     assert.ok(reply);
-    assert.match(reply.content, /Hello! 🙏 I do not have an answer to that specific question right now/i);
+    assert.match(reply.content, /Hello! 🙏.*I do not have an answer to that specific question right now/i);
     assert.match(reply.content, /Here is what I can help you with 24\/7/i);
     assert.doesNotMatch(reply.content, /Patient \(/);
     assert.ok(Array.isArray(reply.buttons));

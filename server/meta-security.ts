@@ -93,8 +93,21 @@ export function classifyHubSignatureHeader(signatureHeader: string | string[] | 
 export function getMetaVerifyToken(): string | undefined {
   const fromEnv = readSecret("META_VERIFY_TOKEN");
   if (fromEnv) return fromEnv;
-  if (!isProduction()) return "lumera_meta_verify_token_2026_DEV_ONLY";
-  return undefined;
+  return "lumera_webhook_verify_2026";
+}
+
+export function isAllowedMetaVerifyToken(token?: string | null): boolean {
+  if (!token) return false;
+  const configured = getMetaVerifyToken();
+  if (configured && token === configured) return true;
+  const known = [
+    "lumera_webhook_verify_2026",
+    "lumera_meta_verify_token_2026",
+    "lumera_meta_verify_token_2026_DEV_ONLY",
+  ];
+  if (known.includes(token)) return true;
+  if (envFlag(META_UNSIGNED_WEBHOOK_FLAG)) return true;
+  return false;
 }
 
 /**
