@@ -399,6 +399,115 @@ export function ensureMetaTechProviderAndPolicies(database: SqlDatabase) {
         ]),
         meta_template_id: "meta_tpl_983102948110",
         rejection_reason: null
+      },
+      {
+        id: "tpl-10",
+        tenant_id: "tenant-lumera-main",
+        waba_id: "waba_398249018247019",
+        name: "consultation_invoice_receipt",
+        category: "UTILITY",
+        language: "en",
+        status: "APPROVED",
+        components: JSON.stringify([
+          { type: "HEADER", format: "TEXT", text: "Consultation Payment Receipt" },
+          {
+            type: "BODY",
+            text: "Namaste {{1}}, thank you for visiting {{2}}. We have received payment of {{3}} for your consultation with {{4}} (Invoice #{{5}}). Your official digital receipt is ready.",
+            example: { body_text: [["Ravee", "Lumera Apex PolyClinic", "₹700.00", "Dr. Siddharth Varma", "INV-2026-0891"]] }
+          },
+          { type: "FOOTER", text: "Lumera Health Billing Desk" },
+          {
+            type: "BUTTONS",
+            buttons: [
+              { type: "QUICK_REPLY", text: "Download Invoice" },
+              { type: "QUICK_REPLY", text: "Book Next Visit" }
+            ]
+          }
+        ]),
+        meta_template_id: "meta_tpl_983102948111",
+        rejection_reason: null
+      },
+      {
+        id: "tpl-11",
+        tenant_id: "tenant-lumera-main",
+        waba_id: "waba_398249018247019",
+        name: "clinic_intake_welcome",
+        category: "UTILITY",
+        language: "en",
+        status: "APPROVED",
+        components: JSON.stringify([
+          { type: "HEADER", format: "TEXT", text: "Welcome to {{1}}" },
+          {
+            type: "BODY",
+            text: "Hello {{2}}! 🙏 Thank you for contacting {{3}}. We provide 24/7 OPD consultation booking, specialist OPD schedules, and digital prescriptions. How may our clinical desk assist you today?",
+            example: { body_text: [["Lumera Apex PolyClinic", "Ravee", "Lumera Health"]] }
+          },
+          { type: "FOOTER", text: "Lumera 24/7 Clinic Assistant" },
+          {
+            type: "BUTTONS",
+            buttons: [
+              { type: "QUICK_REPLY", text: "Book Appointment" },
+              { type: "QUICK_REPLY", text: "Doctor Timings" },
+              { type: "QUICK_REPLY", text: "Clinic Location" }
+            ]
+          }
+        ]),
+        meta_template_id: "meta_tpl_983102948112",
+        rejection_reason: null
+      },
+      {
+        id: "tpl-12",
+        tenant_id: "tenant-lumera-main",
+        waba_id: "waba_398249018247019",
+        name: "lumera_appointment_booking_v2",
+        category: "UTILITY",
+        language: "en",
+        status: "APPROVED",
+        components: JSON.stringify([
+          { type: "HEADER", format: "TEXT", text: "OPD Booking Confirmed" },
+          {
+            type: "BODY",
+            text: "Namaste {{1}}, your consultation with {{2}} ({{3}}) at {{4}} is booked for {{5}} at {{6}}. Your token is #{{7}} (UHID: {{8}}). Please arrive 10 minutes prior to your slot.",
+            example: { body_text: [["Ravee", "Dr. Siddharth Varma", "Physiotherapy", "Lumera Clinic", "Today", "11:30 AM", "01", "LUM-999-732"]] }
+          },
+          { type: "FOOTER", text: "Lumera OPD Care Management" },
+          {
+            type: "BUTTONS",
+            buttons: [
+              { type: "QUICK_REPLY", text: "Confirm Arrival" },
+              { type: "QUICK_REPLY", text: "Reschedule Slot" }
+            ]
+          }
+        ]),
+        meta_template_id: "meta_tpl_983102948113",
+        rejection_reason: null
+      },
+      {
+        id: "tpl-13",
+        tenant_id: "tenant-lumera-main",
+        waba_id: "waba_398249018247019",
+        name: "patient_vitals_summary",
+        category: "UTILITY",
+        language: "en",
+        status: "APPROVED",
+        components: JSON.stringify([
+          { type: "HEADER", format: "TEXT", text: "Clinical Vitals Record" },
+          {
+            type: "BODY",
+            text: "Dear {{1}}, your clinical vitals recorded on {{2}} at {{3}} are: BP: {{4}}, Pulse: {{5}} bpm, SpO2: {{6}}%, Temp: {{7}}°F. Please consult your physician if any reading varies.",
+            example: { body_text: [["Ravee", "Today", "Lumera Clinic", "120/80 mmHg", "72", "99", "98.4"]] }
+          },
+          { type: "FOOTER", text: "Lumera Digital Health Record" },
+          {
+            type: "BUTTONS",
+            buttons: [
+              { type: "QUICK_REPLY", text: "View Prescription" },
+              { type: "QUICK_REPLY", text: "Book Follow-up" }
+            ]
+          }
+        ]),
+        meta_template_id: "meta_tpl_983102948114",
+        rejection_reason: null
       }
     ];
 

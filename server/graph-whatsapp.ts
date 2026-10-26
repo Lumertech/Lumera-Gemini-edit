@@ -349,6 +349,93 @@ export async function sendWhatsAppGraphText(opts: {
   });
 }
 
+export async function sendWhatsAppGraphInteractive(opts: {
+  credentials: GraphCredentials;
+  to: string;
+  body: string;
+  buttons: string[];
+  footer?: string;
+  fetchImpl?: typeof fetch;
+}): Promise<GraphMessageResult> {
+  const cleanButtons = (opts.buttons || [])
+    .map((b) => String(b || "").trim())
+    .filter(Boolean)
+    .slice(0, 10);
+
+  if (cleanButtons.length === 0) {
+    return sendWhatsAppGraphText({
+      credentials: opts.credentials,
+      to: opts.to,
+      body: opts.body,
+      fetchImpl: opts.fetchImpl,
+    });
+  }
+
+  // Meta Cloud API supports up to 3 quick-reply buttons (title max 20 chars)
+  if (cleanButtons.length <= 3) {
+    return postGraphWhatsAppMessage({
+      credentials: opts.credentials,
+      to: opts.to,
+      fetchImpl: opts.fetchImpl,
+      failureLabel: "interactive-button",
+      payload: {
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        type: "interactive",
+        interactive: {
+          type: "button",
+          body: {
+            text: opts.body,
+          },
+          ...(opts.footer ? { footer: { text: opts.footer } } : {}),
+          action: {
+            buttons: cleanButtons.map((btn, idx) => ({
+              type: "reply",
+              reply: {
+                id: `btn_${idx + 1}`,
+                title: btn.length > 20 ? btn.slice(0, 20).trim() : btn,
+              },
+            })),
+          },
+        },
+      },
+    });
+  }
+
+  // 4 to 10 choices -> interactive list message (menu sheet)
+  return postGraphWhatsAppMessage({
+    credentials: opts.credentials,
+    to: opts.to,
+    fetchImpl: opts.fetchImpl,
+    failureLabel: "interactive-list",
+    payload: {
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      type: "interactive",
+      interactive: {
+        type: "list",
+        body: {
+          text: opts.body,
+        },
+        ...(opts.footer ? { footer: { text: opts.footer } } : {}),
+        action: {
+          button: "View Options",
+          sections: [
+            {
+              title: "Available Options",
+              rows: cleanButtons.map((btn, idx) => ({
+                id: `opt_${idx + 1}`,
+                title: btn.length > 24 ? btn.slice(0, 24).trim() : btn,
+                description: btn.length > 24 ? btn.slice(0, 72).trim() : undefined,
+              })),
+            },
+          ],
+        },
+      },
+    },
+  });
+}
+
 export async function sendWhatsAppGraphTemplate(opts: {
   credentials: GraphCredentials;
   to: string;
@@ -624,6 +711,7 @@ export async function dispatchWhatsAppCloudMessage(opts: {
   to: string;
   textBody: string;
   kind?: CloudMessageKind;
+  buttons?: string[];
   otp?: string;
   purpose?: string;
   templateName?: string;
@@ -716,6 +804,25 @@ export async function dispatchWhatsAppCloudMessage(opts: {
         fetchImpl: opts.fetchImpl,
         failureLabel: kind,
       });
+    } else if (opts.buttons && Array.isArray(opts.buttons) && opts.buttons.length > 0) {
+      graph = await sendWhatsAppGraphInteractive({
+        credentials: creds,
+        to: opts.to,
+        body: opts.textBody,
+        buttons: opts.buttons,
+        footer: "Lumera Clinic Assistant",
+        fetchImpl: opts.fetchImpl,
+      });
+      if (!graph.ok) {
+        // Fallback to text send if interactive payload had any restriction
+        graph = await sendWhatsAppGraphText({
+          credentials: creds,
+          to: opts.to,
+          body: opts.textBody,
+          previewUrl: opts.previewUrl,
+          fetchImpl: opts.fetchImpl,
+        });
+      }
     } else {
       graph = await sendWhatsAppGraphText({
         credentials: creds,

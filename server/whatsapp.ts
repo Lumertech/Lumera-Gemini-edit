@@ -624,6 +624,7 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
             tenantId: sessionTenantId,
             to: patientPhone,
             textBody: botReply.content,
+            buttons: botReply.buttons,
           }).catch((err) => console.error("[UI Test Outbound Error]", err));
         }
       }
@@ -1745,6 +1746,28 @@ export async function processBotActionOrQuery(
     }
   };
 
+  // Conversation context helpers for multi-turn cognitive understanding
+  const getContextValue = (prefix: string): string => {
+    const item = tagsList.find((t) => t.startsWith(prefix + ":"));
+    return item ? item.slice(prefix.length + 1).trim() : "";
+  };
+
+  const setContextValue = (prefix: string, value: string) => {
+    if (conv?.id) {
+      const filtered = tagsList.filter((t) => !t.startsWith(prefix + ":"));
+      if (value) filtered.push(`${prefix}:${value}`);
+      tagsList = filtered;
+      try {
+        db.prepare(`UPDATE whatsapp_conversations SET tags = ? WHERE id = ?`).run(JSON.stringify(filtered), conv.id);
+      } catch {
+        /* ignore */
+      }
+    }
+  };
+
+  const pendingDoctor = getContextValue("pending_doctor");
+  const pendingSymptom = getContextValue("symptom");
+
   // 1. Receptionist Intake Greeting & Introduction
   const words = q.replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(Boolean);
   const firstWord = words[0] || "";
@@ -1776,7 +1799,7 @@ export async function processBotActionOrQuery(
     };
   }
 
-  // 1a. Clinic Location & Directions
+  // 1a. Clinic Location & Directions (Cognitive with Context Retention)
   if (
     q.includes("location") ||
     q.includes("address") ||
@@ -1792,21 +1815,35 @@ export async function processBotActionOrQuery(
     q.includes("कहाँ")
   ) {
     const greetingHeader = isRegistered && firstName ? `Hello ${firstName}! 🙏 ` : "";
+    const doctorNote = pendingDoctor
+      ? `\n\n📌 *For your visit with ${pendingDoctor}*:\nHis OPD Suite is at Room 105. Would you like me to reserve your slot now?`
+      : "\n\nWould you like to book a doctor consultation before your visit?";
+    const actionButtons = pendingDoctor
+      ? [`Book ${pendingDoctor}`, "⏰ Other Slots", "📞 Call Helpline"]
+      : ["📅 Book Appointment", "⏰ Doctor Schedule", "📞 Call Helpline"];
+
     return {
-      content: `${greetingHeader}📍 *${clinicNames.clinicName} — Location & Directions*\n\n🏥 *Address*: 104-106, Health Hub, Sector 14, Opposite Metro Station, Gurgaon, Haryana 122001\n📌 *Landmark*: Next to Central Bank, Metro Pillar #42\n🚗 *Parking*: Dedicated patient parking available on-site\n🗺️ *Google Maps*: https://maps.google.com/?q=${encodeURIComponent(clinicNames.clinicName)}\n\n🕒 *OPD Working Hours*: Monday – Saturday: 09:00 AM – 08:00 PM | Sunday: 10:00 AM – 02:00 PM\n📞 *Front Desk / Helpline*: +91 99999 73271\n\nWould you like to book a doctor consultation before your visit?`,
-      buttons: ["📅 Book Appointment", "⏰ Doctor Schedule", "📞 Call Helpline"],
+      content: `${greetingHeader}📍 *${clinicNames.clinicName} — Location & Directions*\n\n🏥 *Address*: 104-106, Health Hub, Sector 14, Opposite Metro Station, Gurgaon, Haryana 122001\n📌 *Landmark*: Next to Central Bank, Metro Pillar #42\n🚗 *Parking*: Dedicated patient parking available on-site\n🗺️ *Google Maps*: https://maps.google.com/?q=${encodeURIComponent(clinicNames.clinicName)}\n\n🕒 *OPD Working Hours*: Monday – Saturday: 09:00 AM – 08:00 PM | Sunday: 10:00 AM – 02:00 PM\n📞 *Front Desk / Helpline*: +91 99999 73271${doctorNote}`,
+      buttons: actionButtons,
     };
   }
 
-  // 1b. Clinic Timings & Working Hours
+  // 1b. Clinic Timings & Working Hours (Cognitive with Context Retention)
   if (
     (q.includes("timing") || q.includes("hours") || q.includes("working hours") || q.includes("open") || q.includes("close") || q.includes("sunday") || q.includes("holiday") || q.includes("समय") || q.includes("कब खुलता")) &&
     !q.includes("doctor") && !q.includes("dr") && !q.includes("dr.") && !q.includes("specialist")
   ) {
     const greetingHeader = isRegistered && firstName ? `Hello ${firstName}! 🙏 ` : "";
+    const doctorTimingsNote = pendingDoctor
+      ? `\n\n👨‍⚕️ *${pendingDoctor} OPD Hours Today*:\n08:30 AM – 01:30 PM & 04:30 PM – 08:00 PM. Tap below to reserve your token:`
+      : "\n\nWould you like to view a specific doctor's OPD schedule or book an appointment?";
+    const actionButtons = pendingDoctor
+      ? [`Book ${pendingDoctor}`, "⏰ All Doctor Timings", "📍 Clinic Location"]
+      : ["⏰ Doctor Schedule", "📅 Book Appointment", "📍 Clinic Location"];
+
     return {
-      content: `${greetingHeader}⏰ *${clinicNames.clinicName} — Clinic Working & OPD Hours*\n\n🗓️ *OPD Consultation Timings*:\n• *Monday to Saturday*: 09:00 AM – 08:00 PM\n• *Sunday*: 10:00 AM – 02:00 PM (Emergency & Scheduled Reviews)\n\n🔬 *Diagnostic Pathology Lab*:\n• Sample collection opens from 08:00 AM daily\n\n💊 *In-House Pharmacy*:\n• Open 08:30 AM – 08:30 PM daily\n\nWould you like to view a specific doctor's OPD schedule or book an appointment?`,
-      buttons: ["⏰ Doctor Schedule", "📅 Book Appointment", "📍 Clinic Location"],
+      content: `${greetingHeader}⏰ *${clinicNames.clinicName} — Clinic Working & OPD Hours*\n\n🗓️ *OPD Consultation Timings*:\n• *Monday to Saturday*: 09:00 AM – 08:00 PM\n• *Sunday*: 10:00 AM – 02:00 PM (Emergency & Scheduled Reviews)\n\n🔬 *Diagnostic Pathology Lab*:\n• Sample collection opens from 08:00 AM daily\n\n💊 *In-House Pharmacy*:\n• Open 08:30 AM – 08:30 PM daily${doctorTimingsNote}`,
+      buttons: actionButtons,
     };
   }
 
@@ -1828,7 +1865,7 @@ export async function processBotActionOrQuery(
     };
   }
 
-  // 1d. Consultation Fees & Charges
+  // 1d. Consultation Fees & Charges (Cognitive with Context Retention)
   if (
     q.includes("fee") ||
     q.includes("fees") ||
@@ -1844,9 +1881,16 @@ export async function processBotActionOrQuery(
     q.includes("पैसे")
   ) {
     const greetingHeader = isRegistered && firstName ? `Hello ${firstName}! 🙏 ` : "";
+    const doctorFeeNote = pendingDoctor
+      ? `\n\n👨‍⚕️ *${pendingDoctor} Consultation Fee*: ₹700 (includes OPD triage and follow-up validity). Would you like to confirm your booking?`
+      : "\n\nWould you like to check a specific specialist's exact fee or book an appointment?";
+    const actionButtons = pendingDoctor
+      ? [`Book ${pendingDoctor}`, "⏰ Other Doctors", "👤 Speak with Front Desk"]
+      : ["⏰ Doctor Schedule", "📅 Book Appointment", "👤 Speak with Receptionist"];
+
     return {
-      content: `${greetingHeader}💵 *${clinicNames.clinicName} — Consultation Fee Schedule*\n\n• *General Medicine (OPD)*: ₹500\n• *Specialist Consultation* (Physiotherapy, Pediatrics, Dermatology, Cardiology): ₹700 – ₹1,000\n• *Follow-Up Reviews*: Free or discounted within 7 days of initial consultation\n\n💳 *Payment Methods Accepted*:\n• UPI (Google Pay, PhonePe, Paytm, BHIM)\n• Credit & Debit Cards (Visa, MasterCard, RuPay)\n• Cash at Reception Desk\n• Cashless Health Insurance (selected TPAs)\n\nWould you like to check a specific specialist's exact fee or book an appointment?`,
-      buttons: ["⏰ Doctor Schedule", "📅 Book Appointment", "👤 Speak with Receptionist"],
+      content: `${greetingHeader}💵 *${clinicNames.clinicName} — Consultation Fee Schedule*\n\n• *General Medicine (OPD)*: ₹500\n• *Specialist Consultation* (Physiotherapy, Pediatrics, Dermatology, Cardiology): ₹700 – ₹1,000\n• *Follow-Up Reviews*: Free or discounted within 7 days of initial consultation\n\n💳 *Payment Methods Accepted*:\n• UPI (Google Pay, PhonePe, Paytm, BHIM)\n• Credit & Debit Cards (Visa, MasterCard, RuPay)\n• Cash at Reception Desk\n• Cashless Health Insurance (selected TPAs)${doctorFeeNote}`,
+      buttons: actionButtons,
     };
   }
 
@@ -1908,13 +1952,13 @@ export async function processBotActionOrQuery(
 
   // 1h. Specific Doctor or Specialty Match
   const specialtySearchKeywords: { kws: string[]; specMatch: string; docHint?: string }[] = [
-    { kws: ["cardio", "heart", "ecg"], specMatch: "Cardiology", docHint: "Rajesh" },
-    { kws: ["skin", "derma", "hair", "acne", "rash"], specMatch: "Dermatology", docHint: "Meera" },
-    { kws: ["physio", "back pain", "knee pain", "joint", "ortho", "rehab"], specMatch: "Physiotherapy", docHint: "Siddharth" },
-    { kws: ["pediatric", "child", "baby", "kid", "vaccin"], specMatch: "Pediatrics", docHint: "Ananya" },
-    { kws: ["general physician", "physician", "fever doctor", "internal medicine"], specMatch: "General Medicine", docHint: "Vikram" },
-    { kws: ["eye", "ophthalmology", "vision"], specMatch: "Ophthalmology", docHint: "Mukherjee" },
-    { kws: ["dental", "teeth", "tooth", "dentist"], specMatch: "Dental Surgery", docHint: "Swamy" },
+    { kws: ["cardio", "heart", "ecg", "chest pain", "bp", "blood pressure", "palpitation"], specMatch: "Cardiology", docHint: "Rajesh" },
+    { kws: ["skin", "derma", "hair", "acne", "rash", "itching", "allergy", "eczema"], specMatch: "Dermatology", docHint: "Meera" },
+    { kws: ["physio", "back pain", "knee pain", "knee", "back", "joint pain", "joint", "ortho", "rehab", "sprain", "posture"], specMatch: "Physiotherapy", docHint: "Siddharth" },
+    { kws: ["pediatric", "child", "baby", "kid", "vaccin", "infant"], specMatch: "Pediatrics", docHint: "Ananya" },
+    { kws: ["general physician", "physician", "fever", "cold", "cough", "flu", "weakness", "headache", "infection", "body ache", "internal medicine"], specMatch: "General Medicine", docHint: "Vikram" },
+    { kws: ["eye", "ophthalmology", "vision", "cataract"], specMatch: "Ophthalmology", docHint: "Mukherjee" },
+    { kws: ["dental", "teeth", "tooth", "dentist", "gum"], specMatch: "Dental Surgery", docHint: "Swamy" },
   ];
   const matchedSpec = specialtySearchKeywords.find(item => item.kws.some(k => q.includes(k)));
   if (!isIntakePending && matchedSpec && !q.includes("book")) {
@@ -1940,6 +1984,8 @@ export async function processBotActionOrQuery(
     }
 
     if (matchedDoc) {
+      setContextValue("pending_doctor", String(matchedDoc.name));
+      setContextValue("symptom", matchedSpec.specMatch);
       const greetingHeader = isRegistered && firstName ? `Hello ${firstName}! ` : "";
       return {
         content: `${greetingHeader}👨‍⚕️ *${matchedDoc.name}* (${matchedDoc.specialty})\n\n🕒 *OPD Timing*: ${matchedDoc.opd_timing || "09:00 AM - 01:00 PM"} | 🚪 Room ${matchedDoc.opd_room || "101"}\n💵 *Consultation Fee*: ${formatINR(Number(matchedDoc.consultation_fee || 0))}\n\nWould you like to book an appointment with ${matchedDoc.name}?`,
@@ -2119,15 +2165,24 @@ export async function processBotActionOrQuery(
           SELECT d.* FROM doctors d
           JOIN users u ON u.id = d.user_id
           WHERE u.tenant_id = ? AND d.active = 1
+            AND d.name NOT IN ('After Edit', 'Audit Create', 'Clinic Doc', 'Created Physio', 'Explicit Pwd', 'Patched Dentist', 'Label Physio', 'Label Spa', 'Disable Me')
           GROUP BY d.name
-          ORDER BY d.name ASC LIMIT 6
+          ORDER BY CASE WHEN d.name LIKE 'Dr.%' THEN 0 ELSE 1 END, d.name ASC
+          LIMIT 6
         `).all(tenantId) as Record<string, unknown>[];
       } catch {
         /* fallback */
       }
     }
     if (!doctors.length) {
-      doctors = db.prepare("SELECT * FROM doctors WHERE active = 1 GROUP BY name ORDER BY name ASC LIMIT 6").all() as Record<string, unknown>[];
+      doctors = db.prepare(`
+        SELECT * FROM doctors
+        WHERE active = 1
+          AND name NOT IN ('After Edit', 'Audit Create', 'Clinic Doc', 'Created Physio', 'Explicit Pwd', 'Patched Dentist', 'Label Physio', 'Label Spa', 'Disable Me')
+        GROUP BY name
+        ORDER BY CASE WHEN name LIKE 'Dr.%' THEN 0 ELSE 1 END, name ASC
+        LIMIT 6
+      `).all() as Record<string, unknown>[];
     }
 
     const roster = doctors.map((d) => `👨‍⚕️ *${d.name}* (${d.specialty})\n  🕒 ${d.opd_timing || "09:00 AM - 01:00 PM"} | 🚪 Room ${d.opd_room || "101"}\n  💵 Fee: ${formatINR(Number(d.consultation_fee || 0))}`).join("\n\n");
@@ -2144,8 +2199,28 @@ export async function processBotActionOrQuery(
 
 
 
+  const isAffirmativeBook =
+    Boolean(pendingDoctor) &&
+    (
+      q.includes("yes") ||
+      q.includes("confirm") ||
+      q.includes("sure") ||
+      q.includes("ok") ||
+      q.includes("okay") ||
+      q.includes("please book") ||
+      q.includes("reserve") ||
+      q === "1" ||
+      q === "slot 1" ||
+      q.startsWith("book") ||
+      q === "book" ||
+      q.includes("book appointment") ||
+      q.includes("book now") ||
+      q.includes("lock")
+    );
+
   // 6. Book Doctor Appointment (specific consultant first)
   const specificBook =
+    isAffirmativeBook ||
     q.includes("book dr.") ||
     q.includes("book dr ") ||
     q.includes("dr. siddharth") ||
@@ -2165,7 +2240,7 @@ export async function processBotActionOrQuery(
       };
     }
     try {
-      const doctorName = q.includes("siddharth")
+      let doctorName = q.includes("siddharth")
         ? "Siddharth"
         : q.includes("vikram")
           ? "Vikram"
@@ -2179,12 +2254,20 @@ export async function processBotActionOrQuery(
                   ? "Harshvardhan"
                   : undefined;
 
+      if (!doctorName && pendingDoctor) {
+        const docWords = pendingDoctor.replace(/dr\.?/i, "").trim().split(/\s+/);
+        doctorName = docWords[0] || pendingDoctor;
+      }
+
       const booked = bookWhatsAppAppointment({
         tenantId,
         patientPhone: phone,
         patientName,
         doctorName,
       });
+      setContextValue("pending_doctor", "");
+      setContextValue("symptom", "");
+
       const appt = booked.appointment;
       if (!booked.reused) {
         await dispatchWhatsAppBookConfirmation({ tenantId, appointment: appt });
@@ -2202,7 +2285,23 @@ export async function processBotActionOrQuery(
   }
 
   // 6b. Handling Patient Response to Intake (when awaiting_intake is active)
-  if (isIntakePending && !q.includes("prescription") && !q.includes("rx") && !q.includes("timing") && !q.includes("hours")) {
+  const isExcludedFromIntake =
+    q.includes("prescription") ||
+    q.includes("rx") ||
+    q.includes("timing") ||
+    q.includes("hours") ||
+    q.includes("queue") ||
+    q.includes("token") ||
+    q.includes("wait") ||
+    q.includes("location") ||
+    q.includes("address") ||
+    q.includes("fee") ||
+    q.includes("cost") ||
+    q.includes("charge") ||
+    q.includes("insurance") ||
+    q.includes("emergency");
+
+  if (isIntakePending && !isExcludedFromIntake) {
     clearIntakeTag();
 
     // Extract Age if provided
@@ -2272,15 +2371,22 @@ export async function processBotActionOrQuery(
           SELECT d.* FROM doctors d
           JOIN users u ON u.id = d.user_id
           WHERE u.tenant_id = ? AND d.active = 1
+            AND d.name NOT IN ('After Edit', 'Audit Create', 'Clinic Doc', 'Created Physio', 'Explicit Pwd', 'Patched Dentist', 'Label Physio', 'Label Spa', 'Disable Me')
           GROUP BY d.name
-          ORDER BY d.name ASC
+          ORDER BY CASE WHEN d.name LIKE 'Dr.%' THEN 0 ELSE 1 END, d.name ASC
         `).all(tenantId) as Record<string, unknown>[];
       } catch {
         /* fallback */
       }
     }
     if (!doctors.length) {
-      doctors = db.prepare("SELECT * FROM doctors WHERE active = 1 GROUP BY name ORDER BY name ASC").all() as Record<string, unknown>[];
+      doctors = db.prepare(`
+        SELECT * FROM doctors
+        WHERE active = 1
+          AND name NOT IN ('After Edit', 'Audit Create', 'Clinic Doc', 'Created Physio', 'Explicit Pwd', 'Patched Dentist', 'Label Physio', 'Label Spa', 'Disable Me')
+        GROUP BY name
+        ORDER BY CASE WHEN name LIKE 'Dr.%' THEN 0 ELSE 1 END, name ASC
+      `).all() as Record<string, unknown>[];
     }
 
     // If specific recommendation found, bring that doctor to index 0
@@ -2294,6 +2400,12 @@ export async function processBotActionOrQuery(
         const [target] = doctors.splice(recIdx, 1);
         doctors.unshift(target);
       }
+    }
+
+    const chosenDocName = String(doctors[0]?.name || recommendedDoc || "");
+    if (chosenDocName) {
+      setContextValue("pending_doctor", chosenDocName);
+      if (matchedIssue) setContextValue("symptom", matchedIssue);
     }
 
     const greetingName = patientName && patientName !== "Patient" ? `*${patientName}*` : "there";

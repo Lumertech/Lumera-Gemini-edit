@@ -5,11 +5,11 @@ export function walletDispatchStatus(error: string, status?: number): number {
   return cloudDispatchHttpStatus(error, status);
 }
 
-/** Patient WhatsApp text sends (staff replies, bot replies, Rx, custom outbound). */
 export async function dispatchPatientCloudText(opts: {
   tenantId?: string;
   to: string;
   textBody: string;
+  buttons?: string[];
   previewUrl?: boolean;
   /** True only for a staff-typed reply. Bot, Rx, and outbound triggers are automated. */
   isManual?: boolean;
@@ -21,6 +21,7 @@ export async function dispatchPatientCloudText(opts: {
     to: opts.to,
     kind: "text",
     textBody: opts.textBody,
+    buttons: opts.buttons,
     previewUrl: opts.previewUrl,
     db: getDb(),
     tenantId: opts.tenantId,

@@ -142,14 +142,26 @@ export function findTenantByPatientPhone(db: SqlDatabase, phone: string): string
   if (!digits) return null;
   const last10 = digits.slice(-10);
   try {
-    const row = db.prepare(`
+    const rows = db.prepare(`
       SELECT tenant_id FROM patients 
       WHERE replace(replace(replace(replace(phone, '+', ''), ' ', ''), '-', ''), '(', '') LIKE '%' || ? 
       ORDER BY created_at DESC 
-      LIMIT 1
-    `).get(last10) as { tenant_id?: string } | undefined;
-    if (row?.tenant_id && String(row.tenant_id).trim()) {
-      return String(row.tenant_id).trim();
+      LIMIT 10
+    `).all(last10) as { tenant_id?: string }[];
+    for (const row of rows) {
+      const tid = String(row?.tenant_id || "").trim();
+      if (
+        tid &&
+        !tid.startsWith("tenant-clipA-") &&
+        !tid.startsWith("tenant-noSlot-") &&
+        !tid.startsWith("tenant-tmp-") &&
+        !tid.startsWith("tenant-test-") &&
+        !tid.startsWith("tenant-audit-copy-") &&
+        !tid.startsWith("tenant-tplParam-") &&
+        !tid.startsWith("tenant-wa-vertex-")
+      ) {
+        return tid;
+      }
     }
   } catch {
     /* ignore */
@@ -381,6 +393,7 @@ export async function dispatchInboundBotReply(
       tenantId,
       to: fromPhone,
       textBody: outboundText,
+      buttons: botReply.buttons,
     });
     console.log(`[WhatsApp Inbound -> Bot Outbound] to=${fromPhone} result=${JSON.stringify(dispatchResult)}`);
   } catch (sendErr) {
