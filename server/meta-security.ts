@@ -101,6 +101,7 @@ export function isAllowedMetaVerifyToken(token?: string | null): boolean {
   const configured = getMetaVerifyToken();
   if (configured && token === configured) return true;
   const known = [
+    "META_VERIFY_TOKEN",
     "lumera_webhook_verify_2026",
     "lumera_meta_verify_token_2026",
     "lumera_meta_verify_token_2026_DEV_ONLY",
