@@ -291,14 +291,44 @@ export function buildWebRtcSdpAnswer(offerSdp?: string): string {
   ].join("\r\n");
 }
 
+export interface WebhookDebugEntry {
+  id: string;
+  time: string;
+  field?: string;
+  from?: string;
+  callId?: string;
+  callEvent?: string;
+  signatureOk?: boolean;
+  actionsPerformed?: Array<{ action: string; status: number; result: unknown }>;
+  summary: string;
+}
+
+export const webhookDebugLogs: WebhookDebugEntry[] = [];
+
+export function recordWebhookDebugLog(entry: WebhookDebugEntry) {
+  webhookDebugLogs.push(entry);
+  if (webhookDebugLogs.length > 50) {
+    webhookDebugLogs.shift();
+  }
+}
+
 export async function handleMetaInboundCallAction(opts: {
   phoneNumberId: string;
   callId: string;
   action?: "accept" | "pre_accept" | "reject" | "terminate";
   offerSdp?: string;
 }) {
-  const token = readSecret("META_ACCESS_TOKEN", "META_SYSTEM_USER_TOKEN", "WHATSAPP_TOKEN");
-  if (!token || !opts.phoneNumberId || !opts.callId) return { ok: false, error: "Missing token, phoneId, or callId" };
+  const token = readSecret(
+    "META_ACCESS_TOKEN",
+    "META_SYSTEM_USER_TOKEN",
+    "WHATSAPP_TOKEN",
+    "WHATSAPP_ACCESS_TOKEN"
+  );
+  if (!token || !opts.phoneNumberId || !opts.callId) {
+    const err = "Missing token, phoneId, or callId";
+    console.warn(`[Meta Call Action Failed] ${err} phoneId=${opts.phoneNumberId} callId=${opts.callId} hasToken=${Boolean(token)}`);
+    return { ok: false, error: err };
+  }
 
   const action = opts.action || "accept";
   const sdpAnswer = buildWebRtcSdpAnswer(opts.offerSdp);
@@ -329,9 +359,24 @@ export async function handleMetaInboundCallAction(opts: {
     console.log(
       `[Meta Call Action] call_id=${opts.callId} action=${action} status=${res.status} result=${JSON.stringify(data)}`
     );
+    recordWebhookDebugLog({
+      id: `call-action-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      time: new Date().toISOString(),
+      callId: opts.callId,
+      field: `calls:${action}`,
+      summary: `Action: ${action} | HTTP Status: ${res.status} | PhoneId: ${opts.phoneNumberId} | Response: ${JSON.stringify(data)}`,
+      actionsPerformed: [{ action, status: res.status, result: data }],
+    });
     return { ok: res.ok, status: res.status, data };
   } catch (err) {
     console.warn("[Meta Call Action Error]", err);
+    recordWebhookDebugLog({
+      id: `call-action-err-${Date.now()}`,
+      time: new Date().toISOString(),
+      callId: opts.callId,
+      field: `calls:${action}:error`,
+      summary: `Action error: ${String(err)}`,
+    });
     return { ok: false, error: String(err) };
   }
 }
@@ -601,6 +646,26 @@ export function createMetaRouter(): Router {
     return res.status(403).json({ error: "Verification token mismatch" });
   });
 
+  // GET /api/meta/webhook-debug-log - Diagnostic endpoint to view recent inbound webhook and calling actions
+  router.get("/webhook-debug-log", (_req: Request, res: Response) => {
+    const phoneId = readSecret("META_PHONE_NUMBER_ID", "WHATSAPP_PHONE_NUMBER_ID") || "1294483843748285";
+    const token = readSecret(
+      "META_ACCESS_TOKEN",
+      "META_SYSTEM_USER_TOKEN",
+      "WHATSAPP_TOKEN",
+      "WHATSAPP_ACCESS_TOKEN"
+    );
+    return res.json({
+      callingConfig: {
+        phoneId,
+        hasToken: Boolean(token),
+        tokenPrefix: token ? token.slice(0, 10) + "..." : "(none)",
+      },
+      eventsCount: webhookDebugLogs.length,
+      events: webhookDebugLogs.slice(-40).reverse(),
+    });
+  });
+
   // POST /api/meta/webhook - Meta Inbound Webhook Event Receiver
   router.post("/webhook", (req: Request, res: Response) => {
     const candidates = metaWebhookSecretCandidates();
@@ -647,6 +712,13 @@ export function createMetaRouter(): Router {
     try {
       const db = getDb();
       const now = new Date().toISOString();
+
+      recordWebhookDebugLog({
+        id: `webhook-in-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        time: now,
+        signatureOk: signatureDecision.ok,
+        summary: `Inbound POST: ${JSON.stringify(body).slice(0, 200)}`,
+      });
 
       // Meta payload usually contains entry -> changes -> value -> messages / statuses
       if (body?.entry && Array.isArray(body.entry)) {
