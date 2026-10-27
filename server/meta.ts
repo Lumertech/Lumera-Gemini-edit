@@ -365,14 +365,19 @@ export async function handleMetaInboundCallAction(opts: {
           offerSdp: opts.offerSdp,
           publicIp: "34.46.39.52",
         }),
-        signal: AbortSignal.timeout(1500),
+        signal: AbortSignal.timeout(4000),
       });
       if (gwRes.ok) {
         const gwJson = (await gwRes.json()) as { sdpAnswer?: string };
-        if (gwJson?.sdpAnswer) sdpAnswer = gwJson.sdpAnswer;
+        if (gwJson?.sdpAnswer) {
+          sdpAnswer = gwJson.sdpAnswer;
+          console.log(`[Meta Inbound Call] Gateway SDP answer received for callId=${opts.callId}`);
+        }
+      } else {
+        console.warn(`[Meta Inbound Call] Gateway returned status ${gwRes.status} for callId=${opts.callId}`);
       }
-    } catch {
-      // fallback to local buildWebRtcSdpAnswer
+    } catch (gwErr) {
+      console.warn(`[Meta Inbound Call] Gateway fetch error for callId=${opts.callId}:`, gwErr);
     }
     if (!sdpAnswer) {
       sdpAnswer = buildWebRtcSdpAnswer(opts.offerSdp, "34.46.39.52");

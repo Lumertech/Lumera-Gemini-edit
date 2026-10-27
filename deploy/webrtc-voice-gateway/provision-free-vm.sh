@@ -36,13 +36,13 @@ echo "--> Checking Compute Engine API..."
 gcloud services enable compute.googleapis.com --project="${PROJECT_ID}"
 
 # 3. Create Firewall Rules for WebRTC UDP Media & TCP Signaling
-echo "--> Configuring Firewall Rules for WebRTC UDP Ports (10000-20000)..."
+echo "--> Configuring Firewall Rules for WebRTC UDP Ports (10000-65535)..."
 if ! gcloud compute firewall-rules describe lumera-allow-webrtc-udp --project="${PROJECT_ID}" >/dev/null 2>&1; then
   gcloud compute firewall-rules create lumera-allow-webrtc-udp \
     --project="${PROJECT_ID}" \
     --network=default \
     --action=ALLOW \
-    --rules=udp:10000-20000,udp:3478 \
+    --rules=udp:10000-65535,udp:3478 \
     --direction=INGRESS \
     --priority=1000 \
     --target-tags="${TAG}" \
