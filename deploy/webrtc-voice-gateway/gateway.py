@@ -14,7 +14,7 @@ import os
 import re
 import time
 from aiohttp import web
-from aiortc import RTCPeerConnection, RTCSessionDescription, AudioStreamTrack
+from aiortc import RTCPeerConnection, RTCSessionDescription, MediaStreamTrack
 import av
 from av import AudioFrame, AudioResampler
 import numpy as np
@@ -49,7 +49,7 @@ def load_audio_pcm(file_path: str, target_sample_rate: int = 48000) -> np.ndarra
         logger.error(f"Error loading audio PCM from {file_path}: {e}")
     return np.zeros(0, dtype=np.int16)
 
-class MayaVoiceTrack(AudioStreamTrack):
+class MayaVoiceTrack(MediaStreamTrack):
     """
     WebRTC Audio Track that streams Maya's voice greeting at exact 20ms intervals,
     then seamlessly transitions to continuous comfort noise / silence frames
