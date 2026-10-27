@@ -24,6 +24,7 @@ import { SANDBOX_FAKE_WABA_MESSAGE } from "../src/lib/metaStatus.ts";
 import type { SqlDatabase } from "./sql-engine.ts";
 import { dispatchPatientCloudText } from "./whatsapp-patient-dispatch.ts";
 import { processBotActionOrQuery, findRegisteredPatient } from "./whatsapp.ts";
+import { runGeminiVoiceReceptionist } from "./gemini-voice.ts";
 
 /** read and failed are terminal. delivered can still become read. */
 function isPendingOutboundStatus(status: string): boolean {
@@ -328,15 +329,34 @@ export async function dispatchInboundBotReply(
   );
 
   let botReply: { content: string; buttons?: string[]; media?: Record<string, unknown> } | null = null;
-  try {
-    botReply = await processBotActionOrQuery(textBody, fromPhone, patientName, conv || {}, db, {
-      tenantId,
-      sessionTenantId: tenantId,
-      phoneNumberId,
-      wabaId,
-    });
-  } catch (err) {
-    reportCaughtError(err, "meta.webhook.bot-reply.process");
+  if (textBody.startsWith("🎤 Voice") || textBody.startsWith("Voice Note:")) {
+    try {
+      const voiceRes = await runGeminiVoiceReceptionist({
+        message: textBody.replace(/^(🎤\s*Voice Note:\s*"?|Voice Note:\s*"?|"?$)/g, ""),
+        callerName: patientName,
+        callerPhone: fromPhone,
+        tenantId,
+      });
+      botReply = {
+        content: `🎤 *Maya (AI Clinic Receptionist)*:\n\n${voiceRes.speechText}`,
+        buttons: voiceRes.buttons,
+      };
+    } catch {
+      /* fallback to processBotActionOrQuery */
+    }
+  }
+
+  if (!botReply) {
+    try {
+      botReply = await processBotActionOrQuery(textBody, fromPhone, patientName, conv || {}, db, {
+        tenantId,
+        sessionTenantId: tenantId,
+        phoneNumberId,
+        wabaId,
+      });
+    } catch (err) {
+      reportCaughtError(err, "meta.webhook.bot-reply.process");
+    }
   }
 
   // Guaranteed fallback so a response is NEVER avoided
@@ -601,12 +621,13 @@ export function createMetaRouter(): Router {
               if (val?.messages && Array.isArray(val.messages)) {
                 for (const msg of val.messages) {
                   const fromPhone = String(msg.from || "").trim();
+                  const isAudio = msg.type === "audio" || msg.type === "voice";
                   const textBody =
                     msg.text?.body ||
                     msg.interactive?.button_reply?.title ||
                     msg.interactive?.list_reply?.title ||
                     msg.button?.text ||
-                    "[Media/Attachment]";
+                    (isAudio ? `🎤 Voice Note: "${msg.audio?.caption || msg.voice?.caption || "Clinical Consultation Request"}"` : "[Media/Attachment]");
 
                   let targetTenantId = inboundTenantId;
                   if (inboundTenantId === "tenant-lumera-main") {

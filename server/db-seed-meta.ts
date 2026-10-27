@@ -169,8 +169,13 @@ export function ensureMetaTechProviderAndPolicies(database: SqlDatabase) {
 
   // 4. Ensure Meta WhatsApp Templates exist in meta_templates
   const insertTemplate = database.prepare(`
-    INSERT OR IGNORE INTO meta_templates (id, tenant_id, waba_id, name, category, language, status, components, meta_template_id, rejection_reason, created_at, updated_at)
+    INSERT INTO meta_templates (id, tenant_id, waba_id, name, category, language, status, components, meta_template_id, rejection_reason, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      components = excluded.components,
+      status = excluded.status,
+      category = excluded.category,
+      updated_at = excluded.updated_at
   `);
 
     const standardTemplates = [
@@ -436,11 +441,11 @@ export function ensureMetaTechProviderAndPolicies(database: SqlDatabase) {
         language: "en",
         status: "APPROVED",
         components: JSON.stringify([
-          { type: "HEADER", format: "TEXT", text: "Welcome to {{1}}" },
+          { type: "HEADER", format: "TEXT", text: "Welcome to {{1}}", example: { header_text: ["Lumera Apex PolyClinic"] } },
           {
             type: "BODY",
-            text: "Hello {{2}}! 🙏 Thank you for contacting {{3}}. We provide 24/7 OPD consultation booking, specialist OPD schedules, and digital prescriptions. How may our clinical desk assist you today?",
-            example: { body_text: [["Lumera Apex PolyClinic", "Ravee", "Lumera Health"]] }
+            text: "Hello {{1}}! 🙏 Thank you for contacting {{2}}. We provide 24/7 OPD consultation booking, specialist OPD schedules, and digital prescriptions. How may our clinical desk assist you today?",
+            example: { body_text: [["Ravee", "Lumera Apex PolyClinic"]] }
           },
           { type: "FOOTER", text: "Lumera 24/7 Clinic Assistant" },
           {

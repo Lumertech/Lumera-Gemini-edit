@@ -958,7 +958,13 @@ function ensureClipAReminderFixture(database: SqlDatabase, now: string) {
     return;
   }
 
-  if (remindable(appointment)) return;
+  if (remindable(appointment)) {
+    database.prepare(`
+      DELETE FROM appointments
+      WHERE tenant_id = ? AND (patient_id = ? OR patient_phone = ?) AND id != ?
+    `).run(DEMO_TENANT_ID, patientId, CLIP_A_PHONE, String(appointment.id));
+    return;
+  }
   database.prepare(`
     UPDATE appointments
     SET tenant_id = ?, patient_id = ?, patient_name = ?, patient_phone = ?, doctor_id = ?, doctor_name = ?, specialty = ?,
@@ -976,5 +982,9 @@ function ensureClipAReminderFixture(database: SqlDatabase, now: string) {
     slot.timeSlot,
     String(appointment.id)
   );
+  database.prepare(`
+    DELETE FROM appointments
+    WHERE tenant_id = ? AND (patient_id = ? OR patient_phone = ?) AND id != ?
+  `).run(DEMO_TENANT_ID, patientId, CLIP_A_PHONE, String(appointment.id));
 }
 

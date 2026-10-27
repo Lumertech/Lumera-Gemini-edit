@@ -1657,8 +1657,13 @@ export function findRegisteredPatient(
 
     if (row && row.name && String(row.name).trim()) {
       const rawName = String(row.name).trim();
-      // Ignore generic placeholders
-      if (!/^patient(\s*\(\+?\d+\))?$/i.test(rawName)) {
+      // Ignore generic placeholders and test fixture names
+      if (
+        !/^patient(\s*\(\+?\d+\))?$/i.test(rawName) &&
+        rawName !== "A1 Test Recipient" &&
+        rawName !== "No Slot" &&
+        !rawName.startsWith("Test ")
+      ) {
         const cleaned = rawName.replace(/^(dr\.?|mr\.?|ms\.?|mrs\.?)\s+/i, "").trim();
         const firstName = cleaned.split(/\s+/)[0] || cleaned;
         return {
@@ -1702,15 +1707,31 @@ export async function processBotActionOrQuery(
 
   // Check if patient is recognized from the database
   const registered = findRegisteredPatient(db, phone, tenantId);
-  const isRegistered = Boolean(registered && registered.firstName);
-  const firstName = registered?.firstName || (
-    patientName && !/^patient(\s*\(\+?\d+\))?$/i.test(patientName)
-      ? patientName.replace(/^(dr\.?|mr\.?|ms\.?|mrs\.?)\s+/i, "").trim().split(/\s+/)[0]
-      : ""
-  );
-  const effectivePatientName = registered?.name || (
-    patientName && !/^patient(\s*\(\+?\d+\))?$/i.test(patientName) ? patientName : (firstName || "there")
-  );
+  const convPatientName = String(conv?.patient_name || "").trim();
+  const validConvName =
+    convPatientName &&
+    !/^patient(\s*\(\+?\d+\))?$/i.test(convPatientName) &&
+    convPatientName !== "A1 Test Recipient" &&
+    convPatientName !== "No Slot" &&
+    !convPatientName.startsWith("Test ")
+      ? convPatientName
+      : "";
+  const validParamName =
+    patientName &&
+    !/^patient(\s*\(\+?\d+\))?$/i.test(patientName) &&
+    patientName !== "A1 Test Recipient" &&
+    patientName !== "No Slot" &&
+    !patientName.startsWith("Test ")
+      ? patientName
+      : "";
+
+  const effectivePatientName =
+    registered?.name || validConvName || validParamName || "there";
+  const isRegistered = Boolean(registered?.firstName || validConvName || validParamName);
+  const firstName =
+    registered?.firstName ||
+    (validConvName ? validConvName.replace(/^(dr\.?|mr\.?|ms\.?|mrs\.?)\s+/i, "").trim().split(/\s+/)[0] : "") ||
+    (validParamName ? validParamName.replace(/^(dr\.?|mr\.?|ms\.?|mrs\.?)\s+/i, "").trim().split(/\s+/)[0] : "");
 
   // Intake state check from conversation tags
   const rawTags = (conv?.tags as string) || "[]";

@@ -102,49 +102,70 @@ export function findActiveAppointment(opts: {
   }
 
   const db = getDb();
-  if (opts.patientId && opts.date) {
+  if (opts.patientId) {
+    if (opts.date) {
+      const row = opts.doctorId
+        ? (db
+            .prepare(
+              `SELECT * FROM appointments
+               WHERE tenant_id = ? AND patient_id = ? AND date = ? AND doctor_id = ? AND ${ACTIVE_APPOINTMENT_SQL}
+               ORDER BY created_at DESC LIMIT 1`
+            )
+            .get(opts.tenantId, opts.patientId, opts.date, opts.doctorId, ...HIDDEN_AMBIENT_SOURCES) as Record<string, unknown> | undefined)
+        : (db
+            .prepare(
+              `SELECT * FROM appointments
+               WHERE tenant_id = ? AND patient_id = ? AND date = ? AND ${ACTIVE_APPOINTMENT_SQL}
+               ORDER BY created_at DESC LIMIT 1`
+            )
+            .get(opts.tenantId, opts.patientId, opts.date, ...HIDDEN_AMBIENT_SOURCES) as Record<string, unknown> | undefined);
+      if (row) return withLivePatientPhone(opts.tenantId, row);
+      return undefined;
+    }
+
     const row = opts.doctorId
       ? (db
           .prepare(
             `SELECT * FROM appointments
-             WHERE tenant_id = ? AND patient_id = ? AND date = ? AND doctor_id = ? AND ${ACTIVE_APPOINTMENT_SQL}
-             ORDER BY created_at DESC LIMIT 1`
+             WHERE tenant_id = ? AND patient_id = ? AND doctor_id = ? AND ${ACTIVE_APPOINTMENT_SQL}
+             ORDER BY date ASC, created_at DESC LIMIT 1`
           )
-          .get(opts.tenantId, opts.patientId, opts.date, opts.doctorId, ...HIDDEN_AMBIENT_SOURCES) as Record<string, unknown> | undefined)
+          .get(opts.tenantId, opts.patientId, opts.doctorId, ...HIDDEN_AMBIENT_SOURCES) as Record<string, unknown> | undefined)
       : (db
           .prepare(
             `SELECT * FROM appointments
-             WHERE tenant_id = ? AND patient_id = ? AND date = ? AND ${ACTIVE_APPOINTMENT_SQL}
-             ORDER BY created_at DESC LIMIT 1`
+             WHERE tenant_id = ? AND patient_id = ? AND ${ACTIVE_APPOINTMENT_SQL}
+             ORDER BY date ASC, created_at DESC LIMIT 1`
           )
-          .get(opts.tenantId, opts.patientId, opts.date, ...HIDDEN_AMBIENT_SOURCES) as Record<string, unknown> | undefined);
+          .get(opts.tenantId, opts.patientId, ...HIDDEN_AMBIENT_SOURCES) as Record<string, unknown> | undefined);
     if (row) return withLivePatientPhone(opts.tenantId, row);
   }
 
-  if (opts.patientId) {
-    const row = db
-      .prepare(
-        `SELECT * FROM appointments
-         WHERE tenant_id = ? AND patient_id = ? AND ${ACTIVE_APPOINTMENT_SQL}
-         ORDER BY date ASC, created_at DESC LIMIT 1`
-      )
-      .get(opts.tenantId, opts.patientId, ...HIDDEN_AMBIENT_SOURCES) as Record<string, unknown> | undefined;
-    return withLivePatientPhone(opts.tenantId, row);
-  }
-
   if (opts.patientPhone) {
+    const dateClause = opts.date ? "AND date = ?" : "";
+    const params = opts.date
+      ? [opts.tenantId, opts.date, ...HIDDEN_AMBIENT_SOURCES]
+      : [opts.tenantId, ...HIDDEN_AMBIENT_SOURCES];
     const rows = db
       .prepare(
         `SELECT * FROM appointments
-         WHERE tenant_id = ? AND ${ACTIVE_APPOINTMENT_SQL}
+         WHERE tenant_id = ? ${dateClause} AND ${ACTIVE_APPOINTMENT_SQL}
          ORDER BY date ASC, created_at DESC`
       )
-      .all(opts.tenantId, ...HIDDEN_AMBIENT_SOURCES) as Record<string, unknown>[];
-    const bySnapshot = rows.find((row) => phonesMatch(String(row.patient_phone || ""), opts.patientPhone || ""));
+      .all(...params) as Record<string, unknown>[];
+    const bySnapshot = rows.find(
+      (row) =>
+        phonesMatch(String(row.patient_phone || ""), opts.patientPhone || "") &&
+        (!opts.doctorId || String(row.doctor_id || "") === opts.doctorId)
+    );
     if (bySnapshot) return withLivePatientPhone(opts.tenantId, bySnapshot);
     const patient = findPatientByPhoneInTenant(opts.tenantId, opts.patientPhone);
     if (!patient?.id) return undefined;
-    const byPatient = rows.find((row) => String(row.patient_id || "") === String(patient.id));
+    const byPatient = rows.find(
+      (row) =>
+        String(row.patient_id || "") === String(patient.id) &&
+        (!opts.doctorId || String(row.doctor_id || "") === opts.doctorId)
+    );
     return withLivePatientPhone(opts.tenantId, byPatient);
   }
 
@@ -185,7 +206,14 @@ export function bookWhatsAppAppointment(opts: {
   });
   const mappedPatient = mapPatient(patient);
   const date = String(opts.date || "").trim() || clinicCalendarDate(new Date(), tenantTimezone(tenantId));
-  const timeSlot = String(opts.timeSlot || "").trim() || defaultTimeSlot();
+  const timeSlot =
+    String(opts.timeSlot || "").trim() ||
+    getNextAvailableDoctorSlot({
+      tenantId,
+      doctorId: doctor ? String(doctor.id) : opts.doctorId,
+      doctorName: doctor ? String(doctor.name) : opts.doctorName,
+      date,
+    });
 
   const existing = findActiveAppointment({
     tenantId,
@@ -223,6 +251,62 @@ export function bookWhatsAppAppointment(opts: {
     `${appointment.patientName} token ${appointment.tokenNumber} via WhatsApp`
   );
   return { appointment, reused: false, patient: mappedPatient };
+}
+
+export function getNextAvailableDoctorSlot(opts: {
+  tenantId: string;
+  doctorId?: string;
+  doctorName?: string;
+  date?: string;
+}): string {
+  const db = getDb();
+  const tenantId = String(opts.tenantId || "").trim();
+  const date = String(opts.date || "").trim() || clinicCalendarDate(new Date(), tenantTimezone(tenantId));
+
+  const doctor = findDoctor({
+    tenantId,
+    doctorId: opts.doctorId,
+    doctorName: opts.doctorName,
+  });
+
+  const docId = doctor ? String(doctor.id) : "";
+  let count = 0;
+  try {
+    const existing = db
+      .prepare(
+        `SELECT count(*) as cnt FROM appointments
+         WHERE tenant_id = ? AND date = ? AND (doctor_id = ? OR doctor_name = ?)
+           AND status NOT IN ('Completed', 'Cancelled', 'No-Show')`
+      )
+      .get(tenantId, date, docId, String(doctor?.name || opts.doctorName || "")) as { cnt?: number } | undefined;
+    count = Number(existing?.cnt || 0);
+  } catch {
+    count = 0;
+  }
+
+  let startHour = 9;
+  let startMinute = 0;
+  if (doctor?.opd_timing) {
+    const match = String(doctor.opd_timing).match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+    if (match) {
+      let h = parseInt(match[1], 10);
+      const m = parseInt(match[2], 10);
+      const ampm = match[3].toUpperCase();
+      if (ampm === "PM" && h < 12) h += 12;
+      if (ampm === "AM" && h === 12) h = 0;
+      startHour = h;
+      startMinute = m;
+    }
+  }
+
+  const totalMins = startHour * 60 + startMinute + count * 15;
+  const slotHour = Math.floor(totalMins / 60) % 24;
+  const slotMin = totalMins % 60;
+  const ampm = slotHour >= 12 ? "PM" : "AM";
+  const displayHour = slotHour % 12 === 0 ? 12 : slotHour % 12;
+  const displayMin = slotMin < 10 ? `0${slotMin}` : `${slotMin}`;
+
+  return `${displayHour < 10 ? "0" + displayHour : displayHour}:${displayMin} ${ampm}`;
 }
 
 function defaultTimeSlot(): string {
