@@ -16,8 +16,11 @@ from aiohttp import web
 from aiortc import RTCPeerConnection, RTCSessionDescription
 from aiortc.contrib.media import MediaPlayer
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logging.basicConfig(level=logging.DEBUG, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("lumera-voice-gateway")
+logging.getLogger("aiohttp.access").setLevel(logging.INFO)
+logging.getLogger("aiortc").setLevel(logging.DEBUG)
+logging.getLogger("aioice").setLevel(logging.DEBUG)
 
 PORT = int(os.environ.get("PORT", 3000))
 PUBLIC_IP = os.environ.get("PUBLIC_IP", "34.46.39.52")
@@ -125,9 +128,16 @@ async def handle_answer_offer(request):
         except Exception as e:
             logger.error(f"[{call_id}] Error opening audio player: {e}")
 
+    logger.info(f"[{call_id}] OFFER SDP:\n{offer_sdp}")
+
     @pc.on("connectionstatechange")
     def on_connection_state_change():
         logger.info(f"[{call_id}] Connection state changed to: {pc.connectionState}")
+        for t in pc.getTransceivers():
+            if t.receiver and t.receiver.transport:
+                logger.info(f"[{call_id}] Receiver DTLS state: {t.receiver.transport.state}")
+            if t.sender and t.sender.transport:
+                logger.info(f"[{call_id}] Sender DTLS state: {t.sender.transport.state}")
         if pc.connectionState in ["failed", "closed"]:
             asyncio.create_task(cleanup_call(call_id))
 
@@ -151,6 +161,7 @@ async def handle_answer_offer(request):
     # Replace local candidate IPs with VM's public IP
     raw_sdp = pc.localDescription.sdp
     final_sdp = fix_sdp_candidates(raw_sdp, public_ip)
+    logger.info(f"[{call_id}] GENERATED ANSWER SDP:\n{final_sdp}")
 
     # Store active call
     active_calls[call_id] = {
