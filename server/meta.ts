@@ -333,6 +333,8 @@ export function recordWebhookDebugLog(entry: WebhookDebugEntry) {
   }
 }
 
+const cachedCallAnswers = new Map<string, string>();
+
 export async function handleMetaInboundCallAction(opts: {
   phoneNumberId: string;
   callId: string;
@@ -352,8 +354,8 @@ export async function handleMetaInboundCallAction(opts: {
   }
 
   const action = opts.action || "accept";
-  let sdpAnswer = buildWebRtcSdpAnswer(opts.offerSdp, "34.46.39.52");
-  if (action === "accept" || action === "pre_accept") {
+  let sdpAnswer = cachedCallAnswers.get(opts.callId) || "";
+  if (!sdpAnswer && (action === "accept" || action === "pre_accept")) {
     try {
       const gwRes = await fetch("http://34.46.39.52:3000/webrtc/answer-offer", {
         method: "POST",
@@ -372,6 +374,10 @@ export async function handleMetaInboundCallAction(opts: {
     } catch {
       // fallback to local buildWebRtcSdpAnswer
     }
+    if (!sdpAnswer) {
+      sdpAnswer = buildWebRtcSdpAnswer(opts.offerSdp, "34.46.39.52");
+    }
+    cachedCallAnswers.set(opts.callId, sdpAnswer);
   }
 
   try {

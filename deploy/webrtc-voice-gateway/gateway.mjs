@@ -178,6 +178,19 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
+        if (activeCalls.has(callId)) {
+          const existing = activeCalls.get(callId);
+          console.log(`[Reusing Call Session] callId: ${callId} port: ${existing.rtpPort}`);
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({
+            ok: true,
+            callId,
+            rtpPort: existing.rtpPort,
+            sdpAnswer: existing.sdpAnswer,
+          }));
+          return;
+        }
+
         // Allocate a dedicated UDP port in range 10000-20000 for this call
         const rtpPort = 10000 + (Math.floor(Math.random() * 9000));
 
@@ -192,6 +205,7 @@ const server = http.createServer(async (req, res) => {
           iceConnected: false,
           pingsSent: 0,
           startTime: Date.now(),
+          sdpAnswer: "",
         };
 
         udpSocket.on("message", (msg, rinfo) => {
@@ -219,9 +233,10 @@ const server = http.createServer(async (req, res) => {
           });
         });
 
-        // Parse Meta's remote candidate targets and credentials
+        // Parse Meta's remote candidate targets and credentials (filter for IPv4)
         const { targets, metaUfrag, metaPwd } = parseRemoteCandidates(offerSdp);
-        console.log(`[Meta ICE Targets] Call ${callId} targets:`, targets, `metaUfrag: ${metaUfrag}`);
+        const ipv4Targets = targets.filter((t) => !t.ip.includes(":"));
+        console.log(`[Meta ICE Targets] Call ${callId} targets:`, ipv4Targets, `metaUfrag: ${metaUfrag}`);
 
         // Extract mid & audio payload type from offer
         let mid = "audio";
@@ -240,7 +255,7 @@ const server = http.createServer(async (req, res) => {
         const pwd = `pwd${Math.random().toString(36).slice(2, 12)}${Math.random().toString(36).slice(2, 12)}`;
 
         // Send periodic STUN Binding Requests to Meta ICE-lite candidates
-        if (targets.length > 0) {
+        if (ipv4Targets.length > 0) {
           const stunPing = buildStunBindingRequest(metaUfrag, ufrag);
           const pingInterval = setInterval(() => {
             callState.pingsSent++;
@@ -248,7 +263,7 @@ const server = http.createServer(async (req, res) => {
               clearInterval(pingInterval);
               return;
             }
-            for (const target of targets) {
+            for (const target of ipv4Targets) {
               udpSocket.send(stunPing, target.port, target.ip, (err) => {
                 if (err) console.warn(`[STUN Ping Error to ${target.ip}:${target.port}]`, err);
               });
@@ -287,6 +302,7 @@ const server = http.createServer(async (req, res) => {
           "",
         ].join("\r\n");
 
+        callState.sdpAnswer = sdpAnswer;
         activeCalls.set(callId, callState);
 
         res.writeHead(200, { "Content-Type": "application/json" });
