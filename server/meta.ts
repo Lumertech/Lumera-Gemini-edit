@@ -380,6 +380,7 @@ export async function handleMetaInboundCallAction(opts: {
 
     if (action === "accept" || action === "pre_accept") {
       payload.session = {
+        type: "answer",
         sdp_type: "answer",
         sdp: sdpAnswer,
       };

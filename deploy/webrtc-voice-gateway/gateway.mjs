@@ -13,14 +13,57 @@ const CLOUD_RUN_URL = process.env.CLOUD_RUN_URL || "https://www.mylumera.in";
 // 1. In-memory Active Call State
 const activeCalls = new Map();
 
-// Helper: Handle RFC 5389 / 8489 STUN Binding Requests from Meta WhatsApp Media Servers
+// Helper: Build RFC 5389 / RFC 8445 STUN Binding Request (Full ICE Agent -> Meta ICE-lite)
+function buildStunBindingRequest(metaUfrag, localUfrag) {
+  const transactionId = Buffer.alloc(12);
+  for (let i = 0; i < 12; i++) transactionId[i] = Math.floor(Math.random() * 256);
+
+  const usernameStr = metaUfrag && localUfrag ? `${metaUfrag}:${localUfrag}` : "";
+  const attrs = [];
+
+  if (usernameStr) {
+    const userBuf = Buffer.from(usernameStr, "utf8");
+    const paddedLen = Math.ceil(userBuf.length / 4) * 4;
+    const attr = Buffer.alloc(4 + paddedLen);
+    attr.writeUInt16BE(0x0006, 0); // Attribute: USERNAME
+    attr.writeUInt16BE(userBuf.length, 2);
+    userBuf.copy(attr, 4);
+    attrs.push(attr);
+  }
+
+  // ICE-CONTROLLING (0x802A, length 8) - Required when controlling ICE against ICE-lite
+  const iceCtrl = Buffer.alloc(12);
+  iceCtrl.writeUInt16BE(0x802a, 0);
+  iceCtrl.writeUInt16BE(8, 2);
+  Buffer.from("lumera01").copy(iceCtrl, 4);
+  attrs.push(iceCtrl);
+
+  // USE-CANDIDATE (0x0025, length 0) - Nominates candidate to Meta ICE-lite agent
+  const useCand = Buffer.alloc(4);
+  useCand.writeUInt16BE(0x0025, 0);
+  useCand.writeUInt16BE(0, 2);
+  attrs.push(useCand);
+
+  const allAttrs = Buffer.concat(attrs);
+
+  // 20-byte STUN Header
+  const header = Buffer.alloc(20);
+  header.writeUInt16BE(0x0001, 0); // Message Type: Binding Request
+  header.writeUInt16BE(allAttrs.length, 2);
+  header.writeUInt32BE(0x2112a442, 4); // Magic Cookie
+  transactionId.copy(header, 8);
+
+  return Buffer.concat([header, allAttrs]);
+}
+
+// Helper: Handle incoming STUN packets (Binding Request or Success Response)
 function handleStunPacket(socket, msg, rinfo) {
   if (msg.length < 20) return false;
   const msgType = msg.readUInt16BE(0);
   const magicCookie = msg.readUInt32BE(4);
   if (magicCookie !== 0x2112a442) return false;
 
-  // STUN Binding Request = 0x0001
+  // STUN Binding Request = 0x0001 -> Reply with 0x0101
   if (msgType === 0x0001) {
     const transactionId = msg.subarray(8, 20);
 
@@ -53,6 +96,36 @@ function handleStunPacket(socket, msg, rinfo) {
   return false;
 }
 
+// Helper: Parse remote candidate IP/ports and ICE credentials from Meta's offer SDP
+function parseRemoteCandidates(offerSdp) {
+  const targets = [];
+  if (!offerSdp) return { targets, metaUfrag: "", metaPwd: "" };
+
+  // 1. Check all candidate lines
+  const candRegex = /a=candidate:\S+\s+\d+\s+UDP\s+\d+\s+(\S+)\s+(\d+)/gi;
+  let match;
+  while ((match = candRegex.exec(offerSdp)) !== null) {
+    targets.push({ ip: match[1], port: parseInt(match[2], 10) });
+  }
+
+  // 2. Check connection line & audio media line
+  const cMatch = offerSdp.match(/c=IN\s+IP4\s+(\S+)/i);
+  const mMatch = offerSdp.match(/m=audio\s+(\d+)/i);
+  if (cMatch && mMatch) {
+    targets.push({ ip: cMatch[1], port: parseInt(mMatch[1], 10) });
+  }
+
+  // Extract remote ufrag & pwd
+  const ufragMatch = offerSdp.match(/a=ice-ufrag:([^\r\n]+)/i);
+  const pwdMatch = offerSdp.match(/a=ice-pwd:([^\r\n]+)/i);
+
+  return {
+    targets,
+    metaUfrag: ufragMatch ? ufragMatch[1].trim() : "",
+    metaPwd: pwdMatch ? pwdMatch[1].trim() : "",
+  };
+}
+
 // 2. HTTP Signaling & Management Server
 const server = http.createServer(async (req, res) => {
   // CORS
@@ -81,6 +154,7 @@ const server = http.createServer(async (req, res) => {
         callerPhone: c.callerPhone,
         rtpPort: c.rtpPort,
         iceConnected: c.iceConnected,
+        pingsSent: c.pingsSent,
         durationSeconds: Math.round((Date.now() - c.startTime) / 1000),
       })),
       time: new Date().toISOString(),
@@ -89,7 +163,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   // POST /webrtc/answer-offer
-  // Generates compliant WebRTC SDP Answer and opens UDP socket for Meta RTP/ICE
+  // Generates compliant WebRTC SDP Answer, opens UDP socket, and initiates ICE controlling checks to Meta ICE-lite
   if (req.method === "POST" && url.pathname === "/webrtc/answer-offer") {
     let bodyText = "";
     req.on("data", (chunk) => { bodyText += chunk; });
@@ -107,7 +181,7 @@ const server = http.createServer(async (req, res) => {
         // Allocate a dedicated UDP port in range 10000-20000 for this call
         const rtpPort = 10000 + (Math.floor(Math.random() * 9000));
 
-        // Create and bind UDP socket immediately so Meta ICE STUN checks succeed
+        // Create and bind UDP socket immediately
         const udpSocket = dgram.createSocket("udp4");
         const callState = {
           callId,
@@ -116,12 +190,21 @@ const server = http.createServer(async (req, res) => {
           publicIp,
           udpSocket,
           iceConnected: false,
+          pingsSent: 0,
           startTime: Date.now(),
         };
 
         udpSocket.on("message", (msg, rinfo) => {
-          if (handleStunPacket(udpSocket, msg, rinfo)) {
-            callState.iceConnected = true;
+          if (msg.length >= 20) {
+            const msgType = msg.readUInt16BE(0);
+            if (msgType === 0x0101) {
+              callState.iceConnected = true;
+              console.log(`[ICE Connected via Meta Reply] Received STUN 0x0101 from Meta at ${rinfo.address}:${rinfo.port}`);
+            } else if (msgType === 0x0001) {
+              if (handleStunPacket(udpSocket, msg, rinfo)) {
+                callState.iceConnected = true;
+              }
+            }
           }
         });
 
@@ -136,13 +219,9 @@ const server = http.createServer(async (req, res) => {
           });
         });
 
-        // Auto cleanup after 15 minutes max
-        setTimeout(() => {
-          try {
-            udpSocket.close();
-            activeCalls.delete(callId);
-          } catch {}
-        }, 15 * 60 * 1000);
+        // Parse Meta's remote candidate targets and credentials
+        const { targets, metaUfrag, metaPwd } = parseRemoteCandidates(offerSdp);
+        console.log(`[Meta ICE Targets] Call ${callId} targets:`, targets, `metaUfrag: ${metaUfrag}`);
 
         // Extract mid & audio payload type from offer
         let mid = "0";
@@ -156,6 +235,31 @@ const server = http.createServer(async (req, res) => {
 
         const ufrag = `lumera${Math.random().toString(36).slice(2, 8)}`;
         const pwd = `pwd${Math.random().toString(36).slice(2, 12)}${Math.random().toString(36).slice(2, 12)}`;
+
+        // Send periodic STUN Binding Requests to Meta ICE-lite candidates
+        if (targets.length > 0) {
+          const stunPing = buildStunBindingRequest(metaUfrag, ufrag);
+          const pingInterval = setInterval(() => {
+            callState.pingsSent++;
+            if (callState.pingsSent > 15 || callState.iceConnected) {
+              clearInterval(pingInterval);
+              return;
+            }
+            for (const target of targets) {
+              udpSocket.send(stunPing, target.port, target.ip, (err) => {
+                if (err) console.warn(`[STUN Ping Error to ${target.ip}:${target.port}]`, err);
+              });
+            }
+          }, 250);
+        }
+
+        // Auto cleanup after 15 minutes max
+        setTimeout(() => {
+          try {
+            udpSocket.close();
+            activeCalls.delete(callId);
+          } catch {}
+        }, 15 * 60 * 1000);
 
         // RFC 8866 compliant SDP Answer matching Meta WhatsApp Opus audio requirements
         const sdpAnswer = [
@@ -203,5 +307,5 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, "0.0.0.0", () => {
-  console.log(`[Lumera Voice Gateway] Listening on 0.0.0.0:${PORT} (UDP WebRTC Relay & STUN ready)`);
+  console.log(`[Lumera Voice Gateway] Listening on 0.0.0.0:${PORT} (UDP WebRTC Relay & Full ICE Controlling ready)`);
 });
