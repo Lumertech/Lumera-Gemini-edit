@@ -877,23 +877,9 @@ export function createMetaRouter(): Router {
                     now,
                   });
 
-                  // Answer the incoming WhatsApp voice call in 2 rings:
-                  // 1 ring is ~2.5s; 2 rings is ~5s.
-                  // We pre-accept immediately on ring 1 to establish early session progress, then accept at 4500ms (2 rings).
                   if (callId && phoneNumberId) {
                     void (async () => {
                       try {
-                        // Ring 1: pre_accept
-                        await handleMetaInboundCallAction({
-                          phoneNumberId,
-                          callId,
-                          action: "pre_accept",
-                          offerSdp,
-                        });
-
-                        // Ring 2: wait 4.5 seconds (2 rings), then accept and answer
-                        await new Promise((resolve) => setTimeout(resolve, 4500));
-
                         await handleMetaInboundCallAction({
                           phoneNumberId,
                           callId,
@@ -901,7 +887,7 @@ export function createMetaRouter(): Router {
                           offerSdp,
                         });
                       } catch (callAnswerErr) {
-                        console.warn("[Meta Inbound Call 2-Ring Answer Error]", callAnswerErr);
+                        console.warn("[Meta Inbound Call Answer Error]", callAnswerErr);
                       }
                     })();
                   }
