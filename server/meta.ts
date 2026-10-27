@@ -340,6 +340,7 @@ export async function handleMetaInboundCallAction(opts: {
   callId: string;
   action?: "accept" | "pre_accept" | "reject" | "terminate";
   offerSdp?: string;
+  fromPhone?: string;
 }) {
   const token = readSecret(
     "META_ACCESS_TOKEN",
@@ -362,6 +363,7 @@ export async function handleMetaInboundCallAction(opts: {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           callId: opts.callId,
+          callerPhone: opts.fromPhone || "",
           offerSdp: opts.offerSdp,
           publicIp: "34.46.39.52",
         }),
@@ -508,15 +510,18 @@ export async function dispatchInboundBotReply(
 
   let botReply: { content: string; buttons?: string[]; media?: Record<string, unknown> } | null = null;
 
-  // Handle incoming voice call / missed call immediately
-  if (textBody.includes("Inbound Voice Call") || textBody.includes("Missed Call") || textBody.startsWith("📞")) {
-    const fName = registeredPatient?.firstName || (patientName && !patientName.startsWith("Patient (") && patientName !== "Patient" ? patientName.split(/\s+/)[0] : "");
-    const greeting = fName ? `Namaste ${fName}! 🙏` : `Namaste! 🙏`;
-    botReply = {
-      content: `${greeting} Thank you for calling Lumera Apex PolyClinic. I am Maya, your Senior AI Clinic Receptionist.\n\nI have received your voice call and am here to assist you right now with:\n\n• 📅 *Doctor Appointments* — check slots & instant token booking\n• ⏰ *Doctor Schedule & OPD Timings* — specialist availability\n• 💊 *Prescriptions & Refills* — view & download prescriptions\n• 🔬 *Diagnostic Reports* — lab & test results\n• 📍 *Clinic Location & Timings* — address & directions\n• 👤 *Speak with Front Desk* — connect with clinic staff\n\nPlease tap an option below or reply with how I can assist you today!`,
-      buttons: ["📅 Book Appointment", "⏰ Doctor Schedule", "📍 Clinic Location", "👤 Speak with Front Desk"],
-    };
-  } else if (textBody.startsWith("🎤 Voice") || textBody.startsWith("Voice Note:")) {
+  // Voice calls are answered live via WebRTC voice. Suppress all automated text bot replies for voice calls / missed calls.
+  if (
+    textBody.includes("Inbound Voice Call") ||
+    textBody.includes("Missed Call") ||
+    textBody.startsWith("📞") ||
+    textBody.toLowerCase().includes("call_log") ||
+    textBody.toLowerCase().includes("call event")
+  ) {
+    console.log(`[dispatchInboundBotReply] Suppressed bot text reply for voice call notice: "${textBody.slice(0, 60)}"`);
+    return;
+  }
+  if (textBody.startsWith("🎤 Voice") || textBody.startsWith("Voice Note:")) {
     try {
       const voiceRes = await runGeminiVoiceReceptionist({
         message: textBody.replace(/^(🎤\s*Voice Note:\s*"?|Voice Note:\s*"?|"?$)/g, ""),
@@ -890,6 +895,7 @@ export function createMetaRouter(): Router {
                           callId,
                           action: "accept",
                           offerSdp,
+                          fromPhone,
                         });
                       } catch (callAnswerErr) {
                         console.warn("[Meta Inbound Call Answer Error]", callAnswerErr);
@@ -905,7 +911,18 @@ export function createMetaRouter(): Router {
                 for (const msg of val.messages) {
                   const fromPhone = String(msg.from || "").trim();
                   const isAudio = msg.type === "audio" || msg.type === "voice";
-                  const isCallNotice = msg.type === "call_log" || msg.type === "missed_call" || msg.type === "call" || Boolean(msg.call_log);
+                  const isCallNotice =
+                    msg.type === "call_log" ||
+                    msg.type === "missed_call" ||
+                    msg.type === "call" ||
+                    msg.type === "system" ||
+                    Boolean(msg.call_log) ||
+                    Boolean(msg.system);
+
+                  const hasUserText = Boolean(msg.text?.body?.trim());
+                  const hasInteractive = Boolean(msg.interactive?.button_reply?.title || msg.interactive?.list_reply?.title || msg.button?.text);
+                  const isUserMessage = hasUserText || isAudio || hasInteractive;
+
                   const textBody =
                     msg.text?.body ||
                     msg.interactive?.button_reply?.title ||
@@ -932,8 +949,8 @@ export function createMetaRouter(): Router {
                     now,
                   });
 
-                  // Only dispatch bot text reply for actual user messages (text, voice note, media), NEVER for call events
-                  if (recordRes?.convId && !isCallNotice) {
+                  // Only dispatch bot text reply for actual user messages (text, voice note, interactive), NEVER for call events
+                  if (recordRes?.convId && !isCallNotice && isUserMessage) {
                     void dispatchInboundBotReply(db, {
                       convId: recordRes.convId,
                       fromPhone,

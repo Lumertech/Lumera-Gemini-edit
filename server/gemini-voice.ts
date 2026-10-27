@@ -670,10 +670,40 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
   app.post("/api/whatsapp/voice-call", async (req: Request, res: Response) => {
     try {
       const from = String(req.body?.from || req.body?.phone || "+919999973271").trim();
-      const message = String(req.body?.message || req.body?.transcript || req.body?.text || "Hello").trim();
+      let message = String(req.body?.message || req.body?.transcript || req.body?.text || "").trim();
       const callerName = String(req.body?.callerName || "Patient").trim();
       const language = String(req.body?.language || "English").trim();
       const tenantId = String(req.body?.tenantId || "tenant-lumera-main").trim();
+
+      // If raw audio is sent from Voice Gateway, transcribe using Gemini on Vertex AI Mumbai
+      if (!message && req.body?.audioBase64) {
+        try {
+          const ai = getGenAI?.();
+          if (ai) {
+            const cleanBase64 = String(req.body.audioBase64).replace(/^data:audio\/\w+;base64,/, "");
+            const mimeType = String(req.body.mimeType || "audio/wav");
+            const response = await ai.models.generateContent({
+              model: vertexGeminiModel(),
+              contents: [
+                {
+                  inlineData: {
+                    mimeType,
+                    data: cleanBase64,
+                  },
+                },
+                {
+                  text: "Transcribe this patient caller speech accurately in the spoken language (English, Hindi, Hinglish, Marathi, Tamil, etc.). Return only the exact transcription text without any markdown or quotes.",
+                },
+              ],
+            });
+            message = response.text?.trim() || "";
+            console.log(`[Voice Transcription] Transcribed caller audio: "${message}"`);
+          }
+        } catch (transcribeErr) {
+          console.error("[Voice Transcription Error]", transcribeErr);
+        }
+      }
+      if (!message) message = "Hello";
 
       const result = await runGeminiVoiceReceptionist({
         message,
@@ -731,12 +761,19 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
         console.warn("[Voice Call DB Record Error]", dbErr);
       }
 
-      // Also trigger outbound WhatsApp interactive message if live phone number is provided
-      if (from.startsWith("+91") || from.startsWith("91")) {
+      // ONLY send post-call WhatsApp text confirmation if an appointment was booked, rescheduled, or cancelled
+      const isBookingOrChange =
+        result.intent === "BOOKING" ||
+        result.intent === "RESCHEDULE" ||
+        result.intent === "CANCELLATION" ||
+        Boolean((result as any).appointment);
+
+      if (isBookingOrChange && (from.startsWith("+91") || from.startsWith("91"))) {
+        const confirmHeader = result.intent === "CANCELLATION" ? "❌ *Appointment Cancellation Confirmation*" : "📅 *Appointment Confirmation*";
         void dispatchPatientCloudText({
           tenantId,
           to: from,
-          textBody: `🎤 *Maya (AI Clinic Receptionist)*:\n\n${result.speechText}`,
+          textBody: `${confirmHeader}\n\n${result.speechText}\n\n_Thank you for calling Lumera Clinic._`,
           buttons: result.buttons,
         }).catch((err) => console.error("[Voice Outbound WhatsApp Error]", err));
       }
