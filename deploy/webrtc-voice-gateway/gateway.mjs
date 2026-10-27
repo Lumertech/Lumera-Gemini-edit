@@ -224,11 +224,14 @@ const server = http.createServer(async (req, res) => {
         console.log(`[Meta ICE Targets] Call ${callId} targets:`, targets, `metaUfrag: ${metaUfrag}`);
 
         // Extract mid & audio payload type from offer
-        let mid = "0";
+        let mid = "audio";
         let pt = "111";
         if (offerSdp) {
           const midMatch = offerSdp.match(/a=mid:([^\r\n]+)/);
+          const bundleMatch = offerSdp.match(/a=group:BUNDLE\s+([^\r\n]+)/);
           if (midMatch) mid = midMatch[1].trim();
+          else if (bundleMatch) mid = bundleMatch[1].trim();
+
           const mMatch = offerSdp.match(/m=audio\s+\d+\s+UDP\/TLS\/RTP\/SAVPF\s+(\d+)/);
           if (mMatch) pt = mMatch[1].trim();
         }
@@ -274,13 +277,13 @@ const server = http.createServer(async (req, res) => {
           `a=ice-ufrag:${ufrag}`,
           `a=ice-pwd:${pwd}`,
           "a=fingerprint:SHA-256 AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99",
-          "a=setup:active",
+          "a=setup:passive",
           `a=mid:${mid}`,
           "a=sendrecv",
           "a=rtcp-mux",
           `a=rtpmap:${pt} opus/48000/2`,
           `a=fmtp:${pt} minptime=10;useinbandfec=1`,
-          `a=candidate:1 1 UDP 2122260223 ${publicIp} ${rtpPort} typ host`,
+          `a=candidate:1 1 udp 2122260223 ${publicIp} ${rtpPort} typ host generation 0`,
           "",
         ].join("\r\n");
 

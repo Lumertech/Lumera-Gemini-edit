@@ -266,11 +266,14 @@ export function getVoiceGatewayIp(): string {
 }
 
 export function buildWebRtcSdpAnswer(offerSdp?: string, gatewayIp?: string): string {
-  let mid = "0";
+  let mid = "audio";
   let pt = "111";
   if (offerSdp) {
     const midMatch = offerSdp.match(/a=mid:([^\r\n]+)/);
+    const bundleMatch = offerSdp.match(/a=group:BUNDLE\s+([^\r\n]+)/);
     if (midMatch) mid = midMatch[1].trim();
+    else if (bundleMatch) mid = bundleMatch[1].trim();
+
     const mMatch = offerSdp.match(/m=audio\s+\d+\s+UDP\/TLS\/RTP\/SAVPF\s+(\d+)/);
     if (mMatch) pt = mMatch[1].trim();
   }
@@ -293,7 +296,7 @@ export function buildWebRtcSdpAnswer(offerSdp?: string, gatewayIp?: string): str
     `a=ice-ufrag:${ufrag}`,
     `a=ice-pwd:${pwd}`,
     "a=fingerprint:SHA-256 AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99",
-    "a=setup:active",
+    "a=setup:passive",
     `a=mid:${mid}`,
     "a=sendrecv",
     "a=rtcp-mux",
@@ -302,7 +305,7 @@ export function buildWebRtcSdpAnswer(offerSdp?: string, gatewayIp?: string): str
   ];
 
   if (ip !== "127.0.0.1" && ip !== "0.0.0.0") {
-    lines.push(`a=candidate:1 1 UDP 2122260223 ${ip} ${port} typ host`);
+    lines.push(`a=candidate:1 1 udp 2122260223 ${ip} ${port} typ host generation 0`);
   }
   lines.push("");
 
@@ -380,7 +383,6 @@ export async function handleMetaInboundCallAction(opts: {
 
     if (action === "accept" || action === "pre_accept") {
       payload.session = {
-        type: "answer",
         sdp_type: "answer",
         sdp: sdpAnswer,
       };
