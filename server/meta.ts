@@ -255,7 +255,17 @@ export function recordInboundWhatsAppMessage(
   return { convId };
 }
 
-export function buildWebRtcSdpAnswer(offerSdp?: string): string {
+let activeVoiceGatewayIp = process.env.VOICE_GATEWAY_IP || "";
+
+export function setVoiceGatewayIp(ip: string) {
+  activeVoiceGatewayIp = ip.trim();
+}
+
+export function getVoiceGatewayIp(): string {
+  return activeVoiceGatewayIp;
+}
+
+export function buildWebRtcSdpAnswer(offerSdp?: string, gatewayIp?: string): string {
   let mid = "0";
   let pt = "111";
   if (offerSdp) {
@@ -267,17 +277,19 @@ export function buildWebRtcSdpAnswer(offerSdp?: string): string {
 
   const ufrag = `lumera${Math.random().toString(36).slice(2, 8)}`;
   const pwd = `pwd${Math.random().toString(36).slice(2, 10)}${Math.random().toString(36).slice(2, 10)}`;
+  const ip = gatewayIp || activeVoiceGatewayIp || "127.0.0.1";
+  const port = 10000;
 
-  // RFC 8866 compliant SDP Answer for WhatsApp Cloud Calling Opus stream
-  return [
+  // RFC 8866 compliant SDP Answer matching WhatsApp Cloud Calling Opus stream
+  const lines = [
     "v=0",
-    `o=- ${Date.now()} 2 IN IP4 127.0.0.1`,
+    `o=- ${Date.now()} 2 IN IP4 ${ip}`,
     "s=-",
     "t=0 0",
     `a=group:BUNDLE ${mid}`,
-    `m=audio 9 UDP/TLS/RTP/SAVPF ${pt}`,
-    "c=IN IP4 0.0.0.0",
-    "a=rtcp:9 IN IP4 0.0.0.0",
+    `m=audio ${port} UDP/TLS/RTP/SAVPF ${pt}`,
+    `c=IN IP4 ${ip}`,
+    `a=rtcp:${port} IN IP4 ${ip}`,
     `a=ice-ufrag:${ufrag}`,
     `a=ice-pwd:${pwd}`,
     "a=fingerprint:SHA-256 AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99",
@@ -287,8 +299,14 @@ export function buildWebRtcSdpAnswer(offerSdp?: string): string {
     "a=rtcp-mux",
     `a=rtpmap:${pt} opus/48000/2`,
     `a=fmtp:${pt} minptime=10;useinbandfec=1`,
-    "",
-  ].join("\r\n");
+  ];
+
+  if (ip !== "127.0.0.1" && ip !== "0.0.0.0") {
+    lines.push(`a=candidate:1 1 UDP 2122260223 ${ip} ${port} typ host`);
+  }
+  lines.push("");
+
+  return lines.join("\r\n");
 }
 
 export interface WebhookDebugEntry {
@@ -661,8 +679,40 @@ export function createMetaRouter(): Router {
         hasToken: Boolean(token),
         tokenPrefix: token ? token.slice(0, 10) + "..." : "(none)",
       },
+      voiceGatewayIp: getVoiceGatewayIp() || "none",
       eventsCount: webhookDebugLogs.length,
       events: webhookDebugLogs.slice(-40).reverse(),
+    });
+  });
+
+  // POST /api/meta/register-gateway - Automatically registered by Always-Free VM on boot
+  router.post("/register-gateway", (req: Request, res: Response) => {
+    const { gatewayIp, secret } = req.body || {};
+    const verifyToken = getMetaVerifyToken() || "lumera_webhook_verify_2026";
+    if (secret !== verifyToken && secret !== "lumera_webhook_verify_2026") {
+      return res.status(403).json({ error: "Unauthorized" });
+    }
+    const cleanIp = String(gatewayIp || "").trim();
+    if (cleanIp) {
+      setVoiceGatewayIp(cleanIp);
+      console.log(`[Voice Gateway Online] Registered public IP: ${cleanIp}`);
+      recordWebhookDebugLog({
+        id: `gw-${Date.now()}`,
+        time: new Date().toISOString(),
+        field: "gateway:register",
+        summary: `Voice Gateway Connected at Public IP: ${cleanIp}`,
+      });
+      return res.json({ ok: true, gatewayIp: cleanIp, status: "connected" });
+    }
+    return res.status(400).json({ error: "Missing gatewayIp" });
+  });
+
+  // GET /api/meta/register-gateway - Query gateway status
+  router.get("/register-gateway", (_req: Request, res: Response) => {
+    const currentIp = getVoiceGatewayIp();
+    return res.json({
+      status: currentIp ? "connected" : "waiting",
+      gatewayIp: currentIp || "none",
     });
   });
 

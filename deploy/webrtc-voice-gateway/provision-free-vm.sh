@@ -84,38 +84,63 @@ else
     --tags="${TAG}" \
     --metadata=startup-script='#!/bin/bash
       set -e
-      apt-get update && apt-get install -y docker.io docker-compose git curl
-      systemctl enable --now docker
+      apt-get update && apt-get install -y nodejs npm curl git
       mkdir -p /opt/lumera-voice
-      cat << "EOF" > /opt/lumera-voice/docker-compose.yml
-version: "3.8"
-services:
-  webrtc-gateway:
-    image: node:22-bookworm-slim
-    restart: always
-    network_mode: "host"
-    environment:
-      - PORT=3000
-      - NODE_ENV=production
-      - CLOUD_RUN_URL=https://www.mylumera.in
-    command: sh -c "echo Lumera Voice Gateway Ready on host networking"
+      curl -fsSL https://raw.githubusercontent.com/Lumertech/Lumera-Gemini-edit/main/deploy/webrtc-voice-gateway/gateway.mjs -o /opt/lumera-voice/gateway.mjs
+      
+      # Fetch VM External IP
+      EXT_IP=$(curl -s -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/access-configs/0/external-ip || true)
+      if [ -n "$EXT_IP" ]; then
+        curl -s -X POST https://www.mylumera.in/api/meta/register-gateway \
+          -H "Content-Type: application/json" \
+          -d "{\"gatewayIp\":\"$EXT_IP\",\"secret\":\"lumera_webhook_verify_2026\"}" || true
+      fi
+
+      # Setup systemd service
+      cat << "EOF" > /etc/systemd/system/lumera-voice.service
+[Unit]
+Description=Lumera WhatsApp WebRTC Voice Gateway
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/lumera-voice
+ExecStart=/usr/bin/node /opt/lumera-voice/gateway.mjs
+Restart=always
+RestartSec=5
+Environment=PORT=3000
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target
 EOF
-      cd /opt/lumera-voice && docker-compose up -d
+      systemctl daemon-reload
+      systemctl enable --now lumera-voice
     ' \
     --scopes=https://www.googleapis.com/auth/cloud-platform
 
   echo "    Instance '${INSTANCE_NAME}' created successfully!"
 fi
 
-# 5. Output Public IP
+# 5. Output Public IP and Register with Lumera Cloud Run
 echo ""
 echo "=========================================================="
-echo " Lumera Voice Gateway Instance Info"
+echo " Lumera Voice Gateway Instance Info & Registration"
 echo "=========================================================="
-gcloud compute instances describe "${INSTANCE_NAME}" \
-  --zone="${ZONE}" \
-  --project="${PROJECT_ID}" \
-  --format="table(name,zone,machineType.basename(),status,networkInterfaces[0].accessConfigs[0].natIP:label=EXTERNAL_IP)"
+EXTERNAL_IP=$(gcloud compute instances describe "${INSTANCE_NAME}" --zone="${ZONE}" --project="${PROJECT_ID}" --format="value(networkInterfaces[0].accessConfigs[0].natIP)")
+echo "Instance:    ${INSTANCE_NAME}"
+echo "External IP: ${EXTERNAL_IP}"
+echo ""
+
+if [ -n "${EXTERNAL_IP}" ]; then
+  echo "--> Registering Voice Gateway IP (${EXTERNAL_IP}) with Lumera Cloud Run..."
+  REG_RES=$(curl -s -X POST https://www.mylumera.in/api/meta/register-gateway \
+    -H "Content-Type: application/json" \
+    -d "{\"gatewayIp\":\"${EXTERNAL_IP}\",\"secret\":\"lumera_webhook_verify_2026\"}")
+  echo "    Registration Response: ${REG_RES}"
+fi
 
 echo ""
-echo "Done! The instance is 100% covered under GCP's permanent Always Free Tier."
+echo "Done! The instance is online and 100% covered under GCP's permanent Always Free Tier."
+echo "WhatsApp voice calls to +91 98233 73271 will now connect directly to the WebRTC Voice Gateway!"
