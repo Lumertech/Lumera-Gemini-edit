@@ -255,6 +255,34 @@ export function recordInboundWhatsAppMessage(
   return { convId };
 }
 
+export async function handleMetaInboundCallAction(opts: {
+  phoneNumberId: string;
+  callId: string;
+  action?: "terminate" | "reject" | "pre_accept";
+}) {
+  const token = readSecret("META_ACCESS_TOKEN", "META_SYSTEM_USER_TOKEN", "WHATSAPP_TOKEN");
+  if (!token || !opts.phoneNumberId || !opts.callId) return;
+
+  try {
+    const res = await fetch(`https://graph.facebook.com/v22.0/${opts.phoneNumberId}/calls`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        call_id: opts.callId,
+        action: opts.action || "terminate",
+      }),
+    });
+    const data = await res.json().catch(() => null);
+    console.log(`[Meta Call Action] call_id=${opts.callId} action=${opts.action || "terminate"} status=${res.status} result=${JSON.stringify(data)}`);
+  } catch (err) {
+    console.warn("[Meta Call Action Error]", err);
+  }
+}
+
 export async function dispatchInboundBotReply(
   db: SqlDatabase,
   opts: {
@@ -329,7 +357,16 @@ export async function dispatchInboundBotReply(
   );
 
   let botReply: { content: string; buttons?: string[]; media?: Record<string, unknown> } | null = null;
-  if (textBody.startsWith("🎤 Voice") || textBody.startsWith("Voice Note:")) {
+
+  // Handle incoming voice call / missed call immediately
+  if (textBody.includes("Inbound Voice Call") || textBody.includes("Missed Call") || textBody.startsWith("📞")) {
+    const fName = registeredPatient?.firstName || (patientName && !patientName.startsWith("Patient (") && patientName !== "Patient" ? patientName.split(/\s+/)[0] : "");
+    const greeting = fName ? `Namaste ${fName}! 🙏` : `Namaste! 🙏`;
+    botReply = {
+      content: `${greeting} Thank you for calling Lumera Apex PolyClinic. I am Maya, your Senior AI Clinic Receptionist.\n\nI have received your voice call and am here to assist you right now with:\n\n• 📅 *Doctor Appointments* — check slots & instant token booking\n• ⏰ *Doctor Schedule & OPD Timings* — specialist availability\n• 💊 *Prescriptions & Refills* — view & download prescriptions\n• 🔬 *Diagnostic Reports* — lab & test results\n• 📍 *Clinic Location & Timings* — address & directions\n• 👤 *Speak with Front Desk* — connect with clinic staff\n\nPlease tap an option below or reply with how I can assist you today!`,
+      buttons: ["📅 Book Appointment", "⏰ Doctor Schedule", "📍 Clinic Location", "👤 Speak with Front Desk"],
+    };
+  } else if (textBody.startsWith("🎤 Voice") || textBody.startsWith("Voice Note:")) {
     try {
       const voiceRes = await runGeminiVoiceReceptionist({
         message: textBody.replace(/^(🎤\s*Voice Note:\s*"?|Voice Note:\s*"?|"?$)/g, ""),
@@ -617,17 +654,71 @@ export function createMetaRouter(): Router {
                 }
               }
 
+              // Handle Inbound WhatsApp Voice Call Events (Meta Cloud Calling API)
+              if ((change.field === "calls" || val?.calls) && Array.isArray(val?.calls)) {
+                for (const call of val.calls) {
+                  const rawFrom = String(call.from || "").trim();
+                  const fromPhone = rawFrom ? (rawFrom.startsWith("+") ? rawFrom : `+${rawFrom}`) : "";
+                  if (!fromPhone) continue;
+
+                  const callId = String(call.id || "");
+                  const callEvent = String(call.event || "connect");
+                  const direction = String(call.direction || "USER_INITIATED");
+
+                  let targetTenantId = inboundTenantId;
+                  if (inboundTenantId === "tenant-lumera-main") {
+                    const demoTenant = findTenantByPatientPhone(db, fromPhone);
+                    if (demoTenant) {
+                      targetTenantId = demoTenant;
+                    }
+                  }
+
+                  const callNotice = `📞 Inbound Voice Call (${direction.replace(/_/g, " ")}: ${callEvent})`;
+                  const recordRes = recordInboundWhatsAppMessage(db, {
+                    fromPhone,
+                    textBody: callNotice,
+                    tenantId: targetTenantId,
+                    phoneNumberId,
+                    wabaId,
+                    now,
+                  });
+
+                  // Clear any hanging ringing state via Graph API so caller is not left waiting
+                  if (callId && phoneNumberId) {
+                    void handleMetaInboundCallAction({
+                      phoneNumberId,
+                      callId,
+                      action: "terminate",
+                    });
+                  }
+
+                  if (recordRes?.convId) {
+                    void dispatchInboundBotReply(db, {
+                      convId: recordRes.convId,
+                      fromPhone,
+                      textBody: callNotice,
+                      tenantId: targetTenantId,
+                      phoneNumberId,
+                      wabaId,
+                    });
+                  }
+                }
+              }
+
               // Handle inbound user message. Default Lumera host number checks patient's demo practice.
               if (val?.messages && Array.isArray(val.messages)) {
                 for (const msg of val.messages) {
                   const fromPhone = String(msg.from || "").trim();
                   const isAudio = msg.type === "audio" || msg.type === "voice";
+                  const isCallNotice = msg.type === "call_log" || msg.type === "missed_call" || msg.type === "call" || Boolean(msg.call_log);
                   const textBody =
                     msg.text?.body ||
                     msg.interactive?.button_reply?.title ||
                     msg.interactive?.list_reply?.title ||
                     msg.button?.text ||
-                    (isAudio ? `🎤 Voice Note: "${msg.audio?.caption || msg.voice?.caption || "Clinical Consultation Request"}"` : "[Media/Attachment]");
+                    (isAudio ? `🎤 Voice Note: "${msg.audio?.caption || msg.voice?.caption || "Clinical Consultation Request"}"` :
+                     isCallNotice ? `📞 Inbound Voice Call / Missed Call` :
+                     "[Media/Attachment]");
 
                   let targetTenantId = inboundTenantId;
                   if (inboundTenantId === "tenant-lumera-main") {

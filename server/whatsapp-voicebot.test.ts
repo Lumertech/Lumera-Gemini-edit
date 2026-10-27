@@ -6,6 +6,7 @@ import { initDatabase, getDb } from "./db.ts";
 import { runGeminiVoiceReceptionist, mountGeminiVoiceRoutes } from "./gemini-voice.ts";
 import { getNextAvailableDoctorSlot, bookWhatsAppAppointment } from "./whatsapp-calendar-booking.ts";
 import { ensureMetaTechProviderAndPolicies } from "./db-seed.ts";
+import { createMetaRouter } from "./meta.ts";
 
 describe("Gemini Voicebot & Inbound WhatsApp Voice Call Receptionist", () => {
   let server: Server;
@@ -18,6 +19,7 @@ describe("Gemini Voicebot & Inbound WhatsApp Voice Call Receptionist", () => {
     const app = express();
     app.use(express.json());
     mountGeminiVoiceRoutes(app, () => null); // Null GoogleGenAI triggers resilient clinical receptionist
+    app.use("/api/meta", createMetaRouter());
 
     await new Promise<void>((resolve) => {
       server = app.listen(0, () => {
@@ -260,5 +262,74 @@ describe("Gemini Voicebot & Inbound WhatsApp Voice Call Receptionist", () => {
     assert.ok(mr.appointment);
     assert.match(mr.speechText, /अपॉइंटमेंट/);
     assert.match(mr.speechText, /टोकन/);
+  });
+
+  it("11. Inbound WhatsApp Voice Call Webhook triggers AI receptionist Maya auto-answer", async () => {
+    const callWebhookPayload = {
+      object: "whatsapp_business_account",
+      entry: [
+        {
+          id: "waba-entry-test",
+          changes: [
+            {
+              field: "calls",
+              value: {
+                messaging_product: "whatsapp",
+                metadata: {
+                  phone_number_id: "1294483843748285",
+                  display_phone_number: "+91 98233 73271",
+                },
+                contacts: [
+                  {
+                    profile: { name: "Ravee" },
+                    wa_id: "919999973271",
+                  },
+                ],
+                calls: [
+                  {
+                    id: `wacid.test.${Date.now()}`,
+                    from: "919999973271",
+                    to: "919823373271",
+                    direction: "USER_INITIATED",
+                    event: "connect",
+                    timestamp: String(Math.floor(Date.now() / 1000)),
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    const response = await fetch(`http://127.0.0.1:${port}/api/meta/webhook`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(callWebhookPayload),
+    });
+
+    assert.equal(response.status, 200);
+
+    // Wait a brief moment for async dispatch
+    await new Promise((r) => setTimeout(r, 200));
+
+    const db = getDb();
+    const inbound = db.prepare(`
+      SELECT * FROM whatsapp_messages
+      WHERE patient_phone LIKE '%73271' AND sender = 'patient' AND content LIKE '%Inbound Voice Call%'
+      ORDER BY created_at DESC LIMIT 1
+    `).get() as Record<string, unknown> | undefined;
+
+    assert.ok(inbound, "Inbound call should be recorded in whatsapp_messages");
+
+    const reply = db.prepare(`
+      SELECT * FROM whatsapp_messages
+      WHERE patient_phone LIKE '%73271' AND sender = 'bot' AND staff_name = 'Receptionist AI'
+      ORDER BY created_at DESC LIMIT 1
+    `).get() as Record<string, unknown> | undefined;
+
+    assert.ok(reply, "Maya receptionist auto-answer should be recorded in whatsapp_messages");
+    assert.match(String(reply.content), /Maya/i);
+    assert.match(String(reply.content), /call/i);
   });
 });
