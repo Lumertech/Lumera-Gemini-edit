@@ -891,17 +891,7 @@ export function createMetaRouter(): Router {
                       }
                     })();
                   }
-
-                  if (recordRes?.convId) {
-                    void dispatchInboundBotReply(db, {
-                      convId: recordRes.convId,
-                      fromPhone,
-                      textBody: callNotice,
-                      tenantId: targetTenantId,
-                      phoneNumberId,
-                      wabaId,
-                    });
-                  }
+                  // Note: Calls are answered with voice; no automated text message is sent on call events.
                 }
               }
 
@@ -937,7 +927,8 @@ export function createMetaRouter(): Router {
                     now,
                   });
 
-                  if (recordRes?.convId) {
+                  // Only dispatch bot text reply for actual user messages (text, voice note, media), NEVER for call events
+                  if (recordRes?.convId && !isCallNotice) {
                     void dispatchInboundBotReply(db, {
                       convId: recordRes.convId,
                       fromPhone,
