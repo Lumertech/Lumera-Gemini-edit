@@ -349,7 +349,27 @@ export async function handleMetaInboundCallAction(opts: {
   }
 
   const action = opts.action || "accept";
-  const sdpAnswer = buildWebRtcSdpAnswer(opts.offerSdp);
+  let sdpAnswer = buildWebRtcSdpAnswer(opts.offerSdp, "34.46.39.52");
+  if (action === "accept" || action === "pre_accept") {
+    try {
+      const gwRes = await fetch("http://34.46.39.52:3000/webrtc/answer-offer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          callId: opts.callId,
+          offerSdp: opts.offerSdp,
+          publicIp: "34.46.39.52",
+        }),
+        signal: AbortSignal.timeout(1500),
+      });
+      if (gwRes.ok) {
+        const gwJson = (await gwRes.json()) as { sdpAnswer?: string };
+        if (gwJson?.sdpAnswer) sdpAnswer = gwJson.sdpAnswer;
+      }
+    } catch {
+      // fallback to local buildWebRtcSdpAnswer
+    }
+  }
 
   try {
     const payload: Record<string, unknown> = {
