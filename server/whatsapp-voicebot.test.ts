@@ -170,4 +170,95 @@ describe("Gemini Voicebot & Inbound WhatsApp Voice Call Receptionist", () => {
     assert.match(res.speechText, /09:00 AM/i);
     assert.match(res.speechText, /08:00 PM/i);
   });
+
+  it("7. Bengali language voicebot support: emergency escalation and booking", async () => {
+    // Emergency in Bengali
+    const emer = await runGeminiVoiceReceptionist({
+      message: "আমার বুকে খুব ব্যথা এবং শ্বাসকষ্ট হচ্ছে",
+      callerName: "Ravee",
+      callerPhone: "+919999973271",
+      tenantId: "tenant-lumera-main",
+    });
+    assert.equal(emer.intent, "EMERGENCY");
+    assert.equal(emer.isEmergency, true);
+    assert.match(emer.speechText, /জরুরি/);
+    assert.match(emer.speechText, /১০৮/);
+
+    // Booking in Bengali
+    const book = await runGeminiVoiceReceptionist({
+      message: "আমার হাঁটুর ব্যথা, ডাক্তার দেখাতে চাই",
+      callerName: "Ravee",
+      callerPhone: "+919999973271",
+      tenantId: "tenant-lumera-main",
+    });
+    assert.equal(book.intent, "BOOKING");
+    assert.ok(book.appointment);
+    assert.match(book.speechText, /অ্যাপয়েন্টমেন্ট/);
+    assert.match(book.speechText, /টোকেন/);
+  });
+
+  it("8. Telugu language voicebot support: emergency escalation and doctor booking", async () => {
+    // Emergency in Telugu
+    const emer = await runGeminiVoiceReceptionist({
+      message: "నాకు ఛాతీ నొప్పిగా ఉంది మరియు శ్వాస ఆడట్లేదు",
+      callerName: "Ravee",
+      callerPhone: "+919999973271",
+      tenantId: "tenant-lumera-main",
+    });
+    assert.equal(emer.intent, "EMERGENCY");
+    assert.equal(emer.isEmergency, true);
+    assert.match(emer.speechText, /అత్యవసర/);
+    assert.match(emer.speechText, /108/);
+
+    // Booking in Telugu
+    const book = await runGeminiVoiceReceptionist({
+      message: "నాకు మోకాలి నొప్పిగా ఉంది, డాక్టర్ అపాయింట్‌మెంట్ కావాలి",
+      callerName: "Ravee",
+      callerPhone: "+919999973271",
+      tenantId: "tenant-lumera-main",
+    });
+    assert.equal(book.intent, "BOOKING");
+    assert.ok(book.appointment);
+    assert.match(book.speechText, /అపాయింట్‌మెంట్/);
+    assert.match(book.speechText, /టోకెన్/);
+  });
+
+  it("9. Tamil language voicebot support: booking and greetings", async () => {
+    const book = await runGeminiVoiceReceptionist({
+      message: "எனக்கு மூட்டு வலி உள்ளது, மருத்துவரை பார்க்க வேண்டும்",
+      callerName: "Ravee",
+      callerPhone: "+919999973271",
+      tenantId: "tenant-lumera-main",
+    });
+    assert.equal(book.intent, "BOOKING");
+    assert.ok(book.appointment);
+    assert.match(book.speechText, /வணக்கம்/);
+    assert.match(book.speechText, /டோக்கன்/);
+  });
+
+  it("10. Kannada and Marathi language voicebot support", async () => {
+    // Kannada
+    const kn = await runGeminiVoiceReceptionist({
+      message: "ನನಗೆ ಬೆನ್ನು ನೋವು ಇದೆ, ವೈದ್ಯರನ್ನು ನೋಡಬೇಕು",
+      callerName: "Ravee",
+      callerPhone: "+919999973271",
+      tenantId: "tenant-lumera-main",
+    });
+    assert.equal(kn.intent, "BOOKING");
+    assert.ok(kn.appointment);
+    assert.match(kn.speechText, /ಅಪಾಯಿಂಟ್‌ಮೆಂಟ್/);
+    assert.match(kn.speechText, /ಟೋಕನ್/);
+
+    // Marathi
+    const mr = await runGeminiVoiceReceptionist({
+      message: "माझे डोके खूप दुखत आहे, डॉक्टरांची अपॉइंटमेंट हवी आहे",
+      callerName: "Ravee",
+      callerPhone: "+919999973271",
+      tenantId: "tenant-lumera-main",
+    });
+    assert.equal(mr.intent, "BOOKING");
+    assert.ok(mr.appointment);
+    assert.match(mr.speechText, /अपॉइंटमेंट/);
+    assert.match(mr.speechText, /टोकन/);
+  });
 });

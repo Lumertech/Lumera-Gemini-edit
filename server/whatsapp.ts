@@ -104,6 +104,25 @@ export function clinicOutboundCopy(opts: {
   const clinic = String(opts.clinicName || "").trim() || "your clinic";
   const doctor = String(opts.doctorName || "").trim() || "your doctor";
   const patientText = String(opts.patientText || "");
+  const lang = detectLanguageSimple(patientText);
+  const langNames: Record<string, string> = {
+    hi: "Hindi (हिन्दी)",
+    bn: "Bengali (বাংলা)",
+    te: "Telugu (తెలుగు)",
+    ta: "Tamil (தமிழ்)",
+    kn: "Kannada (ಕನ್ನಡ)",
+    mr: "Marathi (मराठी)",
+    gu: "Gujarati (ગુજરાતી)",
+    ml: "Malayalam (മലയാളം)",
+    pa: "Punjabi (ਪੰਜਾਬੀ)",
+    or: "Odia (ଓଡ଼ିଆ)",
+    ur: "Urdu (اردو)",
+    en: "English",
+  };
+  const langInstruction = lang !== "en" && langNames[lang]
+    ? `\nIMPORTANT: The patient is communicating in ${langNames[lang]}. Respond fluently in ${langNames[lang]} using native script with warm, reassuring, and respectful medical tone.`
+    : "";
+
   return {
     handoverRestored: `🤖 Automated AI Assistant Restored: ${clinic} assistant is now handling routine patient inquiries.`,
     healthNotice: `Important health notification from ${clinic}.`,
@@ -112,7 +131,7 @@ export function clinicOutboundCopy(opts: {
     roster: `⏰ *${clinic} OPD Roster & Timings*:\n\n${opts.roster || ""}\n\nEmergency care & triage desk operates 24/7.`,
     assistantPrompt: `You are the WhatsApp medical assistant for ${clinic}. The consulting clinician is ${doctor}.
 The patient is asking: "${patientText}".
-Respond in friendly WhatsApp tone with emojis, medical accuracy, and clear next steps. Keep response within 80-120 words.
+Respond in friendly WhatsApp tone with emojis, medical accuracy, and clear next steps. Keep response within 80-120 words.${langInstruction}
 Suggest relevant quick actions (booking appointment, checking timings, viewing lab report, or talking to staff).
 ${AI_RUPEE_OUTPUT_RULE}`,
     assistantFallback: `Thank you for reaching out to ${clinic}. How may we assist you further?`,
@@ -2539,31 +2558,61 @@ export async function processBotActionOrQuery(
   };
 }
 
-function detectLanguageSimple(text: string): string {
-  // Check for Devanagari script (Hindi/Marathi)
+export function detectLanguageSimple(text: string): string {
+  if (!text) return "en";
+  // Check Indic scripts
+  if (/[\u0C00-\u0C7F]/.test(text)) return "te"; // Telugu
+  if (/[\u0B80-\u0BFF]/.test(text)) return "ta"; // Tamil
+  if (/[\u0C80-\u0CFF]/.test(text)) return "kn"; // Kannada
+  if (/[\u0D00-\u0D7F]/.test(text)) return "ml"; // Malayalam
+  if (/[\u0980-\u09FF]/.test(text)) return "bn"; // Bengali
+  if (/[\u0A80-\u0AFF]/.test(text)) return "gu"; // Gujarati
+  if (/[\u0A00-\u0A7F]/.test(text)) return "pa"; // Punjabi
+  if (/[\u0B00-\u0B7F]/.test(text)) return "or"; // Odia
+  if (/[\u0600-\u06FF]/.test(text)) return "ur"; // Urdu
   if (/[\u0900-\u097F]/.test(text)) {
-    if (text.includes("आहे") || text.includes("नाही") || text.includes("झाले") || text.includes("मला") || text.includes("कंबरदुखी")) {
-      return "mr";
+    if (
+      text.includes("आहे") ||
+      text.includes("नाही") ||
+      text.includes("झाले") ||
+      text.includes("मला") ||
+      text.includes("कंबरदुखी") ||
+      text.includes("नमस्कार") ||
+      text.includes("दाखवायचे")
+    ) {
+      return "mr"; // Marathi
     }
-    return "hi";
+    return "hi"; // Hindi
   }
-  // Kannada script
-  if (/[\u0C80-\u0CFF]/.test(text)) return "kn";
-  // Bengali script
-  if (/[\u0980-\u09FF]/.test(text)) return "bn";
-  // Tamil script
-  if (/[\u0B80-\u0BFF]/.test(text)) return "ta";
+
+  // Transliterated / Romanized Indic checks
+  const lower = text.toLowerCase();
+  if (/\b(naaku|nenu|nopi|baadhaga|undi|kavali|cheyandi)\b/i.test(lower)) return "te";
+  if (/\b(enakku|vali|irukku|vendum|theriyuma)\b/i.test(lower)) return "ta";
+  if (/\b(nanage|novu|ide|beku|hege)\b/i.test(lower)) return "kn";
+  if (/\b(mala|dukhata|aahe|pahije|dakhvayche)\b/i.test(lower)) return "mr";
+  if (/\b(aamar|byatha|korche|chai|dekhte)\b/i.test(lower)) return "bn";
+  if (/\b(mane|dukhavo|chhe|joiye|tamari)\b/i.test(lower)) return "gu";
+  if (/\b(enikku|vedana|undu|kaanan|aano)\b/i.test(lower)) return "ml";
+  if (/\b(mera|meri|mujhe|dard|dikkat|hai|hain|kripya|apka|aapka|namaste|bukhar|dikhana)\b/i.test(lower)) return "hi";
+
   return "en";
 }
 
-async function translateWithGeminiOrFallback(text: string, targetLang: string, ai: GoogleGenAI | null): Promise<string> {
+export async function translateWithGeminiOrFallback(text: string, targetLang: string, ai: GoogleGenAI | null): Promise<string> {
   const langNames: Record<string, string> = {
     en: "English",
     hi: "Hindi",
     mr: "Marathi",
     kn: "Kannada",
     ta: "Tamil",
+    te: "Telugu",
     bn: "Bengali",
+    gu: "Gujarati",
+    ml: "Malayalam",
+    pa: "Punjabi",
+    or: "Odia",
+    ur: "Urdu",
   };
   const targetName = langNames[targetLang] || targetLang;
 
@@ -2584,9 +2633,9 @@ async function translateWithGeminiOrFallback(text: string, targetLang: string, a
     }
   }
 
-  // Common clinical translations dictionary fallback
+  // Common clinical translations dictionary fallback for Indian languages
   if (targetLang === "hi") {
-    if (text.includes("Appointment confirmed")) return `अपॉइंटमेंट की पुष्टि हो गई है! कृपया समय पर ओपीडी में आएं।`;
+    if (text.includes("Appointment") || text.includes("confirmed")) return `अपॉइंटमेंट की पुष्टि हो गई है! कृपया समय पर ओपीडी में आएं।`;
     if (text.includes("Prescription")) return `आपकी मेडिकल पर्ची तैयार है और आपके व्हाट्सएप पर भेज दी गई है।`;
     if (text.includes("Doctor")) return `डॉक्टर आपकी फाइल देख रहे हैं। कृपया रिसेप्शन पर संपर्क करें।`;
     return `नमस्ते, आपकी पूछताछ दर्ज कर ली गई है। हमारा स्टाफ जल्द ही आपसे संपर्क करेगा।`;
@@ -2594,6 +2643,42 @@ async function translateWithGeminiOrFallback(text: string, targetLang: string, a
   if (targetLang === "mr") {
     if (text.includes("Appointment")) return `तुमची अपॉइंटमेंट निश्चित झाली आहे!`;
     return `नमस्कार, तुमची विचारणा नोंदवली गेली आहे. आमचे कर्मचारी लवकरच संपर्क साधतील.`;
+  }
+  if (targetLang === "bn") {
+    if (text.includes("Appointment")) return `আপনার অ্যাপয়েন্টমেন্ট নিশ্চিত করা হয়েছে!`;
+    return `নমস্কার, আপনার অনুরোধ রেকর্ড করা হয়েছে। আমাদের কর্মীরা শীঘ্রই যোগাযোগ করবেন।`;
+  }
+  if (targetLang === "te") {
+    if (text.includes("Appointment")) return `మీ అపాయింట్‌మెంట్ నిర్ధారించబడింది!`;
+    return `నమస్తే, మీ విచారణ నమోదు చేయబడింది. మా సిబ్బంది త్వరలో మిమ్మల్ని సంప్రదిస్తారు.`;
+  }
+  if (targetLang === "ta") {
+    if (text.includes("Appointment")) return `உங்கள் முன்பதிவு உறுதி செய்யப்பட்டது!`;
+    return `வணக்கம், உங்கள் கோரிக்கை பெறப்பட்டது. எங்கள் குழு விரைவில் தொடர்பு கொள்ளும்.`;
+  }
+  if (targetLang === "kn") {
+    if (text.includes("Appointment")) return `ನಿಮ್ಮ ಅಪಾಯಿಂಟ್‌ಮೆಂಟ್ ದೃಢೀಕರಿಸಲ್ಪಟ್ಟಿದೆ!`;
+    return `ನಮಸ್ಕಾರ, ನಿಮ್ಮ ವಿನಂತಿ ದಾಖಲಾಗಿದೆ. ನಮ್ಮ ಸಿಬ್ಬಂದಿ ಶೀಘ್ರದಲ್ಲೇ ಸಂಪರ್ಕಿಸುತ್ತಾರೆ.`;
+  }
+  if (targetLang === "gu") {
+    if (text.includes("Appointment")) return `તમારી એપોઇન્ટમેન્ટ કન્ફર્મ થઈ ગઈ છે!`;
+    return `નમસ્તે, તમારી પૂછપરછ નોંધાઈ ગઈ છે. અમારો સ્ટાફ ટૂંક સમયમાં સંપર્ક કરશે.`;
+  }
+  if (targetLang === "ml") {
+    if (text.includes("Appointment")) return `നിങ്ങളുടെ അപ്പോയിന്റ്മെന്റ് സ്ഥിരീകരിച്ചു!`;
+    return `നമസ്കാരം, നിങ്ങളുടെ ചോദ്യം ലഭിച്ചു. ഞങ്ങളുടെ ജീവനക്കാർ ഉടൻ ബന്ധപ്പെടും.`;
+  }
+  if (targetLang === "pa") {
+    if (text.includes("Appointment")) return `ਤੁਹਾਡੀ ਅਪਾਇੰਟਮੈਂਟ ਕਨਫਰਮ ਹੋ ਗਈ ਹੈ!`;
+    return `ਸਤਿ ਸ਼੍ਰੀ ਅਕਾਲ, ਤੁਹਾਡੀ ਪੁੱਛਗਿੱਛ ਦਰਜ ਕਰ ਲਈ ਗਈ ਹੈ।`;
+  }
+  if (targetLang === "or") {
+    if (text.includes("Appointment")) return `ଆପଣଙ୍କ ଅପଏଣ୍ଟମେଣ୍ଟ ନିଶ୍ଚିତ ହୋଇଛି!`;
+    return `ନମସ୍କାର, ଆପଣଙ୍କ ଅନୁରୋଧ ରେକର୍ଡ କରାଯାଇଛି।`;
+  }
+  if (targetLang === "ur") {
+    if (text.includes("Appointment")) return `آپ کی اپائنٹمنٹ کی تصدیق ہو گئی ہے!`;
+    return `ہیلو، آپ کی درخواست موصول ہو گئی ہے۔`;
   }
   if (targetLang === "en") {
     if (text.includes("नमस्ते") || text.includes("दर्द")) return `Namaste Doctor, I am experiencing pain and would like medical advice.`;
