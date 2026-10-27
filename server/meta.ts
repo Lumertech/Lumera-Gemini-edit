@@ -255,7 +255,7 @@ export function recordInboundWhatsAppMessage(
   return { convId };
 }
 
-let activeVoiceGatewayIp = process.env.VOICE_GATEWAY_IP || "";
+let activeVoiceGatewayIp = process.env.VOICE_GATEWAY_IP || "34.46.39.52";
 
 export function setVoiceGatewayIp(ip: string) {
   activeVoiceGatewayIp = ip.trim();
@@ -277,7 +277,7 @@ export function buildWebRtcSdpAnswer(offerSdp?: string, gatewayIp?: string): str
 
   const ufrag = `lumera${Math.random().toString(36).slice(2, 8)}`;
   const pwd = `pwd${Math.random().toString(36).slice(2, 10)}${Math.random().toString(36).slice(2, 10)}`;
-  const ip = gatewayIp || activeVoiceGatewayIp || "127.0.0.1";
+  const ip = gatewayIp || activeVoiceGatewayIp || "34.46.39.52";
   const port = 10000;
 
   // RFC 8866 compliant SDP Answer matching WhatsApp Cloud Calling Opus stream
