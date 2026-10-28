@@ -93,16 +93,16 @@ class MayaVoiceTrack(MediaStreamTrack):
         """Returns True if Maya is currently streaming voice audio (not silence)."""
         return self.cursor < len(self.pcm)
 
-    def queue_audio(self, new_pcm: np.ndarray):
+    def queue_audio(self, new_pcm: np.ndarray, replace: bool = True):
         """Queues new audio PCM (Maya's cognitive voice response) to be played into WebRTC."""
         if len(new_pcm) == 0:
             return
-        if self.cursor >= len(self.pcm):
+        if replace or self.cursor >= len(self.pcm):
             self.pcm = new_pcm.copy()
             self.cursor = 0
         else:
             self.pcm = np.concatenate([self.pcm[:self.cursor], new_pcm])
-        logger.info(f"Queued {len(new_pcm)} samples ({len(new_pcm)/self.sample_rate:.2f}s) of Maya voice audio")
+        logger.info(f"Queued {len(new_pcm)} samples ({len(new_pcm)/self.sample_rate:.2f}s) of Maya voice audio (replace={replace})")
 
     def interrupt(self):
         """Stops playing current speech immediately."""
@@ -136,7 +136,7 @@ class MayaVoiceTrack(MediaStreamTrack):
         return frame
 
 async def ensure_greeting_audio():
-    """Generates Maya's natural AI Receptionist voice greeting using Edge TTS if not present."""
+    """Preloads Maya's Google Cloud Neural2 AI Receptionist voice greeting."""
     global cached_greeting_pcm
     if not os.path.exists(GREETING_FILE) or os.path.getsize(GREETING_FILE) < 1000:
         logger.info("Generating Maya AI Receptionist greeting audio...")
@@ -154,6 +154,7 @@ async def ensure_greeting_audio():
 
     if os.path.exists(GREETING_FILE):
         cached_greeting_pcm = load_audio_pcm(GREETING_FILE, 48000)
+        logger.info(f"Preloaded Maya greeting into memory: {len(cached_greeting_pcm)/48000:.2f}s")
 
 async def handle_caller_utterance(call_id: str, pcm_16k: np.ndarray, out_track: MayaVoiceTrack, caller_phone: str):
     """Encodes caller speech to WAV, queries Lumera Gemini AI, synthesizes TTS, and queues audio to caller."""
@@ -168,7 +169,12 @@ async def handle_caller_utterance(call_id: str, pcm_16k: np.ndarray, out_track: 
         wav_bytes = wav_io.getvalue()
         audio_b64 = base64.b64encode(wav_bytes).decode("utf-8")
 
-        # 2. Send to Lumera Cloud Run cognitive brain
+        # 2. Retrieve ongoing conversation history for this call
+        conv_history = []
+        if call_id in active_calls:
+            conv_history = active_calls[call_id].get("history", [])
+
+        # 3. Send to Lumera Cloud Run cognitive brain
         headers = {
             "Content-Type": "application/json",
             "Origin": "https://www.mylumera.in"
@@ -180,6 +186,7 @@ async def handle_caller_utterance(call_id: str, pcm_16k: np.ndarray, out_track: 
                 "mimeType": "audio/wav",
                 "callerName": "Patient",
                 "tenantId": "tenant-lumera-main",
+                "conversationHistory": conv_history,
             }
             logger.info(f"[{call_id}] Sending caller speech ({len(pcm_16k)/16000:.2f}s) to Lumera AI...")
             async with session.post(LUMERA_API_URL, json=payload, timeout=aiohttp.ClientTimeout(total=10)) as resp:
@@ -187,9 +194,16 @@ async def handle_caller_utterance(call_id: str, pcm_16k: np.ndarray, out_track: 
                     data = await resp.json()
                     speech_text = data.get("speechText", "")
                     intent = data.get("intent", "INQUIRY")
-                    logger.info(f"[{call_id}] Maya cognitive reply ({intent}): {speech_text}")
+                    transcript = data.get("transcript", "")
+                    logger.info(f"[{call_id}] Caller said: \"{transcript}\" | Maya reply ({intent}): \"{speech_text}\"")
+
+                    if transcript and call_id in active_calls:
+                        active_calls[call_id]["history"].append({"role": "caller", "text": transcript})
 
                     if speech_text:
+                        if call_id in active_calls:
+                            active_calls[call_id]["history"].append({"role": "maya", "text": speech_text})
+
                         resp_audio_bytes = b""
                         if data.get("audioBase64"):
                             try:
@@ -209,7 +223,7 @@ async def handle_caller_utterance(call_id: str, pcm_16k: np.ndarray, out_track: 
                         # Decode into 48kHz mono 16-bit PCM for WebRTC
                         resp_pcm = decode_mp3_bytes_to_pcm(resp_audio_bytes, 48000)
                         if len(resp_pcm) > 0:
-                            out_track.queue_audio(resp_pcm)
+                            out_track.queue_audio(resp_pcm, replace=True)
                             logger.info(f"[{call_id}] Streaming Maya's response into call ({len(resp_pcm)/48000:.2f}s)")
                 else:
                     err_txt = await resp.text()
@@ -226,9 +240,10 @@ async def process_inbound_audio(call_id: str, inbound_track, out_track: MayaVoic
     is_speaking = False
     silence_frames = 0
     speech_frames = 0
-    min_speech_frames = 10        # ~200ms of speech minimum
-    silence_threshold_frames = 30 # ~600ms of silence to trigger end of utterance
-    energy_threshold = 280        # RMS amplitude threshold
+    min_speech_frames = 15        # ~300ms of speech minimum
+    silence_threshold_frames = 45 # ~900ms of silence to trigger end of utterance
+    energy_threshold = 320        # RMS amplitude threshold
+    is_processing = False         # Lock to prevent overlapping queries
 
     try:
         while True:
@@ -244,7 +259,7 @@ async def process_inbound_audio(call_id: str, inbound_track, out_track: MayaVoic
 
                 # If Maya is speaking: only interrupt if caller speaks loudly (barge-in)
                 if maya_talking:
-                    if rms > 1200:
+                    if rms > 1100:
                         logger.info(f"[{call_id}] Caller interrupted Maya (RMS: {rms:.0f})")
                         out_track.interrupt()
                         maya_talking = False
@@ -252,6 +267,10 @@ async def process_inbound_audio(call_id: str, inbound_track, out_track: MayaVoic
                         buffer = [data]
                         speech_frames = 1
                         silence_frames = 0
+                    continue
+
+                if is_processing:
+                    # While Maya is computing the reply (~0.5s), don't trigger duplicate queries
                     continue
 
                 if rms > energy_threshold:
@@ -268,15 +287,24 @@ async def process_inbound_audio(call_id: str, inbound_track, out_track: MayaVoic
                         buffer.append(data)
                         silence_frames += 1
                         if silence_frames > silence_threshold_frames:
-                            if speech_frames >= min_speech_frames:
+                            if speech_frames >= min_speech_frames and not is_processing:
                                 complete_pcm = np.concatenate(buffer)
                                 duration_s = len(complete_pcm) / 16000.0
                                 logger.info(f"[{call_id}] Speech utterance captured: {duration_s:.2f}s ({len(complete_pcm)} samples)")
-                                asyncio.create_task(handle_caller_utterance(call_id, complete_pcm, out_track, caller_phone))
+                                is_processing = True
+
+                                async def run_utterance(b_pcm):
+                                    nonlocal is_processing
+                                    try:
+                                        await handle_caller_utterance(call_id, b_pcm, out_track, caller_phone)
+                                    finally:
+                                        is_processing = False
+
+                                asyncio.create_task(run_utterance(complete_pcm))
+
                             buffer = []
                             is_speaking = False
                             silence_frames = 0
-                            speech_frames = 0
     except asyncio.CancelledError:
         pass
     except Exception as e:
@@ -391,6 +419,7 @@ async def handle_answer_offer(request):
         "track": track,
         "callerPhone": caller_phone,
         "startTime": time.time(),
+        "history": [],
         "sdpAnswer": final_sdp,
         "listenerTask": listener_task,
     }

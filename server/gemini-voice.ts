@@ -19,6 +19,7 @@ export interface VoiceReceptionistInput {
   callerPhone?: string;
   language?: string;
   tenantId?: string;
+  conversationHistory?: Array<{ role: "caller" | "maya"; text: string }>;
   availableDoctors?: Array<{
     name: string;
     specialty: string;
@@ -416,7 +417,112 @@ export async function runGeminiVoiceReceptionist(opts: VoiceReceptionistInput): 
     };
   }
 
-  // 2. Specialty & Clinical Keywords Matching across Indic languages
+  // 2. Primary Conversational AI via Gemini 2.5 Flash on Vertex AI
+  if (getGenAI) {
+    const ai = getGenAI();
+    if (ai) {
+      try {
+        const historyText = (input.conversationHistory || [])
+          .slice(-6)
+          .map((h) => `${h.role === "caller" ? "Caller" : "Maya"}: "${h.text}"`)
+          .join("\n");
+
+        const prompt = `You are Maya, the warm, polite, and intelligent AI Receptionist at Lumera Apex PolyClinic in Gurgaon, India.
+You are speaking live to a caller on a WhatsApp voice phone call.
+
+Caller Phone: ${callerPhone}
+Caller Name: ${cleanCallerName}
+Detected Language: ${langInfo.name} (${langInfo.localName})
+
+Clinic Information:
+- Doctors & OPD:
+  * Dr. Rajesh (Cardiology / Heart Specialist) - Mon-Sat 10:00 AM - 02:00 PM, Fee ₹800
+  * Dr. Vikram Malhotra (General Medicine / Internal Medicine, Fever, BP, Diabetes) - Mon-Sat 09:00 AM - 01:00 PM & 05:00 PM - 08:00 PM, Fee ₹600
+  * Dr. Meera (Dermatology, Skin, Hair) - Mon-Sat 02:00 PM - 06:00 PM, Fee ₹700
+  * Dr. Siddharth (Physiotherapy & Ortho Rehab, Joint & Back Pain) - Mon-Sat 09:00 AM - 04:00 PM, Fee ₹500
+  * Dr. Ananya (Pediatrics, Child Specialist) - Mon-Sat 10:00 AM - 01:00 PM, Fee ₹600
+  * Dr. Swamy (Dental Surgery) - Mon-Sat 11:00 AM - 04:00 PM, Fee ₹500
+  * Dr. Priya Mukherjee (Ophthalmology, Eye Specialist) - Mon-Sat 10:00 AM - 03:00 PM, Fee ₹600
+- OPD Timings: Mon-Sat 09:00 AM to 08:00 PM, Sun 10:00 AM to 02:00 PM. Lab sample collection from 08:00 AM daily.
+- Address: 104-106, Health Hub, Sector 14, Opposite Metro Station, Gurgaon. Free parking available.
+
+Previous Call Conversation (if any):
+${historyText || "(Start of call)"}
+
+Latest Caller Speech: "${message}"
+
+Voice Persona Rules:
+1. Speak naturally and warmly like a real receptionist. Match the caller's language (${langInfo.name} / Hinglish / English).
+2. Keep spoken responses short, concise, and conversational (1 to 2 sentences, 20-35 words max) so it sounds like real voice dialogue.
+3. If caller explicitly asks to book an appointment (e.g. "book an appointment", "give me a slot", "book Dr. Rajesh", "ha book kardo"), set "shouldBook": true and specify the doctor ("Rajesh", "Vikram", "Meera", "Siddharth", "Ananya", "Swamy", "Mukherjee").
+4. If caller is just asking for timings, doctor availability, directions, or asking questions: answer their question warmly and ask if they'd like to book. Do NOT book unless they ask or confirm!
+
+Output strict JSON:
+{
+  "speechText": "Spoken text in ${langInfo.name} / natural Indian conversational style",
+  "intent": "BOOKING" | "TIMINGS" | "LOCATION" | "REFILL" | "DOCTOR_INFO" | "INQUIRY",
+  "shouldBook": false,
+  "doctorName": "Rajesh",
+  "suggestedAction": "Summary"
+}`;
+
+        const gen = await ai.models.generateContent({
+          model: vertexGeminiModel(),
+          contents: [{ text: prompt }],
+        });
+        const txt = String(gen.text || "").trim();
+        const jsonMatch = txt.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          if (parsed.speechText) {
+            if (parsed.shouldBook) {
+              const docToBook = parsed.doctorName || "Vikram";
+              try {
+                const booked = bookWhatsAppAppointment({
+                  tenantId,
+                  patientPhone: callerPhone,
+                  patientName: cleanCallerName !== "there" ? cleanCallerName : "Patient",
+                  doctorName: docToBook,
+                });
+                const appt = booked.appointment;
+                return {
+                  speechText: parsed.speechText,
+                  intent: "BOOKING",
+                  suggestedAction: `Confirmed token #${appt.tokenNumber} for today at ${appt.timeSlot}`,
+                  isEmergency: false,
+                  appointment: {
+                    id: String(appt.id),
+                    tokenNumber: appt.tokenNumber,
+                    doctorName: appt.doctorName,
+                    specialty: appt.specialty,
+                    date: appt.date,
+                    timeSlot: appt.timeSlot,
+                    uhid: appt.uhid,
+                    status: appt.status,
+                  },
+                  buttons: langInfo.buttons.booking,
+                };
+              } catch (bErr) {
+                console.warn("[Voice Gemini Booking Error]", bErr);
+              }
+            }
+
+            return {
+              speechText: parsed.speechText,
+              intent: parsed.intent || "INQUIRY",
+              suggestedAction: parsed.suggestedAction || "Answered patient inquiry",
+              isEmergency: false,
+              buttons: langInfo.buttons.inquiry,
+            };
+          }
+        }
+      } catch (gemErr) {
+        console.warn("[Voicebot Gemini GenAI Error, using resilient fallback]", gemErr);
+      }
+    }
+  }
+
+  // 3. Specialty & Clinical Keywords Fallback matching across Indic languages
   const specialtySearchKeywords: { kws: string[]; specMatch: string; docHint: string }[] = [
     {
       kws: [
@@ -736,18 +842,30 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
                   },
                 },
                 {
-                  text: "Transcribe this patient caller speech accurately in the spoken language (English, Hindi, Hinglish, Marathi, Tamil, etc.). Return only the exact transcription text without any markdown or quotes.",
+                  text: "Transcribe this patient caller speech accurately in the spoken language (English, Hindi, Hinglish, Marathi, Tamil, etc.). Return only the exact transcription text without any markdown or quotes. If the audio contains only silence, background noise, or breathing, return NONE.",
                 },
               ],
             });
             message = response.text?.trim() || "";
+            if (/^(none|silent|silence|inaudible|unintelligible|no speech)[\.\!\?]?$/i.test(message)) {
+              message = "";
+            }
             console.log(`[Voice Transcription] Transcribed caller audio: "${message}"`);
           }
         } catch (transcribeErr) {
           console.error("[Voice Transcription Error]", transcribeErr);
         }
       }
-      if (!message) message = "Hello";
+
+      if (!message) {
+        return res.json({
+          success: true,
+          from,
+          speechText: "",
+          intent: "SILENCE",
+          hasAudio: false,
+        });
+      }
 
       const result = await runGeminiVoiceReceptionist({
         message,
@@ -755,6 +873,7 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
         callerPhone: from,
         language,
         tenantId,
+        conversationHistory: req.body?.conversationHistory,
         getGenAI,
       });
 
@@ -830,6 +949,7 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
       return res.json({
         success: true,
         from,
+        transcript: message,
         audioBase64,
         ...result,
       });
