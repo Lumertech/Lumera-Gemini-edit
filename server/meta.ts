@@ -25,6 +25,8 @@ import type { SqlDatabase } from "./sql-engine.ts";
 import { dispatchPatientCloudText } from "./whatsapp-patient-dispatch.ts";
 import { processBotActionOrQuery, findRegisteredPatient } from "./whatsapp.ts";
 import { runGeminiVoiceReceptionist } from "./gemini-voice.ts";
+import { getWhatsAppTenantVoiceSettings } from "./whatsapp-numbers-store.ts";
+import { getTenantLetterhead } from "./letterhead.ts";
 
 /** read and failed are terminal. delivered can still become read. */
 function isPendingOutboundStatus(status: string): boolean {
@@ -341,6 +343,7 @@ export async function handleMetaInboundCallAction(opts: {
   action?: "accept" | "pre_accept" | "reject" | "terminate";
   offerSdp?: string;
   fromPhone?: string;
+  tenantId?: string;
 }) {
   const token = readSecret(
     "META_ACCESS_TOKEN",
@@ -365,6 +368,7 @@ export async function handleMetaInboundCallAction(opts: {
         body: JSON.stringify({
           callId: opts.callId,
           callerPhone: opts.fromPhone || "",
+          tenantId: opts.tenantId || "tenant-lumera-main",
           offerSdp: opts.offerSdp,
           publicIp: "34.46.39.52",
         }),
@@ -870,7 +874,55 @@ export function createMetaRouter(): Router {
                   const direction = String(call.direction || "USER_INITIATED");
                   const offerSdp = String(call.session?.sdp || call.connection?.webrtc?.sdp || "");
 
-                  // Answer the call immediately on first ring with zero blocking
+                  let targetTenantId = inboundTenantId;
+                  if (inboundTenantId === "tenant-lumera-main") {
+                    const demoTenant = findTenantByPatientPhone(db, fromPhone);
+                    if (demoTenant) {
+                      targetTenantId = demoTenant;
+                    }
+                  }
+
+                  const voiceSettings = getWhatsAppTenantVoiceSettings(db, targetTenantId);
+
+                  // If tenant configured "Messaging Only", gracefully reject voice call and send WhatsApp text
+                  if (!voiceSettings.voiceEnabled) {
+                    console.log(`[Meta Inbound Call] Tenant ${targetTenantId} has voice calls disabled (Messaging Only). Rejecting callId=${callId}`);
+                    if (callId && phoneNumberId) {
+                      void handleMetaInboundCallAction({
+                        phoneNumberId,
+                        callId,
+                        action: "reject",
+                        fromPhone,
+                        tenantId: targetTenantId,
+                      }).catch((rejectErr) => {
+                        console.warn("[Meta Inbound Call Reject Error]", rejectErr);
+                      });
+                    }
+
+                    const letterhead = getTenantLetterhead(targetTenantId);
+                    const clinicName = letterhead.clinicName || "our clinic";
+                    void dispatchPatientCloudText({
+                      tenantId: targetTenantId,
+                      to: fromPhone,
+                      textBody: `Hello! Thank you for calling *${clinicName}*.\n\nOur clinic line is currently configured for *WhatsApp messaging only*. You can text us right here 24/7 to book doctor appointments, check OPD timings, view your prescriptions, or chat with our front desk.\n\nHow may we assist you today?`,
+                      buttons: ["📅 Book Appointment", "⏰ Doctor Timings", "📍 Clinic Location"],
+                    }).catch((textErr) => {
+                      console.warn("[Voice Reject Outbound WhatsApp Notice Error]", textErr);
+                    });
+
+                    const callNotice = `📞 Inbound Voice Call Declined (Messaging Only Mode: ${callEvent})`;
+                    recordInboundWhatsAppMessage(db, {
+                      fromPhone,
+                      textBody: callNotice,
+                      tenantId: targetTenantId,
+                      phoneNumberId,
+                      wabaId,
+                      now,
+                    });
+                    continue;
+                  }
+
+                  // Voice calls enabled: Answer the call immediately on first ring with zero blocking
                   if (callId && phoneNumberId && (callEvent === "connect" || callEvent === "ringing" || offerSdp)) {
                     void handleMetaInboundCallAction({
                       phoneNumberId,
@@ -878,17 +930,10 @@ export function createMetaRouter(): Router {
                       action: "accept",
                       offerSdp,
                       fromPhone,
+                      tenantId: targetTenantId,
                     }).catch((callAnswerErr) => {
                       console.warn("[Meta Inbound Call Answer Error]", callAnswerErr);
                     });
-                  }
-
-                  let targetTenantId = inboundTenantId;
-                  if (inboundTenantId === "tenant-lumera-main") {
-                    const demoTenant = findTenantByPatientPhone(db, fromPhone);
-                    if (demoTenant) {
-                      targetTenantId = demoTenant;
-                    }
                   }
 
                   const callNotice = `📞 Inbound Voice Call (${direction.replace(/_/g, " ")}: ${callEvent})`;

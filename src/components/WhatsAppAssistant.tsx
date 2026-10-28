@@ -38,6 +38,7 @@ import { Patient, Doctor } from '../types';
 import { InertText } from '../lib/inertText';
 import { DocumentPreviewModal, DocumentPreviewData } from './whatsapp/DocumentPreviewModal';
 import { OutboundTriggerPanel } from './whatsapp/OutboundTriggerPanel';
+import { VoiceSettingsPanel } from './whatsapp/VoiceSettingsPanel';
 import {
   conversationInitial,
   findConversationIdByPhone,
@@ -101,8 +102,8 @@ export const WhatsAppAssistant: React.FC<WhatsAppAssistantProps> = ({
   currentPatient,
   doctors,
 }) => {
-  // Navigation tabs: 'chat' (Patient Simulator), 'inbox' (Staff 2-Way Dashboard), 'outbound' (Trigger Engine)
-  const [activeTab, setActiveTab] = useState<'chat' | 'inbox' | 'outbound'>('chat');
+  // Navigation tabs: 'chat' (Patient Simulator), 'inbox' (Staff 2-Way Dashboard), 'outbound' (Trigger Engine), 'voice' (Voice Calls & AI Receptionist)
+  const [activeTab, setActiveTab] = useState<'chat' | 'inbox' | 'outbound' | 'voice'>('chat');
 
   // Conversations and active thread
   const [conversations, setConversations] = useState<ConversationItem[]>([]);
@@ -550,10 +551,24 @@ export const WhatsAppAssistant: React.FC<WhatsAppAssistantProps> = ({
             <Radio className="w-3.5 h-3.5 text-blue-600" />
             Outbound Triggers
           </button>
+          <button
+            onClick={() => setActiveTab('voice')}
+            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              activeTab === 'voice'
+                ? 'bg-white text-purple-700 shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <PhoneCall className="w-3.5 h-3.5 text-purple-600" />
+            Voice & Receptionist
+          </button>
         </div>
       </div>
 
-      {/* 2. TAB: OUTBOUND TRIGGER ENGINE */}
+      {/* 2. TAB: VOICE & RECEPTIONIST SETTINGS */}
+      {activeTab === 'voice' && <VoiceSettingsPanel />}
+
+      {/* 3. TAB: OUTBOUND TRIGGER ENGINE */}
       {activeTab === 'outbound' && (
         <OutboundTriggerPanel
           activePatientName={activePatientName}
@@ -562,7 +577,7 @@ export const WhatsAppAssistant: React.FC<WhatsAppAssistantProps> = ({
         />
       )}
 
-      {/* 3. TAB: CHAT OR 2-WAY STAFF INBOX */}
+      {/* 4. TAB: CHAT OR 2-WAY STAFF INBOX */}
       {(activeTab === 'chat' || activeTab === 'inbox') && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
           {/* Left Column: Staff Multi-Agent Conversation List (Always visible in inbox, optional toggle in chat) */}

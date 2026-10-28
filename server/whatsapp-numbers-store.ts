@@ -91,6 +91,14 @@ export function ensureWhatsAppOwnershipSchema(database: DatabaseSync) {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS whatsapp_tenant_settings (
+      tenant_id TEXT PRIMARY KEY,
+      voice_enabled INTEGER NOT NULL DEFAULT 1,
+      receptionist_name TEXT NOT NULL DEFAULT 'Maya',
+      custom_greeting TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL
+    );
   `);
   try {
     database.exec("ALTER TABLE whatsapp_number_secrets ADD COLUMN registration_pin TEXT NOT NULL DEFAULT ''");
@@ -602,3 +610,80 @@ export type UpsertWhatsAppNumberInput = {
   registrationPin?: string;
   allowCreate?: boolean;
 };
+
+export interface WhatsAppTenantVoiceSettings {
+  tenantId: string;
+  voiceEnabled: boolean;
+  receptionistName: string;
+  customGreeting: string;
+}
+
+function ensureVoiceSettingsTable(database: DatabaseSync) {
+  try {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS whatsapp_tenant_settings (
+        tenant_id TEXT PRIMARY KEY,
+        voice_enabled INTEGER NOT NULL DEFAULT 1,
+        receptionist_name TEXT NOT NULL DEFAULT 'Maya',
+        custom_greeting TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL
+      );
+    `);
+  } catch {}
+}
+
+export function getWhatsAppTenantVoiceSettings(database: DatabaseSync, tenantId: string): WhatsAppTenantVoiceSettings {
+  const tid = String(tenantId || "tenant-lumera-main").trim();
+  ensureVoiceSettingsTable(database);
+  try {
+    const row = database.prepare("SELECT * FROM whatsapp_tenant_settings WHERE tenant_id = ?").get(tid) as any;
+    if (row) {
+      return {
+        tenantId: tid,
+        voiceEnabled: Number(row.voice_enabled ?? 1) === 1,
+        receptionistName: String(row.receptionist_name || "Maya").trim() || "Maya",
+        customGreeting: String(row.custom_greeting || "").trim(),
+      };
+    }
+  } catch (err) {
+    console.warn("[getWhatsAppTenantVoiceSettings]", err);
+  }
+  return {
+    tenantId: tid,
+    voiceEnabled: true,
+    receptionistName: "Maya",
+    customGreeting: "",
+  };
+}
+
+export function saveWhatsAppTenantVoiceSettings(
+  database: DatabaseSync,
+  tenantId: string,
+  settings: { voiceEnabled?: boolean; receptionistName?: string; customGreeting?: string }
+): WhatsAppTenantVoiceSettings {
+  const tid = String(tenantId || "tenant-lumera-main").trim();
+  ensureVoiceSettingsTable(database);
+  const current = getWhatsAppTenantVoiceSettings(database, tid);
+  const voiceEnabled = settings.voiceEnabled !== undefined ? (settings.voiceEnabled ? 1 : 0) : (current.voiceEnabled ? 1 : 0);
+  const receptionistName = settings.receptionistName !== undefined ? settings.receptionistName.trim() || "Maya" : current.receptionistName;
+  const customGreeting = settings.customGreeting !== undefined ? settings.customGreeting.trim() : current.customGreeting;
+  const now = new Date().toISOString();
+
+  database.prepare(`
+    INSERT INTO whatsapp_tenant_settings (tenant_id, voice_enabled, receptionist_name, custom_greeting, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(tenant_id) DO UPDATE SET
+      voice_enabled = excluded.voice_enabled,
+      receptionist_name = excluded.receptionist_name,
+      custom_greeting = excluded.custom_greeting,
+      updated_at = excluded.updated_at
+  `).run(tid, voiceEnabled, receptionistName, customGreeting, now);
+
+  return {
+    tenantId: tid,
+    voiceEnabled: voiceEnabled === 1,
+    receptionistName,
+    customGreeting,
+  };
+}
+

@@ -179,10 +179,12 @@ async def handle_caller_utterance(call_id: str, pcm_16k: np.ndarray, out_track: 
         # 1. Encode 16kHz mono PCM into in-memory WAV on worker thread (non-blocking)
         audio_b64 = await loop.run_in_executor(None, _encode_wav_sync, pcm_16k)
 
-        # 2. Retrieve ongoing conversation history for this call
+        # 2. Retrieve ongoing conversation history and tenantId for this call
         conv_history = []
+        tenant_id = "tenant-lumera-main"
         if call_id in active_calls:
             conv_history = active_calls[call_id].get("history", [])
+            tenant_id = active_calls[call_id].get("tenantId", "tenant-lumera-main")
 
         # 3. Send to Lumera Cloud Run cognitive brain
         headers = {
@@ -195,10 +197,10 @@ async def handle_caller_utterance(call_id: str, pcm_16k: np.ndarray, out_track: 
                 "audioBase64": audio_b64,
                 "mimeType": "audio/wav",
                 "callerName": "Patient",
-                "tenantId": "tenant-lumera-main",
+                "tenantId": tenant_id,
                 "conversationHistory": conv_history,
             }
-            logger.info(f"[{call_id}] Sending caller speech ({len(pcm_16k)/16000:.2f}s) to Lumera AI...")
+            logger.info(f"[{call_id}] Sending caller speech ({len(pcm_16k)/16000:.2f}s) for tenant {tenant_id} to Lumera AI...")
             async with session.post(LUMERA_API_URL, json=payload, timeout=aiohttp.ClientTimeout(total=18)) as resp:
                 if resp.status == 200:
                     data = await resp.json()
@@ -251,7 +253,7 @@ async def process_inbound_audio(call_id: str, inbound_track, out_track: MayaVoic
     silence_frames = 0
     speech_frames = 0
     min_speech_frames = 15        # ~300ms of speech minimum
-    silence_threshold_frames = 45 # ~900ms of silence to trigger end of utterance
+    silence_threshold_frames = 25 # ~500ms of silence for snappy, natural turn-taking
     energy_threshold = 320        # RMS amplitude threshold
     is_processing = False         # Lock to prevent overlapping queries
 
@@ -366,6 +368,7 @@ async def handle_answer_offer(request):
 
     call_id = body.get("callId")
     caller_phone = body.get("callerPhone", "+919999973271")
+    tenant_id = body.get("tenantId", "tenant-lumera-main")
     offer_sdp = body.get("offerSdp", "")
     public_ip = body.get("publicIp", PUBLIC_IP)
 
@@ -428,6 +431,7 @@ async def handle_answer_offer(request):
         "pc": pc,
         "track": track,
         "callerPhone": caller_phone,
+        "tenantId": tenant_id,
         "startTime": time.time(),
         "history": [],
         "sdpAnswer": final_sdp,
