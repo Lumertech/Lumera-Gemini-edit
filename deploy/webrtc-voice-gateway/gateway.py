@@ -109,14 +109,21 @@ class MayaVoiceTrack(MediaStreamTrack):
         self.cursor = len(self.pcm)
 
     async def recv(self):
-        # Precise 20ms WebRTC clock pacing
+        # Precise 20ms WebRTC clock pacing with drift recovery
         if self._start_time is None:
             self._start_time = time.time()
-        else:
-            expected_time = self._start_time + (self.pts / self.sample_rate)
-            delay = expected_time - time.time()
-            if delay > 0:
-                await asyncio.sleep(delay)
+            self._frame_count = 0
+
+        self._frame_count += 1
+        expected_time = self._start_time + (self._frame_count * 0.020)
+        delay = expected_time - time.time()
+        if delay < -0.100:
+            self._start_time = time.time()
+            self._frame_count = 0
+            delay = 0.020
+
+        if delay > 0:
+            await asyncio.sleep(delay)
 
         # 960 samples per frame
         if self.cursor < len(self.pcm):
@@ -156,18 +163,21 @@ async def ensure_greeting_audio():
         cached_greeting_pcm = load_audio_pcm(GREETING_FILE, 48000)
         logger.info(f"Preloaded Maya greeting into memory: {len(cached_greeting_pcm)/48000:.2f}s")
 
+def _encode_wav_sync(pcm: np.ndarray) -> str:
+    wav_io = io.BytesIO()
+    with wave.open(wav_io, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(16000)
+        wf.writeframes(pcm.tobytes())
+    return base64.b64encode(wav_io.getvalue()).decode("utf-8")
+
 async def handle_caller_utterance(call_id: str, pcm_16k: np.ndarray, out_track: MayaVoiceTrack, caller_phone: str):
     """Encodes caller speech to WAV, queries Lumera Gemini AI, synthesizes TTS, and queues audio to caller."""
     try:
-        # 1. Encode 16kHz mono PCM into in-memory WAV
-        wav_io = io.BytesIO()
-        with wave.open(wav_io, "wb") as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(2)
-            wf.setframerate(16000)
-            wf.writeframes(pcm_16k.tobytes())
-        wav_bytes = wav_io.getvalue()
-        audio_b64 = base64.b64encode(wav_bytes).decode("utf-8")
+        loop = asyncio.get_event_loop()
+        # 1. Encode 16kHz mono PCM into in-memory WAV on worker thread (non-blocking)
+        audio_b64 = await loop.run_in_executor(None, _encode_wav_sync, pcm_16k)
 
         # 2. Retrieve ongoing conversation history for this call
         conv_history = []
@@ -220,8 +230,8 @@ async def handle_caller_utterance(call_id: str, pcm_16k: np.ndarray, out_track: 
                                 if chunk["type"] == "audio":
                                     resp_audio_bytes += chunk["data"]
 
-                        # Decode into 48kHz mono 16-bit PCM for WebRTC
-                        resp_pcm = decode_mp3_bytes_to_pcm(resp_audio_bytes, 48000)
+                        # Decode into 48kHz mono 16-bit PCM asynchronously on worker thread (non-blocking)
+                        resp_pcm = await loop.run_in_executor(None, decode_mp3_bytes_to_pcm, resp_audio_bytes, 48000)
                         if len(resp_pcm) > 0:
                             out_track.queue_audio(resp_pcm, replace=True)
                             logger.info(f"[{call_id}] Streaming Maya's response into call ({len(resp_pcm)/48000:.2f}s)")

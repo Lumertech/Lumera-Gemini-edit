@@ -422,7 +422,7 @@ export async function runGeminiVoiceReceptionist(opts: VoiceReceptionistInput): 
     const ai = getGenAI();
     if (ai) {
       try {
-        const historyText = (input.conversationHistory || [])
+        const historyText = (opts.conversationHistory || [])
           .slice(-6)
           .map((h) => `${h.role === "caller" ? "Caller" : "Maya"}: "${h.text}"`)
           .join("\n");
@@ -774,9 +774,8 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
 
   async function synthesizeSpeechNeural(text: string): Promise<string | null> {
     try {
-      const isHindi = /[\u0900-\u097F]/.test(text);
-      const lang = isHindi ? "hi-IN" : "en-IN";
-      const voiceName = isHindi ? "hi-IN-Neural2-A" : "en-IN-Neural2-A";
+      const lang = "en-IN";
+      const voiceName = "en-IN-Neural2-A";
 
       const tokenRes = await fetch("http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token", {
         headers: { "Metadata-Flavor": "Google" },

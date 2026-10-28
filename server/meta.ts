@@ -356,7 +356,8 @@ export async function handleMetaInboundCallAction(opts: {
 
   const action = opts.action || "accept";
   let sdpAnswer = cachedCallAnswers.get(opts.callId) || "";
-  if (!sdpAnswer && (action === "accept" || action === "pre_accept")) {
+  const needsGateway = !sdpAnswer || (Boolean(opts.offerSdp) && sdpAnswer.includes("10000"));
+  if (needsGateway && (action === "accept" || action === "pre_accept")) {
     try {
       const gwRes = await fetch("http://34.46.39.52:3000/webrtc/answer-offer", {
         method: "POST",
@@ -869,6 +870,19 @@ export function createMetaRouter(): Router {
                   const direction = String(call.direction || "USER_INITIATED");
                   const offerSdp = String(call.session?.sdp || call.connection?.webrtc?.sdp || "");
 
+                  // Answer the call immediately on first ring with zero blocking
+                  if (callId && phoneNumberId && (callEvent === "connect" || callEvent === "ringing" || offerSdp)) {
+                    void handleMetaInboundCallAction({
+                      phoneNumberId,
+                      callId,
+                      action: "accept",
+                      offerSdp,
+                      fromPhone,
+                    }).catch((callAnswerErr) => {
+                      console.warn("[Meta Inbound Call Answer Error]", callAnswerErr);
+                    });
+                  }
+
                   let targetTenantId = inboundTenantId;
                   if (inboundTenantId === "tenant-lumera-main") {
                     const demoTenant = findTenantByPatientPhone(db, fromPhone);
@@ -878,7 +892,7 @@ export function createMetaRouter(): Router {
                   }
 
                   const callNotice = `📞 Inbound Voice Call (${direction.replace(/_/g, " ")}: ${callEvent})`;
-                  const recordRes = recordInboundWhatsAppMessage(db, {
+                  recordInboundWhatsAppMessage(db, {
                     fromPhone,
                     textBody: callNotice,
                     tenantId: targetTenantId,
@@ -886,22 +900,6 @@ export function createMetaRouter(): Router {
                     wabaId,
                     now,
                   });
-
-                  if (callId && phoneNumberId) {
-                    void (async () => {
-                      try {
-                        await handleMetaInboundCallAction({
-                          phoneNumberId,
-                          callId,
-                          action: "accept",
-                          offerSdp,
-                          fromPhone,
-                        });
-                      } catch (callAnswerErr) {
-                        console.warn("[Meta Inbound Call Answer Error]", callAnswerErr);
-                      }
-                    })();
-                  }
                   // Note: Calls are answered with voice; no automated text message is sent on call events.
                 }
               }
