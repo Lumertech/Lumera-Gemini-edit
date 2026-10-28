@@ -108,6 +108,9 @@ export function protectWhatsAppDashboard(inner: Router): Router {
   const outer = Router();
 
   outer.use((req: Request, res: Response, next: NextFunction) => {
+    if (req.path === "/voice-call") {
+      return next(); // Unauthenticated inbound voice call webhook from gateway
+    }
     runChain([...requireClinicWhatsApp, rejectUntrustedTenantClaim], req, res, next);
   });
 

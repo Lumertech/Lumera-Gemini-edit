@@ -121,6 +121,8 @@ export function isSecurityExemptPath(path: string): boolean {
   if (p === "/api/meta/register-gateway" || p === "/meta/register-gateway") return true;
   if (p === "/api/meta/webhook-debug-log" || p === "/meta/webhook-debug-log") return true;
   if (p === "/api/whatsapp/voice-call" || p === "/whatsapp/voice-call") return true;
+  if (p === "/api/voice/inbound" || p === "/voice/inbound") return true;
+  if (p === "/meta/voice-call" || p === "/api/meta/voice-call") return true;
   if (p === "/api/gemini/voice-bot" || p === "/gemini/voice-bot") return true;
   if (p === "/api/billing/razorpay/webhook") return true;
   return false;

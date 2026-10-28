@@ -30,7 +30,7 @@ logger = logging.getLogger("lumera-voice-gateway")
 PORT = int(os.environ.get("PORT", 3000))
 PUBLIC_IP = os.environ.get("PUBLIC_IP", "34.46.39.52")
 GREETING_FILE = "/opt/lumera-voice/maya_greeting.mp3"
-LUMERA_API_URL = os.environ.get("LUMERA_API_URL", "https://www.mylumera.in/api/whatsapp/voice-call")
+LUMERA_API_URL = os.environ.get("LUMERA_API_URL", "https://www.mylumera.in/api/voice/inbound")
 
 # Preloaded greeting PCM in memory (48kHz mono 16-bit)
 cached_greeting_pcm = np.zeros(0, dtype=np.int16)
@@ -88,6 +88,10 @@ class MayaVoiceTrack(MediaStreamTrack):
         self.cursor = 0
         self.pts = 0
         self._start_time = None
+
+    def is_speaking(self) -> bool:
+        """Returns True if Maya is currently streaming voice audio (not silence)."""
+        return self.cursor < len(self.pcm)
 
     def queue_audio(self, new_pcm: np.ndarray):
         """Queues new audio PCM (Maya's cognitive voice response) to be played into WebRTC."""
@@ -165,7 +169,11 @@ async def handle_caller_utterance(call_id: str, pcm_16k: np.ndarray, out_track: 
         audio_b64 = base64.b64encode(wav_bytes).decode("utf-8")
 
         # 2. Send to Lumera Cloud Run cognitive brain
-        async with aiohttp.ClientSession() as session:
+        headers = {
+            "Content-Type": "application/json",
+            "Origin": "https://www.mylumera.in"
+        }
+        async with aiohttp.ClientSession(headers=headers) as session:
             payload = {
                 "from": caller_phone or "+919999973271",
                 "audioBase64": audio_b64,
@@ -210,13 +218,9 @@ async def process_inbound_audio(call_id: str, inbound_track, out_track: MayaVoic
     is_speaking = False
     silence_frames = 0
     speech_frames = 0
-    min_speech_frames = 12       # ~240ms of speech minimum
-    silence_threshold_frames = 35 # ~700ms of silence to trigger end of utterance
-    energy_threshold = 300       # RMS amplitude threshold
-
-    # Wait for Maya's initial greeting to finish before actively listening to avoid acoustic feedback
-    greeting_duration = 14.0
-    start_time = time.time()
+    min_speech_frames = 10        # ~200ms of speech minimum
+    silence_threshold_frames = 30 # ~600ms of silence to trigger end of utterance
+    energy_threshold = 280        # RMS amplitude threshold
 
     try:
         while True:
@@ -224,13 +228,23 @@ async def process_inbound_audio(call_id: str, inbound_track, out_track: MayaVoic
             if not frame:
                 break
 
-            # Skip listening while initial greeting is playing
-            if time.time() - start_time < greeting_duration:
-                continue
+            maya_talking = out_track.is_speaking()
 
             for resampled in resampler.resample(frame):
                 data = resampled.to_ndarray().flatten()
                 rms = np.sqrt(np.mean(data.astype(np.float32) ** 2))
+
+                # If Maya is speaking: only interrupt if caller speaks loudly (barge-in)
+                if maya_talking:
+                    if rms > 1200:
+                        logger.info(f"[{call_id}] Caller interrupted Maya (RMS: {rms:.0f})")
+                        out_track.interrupt()
+                        maya_talking = False
+                        is_speaking = True
+                        buffer = [data]
+                        speech_frames = 1
+                        silence_frames = 0
+                    continue
 
                 if rms > energy_threshold:
                     if not is_speaking:

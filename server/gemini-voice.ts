@@ -666,8 +666,8 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
     }
   });
 
-  // 4b. Inbound WhatsApp Voice Call Receiver & Simulator
-  app.post("/api/whatsapp/voice-call", async (req: Request, res: Response) => {
+  // 4b. Inbound WhatsApp Voice Call Receiver & Simulator (supports audioBase64 & direct text)
+  const handleInboundVoiceCall = async (req: Request, res: Response) => {
     try {
       const from = String(req.body?.from || req.body?.phone || "+919999973271").trim();
       let message = String(req.body?.message || req.body?.transcript || req.body?.text || "").trim();
@@ -787,7 +787,10 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
       console.error("[WhatsApp Voice Call Handler Error]", err);
       return res.status(500).json({ error: "Failed to process voice call" });
     }
-  });
+  };
+  app.post("/api/whatsapp/voice-call", handleInboundVoiceCall);
+  app.post("/api/voice/inbound", handleInboundVoiceCall);
+  app.post("/meta/voice-call", handleInboundVoiceCall);
 
   // 4b. Local FHIR document for the signed-in clinic. Not an external locker submission.
   app.post("/api/abdm/fhir-export", requireAuth, async (req: Request, res: Response) => {
