@@ -666,6 +666,50 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
     }
   });
 
+  async function synthesizeSpeechNeural(text: string): Promise<string | null> {
+    try {
+      const isHindi = /[\u0900-\u097F]/.test(text);
+      const lang = isHindi ? "hi-IN" : "en-IN";
+      const voiceName = isHindi ? "hi-IN-Neural2-A" : "en-IN-Neural2-A";
+
+      const tokenRes = await fetch("http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token", {
+        headers: { "Metadata-Flavor": "Google" },
+        signal: AbortSignal.timeout(1500),
+      }).catch(() => null);
+
+      let accessToken = "";
+      if (tokenRes && tokenRes.ok) {
+        const json = await tokenRes.json() as { access_token?: string };
+        accessToken = json.access_token || "";
+      }
+
+      if (!accessToken) return null;
+
+      const ttsRes = await fetch("https://texttospeech.googleapis.com/v1/text:synthesize", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+          "x-goog-user-project": "gen-lang-client-0108182367",
+        },
+        body: JSON.stringify({
+          input: { text },
+          voice: { languageCode: lang, name: voiceName },
+          audioConfig: { audioEncoding: "MP3", speakingRate: 0.98, pitch: 0.0 },
+        }),
+        signal: AbortSignal.timeout(4000),
+      });
+
+      if (ttsRes.ok) {
+        const data = await ttsRes.json() as { audioContent?: string };
+        return data.audioContent || null;
+      }
+    } catch (err) {
+      console.warn("[Neural2 TTS Synthesis Error]", err);
+    }
+    return null;
+  }
+
   // 4b. Inbound WhatsApp Voice Call Receiver & Simulator (supports audioBase64 & direct text)
   const handleInboundVoiceCall = async (req: Request, res: Response) => {
     try {
@@ -778,9 +822,15 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
         }).catch((err) => console.error("[Voice Outbound WhatsApp Error]", err));
       }
 
+      let audioBase64: string | null = null;
+      if (result.speechText) {
+        audioBase64 = await synthesizeSpeechNeural(result.speechText);
+      }
+
       return res.json({
         success: true,
         from,
+        audioBase64,
         ...result,
       });
     } catch (err) {

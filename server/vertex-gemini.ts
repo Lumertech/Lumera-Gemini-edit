@@ -20,12 +20,13 @@ import { GoogleGenAI, type GenerateContentParameters, type GenerateContentRespon
  */
 export const VERTEX_DEFAULT_PROJECT = "gen-lang-client-0108182367";
 export const VERTEX_DEFAULT_LOCATION = "asia-south1";
-export const VERTEX_DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite";
+export const VERTEX_DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
 
 /** Resolved model id. Reads VERTEX_GEMINI_MODEL at call time so a deploy can swap it. */
 export function vertexGeminiModel(env: NodeJS.ProcessEnv = process.env): string {
   const id = String(env.VERTEX_GEMINI_MODEL || "").trim();
-  return id || VERTEX_DEFAULT_GEMINI_MODEL;
+  if (!id || id === "gemini-3.5-flash-lite") return "gemini-2.5-flash";
+  return id;
 }
 
 export const AI_TRANSCRIPTION_NOT_CONFIGURED = "AI_TRANSCRIPTION_NOT_CONFIGURED";

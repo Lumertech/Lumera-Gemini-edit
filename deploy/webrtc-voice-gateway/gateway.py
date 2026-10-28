@@ -190,15 +190,23 @@ async def handle_caller_utterance(call_id: str, pcm_16k: np.ndarray, out_track: 
                     logger.info(f"[{call_id}] Maya cognitive reply ({intent}): {speech_text}")
 
                     if speech_text:
-                        # 3. Synthesize Maya's response using Edge-TTS
-                        import edge_tts
-                        communicate = edge_tts.Communicate(speech_text, "en-IN-NeerjaNeural")
                         resp_audio_bytes = b""
-                        async for chunk in communicate.stream():
-                            if chunk["type"] == "audio":
-                                resp_audio_bytes += chunk["data"]
+                        if data.get("audioBase64"):
+                            try:
+                                resp_audio_bytes = base64.b64decode(data["audioBase64"])
+                                logger.info(f"[{call_id}] Received Google Cloud Neural2 audio ({len(resp_audio_bytes)} bytes)")
+                            except Exception as b64_err:
+                                logger.warn(f"[{call_id}] Error decoding audioBase64: {b64_err}")
 
-                        # 4. Decode into 48kHz mono 16-bit PCM for WebRTC
+                        # Fallback to edge-tts if audioBase64 is absent
+                        if not resp_audio_bytes:
+                            import edge_tts
+                            communicate = edge_tts.Communicate(speech_text, "en-IN-NeerjaNeural")
+                            async for chunk in communicate.stream():
+                                if chunk["type"] == "audio":
+                                    resp_audio_bytes += chunk["data"]
+
+                        # Decode into 48kHz mono 16-bit PCM for WebRTC
                         resp_pcm = decode_mp3_bytes_to_pcm(resp_audio_bytes, 48000)
                         if len(resp_pcm) > 0:
                             out_track.queue_audio(resp_pcm)
