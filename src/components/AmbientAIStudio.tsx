@@ -177,6 +177,7 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
     return () => {
       runRef.current?.stop();
       runRef.current = null;
+      resetAmbientMicrophoneSession();
     };
   }, []);
 
@@ -186,6 +187,7 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
     slotRef.current.phase = snap.phase;
     setIsRequesting(snap.phase === 'starting');
     setIsRecording(snap.phase === 'listening');
+    setIsTranscribing(snap.phase === 'transcribing');
     if (snap.transcript) {
       finalTranscriptRef.current = snap.transcript;
       setTranscript(snap.transcript);
@@ -195,20 +197,24 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
     if (snap.phase === 'error' || snap.phase === 'stopped') {
       setMicError(snap.error);
       setAudioLevel(0);
+      setIsTranscribing(false);
     } else if (snap.phase === 'listening') {
       setMicError(null);
+    } else if (snap.phase === 'idle') {
+      setIsTranscribing(false);
+      setAudioLevel(0);
     }
   };
 
   const stopMic = () => {
-    runRef.current?.stop();
-    runRef.current = null;
+    if (runRef.current) {
+      runRef.current.stop();
+    }
     slotRef.current.phase = 'idle';
     setIsRecording(false);
     setIsRequesting(false);
     setInterimTranscript('');
     setAudioLevel(0);
-    resetAmbientMicrophoneSession();
   };
 
   const loadSample = (sample: (typeof SAMPLE_CONSULTATIONS)[number]) => {
@@ -461,14 +467,16 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
                       ? 'Starting…'
                       : isRecording
                         ? 'Listening'
-                        : micError === MIC_STOPPED_RESUME
-                          ? 'Stopped'
-                          : microphoneStatusLabel({
-                              requesting: false,
-                              recording: false,
-                              transcriptOrigin,
-                              transcribing: isTranscribing,
-                            })}
+                        : isTranscribing
+                          ? 'Transcribing with Gemini…'
+                          : micError === MIC_STOPPED_RESUME
+                            ? 'Stopped'
+                            : microphoneStatusLabel({
+                                requesting: false,
+                                recording: false,
+                                transcriptOrigin,
+                                transcribing: isTranscribing,
+                              })}
                   </span>
                   <span className="text-slate-400 font-mono text-[10px]">
                     {isRecording ? `${audioLevel}%` : isRequesting ? '…' : 'Idle'}

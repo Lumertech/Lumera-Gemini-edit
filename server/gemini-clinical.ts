@@ -1,6 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { requireAuth } from "./auth.ts";
-import { hasAmbientScribeConsent, mountAmbientScribeConsentRoutes, transcribeAppointmentId } from "./ambient-scribe-consent.ts";
+import { cleanVisitId, hasAmbientScribeConsent, latestOpenConsentForPatient, mountAmbientScribeConsentRoutes, transcribeAppointmentId } from "./ambient-scribe-consent.ts";
 import { maxTranscribeBase64Chars, transcribeJsonParser } from "./json-body.ts";
 import { denyUnlessPrescriber } from "./patient-access.ts";
 import { rejectUntrustedTenantClaim } from "./tenant-guard.ts";
@@ -220,7 +220,16 @@ export function mountGeminiClinicalRoutes(app: Express) {
         if (transcribeDurationTooLong(audioBytes, durationMs)) {
           return res.status(413).json({ error: "Recording is too long to transcribe." });
         }
-        const appointmentId = transcribeAppointmentId((req.body ?? {}).appointmentId);
+        let appointmentId = transcribeAppointmentId((req.body ?? {}).appointmentId);
+        if (!appointmentId && (req.body ?? {}).patientId) {
+          const patientId = cleanVisitId((req.body ?? {}).patientId);
+          if (patientId) {
+            const row = latestOpenConsentForPatient(tenantId, patientId);
+            if (row && row.entity_id) {
+              appointmentId = row.entity_id;
+            }
+          }
+        }
         if (!appointmentId) {
           return res.status(400).json({ error: "appointmentId is required", code: "appointment_required" });
         }

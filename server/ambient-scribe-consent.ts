@@ -204,7 +204,7 @@ function mintWalkInAppointment(user: NonNullable<Request["user"]>, patientId: st
   }
 }
 
-function latestOpenConsentForPatient(tenantId: string, patientId: string, now = new Date()): ConsentRow | undefined {
+export function latestOpenConsentForPatient(tenantId: string, patientId: string, now = new Date()): ConsentRow | undefined {
   const day = istClinicDay(now);
   return getDb()
     .prepare(

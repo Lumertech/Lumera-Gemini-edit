@@ -214,6 +214,7 @@ export const CompactAmbientScribe = React.forwardRef<CompactAmbientScribeHandle,
     return () => {
       runRef.current?.stop();
       runRef.current = null;
+      resetAmbientMicrophoneSession();
     };
   }, []);
 
@@ -221,6 +222,7 @@ export const CompactAmbientScribe = React.forwardRef<CompactAmbientScribeHandle,
     slotRef.current.phase = snap.phase;
     setIsRequesting(snap.phase === "starting");
     setIsRecording(snap.phase === "listening");
+    setIsTranscribing(snap.phase === "transcribing");
     if (snap.transcript) {
       setFinalTranscript(snap.transcript);
       setInterimTranscript("");
@@ -229,20 +231,24 @@ export const CompactAmbientScribe = React.forwardRef<CompactAmbientScribeHandle,
     if (snap.phase === "error" || snap.phase === "stopped") {
       setMicError(snap.error);
       setAudioLevel(0);
+      setIsTranscribing(false);
     } else if (snap.phase === "listening") {
       setMicError(null);
+    } else if (snap.phase === "idle") {
+      setIsTranscribing(false);
+      setAudioLevel(0);
     }
   };
 
   const stopMic = () => {
-    runRef.current?.stop();
-    runRef.current = null;
+    if (runRef.current) {
+      runRef.current.stop();
+    }
     slotRef.current.phase = "idle";
     setIsRecording(false);
     setIsRequesting(false);
     setInterimTranscript("");
     setAudioLevel(0);
-    resetAmbientMicrophoneSession();
   };
 
   const handleToggleRecording = (force?: "start" | "stop") => {

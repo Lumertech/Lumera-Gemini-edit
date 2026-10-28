@@ -329,7 +329,8 @@ export function resetAmbientMicrophoneSession(): void {
 function streamIsLive(stream: MediaStream | null): stream is MediaStream {
   if (!stream) return false;
   try {
-    return stream.getAudioTracks().some((track) => track.readyState === "live");
+    const tracks = stream.getAudioTracks();
+    return tracks.length > 0 && tracks.some((track) => track.readyState === "live" && !track.muted);
   } catch {
     return false;
   }
@@ -349,7 +350,14 @@ function acquireMicrophone(
 ): Promise<MediaStream> {
   const live = streamIsLive(retainedStream) ? retainedStream : null;
   if (!live) {
-    if (retainedStream && !streamIsLive(retainedStream)) retainedStream = null;
+    if (retainedStream) {
+      try {
+        retainedStream.getTracks().forEach((track) => track.stop());
+      } catch {
+        /* ignore */
+      }
+      retainedStream = null;
+    }
   } else {
     return Promise.resolve(live);
   }
@@ -637,7 +645,7 @@ export const AMBIENT_TRANSCRIBE_MS = 10_000;
 export const AMBIENT_NO_CHUNK_MESSAGE = "No audio arrived from the microphone. Tap Retry.";
 export const AMBIENT_NO_TRANSCRIPT_MESSAGE = "No transcript arrived from the recording. Tap Retry.";
 
-export type AmbientRunPhase = "idle" | "starting" | "listening" | "error" | "stopped";
+export type AmbientRunPhase = "idle" | "starting" | "listening" | "transcribing" | "error" | "stopped";
 
 export interface AmbientRunSnapshot {
   phase: AmbientRunPhase;
@@ -745,6 +753,8 @@ export function startAmbientCaptureRun(options: {
     periodicTimer = null;
   };
 
+  let isStopping = false;
+
   const fail = (message: string) => {
     if (finished) return;
     finished = true;
@@ -759,47 +769,71 @@ export function startAmbientCaptureRun(options: {
     }
     void options.gesture.audioContext.close().catch(() => {});
     options.onLevel?.(0);
+    resetAmbientMicrophoneSession();
     publish();
   };
 
   const stop = () => {
-    if (finished) return;
-    finished = true;
+    if (finished || isStopping) return;
+    isStopping = true;
     clearTimers();
     detachRecovery();
-    phase = "idle";
-    error = null;
-    try {
-      if (recorder && recorder.state !== "inactive") recorder.stop();
-    } catch {
-      /* ignore */
-    }
-    void options.gesture.audioContext.close().catch(() => {});
     options.onLevel?.(0);
 
-    // If audio chunks were captured, finalize and transcribe the consult recording
-    if (allChunks.length > 0) {
-      const fullBlob = new Blob(allChunks, { type: transcriptionMimeType(mimeType) });
-      if (fullBlob.size >= 100) {
-        options.onAudioRecorded?.(fullBlob);
-        void transcribeRecordedAudio(fullBlob, options.fetchImpl, undefined, options.appointmentId, true)
-          .then((text) => {
+    const onRecorderStopped = async () => {
+      if (finished) return;
+      finished = true;
+      void options.gesture.audioContext.close().catch(() => {});
+      resetAmbientMicrophoneSession();
+
+      if (allChunks.length > 0) {
+        const fullBlob = new Blob(allChunks, { type: transcriptionMimeType(mimeType) });
+        if (fullBlob.size >= 100) {
+          options.onAudioRecorded?.(fullBlob);
+          phase = "transcribing";
+          error = null;
+          publish();
+          try {
+            const text = await transcribeRecordedAudio(
+              fullBlob,
+              options.fetchImpl,
+              undefined,
+              options.appointmentId,
+              true
+            );
             if (text && text.trim()) {
               transcript = text.trim();
-              publish();
             }
-          })
-          .catch(() => {});
+            phase = "idle";
+            error = null;
+          } catch (err: unknown) {
+            phase = "error";
+            error = err instanceof Error ? err.message : "Server transcription failed. Type the consult.";
+          }
+          publish();
+          return;
+        }
       }
+      phase = "idle";
+      error = null;
+      publish();
+    };
+
+    if (recorder && recorder.state !== "inactive") {
+      recorder.onstop = () => {
+        void onRecorderStopped();
+      };
+      try {
+        recorder.stop();
+      } catch {
+        void onRecorderStopped();
+      }
+    } else {
+      void onRecorderStopped();
     }
-    publish();
   };
 
   publish();
-
-  chunkTimer = setTimeout(() => {
-    if (!sawChunk) fail(AMBIENT_NO_CHUNK_MESSAGE);
-  }, firstChunkMs);
 
   const uploadFirst = (blob: Blob) => {
     const timeoutError = () => new Error(AMBIENT_NO_TRANSCRIPT_MESSAGE);
@@ -809,7 +843,7 @@ export function startAmbientCaptureRun(options: {
       timeoutError
     )
       .then((text) => {
-        if (finished) return;
+        if (finished || isStopping) return;
         if (transcribeTimer) clearTimeout(transcribeTimer);
         transcribeTimer = null;
         if (text) transcript = text;
@@ -818,6 +852,7 @@ export function startAmbientCaptureRun(options: {
         publish();
       })
       .catch((err: unknown) => {
+        if (finished || isStopping) return;
         const message = err instanceof Error ? err.message : "Server transcription failed. Type the consult.";
         fail(message);
       });
@@ -909,7 +944,8 @@ export function startAmbientCaptureRun(options: {
     const parts: Blob[] = [];
     let uploadStarted = false;
     recorder.ondataavailable = (event: BlobEvent) => {
-      if (finished || !event.data || event.data.size <= 0) return;
+      if (!event.data || event.data.size <= 0) return;
+      if (finished) return;
       const trackLive = stream.getAudioTracks().some((track) => track.readyState === "live");
       if (!trackLive) return;
       if (!sawChunk) {
@@ -917,11 +953,11 @@ export function startAmbientCaptureRun(options: {
         if (chunkTimer) clearTimeout(chunkTimer);
         chunkTimer = null;
         transcribeTimer = setTimeout(() => {
-          if (phase !== "listening") fail(AMBIENT_NO_TRANSCRIPT_MESSAGE);
+          if (phase !== "listening" && !isStopping) fail(AMBIENT_NO_TRANSCRIPT_MESSAGE);
         }, transcribeMs);
       }
       allChunks.push(event.data);
-      if (!uploadStarted && phase !== "listening") {
+      if (!uploadStarted && phase !== "listening" && !isStopping) {
         parts.push(event.data);
         const total = parts.reduce((sum, part) => sum + part.size, 0);
         if (total >= 100) {
@@ -934,6 +970,9 @@ export function startAmbientCaptureRun(options: {
     };
     try {
       recorder.start(1000);
+      chunkTimer = setTimeout(() => {
+        if (!sawChunk) fail(AMBIENT_NO_CHUNK_MESSAGE);
+      }, firstChunkMs);
     } catch {
       fail("The microphone could not be started. Tap Retry.");
     }
