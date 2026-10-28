@@ -88,10 +88,17 @@ class MayaVoiceTrack(MediaStreamTrack):
         self.cursor = 0
         self.pts = 0
         self._start_time = None
+        self._speech_start_time = time.time() if len(self.pcm) > 0 else 0.0
 
     def is_speaking(self) -> bool:
         """Returns True if Maya is currently streaming voice audio (not silence)."""
         return self.cursor < len(self.pcm)
+
+    def speech_elapsed_s(self) -> float:
+        """Returns seconds elapsed since current speech chunk started playing."""
+        if not self.is_speaking():
+            return 0.0
+        return max(0.0, time.time() - self._speech_start_time)
 
     def queue_audio(self, new_pcm: np.ndarray, replace: bool = True):
         """Queues new audio PCM (Maya's cognitive voice response) to be played into WebRTC."""
@@ -102,11 +109,13 @@ class MayaVoiceTrack(MediaStreamTrack):
             self.cursor = 0
         else:
             self.pcm = np.concatenate([self.pcm[:self.cursor], new_pcm])
+        self._speech_start_time = time.time()
         logger.info(f"Queued {len(new_pcm)} samples ({len(new_pcm)/self.sample_rate:.2f}s) of Maya voice audio (replace={replace})")
 
     def interrupt(self):
         """Stops playing current speech immediately."""
         self.cursor = len(self.pcm)
+        self._speech_start_time = 0.0
 
     async def recv(self):
         # Precise 20ms WebRTC clock pacing with drift recovery
@@ -212,6 +221,10 @@ async def handle_caller_utterance(call_id: str, pcm_16k: np.ndarray, out_track: 
                     if transcript and call_id in active_calls:
                         active_calls[call_id]["history"].append({"role": "caller", "text": transcript})
 
+                    if not speech_text and len(pcm_16k) >= 9600:
+                        logger.warn(f"[{call_id}] Lumera AI returned empty speechText. Using polite clarification fallback.")
+                        speech_text = "I'm sorry, I couldn't hear that clearly. Could you please repeat?"
+
                     if speech_text:
                         if call_id in active_calls:
                             active_calls[call_id]["history"].append({"role": "maya", "text": speech_text})
@@ -252,10 +265,13 @@ async def process_inbound_audio(call_id: str, inbound_track, out_track: MayaVoic
     is_speaking = False
     silence_frames = 0
     speech_frames = 0
+    interruption_frames = 0
     min_speech_frames = 15        # ~300ms of speech minimum
-    silence_threshold_frames = 25 # ~500ms of silence for snappy, natural turn-taking
-    energy_threshold = 320        # RMS amplitude threshold
+    silence_threshold_frames = 45 # ~900ms of silence for natural human pauses without chopping
+    energy_threshold = 350        # RMS amplitude threshold for speech detection
+    max_speech_frames = 600       # ~12 seconds cap on single speech utterance
     is_processing = False         # Lock to prevent overlapping queries
+    pending_utterance = None      # Buffer continuation if caller speaks while Gemini is answering
 
     try:
         while True:
@@ -269,21 +285,27 @@ async def process_inbound_audio(call_id: str, inbound_track, out_track: MayaVoic
                 data = resampled.to_ndarray().flatten()
                 rms = np.sqrt(np.mean(data.astype(np.float32) ** 2))
 
-                # If Maya is speaking: only interrupt if caller speaks loudly (barge-in)
+                # If Maya is speaking:
+                # 1. Do NOT interrupt during the first 1.8 seconds (grace period to eliminate initial speaker echo spike)
+                # 2. Require sustained loud caller speech: at least 10 consecutive frames (200ms) with RMS > 2000
+                #    (acoustic echo spikes are usually 1-2 frames; human caller speaking over Maya is sustained and loud)
                 if maya_talking:
-                    if rms > 1100:
-                        logger.info(f"[{call_id}] Caller interrupted Maya (RMS: {rms:.0f})")
-                        out_track.interrupt()
-                        maya_talking = False
-                        is_speaking = True
-                        buffer = [data]
-                        speech_frames = 1
-                        silence_frames = 0
+                    if out_track.speech_elapsed_s() > 1.8 and rms > 2000:
+                        interruption_frames += 1
+                        if interruption_frames >= 10:
+                            logger.info(f"[{call_id}] Caller sustained speech interrupted Maya (RMS: {rms:.0f}, frames: {interruption_frames})")
+                            out_track.interrupt()
+                            maya_talking = False
+                            is_speaking = True
+                            buffer = [data]
+                            speech_frames = 10
+                            silence_frames = 0
+                            interruption_frames = 0
+                    else:
+                        interruption_frames = 0
                     continue
 
-                if is_processing:
-                    # While Maya is computing the reply (~0.5s), don't trigger duplicate queries
-                    continue
+                interruption_frames = 0
 
                 if rms > energy_threshold:
                     if not is_speaking:
@@ -294,25 +316,38 @@ async def process_inbound_audio(call_id: str, inbound_track, out_track: MayaVoic
                     buffer.append(data)
                     speech_frames += 1
                     silence_frames = 0
+                    if speech_frames >= max_speech_frames:
+                        logger.info(f"[{call_id}] Utterance hit 12s cap, finalizing...")
+                        silence_frames = silence_threshold_frames + 1
                 else:
                     if is_speaking:
                         buffer.append(data)
                         silence_frames += 1
                         if silence_frames > silence_threshold_frames:
-                            if speech_frames >= min_speech_frames and not is_processing:
+                            if speech_frames >= min_speech_frames:
                                 complete_pcm = np.concatenate(buffer)
                                 duration_s = len(complete_pcm) / 16000.0
                                 logger.info(f"[{call_id}] Speech utterance captured: {duration_s:.2f}s ({len(complete_pcm)} samples)")
-                                is_processing = True
+                                
+                                if not is_processing:
+                                    is_processing = True
 
-                                async def run_utterance(b_pcm):
-                                    nonlocal is_processing
-                                    try:
-                                        await handle_caller_utterance(call_id, b_pcm, out_track, caller_phone)
-                                    finally:
-                                        is_processing = False
+                                    async def run_utterance(b_pcm):
+                                        nonlocal is_processing, pending_utterance
+                                        try:
+                                            await handle_caller_utterance(call_id, b_pcm, out_track, caller_phone)
+                                        finally:
+                                            is_processing = False
+                                            if pending_utterance is not None:
+                                                next_pcm = pending_utterance
+                                                pending_utterance = None
+                                                is_processing = True
+                                                asyncio.create_task(run_utterance(next_pcm))
 
-                                asyncio.create_task(run_utterance(complete_pcm))
+                                    asyncio.create_task(run_utterance(complete_pcm))
+                                else:
+                                    logger.info(f"[{call_id}] Storing speech utterance as pending while previous completes")
+                                    pending_utterance = complete_pcm
 
                             buffer = []
                             is_speaking = False
@@ -320,7 +355,7 @@ async def process_inbound_audio(call_id: str, inbound_track, out_track: MayaVoic
     except asyncio.CancelledError:
         pass
     except Exception as e:
-        logger.error(f"[{call_id}] Inbound audio listener loop exception: {e}")
+        logger.error(f"[{call_id}] Inbound audio listener loop exception: {repr(e)}")
 
 def fix_sdp_candidates(sdp: str, public_ip: str) -> str:
     """Ensures SDP answer advertises the VM's public IP for host candidates and c= line."""

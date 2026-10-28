@@ -978,9 +978,13 @@ ${historyText || "(Start of call)"}
 
 Instructions:
 1. Listen directly to the caller's audio clip.
-2. In "transcript", transcribe what the caller said in their spoken language (English, Hindi, Hinglish, Marathi, Tamil, etc.). If the audio is pure silence, background noise, breathing, or inaudible, set "transcript": "", "speechText": "", "intent": "SILENCE".
-3. In "speechText", formulate your spoken receptionist response in the caller's spoken language. Keep it conversational, warm, and concise (1 to 2 short sentences, 15 to 25 words maximum) suitable for snappy live voice dialogue.
-4. If the caller asks to book an appointment (e.g. "book an appointment", "give me a slot", "book Dr. ...", "appointment chahiye", "ha book kardo"), set "shouldBook": true and specify the matched doctor's name in "doctorName".
+2. In "transcript", transcribe what the caller said in their spoken language (English, Hindi, Hinglish, Marathi, Tamil, etc.).
+   - If the speech is muffled, faint, brief, or partially unclear, provide your best phonetic transcription.
+   - ONLY set "transcript": "" and "speechText": "" with "intent": "SILENCE" if the audio is strictly 100% dead silence with no human voice or speech sounds at all.
+3. In "speechText", formulate your spoken receptionist response in the caller's spoken language.
+   - If the caller's speech was unclear, faint, or cut off, respond warmly asking them to repeat (e.g. "I'm sorry, I couldn't hear that clearly. Could you please repeat?" or in Hindi "माफ़ कीजिए, मुझे आपकी आवाज़ साफ़ नहीं आई। क्या आप दोबारा बोलेंगे?").
+   - Keep answers conversational, warm, and concise (1 to 2 short sentences, 15 to 25 words maximum) suitable for snappy live voice dialogue.
+4. If the caller asks to book an appointment (e.g. "book an appointment", "give me a slot", "book Dr. ...", "appointment chahiye", "ha book kardo", or names a doctor or confirms a time after you asked which doctor/slot): set "shouldBook": true and specify the matched doctor's name in "doctorName".
 5. If caller is asking for timings, fees, doctor availability, directions, or asking medical questions: answer their question warmly using the clinic facts above and ask if they would like to book. Do NOT book unless they ask or confirm!
 
 Output strict JSON:
@@ -1031,13 +1035,20 @@ Output strict JSON:
       }
 
       if (!message && !speechText) {
-        return res.json({
-          success: true,
-          from,
-          speechText: "",
-          intent: "SILENCE",
-          hasAudio: false,
-        });
+        const rawAudio = String(req.body?.audioBase64 || "");
+        if (rawAudio.length > 500) {
+          speechText = `I'm sorry, I couldn't hear that clearly. Could you please repeat?`;
+          intent = "INQUIRY";
+          suggestedAction = "Asked caller to repeat unclear utterance";
+        } else {
+          return res.json({
+            success: true,
+            from,
+            speechText: "",
+            intent: "SILENCE",
+            hasAudio: false,
+          });
+        }
       }
 
       if (shouldBook) {
