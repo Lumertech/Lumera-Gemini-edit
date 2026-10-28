@@ -189,7 +189,7 @@ async def handle_caller_utterance(call_id: str, pcm_16k: np.ndarray, out_track: 
                 "conversationHistory": conv_history,
             }
             logger.info(f"[{call_id}] Sending caller speech ({len(pcm_16k)/16000:.2f}s) to Lumera AI...")
-            async with session.post(LUMERA_API_URL, json=payload, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            async with session.post(LUMERA_API_URL, json=payload, timeout=aiohttp.ClientTimeout(total=18)) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     speech_text = data.get("speechText", "")
@@ -229,7 +229,7 @@ async def handle_caller_utterance(call_id: str, pcm_16k: np.ndarray, out_track: 
                     err_txt = await resp.text()
                     logger.warn(f"[{call_id}] Lumera AI returned HTTP {resp.status}: {err_txt}")
     except Exception as e:
-        logger.error(f"[{call_id}] Error handling caller utterance: {e}")
+        logger.error(f"[{call_id}] Error handling caller utterance: {repr(e)}")
 
 async def process_inbound_audio(call_id: str, inbound_track, out_track: MayaVoiceTrack, caller_phone: str):
     """Listens to caller audio, detects speech activity (VAD), and routes utterances to Gemini."""
