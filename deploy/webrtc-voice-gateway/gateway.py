@@ -249,7 +249,12 @@ async def handle_caller_utterance(call_id: str, pcm_16k: np.ndarray, out_track: 
                         resp_pcm = await loop.run_in_executor(None, decode_mp3_bytes_to_pcm, resp_audio_bytes, 48000)
                         if len(resp_pcm) > 0:
                             out_track.queue_audio(resp_pcm, replace=True)
-                            logger.info(f"[{call_id}] Streaming Maya's response into call ({len(resp_pcm)/48000:.2f}s)")
+                            dur_s = len(resp_pcm) / 48000.0
+                            logger.info(f"[{call_id}] Streaming Maya's response into call ({dur_s:.2f}s)")
+
+                            if intent == "TRANSFER":
+                                logger.info(f"[{call_id}] Call transfer announced. Scheduling graceful call completion in {dur_s + 2.0:.1f}s")
+                                loop.call_later(dur_s + 2.0, lambda: asyncio.create_task(cleanup_call(call_id)))
                 else:
                     err_txt = await resp.text()
                     logger.warn(f"[{call_id}] Lumera AI returned HTTP {resp.status}: {err_txt}")

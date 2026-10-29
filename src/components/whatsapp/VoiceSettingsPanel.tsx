@@ -24,6 +24,7 @@ interface VoiceSettingsData {
   voiceEnabled: boolean;
   receptionistName: string;
   customGreeting: string;
+  escalationPhone?: string;
   clinic: {
     name: string;
     address: string;
@@ -52,6 +53,7 @@ export const VoiceSettingsPanel: React.FC = () => {
   const [voiceEnabled, setVoiceEnabled] = useState<boolean>(true);
   const [receptionistName, setReceptionistName] = useState<string>('Maya');
   const [customGreeting, setCustomGreeting] = useState<string>('');
+  const [escalationPhone, setEscalationPhone] = useState<string>('');
   const [clinicData, setClinicData] = useState<VoiceSettingsData['clinic']>({
     name: 'Lumera Clinic',
     address: '',
@@ -81,6 +83,7 @@ export const VoiceSettingsPanel: React.FC = () => {
         setVoiceEnabled(Boolean(data.voiceEnabled));
         setReceptionistName(data.receptionistName || 'Maya');
         setCustomGreeting(data.customGreeting || '');
+        setEscalationPhone(data.escalationPhone || '');
         if (data.clinic) setClinicData(data.clinic);
         if (data.doctors) setDoctors(data.doctors);
       } else {
@@ -111,6 +114,7 @@ export const VoiceSettingsPanel: React.FC = () => {
           voiceEnabled,
           receptionistName,
           customGreeting,
+          escalationPhone,
         }),
       });
 
@@ -352,6 +356,29 @@ export const VoiceSettingsPanel: React.FC = () => {
               />
               <p className="text-[11px] text-slate-400 mt-1">
                 Special welcome announcement or clinic tagline spoken to callers.
+              </p>
+            </div>
+          </div>
+
+          {/* Failover & Escalation Line */}
+          <div className="pt-3 border-t border-slate-200/60">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center gap-1.5">
+                <PhoneCall className="w-3.5 h-3.5 text-amber-600" />
+                Clinic Transfer & Escalation Phone Number
+              </label>
+              <input
+                type="text"
+                value={escalationPhone}
+                onChange={(e) => setEscalationPhone(e.target.value)}
+                placeholder="e.g. +91 98233 73271 or 022 2847 9000"
+                className="w-full max-w-md text-xs px-3 py-2 bg-white rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+              />
+              <p className="text-[11px] text-slate-500 mt-1.5 leading-relaxed">
+                <span className="font-semibold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200 mr-1.5">
+                  Automatic 2-Attempt Failover
+                </span>
+                If {receptionistName} cannot clearly hear or understand the caller after 2 attempts, or if the patient requests human staff, she will immediately announce a transfer to this clinic number and send an urgent WhatsApp handover card with click-to-call.
               </p>
             </div>
           </div>

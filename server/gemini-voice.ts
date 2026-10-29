@@ -441,30 +441,8 @@ export function getTenantVoiceContext(tenantId: string, callerPhone: string): Te
   }
 
   if (doctors.length === 0) {
-    try {
-      const generalRows = db.prepare(`
-        SELECT name, specialty, consultation_fee, opd_timing, available_days, qualification
-        FROM doctors WHERE active = 1
-      `).all() as any[];
-      if (generalRows && generalRows.length > 0) {
-        doctors = generalRows.map((r) => ({
-          name: String(r.name || "").trim(),
-          specialty: String(r.specialty || "General Medicine").trim(),
-          fee: Number(r.consultation_fee || 500),
-          timing: String(r.opd_timing || "09:00 AM - 05:00 PM").trim(),
-          days: String(r.available_days || "Mon-Sat").trim(),
-          qualification: String(r.qualification || "").trim(),
-        }));
-      }
-    } catch {}
-  }
-
-  if (doctors.length === 0) {
     doctors = [
-      { name: "Dr. Vikram Malhotra", specialty: "General Medicine", fee: 600, timing: "09:00 AM - 08:00 PM", days: "Mon-Sat" },
-      { name: "Dr. Rajesh", specialty: "Cardiology", fee: 800, timing: "10:00 AM - 02:00 PM", days: "Mon-Sat" },
-      { name: "Dr. Meera", specialty: "Dermatology", fee: 700, timing: "02:00 PM - 06:00 PM", days: "Mon-Sat" },
-      { name: "Dr. Siddharth", specialty: "Physiotherapy & Rehab", fee: 500, timing: "09:00 AM - 04:00 PM", days: "Mon-Sat" },
+      { name: "Dr. On-Duty Physician", specialty: "General Medicine & Outpatient Care", fee: 500, timing: "09:00 AM - 08:00 PM", days: "Mon-Sat" },
     ];
   }
 
@@ -918,12 +896,6 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
 
       const db = getDb();
       let tenantId = String(req.body?.tenantId || (req as any).user?.tenantId || "tenant-lumera-main").trim();
-      if (tenantId === "tenant-lumera-main") {
-        const demoTenant = findTenantByPatientPhone(db, from);
-        if (demoTenant) {
-          tenantId = demoTenant;
-        }
-      }
 
       const tenantContext = getTenantVoiceContext(tenantId, from);
       const { letterhead, voiceSettings, registered, doctors } = tenantContext;
@@ -931,9 +903,12 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
         registered?.firstName ||
         (callerName && !/^patient(\s*\(\+?\d+\))?$/i.test(callerName) && callerName !== "A1 Test Recipient" ? callerName.split(/\s+/)[0] : "there");
       const receptionistName = voiceSettings.receptionistName || "Maya";
-      const clinicName = letterhead.clinicName || "Lumera Clinic";
+      const clinicName = (letterhead.clinicName && !/physio practice/i.test(letterhead.clinicName))
+        ? letterhead.clinicName
+        : "Lumera Health";
       const clinicAddress = [letterhead.address, letterhead.city].filter(Boolean).join(", ") || "Main Medical Center";
       const clinicPhone = letterhead.phone || letterhead.whatsappNumber || "+91 98233 73271";
+      const escalationPhone = voiceSettings.escalationPhone || clinicPhone;
 
       const doctorRosterText = doctors
         .map((d) => `  * Dr. ${d.name.replace(/^dr\.?\s*/i, "")} (${d.specialty}) - OPD: ${d.timing} (${d.days}), Fee ₹${d.fee}`)
@@ -945,10 +920,11 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
         .join("\n");
 
       let speechText = "";
-      let intent: VoiceReceptionistResult["intent"] = "INQUIRY";
+      let intent: VoiceReceptionistResult["intent"] | "TRANSFER" = "INQUIRY";
       let suggestedAction = "Answered patient inquiry";
       let appointmentData: VoiceReceptionistResult["appointment"] | undefined;
       let shouldBook = false;
+      let shouldTransfer = false;
       let doctorToBook = "";
 
       // Single-pass Multimodal Inference: Transcribe & Formulate Receptionist Spoken Reply in 1 Roundtrip
@@ -971,6 +947,7 @@ ${doctorRosterText}
 - OPD Timings: Mon-Sat 09:00 AM to 08:00 PM, Sun 10:00 AM to 02:00 PM.
 - Address: ${clinicAddress}.
 - Phone: ${clinicPhone}.
+- Escalation Line: ${escalationPhone}.
 ${voiceSettings.customGreeting ? `- Greeting Preference: "${voiceSettings.customGreeting}"` : ""}
 
 Previous Call Conversation (if any):
@@ -984,15 +961,17 @@ Instructions:
 3. In "speechText", formulate your spoken receptionist response in the caller's spoken language.
    - If the caller's speech was unclear, faint, or cut off, respond warmly asking them to repeat (e.g. "I'm sorry, I couldn't hear that clearly. Could you please repeat?" or in Hindi "माफ़ कीजिए, मुझे आपकी आवाज़ साफ़ नहीं आई। क्या आप दोबारा बोलेंगे?").
    - Keep answers conversational, warm, and concise (1 to 2 short sentences, 15 to 25 words maximum) suitable for snappy live voice dialogue.
-4. If the caller asks to book an appointment (e.g. "book an appointment", "give me a slot", "book Dr. ...", "appointment chahiye", "ha book kardo", or names a doctor or confirms a time after you asked which doctor/slot): set "shouldBook": true and specify the matched doctor's name in "doctorName".
-5. If caller is asking for timings, fees, doctor availability, directions, or asking medical questions: answer their question warmly using the clinic facts above and ask if they would like to book. Do NOT book unless they ask or confirm!
+4. If the caller asks to speak to a human, staff, doctor, receptionist, or operator (e.g. "transfer me", "talk to human", "doctor se baat karni hai", "receptionist chahiye", "operator", "emergency", "connect to staff"): set "intent": "TRANSFER", "shouldTransfer": true.
+5. If the caller asks to book an appointment (e.g. "book an appointment", "give me a slot", "book Dr. ...", "appointment chahiye", "ha book kardo", or names a doctor or confirms a time after you asked which doctor/slot): set "shouldBook": true and specify the matched doctor's name in "doctorName".
+6. If caller is asking for timings, fees, doctor availability, directions, or asking medical questions: answer their question warmly using the clinic facts above and ask if they would like to book. Do NOT book unless they ask or confirm!
 
 Output strict JSON:
 {
   "transcript": "transcribed caller speech",
   "speechText": "spoken receptionist response",
-  "intent": "BOOKING" | "TIMINGS" | "LOCATION" | "REFILL" | "DOCTOR_INFO" | "INQUIRY" | "SILENCE",
+  "intent": "BOOKING" | "TIMINGS" | "LOCATION" | "REFILL" | "DOCTOR_INFO" | "INQUIRY" | "TRANSFER" | "SILENCE",
   "shouldBook": false,
+  "shouldTransfer": false,
   "doctorName": "doctor name",
   "suggestedAction": "brief summary"
 }`;
@@ -1025,6 +1004,7 @@ Output strict JSON:
               intent = (parsed.intent || "INQUIRY") as any;
               suggestedAction = String(parsed.suggestedAction || "Answered patient inquiry");
               shouldBook = Boolean(parsed.shouldBook);
+              shouldTransfer = Boolean(parsed.shouldTransfer);
               doctorToBook = String(parsed.doctorName || "");
               console.log(`[Single-Pass Voice AI] Caller: "${message}" | ${receptionistName} (${intent}): "${speechText}" (fast-path)`);
             }
@@ -1034,7 +1014,27 @@ Output strict JSON:
         }
       }
 
-      if (!message && !speechText) {
+      // Check Failover & 2-Attempt Unclear Transfer
+      const history = (req.body?.conversationHistory || []) as Array<{ role: string; text: string }>;
+      const previousClarifications = history.filter(
+        (h) => h.role === "maya" && (
+          /couldn't hear that clearly|could you please repeat|trouble hearing|साफ़ नहीं|दोबारा बोलेंगे/i.test(h.text)
+        )
+      ).length;
+
+      const isTransferRequested =
+        shouldTransfer ||
+        intent === "TRANSFER" ||
+        /human|staff|transfer|receptionist|operator|doctor se baat|connect me|emergency/i.test(message);
+
+      const isCurrentTurnUnclear = (!message && !speechText) || /couldn't hear that clearly|could you please repeat/i.test(speechText);
+      const isFailoverTriggered = isTransferRequested || (isCurrentTurnUnclear && previousClarifications >= 1);
+
+      if (isFailoverTriggered) {
+        intent = "TRANSFER";
+        speechText = `I apologize, I'm having trouble hearing you clearly over the line. Let me connect you directly to our clinic staff at ${escalationPhone}. One moment, please.`;
+        suggestedAction = `Transferred caller to clinic desk (${escalationPhone})`;
+      } else if (!message && !speechText) {
         const rawAudio = String(req.body?.audioBase64 || "");
         if (rawAudio.length > 500) {
           speechText = `I'm sorry, I couldn't hear that clearly. Could you please repeat?`;
@@ -1158,6 +1158,28 @@ Output strict JSON:
         }).catch((err) => console.error("[Voice Outbound WhatsApp Error]", err));
       }
 
+      // If call is transferred / escalated to staff: update conversation mode and send instant handover card
+      if (intent === "TRANSFER") {
+        try {
+          db.prepare(`
+            UPDATE whatsapp_conversations
+            SET handover_mode = 'manual', assigned_staff = 'Front Desk (Escalated Call)', tags = '["Voice Escalation", "Call Transfer"]', updated_at = ?
+            WHERE patient_phone = ? AND tenant_id = ?
+          `).run(now, from, tenantId);
+        } catch (hErr) {
+          console.warn("[Voice Handover DB Error]", hErr);
+        }
+
+        if (from.startsWith("+91") || from.startsWith("91")) {
+          void dispatchPatientCloudText({
+            tenantId,
+            to: from,
+            textBody: `🚨 *Clinic Front Desk Transfer*\n\nHello! We noticed the audio connection on your call was unclear.\n\nYou can speak directly with our clinic team right now:\n📞 *Call Front Desk:* ${escalationPhone}\n🏥 *Clinic:* ${clinicName}\n\nOur front desk has been alerted and is ready to assist you.`,
+            buttons: ["📞 Call Front Desk", "💬 Chat with Staff", "📅 Book Online"],
+          }).catch((err) => console.error("[Voice Escalation WhatsApp Card Error]", err));
+        }
+      }
+
       let audioBase64: string | null = null;
       if (speechText) {
         audioBase64 = await synthesizeSpeechNeural(speechText);
@@ -1197,8 +1219,9 @@ Output strict JSON:
         voiceEnabled: settings.voiceEnabled,
         receptionistName: settings.receptionistName,
         customGreeting: settings.customGreeting,
+        escalationPhone: settings.escalationPhone || letterhead.phone || letterhead.whatsappNumber || "+91 98233 73271",
         clinic: {
-          name: letterhead.clinicName,
+          name: letterhead.clinicName && !/physio practice/i.test(letterhead.clinicName) ? letterhead.clinicName : "Lumera Health",
           address: letterhead.address,
           city: letterhead.city,
           phone: letterhead.phone || letterhead.whatsappNumber,
@@ -1215,11 +1238,12 @@ Output strict JSON:
     try {
       const tenantId = String((req as any).user?.tenantId || req.body?.tenantId || "tenant-lumera-main").trim();
       const db = getDb();
-      const { voiceEnabled, receptionistName, customGreeting } = req.body || {};
+      const { voiceEnabled, receptionistName, customGreeting, escalationPhone } = req.body || {};
       const updated = saveWhatsAppTenantVoiceSettings(db, tenantId, {
         voiceEnabled: typeof voiceEnabled === "boolean" ? voiceEnabled : undefined,
         receptionistName: typeof receptionistName === "string" ? receptionistName : undefined,
         customGreeting: typeof customGreeting === "string" ? customGreeting : undefined,
+        escalationPhone: typeof escalationPhone === "string" ? escalationPhone : undefined,
       });
       return res.json({
         success: true,

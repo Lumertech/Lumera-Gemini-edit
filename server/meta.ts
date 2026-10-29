@@ -875,13 +875,6 @@ export function createMetaRouter(): Router {
                   const offerSdp = String(call.session?.sdp || call.connection?.webrtc?.sdp || "");
 
                   let targetTenantId = inboundTenantId;
-                  if (inboundTenantId === "tenant-lumera-main") {
-                    const demoTenant = findTenantByPatientPhone(db, fromPhone);
-                    if (demoTenant) {
-                      targetTenantId = demoTenant;
-                    }
-                  }
-
                   const voiceSettings = getWhatsAppTenantVoiceSettings(db, targetTenantId);
 
                   // If tenant configured "Messaging Only", gracefully reject voice call and send WhatsApp text
@@ -976,13 +969,6 @@ export function createMetaRouter(): Router {
                      "[Media/Attachment]");
 
                   let targetTenantId = inboundTenantId;
-                  if (inboundTenantId === "tenant-lumera-main") {
-                    const demoTenant = findTenantByPatientPhone(db, fromPhone);
-                    if (demoTenant) {
-                      targetTenantId = demoTenant;
-                    }
-                  }
-
                   const recordRes = recordInboundWhatsAppMessage(db, {
                     fromPhone,
                     textBody,
