@@ -362,13 +362,26 @@ export async function handleMetaInboundCallAction(opts: {
   const needsGateway = !sdpAnswer || (Boolean(opts.offerSdp) && sdpAnswer.includes("10000"));
   if (needsGateway && (action === "accept" || action === "pre_accept")) {
     try {
+      const callTenantId = opts.tenantId || "tenant-lumera-main";
+      const db = getDb();
+      const letterhead = getTenantLetterhead(callTenantId);
+      const voiceSettings = getWhatsAppTenantVoiceSettings(db, callTenantId);
+      const clinicName = letterhead.clinicName && !/physio practice/i.test(letterhead.clinicName)
+        ? letterhead.clinicName
+        : "Lumera Health";
+      const receptionistName = voiceSettings.receptionistName || "Maya";
+      const customGreeting = voiceSettings.customGreeting || "";
+
       const gwRes = await fetch("http://34.46.39.52:3000/webrtc/answer-offer", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           callId: opts.callId,
           callerPhone: opts.fromPhone || "",
-          tenantId: opts.tenantId || "tenant-lumera-main",
+          tenantId: callTenantId,
+          clinicName,
+          receptionistName,
+          customGreeting,
           offerSdp: opts.offerSdp,
           publicIp: "34.46.39.52",
         }),

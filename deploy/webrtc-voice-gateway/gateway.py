@@ -172,6 +172,49 @@ async def ensure_greeting_audio():
         cached_greeting_pcm = load_audio_pcm(GREETING_FILE, 48000)
         logger.info(f"Preloaded Maya greeting into memory: {len(cached_greeting_pcm)/48000:.2f}s")
 
+tenant_greetings: dict = {}
+
+async def get_tenant_greeting(tenant_id: str, clinic_name: str = "", receptionist_name: str = "", custom_greeting: str = "") -> np.ndarray:
+    """Returns pre-cached or newly synthesized greeting audio for a specific clinic tenant."""
+    global cached_greeting_pcm
+    # Unique cache key per tenant settings version
+    cache_key = f"{tenant_id}:{clinic_name}:{receptionist_name}:{custom_greeting}"
+    if cache_key in tenant_greetings:
+        return tenant_greetings[cache_key]
+
+    # If it's the default tenant without overrides, return global default
+    if (tenant_id == "tenant-lumera-main" or not tenant_id) and not custom_greeting and not clinic_name:
+        return cached_greeting_pcm
+
+    rec_name = receptionist_name.strip() or "Maya"
+    cl_name = clinic_name.strip() or "Lumera Health"
+
+    if custom_greeting and custom_greeting.strip():
+        text = custom_greeting.strip()
+    else:
+        text = (
+            f"Hello! Welcome to {cl_name}. I am {rec_name}, your AI Receptionist. "
+            "How can I help you today? Would you like to book an appointment or check clinic timings?"
+        )
+
+    try:
+        import edge_tts
+        communicate = edge_tts.Communicate(text, "en-IN-NeerjaNeural")
+        audio_bytes = b""
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                audio_bytes += chunk["data"]
+
+        pcm = decode_mp3_bytes_to_pcm(audio_bytes, 48000)
+        if len(pcm) > 0:
+            tenant_greetings[cache_key] = pcm
+            logger.info(f"Generated & cached greeting for tenant '{tenant_id}' ({len(pcm)/48000:.2f}s): {text[:60]}...")
+            return pcm
+    except Exception as e:
+        logger.error(f"Failed to generate custom greeting for tenant {tenant_id}: {e}")
+
+    return cached_greeting_pcm
+
 def _encode_wav_sync(pcm: np.ndarray) -> str:
     wav_io = io.BytesIO()
     with wave.open(wav_io, "wb") as wf:
@@ -425,15 +468,22 @@ async def handle_answer_offer(request):
             "sdpAnswer": existing["sdpAnswer"],
         })
 
-    logger.info(f"[{call_id}] Initializing new WebRTC call from {caller_phone}")
+    clinic_name = body.get("clinicName", "")
+    receptionist_name = body.get("receptionistName", "")
+    custom_greeting = body.get("customGreeting", "")
+
+    logger.info(f"[{call_id}] Initializing WebRTC call for tenant='{tenant_id}' clinic='{clinic_name}' caller={caller_phone}")
+
+    # Fetch pre-cached or synthesize tenant-specific greeting
+    greeting_pcm = await get_tenant_greeting(tenant_id, clinic_name, receptionist_name, custom_greeting)
 
     # Create RTCPeerConnection
     pc = RTCPeerConnection()
 
-    # Attach Maya Voice Track with preloaded 48kHz PCM
-    track = MayaVoiceTrack(cached_greeting_pcm, 48000)
+    # Attach Maya Voice Track with tenant greeting PCM
+    track = MayaVoiceTrack(greeting_pcm, 48000)
     pc.addTrack(track)
-    logger.info(f"[{call_id}] Attached MayaVoiceTrack (continuous 48kHz Opus) to WebRTC peer")
+    logger.info(f"[{call_id}] Attached MayaVoiceTrack ({len(greeting_pcm)/48000:.2f}s) to WebRTC peer")
 
     listener_task = None
 
