@@ -38,6 +38,52 @@ cached_greeting_pcm = np.zeros(0, dtype=np.int16)
 # Active call sessions: callId -> { pc, track, callerPhone, startTime, sdpAnswer, listenerTask }
 active_calls = {}
 
+class SileroVAD:
+    """Neural Voice Activity Detector using Silero ONNX. Detects speech accurately across accents and noise."""
+    def __init__(self, model_path="/opt/lumera-voice/models/silero_vad.onnx"):
+        self.session = None
+        self._sr = np.array(16000, dtype=np.int64)
+        self.state = np.zeros((2, 1, 128), dtype=np.float32)
+        try:
+            import onnxruntime as ort
+            if os.path.exists(model_path):
+                opts = ort.SessionOptions()
+                opts.inter_op_num_threads = 1
+                opts.intra_op_num_threads = 1
+                self.session = ort.InferenceSession(model_path, sess_options=opts)
+                logger.info(f"Silero VAD Neural Engine initialized successfully from {model_path}")
+            else:
+                logger.warning(f"Silero VAD model not found at {model_path}, using fallback RMS")
+        except Exception as e:
+            logger.warning(f"Could not load Silero VAD ({e}), using fallback RMS")
+
+    def reset(self):
+        self.state = np.zeros((2, 1, 128), dtype=np.float32)
+
+    def is_speech(self, audio_chunk_16k: np.ndarray, threshold: float = 0.45) -> bool:
+        """Returns True if chunk contains human speech. Expects 512 samples (~32ms) at 16kHz."""
+        if self.session is None or len(audio_chunk_16k) < 512:
+            rms = np.sqrt(np.mean(audio_chunk_16k.astype(np.float32) ** 2))
+            return rms > 300
+
+        # Silero VAD expects float32 in range [-1.0, 1.0]
+        chunk = audio_chunk_16k[:512].astype(np.float32) / 32768.0
+        chunk = np.expand_dims(chunk, axis=0)
+
+        inputs = {
+            "input": chunk,
+            "sr": self._sr,
+            "state": self.state
+        }
+        try:
+            out, next_state = self.session.run(None, inputs)
+            self.state = next_state
+            prob = float(out[0][0])
+            return prob >= threshold
+        except Exception:
+            rms = np.sqrt(np.mean(audio_chunk_16k.astype(np.float32) ** 2))
+            return rms > 300
+
 def load_audio_pcm(file_path: str, target_sample_rate: int = 48000) -> np.ndarray:
     """Decodes and resamples any audio file into 48kHz mono 16-bit PCM for WebRTC Opus."""
     try:
@@ -305,21 +351,25 @@ async def handle_caller_utterance(call_id: str, pcm_16k: np.ndarray, out_track: 
         logger.error(f"[{call_id}] Error handling caller utterance: {repr(e)}")
 
 async def process_inbound_audio(call_id: str, inbound_track, out_track: MayaVoiceTrack, caller_phone: str):
-    """Listens to caller audio, detects speech activity (VAD), and routes utterances to Gemini."""
-    logger.info(f"[{call_id}] Started inbound audio listener loop for caller: {caller_phone}")
+    """Listens to caller audio using Neural Silero VAD with pre-roll buffering & AGC to eliminate dropped speech."""
+    logger.info(f"[{call_id}] Started neural inbound audio listener loop for caller: {caller_phone}")
     resampler = AudioResampler(format="s16", layout="mono", rate=16000)
+    vad = SileroVAD()
 
-    buffer = []
+    from collections import deque
+    # Pre-roll ring buffer: keeps previous ~300ms (10 frames of 32ms) so first syllables are never cut
+    pre_roll_buffer = deque(maxlen=10)
+    speech_buffer = []
+    chunk_accumulator = []
     is_speaking = False
     silence_frames = 0
     speech_frames = 0
     interruption_frames = 0
-    min_speech_frames = 15        # ~300ms of speech minimum
-    silence_threshold_frames = 45 # ~900ms of silence for natural human pauses without chopping
-    energy_threshold = 350        # RMS amplitude threshold for speech detection
-    max_speech_frames = 600       # ~12 seconds cap on single speech utterance
-    is_processing = False         # Lock to prevent overlapping queries
-    pending_utterance = None      # Buffer continuation if caller speaks while Gemini is answering
+    min_speech_frames = 8         # ~250ms of neural speech minimum to trigger processing
+    silence_threshold_frames = 25 # ~800ms of natural human pause to finalize utterance
+    max_speech_frames = 450       # ~14 seconds max cap
+    is_processing = False         # Lock to serialize queries cleanly
+    pending_utterance = None
 
     try:
         while True:
@@ -330,76 +380,94 @@ async def process_inbound_audio(call_id: str, inbound_track, out_track: MayaVoic
             maya_talking = out_track.is_speaking()
 
             for resampled in resampler.resample(frame):
-                data = resampled.to_ndarray().flatten()
-                rms = np.sqrt(np.mean(data.astype(np.float32) ** 2))
+                raw_data = resampled.to_ndarray().flatten()
+                chunk_accumulator.extend(raw_data)
 
-                # If Maya is speaking:
-                # 1. Do NOT interrupt during the first 1.8 seconds (grace period to eliminate initial speaker echo spike)
-                # 2. Require sustained loud caller speech: at least 10 consecutive frames (200ms) with RMS > 2000
-                #    (acoustic echo spikes are usually 1-2 frames; human caller speaking over Maya is sustained and loud)
-                if maya_talking:
-                    if out_track.speech_elapsed_s() > 1.8 and rms > 2000:
-                        interruption_frames += 1
-                        if interruption_frames >= 10:
-                            logger.info(f"[{call_id}] Caller sustained speech interrupted Maya (RMS: {rms:.0f}, frames: {interruption_frames})")
-                            out_track.interrupt()
-                            maya_talking = False
-                            is_speaking = True
-                            buffer = [data]
-                            speech_frames = 10
-                            silence_frames = 0
+                # Process in 512-sample blocks (~32ms at 16kHz) for optimal Silero VAD inference
+                while len(chunk_accumulator) >= 512:
+                    block = np.array(chunk_accumulator[:512], dtype=np.int16)
+                    chunk_accumulator = chunk_accumulator[512:]
+
+                    # Evaluate speech probability using Neural VAD
+                    speech_detected = vad.is_speech(block, threshold=0.42)
+                    rms = np.sqrt(np.mean(block.astype(np.float32) ** 2))
+
+                    # If Maya is speaking:
+                    # Echo suppression with barge-in support:
+                    # Allow caller to interrupt if loud human voice is sustained for > 150ms after initial greeting grace
+                    if maya_talking:
+                        if out_track.speech_elapsed_s() > 1.2 and speech_detected and rms > 1500:
+                            interruption_frames += 1
+                            if interruption_frames >= 5: # ~160ms sustained human speech
+                                logger.info(f"[{call_id}] Caller interrupted Maya (RMS: {rms:.0f}, frames: {interruption_frames})")
+                                out_track.interrupt()
+                                maya_talking = False
+                                is_speaking = True
+                                speech_buffer = list(pre_roll_buffer) + [block]
+                                speech_frames = 5
+                                silence_frames = 0
+                                interruption_frames = 0
+                        else:
                             interruption_frames = 0
+                        pre_roll_buffer.append(block)
+                        continue
+
+                    interruption_frames = 0
+
+                    if speech_detected:
+                        if not is_speaking:
+                            logger.info(f"[{call_id}] Caller speech detected via Neural VAD (RMS: {rms:.0f})")
+                            is_speaking = True
+                            # Prepend pre-roll buffer so words like 'Hello', 'Dr', 'Appointment' are never clipped
+                            speech_buffer = list(pre_roll_buffer)
+                            speech_frames = 0
+                        speech_buffer.append(block)
+                        speech_frames += 1
+                        silence_frames = 0
+                        if speech_frames >= max_speech_frames:
+                            logger.info(f"[{call_id}] Utterance reached cap, finalizing...")
+                            silence_frames = silence_threshold_frames + 1
                     else:
-                        interruption_frames = 0
-                    continue
+                        pre_roll_buffer.append(block)
+                        if is_speaking:
+                            speech_buffer.append(block)
+                            silence_frames += 1
+                            if silence_frames > silence_threshold_frames:
+                                if speech_frames >= min_speech_frames:
+                                    complete_pcm = np.concatenate(speech_buffer)
+                                    # Apply soft AGC normalization if volume is low
+                                    peak = np.max(np.abs(complete_pcm))
+                                    if 0 < peak < 16000:
+                                        gain = min(2.5, 24000.0 / peak)
+                                        complete_pcm = np.clip(complete_pcm.astype(np.float32) * gain, -32767, 32767).astype(np.int16)
 
-                interruption_frames = 0
+                                    duration_s = len(complete_pcm) / 16000.0
+                                    logger.info(f"[{call_id}] Neural VAD speech captured: {duration_s:.2f}s ({len(complete_pcm)} samples)")
 
-                if rms > energy_threshold:
-                    if not is_speaking:
-                        logger.info(f"[{call_id}] Caller speech started (RMS: {rms:.0f})")
-                        is_speaking = True
-                        buffer = []
-                        speech_frames = 0
-                    buffer.append(data)
-                    speech_frames += 1
-                    silence_frames = 0
-                    if speech_frames >= max_speech_frames:
-                        logger.info(f"[{call_id}] Utterance hit 12s cap, finalizing...")
-                        silence_frames = silence_threshold_frames + 1
-                else:
-                    if is_speaking:
-                        buffer.append(data)
-                        silence_frames += 1
-                        if silence_frames > silence_threshold_frames:
-                            if speech_frames >= min_speech_frames:
-                                complete_pcm = np.concatenate(buffer)
-                                duration_s = len(complete_pcm) / 16000.0
-                                logger.info(f"[{call_id}] Speech utterance captured: {duration_s:.2f}s ({len(complete_pcm)} samples)")
-                                
-                                if not is_processing:
-                                    is_processing = True
+                                    if not is_processing:
+                                        is_processing = True
 
-                                    async def run_utterance(b_pcm):
-                                        nonlocal is_processing, pending_utterance
-                                        try:
-                                            await handle_caller_utterance(call_id, b_pcm, out_track, caller_phone)
-                                        finally:
-                                            is_processing = False
-                                            if pending_utterance is not None:
-                                                next_pcm = pending_utterance
-                                                pending_utterance = None
-                                                is_processing = True
-                                                asyncio.create_task(run_utterance(next_pcm))
+                                        async def run_utterance(b_pcm):
+                                            nonlocal is_processing, pending_utterance
+                                            try:
+                                                await handle_caller_utterance(call_id, b_pcm, out_track, caller_phone)
+                                            finally:
+                                                is_processing = False
+                                                if pending_utterance is not None:
+                                                    next_pcm = pending_utterance
+                                                    pending_utterance = None
+                                                    is_processing = True
+                                                    asyncio.create_task(run_utterance(next_pcm))
 
-                                    asyncio.create_task(run_utterance(complete_pcm))
-                                else:
-                                    logger.info(f"[{call_id}] Storing speech utterance as pending while previous completes")
-                                    pending_utterance = complete_pcm
+                                        asyncio.create_task(run_utterance(complete_pcm))
+                                    else:
+                                        logger.info(f"[{call_id}] Storing speech utterance as pending while previous completes")
+                                        pending_utterance = complete_pcm
 
-                            buffer = []
-                            is_speaking = False
-                            silence_frames = 0
+                                speech_buffer = []
+                                is_speaking = False
+                                silence_frames = 0
+                                vad.reset()
     except asyncio.CancelledError:
         pass
     except Exception as e:
