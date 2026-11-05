@@ -39,11 +39,14 @@ cached_greeting_pcm = np.zeros(0, dtype=np.int16)
 active_calls = {}
 
 class SileroVAD:
-    """Neural Voice Activity Detector using Silero ONNX. Detects speech accurately across accents and noise."""
-    def __init__(self, model_path="/opt/lumera-voice/models/silero_vad.onnx"):
+    """Neural Voice Activity Detector using Silero ONNX v5 with context buffer. Detects speech accurately across accents and noise."""
+    def __init__(self, model_path="/opt/lumera-voice/models/silero_vad.onnx", sample_rate=16000):
         self.session = None
-        self._sr = np.array(16000, dtype=np.int64)
+        self.sample_rate = sample_rate
+        self.context_size = 64
+        self._sr = np.array([sample_rate], dtype=np.int64)
         self.state = np.zeros((2, 1, 128), dtype=np.float32)
+        self.context = np.zeros((1, self.context_size), dtype=np.float32)
         try:
             import onnxruntime as ort
             if os.path.exists(model_path):
@@ -59,29 +62,34 @@ class SileroVAD:
 
     def reset(self):
         self.state = np.zeros((2, 1, 128), dtype=np.float32)
+        self.context = np.zeros((1, self.context_size), dtype=np.float32)
 
-    def is_speech(self, audio_chunk_16k: np.ndarray, threshold: float = 0.45) -> bool:
+    def is_speech(self, audio_chunk_16k: np.ndarray, threshold: float = 0.40) -> bool:
         """Returns True if chunk contains human speech. Expects 512 samples (~32ms) at 16kHz."""
+        rms = float(np.sqrt(np.mean(audio_chunk_16k.astype(np.float32) ** 2)))
         if self.session is None or len(audio_chunk_16k) < 512:
-            rms = np.sqrt(np.mean(audio_chunk_16k.astype(np.float32) ** 2))
             return rms > 300
 
-        # Silero VAD expects float32 in range [-1.0, 1.0]
-        chunk = audio_chunk_16k[:512].astype(np.float32) / 32768.0
-        chunk = np.expand_dims(chunk, axis=0)
-
-        inputs = {
-            "input": chunk,
-            "sr": self._sr,
-            "state": self.state
-        }
         try:
+            # Silero VAD v5 requires preceding context concatenated with current 512-sample chunk
+            chunk = audio_chunk_16k[:512].astype(np.float32) / 32768.0
+            if chunk.ndim == 1:
+                chunk = np.expand_dims(chunk, axis=0)
+
+            x = np.concatenate([self.context, chunk], axis=1)
+            inputs = {
+                "input": x,
+                "sr": self._sr,
+                "state": self.state
+            }
             out, next_state = self.session.run(None, inputs)
             self.state = next_state
-            prob = float(out[0][0])
-            return prob >= threshold
-        except Exception:
-            rms = np.sqrt(np.mean(audio_chunk_16k.astype(np.float32) ** 2))
+            self.context = x[:, -self.context_size:]
+            prob = float(out.item())
+            # Dual validation: neural probability with soft energy guard
+            return prob >= threshold or (prob >= 0.25 and rms > 600)
+        except Exception as err:
+            logger.warning(f"Silero VAD evaluation error: {err}")
             return rms > 300
 
 def load_audio_pcm(file_path: str, target_sample_rate: int = 48000) -> np.ndarray:
@@ -471,7 +479,12 @@ async def process_inbound_audio(call_id: str, inbound_track, out_track: MayaVoic
     except asyncio.CancelledError:
         pass
     except Exception as e:
-        logger.error(f"[{call_id}] Inbound audio listener loop exception: {repr(e)}")
+        # MediaStreamError is standard when caller hangs up on WhatsApp
+        err_name = type(e).__name__
+        if "MediaStreamError" in err_name or "ConnectionResetError" in err_name:
+            logger.info(f"[{call_id}] Inbound audio stream ended by caller ({err_name})")
+        else:
+            logger.error(f"[{call_id}] Inbound audio listener loop exception: {repr(e)}")
 
 def fix_sdp_candidates(sdp: str, public_ip: str) -> str:
     """Ensures SDP answer advertises the VM's public IP for host candidates and c= line."""
