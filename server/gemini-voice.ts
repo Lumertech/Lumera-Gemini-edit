@@ -403,11 +403,18 @@ export interface TenantVoiceDoctor {
   qualification?: string;
 }
 
+export interface CallerLearningProfile {
+  previousVisitsCount: number;
+  lastDoctorName?: string;
+  lastSpecialty?: string;
+}
+
 export interface TenantVoiceContext {
   letterhead: ReturnType<typeof getTenantLetterhead>;
   voiceSettings: ReturnType<typeof getWhatsAppTenantVoiceSettings>;
   registered: ReturnType<typeof findRegisteredPatient>;
   doctors: TenantVoiceDoctor[];
+  callerProfile?: CallerLearningProfile;
 }
 
 export function getTenantVoiceContext(tenantId: string, callerPhone: string): TenantVoiceContext {
@@ -446,11 +453,37 @@ export function getTenantVoiceContext(tenantId: string, callerPhone: string): Te
     ];
   }
 
+  // Continuous learning: retrieve caller's past interactions & doctor relationships
+  let callerProfile: CallerLearningProfile | undefined;
+  try {
+    const rawDigits = String(callerPhone || "").replace(/\D/g, "").slice(-10);
+    if (rawDigits) {
+      const pastAppts = db.prepare(`
+        SELECT doctor_name, specialty, created_at
+        FROM appointments
+        WHERE (patient_phone = ? OR patient_phone LIKE ?) AND tenant_id = ?
+        ORDER BY created_at DESC
+        LIMIT 5
+      `).all(callerPhone, `%${rawDigits}`, tenantId) as any[];
+
+      if (pastAppts && pastAppts.length > 0) {
+        callerProfile = {
+          previousVisitsCount: pastAppts.length,
+          lastDoctorName: String(pastAppts[0].doctor_name || "").replace(/^dr\.?\s*/i, ""),
+          lastSpecialty: String(pastAppts[0].specialty || ""),
+        };
+      }
+    }
+  } catch (profErr) {
+    console.warn("[getTenantVoiceContext callerProfile]", profErr);
+  }
+
   return {
     letterhead,
     voiceSettings,
     registered,
     doctors,
+    callerProfile,
   };
 }
 
@@ -898,7 +931,7 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
       let tenantId = String(req.body?.tenantId || (req as any).user?.tenantId || "tenant-lumera-main").trim();
 
       const tenantContext = getTenantVoiceContext(tenantId, from);
-      const { letterhead, voiceSettings, registered, doctors } = tenantContext;
+      const { letterhead, voiceSettings, registered, doctors, callerProfile } = tenantContext;
       const cleanCallerName =
         registered?.firstName ||
         (callerName && !/^patient(\s*\(\+?\d+\))?$/i.test(callerName) && callerName !== "A1 Test Recipient" ? callerName.split(/\s+/)[0] : "there");
@@ -913,6 +946,14 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
       const doctorRosterText = doctors
         .map((d) => `  * Dr. ${d.name.replace(/^dr\.?\s*/i, "")} (${d.specialty}) - OPD: ${d.timing} (${d.days}), Fee ₹${d.fee}`)
         .join("\n");
+
+      let memoryProfileText = "";
+      if (callerProfile && callerProfile.previousVisitsCount > 0) {
+        memoryProfileText = `Caller Profile & Continuous Memory:
+- Returning Patient: Yes (${callerProfile.previousVisitsCount} prior visits at this clinic)
+- Last Consulted Doctor: Dr. ${callerProfile.lastDoctorName} (${callerProfile.lastSpecialty})
+- Personalization Tip: If the caller mentions a checkup, follow-up, or does not specify a doctor, warmly ask if they would like to book with their usual doctor, Dr. ${callerProfile.lastDoctorName}.`;
+      }
 
       const historyText = (req.body?.conversationHistory || [])
         .slice(-6)
@@ -940,7 +981,7 @@ You are speaking live to a caller on a WhatsApp voice phone call.
 
 Caller Phone: ${from}
 Caller Name: ${cleanCallerName}
-Clinic Information:
+${memoryProfileText ? `${memoryProfileText}\n` : ""}Clinic Information:
 - Clinic: ${clinicName}
 - Doctors & OPD:
 ${doctorRosterText}
@@ -954,24 +995,27 @@ Previous Call Conversation (if any):
 ${historyText || "(Start of call)"}
 
 Instructions:
-1. Listen carefully to the caller's audio clip. Indian English, Hindi, Hinglish, Marathi, Bengali, Tamil, Telugu, and other Indian regional accents are spoken.
+1. Listen carefully to the caller's audio clip. Indian English, Hindi, Hinglish, Marathi, Bengali, Tamil, Telugu, and other Indian regional languages are spoken.
 2. In "transcript", transcribe what the caller said.
    - The caller may speak fast, softly, or in Hinglish (e.g. "appointment chahiye", "doctor kab baithenge", "dr siddharth se milna hai", "kya timing hai", "aaj slot milega").
    - Match phonetic doctor names to the clinic roster above (e.g. "sidart" -> Dr. Siddharth, "vikram" -> Dr. Vikram, "ananya" -> Dr. Ananya, "mukherji" -> Dr. Mukherjee).
    - If the speech is muffled, faint, brief, or partially unclear, use context from previous turns to provide your best phonetic transcription instead of leaving it empty.
    - ONLY set "transcript": "" and "speechText": "" with "intent": "SILENCE" if the audio is strictly 100% dead digital silence with no human voice or background audio at all.
-3. In "speechText", formulate your spoken receptionist response in the caller's spoken language.
+3. LANGUAGE CONTINUITY RULE (STRICT):
+   - You MUST reply in the EXACT same language and dialect the caller is using (e.g., if caller speaks Hindi or Hinglish, reply in Hindi or Hinglish; if English, reply in English).
+   - NEVER switch languages on your own. Keep the active conversation language until the caller deliberately switches to another language for a full coherent sentence.
+4. In "speechText", formulate your spoken receptionist response in the caller's spoken language.
    - Always acknowledge what you heard rather than immediately asking to repeat whenever even 1-2 words are discernible.
-   - If the caller's speech was completely inaudible or cut off, respond warmly asking them to repeat (e.g. "I'm sorry, I couldn't hear that clearly. Could you please repeat?" or in Hindi "माफ़ कीजिए, मुझे आपकी आवाज़ साफ़ नहीं आई। क्या आप दोबारा बोलेंगे?").
+   - If the caller's speech was completely inaudible or cut off, respond warmly asking them to repeat (in the caller's language, e.g. in Hindi "माफ़ कीजिए, मुझे आपकी आवाज़ साफ़ नहीं आई। क्या आप दोबारा बोलेंगे?" or in English "I'm sorry, I couldn't hear that clearly. Could you please repeat?").
    - Keep answers conversational, warm, and concise (1 to 2 short sentences, 15 to 25 words maximum) suitable for snappy live voice dialogue.
-4. If the caller asks to speak to a human, staff, doctor, receptionist, or operator (e.g. "transfer me", "talk to human", "doctor se baat karni hai", "receptionist chahiye", "operator", "emergency", "connect to staff"): set "intent": "TRANSFER", "shouldTransfer": true.
-5. If the caller asks to book an appointment (e.g. "book an appointment", "give me a slot", "book Dr. ...", "appointment chahiye", "ha book kardo", or names a doctor or confirms a time after you asked which doctor/slot): set "shouldBook": true and specify the matched doctor's name in "doctorName".
-6. If caller is asking for timings, fees, doctor availability, directions, or asking medical questions: answer their question warmly using the clinic facts above and ask if they would like to book. Do NOT book unless they ask or confirm!
+5. If the caller asks to speak to a human, staff, doctor, receptionist, or operator (e.g. "transfer me", "talk to human", "doctor se baat karni hai", "receptionist chahiye", "operator", "emergency", "connect to staff"): set "intent": "TRANSFER", "shouldTransfer": true.
+6. If the caller asks to book an appointment (e.g. "book an appointment", "give me a slot", "book Dr. ...", "appointment chahiye", "ha book kardo", or names a doctor or confirms a time after you asked which doctor/slot): set "shouldBook": true and specify the matched doctor's name in "doctorName".
+7. If caller is asking for timings, fees, doctor availability, directions, or asking medical questions: answer their question warmly using the clinic facts above and ask if they would like to book. Do NOT book unless they ask or confirm!
 
 Output strict JSON:
 {
   "transcript": "transcribed caller speech",
-  "speechText": "spoken receptionist response",
+  "speechText": "spoken receptionist response in caller's language",
   "intent": "BOOKING" | "TIMINGS" | "LOCATION" | "REFILL" | "DOCTOR_INFO" | "INQUIRY" | "TRANSFER" | "SILENCE",
   "shouldBook": false,
   "shouldTransfer": false,
@@ -1017,7 +1061,7 @@ Output strict JSON:
         }
       }
 
-      // Check Failover & 2-Attempt Unclear Transfer
+      // Check Failover & 3-Attempt Unclear Transfer
       const history = (req.body?.conversationHistory || []) as Array<{ role: string; text: string }>;
       const previousClarifications = history.filter(
         (h) => h.role === "maya" && (
@@ -1030,17 +1074,25 @@ Output strict JSON:
         intent === "TRANSFER" ||
         /human|staff|transfer|receptionist|operator|doctor se baat|connect me|emergency/i.test(message);
 
-      const isCurrentTurnUnclear = (!message && !speechText) || /couldn't hear that clearly|could you please repeat/i.test(speechText);
-      const isFailoverTriggered = isTransferRequested || (isCurrentTurnUnclear && previousClarifications >= 1);
+      const isCurrentTurnUnclear = (!message && !speechText) || /couldn't hear that clearly|could you please repeat|साफ़ नहीं|दोबारा बोलेंगे/i.test(speechText);
+      // Transfer after 3 unclear attempts (i.e. already had 2 previous clarifications + current turn is also unclear)
+      const isFailoverTriggered = isTransferRequested || (isCurrentTurnUnclear && previousClarifications >= 2);
 
       if (isFailoverTriggered) {
         intent = "TRANSFER";
-        speechText = `I apologize, I'm having trouble hearing you clearly over the line. Let me connect you directly to our clinic staff at ${escalationPhone}. One moment, please.`;
+        const callerSpeaksHindi = /[\u0900-\u097F]|aap|karna|hoga|baat|hai|tha|kripya/i.test(message) ||
+          history.some(h => /[\u0900-\u097F]|नमस्ते|माफ़/i.test(h.text));
+        speechText = callerSpeaksHindi
+          ? `माफ़ कीजिए, मुझे आपकी आवाज़ साफ़ नहीं आ रही है। मैं आपकी कॉल हमारे क्लिनिक स्टाफ ${escalationPhone} पर ट्रांसफर कर रही हूँ। कृपया एक मिनट रुकिए।`
+          : `I apologize, I'm having trouble hearing you clearly over the line. Let me connect you directly to our clinic staff at ${escalationPhone}. One moment, please.`;
         suggestedAction = `Transferred caller to clinic desk (${escalationPhone})`;
       } else if (!message && !speechText) {
         const rawAudio = String(req.body?.audioBase64 || "");
         if (rawAudio.length > 500) {
-          speechText = `I'm sorry, I couldn't hear that clearly. Could you please repeat?`;
+          const callerSpeaksHindi = history.some(h => /[\u0900-\u097F]|नमस्ते|माफ़/i.test(h.text));
+          speechText = callerSpeaksHindi
+            ? `माफ़ कीजिए, मुझे आपकी आवाज़ साफ़ नहीं आई। क्या आप दोबारा बोलेंगे?`
+            : `I'm sorry, I couldn't hear that clearly. Could you please repeat?`;
           intent = "INQUIRY";
           suggestedAction = "Asked caller to repeat unclear utterance";
         } else {
