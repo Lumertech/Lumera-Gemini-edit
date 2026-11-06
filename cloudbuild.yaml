@@ -80,8 +80,8 @@ steps:
       - -c
       - |
         set -euo pipefail
-        chmod +x deploy/clear-cloud-run-source-annotation.sh
-        deploy/clear-cloud-run-source-annotation.sh \
+        sed -i 's/\r$//' deploy/clear-cloud-run-source-annotation.sh
+        bash deploy/clear-cloud-run-source-annotation.sh \
           --service "${_SERVICE}" \
           --region "${_REGION}" \
           --project "${PROJECT_ID}" \
