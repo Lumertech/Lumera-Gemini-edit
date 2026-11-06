@@ -751,6 +751,12 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
       saved[key] = process.env[key];
       delete process.env[key];
     }
+    const savedNumber = getDb()
+      .prepare("SELECT status FROM whatsapp_numbers WHERE owner_type = 'tenant' AND owner_id = ?")
+      .get(DEMO_TENANT_ID) as { status?: string } | undefined;
+    getDb()
+      .prepare("UPDATE whatsapp_numbers SET status = 'disconnected' WHERE owner_type = 'tenant' AND owner_id = ?")
+      .run(DEMO_TENANT_ID);
     try {
       applyWalletTransaction(DEMO_TENANT_ID, "adjustment", 1000, {
         note: "Clip A reminder test credit",
@@ -778,6 +784,11 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
       assert.equal(event.patient_phone, "+919999973271");
       assert.equal(event.event_type, "appointment_reminder");
     } finally {
+      if (savedNumber?.status) {
+        getDb()
+          .prepare("UPDATE whatsapp_numbers SET status = ? WHERE owner_type = 'tenant' AND owner_id = ?")
+          .run(savedNumber.status, DEMO_TENANT_ID);
+      }
       for (const [key, value] of Object.entries(saved)) {
         if (value === undefined) delete process.env[key];
         else process.env[key] = value;

@@ -2546,10 +2546,10 @@ export async function processBotActionOrQuery(
   }
 
   // 10. Default Fallback when no response is available to a specific question
-  const greetingPrefix = isRegistered && firstName
-    ? `Hello ${firstName}! 🙏`
-    : (patientName && !patientName.startsWith("Patient (") && patientName !== "Patient"
-        ? `Namaste ${patientName}! 🙏`
+  const greetingPrefix = patientName && !patientName.startsWith("Patient (") && patientName !== "Patient"
+    ? `Namaste ${patientName}! 🙏`
+    : (isRegistered && firstName
+        ? `Hello ${firstName}! 🙏`
         : `Hello! 🙏`);
   const queryAck = text ? ` We have received your query: "${text}".` : "";
   return {
