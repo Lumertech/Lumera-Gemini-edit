@@ -958,7 +958,7 @@ export function createMetaRouter(): Router {
                   }
 
                   const callNotice = `📞 Inbound Voice Call (${direction.replace(/_/g, " ")}: ${callEvent})`;
-                  recordInboundWhatsAppMessage(db, {
+                  const recordRes = recordInboundWhatsAppMessage(db, {
                     fromPhone,
                     textBody: callNotice,
                     tenantId: targetTenantId,
@@ -966,7 +966,37 @@ export function createMetaRouter(): Router {
                     wabaId,
                     now,
                   });
-                  // Note: Calls are answered with voice; no automated text message is sent on call events.
+
+                  if (recordRes?.convId) {
+                    const voiceSettings = getWhatsAppTenantVoiceSettings(db, targetTenantId);
+                    const receptionistName = voiceSettings.receptionistName || "Maya";
+                    const replyMsgId = `msg-call-${crypto.randomUUID().slice(0, 8)}`;
+                    const callAnswerText = `🎙️ Inbound call answered live by ${receptionistName} (AI Receptionist).`;
+                    const callTime = new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" });
+                    try {
+                      db.prepare(`
+                        INSERT INTO whatsapp_messages (
+                          id, conversation_id, patient_phone, sender, staff_name,
+                          content, time_display, buttons, media, status, created_at, tenant_id
+                        ) VALUES (?, ?, ?, 'bot', 'Receptionist AI', ?, ?, '[]', '[]', 'delivered', ?, ?)
+                      `).run(
+                        replyMsgId,
+                        recordRes.convId,
+                        fromPhone,
+                        callAnswerText,
+                        callTime,
+                        now,
+                        targetTenantId
+                      );
+                      db.prepare(`
+                        UPDATE whatsapp_conversations
+                        SET last_message = ?, last_message_time = ?, updated_at = ?
+                        WHERE id = ?
+                      `).run(callAnswerText.slice(0, 80), callTime, now, recordRes.convId);
+                    } catch (msgErr) {
+                      console.warn("[Voice Call Log Insert Error]", msgErr);
+                    }
+                  }
                 }
               }
 
