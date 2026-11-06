@@ -468,7 +468,7 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
                       : isRecording
                         ? 'Listening'
                         : isTranscribing
-                          ? 'Transcribing with Gemini…'
+                          ? 'Transcribing…'
                           : micError === MIC_STOPPED_RESUME
                             ? 'Stopped'
                             : microphoneStatusLabel({

@@ -80,7 +80,7 @@ describe("production DATABASE_URL fail-fast (Epic 0.2)", () => {
       scripts: { build: string };
     };
     assert.match(pkg.scripts.build, /alias:node:sqlite=\.\/server\/sqlite-compat\.ts/);
-    assert.match(pkg.scripts.build, /cp server\/pg-sync-worker\.cjs dist\/pg-sync-worker\.cjs/);
+    assert.match(pkg.scripts.build, /(cp server\/pg-sync-worker\.cjs dist\/pg-sync-worker\.cjs|copyFileSync\('server\/pg-sync-worker\.cjs',\s*'dist\/pg-sync-worker\.cjs'\))/);
   });
 });
 

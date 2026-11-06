@@ -310,24 +310,30 @@ describe("Gemini Voicebot & Inbound WhatsApp Voice Call Receptionist", () => {
 
     assert.equal(response.status, 200);
 
-    // Wait a brief moment for async dispatch
-    await new Promise((r) => setTimeout(r, 200));
-
     const db = getDb();
-    const inbound = db.prepare(`
-      SELECT * FROM whatsapp_messages
-      WHERE patient_phone LIKE '%73271' AND sender = 'patient' AND content LIKE '%Inbound Voice Call%'
-      ORDER BY created_at DESC LIMIT 1
-    `).get() as Record<string, unknown> | undefined;
+    let inbound: Record<string, unknown> | undefined;
+    let reply: Record<string, unknown> | undefined;
+
+    for (let i = 0; i < 20; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      if (!inbound) {
+        inbound = db.prepare(`
+          SELECT * FROM whatsapp_messages
+          WHERE patient_phone LIKE '%73271' AND sender = 'patient' AND content LIKE '%Inbound Voice Call%'
+          ORDER BY created_at DESC LIMIT 1
+        `).get() as Record<string, unknown> | undefined;
+      }
+      if (!reply) {
+        reply = db.prepare(`
+          SELECT * FROM whatsapp_messages
+          WHERE patient_phone LIKE '%73271' AND sender = 'bot' AND staff_name = 'Receptionist AI'
+          ORDER BY created_at DESC LIMIT 1
+        `).get() as Record<string, unknown> | undefined;
+      }
+      if (inbound && reply) break;
+    }
 
     assert.ok(inbound, "Inbound call should be recorded in whatsapp_messages");
-
-    const reply = db.prepare(`
-      SELECT * FROM whatsapp_messages
-      WHERE patient_phone LIKE '%73271' AND sender = 'bot' AND staff_name = 'Receptionist AI'
-      ORDER BY created_at DESC LIMIT 1
-    `).get() as Record<string, unknown> | undefined;
-
     assert.ok(reply, "Maya receptionist auto-answer should be recorded in whatsapp_messages");
     assert.match(String(reply.content), /Maya/i);
     assert.match(String(reply.content), /call/i);

@@ -833,11 +833,7 @@ export function createMetaRouter(): Router {
           if (entry.changes && Array.isArray(entry.changes)) {
             for (const change of entry.changes) {
               const val = change.value;
-              const rawPhoneId = String(val?.metadata?.phone_number_id || "").trim();
-              const phoneNumberId =
-                rawPhoneId ||
-                readSecret("META_PHONE_NUMBER_ID", "WHATSAPP_PHONE_NUMBER_ID") ||
-                "1294483843748285";
+              const phoneNumberId = String(val?.metadata?.phone_number_id || "").trim();
               let inboundTenantId = inboundTenantIdFromPhoneNumberId(phoneNumberId);
               if (!inboundTenantId) {
                 const envPhoneId = readSecret("META_PHONE_NUMBER_ID", "WHATSAPP_PHONE_NUMBER_ID");
@@ -846,7 +842,26 @@ export function createMetaRouter(): Router {
                 }
               }
               if (!inboundTenantId) {
-                inboundTenantId = "tenant-lumera-main";
+                console.warn(
+                  "[Meta Webhook] Unknown phone_number_id; acknowledging without writing.",
+                  phoneNumberId || "(missing)"
+                );
+                if (val?.statuses && Array.isArray(val.statuses)) {
+                  for (const st of val.statuses) {
+                    try {
+                      applyWhatsAppOutboundStatus(db, {
+                        messageId: st.id,
+                        recipientId: st.recipient_id,
+                        status: st.status,
+                        sentAt: now,
+                        tenantId: WHATSAPP_QUARANTINE_TENANT_ID,
+                      });
+                    } catch (err) {
+                      reportCaughtError(err, "meta.webhook.outbound-status.unassigned");
+                    }
+                  }
+                }
+                continue;
               }
               const wabaId = String(entry?.id || "").trim();
 
