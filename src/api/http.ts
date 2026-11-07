@@ -193,6 +193,60 @@ async function apiFetchResponseOnce(
   return res;
 }
 
+export type ApiUploadResult = { status: number; json: ApiErrorBody & Record<string, unknown> };
+
+function parseUploadJson(text: string): ApiUploadResult["json"] {
+  try {
+    const parsed = JSON.parse(text || "{}") as unknown;
+    if (!parsed || typeof parsed !== "object") return {};
+    return withoutSessionCredential(parsed as ApiErrorBody);
+  } catch {
+    return {};
+  }
+}
+
+/** Multipart upload with the same cookie and CSRF rules as `apiFetchResponse`, plus byte progress. */
+export function apiUploadForm(
+  path: string,
+  body: FormData,
+  onProgress?: (ratio: number) => void
+): Promise<ApiUploadResult> {
+  const send = (csrfOverride: string | null) => {
+    const seq = takeCsrfSeq();
+    return new Promise<{ status: number; text: string; csrfToken: string; code: string }>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", path);
+      xhr.withCredentials = true;
+      const token = csrfOverride ?? (csrfFromServer || csrfTokenFromDocument());
+      if (token) xhr.setRequestHeader("X-CSRF-Token", token);
+      xhr.upload.onprogress = (event) => {
+        if (!onProgress || !event.lengthComputable || event.total <= 0) return;
+        onProgress(Math.max(0, Math.min(1, event.loaded / event.total)));
+      };
+      xhr.onerror = () => reject(new Error("Upload failed"));
+      xhr.onload = () => {
+        const headerToken = String(xhr.getResponseHeader("X-CSRF-Token") || "").trim();
+        const json = parseUploadJson(xhr.responseText || "");
+        const bodyToken = String(json.csrfToken || "").trim();
+        rememberCsrfToken(headerToken || bodyToken, seq);
+        resolve({
+          status: xhr.status,
+          text: xhr.responseText || "",
+          csrfToken: headerToken || bodyToken,
+          code: String(json.code || ""),
+        });
+      };
+      xhr.send(body);
+    });
+  };
+
+  return send(null).then(async (first) => {
+    const refreshed = first.status === 403 && first.code === CSRF_REFRESHED && first.csrfToken;
+    const settled = refreshed ? await send(first.csrfToken) : first;
+    return { status: settled.status, json: parseUploadJson(settled.text) };
+  });
+}
+
 export async function apiFetch<T = unknown>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await apiFetchResponse(path, init);
   const parsed = await res.json().catch(() => ({}));
