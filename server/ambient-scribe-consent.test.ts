@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -21,6 +22,7 @@ import {
 } from "./ambient-walkin.ts";
 import {
   AMBIENT_SCRIBE_CONSENT_TEXT,
+  ambientScribeConsentStatementAccepted,
   AMBIENT_WALKIN_SOURCE,
   closeStaleAmbientWalkIns,
   hasAmbientScribeConsent,
@@ -92,7 +94,7 @@ describe("ambient scribe per-visit consent", () => {
   it("records one audit per appointment and does not grant the health-document consent", async () => {
     assert.equal(
       AMBIENT_SCRIBE_CONSENT_TEXT,
-      "I have told the patient that this consult will be recorded and transcribed by an AI service to draft notes, and the patient agreed. Audio is not stored."
+      "I have told the patient that this consult will be recorded and transcribed by Google Cloud Vertex AI (India) to draft notes, and the patient agreed. Audio is not stored."
     );
     const doctor = seedDoctor("doc");
     const token = await login(doctor.email);
@@ -223,6 +225,146 @@ describe("ambient scribe per-visit consent", () => {
       { Authorization: `Bearer ${deskToken}` }
     );
     assert.equal(denied.status, 403);
+  });
+
+  it("accepts the previous consent sentence and still rejects a paraphrase", async () => {
+    const previous =
+      "I have told the patient that this consult will be recorded and transcribed by an AI service to draft notes, and the patient agreed. Audio is not stored.";
+    assert.equal(ambientScribeConsentStatementAccepted(AMBIENT_SCRIBE_CONSENT_TEXT), true);
+    assert.equal(ambientScribeConsentStatementAccepted(previous), true);
+    assert.equal(ambientScribeConsentStatementAccepted(previous + " "), false);
+    const doctor = seedDoctor("prior");
+    const token = await login(doctor.email);
+    const auth = { Authorization: `Bearer ${token}` };
+    const created = await jsonRequest(
+      port,
+      "POST",
+      "/api/patients",
+      { name: "Prior Consent", phone: `+91 96${String(Date.now()).slice(-8)}`, age: 29, gender: "Female" },
+      auth
+    );
+    assert.equal(created.status, 201, String(created.json.error || ""));
+    const patientId = String((created.json.patient as { id: string }).id);
+    const saved = await jsonRequest(
+      port,
+      "POST",
+      "/api/ambient-scribe/consent",
+      { patientId, attested: true, statement: previous },
+      auth
+    );
+    assert.equal(saved.status, 201, String(saved.json.error || ""));
+    assert.equal(saved.json.confirmed, true);
+    const row = getDb()
+      .prepare(
+        `SELECT details FROM audit_logs WHERE action = 'ambient_scribe_consent' AND tenant_id = ? AND entity_id = ?`
+      )
+      .get(doctor.tenantId, String(saved.json.appointmentId)) as { details: string };
+    assert.equal(row.details.includes(previous), false);
+    assert.equal(hasAmbientScribeConsent(doctor.tenantId, String(saved.json.appointmentId)), true);
+    const paraphrased = await jsonRequest(
+      port,
+      "POST",
+      "/api/ambient-scribe/consent",
+      { patientId, attested: true, statement: "The patient agreed to recording." },
+      auth
+    );
+    assert.equal(paraphrased.status, 400);
+  });
+
+  it("stores the submitted notice version and hash, and still accepts a row with no version", async () => {
+    const previous =
+      "I have told the patient that this consult will be recorded and transcribed by an AI service to draft notes, and the patient agreed. Audio is not stored.";
+    const doctor = seedDoctor("notice");
+    const token = await login(doctor.email);
+    const auth = { Authorization: `Bearer ${token}` };
+
+    let enrolN = 0;
+    async function enrol(name: string) {
+      enrolN += 1;
+      const created = await jsonRequest(
+        port,
+        "POST",
+        "/api/patients",
+        {
+          name,
+          phone: `+91 94${String(Date.now()).slice(-6)}${enrolN}${Math.floor(Math.random() * 10)}`,
+          age: 40,
+          gender: "Female",
+        },
+        auth
+      );
+      assert.equal(created.status, 201, String(created.json.error || ""));
+      return String((created.json.patient as { id: string }).id);
+    }
+
+    const oldPatientId = await enrol("Old Notice");
+    const newPatientId = await enrol("New Notice");
+    const savedOld = await jsonRequest(
+      port,
+      "POST",
+      "/api/ambient-scribe/consent",
+      { patientId: oldPatientId, attested: true, statement: previous },
+      auth
+    );
+    const savedNew = await jsonRequest(
+      port,
+      "POST",
+      "/api/ambient-scribe/consent",
+      { patientId: newPatientId, attested: true, statement: AMBIENT_SCRIBE_CONSENT_TEXT },
+      auth
+    );
+    assert.equal(savedOld.status, 201, String(savedOld.json.error || ""));
+    assert.equal(savedNew.status, 201, String(savedNew.json.error || ""));
+
+    function storedDetails(appointmentId: string) {
+      const row = getDb()
+        .prepare(
+          `SELECT details FROM audit_logs WHERE action = 'ambient_scribe_consent' AND tenant_id = ? AND entity_id = ?`
+        )
+        .get(doctor.tenantId, appointmentId) as { details: string };
+      return JSON.parse(row.details) as { notice: string; consentTextVersion: string; consentTextSha256: string };
+    }
+
+    const oldDetails = storedDetails(String(savedOld.json.appointmentId));
+    const newDetails = storedDetails(String(savedNew.json.appointmentId));
+    const oldHash = createHash("sha256").update(previous).digest("hex");
+    const newHash = createHash("sha256").update(AMBIENT_SCRIBE_CONSENT_TEXT).digest("hex");
+    assert.equal(oldDetails.consentTextVersion, "v1-generic-ai");
+    assert.equal(newDetails.consentTextVersion, "v2-vertex-india");
+    assert.notEqual(oldDetails.consentTextVersion, newDetails.consentTextVersion);
+    assert.equal(oldDetails.consentTextSha256, oldHash);
+    assert.equal(newDetails.consentTextSha256, newHash);
+    assert.notEqual(oldDetails.consentTextSha256, newDetails.consentTextSha256);
+    assert.equal(oldDetails.notice, newDetails.notice);
+    assert.equal(oldDetails.notice.includes(previous), false);
+    assert.equal(newDetails.notice.includes(AMBIENT_SCRIBE_CONSENT_TEXT), false);
+
+    const legacyPatientId = await enrol("Legacy Notice");
+    const legacyVisitId = `apt-legacy-${legacyPatientId}`;
+    insertVisit({
+      id: legacyVisitId,
+      tenantId: doctor.tenantId,
+      patientId: legacyPatientId,
+      doctorId: doctor.userId,
+      date: istClinicDay(),
+      status: "Open",
+      source: "Walk-in",
+    });
+    recordConsent(doctor.tenantId, doctor.userId, legacyPatientId, legacyVisitId);
+    const legacy = getDb()
+      .prepare(`SELECT details FROM audit_logs WHERE action = 'ambient_scribe_consent' AND entity_id = ?`)
+      .get(legacyVisitId) as { details: string };
+    assert.equal(legacy.details.includes("consentTextVersion"), false);
+    assert.equal(hasAmbientScribeConsent(doctor.tenantId, legacyVisitId), true);
+    const legacyRead = await jsonRequest(
+      port,
+      "GET",
+      `/api/ambient-scribe/consent?appointmentId=${encodeURIComponent(legacyVisitId)}`,
+      undefined,
+      auth
+    );
+    assert.equal(legacyRead.status, 200);
+    assert.equal(legacyRead.json.confirmed, true);
   });
 
   it("rejects an appointment that is missing or belongs to another patient, and mints a walk-in id", async () => {

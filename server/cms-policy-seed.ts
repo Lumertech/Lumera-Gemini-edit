@@ -82,10 +82,15 @@ Government or public-authority requests for user personal data are handled under
 ### India DPDP Act
 Lumera processes personal data as a data processor for the clinic (tenant) that is the controller of patient clinical communications, and as a controller for clinic-staff account data. We honour access, correction, and erasure requests consistent with the Digital Personal Data Protection Act, 2023. Clinical records a clinic must keep under medical law may be **anonymised** rather than fully erased where retention is legally required.
 
+### AI scribe and AI processing
+When a clinician uses the AI scribe for a visit, after confirming the patient has agreed, Lumera sends the consultation audio and related clinical text to Google Cloud's Vertex AI (Gemini) in the Mumbai, India (asia-south1) region to create a draft transcript and note. Lumera does not store the audio. Under Google Cloud's terms, Google does not use this data to train or fine-tune its AI models without Lumera's permission. Google may keep prompts briefly for abuse monitoring and caching, as its terms describe. A clinician reviews and approves every draft before it is added to the record. Questions: ravee@lumer.me.
+
+Voice notes and messages sent to the clinic's WhatsApp assistant may be transcribed or answered using the same Google Cloud Vertex AI service in the Mumbai, India (asia-south1) region.
+
 ### Subprocessors
 - **Meta Platforms, Inc. / Meta Platforms Ireland Ltd:** WhatsApp Cloud API, webhooks, and Facebook Login as the platform operator
 - **Google Cloud Platform:** Secure container hosting (Cloud Run) and related infrastructure
-- **Google Gemini API:** Optional server-side clinical transcription and note assist (only the payload needed to run the feature; not used to sell ads)
+- **Google Cloud Vertex AI (Gemini), Mumbai, India region:** Optional server-side clinical transcription and note assist (only the payload needed to run the feature; not used to sell ads)
 
 Infrastructure subprocessors only receive what is needed to run the requested feature.
 `;
