@@ -28,6 +28,11 @@ import {
   sessionPatientId,
 } from "./patient-tenant.ts";
 import type { PatientTenantExtras } from "./client-serializers.ts";
+import {
+  getClinicScheduleSettings,
+  saveClinicScheduleSettings,
+  listSlotOccupancy,
+} from "./clinic-schedule.ts";
 
 function tenantIdOf(req: Request): string {
   return String(req.user?.tenantId || "").trim();
@@ -1759,6 +1764,67 @@ export function createClinicalRouter(): Router {
 
   registerPatientDocumentRoutes(api);
   registerPatientDocumentConsentRoutes(api);
+
+  // Calendar Schedule Settings (Appointment Duration & Overlap)
+  api.get("/calendar/schedule-settings", requireAuth, (req, res) => {
+    const tenantId = requireTenant(req, res);
+    if (!tenantId) return;
+    const doctorId = String(req.query.doctorId || "").trim();
+    const settings = getClinicScheduleSettings(getDb(), tenantId, doctorId);
+    res.json({ ok: true, settings });
+  });
+
+  api.post("/calendar/schedule-settings", requireAuth, (req, res) => {
+    const tenantId = requireTenant(req, res);
+    if (!tenantId) return;
+    const body = (req.body || {}) as Record<string, unknown>;
+    const settings = saveClinicScheduleSettings(getDb(), tenantId, {
+      doctorId: body.doctorId !== undefined ? String(body.doctorId) : undefined,
+      slotDurationMinutes: body.slotDurationMinutes !== undefined ? Number(body.slotDurationMinutes) : undefined,
+      slotOverlapMax: body.slotOverlapMax !== undefined ? Number(body.slotOverlapMax) : undefined,
+      opdStartTime: body.opdStartTime !== undefined ? String(body.opdStartTime) : undefined,
+      opdEndTime: body.opdEndTime !== undefined ? String(body.opdEndTime) : undefined,
+    });
+    writeAudit(
+      getDb(),
+      req.user?.id || null,
+      req.user?.name || "Clinician",
+      "Schedule settings updated",
+      `Duration: ${settings.slotDurationMinutes}m, Overlap: ${settings.slotOverlapMax}`
+    );
+    res.json({ ok: true, settings });
+  });
+
+  // Slot Occupancy (View Booked Appointments for each Slot)
+  api.get("/calendar/slot-occupancy", requireAuth, (req, res) => {
+    const tenantId = requireTenant(req, res);
+    if (!tenantId) return;
+    const date = String(req.query.date || "").trim() || clinicCalendarDate(new Date(), tenantTimezone(tenantId));
+    const doctorId = String(req.query.doctorId || "").trim();
+    const isStaff = !requestIsPatient(req);
+    const data = listSlotOccupancy(getDb(), {
+      tenantId,
+      date,
+      doctorId,
+      includePrivateDetails: isStaff,
+    });
+    res.json({ ok: true, ...data });
+  });
+
+  // Public/Patient Slot Availability (Returns only available slot times, zero patient data)
+  api.get("/calendar/available-slots", (req, res) => {
+    const tenantId = String(req.query.tenantId || (req as any).user?.tenantId || "tenant-lumera-main").trim();
+    const date = String(req.query.date || "").trim() || clinicCalendarDate(new Date(), tenantTimezone(tenantId));
+    const doctorId = String(req.query.doctorId || "").trim();
+    const data = listSlotOccupancy(getDb(), {
+      tenantId,
+      date,
+      doctorId,
+      includePrivateDetails: false,
+    });
+    const availableSlots = data.slots.filter((s) => s.isAvailable).map((s) => s.timeSlot);
+    res.json({ ok: true, date, availableSlots });
+  });
 
   return api;
 }

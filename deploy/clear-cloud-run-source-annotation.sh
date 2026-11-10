@@ -81,8 +81,8 @@ done
 # (replace rejects that class unless base-images is also set).
 strip_export() {
   local image="${1:-}"
-  # Program is -c so caller stdin (export YAML) reaches Python.
-  python3 -c '
+  if command -v python3 >/dev/null 2>&1 && python3 -c 'import sys' >/dev/null 2>&1; then
+    python3 -c '
 import re, sys
 image = sys.argv[1] if len(sys.argv) > 1 else ""
 text = sys.stdin.read()
@@ -102,7 +102,6 @@ for line in text.splitlines(True):
     rc = runtime_class_line.match(body)
     if rc:
         raw = rc.group(2).strip().strip(quotes)
-        # Delete the line so replace does not require base-images.
         if raw == linux_base or not raw:
             continue
     match = image_line.match(body)
@@ -115,6 +114,53 @@ for line in text.splitlines(True):
     out.append(line)
 sys.stdout.write("".join(out))
 ' "$image"
+  elif command -v python >/dev/null 2>&1 && python -c 'import sys' >/dev/null 2>&1; then
+    python -c '
+import re, sys
+image = sys.argv[1] if len(sys.argv) > 1 else ""
+text = sys.stdin.read()
+skip = (
+    "run.googleapis.com/sources",
+    "run.googleapis.com/base-images",
+)
+image_line = re.compile(r"^(\s*(?:-\s+)?)image:\s*(.*)$")
+runtime_class_line = re.compile(r"^(\s*)runtimeClassName:\s*(.*)$")
+linux_base = "run.googleapis.com/linux-base-image-update"
+quotes = chr(34) + chr(39)
+out = []
+for line in text.splitlines(True):
+    body = line.rstrip("\n")
+    if any(key in body for key in skip):
+        continue
+    rc = runtime_class_line.match(body)
+    if rc:
+        raw = rc.group(2).strip().strip(quotes)
+        if raw == linux_base or not raw:
+            continue
+    match = image_line.match(body)
+    if image and match:
+        raw = match.group(2).strip().strip(quotes)
+        if raw == "scratch":
+            nl = "\n" if line.endswith("\n") else ""
+            out.append("%simage: %s%s" % (match.group(1), image, nl))
+            continue
+    out.append(line)
+sys.stdout.write("".join(out))
+' "$image"
+  else
+    awk -v img="$image" '
+      /run\.googleapis\.com\/sources/ { next }
+      /run\.googleapis\.com\/base-images/ { next }
+      /runtimeClassName:[[:space:]]*["'"'"']?run\.googleapis\.com\/linux-base-image-update/ { next }
+      /^[[:space:]]*(-[[:space:]]+)?image:[[:space:]]*["'"'"']?scratch["'"'"']?[[:space:]]*$/ {
+        match($0, /^[[:space:]]*(-[[:space:]]+)?image:/)
+        prefix = substr($0, RSTART, RLENGTH)
+        print prefix " " img
+        next
+      }
+      { print }
+    '
+  fi
 }
 
 run_self_test() {

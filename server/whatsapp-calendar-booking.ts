@@ -11,6 +11,7 @@ import {
   updateAppointment,
 } from "./clinical.ts";
 import { findDoctor, findPatientByPhoneInTenant } from "./whatsapp-tenant-resolve.ts";
+import { formatMinutesToTime, getClinicScheduleSettings, parseTimeToMinutes } from "./clinic-schedule.ts";
 
 export function normalizePhoneDigits(phone: string): string {
   let digits = String(phone || "").replace(/[^\d]/g, "");
@@ -270,22 +271,35 @@ export function getNextAvailableDoctorSlot(opts: {
   });
 
   const docId = doctor ? String(doctor.id) : "";
-  let count = 0;
+  const scheduleSettings = getClinicScheduleSettings(db, tenantId, docId);
+  const duration = Math.max(1, scheduleSettings.slotDurationMinutes || 15);
+  const maxOverlap = Math.max(1, scheduleSettings.slotOverlapMax || 1);
+
+  // Fetch all active appointments for this doctor on this date
+  let bookedSlots: Array<{ time_slot?: string }> = [];
   try {
-    const existing = db
+    bookedSlots = db
       .prepare(
-        `SELECT count(*) as cnt FROM appointments
+        `SELECT time_slot FROM appointments
          WHERE tenant_id = ? AND date = ? AND (doctor_id = ? OR doctor_name = ?)
            AND status NOT IN ('Completed', 'Cancelled', 'No-Show')`
       )
-      .get(tenantId, date, docId, String(doctor?.name || opts.doctorName || "")) as { cnt?: number } | undefined;
-    count = Number(existing?.cnt || 0);
+      .all(tenantId, date, docId, String(doctor?.name || opts.doctorName || "")) as Array<{ time_slot?: string }>;
   } catch {
-    count = 0;
+    bookedSlots = [];
   }
 
-  let startHour = 9;
-  let startMinute = 0;
+  // Count active appointments per normalized slot
+  const slotCountMap = new Map<string, number>();
+  for (const b of bookedSlots) {
+    const raw = String(b.time_slot || "").trim();
+    if (!raw) continue;
+    const mins = parseTimeToMinutes(raw, -1);
+    const key = mins >= 0 ? formatMinutesToTime(mins) : raw;
+    slotCountMap.set(key, (slotCountMap.get(key) || 0) + 1);
+  }
+
+  let startMinutes = 540; // 09:00 AM default
   if (doctor?.opd_timing) {
     const match = String(doctor.opd_timing).match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
     if (match) {
@@ -294,19 +308,25 @@ export function getNextAvailableDoctorSlot(opts: {
       const ampm = match[3].toUpperCase();
       if (ampm === "PM" && h < 12) h += 12;
       if (ampm === "AM" && h === 12) h = 0;
-      startHour = h;
-      startMinute = m;
+      startMinutes = h * 60 + m;
     }
+  } else if (scheduleSettings.opdStartTime) {
+    startMinutes = parseTimeToMinutes(scheduleSettings.opdStartTime, 540);
   }
 
-  const totalMins = startHour * 60 + startMinute + count * 15;
-  const slotHour = Math.floor(totalMins / 60) % 24;
-  const slotMin = totalMins % 60;
-  const ampm = slotHour >= 12 ? "PM" : "AM";
-  const displayHour = slotHour % 12 === 0 ? 12 : slotHour % 12;
-  const displayMin = slotMin < 10 ? `0${slotMin}` : `${slotMin}`;
+  // Search for the earliest slot whose bookedCount < maxOverlap
+  let currentMins = startMinutes;
+  const maxSearchSlots = 200;
+  for (let i = 0; i < maxSearchSlots; i++) {
+    const candidateSlot = formatMinutesToTime(currentMins);
+    const count = slotCountMap.get(candidateSlot) || 0;
+    if (count < maxOverlap) {
+      return candidateSlot;
+    }
+    currentMins += duration;
+  }
 
-  return `${displayHour < 10 ? "0" + displayHour : displayHour}:${displayMin} ${ampm}`;
+  return formatMinutesToTime(currentMins);
 }
 
 function defaultTimeSlot(): string {

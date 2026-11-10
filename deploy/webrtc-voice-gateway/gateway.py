@@ -32,8 +32,10 @@ PUBLIC_IP = os.environ.get("PUBLIC_IP", "34.46.39.52")
 GREETING_FILE = "/opt/lumera-voice/maya_greeting.mp3"
 LUMERA_API_URL = os.environ.get("LUMERA_API_URL", "https://www.mylumera.in/api/voice/inbound")
 
-# Preloaded greeting PCM in memory (48kHz mono 16-bit)
+# Preloaded greeting and conversational filler PCM in memory (48kHz mono 16-bit)
 cached_greeting_pcm = np.zeros(0, dtype=np.int16)
+cached_filler_pcm = np.zeros(0, dtype=np.int16)
+FILLER_FILE = "/opt/lumera-voice/maya_filler.mp3"
 
 # Active call sessions: callId -> { pc, track, callerPhone, startTime, sdpAnswer, listenerTask }
 active_calls = {}
@@ -206,8 +208,8 @@ class MayaVoiceTrack(MediaStreamTrack):
         return frame
 
 async def ensure_greeting_audio():
-    """Preloads Maya's Google Cloud Neural2 AI Receptionist voice greeting."""
-    global cached_greeting_pcm
+    """Preloads Maya's Google Cloud Neural2 AI Receptionist voice greeting and instant conversational fillers."""
+    global cached_greeting_pcm, cached_filler_pcm
     if not os.path.exists(GREETING_FILE) or os.path.getsize(GREETING_FILE) < 1000:
         logger.info("Generating Maya AI Receptionist greeting audio...")
         text = (
@@ -226,12 +228,31 @@ async def ensure_greeting_audio():
         cached_greeting_pcm = load_audio_pcm(GREETING_FILE, 48000)
         logger.info(f"Preloaded Maya greeting into memory: {len(cached_greeting_pcm)/48000:.2f}s")
 
+    # Preload natural conversational filler ("Ji, ek second main check karti hoon...")
+    if not os.path.exists(FILLER_FILE) or os.path.getsize(FILLER_FILE) < 1000:
+        logger.info("Generating Maya conversational filler audio...")
+        filler_text = "Ji, ek second main check karti hoon."
+        try:
+            import edge_tts
+            communicate = edge_tts.Communicate(filler_text, "en-IN-NeerjaNeural")
+            await communicate.save(FILLER_FILE)
+            logger.info(f"Successfully generated {FILLER_FILE}")
+        except Exception as e:
+            logger.error(f"Failed to generate filler audio: {e}")
+
+    if os.path.exists(FILLER_FILE):
+        cached_filler_pcm = load_audio_pcm(FILLER_FILE, 48000)
+        logger.info(f"Preloaded conversational filler into memory: {len(cached_filler_pcm)/48000:.2f}s")
+
 tenant_greetings: dict = {}
 
 async def get_tenant_greeting(tenant_id: str, clinic_name: str = "", receptionist_name: str = "", custom_greeting: str = "") -> np.ndarray:
-    """Returns pre-cached or newly synthesized greeting audio for a specific clinic tenant."""
+    """
+    Returns greeting audio for a specific clinic tenant.
+    Never blocks the SDP handshake: returns preloaded RAM greeting immediately for 1-ring pickup,
+    while warming up the custom tenant greeting asynchronously in the background.
+    """
     global cached_greeting_pcm
-    # Unique cache key per tenant settings version
     cache_key = f"{tenant_id}:{clinic_name}:{receptionist_name}:{custom_greeting}"
     if cache_key in tenant_greetings:
         return tenant_greetings[cache_key]
@@ -251,22 +272,24 @@ async def get_tenant_greeting(tenant_id: str, clinic_name: str = "", receptionis
             "How can I help you today? Would you like to book an appointment or check clinic timings?"
         )
 
-    try:
-        import edge_tts
-        communicate = edge_tts.Communicate(text, "en-IN-NeerjaNeural")
-        audio_bytes = b""
-        async for chunk in communicate.stream():
-            if chunk["type"] == "audio":
-                audio_bytes += chunk["data"]
+    # Warmup asynchronously in background so the call connects on 1st ring without blocking (<15ms)
+    async def _async_warmup():
+        try:
+            import edge_tts
+            communicate = edge_tts.Communicate(text, "en-IN-NeerjaNeural")
+            audio_bytes = b""
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    audio_bytes += chunk["data"]
 
-        pcm = decode_mp3_bytes_to_pcm(audio_bytes, 48000)
-        if len(pcm) > 0:
-            tenant_greetings[cache_key] = pcm
-            logger.info(f"Generated & cached greeting for tenant '{tenant_id}' ({len(pcm)/48000:.2f}s): {text[:60]}...")
-            return pcm
-    except Exception as e:
-        logger.error(f"Failed to generate custom greeting for tenant {tenant_id}: {e}")
+            pcm = decode_mp3_bytes_to_pcm(audio_bytes, 48000)
+            if len(pcm) > 0:
+                tenant_greetings[cache_key] = pcm
+                logger.info(f"Warmup cached greeting for tenant '{tenant_id}' ({len(pcm)/48000:.2f}s): {text[:50]}...")
+        except Exception as e:
+            logger.error(f"Failed background warmup greeting for tenant {tenant_id}: {e}")
 
+    asyncio.create_task(_async_warmup())
     return cached_greeting_pcm
 
 def _encode_wav_sync(pcm: np.ndarray) -> str:
@@ -451,6 +474,10 @@ async def process_inbound_audio(call_id: str, inbound_track, out_track: MayaVoic
 
                                     duration_s = len(complete_pcm) / 16000.0
                                     logger.info(f"[{call_id}] Neural VAD speech captured: {duration_s:.2f}s ({len(complete_pcm)} samples)")
+
+                                    # Play instant conversational filler so caller receives immediate feedback (<250ms)
+                                    if len(cached_filler_pcm) > 0 and not out_track.is_speaking():
+                                        out_track.queue_audio(cached_filler_pcm, replace=False)
 
                                     if not is_processing:
                                         is_processing = True

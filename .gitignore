@@ -15,3 +15,5 @@ uploads/
 *.db
 .vscode/
 scratch/
+__pycache__/
+*.pyc

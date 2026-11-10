@@ -1159,9 +1159,9 @@ Output strict JSON:
         if (!convId) {
           convId = `conv-vc-${Date.now()}`;
           db.prepare(`
-            INSERT INTO whatsapp_conversations (id, tenant_id, patient_phone, patient_name, handover_mode, assigned_staff, tags, last_message, last_message_time, created_at, updated_at)
-            VALUES (?, ?, ?, ?, 'bot', ?, '["Voice Call"]', ?, ?, ?, ?)
-          `).run(convId, tenantId, from, callerName !== "Patient" ? callerName : "Ravee", `${receptionistName} (AI Voice)`, speechText.slice(0, 100), timeDisplay, now, now);
+            INSERT INTO whatsapp_conversations (id, tenant_id, patient_phone, patient_name, handover_mode, assigned_staff, tags, last_message, last_message_time, updated_at)
+            VALUES (?, ?, ?, ?, 'bot', ?, '["Voice Call"]', ?, ?, ?)
+          `).run(convId, tenantId, from, callerName !== "Patient" ? callerName : "Ravee", `${receptionistName} (AI Voice)`, speechText.slice(0, 100), timeDisplay, now);
         } else {
           db.prepare(`
             UPDATE whatsapp_conversations
@@ -1246,6 +1246,8 @@ Output strict JSON:
         transcript: message,
         speechText,
         intent,
+        shouldTransfer: intent === "TRANSFER",
+        escalationPhone,
         suggestedAction,
         appointment: appointmentData,
         audioBase64,
