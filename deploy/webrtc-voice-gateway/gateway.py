@@ -320,17 +320,18 @@ async def handle_caller_utterance(call_id: str, pcm_16k: np.ndarray, out_track: 
         # 3. Send to Lumera Cloud Run cognitive brain
         privileged = False
         phone_number_id = ""
+        secret_required = bool(VOICE_GATEWAY_SECRET)
         if call_id in active_calls:
             privileged = bool(active_calls[call_id].get("privileged"))
-            if privileged:
+            # With no secret configured, forward the receiving line so the server
+            # can resolve the clinic. Once the secret is set, only a signed offer may.
+            if privileged or not secret_required:
                 phone_number_id = active_calls[call_id].get("phoneNumberId", "") or ""
         headers = {
             "Content-Type": "application/json",
             "Origin": "https://www.mylumera.in",
         }
-        # Only an offer that presented the secret may reuse it. A public offer
-        # still gets SDP so the live Cloud Run revision can answer during rollout.
-        if privileged and VOICE_GATEWAY_SECRET:
+        if privileged and secret_required:
             headers["X-Voice-Gateway-Secret"] = VOICE_GATEWAY_SECRET
         async with aiohttp.ClientSession(headers=headers) as session:
             payload = {
@@ -605,7 +606,7 @@ async def handle_answer_offer(request):
     receptionist_name = body.get("receptionistName", "")
     custom_greeting = body.get("customGreeting", "")
     phone_number_id = body.get("phoneNumberId") or body.get("phone_number_id") or ""
-    if not privileged:
+    if VOICE_GATEWAY_SECRET and not privileged:
         phone_number_id = ""
 
     logger.info(f"[{call_id}] Initializing WebRTC call for tenant='{tenant_id}' clinic='{clinic_name}' caller={caller_phone}")

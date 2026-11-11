@@ -156,10 +156,13 @@ function isVoiceStaffRole(role: string | undefined): boolean {
 
 function inboundVoiceAccess(req: Request): { tenantId: string; authenticated: boolean } | null {
   const sessionTenant = String(req.user?.tenantId || "").trim();
-  // These routes skip cookie CSRF. A patient session must not drive booking or
-  // clinic WhatsApp sends. Clinic staff, including the legacy admin alias, may.
-  const staffSession = Boolean(req.user && sessionTenant && isVoiceStaffRole(req.user.role));
-  if (staffSession) return { tenantId: sessionTenant, authenticated: true };
+  // These routes skip cookie CSRF. A logged-in patient must not drive booking or
+  // clinic WhatsApp sends, even when the gateway secret is still unset.
+  // Clinic staff, including the legacy admin alias, may use their session.
+  if (req.user) {
+    if (!sessionTenant || !isVoiceStaffRole(req.user.role)) return null;
+    return { tenantId: sessionTenant, authenticated: true };
+  }
   if (!voiceGatewayAuthorized(req.get("x-voice-gateway-secret"))) return null;
   const body = (req.body || {}) as {
     phoneNumberId?: unknown;

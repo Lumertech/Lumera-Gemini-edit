@@ -12,7 +12,7 @@ import { findNextBookableSlot } from "./whatsapp-calendar-booking.ts";
 import { saveWhatsAppTenantVoiceSettings } from "./whatsapp-numbers-store.ts";
 import { ensureTenantSlugColumn } from "./tenant-slug.ts";
 import { jsonRequest, startTestServer } from "./test-http.ts";
-import { voiceGatewayAuthorized } from "./voice-gateway-auth.ts";
+import { resetVoiceGatewaySecretWarningForTests, voiceGatewayAuthorized } from "./voice-gateway-auth.ts";
 import { vertexGeminiModel } from "./vertex-gemini.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -172,11 +172,11 @@ describe("forward security and voice fixes", () => {
     process.env.NODE_ENV = "production";
     delete process.env.VOICE_GATEWAY_SECRET;
     try {
-      const closed = await jsonRequest(port, "POST", "/api/meta/register-gateway", {
+      const open = await jsonRequest(port, "POST", "/api/meta/register-gateway", {
         gatewayIp: "203.0.113.10",
         secret: "lumera_webhook_verify_2026",
       });
-      assert.equal(closed.status, 403);
+      assert.equal(open.status, 200);
       process.env.VOICE_GATEWAY_SECRET = "gateway-secret-value";
       const wrong = await jsonRequest(port, "POST", "/api/meta/register-gateway", {
         gatewayIp: "203.0.113.10",
@@ -198,12 +198,27 @@ describe("forward security and voice fixes", () => {
     }
   });
 
-  it("compares the voice gateway secret in constant time and fails closed when unset in production", () => {
-    assert.equal(voiceGatewayAuthorized("x", { NODE_ENV: "production" }), false);
-    assert.equal(voiceGatewayAuthorized("", { NODE_ENV: "production", VOICE_GATEWAY_SECRET: "abc" }), false);
-    assert.equal(voiceGatewayAuthorized("abc", { NODE_ENV: "production", VOICE_GATEWAY_SECRET: "abc" }), true);
-    assert.equal(voiceGatewayAuthorized("abd", { NODE_ENV: "production", VOICE_GATEWAY_SECRET: "abc" }), false);
-    assert.equal(voiceGatewayAuthorized("", { NODE_ENV: "test" }), true);
+  it("compares the voice gateway secret in constant time and allows gateway calls when it is unset", () => {
+    resetVoiceGatewaySecretWarningForTests();
+    const warnings: string[] = [];
+    const original = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map((part) => String(part)).join(" "));
+    };
+    try {
+      assert.equal(voiceGatewayAuthorized("x", { NODE_ENV: "production" }), true);
+      assert.equal(voiceGatewayAuthorized("", { NODE_ENV: "production" }), true);
+      assert.equal(warnings.length, 1);
+      assert.match(warnings[0], /VOICE_GATEWAY_SECRET is unset/);
+      assert.equal(voiceGatewayAuthorized("", { NODE_ENV: "production", VOICE_GATEWAY_SECRET: "abc" }), false);
+      assert.equal(voiceGatewayAuthorized("abc", { NODE_ENV: "production", VOICE_GATEWAY_SECRET: "abc" }), true);
+      assert.equal(voiceGatewayAuthorized("abd", { NODE_ENV: "production", VOICE_GATEWAY_SECRET: "abc" }), false);
+      assert.equal(voiceGatewayAuthorized("", { NODE_ENV: "test" }), true);
+      assert.equal(warnings.length, 1);
+    } finally {
+      console.warn = original;
+      resetVoiceGatewaySecretWarningForTests();
+    }
   });
 
   it("resolves inbound voice from the phone line, not a body tenant, and hides the desk number", async () => {
@@ -248,6 +263,51 @@ describe("forward security and voice fixes", () => {
       assert.doesNotMatch(String(spoofed.json.speechText), /98233\s*73271/);
       assert.equal(spoofed.json.escalationPhone, undefined);
       assert.match(String(spoofed.json.speechText), /can't transfer|cannot transfer|कॉल करें/i);
+    } finally {
+      restoreEnv({
+        NODE_ENV: envSnapshot.NODE_ENV,
+        VOICE_GATEWAY_SECRET: envSnapshot.VOICE_GATEWAY_SECRET,
+      });
+    }
+  });
+
+  it("accepts a gateway voice call in production when VOICE_GATEWAY_SECRET is unset", async () => {
+    const suffix = `${Date.now().toString(36)}open`;
+    const tenantId = `tenant-open-${suffix}`;
+    const phoneNumberId = `1555${suffix.slice(-8)}`;
+    seedTenant(tenantId, { phoneNumberId, name: "Open Clinic" });
+    saveWhatsAppTenantVoiceSettings(getDb(), tenantId, { escalationPhone: "+91 98000 44444", receptionistName: "Asha" });
+    const patient = seedUser({
+      id: `user-open-pt-${suffix}`,
+      tenantId,
+      role: "patient",
+      email: `open.pt.${suffix}@example.com`,
+    });
+    process.env.NODE_ENV = "production";
+    delete process.env.VOICE_GATEWAY_SECRET;
+    try {
+      const gateway = await jsonRequest(port, "POST", "/api/voice/inbound", {
+        from: "+919888800011",
+        message: "",
+        tenantId: "tenant-lumera-main",
+        phoneNumberId,
+        conversationHistory: [
+          { role: "maya", text: "I'm sorry, I couldn't hear that clearly. Could you please repeat?" },
+          { role: "maya", text: "I'm sorry, I couldn't hear that clearly. Could you please repeat?" },
+        ],
+      });
+      assert.equal(gateway.status, 200);
+      assert.equal(gateway.json.intent, "TRANSFER");
+      assert.match(String(gateway.json.speechText), /98000 44444/);
+      assert.equal(gateway.json.escalationPhone, undefined);
+      const asPatient = await jsonRequest(
+        port,
+        "POST",
+        "/api/voice/inbound",
+        { from: "+919888800011", message: "Where is the clinic located?", phoneNumberId },
+        { Authorization: `Bearer ${patient}` }
+      );
+      assert.equal(asPatient.status, 403);
     } finally {
       restoreEnv({
         NODE_ENV: envSnapshot.NODE_ENV,
@@ -541,7 +601,8 @@ describe("forward security and voice fixes", () => {
 
   it("respects VERTEX_GEMINI_MODEL exactly, including gemini-3.5-flash-lite", () => {
     assert.equal(vertexGeminiModel({ VERTEX_GEMINI_MODEL: "gemini-3.5-flash-lite" }), "gemini-3.5-flash-lite");
-    assert.equal(vertexGeminiModel({}), "gemini-2.5-flash");
+    assert.equal(vertexGeminiModel({}), "gemini-3.5-flash-lite");
+    assert.equal(vertexGeminiModel({ NODE_ENV: "production" }), "gemini-3.5-flash-lite");
   });
 
   it("keeps patient-facing voice copy free of hardcoded Lumera clinic branding", () => {
@@ -558,7 +619,8 @@ describe("forward security and voice fixes", () => {
     assert.match(payload, /phoneNumberId/);
     assert.doesNotMatch(payload, /tenantId/);
     assert.match(gateway, /def offer_presented_secret/);
-    assert.match(gateway, /privileged and VOICE_GATEWAY_SECRET/);
+    assert.match(gateway, /privileged and secret_required/);
+    assert.match(gateway, /VOICE_GATEWAY_SECRET and not privileged/);
     assert.match(gateway, /existing.get\("privileged"\) and not privileged/);
     assert.match(gateway, /privileged and not existing.get\("privileged"\)/);
     assert.match(gateway, /status=409/);

@@ -11,17 +11,35 @@ function production(env: NodeJS.ProcessEnv): boolean {
   return env.NODE_ENV === "production";
 }
 
+let unsetGatewaySecretWarned = false;
+
+/** Test hook. Production logs the unset-secret warning once per process. */
+export function resetVoiceGatewaySecretWarningForTests(): void {
+  unsetGatewaySecretWarned = false;
+}
+
+function warnUnsetGatewaySecretOnce(env: NodeJS.ProcessEnv): void {
+  if (!production(env) || unsetGatewaySecretWarned) return;
+  unsetGatewaySecretWarned = true;
+  console.warn(
+    "[Voice Gateway] VOICE_GATEWAY_SECRET is unset. Gateway calls are accepted without the shared secret until it is set on Cloud Run and the voice gateway."
+  );
+}
+
 /**
  * Shared secret for the unauthenticated voice gateway and register-gateway.
- * Production fails closed when VOICE_GATEWAY_SECRET is unset.
- * Non-production allows the call only while the secret is unset, so local tests
- * keep working. Once it is set, every environment must present the same value.
+ * The check applies only when VOICE_GATEWAY_SECRET is set. Until then, gateway
+ * calls keep working and production logs one warning. Patients on the clinic
+ * WhatsApp number never present this header; it is gateway-to-server only.
  * Comparison is constant-time. The Meta verify token is not accepted here.
  */
 export function voiceGatewayAuthorized(provided: unknown, env: NodeJS.ProcessEnv = process.env): boolean {
   const expected = readVoiceGatewaySecret(env);
   const got = String(provided ?? "");
-  if (!expected) return !production(env);
+  if (!expected) {
+    warnUnsetGatewaySecretOnce(env);
+    return true;
+  }
   const left = Buffer.from(got, "utf8");
   const right = Buffer.from(expected, "utf8");
   if (left.length !== right.length) {

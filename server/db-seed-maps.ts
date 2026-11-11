@@ -338,6 +338,8 @@ export function seedCms(database: SqlDatabase, now: string) {
       { icon: "trend", value: "95%", label: "No-Show Reduction" },
       { icon: "bot", value: "24/7", label: "AI Availability" },
     ]),
+    // Pulse admin picker only. Voice and PHI audio use vertexGeminiModel()
+    // (default gemini-3.5-flash-lite), not this CMS label.
     gemini_model: "models/gemini-3.7-flash",
     ambient_sensitivity: "High (Medical Grade 16kHz)",
     auto_soap: "true",
