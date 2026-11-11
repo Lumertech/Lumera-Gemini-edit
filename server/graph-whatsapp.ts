@@ -299,8 +299,8 @@ export function maskWhatsAppRecipient(phone: string): string {
   return last4 ? `****${last4}` : "****";
 }
 
-/** Founder demo handset used when DEMO_WHATSAPP_RECIPIENT_ALLOWLIST is unset. */
-export const DEFAULT_DEMO_WHATSAPP_RECIPIENT_ALLOWLIST = "+919999973271";
+/** Placeholder handset used when DEMO_WHATSAPP_RECIPIENT_ALLOWLIST is unset. */
+export const DEFAULT_DEMO_WHATSAPP_RECIPIENT_ALLOWLIST = "+919000000001";
 
 /**
  * Comma-separated E.164. Unset uses DEFAULT_DEMO_WHATSAPP_RECIPIENT_ALLOWLIST.

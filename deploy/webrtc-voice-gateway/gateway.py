@@ -322,7 +322,7 @@ async def handle_caller_utterance(call_id: str, pcm_16k: np.ndarray, out_track: 
         }
         async with aiohttp.ClientSession(headers=headers) as session:
             payload = {
-                "from": caller_phone or "+919999973271",
+                "from": caller_phone or "+919000000001",
                 "audioBase64": audio_b64,
                 "mimeType": "audio/wav",
                 "callerName": "Patient",
@@ -558,7 +558,7 @@ async def handle_answer_offer(request):
         return web.json_response({"error": "Invalid JSON"}, status=400)
 
     call_id = body.get("callId")
-    caller_phone = body.get("callerPhone", "+919999973271")
+    caller_phone = body.get("callerPhone", "+919000000001")
     tenant_id = body.get("tenantId", "tenant-lumera-main")
     offer_sdp = body.get("offerSdp", "")
     public_ip = body.get("publicIp", PUBLIC_IP)

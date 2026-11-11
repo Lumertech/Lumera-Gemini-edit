@@ -57,7 +57,7 @@ export function conversationInitial(name?: string | null): string {
   return trimmed ? trimmed.charAt(0) : "?";
 }
 
-/** Digits only, so "+91 99999 73271", "919999973271", and "+919999973271" compare equal. */
+/** Digits only, so "+91 90000 00001", "919000000001", and "+919000000001" compare equal. */
 export function phoneDigits(phone?: string | null): string {
   return String(phone || "").replace(/\D/g, "");
 }

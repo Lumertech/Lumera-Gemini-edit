@@ -40,7 +40,7 @@ describe("Gemini Voicebot & Inbound WhatsApp Voice Call Receptionist", () => {
     const res = await runGeminiVoiceReceptionist({
       message: "I have severe knee pain after running, can I book an appointment with a physiotherapist?",
       callerName: "Ravee",
-      callerPhone: "+919999973271",
+      callerPhone: "+919000000001",
       language: "English",
       tenantId: "tenant-lumera-main",
     });
@@ -60,7 +60,7 @@ describe("Gemini Voicebot & Inbound WhatsApp Voice Call Receptionist", () => {
     const res = await runGeminiVoiceReceptionist({
       message: "My father is having severe chest pain and breathlessness since 10 minutes",
       callerName: "Ravee",
-      callerPhone: "+919999973271",
+      callerPhone: "+919000000001",
       language: "English",
       tenantId: "tenant-lumera-main",
     });
@@ -76,7 +76,7 @@ describe("Gemini Voicebot & Inbound WhatsApp Voice Call Receptionist", () => {
     const res = await runGeminiVoiceReceptionist({
       message: "मुझे बुखार और सिरदर्द है, डॉक्टर को दिखाना है",
       callerName: "Ravee",
-      callerPhone: "+919999973271",
+      callerPhone: "+919000000001",
       language: "Hindi",
       tenantId: "tenant-lumera-main",
     });
@@ -122,7 +122,7 @@ describe("Gemini Voicebot & Inbound WhatsApp Voice Call Receptionist", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        from: "+919999973271",
+        from: "+919000000001",
         callerName: "Ravee",
         message: "Where is the clinic located?",
         tenantId: "tenant-lumera-main",
@@ -141,7 +141,7 @@ describe("Gemini Voicebot & Inbound WhatsApp Voice Call Receptionist", () => {
     const db = getDb();
     const recorded = db.prepare(`
       SELECT * FROM whatsapp_messages
-      WHERE patient_phone = '+919999973271' AND sender = 'bot' AND staff_name = 'Maya (AI Receptionist)'
+      WHERE patient_phone = '+919000000001' AND sender = 'bot' AND staff_name = 'Maya (AI Receptionist)'
       ORDER BY created_at DESC LIMIT 1
     `).get() as Record<string, unknown> | undefined;
 
@@ -162,7 +162,7 @@ describe("Gemini Voicebot & Inbound WhatsApp Voice Call Receptionist", () => {
     const res = await runGeminiVoiceReceptionist({
       message: "What are your OPD timings?",
       callerName: "Ravee",
-      callerPhone: "+919999973271",
+      callerPhone: "+919000000001",
       language: "English",
       tenantId: "tenant-lumera-main",
       getGenAI: failingGenAI,
@@ -178,7 +178,7 @@ describe("Gemini Voicebot & Inbound WhatsApp Voice Call Receptionist", () => {
     const emer = await runGeminiVoiceReceptionist({
       message: "আমার বুকে খুব ব্যথা এবং শ্বাসকষ্ট হচ্ছে",
       callerName: "Ravee",
-      callerPhone: "+919999973271",
+      callerPhone: "+919000000001",
       tenantId: "tenant-lumera-main",
     });
     assert.equal(emer.intent, "EMERGENCY");
@@ -190,7 +190,7 @@ describe("Gemini Voicebot & Inbound WhatsApp Voice Call Receptionist", () => {
     const book = await runGeminiVoiceReceptionist({
       message: "আমার হাঁটুর ব্যথা, ডাক্তার দেখাতে চাই",
       callerName: "Ravee",
-      callerPhone: "+919999973271",
+      callerPhone: "+919000000001",
       tenantId: "tenant-lumera-main",
     });
     assert.equal(book.intent, "BOOKING");
@@ -204,7 +204,7 @@ describe("Gemini Voicebot & Inbound WhatsApp Voice Call Receptionist", () => {
     const emer = await runGeminiVoiceReceptionist({
       message: "నాకు ఛాతీ నొప్పిగా ఉంది మరియు శ్వాస ఆడట్లేదు",
       callerName: "Ravee",
-      callerPhone: "+919999973271",
+      callerPhone: "+919000000001",
       tenantId: "tenant-lumera-main",
     });
     assert.equal(emer.intent, "EMERGENCY");
@@ -216,7 +216,7 @@ describe("Gemini Voicebot & Inbound WhatsApp Voice Call Receptionist", () => {
     const book = await runGeminiVoiceReceptionist({
       message: "నాకు మోకాలి నొప్పిగా ఉంది, డాక్టర్ అపాయింట్‌మెంట్ కావాలి",
       callerName: "Ravee",
-      callerPhone: "+919999973271",
+      callerPhone: "+919000000001",
       tenantId: "tenant-lumera-main",
     });
     assert.equal(book.intent, "BOOKING");
@@ -229,7 +229,7 @@ describe("Gemini Voicebot & Inbound WhatsApp Voice Call Receptionist", () => {
     const book = await runGeminiVoiceReceptionist({
       message: "எனக்கு மூட்டு வலி உள்ளது, மருத்துவரை பார்க்க வேண்டும்",
       callerName: "Ravee",
-      callerPhone: "+919999973271",
+      callerPhone: "+919000000001",
       tenantId: "tenant-lumera-main",
     });
     assert.equal(book.intent, "BOOKING");
@@ -243,7 +243,7 @@ describe("Gemini Voicebot & Inbound WhatsApp Voice Call Receptionist", () => {
     const kn = await runGeminiVoiceReceptionist({
       message: "ನನಗೆ ಬೆನ್ನು ನೋವು ಇದೆ, ವೈದ್ಯರನ್ನು ನೋಡಬೇಕು",
       callerName: "Ravee",
-      callerPhone: "+919999973271",
+      callerPhone: "+919000000001",
       tenantId: "tenant-lumera-main",
     });
     assert.equal(kn.intent, "BOOKING");
@@ -255,7 +255,7 @@ describe("Gemini Voicebot & Inbound WhatsApp Voice Call Receptionist", () => {
     const mr = await runGeminiVoiceReceptionist({
       message: "माझे डोके खूप दुखत आहे, डॉक्टरांची अपॉइंटमेंट हवी आहे",
       callerName: "Ravee",
-      callerPhone: "+919999973271",
+      callerPhone: "+919000000001",
       tenantId: "tenant-lumera-main",
     });
     assert.equal(mr.intent, "BOOKING");
@@ -282,13 +282,13 @@ describe("Gemini Voicebot & Inbound WhatsApp Voice Call Receptionist", () => {
                 contacts: [
                   {
                     profile: { name: "Ravee" },
-                    wa_id: "919999973271",
+                    wa_id: "919000000001",
                   },
                 ],
                 calls: [
                   {
                     id: `wacid.test.${Date.now()}`,
-                    from: "919999973271",
+                    from: "919000000001",
                     to: "919823373271",
                     direction: "USER_INITIATED",
                     event: "connect",
@@ -319,14 +319,14 @@ describe("Gemini Voicebot & Inbound WhatsApp Voice Call Receptionist", () => {
       if (!inbound) {
         inbound = db.prepare(`
           SELECT * FROM whatsapp_messages
-          WHERE patient_phone LIKE '%73271' AND sender = 'patient' AND content LIKE '%Inbound Voice Call%'
+          WHERE patient_phone LIKE '%9000000001' AND sender = 'patient' AND content LIKE '%Inbound Voice Call%'
           ORDER BY created_at DESC LIMIT 1
         `).get() as Record<string, unknown> | undefined;
       }
       if (!reply) {
         reply = db.prepare(`
           SELECT * FROM whatsapp_messages
-          WHERE patient_phone LIKE '%73271' AND sender = 'bot' AND staff_name = 'Receptionist AI'
+          WHERE patient_phone LIKE '%9000000001' AND sender = 'bot' AND staff_name = 'Receptionist AI'
           ORDER BY created_at DESC LIMIT 1
         `).get() as Record<string, unknown> | undefined;
       }

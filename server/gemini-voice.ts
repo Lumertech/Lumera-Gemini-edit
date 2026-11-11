@@ -488,7 +488,7 @@ export function getTenantVoiceContext(tenantId: string, callerPhone: string): Te
 }
 
 export async function runGeminiVoiceReceptionist(opts: VoiceReceptionistInput): Promise<VoiceReceptionistResult> {
-  const { message, callerName = "Patient", callerPhone = "+919999973271", language = "English", tenantId = "tenant-lumera-main", getGenAI } = opts;
+  const { message, callerName = "Patient", callerPhone = "+919000000001", language = "English", tenantId = "tenant-lumera-main", getGenAI } = opts;
   const lowerMsg = String(message || "").toLowerCase();
   const db = getDb();
   const tenantContext = getTenantVoiceContext(tenantId, callerPhone);
@@ -848,7 +848,7 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
   // 4. Voice Bot & Triage Simulator with Emergency Escalation & Resilient Offline Fallback
   app.post("/api/gemini/voice-bot", async (req: Request, res: Response) => {
     try {
-      const { message, callerName = "Patient", language = "English", callerPhone = "+919999973271", availableDoctors } = req.body;
+      const { message, callerName = "Patient", language = "English", callerPhone = "+919000000001", availableDoctors } = req.body;
       if (!message) return res.status(400).json({ error: "Message is required" });
 
       const tenantId = String(req.body?.tenantId || (req as any).user?.tenantId || "tenant-lumera-main");
@@ -922,7 +922,7 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
   // 4b. Inbound WhatsApp Voice Call Receiver & Simulator (supports single-pass audioBase64 & direct text)
   const handleInboundVoiceCall = async (req: Request, res: Response) => {
     try {
-      const from = String(req.body?.from || req.body?.phone || "+919999973271").trim();
+      const from = String(req.body?.from || req.body?.phone || "+919000000001").trim();
       let message = String(req.body?.message || req.body?.transcript || req.body?.text || "").trim();
       const callerName = String(req.body?.callerName || "Patient").trim();
       const language = String(req.body?.language || "English").trim();

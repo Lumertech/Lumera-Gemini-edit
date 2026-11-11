@@ -3,8 +3,8 @@ import { describe, it, before, after } from "node:test";
 import { getDb, initDatabase } from "./db.ts";
 import { processBotActionOrQuery } from "./whatsapp.ts";
 
-describe("WhatsApp Receptionist Agent Workflow Tests (+919999973271)", () => {
-  const patientPhone = "+919999973271";
+describe("WhatsApp Receptionist Agent Workflow Tests (+919000000001)", () => {
+  const patientPhone = "+919000000001";
   const tenantId = "tenant-lumera-main";
 
   before(() => {
@@ -204,7 +204,7 @@ describe("WhatsApp Receptionist Agent Workflow Tests (+919999973271)", () => {
     const reply = await processBotActionOrQuery(
       "Hi",
       patientPhone,
-      "Patient (+919999973271)",
+      "Patient (+919000000001)",
       {},
       db,
       { tenantId }

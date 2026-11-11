@@ -601,7 +601,13 @@ describe("WhatsApp honesty: booking notify, reminder template, OTP wamid", () =>
     const patientId = String((patientRes.json.patient as { id: string }).id);
     const created = await book(auth, patientId, clinic.doctorId);
     assert.equal(created.status, 201, String(created.json.error || ""));
-    assert.ok((created.json.appointment as { id: string }).id);
+    const createdAppointment = created.json.appointment as { id: string; patientId: string };
+    assert.ok(createdAppointment.id);
+    const createdAudit = getDb()
+      .prepare(`SELECT details FROM audit_logs WHERE action = 'Appointment created' AND details LIKE ? ORDER BY timestamp DESC LIMIT 1`)
+      .get(`%${createdAppointment.id}%`) as { details: string } | undefined;
+    assert.equal(createdAudit?.details, `${createdAppointment.id} ${createdAppointment.patientId}`);
+    assert.equal(String(createdAudit?.details || "").includes("Asha"), false);
     const notify = created.json.notify as { sent?: boolean; wamid?: string; reason?: string };
     assert.equal(notify.sent, false);
     assert.equal(notify.wamid, undefined);

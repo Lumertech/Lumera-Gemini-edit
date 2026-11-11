@@ -287,14 +287,14 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
       const captured: Array<{ url: string; body: Record<string, unknown> }> = [];
       const result = await sendWhatsAppGraphMessage({
         credentials,
-        to: "+919999973271",
+        to: "+919000000001",
         otp,
         purpose: "login",
         fetchImpl: mockGraphFetch(captured, "wamid.MANAGER_OTP"),
       });
       assert.equal(result.ok, true);
       const { to, ...withoutRecipient } = captured[0].body;
-      assert.equal(to, "919999973271");
+      assert.equal(to, "919000000001");
       assert.equal("recipient_type" in captured[0].body, false);
       assert.deepEqual(withoutRecipient, {
         messaging_product: "whatsapp",
@@ -320,7 +320,7 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
       const extraCaptured: Array<{ url: string; body: Record<string, unknown> }> = [];
       await sendWhatsAppGraphTemplate({
         credentials,
-        to: "+919999973271",
+        to: "+919000000001",
         name: "lumera_login_otp",
         language: "en",
         bodyParameters: [otp, "Lumera Clinic"],
@@ -337,7 +337,7 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
 
       const dispatchedCaptured: Array<{ url: string; body: Record<string, unknown> }> = [];
       const dispatched = await dispatchWhatsAppCloudMessage({
-        to: "+919999973271",
+        to: "+919000000001",
         kind: "otp",
         otp,
         purpose: "login",
