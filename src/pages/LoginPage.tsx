@@ -481,17 +481,25 @@ export const LoginPage: React.FC = () => {
   };
 
   // Explicit one-click demo. Server holds the seeded credentials; shown only when DEMO_LOGIN_ENABLED is set.
-  const handleQuickDemoClinician = async () => {
+  const [demoNotice, setDemoNotice] = useState("");
+  const handleQuickDemoClinician = async (demoRole?: "doctor" | "admin") => {
     setBusy(true);
     setError("");
+    setDemoNotice("");
 
     try {
-      const res = await demoLogin();
+      const res = await demoLogin(demoRole);
       if (res.user) {
         goAfterAuth(go, destinationAfterAuth(res.user, loginNext), loginNextPath);
+      } else {
+        const message = "Demo sign-in did not start a session. Please try again.";
+        setError(message);
+        setDemoNotice(message);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Demo sign in failed.");
+      const message = err instanceof Error ? err.message : "Demo sign in failed.";
+      setError(message);
+      setDemoNotice(message);
     } finally {
       setBusy(false);
     }
@@ -1309,16 +1317,40 @@ export const LoginPage: React.FC = () => {
                     ))}
                   </select>
                   {demoLoginEnabled ? (
-                    <button
-                      type="button"
-                      onClick={handleQuickDemoClinician}
-                      disabled={busy}
-                      data-testid="quick-demo-login"
-                      className="w-full py-2 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 text-slate-300 hover:text-white text-xs font-medium transition-colors flex items-center justify-center gap-1.5"
-                    >
-                      <Zap className="w-3.5 h-3.5 text-amber-400" />
-                      <span>Quick Demo — Try the demo</span>
-                    </button>
+                    <div className="space-y-2">
+                      <div className="flex flex-col gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void handleQuickDemoClinician()}
+                          disabled={busy}
+                          data-testid="quick-demo-login"
+                          className="w-full py-2 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 text-slate-300 hover:text-white text-xs font-medium transition-colors flex items-center justify-center gap-1.5"
+                        >
+                          <Zap className="w-3.5 h-3.5 text-amber-400" />
+                          <span>Quick Demo — Doctor</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleQuickDemoClinician("admin")}
+                          disabled={busy}
+                          data-testid="quick-demo-admin"
+                          className="w-full py-2 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 text-slate-300 hover:text-white text-xs font-medium transition-colors flex items-center justify-center gap-1.5"
+                        >
+                          <Zap className="w-3.5 h-3.5 text-amber-400" />
+                          <span>Quick Demo — Admin</span>
+                        </button>
+                      </div>
+                      {demoNotice ? (
+                        <p
+                          data-testid="quick-demo-error"
+                          className="text-[11px] text-rose-300 flex items-start gap-1.5"
+                          role="alert"
+                        >
+                          <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                          <span>{demoNotice}</span>
+                        </p>
+                      ) : null}
+                    </div>
                   ) : null}
                 </div>
               </div>

@@ -1213,7 +1213,6 @@ export default function ClinicianApp() {
             <VoiceBotAssistant
               currentPatient={currentPatient}
               doctors={doctors}
-              clinicName={clinicSettings.name}
             />
           )}
 
