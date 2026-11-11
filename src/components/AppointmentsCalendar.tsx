@@ -21,7 +21,7 @@ import {
   Users
 } from 'lucide-react';
 import { Appointment, Doctor, Patient } from '../types';
-import { clinicCalendarDate, shiftIsoDate } from '../lib/clinicDay';
+import { clinicCalendarDate, clinicWeekDates, clinicWeekStart, formatClinicDayLabel, formatClinicWeekRange, shiftIsoDate } from '../lib/clinicDay';
 import { apiFetch } from '../api/http';
 
 interface AppointmentsCalendarProps {
@@ -47,6 +47,65 @@ interface SlotOccupancyItem {
     type?: string;
     doctorName?: string;
   }>;
+}
+
+function slotSortKey(slot: string): number {
+  const match = String(slot || '').match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+  if (!match) return 24 * 60;
+  let hour = Number(match[1]);
+  const minute = Number(match[2]);
+  const meridiem = (match[3] || '').toUpperCase();
+  if (meridiem === 'PM' && hour < 12) hour += 12;
+  if (meridiem === 'AM' && hour === 12) hour = 0;
+  return hour * 60 + minute;
+}
+
+function WeekDaySessions({
+  date,
+  items,
+  onCheckIn,
+}: {
+  date: string;
+  items: Appointment[];
+  onCheckIn?: (apt: Appointment) => void;
+}) {
+  return (
+    <section
+      data-testid={`week-day-${date}`}
+      className="min-w-0 rounded-lg border border-slate-200 bg-slate-50/60 p-3 space-y-2"
+    >
+      <div className="flex items-start justify-between gap-2">
+        <h4 className="text-xs font-bold text-slate-900 break-words">{formatClinicDayLabel(date)}</h4>
+        <span className="text-[10px] font-mono text-slate-500 shrink-0">{items.length}</span>
+      </div>
+      {items.length === 0 ? (
+        <p className="text-[11px] text-slate-400">No sessions</p>
+      ) : (
+        <ul className="space-y-2">
+          {items.map((apt) => (
+            <li key={apt.id} className="min-w-0 rounded-md border border-slate-200 bg-white p-2 space-y-1.5">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-slate-900">{apt.patientName}</p>
+                  <p className="text-[11px] text-slate-500">{apt.timeSlot} · {apt.type}</p>
+                  <p className="text-[11px] text-slate-500">{apt.doctorName}</p>
+                </div>
+                <p className="text-xs font-semibold text-slate-900 shrink-0">{formatINR(apt.consultationFee || 0)}</p>
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-[11px] text-slate-500">{apt.status}</span>
+                {onCheckIn && apt.status !== 'Triage / Vitals' && apt.status !== 'In Consultation' && apt.status !== 'Completed' && apt.status !== 'Cancelled' && (
+                  <button type="button" onClick={() => onCheckIn(apt)} className="px-2.5 py-1 rounded-md bg-blue-600 text-white text-[11px] font-semibold">
+                    Check in
+                  </button>
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
 }
 
 interface ScheduleSettings {
@@ -84,6 +143,7 @@ export const AppointmentsCalendar: React.FC<AppointmentsCalendarProps> = ({
   const [patientId, setPatientId] = useState(patients[0]?.id || '');
   const [doctorId, setDoctorId] = useState(doctors[0]?.id || '');
   const [bookingDate, setBookingDate] = useState(() => clinicCalendarDate());
+  const [weekAnchor, setWeekAnchor] = useState(() => clinicCalendarDate());
   const [timeSlot, setTimeSlot] = useState('09:00 AM');
   const [consultType, setConsultType] = useState<Appointment['type']>('New Consultation');
   const [source, setSource] = useState<Appointment['source']>('Walk-in');
@@ -199,8 +259,22 @@ export const AppointmentsCalendar: React.FC<AppointmentsCalendarProps> = ({
     setShowBookModal(false);
   };
 
+  const weekDates = clinicWeekDates(weekAnchor);
+  const weekGroups = weekDates.map((date) => ({
+    date,
+    items: filteredAppointments
+      .filter((apt) => String(apt.date || '').slice(0, 10) === date)
+      .slice()
+      .sort((a, b) => slotSortKey(a.timeSlot) - slotSortKey(b.timeSlot)),
+  }));
+  const weekBookingCount = weekGroups.reduce((sum, day) => sum + day.items.length, 0);
+  const shiftWeek = (days: number) => {
+    const start = clinicWeekStart(weekAnchor) || weekAnchor;
+    setWeekAnchor(shiftIsoDate(start, days));
+  };
+
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6 overflow-x-hidden">
       {/* Header & View Controls */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
         <div>
@@ -416,8 +490,55 @@ export const AppointmentsCalendar: React.FC<AppointmentsCalendarProps> = ({
             </div>
           )}
         </div>
+      ) : viewMode === 'Week' ? (
+        <div
+          data-testid="appointments-week-view"
+          className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden"
+        >
+          <div className="px-4 py-3.5 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0">
+              <h3 className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
+                <CalendarDays className="w-4 h-4 text-blue-600 shrink-0" />
+                <span className="break-words">Week of {formatClinicWeekRange(weekAnchor)}</span>
+              </h3>
+              <p className="text-[11px] text-slate-500 mt-1">{weekBookingCount} bookings this week</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <button
+                type="button"
+                aria-label="Previous week"
+                onClick={() => shiftWeek(-7)}
+                className="inline-flex items-center justify-center w-9 h-9 rounded-md border border-slate-200 text-slate-700 hover:bg-slate-50"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setWeekAnchor(clinicCalendarDate())}
+                className="px-2.5 py-1.5 rounded-md border border-slate-200 text-[11px] font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                This week
+              </button>
+              <button
+                type="button"
+                aria-label="Next week"
+                onClick={() => shiftWeek(7)}
+                className="inline-flex items-center justify-center w-9 h-9 rounded-md border border-slate-200 text-slate-700 hover:bg-slate-50"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+          <div className="p-3 space-y-3">
+            {weekGroups.map((day) => (
+              <div key={day.date} className="min-w-0">
+                <WeekDaySessions date={day.date} items={day.items} onCheckIn={onCheckIn} />
+              </div>
+            ))}
+          </div>
+        </div>
       ) : (
-        /* Regular Appointments List / Grid */
+        /* Day view — unchanged list for the selected booking date. Month uses this list too. */
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
           <div className="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between">
             <h3 className="font-bold text-slate-900 text-xs flex items-center gap-1.5">

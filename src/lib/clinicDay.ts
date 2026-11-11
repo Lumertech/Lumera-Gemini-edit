@@ -102,6 +102,33 @@ export function formatClinicDateLabel(isoDate: string): string {
   });
 }
 
+/**
+ * Monday of the clinic week that contains `isoDate`.
+ * Sunday belongs to the week that started the previous Monday.
+ */
+export function clinicWeekStart(isoDate: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(isoDate || "").trim());
+  if (!match) return "";
+  const utc = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12));
+  const weekday = utc.getUTCDay();
+  const delta = weekday === 0 ? -6 : 1 - weekday;
+  return shiftIsoDate(match[0], delta);
+}
+
+/** Seven clinic dates, Monday through Sunday, for the week containing `isoDate`. */
+export function clinicWeekDates(isoDate: string): string[] {
+  const start = clinicWeekStart(isoDate);
+  if (!start) return [];
+  return Array.from({ length: 7 }, (_, index) => shiftIsoDate(start, index));
+}
+
+/** Range label such as "16 Nov 2026 – 22 Nov 2026". Empty when the date is not ISO. */
+export function formatClinicWeekRange(isoDate: string): string {
+  const dates = clinicWeekDates(isoDate);
+  if (dates.length !== 7) return "";
+  return `${formatClinicDateLabel(dates[0])} – ${formatClinicDateLabel(dates[6])}`;
+}
+
 /** Month heading for a clinic calendar. Noon UTC keeps the 1st on the India date. */
 export function formatClinicMonthLabel(year: number, monthIndex: number): string {
   const utc = new Date(Date.UTC(year, monthIndex, 1, 12));

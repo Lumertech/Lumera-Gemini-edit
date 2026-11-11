@@ -71,7 +71,7 @@ interface AuthContextValue {
   loading: boolean;
   login: (email: string, password: string, skipOtp?: boolean) => Promise<LoginResult>;
   /** Explicit one-click demo. No-op on the server unless DEMO_LOGIN_ENABLED is set. */
-  demoLogin: () => Promise<LoginResult>;
+  demoLogin: (demoRole?: "doctor" | "admin") => Promise<LoginResult>;
   demoLoginEnabled: boolean;
   oauthLogin: (
     provider: "google" | "facebook",
@@ -169,10 +169,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return d;
   }, []);
 
-  const demoLogin = useCallback(async (): Promise<LoginResult> => {
+  const demoLogin = useCallback(async (demoRole?: "doctor" | "admin"): Promise<LoginResult> => {
     const d = await apiFetch<LoginResult & { token?: string }>("/api/auth/demo-login", {
       method: "POST",
-      body: JSON.stringify({}),
+      body: JSON.stringify(demoRole === "admin" ? { demoRole: "admin" } : {}),
     });
     purgeLegacyAuthToken();
     if (d.user && !d.requiresOtp) {

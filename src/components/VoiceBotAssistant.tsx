@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   PhoneCall, 
   PhoneOff, 
@@ -15,7 +15,11 @@ import {
   ShieldCheck,
   Video
 } from 'lucide-react';
-import { apiFetchResponse } from '../api/http';
+import { apiFetch, apiFetchResponse } from '../api/http';
+import { useAuth } from '../auth/AuthContext';
+import { formatIndianPhoneDisplay, isIndianPhoneNumber } from '../lib/indianPhone';
+import { canEditClinicVoiceSettings, mayaDeskStatus, mayaOpeningGreeting, mayaWhatsAppLine } from '../lib/voiceDesk';
+import { useNav } from '../nav/NavigationContext';
 import { Patient, Doctor } from '../types';
 
 interface VoiceBotAssistantProps {
@@ -24,17 +28,35 @@ interface VoiceBotAssistantProps {
 }
 
 const INDIAN_LANGUAGES = [
-  { name: 'English (India)', code: 'en-IN', greeting: 'Hello! Thank you for calling Lumera Polyclinic. How may I assist your health appointment today?' },
-  { name: 'Hindi (हिंदी)', code: 'hi-IN', greeting: 'नमस्ते! लुमेरा पॉलीक्लिनिक में कॉल करने के लिए धन्यवाद। आज मैं आपकी स्वास्थ्य नियुक्ति में कैसे सहायता कर सकता हूँ?' },
-  { name: 'Tamil (தமிழ்)', code: 'ta-IN', greeting: 'வணக்கம்! லுமேரா பாலி கிளினிக்கிற்கு அழைக்க நன்றி. உங்கள் மருத்துவ சந்திப்புக்கு நான் எவ்வாறு உதவ முடியும்?' },
-  { name: 'Telugu (తెలుగు)', code: 'te-IN', greeting: 'నమస్కారం! లుమెరా పాలిక్లినిక్‌కి కాల్ చేసినందుకు ధన్యవాదాలు. మీ వైద్య నియామకంలో నేను మీకు ఎలా సహాయం చేయగలను?' },
-  { name: 'Marathi (मराठी)', code: 'mr-IN', greeting: 'नमस्कार! लुमेरा पॉलीक्लिनिकमध्ये कॉल केल्याबद्दल धन्यवाद. आज मी तुमच्या आरोग्य भेटीसाठी कशी मदत करू शकतो?' },
-  { name: 'Kannada (ಕನ್ನಡ)', code: 'kn-IN', greeting: 'ನಮಸ್ಕಾರ! ಲುಮೆರಾ ಪಾಲಿಕ್ಲಿನಿಕ್‌ಗೆ ಕರೆ ಮಾಡಿದ್ದಕ್ಕಾಗಿ ಧನ್ಯವಾದಗಳು. ನಿಮ್ಮ ಆರೋಗ್ಯ ಅಪಾಯಿಂಟ್ಮೆಂಟ್ ಅನ್ನು ನಾನು ಹೇಗೆ ಸಹಾಯ ಮಾಡಲಿ?' },
-  { name: 'Bengali (বাংলা)', code: 'bn-IN', greeting: 'নমস্কার! লুভেরা পলিনিক্সে কল করার জন্য ধন্যবাদ। আজ আমি আপনার স্বাস্থ্য অ্যাপয়েন্টমেন্টে কীভাবে সাহায্য করতে পারি?' },
-  { name: 'Gujarati (ગુજરાતી)', code: 'gu-IN', greeting: 'નમસ્તે! લુમેરા પોલીક્લિનિકમાં કૉલ કરવા બદલ આભાર. આજે હું તમારી સ્વાસ્થ્ય મુલાકાતમાં કેવી રીતે મદદ કરી શકું?' },
-  { name: 'Punjabi (ਪੰਜਾਬੀ)', code: 'pa-IN', greeting: 'ਸਤਿ ਸ਼੍ਰੀ ਅਕਾਲ! ਲੁਮੇਰਾ ਪੋਲੀਕਲਿਨਿਕ ਵਿੱਚ ਕਾਲ ਕਰਨ ਲਈ ਧੰਨਵਾਦ। ਅਸੀਂ ਤੁਹਾਡੀ ਸਿਹਤ appointment ਵਿੱਚ ਕਿਵੇਂ ਮਦਦ ਕਰ ਸਕਦੇ ਹਾਂ?' },
-  { name: 'Malayalam (മലയാളം)', code: 'ml-IN', greeting: 'നമസ്കാരം! ലുമെറ പോളിക്ലിനിക്കിലേക്ക് വിളിച്ചതിന് നന്ദി. നിങ്ങളുടെ ആരോഗ്യ അപ്പോയിന്റ്മെന്റിൽ ഞാൻ എങ്ങനെ സഹായിക്കണം?' }
+  { name: 'English (India)', code: 'en-IN' },
+  { name: 'Hindi (हिंदी)', code: 'hi-IN' },
+  { name: 'Tamil (தமிழ்)', code: 'ta-IN' },
+  { name: 'Telugu (తెలుగు)', code: 'te-IN' },
+  { name: 'Marathi (मराठी)', code: 'mr-IN' },
+  { name: 'Kannada (ಕನ್ನಡ)', code: 'kn-IN' },
+  { name: 'Bengali (বাংলা)', code: 'bn-IN' },
+  { name: 'Gujarati (ગુજરાતી)', code: 'gu-IN' },
+  { name: 'Punjabi (ਪੰਜਾਬੀ)', code: 'pa-IN' },
+  { name: 'Malayalam (മലയാളം)', code: 'ml-IN' },
 ];
+
+function localizedGreeting(code: string, clinicName: string, customGreeting: string): string {
+  const custom = customGreeting.trim();
+  if (custom) return custom;
+  const name = clinicName.trim() || 'the clinic';
+  const named: Record<string, string> = {
+    'hi-IN': `नमस्ते! ${name} में कॉल करने के लिए धन्यवाद। आज मैं आपकी स्वास्थ्य नियुक्ति में कैसे सहायता कर सकता हूँ?`,
+    'ta-IN': `வணக்கம்! ${name} அழைத்ததற்கு நன்றி. உங்கள் மருத்துவ சந்திப்புக்கு நான் எவ்வாறு உதவ முடியும்?`,
+    'te-IN': `నమస్కారం! ${name} కి కాల్ చేసినందుకు ధన్యవాదాలు. మీ వైద్య నియామకంలో నేను మీకు ఎలా సహాయం చేయగలను?`,
+    'mr-IN': `नमस्कार! ${name} मध्ये कॉल केल्याबद्दल धन्यवाद. आज मी तुमच्या आरोग्य भेटीसाठी कशी मदत करू शकतो?`,
+    'kn-IN': `ನಮಸ್ಕಾರ! ${name} ಗೆ ಕರೆ ಮಾಡಿದ್ದಕ್ಕಾಗಿ ಧನ್ಯವಾದಗಳು. ನಿಮ್ಮ ಆರೋಗ್ಯ ಅಪಾಯಿಂಟ್ಮೆಂಟ್ ಅನ್ನು ನಾನು ಹೇಗೆ ಸಹಾಯ ಮಾಡಲಿ?`,
+    'bn-IN': `নমস্কার! ${name}-এ কল করার জন্য ধন্যবাদ। আজ আমি আপনার স্বাস্থ্য অ্যাপয়েন্টমেন্টে কীভাবে সাহায্য করতে পারি?`,
+    'gu-IN': `નમસ્તે! ${name} માં કૉલ કરવા બદલ આભાર. આજે હું તમારી સ્વાસ્થ્ય મુલાકાતમાં કેવી રીતે મદદ કરી શકું?`,
+    'pa-IN': `ਸਤਿ ਸ਼੍ਰੀ ਅਕਾਲ! ${name} ਵਿੱਚ ਕਾਲ ਕਰਨ ਲਈ ਧੰਨਵਾਦ। ਅਸੀਂ ਤੁਹਾਡੀ ਸਿਹਤ ਮੁਲਾਕਾਤ ਵਿੱਚ ਕਿਵੇਂ ਮਦਦ ਕਰ ਸਕਦੇ ਹਾਂ?`,
+    'ml-IN': `നമസ്കാരം! ${name} ലേക്ക് വിളിച്ചതിന് നന്ദി. നിങ്ങളുടെ ആരോഗ്യ അപ്പോയിന്റ്മെന്റിൽ ഞാൻ എങ്ങനെ സഹായിക്കണം?`,
+  };
+  return named[code] || mayaOpeningGreeting(name);
+}
 
 const VOICE_PERSONAS = [
   { id: 'maya', name: 'Maya (Warm & Empathetic)', pitch: 1.1, rate: 1.0, desc: 'Kind, comforting tone ideal for patient triage' },
@@ -47,6 +69,9 @@ export const VoiceBotAssistant: React.FC<VoiceBotAssistantProps> = ({
   currentPatient,
   doctors,
 }) => {
+  const { user } = useAuth();
+  const { go } = useNav();
+  const canEdit = canEditClinicVoiceSettings(user?.role);
   const [isInCall, setIsInCall] = useState(false);
   const [callType, setCallType] = useState<'ivrn' | 'whatsapp'>('whatsapp');
   const [selectedLang, setSelectedLang] = useState(INDIAN_LANGUAGES[0]);
@@ -55,27 +80,86 @@ export const VoiceBotAssistant: React.FC<VoiceBotAssistantProps> = ({
   const [spokenInput, setSpokenInput] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [hasEmergency, setHasEmergency] = useState(false);
+  const [deskLoaded, setDeskLoaded] = useState(false);
+  const [settingsHydrated, setSettingsHydrated] = useState(false);
+  const [escalationTouched, setEscalationTouched] = useState(false);
+  const [voiceEnabled, setVoiceEnabled] = useState(true);
+  const [customGreeting, setCustomGreeting] = useState('');
+  const [escalationPhone, setEscalationPhone] = useState('');
+  const [clinicName, setClinicName] = useState('');
+  const [whatsappConnected, setWhatsappConnected] = useState(false);
+  const [whatsappDisplay, setWhatsappDisplay] = useState('');
+  const [settingsError, setSettingsError] = useState('');
+  const [settingsSaved, setSettingsSaved] = useState(false);
+  const [savingSettings, setSavingSettings] = useState(false);
+  const openingLine = localizedGreeting(selectedLang.code, clinicName, customGreeting);
   const [callLog, setCallLog] = useState<Array<{ speaker: 'Caller' | 'AI Voice Assistant'; text: string; time: string }>>([
     {
       speaker: 'AI Voice Assistant',
-      text: selectedLang.greeting,
+      text: mayaOpeningGreeting(''),
       time: new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: '2-digit', minute: '2-digit' })
     },
   ]);
   const [voiceVolume, setVoiceVolume] = useState(65);
 
-  // Update initial greeting when language changes
   useEffect(() => {
-    if (!isInCall) {
-      setCallLog([
-        {
-          speaker: 'AI Voice Assistant',
-          text: selectedLang.greeting,
-          time: new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: '2-digit', minute: '2-digit' })
+    let cancelled = false;
+    void (async () => {
+      try {
+        const [settingsRes, mine, letterhead] = await Promise.all([
+          apiFetch<{
+            voiceEnabled?: boolean;
+            customGreeting?: string;
+            escalationPhone?: string;
+            clinic?: { name?: string };
+          }>('/api/whatsapp/voice-settings'),
+          apiFetch<{
+            tenantNumber?: { status?: string } | null;
+            doctorNumber?: { status?: string } | null;
+          }>('/api/whatsapp-numbers/mine').catch(() => null),
+          apiFetch<{ letterhead?: { clinicName?: string; whatsappNumber?: string }; clinicName?: string; whatsappNumber?: string }>(
+            '/api/tenant/letterhead'
+          ).catch(() => null),
+        ]);
+        if (cancelled) return;
+        setVoiceEnabled(settingsRes?.voiceEnabled !== false);
+        setCustomGreeting(String(settingsRes?.customGreeting || ''));
+        setEscalationPhone(String(settingsRes?.escalationPhone || ''));
+        setEscalationTouched(false);
+        setSettingsHydrated(true);
+        const letter = (letterhead?.letterhead || letterhead) as { clinicName?: string; whatsappNumber?: string } | null;
+        const name = String(letter?.clinicName || settingsRes?.clinic?.name || '').trim();
+        setClinicName(name);
+        const connected = mine?.tenantNumber?.status === 'connected' || mine?.doctorNumber?.status === 'connected';
+        setWhatsappConnected(Boolean(connected));
+        const published = String(letter?.whatsappNumber || '').trim();
+        setWhatsappDisplay(published ? formatIndianPhoneDisplay(published) : '');
+      } catch (err) {
+        if (!cancelled) {
+          setSettingsHydrated(false);
+          setSettingsError(err instanceof Error ? err.message : 'Could not load voice settings.');
         }
-      ]);
-    }
-  }, [selectedLang]);
+      } finally {
+        if (!cancelled) setDeskLoaded(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const inCallRef = useRef(isInCall);
+  inCallRef.current = isInCall;
+  useEffect(() => {
+    if (inCallRef.current) return;
+    setCallLog([
+      {
+        speaker: 'AI Voice Assistant',
+        text: openingLine,
+        time: new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: '2-digit', minute: '2-digit' })
+      }
+    ]);
+  }, [openingLine]);
 
   // Call timer simulation
   useEffect(() => {
@@ -105,7 +189,35 @@ export const VoiceBotAssistant: React.FC<VoiceBotAssistantProps> = ({
 
   const handleStartCall = () => {
     setIsInCall(true);
-    speakText(selectedLang.greeting);
+    speakText(openingLine);
+  };
+
+  const handleSaveVoiceSettings = async () => {
+    if (!canEdit || !settingsHydrated) return;
+    const phone = escalationPhone.trim();
+    if (escalationTouched && phone && !isIndianPhoneNumber(phone)) {
+      setSettingsError('Enter an Indian mobile or landline number, for example +91 98200 11111.');
+      setSettingsSaved(false);
+      return;
+    }
+    setSavingSettings(true);
+    setSettingsError('');
+    setSettingsSaved(false);
+    try {
+      await apiFetch('/api/whatsapp/voice-settings', {
+        method: 'POST',
+        body: JSON.stringify({
+          voiceEnabled,
+          customGreeting,
+          ...(escalationTouched ? { escalationPhone: phone } : {}),
+        }),
+      });
+      setSettingsSaved(true);
+    } catch (err) {
+      setSettingsError(err instanceof Error ? err.message : 'Could not save voice settings.');
+    } finally {
+      setSavingSettings(false);
+    }
   };
 
   const handleEndCall = () => {
@@ -161,7 +273,7 @@ export const VoiceBotAssistant: React.FC<VoiceBotAssistantProps> = ({
   };
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-6 space-y-6">
+    <div className="max-w-4xl mx-auto px-4 py-6 space-y-6 overflow-x-hidden" data-testid="maya-voice-settings">
       {/* Header */}
       <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
@@ -243,6 +355,103 @@ export const VoiceBotAssistant: React.FC<VoiceBotAssistantProps> = ({
         </div>
       </div>
 
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 sm:p-5 space-y-4" data-testid="maya-voice-fields">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-sm font-bold text-slate-900">Maya voice settings</h2>
+            <p className="text-xs text-slate-500 mt-1">
+              {canEdit
+                ? 'Clinic admins can change whether Maya answers calls, and the transfer number. Saved through the voice-settings API.'
+                : 'Only a clinic admin can edit these settings.'}
+            </p>
+          </div>
+          {canEdit ? (
+            <button
+              type="button"
+              onClick={() => void handleSaveVoiceSettings()}
+              disabled={savingSettings || !settingsHydrated}
+              data-testid="maya-save-voice-settings"
+              className="px-3 py-2 rounded-lg bg-blue-600 text-white text-xs font-semibold disabled:opacity-50"
+            >
+              {savingSettings ? 'Saving…' : 'Save voice settings'}
+            </button>
+          ) : null}
+        </div>
+
+        {settingsSaved ? (
+          <p className="text-xs text-emerald-700" data-testid="maya-settings-saved">Voice settings saved.</p>
+        ) : null}
+        {settingsError ? (
+          <p className="text-xs text-rose-600" role="alert" data-testid="maya-settings-error">{settingsError}</p>
+        ) : null}
+
+        <label className="flex items-start gap-3 text-sm text-slate-800">
+          <input
+            type="checkbox"
+            className="mt-1"
+            checked={voiceEnabled}
+            disabled={!canEdit}
+            data-testid="maya-answers-calls"
+            onChange={(e) => {
+              setVoiceEnabled(e.target.checked);
+              setSettingsSaved(false);
+            }}
+          />
+          <span>
+            <span className="font-semibold">Maya answers calls</span>
+            <span className="block text-xs text-slate-500 mt-0.5">
+              {voiceEnabled
+                ? 'On. WhatsApp calls are answered by Maya.'
+                : 'Off. Calls are declined and patients are sent to WhatsApp chat.'}
+            </span>
+          </span>
+        </label>
+
+        <div>
+          <label htmlFor="maya-escalation-phone" className="block text-xs font-semibold text-slate-700 mb-1">
+            Escalation / transfer phone
+          </label>
+          <input
+            id="maya-escalation-phone"
+            data-testid="maya-escalation-phone"
+            type="tel"
+            inputMode="tel"
+            value={escalationPhone}
+            disabled={!canEdit}
+            onChange={(e) => {
+              setEscalationTouched(true);
+              setEscalationPhone(e.target.value);
+              setSettingsSaved(false);
+            }}
+            placeholder="+91 98200 11111"
+            className="w-full max-w-md text-sm px-3 py-2 rounded-lg border border-slate-300 disabled:bg-slate-100"
+          />
+          <p className="text-[11px] text-slate-500 mt-1">Indian mobile or landline. Example: +91 98200 11111 or 022 2847 9000.</p>
+        </div>
+
+        <div>
+          <label htmlFor="maya-custom-greeting" className="block text-xs font-semibold text-slate-700 mb-1">
+            Greeting
+          </label>
+          <input
+            id="maya-custom-greeting"
+            data-testid="maya-custom-greeting"
+            type="text"
+            value={customGreeting}
+            disabled={!canEdit}
+            onChange={(e) => {
+              setCustomGreeting(e.target.value);
+              setSettingsSaved(false);
+            }}
+            placeholder={clinicName ? `Thank you for calling ${clinicName}` : 'Thank you for calling'}
+            className="w-full text-sm px-3 py-2 rounded-lg border border-slate-300 disabled:bg-slate-100"
+          />
+          <p className="text-[11px] text-slate-500 mt-1 break-words">
+            Spoken line: {openingLine}
+          </p>
+        </div>
+      </div>
+
       {/* Voice Call Simulator Console */}
       <div className={`rounded-xl p-5 sm:p-7 border shadow-xl space-y-5 transition-colors ${
         callType === 'whatsapp' ? 'bg-slate-900 border-emerald-900/50 text-white' : 'bg-slate-900 border-slate-800 text-white'
@@ -281,14 +490,14 @@ export const VoiceBotAssistant: React.FC<VoiceBotAssistantProps> = ({
             </div>
             <div>
               <div className="flex items-center space-x-2">
-                <h3 className="font-bold text-sm text-white">
-                  {isInCall
-                    ? callType === 'whatsapp'
-                      ? 'WhatsApp Voice Call Connected'
-                      : 'Inbound PSTN Call Connected'
-                    : callType === 'whatsapp'
-                      ? 'WhatsApp Voice Desk Standby'
-                      : 'IVR Telephony Standby'}
+                <h3 className="font-bold text-sm text-white" data-testid="maya-desk-status">
+                  {mayaDeskStatus({
+                    loaded: deskLoaded,
+                    inCall: isInCall,
+                    callType,
+                    voiceEnabled,
+                    connected: whatsappConnected,
+                  })}
                 </h3>
                 {isInCall && (
                   <span className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-bold border ${
@@ -300,12 +509,22 @@ export const VoiceBotAssistant: React.FC<VoiceBotAssistantProps> = ({
                   </span>
                 )}
               </div>
-              <p className="text-[11px] text-slate-400 mt-0.5 flex items-center gap-1.5">
+              <div className="text-[11px] text-slate-400 mt-0.5 flex flex-wrap items-center gap-1.5" data-testid="maya-whatsapp-line">
                 {callType === 'whatsapp' && <ShieldCheck className="w-3 h-3 text-emerald-400 inline" />}
                 {isInCall
                   ? `Duration: ${Math.floor(callDurationSec / 60)}:${(callDurationSec % 60).toString().padStart(2, '0')} • Language: ${selectedLang.name} • Voice: ${selectedPersona.name.split(' ')[0]}`
-                  : `Ready to answer WhatsApp audio calls from patients (+91 ${currentPatient.phone || '9876543210'})`}
-              </p>
+                  : mayaWhatsAppLine({ connected: whatsappConnected, displayNumber: whatsappDisplay })}
+                {!isInCall && !whatsappConnected ? (
+                  <button
+                    type="button"
+                    data-testid="maya-connect-whatsapp"
+                    onClick={() => go('app', { appView: 'settings' })}
+                    className="ml-1 underline text-emerald-300 hover:text-emerald-200"
+                  >
+                    Connect WhatsApp
+                  </button>
+                ) : null}
+              </div>
             </div>
           </div>
 
