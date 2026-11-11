@@ -81,6 +81,7 @@ import { rejectWrongOtp, reserveOtpSend, sendOtpLimited } from "./otp-attempt.ts
 import { parseSpecialtyPackInput, resolveSpecialtyPack } from "./specialty-packs.ts";
 import { appPublicUrl, demoLoginEnabled, isProduction } from "./runtime.ts";
 import { DEMO_PASSWORD } from "../src/lib/demoAccounts.ts";
+import { POLYCLINIC_DEMO_NAME, POLYCLINIC_DEMO_TENANT_ID } from "./demo-workspace-tenants.ts";
 import { dispatchWhatsAppCloudMessage, isCloudDispatchFailure, resolveGraphCredentials } from "./graph-whatsapp.ts";
 import { toE164Phone } from "./clinical.ts";
 import { inboundTenantIdFromPhoneNumberId } from "./meta.ts";
@@ -451,20 +452,75 @@ function withSessionCredential<T extends Record<string, unknown>>(
   return { ...issued, token: credential };
 }
 
+/** Seeded clinic admin used by Quick Demo. Not the platform super-admin. */
+export const CLINIC_DEMO_ADMIN_EMAIL = "clinic.admin@lumera.me";
+/** Created only when no clinic-scoped demo admin exists. */
+export const FALLBACK_CLINIC_DEMO_ADMIN_EMAIL = "clinicadmin@lumera.me";
+
+const CLINIC_SCOPED_ADMIN_ROLES = new Set(["CLINIC_ADMIN", "polyclinic_admin"]);
+
+/** Platform super-admin must never be issued by one-click demo login. */
+export function demoLoginRoleAllowed(role?: string | null): boolean {
+  const value = String(role || "").trim();
+  if (!value || isPlatformAdminRole(value)) return false;
+  return true;
+}
+
+function isClinicScopedAdminRole(role?: string | null): boolean {
+  return CLINIC_SCOPED_ADMIN_ROLES.has(String(role || "").trim());
+}
+
+/**
+ * Clinic-scoped Quick Demo admin. Prefers the seeded polyclinic CLINIC_ADMIN.
+ * Skips any row that is a platform administrator. Seeds clinicadmin@lumera.me
+ * on the demo polyclinic tenant when no safe account exists.
+ */
+export function resolveClinicAdminDemoEmail(database = getDb()): string {
+  const lookup = database.prepare("SELECT email, role FROM users WHERE lower(email) = ?");
+  for (const email of [CLINIC_DEMO_ADMIN_EMAIL, FALLBACK_CLINIC_DEMO_ADMIN_EMAIL]) {
+    const row = lookup.get(email) as { email?: string; role?: string } | undefined;
+    if (row && isClinicScopedAdminRole(row.role) && demoLoginRoleAllowed(row.role)) {
+      return String(row.email || email);
+    }
+  }
+  const now = new Date().toISOString();
+  const existing = lookup.get(FALLBACK_CLINIC_DEMO_ADMIN_EMAIL) as { email?: string } | undefined;
+  if (!existing) {
+    database
+      .prepare(
+        `INSERT INTO users (
+           id, tenant_id, email, password_hash, name, role, status, phone, clinic_name,
+           last_login, created_at, onboarding_completed, practice_type, specialty, pack_id
+         ) VALUES (?, ?, ?, ?, ?, 'CLINIC_ADMIN', 'active', ?, ?, NULL, ?, 1, 'polyclinic', 'gp', 'gp')`
+      )
+      .run(
+        "user-clinicadmin-demo",
+        POLYCLINIC_DEMO_TENANT_ID,
+        FALLBACK_CLINIC_DEMO_ADMIN_EMAIL,
+        hashPassword(DEMO_PASSWORD),
+        "Clinic Admin Demo",
+        "+91 98000 22223",
+        POLYCLINIC_DEMO_NAME,
+        now
+      );
+  }
+  return FALLBACK_CLINIC_DEMO_ADMIN_EMAIL;
+}
+
 /**
  * Quick Demo account allowlist. Same DEMO_LOGIN_ENABLED gate as the doctor sandbox.
- * `email`, `password`, and `role` in the body are not selectors — a posted admin
- * email still lands on the doctor account unless `demoRole` is exactly "admin".
+ * `email`, `password`, and `role` are not selectors. `demoRole: "admin"` is the
+ * clinic-scoped admin sandbox, never the platform super-admin.
  */
 export function demoLoginTargetEmail(body: unknown): { ok: true; email: string } | { ok: false; status: 403; error: string } {
   const record = body && typeof body === "object" && !Array.isArray(body) ? (body as Record<string, unknown>) : {};
   const demoRole = String(record.demoRole ?? "").trim().toLowerCase();
   if (!demoRole || demoRole === "doctor") return { ok: true, email: "doctor@lumera.me" };
-  if (demoRole === "admin") return { ok: true, email: "admin@lumera.me" };
+  if (demoRole === "admin") return { ok: true, email: resolveClinicAdminDemoEmail() };
   return {
     ok: false,
     status: 403,
-    error: "Demo login is only available for the doctor and admin sandbox accounts.",
+    error: "Demo login is only available for the doctor and clinic admin sandbox accounts.",
   };
 }
 
@@ -574,7 +630,7 @@ export function createApiRouter(): Router {
    * Explicit one-click demo. Credentials stay on the server. Disabled unless
    * DEMO_LOGIN_ENABLED is set. Client email, password, and role are ignored.
    * The only selector is `demoRole`: omitted or "doctor" is the clinician sandbox;
-   * "admin" is the same gate for admin@lumera.me. Any other demoRole is refused.
+   * "admin" is the clinic-scoped admin sandbox. A platform super-admin is never issued.
    */
   api.post("/auth/demo-login", (req: Request, res: Response) => {
     if (!demoLoginEnabled()) {
@@ -588,6 +644,9 @@ export function createApiRouter(): Router {
     const user = getDb().prepare("SELECT * FROM users WHERE email = ?").get(email) as unknown as DbUser | undefined;
     if (!user || !verifyPassword(DEMO_PASSWORD, user.password_hash)) {
       return res.status(503).json({ error: "Demo account is not available" });
+    }
+    if (!demoLoginRoleAllowed(user.role)) {
+      return res.status(403).json({ error: "Demo login cannot open a platform administrator." });
     }
     if (user.status === "disabled") {
       return res.status(403).json({ error: "This account has been disabled" });
