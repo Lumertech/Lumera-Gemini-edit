@@ -10,6 +10,14 @@ import {
   writeAudit,
 } from "./db.ts";
 import { clinicLine, getTenantLetterhead } from "./letterhead.ts";
+import { mintPatientLinkToken, PATIENT_LINK_PRINT_TTL_HOURS, revokePatientLinkTokensFor } from "./patient-link-token.ts";
+import { confirmPatientWhatsAppReconsent, recordWhatsAppOptIn } from "./whatsapp-opt-in.ts";
+import {
+  bindStoredSafetyCheckToRx,
+  patientSafetyLists,
+  recordSignedRxSafetyOverride,
+  SAFETY_OVERRIDE_REASON_MIN,
+} from "./rx-safety-store.ts";
 import { requireAuth } from "./auth.ts";
 import { reportCaughtError } from "./error-tracker.ts";
 import { resolveAbdmMode, type AbdmMode } from "./abdm-mode.ts";
@@ -21,6 +29,7 @@ import { denyUnlessPatientRecordRole, denyUnlessPrescriber, isReceptionRole } fr
 import { clinicCalendarDate, parseAppointmentListDate, resolveQueueDate } from "../src/lib/clinicDay.ts";
 import { HIDDEN_AMBIENT_SOURCES, hiddenVisitSourceSql, isHiddenVisitSource } from "./ambient-walkin.ts";
 import { allocateTokenNumber, writeAllocatedToken } from "./queue-tokens.ts";
+import { isPrescriberRole } from "../src/lib/prescriberRoles.ts";
 import {
   loadPatientClinicPhone,
   loadPatientTenant,
@@ -33,6 +42,7 @@ import {
   saveClinicScheduleSettings,
   listSlotOccupancy,
 } from "./clinic-schedule.ts";
+import { notifyReceptionBooking } from "./whatsapp-calendar-reminders.ts";
 
 function tenantIdOf(req: Request): string {
   return String(req.user?.tenantId || "").trim();
@@ -659,7 +669,14 @@ const RX_NOTE_KEYS = [
   "pendingAiFields",
 ] as const;
 
-function specialtyModulesFromBody(body: Record<string, unknown>): string {
+function clientRequestedReview(body: Record<string, unknown>): boolean {
+  if (String(body.reviewedBy || "").trim()) return true;
+  const nested = body.specialtyModules;
+  if (!nested || typeof nested !== "object") return false;
+  return Boolean(String((nested as { reviewedBy?: unknown }).reviewedBy || "").trim());
+}
+
+function specialtyModulesFromBody(body: Record<string, unknown>, signerId: string): string {
   const modules: Record<string, unknown> = {};
   for (const key of PRESCRIPTION_SPECIALTY_KEYS) {
     if (body[key] !== undefined) modules[key] = body[key];
@@ -668,9 +685,41 @@ function specialtyModulesFromBody(body: Record<string, unknown>): string {
     if (body[key] !== undefined) modules[key] = body[key];
   }
   if (body.specialtyModules && typeof body.specialtyModules === "object") {
-    Object.assign(modules, body.specialtyModules as Record<string, unknown>);
+    const extra = { ...(body.specialtyModules as Record<string, unknown>) };
+    delete extra.reviewedBy;
+    Object.assign(modules, extra);
   }
+  delete modules.reviewedBy;
+  if (signerId) modules.reviewedBy = signerId;
   return JSON.stringify(modules);
+}
+
+/**
+ * reviewedBy is the Rx's doctor_id only when this session may prescribe and is
+ * that doctor. A direct user-id match signs only for the doctor role.
+ * Owner-doctors sign as polyclinic_admin through their doctors row.
+ * A receptionist never signs, even when a doctors row links them.
+ */
+export function treatingDoctorId(
+  tenantId: string,
+  sessionUserId: string,
+  role: string | undefined,
+  doctorId: string
+): string {
+  if (!isPrescriberRole(role)) return "";
+  const actor = String(sessionUserId || "").trim();
+  const id = String(doctorId || "").trim();
+  if (!actor || !id) return "";
+  if (actor === id) return role === "doctor" ? id : "";
+  const linked = getDb()
+    .prepare(
+      `SELECT d.id
+       FROM doctors d
+       INNER JOIN users u ON u.id = d.user_id
+       WHERE d.id = ? AND u.id = ? AND u.tenant_id = ?`
+    )
+    .get(id, actor, tenantId) as { id?: string } | undefined;
+  return linked?.id ? String(linked.id) : "";
 }
 
 /** AI drafts cannot be finalized until a clinician records reviewedBy. Nothing is auto-signed. */
@@ -1136,8 +1185,31 @@ function deletePrescriptionDraft(input: {
   );
 }
 
-function insertPrescription(tenantId: string, body: Record<string, unknown>) {
+function prescriptionReviewedBy(row: { specialty_modules?: unknown } | undefined): string {
+  try {
+    const modules = JSON.parse(String(row?.specialty_modules || "{}")) as { reviewedBy?: unknown };
+    return String(modules.reviewedBy || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+async function insertPrescription(
+  tenantId: string,
+  body: Record<string, unknown>,
+  actorId: string,
+  actorRole?: string,
+  actorName?: string
+) {
   assertReviewedAiPrescription(body);
+  const sessionUserId = String(actorId || "").trim();
+  if (clientRequestedReview(body) && !sessionUserId) {
+    throw Object.assign(new Error("Sign in to review this prescription"), { status: 401 });
+  }
+  const doctorId = String(body.doctorId || body.doctor_id || "").trim();
+  const signerId = clientRequestedReview(body)
+    ? treatingDoctorId(tenantId, sessionUserId, actorRole, doctorId)
+    : "";
   const patientId = String(body.patientId || body.patient_id || "").trim();
   const diagnosis = String(body.diagnosis || "").trim();
   if (!patientId) {
@@ -1157,6 +1229,15 @@ function insertPrescription(tenantId: string, body: Record<string, unknown>) {
   const date = String(body.date || now.slice(0, 10));
   const letterhead = getTenantLetterhead(tenantId);
   const stamped = clinicLine(letterhead);
+  const requestedNumber = String(body.rxNumber || body.rx_number || "").trim();
+  if (signerId && requestedNumber) {
+    const prior = getDb()
+      .prepare(`SELECT id FROM prescriptions WHERE tenant_id = ? AND rx_number = ?`)
+      .get(tenantId, requestedNumber) as { id?: string } | undefined;
+    if (prior?.id) {
+      await revokePatientLinkTokensFor({ tenantId, resourceId: requestedNumber, purpose: "rx" });
+    }
+  }
   getDb()
     .prepare(
       `INSERT INTO prescriptions (
@@ -1197,12 +1278,58 @@ function insertPrescription(tenantId: string, body: Record<string, unknown>) {
       String(body.clinicName || body.clinic_name || stamped.name || ""),
       String(body.clinicAddress || body.clinic_address || stamped.address || ""),
       String(body.clinicPhone || body.clinic_phone || stamped.phone || ""),
-      String(body.qrVerificationUrl || body.qr_verification_url || ""),
-      String(body.whatsappSentStatus || body.whatsapp_sent_status || "unsent"),
+      signerId
+        ? (
+            await mintPatientLinkToken({
+              tenantId,
+              patientId: mappedPatient.id,
+              purpose: "rx",
+              resourceId: rxNumber,
+              ttlHours: PATIENT_LINK_PRINT_TTL_HOURS,
+              createdBy: sessionUserId,
+            })
+          ).url
+        : "",
+      "unsent",
       String(body.specialtyType || body.specialty_type || ""),
-      specialtyModulesFromBody(body)
+      specialtyModulesFromBody(body, signerId)
     );
-  return getTenantPrescription(tenantId, id)!;
+  const saved = getTenantPrescription(tenantId, id)!;
+  const lists = patientSafetyLists(getDb(), tenantId, mappedPatient.id);
+  const medicines = body.medicines;
+  bindStoredSafetyCheckToRx(getDb(), {
+    tenantId,
+    rxNumber,
+    patientId: mappedPatient.id,
+    medicines,
+    allergies: lists.allergies,
+    chronicConditions: lists.chronicConditions,
+  });
+  const overrideReason = String(body.safetyOverrideReason || body.safety_override_reason || "").trim();
+  const clinicianName = String(actorName || "").trim();
+  if (overrideReason.length >= SAFETY_OVERRIDE_REASON_MIN && signerId && sessionUserId) {
+    const savedOverride = recordSignedRxSafetyOverride(getDb(), {
+      tenantId,
+      rxNumber,
+      userId: sessionUserId,
+      userName: clinicianName,
+      reason: overrideReason,
+      medicines,
+      allergies: lists.allergies,
+      chronicConditions: lists.chronicConditions,
+    });
+    if (savedOverride) {
+      writeAudit(
+        getDb(),
+        sessionUserId,
+        clinicianName || "Clinician",
+        "safety_override",
+        `tenant ${tenantId} rx ${rxNumber} safety override recorded`,
+        { tenantId, actorRole, entityType: "prescription", entityId: rxNumber, patientId: mappedPatient.id }
+      );
+    }
+  }
+  return saved;
 }
 
 /**
@@ -1311,6 +1438,16 @@ export function createClinicalRouter(): Router {
       delete incoming.consent_artefact;
       delete incoming.consent;
       const row = insertPatient(tenantId, incoming);
+      if (incoming.whatsappOptIn === true || incoming.whatsappOptIn === "true" || incoming.whatsapp_opt_in === true) {
+        recordWhatsAppOptIn(getDb(), {
+          tenantId,
+          phone: String(incoming.phone || (row as { phone?: string }).phone || ""),
+          patientId: String(row.id || ""),
+          optedIn: true,
+          source: "registration",
+          actorId: String(req.user?.id || ""),
+        });
+      }
       const reused = Boolean((row as Record<string, unknown>).__reused);
       if (!reused) {
         writeAudit(getDb(), req.user?.id || null, req.user?.name || "Clinician", "Patient created", mapPatient(row).name);
@@ -1321,6 +1458,28 @@ export function createClinicalRouter(): Router {
       const message = err instanceof Error ? err.message : "Failed to create patient";
       res.status(status || 500).json({ error: message });
     }
+  });
+
+  api.post("/patients/whatsapp-reconsent", requireAuth, (req, res) => {
+    if (!requestIsPatient(req)) return res.status(403).json({ error: "Insufficient permissions" });
+    const tenantId = requireTenant(req, res);
+    if (!tenantId) return;
+    const patientId = sessionPatientId(req);
+    if (!patientId) return res.status(403).json({ error: "Insufficient permissions" });
+    if ((req.body || {}).confirmed !== true) {
+      return res.status(400).json({ error: "Patient confirmation is required" });
+    }
+    const row = getTenantPatient(tenantId, patientId);
+    if (!row) return res.status(404).json({ error: "Patient not found" });
+    const outcome = confirmPatientWhatsAppReconsent(getDb(), {
+      tenantId,
+      phone: String((row as { phone?: string }).phone || ""),
+      patientId,
+      source: "reconsent",
+      actorId: String(req.user?.id || ""),
+      patientConfirmed: true,
+    });
+    res.json({ outcome });
   });
 
   api.post("/patients/link-abha", requireAuth, (req, res) => {
@@ -1460,7 +1619,7 @@ export function createClinicalRouter(): Router {
     );
   });
 
-  api.post("/appointments", requireAuth, (req, res) => {
+  api.post("/appointments", requireAuth, async (req, res) => {
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     if (requestIsPatient(req)) {
@@ -1480,14 +1639,38 @@ export function createClinicalRouter(): Router {
     }
     try {
       const row = insertAppointment(tenantId, req.body || {}, { id: req.user?.id, name: req.user?.name });
+      const appointment = mapAppointment(row);
+      const optInFlag = (req.body || {}).whatsappOptIn;
+      let optInOutcome: ReturnType<typeof recordWhatsAppOptIn> | undefined;
+      if (optInFlag === true || optInFlag === "true") {
+        optInOutcome = recordWhatsAppOptIn(getDb(), {
+          tenantId,
+          phone: String(appointment.patientPhone || ""),
+          patientId: String(appointment.patientId || ""),
+          optedIn: true,
+          source: "booking",
+          actorId: String(req.user?.id || ""),
+        });
+      }
       writeAudit(
         getDb(),
         req.user?.id || null,
         req.user?.name || "Clinician",
         "Appointment created",
-        `${mapAppointment(row).patientName} token ${mapAppointment(row).tokenNumber}`
+        `${appointment.patientName} token ${appointment.tokenNumber}`
       );
-      res.status(201).json(withPatientTenant(req, tenantId, { appointment: mapAppointment(row) }));
+      let notify: { sent: boolean; wamid?: string; reason?: string } = { sent: false, reason: "Graph error" };
+      try {
+        if (optInOutcome === "stop_active") {
+          notify = { sent: false, reason: "patient replied STOP" };
+        } else {
+          notify = await notifyReceptionBooking({ tenantId, appointment });
+        }
+      } catch (notifyErr) {
+        console.error("Appointment booked but WhatsApp notify failed:", notifyErr instanceof Error ? notifyErr.name : "Error");
+        notify = { sent: false, reason: "Graph error" };
+      }
+      res.status(201).json(withPatientTenant(req, tenantId, { appointment, notify }));
     } catch (err: unknown) {
       const status = typeof err === "object" && err && "status" in err ? Number((err as { status: number }).status) : 500;
       const message = err instanceof Error ? err.message : "Failed to create appointment";
@@ -1581,18 +1764,115 @@ export function createClinicalRouter(): Router {
     );
   });
 
-  api.post("/prescriptions", requireAuth, (req, res) => {
+  api.post("/prescriptions/:rxNumber/safety-override", requireAuth, (req, res) => {
+    if (!denyUnlessPrescriber(req, res)) return;
+    const tenantId = requireTenant(req, res);
+    if (!tenantId) return;
+    const rxNumber = String(req.params.rxNumber || "").trim();
+    const reason = String((req.body || {}).reason || "").trim();
+    if (reason.length < SAFETY_OVERRIDE_REASON_MIN) {
+      return res.status(400).json({ error: "Type a reason for this override." });
+    }
+    const rx = getDb()
+      .prepare(`SELECT patient_id, doctor_id, medicines, specialty_modules FROM prescriptions WHERE tenant_id = ? AND rx_number = ?`)
+      .get(tenantId, rxNumber) as
+      | { patient_id?: string; doctor_id?: string; medicines?: string; specialty_modules?: string }
+      | undefined;
+    if (!rx) return res.status(404).json({ error: "Prescription not found" });
+    const doctorId = String(rx.doctor_id || "").trim();
+    const signer = treatingDoctorId(tenantId, String(req.user?.id || ""), String(req.user?.role || ""), doctorId);
+    if (!signer || signer !== doctorId) return res.status(403).json({ error: "Only the treating doctor can override this prescription." });
+    const reviewedBy = prescriptionReviewedBy(rx);
+    if (!reviewedBy || reviewedBy !== doctorId) {
+      return res.status(409).json({ error: "Sign the prescription before recording an override." });
+    }
+    const lists = patientSafetyLists(getDb(), tenantId, String(rx.patient_id || ""));
+    const clinicianName = String(req.user?.name || "").trim();
+    const saved = recordSignedRxSafetyOverride(getDb(), {
+      tenantId,
+      rxNumber,
+      userId: String(req.user?.id || ""),
+      userName: clinicianName,
+      reason,
+      medicines: rx.medicines,
+      allergies: lists.allergies,
+      chronicConditions: lists.chronicConditions,
+    });
+    if (!saved) return res.status(409).json({ error: "A safety check for this signed prescription is required." });
+    writeAudit(getDb(), String(req.user?.id || ""), clinicianName || "Clinician", "safety_override", `tenant ${tenantId} rx ${rxNumber} safety override recorded`, {
+      tenantId,
+      actorRole: String(req.user?.role || ""),
+      entityType: "prescription",
+      entityId: rxNumber,
+      patientId: String(rx.patient_id || ""),
+    });
+    res.json({ ok: true });
+  });
+
+  api.post("/patient-links", requireAuth, async (req, res) => {
+    if (!denyUnlessPrescriber(req, res)) return;
+    const tenantId = requireTenant(req, res);
+    if (!tenantId) return;
+    const body = (req.body || {}) as { purpose?: string; patientId?: string; resourceId?: string; ttlHours?: number };
+    const purpose = body.purpose === "receipt" || body.purpose === "portal" || body.purpose === "hep" ? body.purpose : "rx";
+    const patientId = String(body.patientId || "").trim();
+    const resourceId = String(body.resourceId || "").trim();
+    if (!patientId || !resourceId) return res.status(400).json({ error: "patientId and resourceId are required" });
+    const patient = getTenantPatient(tenantId, patientId);
+    if (!patient) return res.status(404).json({ error: "Patient not found" });
+    if (purpose === "rx") {
+      const rx = getDb()
+        .prepare(`SELECT patient_id, doctor_id, specialty_modules FROM prescriptions WHERE tenant_id = ? AND rx_number = ?`)
+        .get(tenantId, resourceId) as
+        | { patient_id?: string; doctor_id?: string; specialty_modules?: string }
+        | undefined;
+      if (!rx) return res.status(404).json({ error: "Prescription not found" });
+      if (String(rx.patient_id || "") !== patientId) {
+        return res.status(409).json({ error: "This prescription is for a different patient." });
+      }
+      const reviewedBy = prescriptionReviewedBy(rx);
+      if (!reviewedBy || reviewedBy !== String(rx.doctor_id || "").trim()) {
+        return res.status(409).json({ error: "Sign the prescription before issuing a link." });
+      }
+    }
+    const requested = Number(body.ttlHours);
+    const ttlHours =
+      Number.isFinite(requested) && requested > 0 ? Math.min(PATIENT_LINK_PRINT_TTL_HOURS, requested) : PATIENT_LINK_PRINT_TTL_HOURS;
+    try {
+      const link = await mintPatientLinkToken({
+        tenantId,
+        patientId,
+        purpose,
+        resourceId,
+        ttlHours,
+        createdBy: String(req.user?.id || ""),
+      });
+      res.status(201).json({ url: link.url, expiresAt: link.expiresAt.toISOString() });
+    } catch (err) {
+      reportCaughtError(err, "clinical.patientLink");
+      res.status(500).json({ error: "Could not issue the link" });
+    }
+  });
+
+  api.post("/prescriptions", requireAuth, async (req, res) => {
     if (!denyUnlessPrescriber(req, res)) return;
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     try {
-      const row = insertPrescription(tenantId, req.body || {});
+      const row = await insertPrescription(
+        tenantId,
+        req.body || {},
+        String(req.user?.id || ""),
+        String(req.user?.role || ""),
+        String(req.user?.name || "")
+      );
       const mapped = prescriptionForClient(req, tenantId, row);
+      const signed = Boolean(String((mapped as { reviewedBy?: string }).reviewedBy || "").trim());
       writeAudit(
         getDb(),
         req.user?.id || null,
         req.user?.name || "Clinician",
-        "Prescription signed",
+        signed ? "Prescription signed" : "Prescription saved",
         `${mapped.rxNumber} for ${mapped.patientName}`
       );
       const patientId = String(req.body.patientId || req.body.patient_id || "").trim();

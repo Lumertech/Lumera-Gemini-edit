@@ -55,6 +55,12 @@ function mockGraph(opts: { grantPhone: boolean }): typeof fetch {
         headers: { "Content-Type": "application/json" },
       });
     }
+    if (url.includes("/message_templates")) {
+      return new Response(JSON.stringify({ id: "http-tpl", status: "PENDING" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
     if (url.includes("/register")) {
       return new Response(JSON.stringify({ success: true }), {
         status: 200,

@@ -10,6 +10,7 @@ import { attachUser } from "./auth.ts";
 import { createApiRouter } from "./api.ts";
 import { createUsageBillingRouter } from "./usage-billing-api.ts";
 import { getDb, initDatabase } from "./db.ts";
+import { recordWhatsAppOptIn } from "./whatsapp-opt-in.ts";
 import { dispatchWhatsAppCloudMessage } from "./graph-whatsapp.ts";
 import { hashPassword } from "./password.ts";
 import { extractRazorpayPaidRefs } from "./razorpay.ts";
@@ -174,6 +175,13 @@ describe("Usage wallet billing", () => {
   it("WhatsApp send inserts usage_events and does not debit the wallet", async () => {
     const before = publicWalletStatus(tenantId).balance;
     const debitsBefore = listWalletTransactions(tenantId, 50).filter((t) => t.type === "usage_debit").length;
+    recordWhatsAppOptIn(getDb(), {
+      tenantId,
+      phone: "+919823455667",
+      optedIn: true,
+      source: "test",
+      actorId: "test",
+    });
     const sent = await dispatchWhatsAppCloudMessage({
       to: "+919823455667",
       kind: "appointment_reminder",
@@ -388,6 +396,13 @@ describe("Usage wallet billing", () => {
     assert.equal(otp.ok, true);
     assert.equal(publicWalletStatus(emptyTenant).balance, 0);
 
+    recordWhatsAppOptIn(getDb(), {
+      tenantId: emptyTenant,
+      phone: "+919800011122",
+      optedIn: true,
+      source: "test",
+      actorId: "test",
+    });
     const confirm = await dispatchWhatsAppCloudMessage({
       to: "+919800011122",
       kind: "book_confirmation",
@@ -413,6 +428,13 @@ describe("Usage wallet billing", () => {
       .run(emptyTenant, now, now, now);
     publicWalletStatus(emptyTenant);
 
+    recordWhatsAppOptIn(getDb(), {
+      tenantId: emptyTenant,
+      phone: "+919800011122",
+      optedIn: true,
+      source: "test",
+      actorId: "test",
+    });
     const reminder = await dispatchWhatsAppCloudMessage({
       to: "+919800011122",
       kind: "appointment_reminder",
@@ -439,6 +461,13 @@ describe("Usage wallet billing", () => {
     assert.ok(publicWalletStatus(negative).balance < 0);
     const beforeNeg = publicWalletStatus(negative).balance;
     assert.equal(assertWalletAllowsAiScribe(negative).ok, true);
+    recordWhatsAppOptIn(getDb(), {
+      tenantId: negative,
+      phone: "+919800011122",
+      optedIn: true,
+      source: "test",
+      actorId: "test",
+    });
     const stillSends = await dispatchWhatsAppCloudMessage({
       to: "+919800011122",
       kind: "appointment_reminder",

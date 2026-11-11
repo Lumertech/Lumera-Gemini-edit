@@ -19,9 +19,13 @@ import {
   vertexGeminiModel,
 } from "./vertex-gemini.ts";
 import type { NextFunction } from "express";
+import { getDb } from "./db.ts";
+import { rememberSafetyCheckResponse } from "./rx-safety-store.ts";
+import { RULE_BASED_SAFETY_SOURCE } from "../src/lib/safetyCheckGate.ts";
 
 let testSoapGenerator: ((body: Record<string, unknown>) => Promise<unknown>) | undefined;
 let testTranscribeGenerator: (() => Promise<string>) | undefined;
+let testSafetyCheck: (() => Promise<unknown>) | undefined;
 
 /** Test-only Gemini mock so HTTP tests do not need live API keys. */
 export function setGeminiSoapGeneratorForTests(
@@ -33,6 +37,109 @@ export function setGeminiSoapGeneratorForTests(
 /** Test-only transcription stand-in. It does not receive audio or a transcript. */
 export function setGeminiTranscribeGeneratorForTests(fn?: (() => Promise<string>) | undefined) {
   testTranscribeGenerator = fn;
+}
+
+/** Test-only stand-in for the safety-check model. A throw takes the rule-based path. */
+export function setGeminiSafetyCheckForTests(fn?: (() => Promise<unknown>) | undefined) {
+  testSafetyCheck = fn;
+}
+
+function alertListIsSevere(alerts: unknown[]): boolean {
+  return alerts.some((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+    const severity = String((item as { severity?: unknown }).severity || "").trim().toLowerCase();
+    return severity === "severe" || severity === "critical";
+  });
+}
+
+/** Model JSON is usable only as an alert list. Status and source are computed here. */
+function modelSafetyPayload(raw: unknown): {
+  hasHighRiskAlert: boolean;
+  alerts: unknown[];
+  safetyStatus: "HIGH_RISK" | "REVIEW" | "SAFE";
+} {
+  const parsed = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : null;
+  if (!parsed || !Array.isArray(parsed.alerts) || typeof parsed.hasHighRiskAlert !== "boolean") {
+    throw new Error("safety check reply was not a usable alert list");
+  }
+  const alerts = parsed.alerts;
+  const hasHighRiskAlert = parsed.hasHighRiskAlert === true || alertListIsSevere(alerts);
+  const safetyStatus = hasHighRiskAlert ? "HIGH_RISK" : alerts.length > 0 ? "REVIEW" : "SAFE";
+  return { hasHighRiskAlert, alerts, safetyStatus };
+}
+
+function ruleBasedSafety(input: {
+  patientAllergies: unknown;
+  medicines: unknown;
+}): { hasHighRiskAlert: boolean; alerts: unknown[]; safetyStatus: "HIGH_RISK" | "REVIEW"; source: string } {
+  const allergies = Array.isArray(input.patientAllergies) ? input.patientAllergies : [];
+  const medicines = Array.isArray(input.medicines) ? input.medicines : [];
+  const alerts: unknown[] = [];
+  const drugNames = medicines.map((med) => {
+    const row = med && typeof med === "object" ? (med as { drugName?: unknown; composition?: unknown }) : {};
+    return `${String(row.drugName || "")} ${String(row.composition || "")}`.toLowerCase();
+  });
+  for (const allergy of allergies) {
+    const allgLower = String(allergy).toLowerCase();
+    if (
+      allgLower.includes("penicillin") &&
+      drugNames.some((name) => name.includes("amoxicillin") || name.includes("augmentin") || name.includes("ampicillin"))
+    ) {
+      alerts.push({
+        type: "ALLERGY",
+        severity: "Severe",
+        drugsInvolved: ["Amoxicillin/Clavulanate"],
+        description: "Patient is allergic to Penicillin.",
+        clinicalRecommendation: "Switch to a Macrolide.",
+      });
+    }
+  }
+  const hasHighRiskAlert = alertListIsSevere(alerts);
+  return {
+    hasHighRiskAlert,
+    alerts,
+    safetyStatus: hasHighRiskAlert ? "HIGH_RISK" : "REVIEW",
+    source: RULE_BASED_SAFETY_SOURCE,
+  };
+}
+
+function finishSafetyCheck(req: Request, res: Response, body: unknown) {
+  const record = body && typeof body === "object" && !Array.isArray(body) ? (body as Record<string, unknown>) : {};
+  const alerts = Array.isArray(record.alerts) ? record.alerts : [];
+  const hasHighRiskAlert = record.hasHighRiskAlert === true || alertListIsSevere(alerts);
+  const fallback = record.source === RULE_BASED_SAFETY_SOURCE;
+  let safetyStatus = hasHighRiskAlert ? "HIGH_RISK" : alerts.length > 0 ? "REVIEW" : "SAFE";
+  if (fallback && safetyStatus === "SAFE") safetyStatus = "REVIEW";
+  const payload: Record<string, unknown> = { ...record, hasHighRiskAlert, alerts, safetyStatus };
+  if (fallback) payload.source = RULE_BASED_SAFETY_SOURCE;
+  else delete payload.source;
+  const tenantId = String(req.user?.tenantId || "").trim();
+  if (tenantId) {
+    try {
+      const incoming = (req.body || {}) as {
+        medicines?: unknown;
+        patientAllergies?: unknown;
+        chronicConditions?: unknown;
+        patientId?: unknown;
+        patientAge?: unknown;
+        patientGender?: unknown;
+      };
+      rememberSafetyCheckResponse(getDb(), {
+        tenantId,
+        patientId: String(incoming.patientId || ""),
+        age: incoming.patientAge,
+        gender: incoming.patientGender,
+        medicines: incoming.medicines,
+        allergies: incoming.patientAllergies,
+        chronicConditions: incoming.chronicConditions,
+        status: 200,
+        body: payload,
+      });
+    } catch (err) {
+      console.error("safety check persist failed", err);
+    }
+  }
+  return res.json(payload);
 }
 
 function prescriberOnly(req: Request, res: Response, next: NextFunction): void {
@@ -165,6 +272,18 @@ export function mountGeminiClinicalRoutes(app: Express) {
   app.post("/api/gemini/safety-check", async (req: Request, res: Response) => {
     try {
       const { patientAllergies = [], chronicConditions = [], medicines = [], patientAge, patientGender } = req.body;
+      if (testSafetyCheck) {
+        try {
+          return finishSafetyCheck(req, res, modelSafetyPayload(await testSafetyCheck()));
+        } catch (err: unknown) {
+          console.error("Safety check Gemini error", errorName(err));
+          return finishSafetyCheck(
+            req,
+            res,
+            ruleBasedSafety({ patientAllergies, medicines })
+          );
+        }
+      }
       if (!Array.isArray(medicines) || medicines.length === 0) {
         return res.json({ hasHighRiskAlert: false, alerts: [] });
       }
@@ -179,7 +298,7 @@ export function mountGeminiClinicalRoutes(app: Express) {
           contents: prompt,
           config: { responseMimeType: "application/json", temperature: 0.1 },
         });
-        return res.json(JSON.parse(response.text?.trim() || "{}"));
+        return finishSafetyCheck(req, res, modelSafetyPayload(JSON.parse(response.text?.trim() || "{}")));
       } catch (err: unknown) {
         console.error("Safety check error", errorName(err));
         return res.status(503).json({

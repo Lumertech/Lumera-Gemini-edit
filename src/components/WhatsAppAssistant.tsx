@@ -33,7 +33,7 @@ import {
   SlidersHorizontal,
   Stethoscope
 } from 'lucide-react';
-import { apiFetchResponse } from '../api/http';
+import { apiFetch, apiFetchResponse } from '../api/http';
 import { Patient, Doctor } from '../types';
 import { InertText } from '../lib/inertText';
 import { DocumentPreviewModal, DocumentPreviewData } from './whatsapp/DocumentPreviewModal';
@@ -48,10 +48,13 @@ import {
   type WhatsAppChatMessage,
   type WhatsAppConversationItem,
 } from '../lib/whatsappInbox';
+import { whatsAppPillFromStatus } from '../lib/clinicNav';
+import { outboundCountLabel, outboundDeliveryCounts } from '../lib/whatsappDelivery';
 
 interface WhatsAppAssistantProps {
   currentPatient: Patient;
   doctors: Doctor[];
+  clinicEmail?: string;
 }
 
 type ConversationItem = WhatsAppConversationItem;
@@ -101,9 +104,13 @@ const CANNED_STAFF_REPLIES = [
 export const WhatsAppAssistant: React.FC<WhatsAppAssistantProps> = ({
   currentPatient,
   doctors,
+  clinicEmail,
 }) => {
   // Navigation tabs: 'chat' (Patient Simulator), 'inbox' (Staff 2-Way Dashboard), 'outbound' (Trigger Engine), 'voice' (Voice Calls & AI Receptionist)
   const [activeTab, setActiveTab] = useState<'chat' | 'inbox' | 'outbound' | 'voice'>('chat');
+  const [connectionLabel, setConnectionLabel] = useState('WhatsApp status unavailable');
+  const [connectionState, setConnectionState] = useState<'connected' | 'disconnected' | 'unknown'>('unknown');
+  const [deliveryLabel, setDeliveryLabel] = useState(outboundCountLabel({ sent: 0, failed: 0, pending: 0 }));
 
   // Conversations and active thread
   const [conversations, setConversations] = useState<ConversationItem[]>([]);
@@ -128,6 +135,32 @@ export const WhatsAppAssistant: React.FC<WhatsAppAssistantProps> = ({
   const [voiceResult, setVoiceResult] = useState<any>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void apiFetch<{ tenantNumber?: { status?: string } | null }>('/api/whatsapp-numbers/mine')
+      .then((data) => {
+        if (cancelled) return;
+        const pill = whatsAppPillFromStatus(data.tenantNumber?.status || 'disconnected');
+        setConnectionLabel(pill.label);
+        setConnectionState(pill.state);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        const pill = whatsAppPillFromStatus(null);
+        setConnectionLabel(pill.label);
+        setConnectionState(pill.state);
+      });
+    void apiFetch<{ events?: Array<{ status?: string }> }>('/api/whatsapp/outbound/events')
+      .then((data) => {
+        if (cancelled) return;
+        setDeliveryLabel(outboundCountLabel(outboundDeliveryCounts((data.events || []).map((event) => event.status || ''))));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -364,7 +397,7 @@ export const WhatsAppAssistant: React.FC<WhatsAppAssistantProps> = ({
           rxNumber: 'RX-2026-0106',
           patientName: activePatientName || currentPatient.name || 'Rajiv Saxena',
           patientUhid: currentPatient.uhid || 'LUM-2026-0106',
-          patientPhone: activePatientPhone || currentPatient.phone || '+91 98234 55667',
+          patientPhone: activePatientPhone || currentPatient.phone || '',
           doctorName: 'Dr. Vikram Malhotra',
           doctorSpecialty: 'General Medicine',
           doctorRegNumber: 'MCI-2012-74892',
@@ -493,9 +526,25 @@ export const WhatsAppAssistant: React.FC<WhatsAppAssistantProps> = ({
       <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <div className="flex flex-wrap items-center gap-2">
-            <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-              WhatsApp Cloud API Live
+            <span
+              data-testid="whatsapp-connection-header"
+              className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider flex items-center gap-1.5 border ${
+                connectionState === 'connected'
+                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                  : connectionState === 'disconnected'
+                    ? 'bg-rose-50 text-rose-700 border-rose-200'
+                    : 'bg-slate-50 text-slate-600 border-slate-200'
+              }`}
+            >
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  connectionState === 'connected' ? 'bg-emerald-500' : connectionState === 'disconnected' ? 'bg-rose-500' : 'bg-slate-400'
+                }`}
+              ></span>
+              {connectionLabel}
+            </span>
+            <span data-testid="whatsapp-delivery-counts" className="px-2.5 py-0.5 rounded-full text-[11px] font-mono bg-slate-50 text-slate-700 border border-slate-200">
+              {deliveryLabel}
             </span>
             <span className="px-2.5 py-0.5 rounded-full text-[11px] font-mono bg-blue-50 text-blue-700 border border-blue-200 flex items-center gap-1">
               <Layers className="w-3 h-3" /> SQLite EMR Sync (data/lumera.db)
@@ -915,7 +964,7 @@ export const WhatsAppAssistant: React.FC<WhatsAppAssistantProps> = ({
                                       rxNumber: 'RX-2026-0106',
                                       patientName: activePatientName || currentPatient.name || 'Rajiv Saxena',
                                       patientUhid: currentPatient.uhid || 'LUM-2026-0106',
-                                      patientPhone: activePatientPhone || currentPatient.phone || '+91 98234 55667',
+                                      patientPhone: activePatientPhone || currentPatient.phone || '',
                                       doctorName: 'Dr. Vikram Malhotra',
                                       doctorSpecialty: 'General Medicine',
                                       doctorRegNumber: 'MCI-2012-74892',
@@ -1034,6 +1083,7 @@ export const WhatsAppAssistant: React.FC<WhatsAppAssistantProps> = ({
       {/* 4. Document Preview Modal (Prescription or Lab Report) */}
       <DocumentPreviewModal
         document={previewDocument}
+        clinicEmail={clinicEmail}
         onClose={() => setPreviewDocument(null)}
       />
     </div>

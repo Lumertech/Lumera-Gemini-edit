@@ -793,7 +793,7 @@ export const QueueBoard: React.FC<QueueBoardProps> = ({
                     <div className="flex items-center justify-between">
                       <span className="text-slate-500 font-medium">Emergency Contact:</span>
                       <span className="text-slate-700 font-medium">
-                        {drawerData.patient.emergencyContact || '+91 98112 33445'}
+                        {drawerData.patient.emergencyContact || '—'}
                       </span>
                     </div>
 

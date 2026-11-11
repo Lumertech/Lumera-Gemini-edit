@@ -42,6 +42,21 @@ jobs:
         run: |
           if [ -f package-lock.json ]; then npm ci; else npm install; fi
 
+      - name: No Rajiv fallback phone outside seed and tests
+        run: |
+          set -euo pipefail
+          digits91=$(printf '%s%s%s' '91' '98234' '55667')
+          national=$(printf '%s%s' '98234' '55667')
+          if git grep -n -I -E "[+]91[[:space:]]*98234[[:space:]]*55667|(^|[^0-9])${digits91}([^0-9]|$)|(^|[^0-9])${national}([^0-9]|$)" -- . ':!*.test.ts' ':!*.test.tsx' ':(exclude)*seed*' ':(exclude)*Seed*'; then
+            echo "That demo patient phone is only allowed in seed and test files."
+            exit 1
+          fi
+          symbol=$(printf '%s%s' 'SEEDED_DEMO_PATIENT_' 'PHONE')
+          if git grep -n -I -F "$symbol" -- . ':!*.test.ts' ':!*.test.tsx' ':(exclude)*seed*' ':(exclude)*Seed*'; then
+            echo "That demo phone constant may be imported only from seed and test files."
+            exit 1
+          fi
+
       - name: Lint (tsc --noEmit)
         run: npm run lint
 

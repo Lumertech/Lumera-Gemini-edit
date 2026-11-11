@@ -22,7 +22,6 @@ import {
   PharmacyBatchItem,
   PolyclinicSpecialty
 } from '../types';
-
 export const PHYSIO_EXERCISE_DATABASE: PrescribedExercise[] = [
   // Spine & Neck
   {
@@ -1053,7 +1052,7 @@ export const DEFAULT_PATIENTS: Patient[] = [
     name: 'Rajiv Saxena',
     age: 44,
     gender: 'Male',
-    phone: '+91 98234 55667',
+    phone: '',
     email: 'rajiv.saxena@gmail.com',
     bloodGroup: 'O+',
     allergies: ['None known'],
@@ -1158,7 +1157,7 @@ export const DEFAULT_APPOINTMENTS: Appointment[] = [
     tokenNumber: 1,
     patientId: 'pat-6',
     patientName: 'Rajiv Saxena',
-    patientPhone: '+91 98234 55667',
+    patientPhone: '',
     uhid: 'LUM-2026-0106',
     doctorId: 'doc-6',
     doctorName: 'Dr. Siddharth Varma (PT)',
@@ -1362,6 +1361,7 @@ export const DEFAULT_WHATSAPP_TEMPLATES: WhatsAppTemplate[] = [
     bodyText: 'Dear {{1}},\n\nYour digital prescription from {{2}} has been generated successfully.\n\n📋 Rx No: *{{3}}*\n💊 Medications: {{4}} items\n🗓️ Follow-up: *{{5}}*\n\nAsk the clinic to print this prescription from your visit.',
     footerText: 'Issued under the Telemedicine Practice Guidelines, 2020',
     buttons: [
+      { type: 'URL', text: 'View Digital Rx PDF', payload: 'https://www.mylumera.in/rx/v/opaque-token' },
       { type: 'QUICK_REPLY', text: 'Order Medicines', payload: 'ORDER_MEDS' }
     ],
     status: 'APPROVED'
@@ -1374,7 +1374,9 @@ export const DEFAULT_WHATSAPP_TEMPLATES: WhatsAppTemplate[] = [
     headerText: '💳 Bill & Payment Request',
     bodyText: 'Dear {{1}},\n\nInvoice *{{2}}* for {{3}} has been generated for total amount *₹{{4}}*.\n\nPay at the clinic desk. The receipt is issued when the bill is collected.',
     footerText: 'Instant GST Receipt provided on payment',
-    buttons: [],
+    buttons: [
+      { type: 'URL', text: 'Pay via UPI/Card', payload: 'https://www.mylumera.in/pay/v/opaque-token' }
+    ],
     status: 'APPROVED'
   },
   {

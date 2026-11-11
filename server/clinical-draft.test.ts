@@ -202,6 +202,7 @@ describe("prescription draft scoping and AI review gate", () => {
         diagnosis: "DX-UNIQUE",
         aiSource: "pulse-local-parser",
         aiGeneratedAt: "2026-10-15T02:00:00.000Z",
+        doctorId: clinic.userId,
         reviewedBy: clinic.userId,
         historyOfPresentIllness: "HPI-UNIQUE",
         redFlags: ["syncope"],
@@ -220,6 +221,30 @@ describe("prescription draft scoping and AI review gate", () => {
       redFlags?: string[];
     };
     assert.equal(prescription.reviewedBy, clinic.userId);
+
+    const forged = await jsonRequest(
+      port,
+      "POST",
+      "/api/prescriptions",
+      {
+        patientId: patient.id,
+        diagnosis: "Forged reviewer",
+        doctorId: clinic.userId,
+        reviewedBy: "not-the-session",
+        whatsappSentStatus: "delivered",
+        medicines: [],
+      },
+      auth
+    );
+    assert.equal(forged.status, 201, String(forged.json.error || ""));
+    const forgedRx = forged.json.prescription as { reviewedBy?: string; whatsappSentStatus?: string; id?: string };
+    assert.equal(forgedRx.reviewedBy, clinic.userId);
+    assert.equal(forgedRx.whatsappSentStatus, "unsent");
+    const storedStatus = getDb()
+      .prepare("SELECT whatsapp_sent_status, specialty_modules FROM prescriptions WHERE id = ?")
+      .get(forgedRx.id) as { whatsapp_sent_status: string; specialty_modules: string };
+    assert.equal(storedStatus.whatsapp_sent_status, "unsent");
+    assert.equal(JSON.parse(storedStatus.specialty_modules).reviewedBy, clinic.userId);
     assert.equal(prescription.historyOfPresentIllness, "HPI-UNIQUE");
     assert.equal(prescription.followUpDays, 11);
     assert.equal(prescription.riskLevel, "High");
