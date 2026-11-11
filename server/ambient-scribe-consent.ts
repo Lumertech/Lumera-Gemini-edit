@@ -16,7 +16,7 @@ export { AMBIENT_WALKIN_SOURCE };
  * Separate from the #141 health-document consent gate. That gate stays as it is.
  */
 export const AMBIENT_SCRIBE_CONSENT_TEXT =
-  "I have told the patient that this consult will be recorded and transcribed by Google Cloud Vertex AI (India) to draft notes, and the patient agreed. Audio is not stored.";
+  "I have told the patient that this consult will be recorded and transcribed by Google Cloud, Mumbai, India to draft notes, and the patient agreed. Audio is not stored.";
 
 const PRIOR_AMBIENT_SCRIBE_CONSENT_TEXT_V1 =
   "I have told the patient that this consult will be recorded and transcribed by an AI service to draft notes, and the patient agreed. Audio is not stored.";
@@ -36,7 +36,7 @@ export function ambientScribeConsentNotice(statement: string): {
 } {
   const consentTextVersion =
     statement === AMBIENT_SCRIBE_CONSENT_TEXT
-      ? "v2-vertex-india"
+      ? "v2-google-cloud-mumbai"
       : statement === PRIOR_AMBIENT_SCRIBE_CONSENT_TEXT_V1
         ? "v1-generic-ai"
         : "";

@@ -94,7 +94,7 @@ describe("ambient scribe per-visit consent", () => {
   it("records one audit per appointment and does not grant the health-document consent", async () => {
     assert.equal(
       AMBIENT_SCRIBE_CONSENT_TEXT,
-      "I have told the patient that this consult will be recorded and transcribed by Google Cloud Vertex AI (India) to draft notes, and the patient agreed. Audio is not stored."
+      "I have told the patient that this consult will be recorded and transcribed by Google Cloud, Mumbai, India to draft notes, and the patient agreed. Audio is not stored."
     );
     const doctor = seedDoctor("doc");
     const token = await login(doctor.email);
@@ -330,7 +330,7 @@ describe("ambient scribe per-visit consent", () => {
     const oldHash = createHash("sha256").update(previous).digest("hex");
     const newHash = createHash("sha256").update(AMBIENT_SCRIBE_CONSENT_TEXT).digest("hex");
     assert.equal(oldDetails.consentTextVersion, "v1-generic-ai");
-    assert.equal(newDetails.consentTextVersion, "v2-vertex-india");
+    assert.equal(newDetails.consentTextVersion, "v2-google-cloud-mumbai");
     assert.notEqual(oldDetails.consentTextVersion, newDetails.consentTextVersion);
     assert.equal(oldDetails.consentTextSha256, oldHash);
     assert.equal(newDetails.consentTextSha256, newHash);
