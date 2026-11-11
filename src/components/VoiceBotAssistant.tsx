@@ -16,15 +16,17 @@ import {
   Video
 } from 'lucide-react';
 import { apiFetchResponse } from '../api/http';
+import { mayaDefaultGreeting } from '../lib/clinicNav';
 import { Patient, Doctor } from '../types';
 
 interface VoiceBotAssistantProps {
   currentPatient: Patient;
   doctors: Doctor[];
+  clinicName?: string | null;
 }
 
 const INDIAN_LANGUAGES = [
-  { name: 'English (India)', code: 'en-IN', greeting: 'Hello! Thank you for calling Lumera Polyclinic. How may I assist your health appointment today?' },
+  { name: 'English (India)', code: 'en-IN', greeting: '' },
   { name: 'Hindi (हिंदी)', code: 'hi-IN', greeting: 'नमस्ते! लुमेरा पॉलीक्लिनिक में कॉल करने के लिए धन्यवाद। आज मैं आपकी स्वास्थ्य नियुक्ति में कैसे सहायता कर सकता हूँ?' },
   { name: 'Tamil (தமிழ்)', code: 'ta-IN', greeting: 'வணக்கம்! லுமேரா பாலி கிளினிக்கிற்கு அழைக்க நன்றி. உங்கள் மருத்துவ சந்திப்புக்கு நான் எவ்வாறு உதவ முடியும்?' },
   { name: 'Telugu (తెలుగు)', code: 'te-IN', greeting: 'నమస్కారం! లుమెరా పాలిక్లినిక్‌కి కాల్ చేసినందుకు ధన్యవాదాలు. మీ వైద్య నియామకంలో నేను మీకు ఎలా సహాయం చేయగలను?' },
@@ -46,10 +48,14 @@ const VOICE_PERSONAS = [
 export const VoiceBotAssistant: React.FC<VoiceBotAssistantProps> = ({
   currentPatient,
   doctors,
+  clinicName,
 }) => {
+  const languages = INDIAN_LANGUAGES.map((lang) =>
+    lang.code === "en-IN" ? { ...lang, greeting: mayaDefaultGreeting(clinicName) } : lang
+  );
   const [isInCall, setIsInCall] = useState(false);
   const [callType, setCallType] = useState<'ivrn' | 'whatsapp'>('whatsapp');
-  const [selectedLang, setSelectedLang] = useState(INDIAN_LANGUAGES[0]);
+  const [selectedLang, setSelectedLang] = useState(languages[0]);
   const [selectedPersona, setSelectedPersona] = useState(VOICE_PERSONAS[0]);
   const [callDurationSec, setCallDurationSec] = useState(0);
   const [spokenInput, setSpokenInput] = useState('');
@@ -63,6 +69,11 @@ export const VoiceBotAssistant: React.FC<VoiceBotAssistantProps> = ({
     },
   ]);
   const [voiceVolume, setVoiceVolume] = useState(65);
+
+  useEffect(() => {
+    if (isInCall) return;
+    setSelectedLang((current) => languages.find((lang) => lang.code === current.code) || languages[0]);
+  }, [clinicName]);
 
   // Update initial greeting when language changes
   useEffect(() => {
@@ -208,7 +219,7 @@ export const VoiceBotAssistant: React.FC<VoiceBotAssistantProps> = ({
           <select
             value={selectedLang.code}
             onChange={(e) => {
-              const found = INDIAN_LANGUAGES.find((l) => l.code === e.target.value);
+              const found = languages.find((l) => l.code === e.target.value);
               if (found) setSelectedLang(found);
             }}
             className="w-full text-xs bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-slate-900 font-medium focus:ring-2 focus:ring-blue-500 focus:outline-none"

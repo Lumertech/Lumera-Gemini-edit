@@ -612,6 +612,12 @@ describe("forward security and voice fixes", () => {
     assert.doesNotMatch(voice, /9823373271/);
     assert.doesNotMatch(voice, /Lumera Health|Lumera Apex PolyClinic|Lumera Polyclinic|Lumera Clinic/);
     assert.match(gateway, /Namaste, one moment please/);
+    assert.match(gateway, /Namaste! Thank you for calling \{cl_name\}\. How can I help you today\?/);
+    assert.doesNotMatch(gateway, /health appointment/);
+    const voiceBot = fs.readFileSync(path.join(root, "src/components/VoiceBotAssistant.tsx"), "utf8");
+    assert.match(voiceBot, /mayaDefaultGreeting/);
+    assert.doesNotMatch(voiceBot, /health appointment/);
+    assert.doesNotMatch(voiceBot, /Thank you for calling Lumera/);
     assert.match(gateway, /VOICE_GATEWAY_SECRET/);
     assert.match(gateway, /phoneNumberId/);
     assert.doesNotMatch(gateway, /Lumera Apex|Lumera Health/);

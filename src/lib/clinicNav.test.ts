@@ -8,6 +8,7 @@ import {
   clinicDateHeading,
   greetingAddress,
   greetingClinicName,
+  mayaDefaultGreeting,
   homeGreetingLine,
   timeOfDayGreeting,
   homeKpiCards,
@@ -131,6 +132,12 @@ describe("clinic home routing and nav", () => {
     assert.equal(greetingClinicName("Malhotra Individual Practice"), "Malhotra Individual Practice");
     assert.equal(greetingClinicName("physio practice"), "Physio Practice");
     assert.equal(greetingClinicName("  "), "your clinic");
+    assert.equal(
+      mayaDefaultGreeting("North Clinic"),
+      "Namaste! Thank you for calling North Clinic. How can I help you today?"
+    );
+    assert.equal(mayaDefaultGreeting("  "), "Namaste! Thank you for calling the clinic. How can I help you today?");
+    assert.doesNotMatch(mayaDefaultGreeting("North Clinic"), /Lumera|health appointment/);
     assert.equal(formatVisitTime({ timeSlot: "10:30 AM", source: "Call Desk" }), "Appointment 10:30 AM");
     assert.equal(formatVisitTime({ timeSlot: "10:30 AM", source: "Walk-in" }), "Appointment 10:30 AM");
     assert.equal(

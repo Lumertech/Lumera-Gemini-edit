@@ -252,12 +252,8 @@ def clinic_greeting_text(clinic_name: str = "", receptionist_name: str = "", cus
     """Patient-facing greeting. Clinic and receptionist names are variables. Missing name stays neutral."""
     if custom_greeting and custom_greeting.strip():
         return custom_greeting.strip()
-    rec_name = receptionist_name.strip() or "Maya"
     cl_name = clinic_name.strip() or "the clinic"
-    return (
-        f"Hello! Welcome to {cl_name}. I am {rec_name}, your AI Receptionist. "
-        "How can I help you today? Would you like to book an appointment or check clinic timings?"
-    )
+    return f"Namaste! Thank you for calling {cl_name}. How can I help you today?"
 
 async def synthesize_tts_pcm(text: str) -> np.ndarray:
     try:
