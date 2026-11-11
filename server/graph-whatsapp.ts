@@ -299,8 +299,8 @@ export function maskWhatsAppRecipient(phone: string): string {
   return last4 ? `****${last4}` : "****";
 }
 
-/** Founder demo handset used when DEMO_WHATSAPP_RECIPIENT_ALLOWLIST is unset. */
-export const DEFAULT_DEMO_WHATSAPP_RECIPIENT_ALLOWLIST = "+919999973271";
+/** Placeholder handset used when DEMO_WHATSAPP_RECIPIENT_ALLOWLIST is unset. */
+export const DEFAULT_DEMO_WHATSAPP_RECIPIENT_ALLOWLIST = "+919000000001";
 
 /**
  * Comma-separated E.164. Unset uses DEFAULT_DEMO_WHATSAPP_RECIPIENT_ALLOWLIST.
@@ -836,8 +836,8 @@ function demoCapRowMatches(
     return true;
   }
   if (key.invoiceId) return String(payload.invoiceId || "") === key.invoiceId;
-  const want = toWhatsAppRecipient(key.phone).slice(-10);
-  const have = toWhatsAppRecipient(String(row.patient_phone || "")).slice(-10);
+  const want = toWhatsAppRecipient(key.phone);
+  const have = toWhatsAppRecipient(String(row.patient_phone || ""));
   return Boolean(want) && want === have;
 }
 

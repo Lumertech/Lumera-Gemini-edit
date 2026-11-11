@@ -178,7 +178,7 @@ export const VoiceSettingsPanel: React.FC = () => {
         body: JSON.stringify({
           message: testQuery,
           callerName: 'Patient Test',
-          callerPhone: '+919999973271',
+          callerPhone: '+919000000001',
         }),
       });
 

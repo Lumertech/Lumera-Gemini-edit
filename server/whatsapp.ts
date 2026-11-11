@@ -1762,7 +1762,7 @@ export async function processBotActionOrQuery(
       : ["📅 Book Appointment", "⏰ Doctor Schedule", "📞 Call Helpline"];
 
     return {
-      content: `${greetingHeader}📍 *${clinicNames.clinicName} — Location & Directions*\n\n🏥 *Address*: 104-106, Health Hub, Sector 14, Opposite Metro Station, Gurgaon, Haryana 122001\n📌 *Landmark*: Next to Central Bank, Metro Pillar #42\n🚗 *Parking*: Dedicated patient parking available on-site\n🗺️ *Google Maps*: https://maps.google.com/?q=${encodeURIComponent(clinicNames.clinicName)}\n\n🕒 *OPD Working Hours*: Monday – Saturday: 09:00 AM – 08:00 PM | Sunday: 10:00 AM – 02:00 PM\n📞 *Front Desk / Helpline*: +91 99999 73271${doctorNote}`,
+      content: `${greetingHeader}📍 *${clinicNames.clinicName} — Location & Directions*\n\n🏥 *Address*: 104-106, Health Hub, Sector 14, Opposite Metro Station, Gurgaon, Haryana 122001\n📌 *Landmark*: Next to Central Bank, Metro Pillar #42\n🚗 *Parking*: Dedicated patient parking available on-site\n🗺️ *Google Maps*: https://maps.google.com/?q=${encodeURIComponent(clinicNames.clinicName)}\n\n🕒 *OPD Working Hours*: Monday – Saturday: 09:00 AM – 08:00 PM | Sunday: 10:00 AM – 02:00 PM\n📞 *Front Desk / Helpline*: +91 90000 00001${doctorNote}`,
       buttons: actionButtons,
     };
   }
@@ -1799,7 +1799,7 @@ export async function processBotActionOrQuery(
   ) {
     const greetingHeader = isRegistered && firstName ? `Hello ${firstName}! 🙏 ` : "";
     return {
-      content: `${greetingHeader}📞 *${clinicNames.clinicName} — Contact & Reception Desk*\n\n☎️ *Reception & Appointments*: +91 99999 73271\n💬 *WhatsApp Assistant*: 24/7 Automated Booking & EMR Records\n📧 *Email Support*: support@apexpolyclinic.com\n📍 *Address*: 104-106, Health Hub, Sector 14, Gurgaon\n\n🕒 *Front Desk Staff Available*: 09:00 AM – 08:00 PM (Mon–Sat)\n\nHow can our team assist you today?`,
+      content: `${greetingHeader}📞 *${clinicNames.clinicName} — Contact & Reception Desk*\n\n☎️ *Reception & Appointments*: +91 90000 00001\n💬 *WhatsApp Assistant*: 24/7 Automated Booking & EMR Records\n📧 *Email Support*: support@apexpolyclinic.com\n📍 *Address*: 104-106, Health Hub, Sector 14, Gurgaon\n\n🕒 *Front Desk Staff Available*: 09:00 AM – 08:00 PM (Mon–Sat)\n\nHow can our team assist you today?`,
       buttons: ["📅 Book Appointment", "⏰ Doctor Schedule", "📍 Clinic Location", "👤 Speak with Receptionist"],
     };
   }
@@ -1884,7 +1884,7 @@ export async function processBotActionOrQuery(
     q.includes("आपातकालीन")
   ) {
     return {
-      content: `🚨 *EMERGENCY MEDICAL NOTICE*\n\nIf you or a patient are experiencing a life-threatening medical emergency (such as severe chest pain, acute shortness of breath, sudden paralysis, uncontrolled bleeding, or loss of consciousness):\n\n🚑 *Call National Emergency Ambulance*: *108* or *112* immediately.\n🏥 *Nearest 24/7 ER*: Please proceed directly to the nearest hospital emergency department.\n\n📞 *${clinicNames.clinicName} Urgent Line*: +91 99999 73271\nOur clinic is open for outpatient appointments today. For urgent consultations, please tap below:`,
+      content: `🚨 *EMERGENCY MEDICAL NOTICE*\n\nIf you or a patient are experiencing a life-threatening medical emergency (such as severe chest pain, acute shortness of breath, sudden paralysis, uncontrolled bleeding, or loss of consciousness):\n\n🚑 *Call National Emergency Ambulance*: *108* or *112* immediately.\n🏥 *Nearest 24/7 ER*: Please proceed directly to the nearest hospital emergency department.\n\n📞 *${clinicNames.clinicName} Urgent Line*: +91 90000 00001\nOur clinic is open for outpatient appointments today. For urgent consultations, please tap below:`,
       buttons: ["📅 Book Urgent Slot", "📍 Clinic Location", "📞 Call Helpline"],
     };
   }

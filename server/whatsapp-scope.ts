@@ -29,7 +29,7 @@ export function listTenantConversations(tenantId: string) {
     .all(tenantId) as Record<string, unknown>[];
 }
 
-/** Last-10 digits so "+91 99999 73271" and "+919999973271" compare equal in SQL. */
+/** Last-10 digits so "+91 90000 00001" and "+919000000001" compare equal in SQL. */
 function phoneLast10Sql(column: string): string {
   const digits = `replace(replace(replace(replace(${column}, '+', ''), ' ', ''), '-', ''), '(', '')`;
   return `substr(${digits}, length(${digits}) - 9, 10)`;
