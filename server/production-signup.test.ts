@@ -6,7 +6,7 @@ import { getDb, initDatabase } from "./db.ts";
 import { createLiveRegistrationRouter } from "./live-registration-routes.ts";
 import { hashOtp, otpMatches } from "./otp-hash.ts";
 import { resetSendOtpRateLimits } from "./otp-rate-limit.ts";
-import { RAZORPAY_PLAN_ENV, maybeStartTrialIfPending } from "./trial-lifecycle.ts";
+import { RAZORPAY_PLAN_ENV, maybeStartTrialIfPending, recordPlanCheckout, settlePlanCheckoutWebhook } from "./trial-lifecycle.ts";
 import { jsonRequest, startTestServer, type TestHttpServer } from "./test-http.ts";
 import { upsertTenantSubscription } from "./platform-tenants-schema.ts";
 
@@ -206,9 +206,143 @@ describe("production signup trial", () => {
     assert.equal(maybeStartTrialIfPending(getDb(), userId), null);
     const socialPhone = `+9166${String(Date.now()).slice(-8)}`;
     getDb().prepare("UPDATE users SET phone = ?, whatsapp_verified = 1 WHERE id = ?").run(socialPhone, userId);
+    assert.equal(maybeStartTrialIfPending(getDb(), userId), null);
+    getDb().prepare("UPDATE users SET phone_otp_verified_at = ? WHERE id = ?").run(new Date().toISOString(), userId);
     const started = maybeStartTrialIfPending(getDb(), userId);
     assert.equal(started?.ok, true);
     const row = getDb().prepare("SELECT lifecycle_status FROM tenants WHERE id = ?").get(tenantId) as { lifecycle_status: string };
     assert.equal(row.lifecycle_status, "trial");
+  });
+
+  it("does not let a register OTP or updatedPhone rewrite another clinic", async () => {
+    const stamp = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+    const victimId = `tenant-victim-${stamp}`;
+    const now = new Date().toISOString();
+    const future = new Date(Date.now() + 20 * 24 * 60 * 60 * 1000).toISOString();
+    getDb()
+      .prepare(
+        `INSERT INTO tenants (id, name, specialty, country, timezone, phone, trial_ends_at, ai_scribe_minutes_limit, ai_scribe_minutes_used, active_status, hfr_id, created_at, updated_at, lifecycle_status)
+         VALUES (?, 'Victim Clinic', 'General Medicine', 'India', 'IST (UTC+5:30)', '+919000000001', ?, 500, 0, 1, '', ?, ?, 'active')`
+      )
+      .run(victimId, future, now, now);
+    const otp = "135791";
+    const attackerPhone = `+9188${String(Date.now()).slice(-8)}`;
+    const verificationId = crypto.randomUUID();
+    getDb()
+      .prepare(
+        `INSERT INTO otp_verifications (id, phone, email, otp, purpose, payload, created_at, expires_at)
+         VALUES (?, ?, ?, ?, 'register', ?, ?, ?)`
+      )
+      .run(
+        verificationId,
+        attackerPhone,
+        `attacker.${stamp}@signup-test.example`,
+        otp,
+        JSON.stringify({ tenantId: victimId, phone: attackerPhone, email: `attacker.${stamp}@signup-test.example`, name: "Attacker" }),
+        now,
+        new Date(Date.now() + 5 * 60 * 1000).toISOString()
+      );
+    const res = await jsonRequest(server.port, "POST", "/api/auth/whatsapp/verify-otp", {
+      verificationId,
+      otp,
+      updatedPhone: "+919000000001",
+    });
+    assert.equal(res.status, 200, String(res.json.error || res.status));
+    assert.notEqual(res.json.tenantId, victimId);
+    const victim = getDb().prepare("SELECT lifecycle_status, phone FROM tenants WHERE id = ?").get(victimId) as {
+      lifecycle_status: string;
+      phone: string;
+    };
+    assert.equal(victim.lifecycle_status, "active");
+    assert.equal(victim.phone, "+919000000001");
+  });
+
+  it("does not replace a paid clinic when a patient verifies a trial phone", async () => {
+    const stamp = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+    const tenantId = `tenant-paid-${stamp}`;
+    const userId = `user-paid-${stamp}`;
+    const email = `paid.${stamp}@signup-test.example`;
+    const now = new Date().toISOString();
+    const future = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    getDb()
+      .prepare(
+        `INSERT INTO tenants (id, name, specialty, country, timezone, phone, trial_ends_at, ai_scribe_minutes_limit, ai_scribe_minutes_used, active_status, hfr_id, created_at, updated_at, lifecycle_status)
+         VALUES (?, 'Paid Clinic', 'General Medicine', 'India', 'IST (UTC+5:30)', '+919222200011', ?, 500, 0, 1, '', ?, ?, 'active')`
+      )
+      .run(tenantId, future, now, now);
+    getDb()
+      .prepare(
+        `INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, clinic_name, created_at)
+         VALUES (?, ?, ?, 'x', 'Patient', 'patient', 'active', '+919222200011', 'Paid Clinic', ?)`
+      )
+      .run(userId, tenantId, email, now);
+    upsertTenantSubscription(getDb(), tenantId, {
+      planCode: "clinic",
+      status: "active",
+      billingSource: "manual",
+      endsAt: future,
+    });
+    const token = signJwtToken({ userId, tenantId, email, role: "patient", name: "Patient" });
+    const otp = "246801";
+    const verificationId = crypto.randomUUID();
+    getDb()
+      .prepare(
+        `INSERT INTO otp_verifications (id, phone, email, otp, purpose, payload, created_at, expires_at)
+         VALUES (?, '+919333300022', ?, ?, 'trial_phone', ?, ?, ?)`
+      )
+      .run(verificationId, email, otp, JSON.stringify({ userId, tenantId }), now, new Date(Date.now() + 5 * 60 * 1000).toISOString());
+    const res = await authed(server.port, "POST", "/api/auth/trial-phone/verify", token, { verificationId, otp });
+    assert.equal(res.status, 403);
+    const sub = getDb().prepare("SELECT status, plan_code FROM tenant_subscriptions WHERE tenant_id = ?").get(tenantId) as {
+      status: string;
+      plan_code: string;
+    };
+    assert.equal(sub.status, "active");
+    assert.equal(sub.plan_code, "clinic");
+  });
+
+  it("activates a plan only for a server order paid in full", () => {
+    const stamp = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+    const tenantId = `tenant-pay-${stamp}`;
+    const now = new Date().toISOString();
+    getDb()
+      .prepare(
+        `INSERT INTO tenants (id, name, specialty, country, timezone, phone, trial_ends_at, ai_scribe_minutes_limit, ai_scribe_minutes_used, active_status, hfr_id, created_at, updated_at, lifecycle_status)
+         VALUES (?, 'Pay Clinic', 'General Medicine', 'India', 'IST (UTC+5:30)', '+919444400033', ?, 500, 0, 1, '', ?, ?, 'trial')`
+      )
+      .run(tenantId, now, now, now);
+    const orderId = `order_plan_${stamp}`;
+    recordPlanCheckout(getDb(), {
+      orderId,
+      tenantId,
+      planCode: "polyclinic",
+      cycle: "monthly",
+      amountPaise: 790482,
+    });
+    const noted = settlePlanCheckoutWebhook(getDb(), {
+      event: "payment.captured",
+      payload: {
+        payment: {
+          entity: {
+            id: "pay_small",
+            amount: 100,
+            order_id: orderId,
+            notes: { purpose: "plan_subscription", tenant_id: "tenant-other", plan_code: "polyclinic", cycle: "annual" },
+          },
+        },
+      },
+    });
+    assert.equal(noted.matched, true);
+    assert.equal(noted.ok, false);
+    const unpaid = getDb().prepare("SELECT lifecycle_status FROM tenants WHERE id = ?").get(tenantId) as { lifecycle_status: string };
+    assert.equal(unpaid.lifecycle_status, "trial");
+    const paid = settlePlanCheckoutWebhook(getDb(), {
+      event: "payment.captured",
+      payload: { payment: { entity: { id: "pay_full", amount: 790482, order_id: orderId, notes: { purpose: "wallet_topup" } } } },
+    });
+    assert.equal(paid.matched, true);
+    assert.equal(paid.ok, true);
+    const row = getDb().prepare("SELECT lifecycle_status FROM tenants WHERE id = ?").get(tenantId) as { lifecycle_status: string };
+    assert.equal(row.lifecycle_status, "active");
   });
 });

@@ -66,7 +66,23 @@ function findClaim(database: SqlDatabase, column: "email_key" | "phone_key", val
 
 export type TrialStartResult =
   | { ok: true; trialEndsAt: string; alreadyStarted: boolean }
-  | { ok: false; code: "repeat_trial"; error: string };
+  | { ok: false; code: "repeat_trial" | "not_pending"; error: string };
+
+const NOT_PENDING_ERROR = "This clinic cannot start a free trial.";
+
+export function ensurePhoneOtpColumn(database: SqlDatabase) {
+  try {
+    database.exec("ALTER TABLE users ADD COLUMN phone_otp_verified_at TEXT NOT NULL DEFAULT ''");
+  } catch {
+    /* column already present */
+  }
+}
+
+/** Set only after a WhatsApp OTP for this user. Password login must not set it. */
+export function markPhoneOtpVerified(database: SqlDatabase, userId: string, at = new Date().toISOString()) {
+  ensurePhoneOtpColumn(database);
+  database.prepare("UPDATE users SET phone_otp_verified_at = ? WHERE id = ?").run(at, userId);
+}
 
 /**
  * Starts the 7-day trial after a verified WhatsApp number.
@@ -83,6 +99,13 @@ export function beginVerifiedWhatsAppTrial(
   const phone = phoneKey(input.phone, tenantId);
   if (!tenantId || !email || !phone) {
     return { ok: false, code: "repeat_trial", error: REPEAT_TRIAL_ERROR };
+  }
+  const tenant = database.prepare("SELECT lifecycle_status FROM tenants WHERE id = ?").get(tenantId) as
+    | { lifecycle_status?: string }
+    | undefined;
+  const lifecycle = String(tenant?.lifecycle_status || "");
+  if (!tenant || lifecycle !== PENDING_VERIFICATION) {
+    return { ok: false, code: "not_pending", error: NOT_PENDING_ERROR };
   }
   if (isSandboxOrDemoTenant(database as unknown as DatabaseSync, tenantId)) {
     const existing = database.prepare("SELECT trial_ends_at FROM tenants WHERE id = ?").get(tenantId) as
@@ -139,10 +162,11 @@ export function beginVerifiedWhatsAppTrial(
 
 /** Social sign-on does not start a trial until this clinic's WhatsApp number is verified. */
 export function maybeStartTrialIfPending(database: SqlDatabase, userId: string): TrialStartResult | null {
+  ensurePhoneOtpColumn(database);
   const user = database
-    .prepare("SELECT id, tenant_id, email, phone, whatsapp_verified, role FROM users WHERE id = ?")
+    .prepare("SELECT id, tenant_id, email, phone, phone_otp_verified_at, role FROM users WHERE id = ?")
     .get(userId) as
-    | { id: string; tenant_id?: string; email?: string; phone?: string; whatsapp_verified?: number; role?: string }
+    | { id: string; tenant_id?: string; email?: string; phone?: string; phone_otp_verified_at?: string; role?: string }
     | undefined;
   if (!user?.tenant_id) return null;
   if (user.role === "patient" || user.role === "super_admin") return null;
@@ -150,7 +174,7 @@ export function maybeStartTrialIfPending(database: SqlDatabase, userId: string):
     | { lifecycle_status?: string }
     | undefined;
   if (String(tenant?.lifecycle_status || "") !== PENDING_VERIFICATION) return null;
-  if (!Number(user.whatsapp_verified)) return null;
+  if (!String(user.phone_otp_verified_at || "").trim()) return null;
   return beginVerifiedWhatsAppTrial(database, {
     tenantId: user.tenant_id,
     email: String(user.email || ""),
@@ -242,6 +266,81 @@ export function describeTrialAccess(database: SqlDatabase, tenantId: string, now
   };
 }
 
+export function ensurePlanCheckoutTable(database: SqlDatabase) {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS plan_checkouts (
+      order_id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      plan_code TEXT NOT NULL,
+      cycle TEXT NOT NULL,
+      amount_paise INTEGER NOT NULL,
+      payment_id TEXT NOT NULL DEFAULT '',
+      paid_at TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL
+    );
+  `);
+}
+
+export function recordPlanCheckout(
+  database: SqlDatabase,
+  row: { orderId: string; tenantId: string; planCode: string; cycle: string; amountPaise: number }
+) {
+  ensurePlanCheckoutTable(database);
+  database
+    .prepare(
+      `INSERT INTO plan_checkouts (order_id, tenant_id, plan_code, cycle, amount_paise, payment_id, paid_at, created_at)
+       VALUES (?, ?, ?, ?, ?, '', '', ?)`
+    )
+    .run(row.orderId, row.tenantId, row.planCode, row.cycle, Math.round(row.amountPaise), new Date().toISOString());
+}
+
+/**
+ * Activates a plan only for an order this server created, and only when the
+ * Razorpay entity amount covers that order. Payment notes are ignored.
+ */
+export function settlePlanCheckoutWebhook(
+  database: SqlDatabase,
+  payload: unknown
+): { matched: false } | { matched: true; ok: true } | { matched: true; ok: false; status: number; error: string } {
+  ensurePlanCheckoutTable(database);
+  if (!payload || typeof payload !== "object") return { matched: false };
+  const body = payload as {
+    event?: string;
+    payload?: {
+      payment?: { entity?: Record<string, unknown> };
+      order?: { entity?: Record<string, unknown> };
+    };
+  };
+  const event = String(body.event || "");
+  if (event && event !== "payment.captured" && event !== "order.paid" && event !== "payment_link.paid") {
+    return { matched: false };
+  }
+  const payment = body.payload?.payment?.entity;
+  const order = body.payload?.order?.entity;
+  const orderId = String(payment?.order_id || order?.id || "").trim();
+  if (!orderId) return { matched: false };
+  const intent = database
+    .prepare("SELECT order_id, tenant_id, plan_code, cycle, amount_paise, paid_at FROM plan_checkouts WHERE order_id = ?")
+    .get(orderId) as
+    | { order_id: string; tenant_id: string; plan_code: string; cycle: string; amount_paise: number; paid_at: string }
+    | undefined;
+  if (!intent) return { matched: false };
+  if (String(intent.paid_at || "").trim()) return { matched: true, ok: true };
+  const amountPaise = Number(payment?.amount ?? order?.amount ?? 0);
+  if (!Number.isFinite(amountPaise) || amountPaise < Number(intent.amount_paise)) {
+    return { matched: true, ok: false, status: 400, error: "Payment amount does not match the clinic plan order." };
+  }
+  const paymentId = String(payment?.id || "").trim();
+  activatePaidPlan(database, {
+    tenantId: intent.tenant_id,
+    planCode: intent.plan_code,
+    cycle: intent.cycle,
+    paymentId,
+  });
+  database.prepare("UPDATE plan_checkouts SET payment_id = ?, paid_at = ? WHERE order_id = ?").run(paymentId, new Date().toISOString(), orderId);
+  return { matched: true, ok: true };
+}
+
 export function extendTenantTrial(database: SqlDatabase, tenantId: string, endsAt: string) {
   const now = new Date().toISOString();
   database
@@ -263,7 +362,7 @@ export function activatePaidPlan(
   const days = cycle === "annual" ? 365 : 30;
   const now = new Date();
   const endsAt = new Date(now.getTime() + days * MS_DAY).toISOString();
-  const planCode = input.planCode === "polyclinic" ? "polyclinic" : "individual";
+  const planCode = input.planCode === "polyclinic" ? "clinic" : input.planCode === "individual" ? "professional" : input.planCode;
   upsertTenantSubscription(database, input.tenantId, {
     planCode,
     status: "active",

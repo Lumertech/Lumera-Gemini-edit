@@ -14,7 +14,11 @@ import {
   REPEAT_TRIAL_ERROR,
   beginVerifiedWhatsAppTrial,
   describeTrialAccess,
+  markPhoneOtpVerified,
+  recordPlanCheckout,
 } from "./trial-lifecycle.ts";
+
+const TRIAL_PHONE_ROLES = new Set(["doctor", "CLINIC_ADMIN", "polyclinic_admin"]);
 
 function planSelection(body: Record<string, unknown> | undefined): { planCode: "individual" | "polyclinic"; cycle: "monthly" | "annual" } | { error: string } {
   const planCode = String(body?.planCode || body?.plan || "individual").trim().toLowerCase();
@@ -76,6 +80,13 @@ export function createTrialRouter(): Router {
       cycle: selection.cycle,
     });
     if (created.ok === false) return res.status(502).json({ error: created.error, configured: true, paid: false });
+    recordPlanCheckout(getDb(), {
+      orderId: created.orderId,
+      tenantId,
+      planCode: selection.planCode,
+      cycle: selection.cycle,
+      amountPaise,
+    });
     writeAudit(getDb(), req.user?.id || null, "Clinic account", "Plan checkout started", `tenant=${tenantId} plan=${selection.planCode}`);
     return res.json({
       configured: true,
@@ -93,6 +104,9 @@ export function createTrialRouter(): Router {
   });
 
   api.post("/auth/trial-phone/send", requireAuth, async (req: Request, res: Response) => {
+    if (!TRIAL_PHONE_ROLES.has(String(req.user?.role || ""))) {
+      return res.status(403).json({ error: "Only the clinic account can verify the trial phone." });
+    }
     const phone = String(req.body?.phone || req.user?.phone || "").trim();
     const email = String(req.user?.email || "").trim().toLowerCase();
     if (!phoneMatchKey(phone)) return res.status(400).json({ error: "Enter a WhatsApp mobile number." });
@@ -140,6 +154,9 @@ export function createTrialRouter(): Router {
   });
 
   api.post("/auth/trial-phone/verify", requireAuth, (req: Request, res: Response) => {
+    if (!TRIAL_PHONE_ROLES.has(String(req.user?.role || ""))) {
+      return res.status(403).json({ error: "Only the clinic account can verify the trial phone." });
+    }
     const verificationId = String(req.body?.verificationId || "").trim();
     const inputOtp = String(req.body?.otp || "").trim();
     if (!verificationId || !inputOtp) {
@@ -165,17 +182,21 @@ export function createTrialRouter(): Router {
     if (payload.userId && payload.userId !== req.user?.id) {
       return res.status(400).json({ error: "Invalid or expired verification session. Please request a new OTP." });
     }
-    const tenantId = String(payload.tenantId || req.user?.tenantId || "");
+    const tenantId = String(req.user?.tenantId || "");
     const now = new Date().toISOString();
     getDb().prepare("UPDATE otp_verifications SET verified_at = ? WHERE id = ?").run(now, verificationId);
     getDb().prepare("UPDATE users SET phone = ?, whatsapp_verified = 1 WHERE id = ?").run(record.phone, req.user?.id);
+    markPhoneOtpVerified(getDb(), String(req.user?.id || ""), now);
     const started = beginVerifiedWhatsAppTrial(getDb(), {
       tenantId,
       email: String(req.user?.email || record.email || ""),
       phone: record.phone,
       userId: req.user?.id,
     });
-    if (started.ok === false) return res.status(409).json({ error: REPEAT_TRIAL_ERROR, code: started.code, trialStarted: false });
+    if (started.ok === false) {
+      const status = started.code === "not_pending" ? 403 : 409;
+      return res.status(status).json({ error: started.error, code: started.code, trialStarted: false });
+    }
     return res.json({
       ok: true,
       trialStarted: true,

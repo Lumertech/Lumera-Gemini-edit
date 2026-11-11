@@ -257,6 +257,17 @@ export const plans = pgTable("plans", {
   sortOrder: integer("sort_order").notNull().default(0),
 });
 
+export const planCheckouts = pgTable("plan_checkouts", {
+  orderId: text("order_id").primaryKey(),
+  tenantId: text("tenant_id").notNull(),
+  planCode: text("plan_code").notNull(),
+  cycle: text("cycle").notNull(),
+  amountPaise: integer("amount_paise").notNull(),
+  paymentId: text("payment_id").notNull().default(""),
+  paidAt: text("paid_at").notNull().default(""),
+  createdAt: text("created_at").notNull(),
+});
+
 export const trialClaims = pgTable("trial_claims", {
   id: text("id").primaryKey(),
   emailKey: text("email_key").notNull(),
@@ -315,4 +326,5 @@ export const LUMERA_TABLE_NAMES = [
   "plans",
   "tenant_subscriptions",
   "trial_claims",
+  "plan_checkouts",
 ] as const;

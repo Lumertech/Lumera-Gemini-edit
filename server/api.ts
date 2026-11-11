@@ -85,6 +85,7 @@ import {
   REPEAT_TRIAL_ERROR,
   beginVerifiedWhatsAppTrial,
   extendTenantTrial,
+  markPhoneOtpVerified,
   maybeStartTrialIfPending,
 } from "./trial-lifecycle.ts";
 import { rejectWrongOtp, reserveOtpSend, sendOtpLimited } from "./otp-attempt.ts";
@@ -1102,14 +1103,23 @@ export function createApiRouter(): Router {
       const specialty = mappedRegisterSpecialty.ok ? mappedRegisterSpecialty.id : "gp";
       const country = payload.country || "India";
       const timezone = payload.timezone || "IST (UTC+5:30)";
-      const phone = record.phone || payload.phone || "";
+      const phone = String(record.phone || "").trim();
       const name = payload.name || "Practice Director";
       const email = record.email || payload.email || "";
       const passwordHash = payload.passwordHash || hashPassword("Lumera@2026");
       const avatarUrl = payload.avatarUrl || "";
 
-      let tenantId = payload.tenantId;
-      let userId = payload.userId;
+      let tenantId = String(payload.tenantId || "").trim();
+      let userId = String(payload.userId || "").trim();
+      const pendingTenant = tenantId
+        ? (getDb().prepare("SELECT lifecycle_status FROM tenants WHERE id = ?").get(tenantId) as
+            | { lifecycle_status?: string }
+            | undefined)
+        : undefined;
+      if (String(pendingTenant?.lifecycle_status || "") !== PENDING_VERIFICATION) {
+        tenantId = "";
+        userId = "";
+      }
       let hfrId = payload.hfrId;
       let hprId = payload.hprId;
 
@@ -1123,9 +1133,7 @@ export function createApiRouter(): Router {
         getDb().prepare(`
           INSERT INTO tenants (id, name, specialty, country, timezone, phone, trial_ends_at, ai_scribe_minutes_limit, ai_scribe_minutes_used, active_status, hfr_id, created_at, updated_at, lifecycle_status)
           VALUES (?, ?, ?, ?, ?, ?, ?, 500, 0, 1, ?, ?, ?, ?)
-        `).run(tenantId, practiceName, specialty, country, timezone, updatedPhone || phone, trialEndsAt, hfrId, now, now, PENDING_VERIFICATION);
-      } else if (updatedPhone) {
-        getDb().prepare("UPDATE tenants SET phone = ?, updated_at = ? WHERE id = ?").run(updatedPhone, now, tenantId);
+        `).run(tenantId, practiceName, specialty, country, timezone, phone, trialEndsAt, hfrId, now, now, PENDING_VERIFICATION);
       }
 
       // Ensure DHIS transactions entry exists
@@ -1148,6 +1156,10 @@ export function createApiRouter(): Router {
         existingUser = getDb().prepare("SELECT * FROM users WHERE email = ?").get(email) as unknown as DbUser | undefined;
       }
 
+      if (existingUser && String(existingUser.tenant_id || "") && String(existingUser.tenant_id) !== tenantId) {
+        return res.status(400).json({ error: "Invalid or expired verification session. Please request a new OTP." });
+      }
+
       if (!existingUser) {
         userId = `user-${crypto.randomUUID().slice(0, 8)}`;
         hprId = hprId || `IN-HPR-${Math.floor(10000000 + Math.random() * 90000000)}`;
@@ -1160,7 +1172,7 @@ export function createApiRouter(): Router {
           email,
           passwordHash,
           name,
-          updatedPhone || phone,
+          phone,
           practiceName,
           avatarUrl,
           hprId,
@@ -1183,7 +1195,7 @@ export function createApiRouter(): Router {
               hpr_id = COALESCE(NULLIF(hpr_id, ''), ?),
               hfr_id = COALESCE(NULLIF(hfr_id, ''), ?)
           WHERE id = ?
-        `).run(tenantId, practiceName, updatedPhone || phone, now, hprId, hfrId, userId);
+        `).run(tenantId, practiceName, phone, now, hprId, hfrId, userId);
       }
 
       // Ensure Doctor entry exists for EHR suite (blank credentials until onboarding)
@@ -1200,19 +1212,21 @@ export function createApiRouter(): Router {
           specialty,
           avatarUrl,
           hprId,
-          updatedPhone || phone,
+          phone,
           email
         );
       }
 
+      markPhoneOtpVerified(getDb(), String(userId || ""), now);
       const started = beginVerifiedWhatsAppTrial(getDb(), {
         tenantId,
         email,
-        phone: updatedPhone || phone,
+        phone,
         userId,
       });
       if (started.ok === false) {
-        return res.status(409).json({ error: REPEAT_TRIAL_ERROR, code: started.code, trialStarted: false });
+        const status = started.code === "not_pending" ? 403 : 409;
+        return res.status(status).json({ error: started.error, code: started.code, trialStarted: false });
       }
 
       const updatedUser = getDb().prepare("SELECT * FROM users WHERE id = ?").get(userId) as unknown as DbUser;

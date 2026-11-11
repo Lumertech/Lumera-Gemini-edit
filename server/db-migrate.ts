@@ -528,6 +528,23 @@ export function migrate(database: SqlDatabase) {
   `);
   database.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_trial_claims_email ON trial_claims(email_key)");
   database.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_trial_claims_phone ON trial_claims(phone_key)");
+  try {
+    database.exec("ALTER TABLE users ADD COLUMN phone_otp_verified_at TEXT NOT NULL DEFAULT ''");
+  } catch {
+    /* column already present */
+  }
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS plan_checkouts (
+      order_id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      plan_code TEXT NOT NULL,
+      cycle TEXT NOT NULL,
+      amount_paise INTEGER NOT NULL,
+      payment_id TEXT NOT NULL DEFAULT '',
+      paid_at TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL
+    );
+  `);
 }
 
 /**
