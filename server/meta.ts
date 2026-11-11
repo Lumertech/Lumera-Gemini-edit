@@ -1,6 +1,6 @@
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { isPlatformAdminRole, requireAuth } from "./auth.ts";
-import { confirmPatientWhatsAppReconsent, isWhatsAppOptInMessage, isWhatsAppOptOutMessage, recordWhatsAppOptIn } from "./whatsapp-opt-in.ts";
+import { isWhatsAppOptOutMessage, recordWhatsAppOptIn } from "./whatsapp-opt-in.ts";
 import { findDataDeletionRequest, getDb } from "./db.ts";
 import { appPublicUrl, envFlag, isProduction, readSecret, sandboxSimulatorsEnabled } from "./runtime.ts";
 import { reportCaughtError } from "./error-tracker.ts";
@@ -1070,20 +1070,13 @@ export function createMetaRouter(): Router {
                      "[Media/Attachment]");
 
                   const inboundText = String(textBody || "");
-                  const optKeyword = isWhatsAppOptOutMessage(inboundText) || isWhatsAppOptInMessage(inboundText);
-                  if (isWhatsAppOptOutMessage(inboundText)) {
+                  const optKeyword = isWhatsAppOptOutMessage(inboundText);
+                  if (optKeyword) {
                     recordWhatsAppOptIn(db, {
                       tenantId: inboundTenantId,
                       phone: fromPhone,
                       optedIn: false,
                       source: "stop",
-                    });
-                  } else if (isWhatsAppOptInMessage(inboundText)) {
-                    confirmPatientWhatsAppReconsent(db, {
-                      tenantId: inboundTenantId,
-                      phone: fromPhone,
-                      source: "start",
-                      patientConfirmed: true,
                     });
                   }
 
