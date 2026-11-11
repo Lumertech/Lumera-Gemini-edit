@@ -150,9 +150,17 @@ export function detectIndicBooking(message: string): boolean {
 
 function inboundVoiceAccess(req: Request): { tenantId: string; authenticated: boolean } | null {
   const sessionTenant = String(req.user?.tenantId || "").trim();
-  const authenticated = Boolean(req.user && sessionTenant);
-  if (!authenticated && !voiceGatewayAuthorized(req.get("x-voice-gateway-secret"))) return null;
-  if (authenticated) return { tenantId: sessionTenant, authenticated: true };
+  const role = String(req.user?.role || "");
+  // These routes skip cookie CSRF. A patient session must not drive booking or
+  // clinic WhatsApp sends. Only a clinic staff session may stand in for the gateway.
+  const staffSession = Boolean(
+    req.user &&
+      sessionTenant &&
+      role !== "patient" &&
+      (CLINICIAN_ROLES as readonly string[]).includes(role)
+  );
+  if (staffSession) return { tenantId: sessionTenant, authenticated: true };
+  if (!voiceGatewayAuthorized(req.get("x-voice-gateway-secret"))) return null;
   const body = (req.body || {}) as {
     phoneNumberId?: unknown;
     phone_number_id?: unknown;

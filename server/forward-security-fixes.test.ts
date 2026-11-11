@@ -256,6 +256,46 @@ describe("forward security and voice fixes", () => {
     }
   });
 
+  it("rejects a patient session on the voice route and keeps staff on their own clinic", async () => {
+    const suffix = `${Date.now().toString(36)}staff`;
+    const tenantA = `tenant-staff-a-${suffix}`;
+    const tenantB = `tenant-staff-b-${suffix}`;
+    seedTenant(tenantA, { name: "Staff Clinic", phoneNumberId: `1888${suffix.slice(-8)}` });
+    seedTenant(tenantB, { name: "Other Clinic", phoneNumberId: `1999${suffix.slice(-8)}` });
+    getDb().prepare("UPDATE tenants SET address = '1 Staff Road', city = 'Pune' WHERE id = ?").run(tenantA);
+    getDb().prepare("UPDATE tenants SET address = '9 Other Road', city = 'Delhi' WHERE id = ?").run(tenantB);
+    const doctor = seedUser({ id: `user-staff-doc-${suffix}`, tenantId: tenantA, role: "doctor", email: `staff.doc.${suffix}@example.com` });
+    const patient = seedUser({ id: `user-staff-pt-${suffix}`, tenantId: tenantA, role: "patient", email: `staff.pt.${suffix}@example.com` });
+    const phoneB = `1999${suffix.slice(-8)}`;
+    process.env.NODE_ENV = "production";
+    process.env.VOICE_GATEWAY_SECRET = "voice-line-secret";
+    try {
+      const asPatient = await jsonRequest(
+        port,
+        "POST",
+        "/api/voice/inbound",
+        { from: "+919111122233", message: "Where is the clinic located?", phoneNumberId: phoneB },
+        { Authorization: `Bearer ${patient}` }
+      );
+      assert.equal(asPatient.status, 403);
+      const asDoctor = await jsonRequest(
+        port,
+        "POST",
+        "/api/voice/inbound",
+        { from: "+919111122233", message: "Where is the clinic located?", phoneNumberId: phoneB },
+        { Authorization: `Bearer ${doctor}` }
+      );
+      assert.equal(asDoctor.status, 200);
+      assert.match(String(asDoctor.json.speechText), /Staff Clinic|1 Staff Road/);
+      assert.doesNotMatch(String(asDoctor.json.speechText), /Other Clinic|9 Other Road/);
+    } finally {
+      restoreEnv({
+        NODE_ENV: envSnapshot.NODE_ENV,
+        VOICE_GATEWAY_SECRET: envSnapshot.VOICE_GATEWAY_SECRET,
+      });
+    }
+  });
+
   it("creates a callback task when the clinic has no phone and does not invent a Lumera number", async () => {
     const suffix = `${Date.now().toString(36)}b`;
     const tenantId = `tenant-cb-${suffix}`;
@@ -502,6 +542,10 @@ describe("forward security and voice fixes", () => {
     const payload = gateway.slice(gateway.indexOf("payload = {"), gateway.indexOf("logger.info", gateway.indexOf("payload = {")));
     assert.match(payload, /phoneNumberId/);
     assert.doesNotMatch(payload, /tenantId/);
+    assert.match(gateway, /def offer_authorized/);
+    assert.match(gateway, /if not offer_authorized\(request\)/);
+    const meta = fs.readFileSync(path.join(root, "server/meta.ts"), "utf8");
+    assert.match(meta, /X-Voice-Gateway-Secret/);
     assert.doesNotMatch(fs.readFileSync(path.join(root, "deploy/webrtc-voice-gateway/provision-free-vm.sh"), "utf8"), /lumera_webhook_verify_2026/);
   });
 });

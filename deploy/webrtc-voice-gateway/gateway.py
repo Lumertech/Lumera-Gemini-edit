@@ -10,6 +10,7 @@ and cognitively responds in real time using Gemini AI.
 import asyncio
 import base64
 import fractions
+import hmac
 import io
 import json
 import logging
@@ -560,7 +561,22 @@ async def handle_health(request):
         "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     })
 
+def offer_authorized(request) -> bool:
+    """When VOICE_GATEWAY_SECRET is set, only Cloud Run may open a call that will reuse it."""
+    expected = VOICE_GATEWAY_SECRET
+    if not expected:
+        return True
+    provided = request.headers.get("X-Voice-Gateway-Secret", "") or ""
+    expected_b = expected.encode("utf-8")
+    provided_b = provided.encode("utf-8")
+    if len(provided_b) != len(expected_b):
+        hmac.compare_digest(expected_b, expected_b)
+        return False
+    return hmac.compare_digest(provided_b, expected_b)
+
 async def handle_answer_offer(request):
+    if not offer_authorized(request):
+        return web.json_response({"error": "Unauthorized"}, status=403)
     try:
         body = await request.json()
     except Exception:

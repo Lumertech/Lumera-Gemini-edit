@@ -27,7 +27,7 @@ import { processBotActionOrQuery, findRegisteredPatient } from "./whatsapp.ts";
 import { runGeminiVoiceReceptionist } from "./gemini-voice.ts";
 import { getWhatsAppTenantVoiceSettings } from "./whatsapp-numbers-store.ts";
 import { getTenantLetterhead } from "./letterhead.ts";
-import { voiceGatewayAuthorized } from "./voice-gateway-auth.ts";
+import { readVoiceGatewaySecret, voiceGatewayAuthorized } from "./voice-gateway-auth.ts";
 
 /** read and failed are terminal. delivered can still become read. */
 function isPendingOutboundStatus(status: string): boolean {
@@ -373,9 +373,12 @@ export async function handleMetaInboundCallAction(opts: {
       const receptionistName = voiceSettings.receptionistName || "Maya";
       const customGreeting = voiceSettings.customGreeting || "";
 
+      const gatewaySecret = readVoiceGatewaySecret();
+      const gwHeaders: Record<string, string> = { "Content-Type": "application/json" };
+      if (gatewaySecret) gwHeaders["X-Voice-Gateway-Secret"] = gatewaySecret;
       const gwRes = await fetch("http://34.46.39.52:3000/webrtc/answer-offer", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: gwHeaders,
         body: JSON.stringify({
           callId: opts.callId,
           callerPhone: opts.fromPhone || "",
