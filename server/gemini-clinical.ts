@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from "express";
-import { requireAuth } from "./auth.ts";
+import { CLINIC_MANAGER_ROLES, requireAuth, requireRole } from "./auth.ts";
+import { isIndianPhoneNumber } from "../src/lib/indianPhone.ts";
 import { cleanVisitId, hasAmbientScribeConsent, latestOpenConsentForPatient, mountAmbientScribeConsentRoutes, transcribeAppointmentId } from "./ambient-scribe-consent.ts";
 import { maxTranscribeBase64Chars, transcribeJsonParser } from "./json-body.ts";
 import { denyUnlessPrescriber } from "./patient-access.ts";
@@ -280,5 +281,22 @@ export function mountGeminiClinicalRoutes(app: Express) {
   );
 
   mountAmbientScribeConsentRoutes(app);
+  // Runs before the voice-settings handler in gemini-voice.ts. Managers may save;
+  // an escalation number, when present, must be an Indian mobile or landline.
+  app.post(
+    "/api/whatsapp/voice-settings",
+    requireAuth,
+    requireRole(...CLINIC_MANAGER_ROLES),
+    (req: Request, res: Response, next: NextFunction) => {
+      const phone = (req.body as { escalationPhone?: unknown } | undefined)?.escalationPhone;
+      if (typeof phone === "string" && phone.trim() && !isIndianPhoneNumber(phone)) {
+        res.status(400).json({
+          error: "Enter an Indian mobile or landline number, for example +91 98200 11111.",
+        });
+        return;
+      }
+      next();
+    }
+  );
   mountGeminiVoiceRoutes(app, getVertexClient);
 }
