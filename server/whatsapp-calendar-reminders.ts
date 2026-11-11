@@ -338,7 +338,7 @@ export async function dispatchAppointmentReminder(opts: {
     };
   }
   const attempt = decision.attempt;
-  const permanent = attempt >= REMINDER_MAX_ATTEMPTS;
+  let permanent = attempt >= REMINDER_MAX_ATTEMPTS;
   const recordedAt = now.toISOString();
   const template = resolveApprovedClinicTemplate("appointment_reminder", getDb(), opts.tenantId);
   if (!template) {
@@ -396,6 +396,9 @@ export async function dispatchAppointmentReminder(opts: {
     reminderWindow: opts.window,
     sentAt: recordedAt,
   });
+  if (isCloudDispatchFailure(sent) && sent.error.startsWith(WHATSAPP_OPT_IN_REQUIRED)) {
+    permanent = true;
+  }
   return recordCloudDispatch({
     eventType: "appointment_reminder",
     appointment: opts.appointment,
@@ -486,7 +489,7 @@ export async function notifyReceptionBooking(opts: {
     templateName: template.name,
     templateLanguage: template.language,
     templateParameters: [clinicName, doctorName, dateTime, patientFirstName(patientName)],
-    textBody: `${clinicName}: appointment with ${doctorName} on ${dateTime} for ${patientName}`,
+    textBody: `${clinicName}: appointment with ${doctorName} on ${dateTime} for ${patientFirstName(patientName)}`,
     db: getDb(),
     fetchImpl: opts.fetchImpl,
     tenantId: opts.tenantId,

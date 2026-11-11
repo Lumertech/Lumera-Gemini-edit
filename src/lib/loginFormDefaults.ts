@@ -8,7 +8,7 @@ export const REGISTER_PASSWORD_PLACEHOLDER = "Minimum 6 characters";
 const SEEDED_DEMO_EMAILS = new Set([
   "doctor@lumera.me",
   "admin@lumera.me",
-  "rdp9999973271@gmail.com",
+  "demo@example.com",
 ]);
 
 const SEEDED_DEMO_PASSWORDS = new Set(["Lumera@2026"]);

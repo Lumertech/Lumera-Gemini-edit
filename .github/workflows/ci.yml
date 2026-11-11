@@ -56,6 +56,11 @@ jobs:
             echo "That demo phone constant may be imported only from seed and test files."
             exit 1
           fi
+          founder_email=$(printf '%s%s@%s' 'rdp' '9999973271' 'gmail.com')
+          if git grep -n -I -F "$founder_email" -- .; then
+            echo "That personal email must not appear in the repo."
+            exit 1
+          fi
 
       - name: Lint (tsc --noEmit)
         run: npm run lint
