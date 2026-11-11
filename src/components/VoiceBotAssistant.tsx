@@ -81,6 +81,8 @@ export const VoiceBotAssistant: React.FC<VoiceBotAssistantProps> = ({
   const [isProcessing, setIsProcessing] = useState(false);
   const [hasEmergency, setHasEmergency] = useState(false);
   const [deskLoaded, setDeskLoaded] = useState(false);
+  const [settingsHydrated, setSettingsHydrated] = useState(false);
+  const [escalationTouched, setEscalationTouched] = useState(false);
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [customGreeting, setCustomGreeting] = useState('');
   const [escalationPhone, setEscalationPhone] = useState('');
@@ -123,6 +125,8 @@ export const VoiceBotAssistant: React.FC<VoiceBotAssistantProps> = ({
         setVoiceEnabled(settingsRes?.voiceEnabled !== false);
         setCustomGreeting(String(settingsRes?.customGreeting || ''));
         setEscalationPhone(String(settingsRes?.escalationPhone || ''));
+        setEscalationTouched(false);
+        setSettingsHydrated(true);
         const letter = (letterhead?.letterhead || letterhead) as { clinicName?: string; whatsappNumber?: string } | null;
         const name = String(letter?.clinicName || settingsRes?.clinic?.name || '').trim();
         setClinicName(name);
@@ -131,7 +135,10 @@ export const VoiceBotAssistant: React.FC<VoiceBotAssistantProps> = ({
         const published = String(letter?.whatsappNumber || '').trim();
         setWhatsappDisplay(published ? formatIndianPhoneDisplay(published) : '');
       } catch (err) {
-        if (!cancelled) setSettingsError(err instanceof Error ? err.message : 'Could not load voice settings.');
+        if (!cancelled) {
+          setSettingsHydrated(false);
+          setSettingsError(err instanceof Error ? err.message : 'Could not load voice settings.');
+        }
       } finally {
         if (!cancelled) setDeskLoaded(true);
       }
@@ -186,9 +193,9 @@ export const VoiceBotAssistant: React.FC<VoiceBotAssistantProps> = ({
   };
 
   const handleSaveVoiceSettings = async () => {
-    if (!canEdit) return;
+    if (!canEdit || !settingsHydrated) return;
     const phone = escalationPhone.trim();
-    if (phone && !isIndianPhoneNumber(phone)) {
+    if (escalationTouched && phone && !isIndianPhoneNumber(phone)) {
       setSettingsError('Enter an Indian mobile or landline number, for example +91 98200 11111.');
       setSettingsSaved(false);
       return;
@@ -202,7 +209,7 @@ export const VoiceBotAssistant: React.FC<VoiceBotAssistantProps> = ({
         body: JSON.stringify({
           voiceEnabled,
           customGreeting,
-          escalationPhone: phone,
+          ...(escalationTouched ? { escalationPhone: phone } : {}),
         }),
       });
       setSettingsSaved(true);
@@ -362,7 +369,7 @@ export const VoiceBotAssistant: React.FC<VoiceBotAssistantProps> = ({
             <button
               type="button"
               onClick={() => void handleSaveVoiceSettings()}
-              disabled={savingSettings}
+              disabled={savingSettings || !settingsHydrated}
               data-testid="maya-save-voice-settings"
               className="px-3 py-2 rounded-lg bg-blue-600 text-white text-xs font-semibold disabled:opacity-50"
             >
@@ -412,6 +419,7 @@ export const VoiceBotAssistant: React.FC<VoiceBotAssistantProps> = ({
             value={escalationPhone}
             disabled={!canEdit}
             onChange={(e) => {
+              setEscalationTouched(true);
               setEscalationPhone(e.target.value);
               setSettingsSaved(false);
             }}

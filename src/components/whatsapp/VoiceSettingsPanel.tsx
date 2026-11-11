@@ -54,6 +54,8 @@ export const VoiceSettingsPanel: React.FC = () => {
   const { go } = useNav();
   const canEdit = canEditClinicVoiceSettings(user?.role);
   const [loading, setLoading] = useState<boolean>(true);
+  const [settingsHydrated, setSettingsHydrated] = useState(false);
+  const [escalationTouched, setEscalationTouched] = useState(false);
   const [whatsappConnected, setWhatsappConnected] = useState(false);
   const [whatsappDisplay, setWhatsappDisplay] = useState('');
   const [saving, setSaving] = useState<boolean>(false);
@@ -100,6 +102,8 @@ export const VoiceSettingsPanel: React.FC = () => {
         setReceptionistName(data.receptionistName || 'Maya');
         setCustomGreeting(data.customGreeting || '');
         setEscalationPhone(data.escalationPhone || '');
+        setEscalationTouched(false);
+        setSettingsHydrated(true);
         if (data.clinic) setClinicData(data.clinic);
         if (data.doctors) setDoctors(data.doctors);
         const connected = mine?.tenantNumber?.status === 'connected' || mine?.doctorNumber?.status === 'connected';
@@ -107,6 +111,7 @@ export const VoiceSettingsPanel: React.FC = () => {
         setWhatsappConnected(Boolean(connected));
         setWhatsappDisplay(published ? formatIndianPhoneDisplay(published) : '');
       } else {
+        setSettingsHydrated(false);
         setError('Failed to fetch clinic voice settings.');
       }
     } catch (err) {
@@ -123,11 +128,11 @@ export const VoiceSettingsPanel: React.FC = () => {
 
   const handleSave = async () => {
     try {
-      if (!canEdit) {
-        setError('Only a clinic admin or manager can edit voice settings.');
+      if (!canEdit || !settingsHydrated) {
+        setError(settingsHydrated ? 'Only a clinic admin can edit these settings.' : 'Voice settings are still loading.');
         return;
       }
-      if (escalationPhone.trim() && !isIndianPhoneNumber(escalationPhone)) {
+      if (escalationTouched && escalationPhone.trim() && !isIndianPhoneNumber(escalationPhone)) {
         setError('Enter an Indian mobile or landline number, for example +91 98200 11111.');
         return;
       }
@@ -143,7 +148,7 @@ export const VoiceSettingsPanel: React.FC = () => {
           voiceEnabled,
           receptionistName,
           customGreeting,
-          escalationPhone,
+          ...(escalationTouched ? { escalationPhone: escalationPhone.trim() } : {}),
         }),
       });
 
@@ -236,7 +241,7 @@ export const VoiceSettingsPanel: React.FC = () => {
 
           <button
             onClick={handleSave}
-            disabled={saving || !canEdit}
+            disabled={saving || !canEdit || !settingsHydrated}
             className="flex items-center justify-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-semibold rounded-xl shadow-xs transition-all self-start md:self-auto shrink-0"
           >
             {saving ? (
@@ -422,7 +427,10 @@ export const VoiceSettingsPanel: React.FC = () => {
                 type="text"
                 value={escalationPhone}
                 disabled={!canEdit}
-                onChange={(e) => setEscalationPhone(e.target.value)}
+                onChange={(e) => {
+                  setEscalationTouched(true);
+                  setEscalationPhone(e.target.value);
+                }}
                 placeholder="e.g. +91 98233 73271 or 022 2847 9000"
                 className="w-full max-w-md text-xs px-3 py-2 bg-white rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
               />
