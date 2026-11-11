@@ -1,6 +1,10 @@
-import fs from "node:fs";
-import path from "node:path";
 import { getDb, writeAudit } from "./db.ts";
+import {
+  assertAllowedPatientDocument,
+  readStoredPatientDocument,
+  removeStoredPatientDocument,
+  storePatientDocumentBytes,
+} from "./patient-documents.ts";
 import { tenantTimezone } from "./clinical.ts";
 import { collectedClinicDate, isCollectedInvoiceStatus } from "./collected-revenue.ts";
 import { clinicCalendarDate } from "../src/lib/clinicDay.ts";
@@ -685,14 +689,10 @@ function mapVaccine(row: Record<string, unknown>) {
   };
 }
 
-const EXPENSE_DIR = path.join(process.cwd(), "uploads", "clinic-expenses");
+/** Middle segment of the patient-document storage key. Not a patient id. */
+const EXPENSE_RECEIPT_SEGMENT = "clinic-expenses";
 
-function safeTenantDir(tenantId: string): string {
-  if (!/^[A-Za-z0-9_-]+$/.test(tenantId)) throw accountsError(400, "Invalid tenant");
-  return path.join(EXPENSE_DIR, tenantId);
-}
-
-export function createExpense(
+export async function createExpense(
   tenantId: string,
   body: Record<string, unknown>,
   actor: { id: string; name: string },
@@ -704,47 +704,57 @@ export function createExpense(
   const gst = gstBreakdown([{ taxable, gstPercent }]);
   const total = taxable + gst.tax;
   const id = nid("exp");
-  let receiptPath = "";
   let receiptName = "";
   let receiptMime = "";
+  let storageKey = "";
+  let storageBackend = "";
   if (file && file.buffer?.length) {
-    const allowed = new Set(["application/pdf", "image/jpeg", "image/png", "image/webp"]);
-    if (!allowed.has(file.mimetype)) throw accountsError(400, "Receipt must be a PDF or image");
-    if (file.buffer.length > 5 * 1024 * 1024) throw accountsError(400, "Receipt must be 5 MB or smaller");
-    const ext = file.mimetype === "application/pdf" ? ".pdf" : file.mimetype === "image/png" ? ".png" : file.mimetype === "image/webp" ? ".webp" : ".jpg";
-    const dir = safeTenantDir(tenantId);
-    fs.mkdirSync(dir, { recursive: true });
-    receiptPath = path.join(dir, `${id}${ext}`);
-    fs.writeFileSync(receiptPath, file.buffer);
-    receiptName = path.basename(String(file.originalname || "receipt")).slice(0, 120);
-    receiptMime = file.mimetype;
+    const mime = await assertAllowedPatientDocument(file.buffer, file.mimetype);
+    const stored = await storePatientDocumentBytes(tenantId, EXPENSE_RECEIPT_SEGMENT, file.buffer, mime);
+    receiptName = pathBasename(String(file.originalname || "receipt")).slice(0, 120);
+    receiptMime = mime;
+    storageKey = stored.storageKey;
+    storageBackend = stored.storageBackend;
   }
-  getDb()
-    .prepare(
-      `INSERT INTO clinic_expenses (
-        id, tenant_id, vendor_name, bill_number, bill_date, category, taxable_amount, gst_percent, tax_amount,
-        total_amount, notes, receipt_filename, receipt_mime, receipt_path, created_by, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-    .run(
-      id,
-      tenantId,
-      String(body.vendorName || body.vendor_name || "").trim().slice(0, 120),
-      String(body.billNumber || body.bill_number || "").trim().slice(0, 40),
-      billDate,
-      String(body.category || "general").trim().slice(0, 40) || "general",
-      taxable,
-      gstPercent,
-      gst.tax,
-      total,
-      String(body.notes || "").slice(0, 400),
-      receiptName,
-      receiptMime,
-      receiptPath,
-      actor.id,
-      nowIso()
-    );
+  try {
+    getDb()
+      .prepare(
+        `INSERT INTO clinic_expenses (
+          id, tenant_id, vendor_name, bill_number, bill_date, category, taxable_amount, gst_percent, tax_amount,
+          total_amount, notes, receipt_filename, receipt_mime, receipt_path, storage_key, storage_backend, created_by, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?)`
+      )
+      .run(
+        id,
+        tenantId,
+        String(body.vendorName || body.vendor_name || "").trim().slice(0, 120),
+        String(body.billNumber || body.bill_number || "").trim().slice(0, 40),
+        billDate,
+        String(body.category || "general").trim().slice(0, 40) || "general",
+        taxable,
+        gstPercent,
+        gst.tax,
+        total,
+        String(body.notes || "").slice(0, 400),
+        receiptName,
+        receiptMime,
+        storageKey,
+        storageBackend,
+        actor.id,
+        nowIso()
+      );
+  } catch (err) {
+    if (storageKey) {
+      await removeStoredPatientDocument(tenantId, storageKey, storageBackend).catch(() => undefined);
+    }
+    throw err;
+  }
   return listExpenses(tenantId).find((row) => row.id === id);
+}
+
+function pathBasename(value: string): string {
+  const parts = value.split(/[/\\]/);
+  return parts[parts.length - 1] || "receipt";
 }
 
 export function listExpenses(tenantId: string, month?: string) {
@@ -770,31 +780,49 @@ export function listExpenses(tenantId: string, month?: string) {
         sgst: gst.sgst,
         totalAmount: Number(row.total_amount || 0),
         notes: String(row.notes || ""),
-        hasReceipt: Boolean(row.receipt_path),
+        hasReceipt: Boolean(String(row.storage_key || "").trim()),
         receiptFilename: String(row.receipt_filename || ""),
       };
     });
 }
 
-export function deleteExpense(tenantId: string, id: string) {
+export async function deleteExpense(tenantId: string, id: string) {
+  const row = getDb()
+    .prepare(
+      "SELECT storage_key, storage_backend FROM clinic_expenses WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL"
+    )
+    .get(id, tenantId) as { storage_key?: string; storage_backend?: string } | undefined;
+  if (!row) throw accountsError(404, "Expense not found");
+  const storageKey = String(row.storage_key || "");
+  if (storageKey) {
+    await removeStoredPatientDocument(tenantId, storageKey, String(row.storage_backend || ""));
+  }
   const result = getDb()
     .prepare("UPDATE clinic_expenses SET deleted_at = ? WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL")
     .run(nowIso(), id, tenantId);
   if (changesOf(result) !== 1) throw accountsError(404, "Expense not found");
 }
 
-export function expenseReceipt(tenantId: string, id: string): { filePath: string; filename: string; mime: string } {
+export async function expenseReceipt(
+  tenantId: string,
+  id: string
+): Promise<{ bytes: Buffer; filename: string; mime: string }> {
   const row = getDb()
     .prepare(
-      "SELECT receipt_path, receipt_filename, receipt_mime FROM clinic_expenses WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL"
+      `SELECT storage_key, storage_backend, receipt_filename, receipt_mime
+       FROM clinic_expenses WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL`
     )
-    .get(id, tenantId) as { receipt_path?: string; receipt_filename?: string; receipt_mime?: string } | undefined;
-  if (!row?.receipt_path) throw accountsError(404, "Receipt not found");
-  const dir = safeTenantDir(tenantId);
-  const resolved = path.resolve(row.receipt_path);
-  if (!resolved.startsWith(dir + path.sep)) throw accountsError(404, "Receipt not found");
-  if (!fs.existsSync(resolved)) throw accountsError(404, "Receipt not found");
-  return { filePath: resolved, filename: row.receipt_filename || "receipt", mime: row.receipt_mime || "application/octet-stream" };
+    .get(id, tenantId) as
+    | { storage_key?: string; storage_backend?: string; receipt_filename?: string; receipt_mime?: string }
+    | undefined;
+  const storageKey = String(row?.storage_key || "");
+  if (!row || !storageKey) throw accountsError(404, "Receipt not found");
+  const bytes = await readStoredPatientDocument(tenantId, storageKey, String(row.storage_backend || ""));
+  return {
+    bytes,
+    filename: row.receipt_filename || "receipt",
+    mime: row.receipt_mime || "application/octet-stream",
+  };
 }
 
 type InvoiceRow = Record<string, unknown>;

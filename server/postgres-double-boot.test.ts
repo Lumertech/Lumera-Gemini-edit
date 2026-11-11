@@ -93,6 +93,32 @@ describe("initDatabase on real Postgres", () => {
       // ON CONFLICT DO NOTHING keeps the original primary keys. A reseed must not
       // insert a second copy and must not abort the boot.
       assert.equal(ids.rows[0].c, 78);
+      const tables = [
+        "clinic_vendors",
+        "inventory_items",
+        "vendor_price_locks",
+        "stock_batches",
+        "stock_movements",
+        "vaccine_administrations",
+        "clinic_expenses",
+        "invoice_refunds",
+        "day_closes",
+        "accounts_settings",
+      ];
+      for (const name of tables) {
+        const found = await check.query("SELECT to_regclass($1) AS name", [`public.${name}`]);
+        assert.equal(found.rows[0].name, name, `${name} missing after the second boot`);
+      }
+      const receiptColumns = await check.query(
+        `SELECT column_name FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'clinic_expenses'
+           AND column_name IN ('storage_key', 'storage_backend')
+         ORDER BY column_name`
+      );
+      assert.deepEqual(
+        receiptColumns.rows.map((row: { column_name: string }) => row.column_name),
+        ["storage_backend", "storage_key"]
+      );
     } finally {
       await check.end();
     }

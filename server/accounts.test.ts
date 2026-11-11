@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { createApiRouter } from "./api.ts";
 import { ensureAccountsSchema } from "./accounts-schema.ts";
 import { getDb, initDatabase } from "./db.ts";
 import { hashPassword } from "./password.ts";
+import { readStoredPatientDocument } from "./patient-documents.ts";
 import { jsonRequest, startTestServer } from "./test-http.ts";
 import { applyWalletTransaction } from "./usage-wallet.ts";
 import { clinicCalendarDate, shiftIsoDate } from "../src/lib/clinicDay.ts";
@@ -432,5 +436,108 @@ describe("clinic accounts, inventory, and day close", () => {
     assert.equal(drop.status, 403);
     const dropped = await jsonRequest(port, "DELETE", `/api/accounts/expenses/${saved.id}`, undefined, admin);
     assert.equal(dropped.status, 200);
+  });
+
+  it("creates the accounts tables again without dropping them", () => {
+    ensureAccountsSchema(getDb());
+    ensureAccountsSchema(getDb());
+    const names = [
+      "clinic_vendors",
+      "inventory_items",
+      "vendor_price_locks",
+      "stock_batches",
+      "stock_movements",
+      "vaccine_administrations",
+      "clinic_expenses",
+      "invoice_refunds",
+      "day_closes",
+      "accounts_settings",
+    ];
+    for (const name of names) {
+      const row = getDb().prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(name) as
+        | { name?: string }
+        | undefined;
+      assert.equal(row?.name, name);
+    }
+    const columns = getDb().prepare("PRAGMA table_info(clinic_expenses)").all() as { name: string }[];
+    assert.equal(columns.some((column) => column.name === "storage_key"), true);
+    assert.equal(columns.some((column) => column.name === "storage_backend"), true);
+  });
+
+  it("stores a receipt in the patient-document store and reads it back after the upload buffer is gone", async () => {
+    const clinic = seedClinic("receipt");
+    const desk = await login(clinic.desk.email);
+    const previousDir = process.env.PATIENT_DOCS_DIR;
+    const previousEnv = process.env.NODE_ENV;
+    const previousBucket = process.env.PATIENT_DOCS_GCS_BUCKET;
+    const docsDir = fs.mkdtempSync(path.join(os.tmpdir(), "lumera-expense-receipts-"));
+    process.env.PATIENT_DOCS_DIR = docsDir;
+    delete process.env.PATIENT_DOCS_GCS_BUCKET;
+    const pdf = Buffer.from("%PDF-1.4\nnot a real pdf\n%%EOF");
+    try {
+      process.env.NODE_ENV = "production";
+      const refused = new FormData();
+      refused.set("vendorName", "Grid");
+      refused.set("billNumber", "EB-NO");
+      refused.set("billDate", "2026-11-11");
+      refused.set("taxableAmount", "10");
+      refused.set("gstPercent", "0");
+      refused.set("receipt", new Blob([pdf], { type: "application/pdf" }), "bill.pdf");
+      const blocked = await fetch(`http://127.0.0.1:${port}/api/accounts/expenses`, {
+        method: "POST",
+        headers: desk,
+        body: refused,
+      });
+      assert.equal(blocked.status, 503);
+      const blockedBody = (await blocked.json()) as { error?: string };
+      assert.match(String(blockedBody.error || ""), /PATIENT_DOCS_GCS_BUCKET/);
+
+      process.env.NODE_ENV = previousEnv;
+      const form = new FormData();
+      form.set("vendorName", "Grid power");
+      form.set("billNumber", "EB-PDF");
+      form.set("billDate", "2026-11-11");
+      form.set("taxableAmount", "100");
+      form.set("gstPercent", "0");
+      form.set("category", "utilities");
+      form.set("receipt", new Blob([pdf], { type: "application/pdf" }), "power.pdf");
+      const created = await fetch(`http://127.0.0.1:${port}/api/accounts/expenses`, {
+        method: "POST",
+        headers: desk,
+        body: form,
+      });
+      const createdJson = (await created.json()) as { error?: string; expense?: { id: string; hasReceipt: boolean } };
+      assert.equal(created.status, 201, String(createdJson.error || ""));
+      const expenseId = String(createdJson.expense?.id || "");
+      assert.equal(createdJson.expense?.hasReceipt, true);
+
+      const downloaded = await fetch(`http://127.0.0.1:${port}/api/accounts/expenses/${expenseId}/receipt`, {
+        headers: desk,
+      });
+      assert.equal(downloaded.status, 200);
+      assert.equal(Buffer.compare(Buffer.from(await downloaded.arrayBuffer()), pdf), 0);
+
+      const row = getDb()
+        .prepare("SELECT storage_key, storage_backend, receipt_path FROM clinic_expenses WHERE id = ? AND tenant_id = ?")
+        .get(expenseId, clinic.tenantId) as { storage_key: string; storage_backend: string; receipt_path: string };
+      assert.equal(row.storage_backend, "local");
+      assert.equal(row.receipt_path, "");
+      assert.match(row.storage_key, new RegExp(`^${clinic.tenantId}/clinic-expenses/`));
+      assert.equal(fs.existsSync(path.join(process.cwd(), "uploads", "clinic-expenses", clinic.tenantId)), false);
+
+      ensureAccountsSchema(getDb());
+      const reread = await readStoredPatientDocument(clinic.tenantId, row.storage_key, row.storage_backend);
+      assert.equal(Buffer.compare(reread, pdf), 0);
+      const onDisk = fs.readFileSync(path.join(docsDir, row.storage_key));
+      assert.equal(Buffer.compare(onDisk, pdf), 0);
+    } finally {
+      if (previousEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousEnv;
+      if (previousDir === undefined) delete process.env.PATIENT_DOCS_DIR;
+      else process.env.PATIENT_DOCS_DIR = previousDir;
+      if (previousBucket === undefined) delete process.env.PATIENT_DOCS_GCS_BUCKET;
+      else process.env.PATIENT_DOCS_GCS_BUCKET = previousBucket;
+      fs.rmSync(docsDir, { recursive: true, force: true });
+    }
   });
 });

@@ -1,4 +1,3 @@
-import fs from "node:fs";
 import { Router, type Request, type Response } from "express";
 import multer from "multer";
 import { requireAuth } from "./auth.ts";
@@ -241,9 +240,9 @@ export function createAccountsRouter(): Router {
     const tenantId = gate(req, res, ACCOUNTS_DESK_ROLES);
     if (!tenantId) return;
     const contentType = String(req.headers["content-type"] || "");
-    const finish = (file?: Express.Multer.File) => {
+    const finish = async (file?: Express.Multer.File) => {
       try {
-        const expense = createExpense(tenantId, req.body || {}, actorOf(req), file ? {
+        const expense = await createExpense(tenantId, req.body || {}, actorOf(req), file ? {
           originalname: file.originalname,
           mimetype: file.mimetype,
           buffer: file.buffer,
@@ -259,31 +258,31 @@ export function createAccountsRouter(): Router {
           sendErr(res, accountsError(400, err instanceof Error ? err.message : "Upload failed"), "accounts.expense.upload");
           return;
         }
-        finish(req.file);
+        void finish(req.file);
       });
       return;
     }
-    finish();
+    void finish();
   });
 
-  api.get("/accounts/expenses/:id/receipt", requireAuth, (req, res) => {
+  api.get("/accounts/expenses/:id/receipt", requireAuth, async (req, res) => {
     const tenantId = gate(req, res, READ_ROLES);
     if (!tenantId) return;
     try {
-      const receipt = expenseReceipt(tenantId, req.params.id);
+      const receipt = await expenseReceipt(tenantId, req.params.id);
       res.setHeader("Content-Type", receipt.mime);
       res.setHeader("Content-Disposition", `attachment; filename="${receipt.filename.replace(/"/g, "")}"`);
-      fs.createReadStream(receipt.filePath).pipe(res);
+      res.send(receipt.bytes);
     } catch (err) {
       sendErr(res, err, "accounts.receipt");
     }
   });
 
-  api.delete("/accounts/expenses/:id", requireAuth, (req, res) => {
+  api.delete("/accounts/expenses/:id", requireAuth, async (req, res) => {
     const tenantId = gate(req, res, ACCOUNTS_ADMIN_ROLES);
     if (!tenantId) return;
     try {
-      deleteExpense(tenantId, req.params.id);
+      await deleteExpense(tenantId, req.params.id);
       res.json({ ok: true });
     } catch (err) {
       sendErr(res, err, "accounts.expense.delete");

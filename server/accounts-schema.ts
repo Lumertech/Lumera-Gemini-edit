@@ -94,6 +94,8 @@ CREATE TABLE IF NOT EXISTS clinic_expenses (
   receipt_filename TEXT NOT NULL DEFAULT '',
   receipt_mime TEXT NOT NULL DEFAULT '',
   receipt_path TEXT NOT NULL DEFAULT '',
+  storage_key TEXT NOT NULL DEFAULT '',
+  storage_backend TEXT NOT NULL DEFAULT '',
   created_by TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,
   deleted_at TEXT
@@ -145,4 +147,15 @@ CREATE INDEX IF NOT EXISTS idx_day_closes_tenant ON day_closes(tenant_id, close_
 
 export function ensureAccountsSchema(database: SqlDatabase): void {
   database.exec(ACCOUNTS_DDL);
+  // Databases created before receipt bytes moved onto the patient-document store.
+  for (const column of [
+    "storage_key TEXT NOT NULL DEFAULT ''",
+    "storage_backend TEXT NOT NULL DEFAULT ''",
+  ]) {
+    try {
+      database.exec(`ALTER TABLE clinic_expenses ADD COLUMN ${column}`);
+    } catch {
+      /* The column is already there. A second boot must keep going. */
+    }
+  }
 }

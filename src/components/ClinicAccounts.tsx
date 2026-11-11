@@ -398,7 +398,7 @@ export const ClinicAccounts: React.FC<{ refreshKey?: string }> = ({ refreshKey }
             <input className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs" type="date" value={expDate} onChange={(e) => setExpDate(e.target.value)} />
             <input className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs" type="number" placeholder="Taxable ₹" value={expTaxable} onChange={(e) => setExpTaxable(e.target.value)} />
             <input className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs" type="number" placeholder="GST %" value={expGst} onChange={(e) => setExpGst(Number(e.target.value))} />
-            <input className="w-full text-xs" type="file" accept="application/pdf,image/jpeg,image/png,image/webp" onChange={(e) => setExpFile(e.target.files?.[0] || null)} />
+            <input className="w-full text-xs" type="file" accept="application/pdf,image/jpeg,image/png" onChange={(e) => setExpFile(e.target.files?.[0] || null)} />
             <button type="button" data-testid="expense-save" onClick={() => void saveExpense()} className="w-full sm:w-auto px-3 py-2 rounded-lg bg-slate-900 text-white text-xs font-semibold">
               Save expense
             </button>
