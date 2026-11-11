@@ -25,6 +25,7 @@ import { phonesMatch } from "./whatsapp-calendar-booking.ts";
 import { cloudDispatchHttpStatus, isCloudDispatchFailure, toWhatsAppRecipient } from "./graph-whatsapp.ts";
 import { META_REVIEW_TENANT_ID } from "./tenant-slug.ts";
 import { dispatchPatientCloudText } from "./whatsapp-patient-dispatch.ts";
+import { queueAskMessageForAppointment, recordsLinkSuffix } from "./patient-visit-delivery.ts";
 import { isProduction } from "./runtime.ts";
 import { reportCaughtError } from "./error-tracker.ts";
 import { CLINICIAN_ROLES, requireAuth, requireRole } from "./auth.ts";
@@ -2122,8 +2123,14 @@ export async function processBotActionOrQuery(
       const medList = meds.slice(0, 4).map((m: any) => `• *${m.drugName}* (${m.dosage}) — ${m.frequency} [${m.timing}]`).join("\n");
       const followUpText = rx.follow_up_date ? `\n*Next Follow-Up*: *${rx.follow_up_date}*` : "";
 
+      let rxContent = `💊 *Prescription Record Found (${rx.rx_number})*\n\n*Patient*: ${rx.patient_name}\n*Consultant*: ${rx.doctor_name} (${rx.doctor_specialty || "Specialist"})\n*Diagnosis*: ${rx.diagnosis}\n*Date*: ${rx.date}${followUpText}\n\n*Prescribed Medications*:\n${medList || "• See attached PDF for complete details"}\n\nTap below to view or download the digitally signed prescription PDF:`;
+      try {
+        rxContent += recordsLinkSuffix(db, String(rx.tenant_id || tenantId), rx, phone);
+      } catch (err) {
+        reportCaughtError(err, "whatsapp.rx.link");
+      }
       return {
-        content: `💊 *Prescription Record Found (${rx.rx_number})*\n\n*Patient*: ${rx.patient_name}\n*Consultant*: ${rx.doctor_name} (${rx.doctor_specialty || "Specialist"})\n*Diagnosis*: ${rx.diagnosis}\n*Date*: ${rx.date}${followUpText}\n\n*Prescribed Medications*:\n${medList || "• See attached PDF for complete details"}\n\nTap below to view or download the digitally signed prescription PDF:`,
+        content: rxContent,
         buttons: ["📄 Preview Prescription", "📥 Download PDF", "💊 Request Pharmacy Refill"],
         media: {
           type: "pdf",
@@ -2484,8 +2491,30 @@ export async function processBotActionOrQuery(
     const queue = getWhatsAppQueue({ tenantId, patientPhone: phone });
     if (queue.hasAppointment && queue.appointment) {
       const appt = queue.appointment;
+      let content = `🎫 *Live OPD Token & Queue Status*\n\n*Patient*: ${appt.patientName}\n*Token Number*: *#${appt.tokenNumber}*\n*Consultant*: ${appt.doctorName} (${appt.specialty})\n*Status*: ${appt.status}\n\n👥 *Patients Ahead of You*: *${appt.patientsAhead}*\n⏳ *Estimated Wait*: *~${appt.estimatedWaitMins} minutes*\n\nPlease remain in the waiting lounge. We will notify you on WhatsApp when you are next.`;
+      try {
+        const richer = queueAskMessageForAppointment(
+          db,
+          tenantId,
+          {
+            id: appt.id,
+            patient_id: appt.patientId,
+            patient_phone: phone,
+            doctor_id: appt.doctorId,
+            doctor_name: appt.doctorName,
+            date: appt.date,
+            token_number: appt.tokenNumber,
+            status: appt.status,
+            tenant_id: tenantId,
+          },
+          phone
+        );
+        if (richer) content = richer;
+      } catch (err) {
+        reportCaughtError(err, "whatsapp.queue.link");
+      }
       return {
-        content: `🎫 *Live OPD Token & Queue Status*\n\n*Patient*: ${appt.patientName}\n*Token Number*: *#${appt.tokenNumber}*\n*Consultant*: ${appt.doctorName} (${appt.specialty})\n*Status*: ${appt.status}\n\n👥 *Patients Ahead of You*: *${appt.patientsAhead}*\n⏳ *Estimated Wait*: *~${appt.estimatedWaitMins} minutes*\n\nPlease remain in the waiting lounge. We will notify you on WhatsApp when you are next.`,
+        content,
         buttons: ["🔄 Refresh Queue", "🔄 Reschedule Slot", "❌ Cancel Appointment"],
       };
     }

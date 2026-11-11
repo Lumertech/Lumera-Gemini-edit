@@ -18,6 +18,7 @@ import { metaWebhookRawBody } from "./meta-security.ts";
 import { attachUnknownApiJsonNotFound } from "./spa-fallback.ts";
 import { globalJsonParser } from "./json-body.ts";
 import { domainTenantMiddleware } from "./tenant-domain.ts";
+import { mountPatientVisitRoutes } from "./patient-visit-routes.ts";
 
 /**
  * Production Express app without listen() or database boot.
@@ -63,6 +64,7 @@ export function createLumeraApp(): express.Express {
   attachPublicPolicyHtml(app);
   attachPublicPricingHtml(app);
   mountGeminiClinicalRoutes(app);
+  mountPatientVisitRoutes(app);
   // Unknown /api JSON 404 stays after every API mount. SPA fallback is last, in startServer.
   attachUnknownApiJsonNotFound(app);
   return app;
