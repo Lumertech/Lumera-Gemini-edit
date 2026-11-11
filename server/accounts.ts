@@ -986,6 +986,14 @@ export function deleteRefund(tenantId: string, id: string) {
   if (changesOf(result) !== 1) throw accountsError(404, "Refund not found");
 }
 
+function invoiceHasRazorpayCollect(invoice: InvoiceRow): boolean {
+  const mode = String(invoice.payment_mode || "").trim().toLowerCase();
+  if (mode === "razorpay" || mode === "upi / qr") return true;
+  return [invoice.pay_link, invoice.razorpay_order_id, invoice.razorpay_payment_link_id].some(
+    (value) => String(value || "").trim() !== ""
+  );
+}
+
 /** Records the clinic's own UPI. Does not mark a Razorpay pay link paid. */
 export function recordClinicUpi(
   tenantId: string,
@@ -997,6 +1005,12 @@ export function recordClinicUpi(
     .get(invoiceId, tenantId) as InvoiceRow | undefined;
   if (!invoice) throw accountsError(404, "Invoice not found");
   if (isCollectedInvoiceStatus(invoice.status)) throw accountsError(409, "This bill is already collected");
+  if (invoiceHasRazorpayCollect(invoice)) {
+    throw accountsError(
+      400,
+      "This bill has a Razorpay pay link. It stays unpaid until a verified webhook."
+    );
+  }
   const now = nowIso();
   const total = rupee(invoice.total_amount);
   getDb()

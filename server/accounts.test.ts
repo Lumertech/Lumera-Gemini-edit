@@ -121,6 +121,14 @@ describe("clinic accounts, inventory, and day close", () => {
     const invoice = await bill(desk, 100);
     const upi = await jsonRequest(port, "POST", `/api/invoices/${invoice.id}/desk-collect`, { paymentMode: "UPI" }, desk);
     assert.equal(upi.status, 400);
+
+    const linked = await bill(desk, 150);
+    const order = await jsonRequest(port, "POST", `/api/invoices/${linked.id}/pay-order`, {}, desk);
+    assert.equal(order.status, 200, String(order.json.error || ""));
+    const clinicUpi = await jsonRequest(port, "POST", "/api/accounts/collections/upi", { invoiceId: linked.id }, desk);
+    assert.equal(clinicUpi.status, 400);
+    const still = await jsonRequest(port, "GET", `/api/invoices/${linked.id}`, undefined, desk);
+    assert.equal((still.json.invoice as { paymentStatus: string }).paymentStatus, "Unpaid");
   });
 
   it("keeps tenants, roles, stock math, and day-close totals apart", async () => {
