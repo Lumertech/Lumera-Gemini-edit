@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../../api/http';
+import { outboundCountLabel, outboundDeliveryCounts } from '../../lib/whatsappDelivery';
 import { 
   Bell, 
   Send, 
@@ -256,7 +257,9 @@ export const OutboundTriggerPanel: React.FC<OutboundTriggerPanelProps> = ({
           <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">
             Live Outbound Event Delivery Log
           </span>
-          <span className="text-[11px] text-slate-400">{events.length} dispatched events recorded</span>
+          <span className="text-[11px] text-slate-400" data-testid="outbound-delivery-counts">
+            {outboundCountLabel(outboundDeliveryCounts(events.map((event) => event.status)))}
+          </span>
         </div>
 
         <div className="border border-slate-200 rounded-xl overflow-hidden divide-y divide-slate-100 max-h-48 overflow-y-auto bg-white">

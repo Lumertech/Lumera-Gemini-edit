@@ -103,6 +103,17 @@ export function consumeSendOtpAttempt(
  * Same windows as send-otp. targetKey is stored as given so a caller can pass
  * a hash instead of a phone. Do not pass a raw Aadhaar number.
  */
+/** Forgot-password window. Keyed by normalised email and by client IP, before any user lookup. */
+export function consumeForgotPasswordAttempt(
+  email: string,
+  ip: string,
+  now = Date.now()
+): { ok: true; withinCooldown: boolean; targetCooldown: boolean; retryAfterSec: number } | { ok: false; retryAfterSec: number } {
+  const normalised = String(email || "").trim().toLowerCase();
+  const key = `forgot-email:${normalised}`;
+  return consumeHashedOtpAttempt(key, ip, key, now);
+}
+
 export function consumeHashedOtpAttempt(
   targetKey: string,
   ip: string,
@@ -117,8 +128,37 @@ function tracksClientIp(ip: string): boolean {
   return ip !== "127.0.0.1" && ip !== "::1" && ip !== "::ffff:127.0.0.1";
 }
 
+/** Same IP window as send-otp. Loopback is not counted. Shares `ipBuckets` with OTP sends. */
+export function consumeClientIpAttempt(
+  ip: string,
+  now = Date.now()
+): { ok: true } | { ok: false; retryAfterSec: number } {
+  const ipKey = String(ip || "unknown");
+  if (!tracksClientIp(ipKey)) return { ok: true };
+  const ipLimit = atLimit(ipBuckets, ipKey, SEND_OTP_MAX_PER_IP, now);
+  if (ipLimit.limited) return { ok: false, retryAfterSec: ipLimit.retryAfterSec || 1 };
+  bump(ipBuckets, ipKey, now);
+  return { ok: true };
+}
+
 export function resetSendOtpRateLimits() {
   phoneBuckets.clear();
   ipBuckets.clear();
   userBuckets.clear();
+}
+
+/**
+ * A failed Graph send must not start the 60s cooldown, or the retry cannot
+ * place a new call. The 3-per-10-minute counters stay where they are.
+ */
+export function releaseOtpSendCooldown(phone: string, userKey: string, ip?: string) {
+  const phoneKey = normalizeOtpPhone(phone) || String(phone || "").trim();
+  const clearLast = (store: Map<string, Bucket>, key: string) => {
+    const prev = store.get(key);
+    if (!prev) return;
+    prev.lastAt = 0;
+  };
+  clearLast(phoneBuckets, phoneKey);
+  clearLast(userBuckets, String(userKey || "").trim() || `phone:${phoneKey}`);
+  if (ip && tracksClientIp(ip)) clearLast(ipBuckets, ip);
 }

@@ -281,6 +281,10 @@ export const PhysioProgressTracker: React.FC<PhysioProgressTrackerProps> = ({
               </div>
             </div>
 
+            <div className="bg-blue-50 p-2.5 rounded-lg text-[11px] text-blue-900 font-medium">
+              🔗 <strong>www.mylumera.in/hep/v/…</strong>
+            </div>
+
             <button
               type="button"
               onClick={() => setShowQrModal(false)}

@@ -50,6 +50,7 @@ import {
   issueLumeraSession,
   isPlatformAdminRole,
   otpEchoPayload,
+  USER_PHONE_MISSING,
   requireAuth,
   requirePlatformAdmin,
   requireRole,
@@ -77,7 +78,8 @@ import {
   upsertTenantSubscription,
 } from "./platform-tenants.ts";
 import { generateTemporaryPassword, hashPassword, passwordRuleError, verifyPassword } from "./password.ts";
-import { rejectWrongOtp, reserveOtpSend, sendOtpLimited } from "./otp-attempt.ts";
+import { abandonFailedOtpSend, findPendingOtp, generateNumericOtp, logOtpSendFailure, OTP_PUBLIC_SEND_FAILURE, rejectWrongOtp, reserveOtpSend, sendOtpLimited } from "./otp-attempt.ts";
+import { consumeForgotPasswordAttempt, requestClientIp } from "./otp-rate-limit.ts";
 import { parseSpecialtyPackInput, resolveSpecialtyPack } from "./specialty-packs.ts";
 import { appPublicUrl, demoLoginEnabled, isProduction } from "./runtime.ts";
 import { DEMO_PASSWORD } from "../src/lib/demoAccounts.ts";
@@ -301,7 +303,8 @@ function recordWhatsAppOtpEvent(opts: {
     const db = getDb();
     const now = new Date().toISOString();
     const timeDisplay = new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "numeric", minute: "2-digit", hour12: true });
-    const cleanPhone = opts.phone.trim() || "+91 98234 55667";
+    const cleanPhone = opts.phone.trim();
+    if (!cleanPhone) return;
     const preferredId = `conv-otp-${cleanPhone.replace(/\D/g, "").slice(-8) || "user"}`;
     const userName = opts.name.trim() || "Healthcare Clinician";
     const conversationTenantId = uniqueOtpClinicId(cleanPhone) || WHATSAPP_QUARANTINE_TENANT_ID;
@@ -342,6 +345,17 @@ export type OtpDispatchResult =
   | { ok: true; channel: "graph" | "sandbox"; messageId?: string }
   | { ok: false; error: string; channel: "none" | "graph" };
 
+function auditOtpNoWamid(purpose: string) {
+  try {
+    writeAudit(getDb(), null, "system", "whatsapp_otp_no_wamid", `otp ${purpose} accepted without a message id`, {
+      entityType: "otp",
+      entityId: purpose,
+    });
+  } catch {
+    /* audit is best-effort and must not block the failure response */
+  }
+}
+
 async function dispatchWhatsAppOtpMessage(phone: string, name: string, otp: string, purpose: string): Promise<OtpDispatchResult> {
   const sent = await dispatchWhatsAppCloudMessage({
     to: phone,
@@ -354,6 +368,10 @@ async function dispatchWhatsAppOtpMessage(phone: string, name: string, otp: stri
   });
 
   if (sent.ok && sent.channel === "graph") {
+    if (!sent.messageId) {
+      auditOtpNoWamid(purpose);
+      return { ok: false, error: "WhatsApp Cloud API did not return a message id.", channel: "graph" };
+    }
     recordWhatsAppOtpEvent({
       phone,
       name,
@@ -368,6 +386,7 @@ async function dispatchWhatsAppOtpMessage(phone: string, name: string, otp: stri
 
   if (isCloudDispatchFailure(sent)) {
     if (sent.channel === "graph") {
+      if (/did not return a message id|HTTP 200/i.test(sent.error)) auditOtpNoWamid(purpose);
       recordWhatsAppOtpEvent({
         phone,
         name,
@@ -417,12 +436,35 @@ async function dispatchWhatsAppOtpMessage(phone: string, name: string, otp: stri
   return { ok: true, channel: "sandbox" };
 }
 
-function otpDispatchFailure(res: Response, result: OtpDispatchResult) {
-  if (result.ok === false) {
+function otpWasGraphDelivered(
+  result: OtpDispatchResult
+): result is { ok: true; channel: "graph"; messageId: string } {
+  return result.ok === true && result.channel === "graph" && Boolean(result.messageId);
+}
+
+function otpDispatchFailure(
+  res: Response,
+  result: OtpDispatchResult,
+  verification?: { id: string; phone: string; email?: string; userId?: string },
+  req?: Request
+) {
+  const missingWamid = result.ok === true && result.channel === "graph" && !result.messageId;
+  if (result.ok === false || missingWamid) {
+    if (verification) {
+      abandonFailedOtpSend({
+        id: verification.id,
+        phone: verification.phone,
+        email: verification.email,
+        userId: verification.userId,
+        ip: req ? requestClientIp(req) : undefined,
+      });
+    }
+    const detail = result.ok === false ? result.error : "graph response had no message id";
+    logOtpSendFailure(verification?.phone || "", detail);
     res.status(503).json({
-      error: result.error,
+      error: OTP_PUBLIC_SEND_FAILURE,
       otpDelivered: false,
-      channel: result.channel,
+      channel: result.ok === false ? result.channel : "graph",
     });
     return true;
   }
@@ -573,8 +615,10 @@ export function createApiRouter(): Router {
       return issuePasswordSession(reason);
     }
 
-    // Mandatory WhatsApp Business Phone Binding & Verification
-    const phone = user.phone || "+91 98234 55667";
+    // Phone is checked only after the password matched. A missing number cannot
+    // tell a caller which emails exist: unknown emails already returned 401.
+    const phone = String(user.phone || "").trim();
+    if (!phone) return res.status(422).json({ code: USER_PHONE_MISSING });
     const slot = reserveOtpSend(req, phone, "login", { userId: user.id, email: user.email }, true);
     if (slot.limited === true) return sendOtpLimited(res, slot.retryAfterSec);
     if (slot.pending) {
@@ -590,7 +634,7 @@ export function createApiRouter(): Router {
         message: "Pending verification reused.",
       });
     }
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otp = generateNumericOtp();
     const verificationId = crypto.randomUUID();
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
 
@@ -608,7 +652,7 @@ export function createApiRouter(): Router {
     );
 
     const sent = await dispatchWhatsAppOtpMessage(phone, user.name, otp, "login");
-    if (otpDispatchFailure(res, sent)) return;
+    if (otpDispatchFailure(res, sent, { id: verificationId, phone, email: user.email, userId: user.id }, req)) return;
 
     return res.json({
       requiresOtp: true,
@@ -619,10 +663,10 @@ export function createApiRouter(): Router {
       expiresAt,
       user: publicUser(user),
       otpChannel: sent.ok ? sent.channel : undefined,
-      message:
-        sent.ok && sent.channel === "graph"
-          ? "Security code dispatched via WhatsApp Cloud API."
-          : "SANDBOX / DEV-ONLY: security code recorded locally (not sent via Graph).",
+      ...(otpWasGraphDelivered(sent) ? { wamid: sent.messageId } : {}),
+      message: otpWasGraphDelivered(sent)
+        ? "Security code dispatched via WhatsApp Cloud API."
+        : "SANDBOX / DEV-ONLY: security code recorded locally (not sent via Graph).",
     });
   });
 
@@ -879,7 +923,9 @@ export function createApiRouter(): Router {
       }, jwtToken));
     }
 
-    const phone = user.phone || "+91 98234 55667";
+    // Phone is checked only after the provider identity resolved to this account.
+    const phone = String(user.phone || "").trim();
+    if (!phone) return res.status(422).json({ code: USER_PHONE_MISSING });
     const slot = reserveOtpSend(req, phone, "login", { userId: user.id, email: user.email }, true);
     if (slot.limited === true) return sendOtpLimited(res, slot.retryAfterSec);
     if (slot.pending) {
@@ -896,7 +942,7 @@ export function createApiRouter(): Router {
         message: "Pending verification reused.",
       });
     }
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otp = generateNumericOtp();
     const verificationId = crypto.randomUUID();
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
 
@@ -914,7 +960,7 @@ export function createApiRouter(): Router {
     );
 
     const sent = await dispatchWhatsAppOtpMessage(phone, user.name, otp, "login");
-    if (otpDispatchFailure(res, sent)) return;
+    if (otpDispatchFailure(res, sent, { id: verificationId, phone, email: user.email, userId: user.id }, req)) return;
 
     return res.json({
       requiresOtp: true,
@@ -958,7 +1004,7 @@ export function createApiRouter(): Router {
       });
     }
 
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otp = generateNumericOtp();
     const verificationId = crypto.randomUUID();
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
 
@@ -968,21 +1014,22 @@ export function createApiRouter(): Router {
     `).run(verificationId, phone, email, otp, purpose, payload, new Date().toISOString(), expiresAt);
 
     const sent = await dispatchWhatsAppOtpMessage(phone, name, otp, purpose);
-    if (otpDispatchFailure(res, sent)) return;
+    if (otpDispatchFailure(res, sent, { id: verificationId, phone, email, userId: req.user?.id }, req)) return;
 
+    const graphSent = otpWasGraphDelivered(sent);
     return res.json({
       ok: true,
       verificationId,
       phone,
       ...otpEchoPayload(otp),
       expiresAt,
-      status: sent.ok && sent.channel === "graph" ? "sent" : "sandbox_recorded",
-      channel: sent.ok && sent.channel === "graph" ? "WhatsApp Cloud API" : "SANDBOX / DEV-ONLY SQLite",
+      ...(graphSent ? { wamid: sent.messageId, messageId: sent.messageId } : {}),
+      status: graphSent ? "sent" : "sandbox_recorded",
+      channel: graphSent ? "WhatsApp Cloud API" : "SANDBOX / DEV-ONLY SQLite",
       sandbox: sent.ok && sent.channel === "sandbox",
-      message:
-        sent.ok && sent.channel === "graph"
-          ? "6-digit OTP sent via WhatsApp Cloud API."
-          : "SANDBOX / DEV-ONLY: OTP recorded locally (not sent via Graph).",
+      message: graphSent
+        ? "6-digit OTP sent via WhatsApp Cloud API."
+        : "SANDBOX / DEV-ONLY: OTP recorded locally (not sent via Graph).",
     });
   });
 
@@ -1351,7 +1398,7 @@ export function createApiRouter(): Router {
     ensureTenantSubscription(getDb(), tenantId, { planCode: "trial", status: "trial", billingSource: "sandbox" });
 
     // 6. WHATSAPP OTP TRIGGER:
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otp = generateNumericOtp();
     const verificationId = crypto.randomUUID();
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
 
@@ -1378,7 +1425,7 @@ export function createApiRouter(): Router {
     `).run(verificationId, phone, email, otp, JSON.stringify(otpPayload), now, expiresAt);
 
     const sent = await dispatchWhatsAppOtpMessage(phone, name, otp, "register");
-    if (otpDispatchFailure(res, sent)) return;
+    if (otpDispatchFailure(res, sent, { id: verificationId, phone, email, userId }, req)) return;
 
     return res.json({
       requiresOtp: true,
@@ -1396,10 +1443,10 @@ export function createApiRouter(): Router {
         dhisClaimsLimit: 100,
       },
       otpChannel: sent.ok ? sent.channel : undefined,
-      message:
-        sent.ok && sent.channel === "graph"
-          ? "6-digit OTP sent via WhatsApp Cloud API."
-          : "SANDBOX / DEV-ONLY: OTP recorded locally (not sent via Graph).",
+      ...(otpWasGraphDelivered(sent) ? { wamid: sent.messageId } : {}),
+      message: otpWasGraphDelivered(sent)
+        ? "6-digit OTP sent via WhatsApp Cloud API."
+        : "SANDBOX / DEV-ONLY: OTP recorded locally (not sent via Graph).",
     });
   };
 
@@ -1597,89 +1644,143 @@ export function createApiRouter(): Router {
     }, jwtToken));
   });
 
-  // Password Recovery / Forgot Password
-  api.post("/auth/forgot-password", async (req: Request, res: Response) => {
+  // Same body for unknown emails, accounts with no phone, and real accounts.
+  // Nothing in this JSON identifies whether the address is registered.
+  const FORGOT_PASSWORD_BODY = {
+    ok: true,
+    message: "If this email is registered, we've sent a code.",
+  } as const;
+
+  function auditPasswordResetAttempt(outcome: "sent" | "not_sent") {
+    writeAudit(getDb(), null, "password-reset", "password_reset_requested", `outcome ${outcome}`, {
+      entityType: "auth",
+      entityId: "password_reset",
+    });
+  }
+
+  // Password Recovery / Forgot Password. No login, so the response cannot
+  // reveal who is registered or include a phone number. The public reply is
+  // sent before WhatsApp dispatch and the audit, including when the email or
+  // the client IP is already over the send window.
+  const RESET_CODE_FAILURE = {
+    error: "Invalid or expired reset code. Please request a fresh OTP.",
+  } as const;
+
+  function finishPasswordReset(res: Response, after?: () => Promise<void> | void) {
+    res.status(200).json(FORGOT_PASSWORD_BODY);
+    setImmediate(() => {
+      void Promise.resolve()
+        .then(() => (after ? after() : undefined))
+        .then(() => {
+          if (!after) auditPasswordResetAttempt("not_sent");
+        })
+        .catch((err) => {
+          try {
+            auditPasswordResetAttempt("not_sent");
+          } catch {
+            /* the public reply is already on the wire */
+          }
+          reportCaughtError(err, "POST /api/auth/forgot-password");
+        });
+    });
+  }
+
+  api.post("/auth/forgot-password", (req: Request, res: Response) => {
     const email = String(req.body?.email || "").trim().toLowerCase();
     if (!email) {
       return res.status(400).json({ error: "Please provide your registered email address." });
     }
 
-    const user = getDb().prepare("SELECT * FROM users WHERE email = ?").get(email) as unknown as DbUser | undefined;
-    const phone = user?.phone || "+91 98234 55667";
-    const name = user?.name || "Clinician";
-    const slot = reserveOtpSend(req, phone, "password_reset", { userId: user?.id, email }, true);
-    if (slot.limited === true) return sendOtpLimited(res, slot.retryAfterSec);
-    if (slot.pending) {
-      return res.json({
-        ok: true,
-        verificationId: slot.pending.id,
-        phone,
-        ...otpEchoPayload(slot.pending.otp),
-        reused: true,
-        message: "Pending verification reused.",
-      });
+    const allowance = consumeForgotPasswordAttempt(email, requestClientIp(req));
+    if (!allowance.ok) {
+      finishPasswordReset(res);
+      return;
     }
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const verificationId = crypto.randomUUID();
-    const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
 
-    getDb().prepare(`
-      INSERT INTO otp_verifications (id, phone, email, otp, purpose, payload, created_at, expires_at)
-      VALUES (?, ?, ?, ?, 'password_reset', ?, ?, ?)
-    `).run(
-      verificationId,
-      phone,
-      email,
-      otp,
-      JSON.stringify({ userId: user?.id, email }),
-      new Date().toISOString(),
-      expiresAt
-    );
+    const user = getDb().prepare("SELECT * FROM users WHERE email = ?").get(email) as unknown as DbUser | undefined;
+    const phone = String(user?.phone || "").trim();
+    if (!user || !phone) {
+      finishPasswordReset(res);
+      return;
+    }
+    const name = user.name || "Clinician";
+    const pending = findPendingOtp(phone, "password_reset", email);
+    const otp = pending?.otp || generateNumericOtp();
+    const verificationId = pending?.id || crypto.randomUUID();
+    if (!pending) {
+      const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+      getDb().prepare(`
+        INSERT INTO otp_verifications (id, phone, email, otp, purpose, payload, created_at, expires_at)
+        VALUES (?, ?, ?, ?, 'password_reset', ?, ?, ?)
+      `).run(
+        verificationId,
+        phone,
+        email,
+        otp,
+        JSON.stringify({ userId: user.id }),
+        new Date().toISOString(),
+        expiresAt
+      );
+    }
 
-    const sent = await dispatchWhatsAppOtpMessage(phone, name, otp, "password_reset");
-    if (otpDispatchFailure(res, sent)) return;
-
-    return res.json({
-      ok: true,
-      verificationId,
-      phone,
-      ...otpEchoPayload(otp),
-      otpChannel: sent.ok ? sent.channel : undefined,
-      message:
-        sent.ok && sent.channel === "graph"
-          ? `Password reset code sent via WhatsApp Cloud API to ${phone}.`
-          : `SANDBOX / DEV-ONLY: password reset code recorded locally for ${phone} (not sent via Graph).`,
+    finishPasswordReset(res, async () => {
+      const sent = await dispatchWhatsAppOtpMessage(phone, name, otp, "password_reset");
+      const missingWamid = sent.ok === true && sent.channel === "graph" && !sent.messageId;
+      if (sent.ok === false || missingWamid) {
+        abandonFailedOtpSend({
+          id: verificationId,
+          phone,
+          email,
+          userId: user.id,
+          ip: requestClientIp(req),
+        });
+        auditPasswordResetAttempt("not_sent");
+        return;
+      }
+      auditPasswordResetAttempt("sent");
     });
   });
 
-  // Password Reset Finalization
+  // Password Reset Finalization. Unknown, expired, wrong, and locked codes
+  // share one 400 body so a lockout cannot be told apart from a bad address.
   api.post("/auth/reset-password", (req: Request, res: Response) => {
     const verificationId = String(req.body?.verificationId || "").trim();
+    const email = String(req.body?.email || "").trim().toLowerCase();
     const otp = String(req.body?.otp || "").trim();
     const newPassword = String(req.body?.newPassword || "");
 
-    if (!verificationId || !otp || !newPassword) {
-      return res.status(400).json({ error: "Verification ID, 6-digit OTP, and new password are required." });
+    if ((!verificationId && !email) || !otp || !newPassword) {
+      return res.status(400).json({ error: "Email, 6-digit OTP, and new password are required." });
     }
     if (newPassword.length < 6) {
       return res.status(400).json({ error: "Password must be at least 6 characters long." });
     }
 
-    const record = getDb()
-      .prepare("SELECT * FROM otp_verifications WHERE id = ?")
-      .get(verificationId) as {
+    const record = (
+      verificationId
+        ? getDb().prepare("SELECT * FROM otp_verifications WHERE id = ? AND purpose = 'password_reset'").get(verificationId)
+        : getDb()
+            .prepare(
+              `SELECT * FROM otp_verifications
+               WHERE purpose = 'password_reset' AND lower(email) = ? AND verified_at IS NULL AND expires_at > ?
+               ORDER BY created_at DESC LIMIT 1`
+            )
+            .get(email, new Date().toISOString())
+    ) as {
         id: string;
         email: string;
         otp: string;
         payload: string;
         expires_at: string;
+        verified_at?: string | null;
+        failed_attempts?: number;
       } | undefined;
 
-    if (!record || new Date(record.expires_at).getTime() < Date.now()) {
-      return res.status(400).json({ error: "Invalid or expired reset code. Please request a fresh OTP." });
+    if (!record || record.verified_at || new Date(record.expires_at).getTime() < Date.now()) {
+      return res.status(400).json(RESET_CODE_FAILURE);
     }
-    const resetVerdict = rejectWrongOtp(record, otp, "Invalid or expired reset code. Please request a fresh OTP.");
-    if (resetVerdict.ok === false) return res.status(resetVerdict.status).json({ error: resetVerdict.error });
+    const resetVerdict = rejectWrongOtp(record, otp, RESET_CODE_FAILURE.error);
+    if (resetVerdict.ok === false) return res.status(400).json(RESET_CODE_FAILURE);
 
     let payload: Record<string, any> = {};
     try {
@@ -1692,12 +1793,12 @@ export function createApiRouter(): Router {
     const user = getDb().prepare("SELECT * FROM users WHERE email = ?").get(userEmail) as unknown as DbUser | undefined;
 
     if (!user) {
-      return res.status(404).json({ error: "User account not found." });
+      return res.status(400).json(RESET_CODE_FAILURE);
     }
 
     const newHash = hashPassword(newPassword);
     getDb().prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(newHash, user.id);
-    getDb().prepare("UPDATE otp_verifications SET verified_at = ? WHERE id = ?").run(new Date().toISOString(), verificationId);
+    getDb().prepare("UPDATE otp_verifications SET verified_at = ? WHERE id = ?").run(new Date().toISOString(), record.id);
 
     writeAudit(getDb(), user.id, user.name, "Password Reset", `Password reset via WhatsApp OTP for ${user.email}`);
 

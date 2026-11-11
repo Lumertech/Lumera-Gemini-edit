@@ -33,6 +33,7 @@ import {
 import { apiFetch } from './api/http';
 import { appointmentIdForBillContext, appointmentsForClinicDay, clinicCalendarDate } from './lib/clinicDay';
 import { pickInvoiceForContext, type PersistedInvoice } from './lib/billingCollect';
+import { type BookingNotify } from './lib/bookingNotify';
 import { useAuth } from './auth/AuthContext';
 import { useNav } from './nav/NavigationContext';
 import { canonicalizeAppView, appViewToPath } from './nav/surfaces';
@@ -506,7 +507,7 @@ export default function ClinicianApp() {
   }, [billPool, currentPatient.id, pinnedBillAppointmentId]);
 
   const persistAppointmentCreate = async (input: Partial<Appointment>) => {
-    const { appointment } = await apiFetch<{ appointment: Appointment }>('/api/appointments', {
+    const body = await apiFetch<{ appointment: Appointment; notify?: BookingNotify }>('/api/appointments', {
       method: 'POST',
       body: JSON.stringify({
         patientId: input.patientId,
@@ -517,11 +518,12 @@ export default function ClinicianApp() {
         ...(input.source ? { source: input.source } : {}),
       }),
     });
+    const appointment = body.appointment;
     setAppointments((prev) => [appointment, ...prev.filter((a) => a.id !== appointment.id && a.id !== input.id)]);
     if (appointment.date === queueDate) {
       setQueueAppointments((prev) => [appointment, ...prev.filter((a) => a.id !== appointment.id)].sort((a, b) => a.tokenNumber - b.tokenNumber));
     }
-    return appointment;
+    return { appointment, notify: body.notify };
   };
 
   const persistPatientCreate = async (input: Patient) => {
@@ -567,7 +569,7 @@ export default function ClinicianApp() {
     return next;
   };
 
-  const handleSavePrescription = (newRx: Prescription) => {
+  const handleSavePrescription = async (newRx: Prescription): Promise<Prescription | void> => {
     setPrescriptions((prev) => [newRx, ...prev.filter((p) => p.id !== newRx.id)]);
     setAppointments((prev) =>
       prev.map((a) =>
@@ -583,23 +585,22 @@ export default function ClinicianApp() {
           : a
       )
     );
-    void (async () => {
-      try {
-        const { prescription } = await apiFetch<{ prescription: Prescription }>('/api/prescriptions', {
-          method: 'POST',
-          body: JSON.stringify({ ...newRx, appointmentId: draftAppointmentId }),
-        });
-        setPrescriptions((prev) => [prescription, ...prev.filter((p) => p.id !== prescription.id && p.id !== newRx.id)]);
-        const inConsult = appointments.find(
-          (a) => a.patientId === newRx.patientId && (a.status === 'In Consultation' || a.status === 'Completed')
-        );
-        if (inConsult) {
-          await persistAppointmentPatch(inConsult.id, { status: 'Completed' });
-        }
-      } catch (err) {
-        console.error('Failed to persist prescription', err);
+    try {
+      const { prescription } = await apiFetch<{ prescription: Prescription }>('/api/prescriptions', {
+        method: 'POST',
+        body: JSON.stringify({ ...newRx, appointmentId: draftAppointmentId }),
+      });
+      setPrescriptions((prev) => [prescription, ...prev.filter((p) => p.id !== prescription.id && p.id !== newRx.id)]);
+      const inConsult = appointments.find(
+        (a) => a.patientId === newRx.patientId && (a.status === 'In Consultation' || a.status === 'Completed')
+      );
+      if (inConsult) {
+        await persistAppointmentPatch(inConsult.id, { status: 'Completed' });
       }
-    })();
+      return prescription;
+    } catch (err) {
+      console.error('Failed to persist prescription', err);
+    }
   };
 
   const handleUpdateAppointmentStatus = (id: string, status: Appointment['status']) => {
@@ -715,10 +716,13 @@ export default function ClinicianApp() {
     });
   };
 
-  const handleBookAppointment = (newApt: Partial<Appointment>) => {
-    void persistAppointmentCreate(newApt).catch((err) => {
+  const handleBookAppointment = async (newApt: Partial<Appointment>) => {
+    try {
+      return await persistAppointmentCreate(newApt);
+    } catch (err) {
       console.error('Failed to persist appointment', err);
-    });
+      throw err;
+    }
   };
 
   const handleSelectDoctor = (doctor: Doctor) => {
@@ -1087,6 +1091,12 @@ export default function ClinicianApp() {
                     initialDraft={draftSession.draft}
                     initialSoapData={null}
                     onSavePrescription={handleSavePrescription}
+                    onPrescriptionLoaded={(loaded) => {
+                      setPrescriptions((prev) => [
+                        loaded,
+                        ...prev.filter((item) => item.rxNumber !== loaded.rxNumber && item.id !== loaded.id),
+                      ]);
+                    }}
                     clinicSettings={clinicSettings}
                     isSpecialtyLocked={isSpecialtyLocked}
                     lockedSpecialty={lockedSpecialty}
@@ -1100,7 +1110,7 @@ export default function ClinicianApp() {
                       openBillForAppointment(id, currentPatient.id);
                     }}
                     appointments={appointments}
-                    onBookFollowUp={async (input) => persistAppointmentCreate(input)}
+                    onBookFollowUp={async (input) => (await persistAppointmentCreate(input)).appointment}
                     onAutoSave={handleAutoSaveDraft}
                   />
                 )}
@@ -1206,6 +1216,7 @@ export default function ClinicianApp() {
             <WhatsAppAssistant
               currentPatient={currentPatient}
               doctors={doctors}
+              clinicEmail={clinicSettings.email}
             />
           )}
 

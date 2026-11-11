@@ -1,6 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { formatINR } from '../lib/currency.ts';
-import { apiFetchResponse } from '../api/http';
+import { apiFetch, apiFetchResponse } from '../api/http';
+import {
+  interpretSignedRxWhatsAppResponse,
+  patientPhoneBlocksWhatsAppSend,
+  shouldPersistWhatsAppSent,
+  signedRxWhatsAppRequestBody,
+  whatsAppDispatchNotice,
+  type SignedRxWhatsAppUi,
+} from '../lib/signedRxWhatsAppSend';
 import { 
   FileText, 
   Plus, 
@@ -82,6 +90,7 @@ import { FollowUpSlotPicker, ReservedFollowUp } from './FollowUpSlotPicker';
 import { clonePresetExercises, presetHepToastMessage } from '../lib/rxPresetHep';
 import { followUpBookingRef } from '../lib/followUpSlots';
 import { installPrescriptionPrintHooks, joinPresent, printPrescriptionDocument } from '../lib/printPrescription';
+import { RULE_BASED_SAFETY_SOURCE, safetyGateBlocksActions } from '../lib/safetyCheckGate';
 import { resolveRxModule } from '../lib/specialtyWorkflow';
 import { PatientRecordModal } from './PatientRecordModal';
 import {
@@ -100,7 +109,7 @@ interface PrescriptionWriterProps {
   initialSoapData: SoapNote | null;
   /** Restored draft for this patient. Null means the fetch resolved with no saved draft. */
   initialDraft?: unknown | null;
-  onSavePrescription: (prescription: Prescription) => void;
+  onSavePrescription: (prescription: Prescription) => void | Promise<Prescription | void>;
   clinicSettings: ClinicSettings;
   isSpecialtyLocked?: boolean;
   lockedSpecialty?: string;
@@ -109,6 +118,28 @@ interface PrescriptionWriterProps {
   onBookFollowUp?: (input: Partial<Appointment>) => Promise<Appointment | void>;
   onAutoSave?: (prescription: Prescription, options?: { immediate?: boolean }) => void;
   appointmentId?: string;
+  /** Replace a saved Rx from GET. Does not insert another row. */
+  onPrescriptionLoaded?: (prescription: Prescription) => void;
+}
+
+function WhatsAppDispatchNotice({ kind, text }: { kind: SignedRxWhatsAppUi['kind']; text: string }) {
+  const tone =
+    kind === 'sent'
+      ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+      : kind === 'sandbox'
+        ? 'border-slate-200 bg-slate-50 text-slate-700'
+        : 'border-rose-200 bg-rose-50 text-rose-800';
+  const iconClass = kind === 'sent' ? 'text-emerald-600' : kind === 'sandbox' ? 'text-slate-500' : 'text-rose-600';
+  return (
+    <div role="status" className={`p-2.5 rounded-lg border text-[11px] font-medium flex items-center gap-2 ${tone}`}>
+      {kind === 'sent' ? (
+        <CheckCircle className={`w-4 h-4 shrink-0 ${iconClass}`} />
+      ) : (
+        <AlertTriangle className={`w-4 h-4 shrink-0 ${iconClass}`} />
+      )}
+      <span>{text}</span>
+    </div>
+  );
 }
 
 export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
@@ -125,6 +156,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
   onBookFollowUp,
   onAutoSave,
   appointmentId,
+  onPrescriptionLoaded,
 }) => {
   // Determine initial specialty from current doctor
   const getInitialSpecialty = (doctorSpec: string): PolyclinicSpecialty =>
@@ -333,13 +365,13 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
   // Safety checker state
   const [isCheckingSafety, setIsCheckingSafety] = useState(false);
   const [safetyResult, setSafetyResult] = useState<SafetyCheckResult | null>(null);
-  // Tracks which exact medicine list the last safety check ran against, and
-  // which exact list a HIGH_RISK override was acknowledged for. Both are
-  // compared against the *current* medicine list signature below, so any
-  // edit to the medicine list invalidates a stale check or a stale override
-  // and re-blocks Print/Send/Finalize until the doctor re-runs the audit.
+  // Tracks which medicine list the last safety check ran against. A later
+  // edit makes that check stale and blocks Print, Send, and Sign until the
+  // doctor runs the audit again. A required reason starts empty.
   const [safetyCheckedSignature, setSafetyCheckedSignature] = useState<string | null>(null);
-  const [safetyOverrideSignature, setSafetyOverrideSignature] = useState<string | null>(null);
+  const [safetyOverrideReason, setSafetyOverrideReason] = useState('');
+  const [printVerifyUrl, setPrintVerifyUrl] = useState('');
+  const SAFETY_OVERRIDE_REASON_MIN = 20;
 
   // Fingerprint of the current medicine list — used purely to detect whether
   // the medicine list has changed since the last safety audit ran.
@@ -347,20 +379,39 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     .map((m) => `${m.id}:${m.drugName}:${m.dosage}:${m.frequency}:${m.durationDays}`)
     .join('|');
   const isSafetyCheckStale = medicines.length > 0 && safetyCheckedSignature !== medicinesSignature;
-  const isSafetyHighRisk = safetyResult?.safetyStatus === 'HIGH_RISK';
-  const isSafetyOverridden = safetyOverrideSignature === medicinesSignature;
+  const overrideReason = safetyOverrideReason.trim();
+  const overrideReady = overrideReason.length >= SAFETY_OVERRIDE_REASON_MIN;
+  const reviewWithAlerts =
+    safetyResult?.safetyStatus === 'REVIEW' &&
+    (safetyResult.alerts?.length || 0) > 0 &&
+    safetyResult.source !== RULE_BASED_SAFETY_SOURCE;
+  const showSafetyOverride =
+    Boolean(safetyResult) &&
+    !isSafetyCheckStale &&
+    (safetyResult?.safetyStatus === 'HIGH_RISK' ||
+      safetyResult?.hasHighRiskAlert === true ||
+      (safetyResult?.source === RULE_BASED_SAFETY_SOURCE && safetyResult?.safetyStatus === 'REVIEW') ||
+      reviewWithAlerts);
   // Blocks Print / WhatsApp Dispatch / Finalize & Sign until the doctor has
-  // run the AI Safety Audit against the *current* medicine list, and — if it
-  // came back HIGH_RISK — explicitly acknowledged the override. This is the
-  // safety gate: a prescription must not leave the app unaudited.
+  // run the AI Safety Audit against the *current* medicine list, and typed a
+  // reason when the check needs one. The reason starts empty.
   const isSafetyGateBlocking =
-    medicines.length > 0 && (isSafetyCheckStale || (isSafetyHighRisk && !isSafetyOverridden));
+    safetyGateBlocksActions({
+      medicineCount: medicines.length,
+      checkedSignature: safetyCheckedSignature,
+      medicinesSignature,
+      safetyStatus: safetyResult?.safetyStatus,
+      hasHighRiskAlert: safetyResult?.hasHighRiskAlert,
+      source: safetyResult?.source,
+      overrideSignature: overrideReady ? medicinesSignature : null,
+    }) ||
+    (medicines.length > 0 && !isSafetyCheckStale && reviewWithAlerts && !overrideReady);
   const safetyGateMessage = !medicines.length
     ? ''
     : isSafetyCheckStale
     ? 'Run the AI Safety Audit before printing, sending, or signing this prescription — the medicine list has changed since the last check.'
-    : isSafetyHighRisk && !isSafetyOverridden
-    ? 'This prescription was flagged HIGH_RISK by the AI Safety Audit. Review the contraindications above and acknowledge the override before proceeding.'
+    : isSafetyGateBlocking
+    ? 'Review the safety check and type a reason before printing, sending, or signing this prescription.'
     : '';
 
   // WhatsApp Translation modal
@@ -368,13 +419,13 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
   const [targetLanguage, setTargetLanguage] = useState('Hindi');
   const [isTranslating, setIsTranslating] = useState(false);
   const [translatedWhatsAppText, setTranslatedWhatsAppText] = useState('');
-  const [whatsappSentSuccess, setWhatsappSentSuccess] = useState(false);
+  const [whatsappNotice, setWhatsappNotice] = useState('');
+  const [whatsappNoticeKind, setWhatsappNoticeKind] = useState<SignedRxWhatsAppUi['kind']>('failed');
 
   // Finalize & Sign states
   const [isFinalized, setIsFinalized] = useState(false);
   const [showFinalizeModal, setShowFinalizeModal] = useState(false);
   const [isSendingWhatsAppDirect, setIsSendingWhatsAppDirect] = useState(false);
-  const [whatsAppDirectSuccess, setWhatsAppDirectSuccess] = useState(false);
 
   // When active doctor changes, adapt specialty
   useEffect(() => {
@@ -428,6 +479,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          patientId: currentPatient.id,
           patientAllergies: currentPatient.allergies,
           chronicConditions: currentPatient.chronicConditions,
           medicines: medicines,
@@ -438,9 +490,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
       const data = await response.json();
       setSafetyResult(data);
       setSafetyCheckedSignature(medicinesSignature);
-      // A fresh check invalidates any previous override — the doctor must
-      // re-acknowledge if this new result is still HIGH_RISK.
-      setSafetyOverrideSignature(null);
+      setSafetyOverrideReason('');
     } catch (err) {
       console.error('Safety check failed:', err);
       // On a failed check we deliberately do NOT record a checked signature,
@@ -519,7 +569,8 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
       return;
     }
     setShowWhatsAppModal(true);
-    setWhatsappSentSuccess(false);
+    setWhatsappNotice('');
+    setWhatsappNoticeKind('failed');
     await translateRxForWhatsApp(targetLanguage);
   };
 
@@ -568,7 +619,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
   const keepModule = (key: string, active: boolean) =>
     savedModuleKeys.includes(key) || (active && !aiSource);
 
-  const buildCurrentRx = (statusOverride?: 'unsent' | 'delivered'): Prescription => ({
+  const buildCurrentRx = (): Prescription => ({
     id: 'rx-' + Date.now(),
     rxNumber: rxNumber,
     patientId: currentPatient.id,
@@ -605,8 +656,8 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     clinicName: clinicSettings.name,
     clinicAddress: clinicSettings.address,
     clinicPhone: clinicSettings.phone,
-    qrVerificationUrl: "",
-    whatsappSentStatus: statusOverride || (whatsAppDirectSuccess || whatsappSentSuccess ? 'delivered' : 'unsent'),
+    qrVerificationUrl: printVerifyUrl,
+    whatsappSentStatus: 'unsent',
     specialtyType: activeSpecialty,
     physiotherapyAssessment: keepModule('physiotherapyAssessment', activeSpecialty === 'Physiotherapy & Rehabilitation') ? physioAssessment : undefined,
     performedTherapies: performedProcedures,
@@ -840,7 +891,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     return true;
   };
 
-  const handleFinalizeAndSignRx = () => {
+  const handleFinalizeAndSignRx = async () => {
     if (aiReviewOpen) {
       window.alert(reviewGateMessage);
       return;
@@ -853,7 +904,11 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     }
     const rx = stampReviewed(buildCurrentRx());
     if (rx.reviewedBy) setReviewedBy(rx.reviewedBy);
-    onSavePrescription(rx);
+    const saved = await onSavePrescription({
+      ...rx,
+      ...(showSafetyOverride && overrideReady ? { safetyOverrideReason: overrideReason } : {}),
+    });
+    if (saved?.qrVerificationUrl) setPrintVerifyUrl(saved.qrVerificationUrl);
     setIsFinalized(true);
     setShowFinalizeModal(true);
   };
@@ -867,37 +922,48 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
       window.alert(safetyGateMessage || 'Run the AI Safety Audit before sending this prescription.');
       return;
     }
+    const phoneBlock = patientPhoneBlocksWhatsAppSend(currentPatient.phone);
+    if (phoneBlock) {
+      setWhatsappNoticeKind('failed');
+      setWhatsappNotice(phoneBlock);
+      return;
+    }
     setIsSendingWhatsAppDirect(true);
+    setWhatsappNotice('');
     try {
       const response = await apiFetchResponse('/api/whatsapp/send-rx', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          patientPhone: currentPatient.phone,
-          patientName: currentPatient.name,
-          uhid: currentPatient.uhid,
-          rxNumber: rxNumber,
-          doctorName: currentDoctor.name,
-          doctorSpecialty: activeSpecialty,
-          diagnosis: diagnosis,
-          medicines: medicines,
-          advice: adviceList,
-          clinicName: clinicSettings.name,
-          language: targetLanguage,
-        }),
+        body: JSON.stringify(signedRxWhatsAppRequestBody(rxNumber)),
       });
-      setWhatsAppDirectSuccess(true);
-      setWhatsappSentSuccess(true);
-      const updatedRx = stampReviewed(buildCurrentRx('delivered'));
-      if (updatedRx.reviewedBy) setReviewedBy(updatedRx.reviewedBy);
-      onSavePrescription(updatedRx);
+      const payload = await response.json().catch(() => ({}));
+      const decision = interpretSignedRxWhatsAppResponse(response.status, payload);
+      const publish = (phone: string) => {
+        setWhatsappNoticeKind(decision.kind);
+        setWhatsappNotice(whatsAppDispatchNotice(decision, phone));
+      };
+      if (!shouldPersistWhatsAppSent(decision)) {
+        publish(currentPatient.phone);
+        return;
+      }
+      let phone = currentPatient.phone;
+      try {
+        const refreshed = await apiFetch<{ prescription: Prescription }>(
+          `/api/prescriptions/${encodeURIComponent(rxNumber)}`
+        );
+        if (refreshed.prescription) {
+          onPrescriptionLoaded?.(refreshed.prescription);
+          phone = refreshed.prescription.patientPhone || phone;
+        }
+      } catch (err) {
+        console.error('WhatsApp send succeeded but the prescription refresh failed', err);
+      }
+      publish(phone);
     } catch (err) {
-      console.error('WhatsApp dispatch failed, falling back:', err);
-      setWhatsAppDirectSuccess(true);
-      setWhatsappSentSuccess(true);
-      const updatedRx = stampReviewed(buildCurrentRx('delivered'));
-      if (updatedRx.reviewedBy) setReviewedBy(updatedRx.reviewedBy);
-      onSavePrescription(updatedRx);
+      console.error('WhatsApp dispatch failed', err);
+      const decision = interpretSignedRxWhatsAppResponse(0, {});
+      setWhatsappNoticeKind(decision.kind);
+      setWhatsappNotice(whatsAppDispatchNotice(decision, ''));
     } finally {
       setIsSendingWhatsAppDirect(false);
     }
@@ -1164,17 +1230,18 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
             </div>
           )}
 
-          {isSafetyHighRisk && !isSafetyCheckStale && (
-            <label className="flex items-start gap-2 pt-2 border-t border-rose-200 text-xs text-rose-900 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={isSafetyOverridden}
-                onChange={(e) => setSafetyOverrideSignature(e.target.checked ? medicinesSignature : null)}
-                className="mt-0.5"
+          {showSafetyOverride && (
+            <label className="block pt-2 border-t border-rose-200 text-xs text-rose-900 space-y-1.5">
+              <span>Type why you are proceeding. The reason is stored with your name and is never filled in for you.</span>
+              <textarea
+                value={safetyOverrideReason}
+                onChange={(e) => setSafetyOverrideReason(e.target.value)}
+                rows={3}
+                placeholder="Type the clinical reason for proceeding"
+                className="w-full rounded-lg border border-rose-200 bg-white px-2 py-1.5 text-xs text-slate-800"
               />
-              <span>
-                I have reviewed the contraindications above and, using my clinical judgment, choose to proceed
-                with this prescription as written.
+              <span className="text-[11px] text-slate-500">
+                {overrideReason.length}/{SAFETY_OVERRIDE_REASON_MIN} characters
               </span>
             </label>
           )}
@@ -2535,25 +2602,22 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
                 <span className="text-[11px] text-slate-500">{currentPatient.phone}</span>
               </div>
 
-              {whatsAppDirectSuccess ? (
-                <div className="bg-white p-2.5 rounded-lg border border-emerald-200 text-emerald-800 text-[11px] font-medium flex items-center gap-2">
-                  <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span>Prescription PDF download link &amp; dosage guide delivered to {currentPatient.phone}!</span>
-                </div>
-              ) : (
-                <button
-                  onClick={handleDirectWhatsAppDispatch}
-                  disabled={isSendingWhatsAppDirect || aiReviewOpen}
-                  className="w-full py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-xs transition-colors cursor-pointer disabled:opacity-50"
-                >
-                  {isSendingWhatsAppDirect ? (
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <Send className="w-3.5 h-3.5" />
-                  )}
-                  <span>{isSendingWhatsAppDirect ? 'Dispatching via Meta API...' : '1-Click Send via WhatsApp'}</span>
-                </button>
-              )}
+              {whatsappNotice ? (
+                <WhatsAppDispatchNotice kind={whatsappNoticeKind} text={whatsappNotice} />
+              ) : null}
+              <button
+                onClick={handleDirectWhatsAppDispatch}
+                disabled={isSendingWhatsAppDirect || aiReviewOpen || Boolean(patientPhoneBlocksWhatsAppSend(currentPatient.phone))}
+                title={patientPhoneBlocksWhatsAppSend(currentPatient.phone) || undefined}
+                className="w-full py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+              >
+                {isSendingWhatsAppDirect ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Send className="w-3.5 h-3.5" />
+                )}
+                <span>{isSendingWhatsAppDirect ? 'Dispatching via Meta API...' : '1-Click Send via WhatsApp'}</span>
+              </button>
             </div>
 
             {/* Bottom Actions */}
@@ -2654,28 +2718,26 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
               />
             </div>
 
-            {whatsappSentSuccess ? (
-              <div className="p-3 bg-emerald-100 text-emerald-800 rounded-lg text-xs font-bold flex items-center justify-center gap-2">
-                <CheckCircle className="w-4 h-4 text-emerald-700" />
-                Prescription & Protocol Delivered to {currentPatient.phone} on WhatsApp!
-              </div>
-            ) : (
-              <div className="flex items-center justify-end space-x-2 pt-2">
-                <button
-                  onClick={() => setShowWhatsAppModal(false)}
-                  className="px-3.5 py-1.5 rounded-md text-xs font-semibold text-slate-600 hover:bg-slate-100"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleSaveAndDispatch}
-                  className="px-4 py-1.5 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs shadow-sm flex items-center space-x-1.5"
-                >
-                  <Send className="w-3.5 h-3.5" />
-                  <span>Send WhatsApp</span>
-                </button>
-              </div>
-            )}
+            {whatsappNotice ? (
+              <WhatsAppDispatchNotice kind={whatsappNoticeKind} text={whatsappNotice} />
+            ) : null}
+            <div className="flex items-center justify-end space-x-2 pt-2">
+              <button
+                onClick={() => setShowWhatsAppModal(false)}
+                className="px-3.5 py-1.5 rounded-md text-xs font-semibold text-slate-600 hover:bg-slate-100"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveAndDispatch}
+                disabled={isSendingWhatsAppDirect || Boolean(patientPhoneBlocksWhatsAppSend(currentPatient.phone))}
+                title={patientPhoneBlocksWhatsAppSend(currentPatient.phone) || undefined}
+                className="px-4 py-1.5 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs shadow-sm flex items-center space-x-1.5 disabled:opacity-50"
+              >
+                <Send className="w-3.5 h-3.5" />
+                <span>Send WhatsApp</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

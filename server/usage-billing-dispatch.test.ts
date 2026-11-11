@@ -9,6 +9,8 @@ import { attachUser } from "./auth.ts";
 import { createApiRouter } from "./api.ts";
 import { createUsageBillingRouter } from "./usage-billing-api.ts";
 import { getDb, initDatabase } from "./db.ts";
+import { recordPassingSafetyAuditForStoredRx } from "./rx-safety-store.ts";
+import { recordWhatsAppOptIn } from "./whatsapp-opt-in.ts";
 import { dispatchWhatsAppCloudMessage, sendPaymentReceipt } from "./graph-whatsapp.ts";
 import { hashPassword } from "./password.ts";
 import {
@@ -151,6 +153,14 @@ describe("Usage wallet billing dispatch paths", () => {
       .prepare("SELECT COUNT(*) AS c FROM usage_events WHERE tenant_id = ? AND resource = 'whatsapp_message'")
       .get(tenantId) as { c: number };
 
+    recordWhatsAppOptIn(getDb(), { tenantId, phone: patientPhone, optedIn: true, source: "test", actorId: "test" });
+    const stamped = new Date().toISOString();
+    getDb()
+      .prepare(
+        `INSERT INTO meta_templates (id, tenant_id, waba_id, name, category, language, status, components, created_at, updated_at)
+         VALUES (?, ?, '204800000000000', 'clinic_appointment_reminder', 'UTILITY', 'en', 'APPROVED', '[]', ?, ?)`
+      )
+      .run(`tpl-usage-${tenantId}`, tenantId, stamped, stamped);
     const reminder = await dispatchAppointmentReminder({
       tenantId,
       appointment: booked.appointment,
@@ -250,6 +260,33 @@ describe("Usage wallet billing dispatch paths", () => {
     assert.ok(agentAfter.c >= agentBefore.c + 1, "staff /whatsapp/send must insert usage_events");
 
     const rxBefore = agentAfter.c;
+    const meteredPatient = await jsonRequest(
+      port,
+      "POST",
+      "/api/patients",
+      { name: "Metered Patient", phone: patientPhone, age: 40, gender: "Female" },
+      clinicAuth
+    );
+    assert.ok(meteredPatient.status === 200 || meteredPatient.status === 201, String(meteredPatient.json.error || "patient"));
+    const meteredPatientId = String((meteredPatient.json.patient as { id: string }).id);
+    const meteredRx = await jsonRequest(
+      port,
+      "POST",
+      "/api/prescriptions",
+      {
+        patientId: meteredPatientId,
+        diagnosis: "Usage wallet check",
+        medicines: [{ drugName: "Paracetamol", dosage: "650 mg", frequency: "1-0-1" }],
+        doctorName: "Dr Meter",
+        doctorId,
+        reviewedBy: doctorId,
+      },
+      clinicAuth
+    );
+    assert.equal(meteredRx.status, 201, String(meteredRx.json.error || "rx"));
+    const meteredRxNumber = String((meteredRx.json.prescription as { rxNumber: string }).rxNumber);
+    assert.equal(recordPassingSafetyAuditForStoredRx(getDb(), tenantId, meteredRxNumber), true);
+    recordWhatsAppOptIn(getDb(), { tenantId, phone: patientPhone, optedIn: true, source: "test", actorId: "test" });
     const rxSend = await jsonRequest(
       port,
       "POST",
@@ -258,7 +295,7 @@ describe("Usage wallet billing dispatch paths", () => {
         patientPhone,
         patientName: "Metered Patient",
         uhid: "LUM-METER-1",
-        rxNumber: `RX-METER-${Date.now()}`,
+        rxNumber: String((meteredRx.json.prescription as { rxNumber: string }).rxNumber),
         doctorName: "Dr Meter",
         diagnosis: "Usage wallet check",
         medicines: [{ drugName: "Paracetamol", dosage: "650 mg", frequency: "1-0-1" }],

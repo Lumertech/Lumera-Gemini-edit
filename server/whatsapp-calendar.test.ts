@@ -28,6 +28,7 @@ import {
 } from "./whatsapp-calendar.ts";
 import { AMBIENT_WALKIN_DUP_SOURCE, AMBIENT_WALKIN_SOURCE } from "./ambient-walkin.ts";
 import { platformAdminActor, upsertWhatsAppNumber } from "./whatsapp-numbers.ts";
+import { recordWhatsAppOptIn } from "./whatsapp-opt-in.ts";
 
 async function jsonRequest(
   port: number,
@@ -86,6 +87,25 @@ function createClinicUser(label: string) {
 }
 
 let phoneSeq = 0;
+function allowTemplates(tenantId: string, phone: string) {
+  recordWhatsAppOptIn(getDb(), { tenantId, phone, optedIn: true, source: "test", actorId: "test" });
+}
+
+function bookOpted(opts: Parameters<typeof bookWhatsAppAppointment>[0]) {
+  allowTemplates(opts.tenantId, opts.patientPhone);
+  return bookWhatsAppAppointment(opts);
+}
+
+function approveTemplate(tenantId: string, name: string, language = "en") {
+  const now = new Date().toISOString();
+  getDb()
+    .prepare(
+      `INSERT INTO meta_templates (id, tenant_id, waba_id, name, category, language, status, components, created_at, updated_at)
+       VALUES (?, ?, '204800000000000', ?, 'UTILITY', ?, 'APPROVED', '[]', ?, ?)`
+    )
+    .run(`tpl-${name}-${tenantId}-${language}`, tenantId, name, language, now, now);
+}
+
 function uniquePhone(): string {
   phoneSeq += 1;
   const n = `${Date.now()}${phoneSeq}${Math.floor(Math.random() * 900 + 100)}`.replace(/\D/g, "").slice(-10);
@@ -151,6 +171,7 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
     const token = await login(clinic.email);
     const auth = { Authorization: `Bearer ${token}` };
     const phone = uniquePhone();
+    allowTemplates(clinic.tenantId, phone);
 
     const booked = await jsonRequest(
       port,
@@ -343,7 +364,8 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
 
     try {
       const clinic = createClinicUser("remindS");
-      const booked = bookWhatsAppAppointment({
+      approveTemplate(clinic.tenantId, "clinic_appointment_reminder");
+      const booked = bookOpted({
         tenantId: clinic.tenantId,
         patientPhone: uniquePhone(),
         patientName: "Reminder Sandbox",
@@ -391,7 +413,7 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
 
     try {
       const clinic = createClinicUser("remindG");
-      const booked = bookWhatsAppAppointment({
+      const booked = bookOpted({
         tenantId: clinic.tenantId,
         patientPhone: uniquePhone(),
         patientName: "Reminder Graph",
@@ -411,13 +433,17 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
         metaWabaName: `Clinic ${clinic.tenantId}`,
         status: "connected",
       });
+      approveTemplate(clinic.tenantId, "clinic_appointment_reminder");
+      approveTemplate(clinic.tenantId, "clinic_booking_confirmation");
 
+      const bodies: Array<Record<string, unknown>> = [];
       const fetchImpl: typeof fetch = async (input, init) => {
         const url = String(input);
         assert.match(url, new RegExp(`/${phoneNumberId}/messages`));
         assert.equal(url.includes(String(process.env.META_PHONE_NUMBER_ID)), false);
         const auth = String((init?.headers as Record<string, string> | undefined)?.Authorization || "");
         assert.match(auth, new RegExp(`Bearer ${tenantToken}`));
+        bodies.push(JSON.parse(String(init?.body || "{}")) as Record<string, unknown>);
         return new Response(JSON.stringify({ messages: [{ id: "wamid.GRAPH_REMINDER_TEST" }] }), {
           status: 200,
           headers: { "Content-Type": "application/json" },
@@ -446,6 +472,15 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
         assert.equal(confirm.channel, "graph");
         assert.equal(confirm.messageId, "wamid.GRAPH_REMINDER_TEST");
       }
+      assert.equal(bodies.length, 2);
+      for (const body of bodies) {
+        assert.equal(body.type, "template");
+        assert.equal(body.text, undefined);
+      }
+      const reminderTemplate = bodies[0].template as { name?: string };
+      const confirmTemplate = bodies[1].template as { name?: string };
+      assert.equal(reminderTemplate.name, "clinic_appointment_reminder");
+      assert.equal(confirmTemplate.name, "clinic_booking_confirmation");
     } finally {
       if (prevToken === undefined) delete process.env.META_ACCESS_TOKEN;
       else process.env.META_ACCESS_TOKEN = prevToken;
@@ -461,11 +496,12 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
 
     try {
       const clinic = createClinicUser("remindP");
+      approveTemplate(clinic.tenantId, "clinic_appointment_reminder");
       const token = await login(clinic.email);
       process.env.NODE_ENV = "production";
       delete process.env.META_ACCESS_TOKEN;
       delete process.env.META_PHONE_NUMBER_ID;
-      const booked = bookWhatsAppAppointment({
+      const booked = bookOpted({
         tenantId: clinic.tenantId,
         patientPhone: uniquePhone(),
         patientName: "Reminder Prod",
@@ -510,7 +546,7 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
       const clinic = createClinicUser("skipSt");
       const token = await login(clinic.email);
       const phone = uniquePhone();
-      const booked = bookWhatsAppAppointment({
+      const booked = bookOpted({
         tenantId: clinic.tenantId,
         patientPhone: phone,
         patientName: "Skip Completed",
@@ -591,6 +627,9 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
       assert.equal(String(recovered?.patient_phone || ""), e164);
 
       getDb().prepare("UPDATE appointments SET patient_phone = ? WHERE id = ?").run("+910000000000", appointment.id);
+      allowTemplates(clinic.tenantId, "+910000000000");
+      allowTemplates(clinic.tenantId, spaced);
+      approveTemplate(clinic.tenantId, "clinic_appointment_reminder");
       const reminded = await jsonRequest(
         port,
         "POST",
@@ -747,7 +786,7 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
 
   it("Trigger 24h Reminder for seeded A1 does not require a new booking", async () => {
     const saved: Record<string, string | undefined> = {};
-    for (const key of ["META_ACCESS_TOKEN", "META_PHONE_NUMBER_ID", "WHATSAPP_ACCESS_TOKEN", "WHATSAPP_PHONE_NUMBER_ID"]) {
+    for (const key of ["META_ACCESS_TOKEN", "META_PHONE_NUMBER_ID", "WHATSAPP_ACCESS_TOKEN", "WHATSAPP_PHONE_NUMBER_ID", "DEMO_WHATSAPP_RECIPIENT_ALLOWLIST"]) {
       saved[key] = process.env[key];
       delete process.env[key];
     }
@@ -757,11 +796,13 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
     getDb()
       .prepare("UPDATE whatsapp_numbers SET status = 'disconnected' WHERE owner_type = 'tenant' AND owner_id = ?")
       .run(DEMO_TENANT_ID);
+    process.env.DEMO_WHATSAPP_RECIPIENT_ALLOWLIST = "+919999973271";
     try {
       applyWalletTransaction(DEMO_TENANT_ID, "adjustment", 1000, {
         note: "Clip A reminder test credit",
         createdBy: "system",
       });
+      allowTemplates(DEMO_TENANT_ID, "+919999973271");
       const token = await login("admin@lumera.me");
       const reminded = await jsonRequest(
         port,
@@ -823,10 +864,10 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
       getDb()
         .prepare(
           `INSERT INTO meta_templates (id, tenant_id, waba_id, name, category, language, status, components, created_at, updated_at)
-           VALUES (?, ?, '204800000000000', 'lumera_appointment_reminder', 'UTILITY', 'en_US', 'APPROVED', '[]', ?, ?)`
+           VALUES (?, ?, '204800000000000', 'clinic_appointment_reminder', 'UTILITY', 'en_US', 'APPROVED', '[]', ?, ?)`
         )
         .run(`tpl-${clinic.tenantId}`, clinic.tenantId, now, now);
-      const booked = bookWhatsAppAppointment({
+      const booked = bookOpted({
         tenantId: clinic.tenantId,
         patientPhone: uniquePhone(),
         patientName: "Param Patient",
@@ -854,13 +895,13 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
         language?: { code?: string };
         components?: Array<{ type?: string; parameters?: Array<{ text?: string }> }>;
       };
-      assert.equal(template.name, "lumera_appointment_reminder");
+      assert.equal(template.name, "clinic_appointment_reminder");
       assert.equal(template.language?.code, "en_US");
       const body = template.components?.find((component) => component.type === "body");
       const clinicRow = getDb().prepare("SELECT name FROM tenants WHERE id = ?").get(clinic.tenantId) as { name: string };
       const parameters = (body?.parameters || []).map((parameter) => parameter.text);
       assert.deepEqual(parameters, [
-        "Param Patient",
+        "Param",
         clinicRow.name,
         booked.appointment.doctorName,
         "2026-10-02",
@@ -991,6 +1032,7 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
       getDb()
         .prepare("UPDATE appointments SET status = 'Waiting', time_slot = '10:30 AM', date = ? WHERE id = ?")
         .run(date, ambientId);
+      approveTemplate(clinic.tenantId, "clinic_appointment_reminder");
       const run = await runAppointmentReminders({
         tenantId: clinic.tenantId,
         now: new Date("2026-11-19T05:00:00.000Z"),

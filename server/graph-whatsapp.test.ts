@@ -35,6 +35,8 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
   const prevWaPhone = process.env.WHATSAPP_PHONE_NUMBER_ID;
   const prevNode = process.env.NODE_ENV;
   const prevTpl = process.env.META_REMINDER_TEMPLATE_NAME;
+  const prevBookTpl = process.env.META_BOOK_CONFIRMATION_TEMPLATE_NAME;
+  const prevUtilityLang = process.env.META_UTILITY_TEMPLATE_LANGUAGE;
   const prevOtpTpl = process.env.META_OTP_TEMPLATE_NAME;
 
   after(() => {
@@ -52,13 +54,19 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
     else process.env.META_REMINDER_TEMPLATE_NAME = prevTpl;
     if (prevOtpTpl === undefined) delete process.env.META_OTP_TEMPLATE_NAME;
     else process.env.META_OTP_TEMPLATE_NAME = prevOtpTpl;
+    if (prevBookTpl === undefined) delete process.env.META_BOOK_CONFIRMATION_TEMPLATE_NAME;
+    else process.env.META_BOOK_CONFIRMATION_TEMPLATE_NAME = prevBookTpl;
+    if (prevUtilityLang === undefined) delete process.env.META_UTILITY_TEMPLATE_LANGUAGE;
+    else process.env.META_UTILITY_TEMPLATE_LANGUAGE = prevUtilityLang;
   });
 
   it("Graph path sends reminder / confirmation / receipt / OTP when creds are set (mock fetch OK)", async () => {
     process.env.META_ACCESS_TOKEN = LIVE_TOKEN;
     process.env.META_PHONE_NUMBER_ID = LIVE_PHONE_ID;
     process.env.NODE_ENV = "test";
-    delete process.env.META_REMINDER_TEMPLATE_NAME;
+    process.env.META_REMINDER_TEMPLATE_NAME = "lumera_appointment_reminder";
+    process.env.META_BOOK_CONFIRMATION_TEMPLATE_NAME = "lumera_appointment_booked";
+    process.env.META_UTILITY_TEMPLATE_LANGUAGE = "en_US";
     delete process.env.META_OTP_TEMPLATE_NAME;
 
     const captured: Array<{ url: string; body: Record<string, unknown> }> = [];
@@ -129,8 +137,16 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
       assert.equal(call.body.to, "919823455667");
     }
     assert.match(String((captured[0].body.text as { body?: string }).body), /123456/);
-    assert.match(String((captured[2].body.text as { body?: string }).body), /Appointment reminder/);
-    assert.match(String((captured[3].body.text as { body?: string }).body), /Appointment confirmed/);
+    assert.equal(captured[2].body.type, "template");
+    assert.equal(captured[2].body.text, undefined);
+    const reminderTemplate = captured[2].body.template as { name?: string; language?: { code?: string } };
+    assert.equal(reminderTemplate.name, "lumera_appointment_reminder");
+    assert.equal(reminderTemplate.language?.code, "en_US");
+    assert.equal(captured[3].body.type, "template");
+    assert.equal(captured[3].body.text, undefined);
+    const confirmTemplate = captured[3].body.template as { name?: string; language?: { code?: string } };
+    assert.equal(confirmTemplate.name, "lumera_appointment_booked");
+    assert.equal(confirmTemplate.language?.code, "en_US");
     assert.match(String((captured[4].body.text as { body?: string }).body), /Payment receipt/);
   });
 

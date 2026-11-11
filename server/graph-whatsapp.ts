@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { graphApiVersion, isProduction, readSecret } from "./runtime.ts";
 import { isUsableGraphToken, isUsablePhoneNumberId } from "./meta-security.ts";
@@ -6,6 +7,17 @@ import { getTenantWabaNumber, getWhatsAppNumberSecret } from "./whatsapp-numbers
 import { waTokenKeyBytes } from "./wa-token-crypto.ts";
 import { formatINR } from "../src/lib/currency.ts";
 import { isSampleTaxInvoice, sampleTaxInvoiceReceiptText } from "../src/lib/sampleTaxInvoice.ts";
+import {
+  approvedClinicTemplate,
+  bookConfirmationTemplateParameters,
+  clinicTemplateName,
+  formatGraphSendError,
+  receiptTemplateParameters,
+  reminderTemplateParameters,
+  TEMPLATE_NOT_APPROVED_ERROR,
+} from "./clinic-whatsapp-templates.ts";
+import { mintPatientLinkToken, revokePatientLinkToken } from "./patient-link-token.ts";
+import { whatsAppOptInBlock } from "./whatsapp-opt-in.ts";
 
 /**
  * Shared Meta WhatsApp Cloud API send module (Wave 1B OTP + Wave 2 utilities).
@@ -29,11 +41,16 @@ export type CloudMessageKind =
   | "appointment_reminder"
   | "book_confirmation"
   | "payment_receipt"
+  | "prescription_ready"
   | "text";
 
 export type CloudDispatchResult =
   | { ok: true; channel: "graph" | "sandbox"; messageId?: string }
-  | { ok: false; error: string; channel: "none" | "graph"; status?: number };
+  | { ok: false; error: string; channel: "none" | "graph"; status?: number; eventId?: string };
+
+export const SKIPPED_NOT_ALLOWLISTED = "skipped_not_allowlisted";
+export const FAILED_FINAL = "failed_final";
+export const DEMO_OUTBOUND_ATTEMPT_CAP = 3;
 
 export const CLINIC_WHATSAPP_NOT_CONNECTED = "Clinic WhatsApp not connected";
 export const READ_ONLY_WHATSAPP_SEND_ERROR =
@@ -53,6 +70,7 @@ export function cloudDispatchHttpStatus(error: string, status?: number): number 
   if (error === READ_ONLY_WHATSAPP_SEND_ERROR || error === WHATSAPP_WINDOW_CLOSED_ERROR) return 403;
   if (/not permitted|24 hours after the patient/i.test(error)) return 403;
   if (String(error || "").includes("Top up now")) return 402;
+  if (String(error || "").includes("TEMPLATE_NOT_APPROVED")) return 409;
   return isProduction() ? 503 : 502;
 }
 
@@ -275,6 +293,37 @@ export function toWhatsAppRecipient(phone: string): string {
   return digits;
 }
 
+/** Last 4 digits only. Logs must not carry a full WhatsApp recipient. */
+export function maskWhatsAppRecipient(phone: string): string {
+  const last4 = toWhatsAppRecipient(phone).slice(-4);
+  return last4 ? `****${last4}` : "****";
+}
+
+/** Founder demo handset used when DEMO_WHATSAPP_RECIPIENT_ALLOWLIST is unset. */
+export const DEFAULT_DEMO_WHATSAPP_RECIPIENT_ALLOWLIST = "+919999973271";
+
+/**
+ * Comma-separated E.164. Unset uses DEFAULT_DEMO_WHATSAPP_RECIPIENT_ALLOWLIST.
+ * An empty value sends demo and test clinics to nobody.
+ */
+export function demoWhatsAppAllowlist(): string[] {
+  const raw = process.env.DEMO_WHATSAPP_RECIPIENT_ALLOWLIST;
+  if (raw === undefined) return [DEFAULT_DEMO_WHATSAPP_RECIPIENT_ALLOWLIST];
+  const trimmed = raw.trim();
+  if (!trimmed) return [];
+  return trimmed
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+/** Exact normalized E.164 (digits only, country code included). Not a last-10 match. */
+export function isDemoWhatsAppAllowlisted(phone: string): boolean {
+  const digits = toWhatsAppRecipient(phone);
+  if (!digits) return false;
+  return demoWhatsAppAllowlist().some((entry) => toWhatsAppRecipient(entry) === digits);
+}
+
 export type GraphMessageResult =
   | { ok: true; messageId: string; graphResponse: unknown }
   | { ok: false; error: string; graphResponse?: unknown };
@@ -310,9 +359,12 @@ export async function postGraphWhatsAppMessage(opts: {
     ).trim();
 
     if (!res.ok || !messageId) {
-      const graphError =
-        (graphResponse as { error?: { message?: string } })?.error?.message ||
-        `Graph API rejected the ${opts.failureLabel || "message"} send (HTTP ${res.status}).`;
+      const graphErr = (graphResponse as { error?: { message?: string; code?: number | string } })?.error;
+      const code = graphErr?.code != null ? String(graphErr.code) : "";
+      const graphError = formatGraphSendError(
+        code,
+        graphErr?.message || `Graph API rejected the ${opts.failureLabel || "message"} send (HTTP ${res.status}).`
+      );
       return { ok: false, error: graphError, graphResponse };
     }
 
@@ -446,6 +498,8 @@ export async function sendWhatsAppGraphTemplate(opts: {
   authOtpButtonParameter?: string;
   /** Marketing/utility coupon COPY_CODE button. Not used for AUTH OTP. */
   couponCodeButtonParameter?: string;
+  /** Utility URL button suffix. The template URL is a fixed base plus this one trailing value. */
+  urlButtonParameter?: string;
   fetchImpl?: typeof fetch;
   failureLabel?: string;
 }): Promise<GraphMessageResult> {
@@ -475,6 +529,14 @@ export async function sendWhatsAppGraphTemplate(opts: {
       sub_type: "url",
       index: "0",
       parameters: [{ type: "text", text: String(opts.authOtpButtonParameter) }],
+    });
+  }
+  if (opts.urlButtonParameter && !opts.authOtpButtonParameter) {
+    components.push({
+      type: "button",
+      sub_type: "url",
+      index: "0",
+      parameters: [{ type: "text", text: String(opts.urlButtonParameter) }],
     });
   }
   if (opts.couponCodeButtonParameter) {
@@ -549,21 +611,39 @@ function utilityTemplateLanguage(): string {
   return envTrim("META_UTILITY_TEMPLATE_LANGUAGE") || envTrim("META_OTP_TEMPLATE_LANGUAGE") || "en";
 }
 
+function envTemplateConfig(kind: CloudMessageKind): { name: string; language: string } | null {
+  const envName =
+    kind === "otp"
+      ? "META_OTP_TEMPLATE_NAME"
+      : kind === "appointment_reminder"
+        ? "META_REMINDER_TEMPLATE_NAME"
+        : kind === "book_confirmation"
+          ? "META_BOOK_CONFIRMATION_TEMPLATE_NAME"
+          : kind === "payment_receipt"
+            ? "META_RECEIPT_TEMPLATE_NAME"
+            : kind === "prescription_ready"
+              ? "META_PRESCRIPTION_READY_TEMPLATE_NAME"
+              : "";
+  if (!envName) return null;
+  const name = envTrim(envName);
+  if (!name) return null;
+  const language =
+    kind === "otp" ? envTrim("META_OTP_TEMPLATE_LANGUAGE") || "en" : utilityTemplateLanguage();
+  return { name, language };
+}
+
 function approvedTenantTemplate(
   db: DatabaseSync,
   tenantId: string,
   kind: CloudMessageKind
 ): { name: string; language: string; category: string } | null {
+  if (kind !== "otp" && clinicTemplateName(kind)) {
+    return approvedClinicTemplate(db, tenantId, kind);
+  }
   const clause =
     kind === "otp"
       ? "(UPPER(category) = 'AUTHENTICATION' OR LOWER(name) LIKE '%otp%' OR LOWER(name) LIKE '%verification%')"
-      : kind === "appointment_reminder"
-        ? "LOWER(name) LIKE '%reminder%'"
-        : kind === "book_confirmation"
-          ? "(LOWER(name) LIKE '%confirm%' OR LOWER(name) LIKE '%booking%')"
-          : kind === "payment_receipt"
-            ? "(LOWER(name) LIKE '%receipt%' OR LOWER(name) LIKE '%payment%')"
-            : "";
+      : "";
   if (!clause) return null;
   try {
     const row = db
@@ -599,24 +679,40 @@ export function templateConfigForKind(
   if (id) {
     if (!db) return null;
     const row = approvedTenantTemplate(db, id, kind);
-    return row ? { name: row.name, language: row.language } : null;
+    if (row) return { name: row.name, language: row.language };
+    // Lumera's own number: a demo/sandbox clinic with no connected line uses the
+    // platform template name. A real clinic does not.
+    if (kind !== "otp" && isSandboxOrDemoTenant(db, id)) {
+      const own = tenantNumberCredentials(db, id);
+      if (!own) return envTemplateConfig(kind);
+    }
+    return null;
   }
-  const envName =
-    kind === "otp"
-      ? "META_OTP_TEMPLATE_NAME"
-      : kind === "appointment_reminder"
-        ? "META_REMINDER_TEMPLATE_NAME"
-        : kind === "book_confirmation"
-          ? "META_BOOK_CONFIRMATION_TEMPLATE_NAME"
-          : kind === "payment_receipt"
-            ? "META_RECEIPT_TEMPLATE_NAME"
-            : "";
-  if (!envName) return null;
-  const name = envTrim(envName);
-  if (!name) return null;
-  const language =
-    kind === "otp" ? envTrim("META_OTP_TEMPLATE_LANGUAGE") || "en" : utilityTemplateLanguage();
-  return { name, language };
+  return envTemplateConfig(kind);
+}
+
+/** Platform Utility templates. Clinic display names are body variables, never this name. */
+export const PLATFORM_REMINDER_TEMPLATE = { name: "lumera_appointment_reminder", language: "en_US" };
+export const PLATFORM_BOOKING_TEMPLATE = { name: "lumera_appointment_booked", language: "en_US" };
+
+/**
+ * Approved template for a clinic send.
+ * A tenant APPROVED meta_templates row wins. Demo and platform sends may use the
+ * platform template. A real clinic with no APPROVED row has nothing to send.
+ */
+export function resolveApprovedClinicTemplate(
+  kind: "appointment_reminder" | "book_confirmation",
+  db?: DatabaseSync | null,
+  tenantId?: string | null
+): { name: string; language: string } | null {
+  const id = String(tenantId || "").trim();
+  const platform = kind === "appointment_reminder" ? PLATFORM_REMINDER_TEMPLATE : PLATFORM_BOOKING_TEMPLATE;
+  if (!id) return templateConfigForKind(kind) || platform;
+  if (!db) return null;
+  const row = templateConfigForKind(kind, db, id);
+  if (row) return row;
+  if (isSandboxOrDemoTenant(db, id)) return platform;
+  return null;
 }
 
 export type ReminderFields = {
@@ -632,10 +728,12 @@ export type ReminderFields = {
 export type ReceiptFields = {
   patientName?: string;
   clinicName?: string;
+  doctorName?: string;
   amount?: number | string;
   currency?: string;
   invoiceId?: string;
   date?: string;
+  receiptUrl?: string;
   tenantId?: string;
   gstin?: string;
   upiId?: string;
@@ -664,7 +762,7 @@ export function buildReminderText(fields: ReminderFields): string {
   );
 }
 
-export function buildBookConfirmationText(fields: ReminderFields & { uhid?: string }): string {
+export function buildBookConfirmationText(fields: ReminderFields): string {
   const name = fields.patientName || "Patient";
   const token =
     fields.tokenNumber != null && Number(fields.tokenNumber) > 0
@@ -678,8 +776,7 @@ export function buildBookConfirmationText(fields: ReminderFields & { uhid?: stri
     `Your visit with *${doctor || "the clinician"}*` +
     (fields.specialty ? ` (${fields.specialty})` : "") +
     ` is booked for *${fields.date || "the scheduled date"}* at *${fields.timeSlot || "TBD"}*.\n\n` +
-    `🎫 Token: *${token}*` +
-    (fields.uhid ? `\nUHID: ${fields.uhid}` : "")
+    `🎫 Token: *${token}*`
   );
 }
 
@@ -703,6 +800,160 @@ export function buildReceiptText(receipt: ReceiptFields): string {
 const CLOUD_NOT_CONFIGURED =
   "WhatsApp Cloud API is not configured. Set META_ACCESS_TOKEN and META_PHONE_NUMBER_ID (or a real tenant phone_number_id + token). Message was not delivered.";
 
+function demoOutboundEventType(kind: CloudMessageKind): string {
+  if (kind === "payment_receipt") return "invoice_receipt";
+  if (kind === "otp") return "otp_verification";
+  return kind;
+}
+
+function demoCapRows(db: DatabaseSync, eventType: string, tenantId: string): Array<{ status?: string; action_payload?: string; patient_phone?: string }> {
+  try {
+    return db
+      .prepare(
+        `SELECT status, action_payload, patient_phone FROM whatsapp_outbound_events
+         WHERE event_type = ? AND TRIM(COALESCE(tenant_id, '')) = ?
+           AND status IN ('skipped_not_allowlisted', 'failed_final')`
+      )
+      .all(eventType, tenantId) as Array<{ status?: string; action_payload?: string; patient_phone?: string }>;
+  } catch {
+    return [];
+  }
+}
+
+function demoCapRowMatches(
+  row: { action_payload?: string; patient_phone?: string },
+  key: { phone: string; appointmentId?: string; reminderWindow?: string; invoiceId?: string }
+): boolean {
+  let payload: { appointmentId?: string; window?: string; invoiceId?: string } = {};
+  try {
+    payload = JSON.parse(String(row.action_payload || "{}")) as typeof payload;
+  } catch {
+    payload = {};
+  }
+  if (key.appointmentId) {
+    if (payload.appointmentId !== key.appointmentId) return false;
+    if (key.reminderWindow && payload.window !== key.reminderWindow) return false;
+    return true;
+  }
+  if (key.invoiceId) return String(payload.invoiceId || "") === key.invoiceId;
+  const want = toWhatsAppRecipient(key.phone).slice(-10);
+  const have = toWhatsAppRecipient(String(row.patient_phone || "")).slice(-10);
+  return Boolean(want) && want === have;
+}
+
+function recordDemoAllowlistEvent(opts: {
+  db: DatabaseSync;
+  eventType: string;
+  phone: string;
+  patientName?: string;
+  tenantId: string;
+  status: typeof SKIPPED_NOT_ALLOWLISTED | typeof FAILED_FINAL;
+  appointmentId?: string;
+  reminderWindow?: string;
+  invoiceId?: string;
+  attempt: number;
+  sentAt?: string;
+}): string | undefined {
+  try {
+    const eventId = `evt-${crypto.randomUUID().slice(0, 8)}`;
+    const sentAt = opts.sentAt || new Date().toISOString();
+    opts.db
+      .prepare(
+        `INSERT INTO whatsapp_outbound_events (id, event_type, patient_phone, patient_name, status, details, action_payload, sent_at, tenant_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        eventId,
+        opts.eventType,
+        opts.phone,
+        opts.patientName || "Patient",
+        opts.status,
+        `Demo WhatsApp recipient ${maskWhatsAppRecipient(opts.phone)} ${opts.status}`,
+        JSON.stringify({
+          appointmentId: opts.appointmentId,
+          tenantId: opts.tenantId,
+          window: opts.reminderWindow,
+          invoiceId: opts.invoiceId,
+          attempt: opts.attempt,
+          reason: SKIPPED_NOT_ALLOWLISTED,
+          channel: "none",
+        }),
+        sentAt,
+        opts.tenantId
+      );
+    return eventId;
+  } catch (err) {
+    console.error("[WhatsApp] failed to record demo allowlist outcome:", err instanceof Error ? err.message : "error");
+    return undefined;
+  }
+}
+
+/**
+ * Demo and seed tenants never call Graph for a recipient outside the allowlist.
+ * Returns null when the send may proceed.
+ */
+async function demoAllowlistGate(opts: {
+  to: string;
+  kind: CloudMessageKind;
+  db?: DatabaseSync | null;
+  tenantId?: string;
+  platformSend?: boolean;
+  patientName?: string;
+  appointmentId?: string;
+  reminderWindow?: string;
+  invoiceId?: string;
+  sentAt?: string;
+}): Promise<CloudDispatchResult | null> {
+  if (opts.platformSend) return null;
+  const tenantId = String(opts.tenantId || "").trim();
+  if (!opts.db || !tenantId || !isSandboxOrDemoTenant(opts.db, tenantId)) return null;
+  const masked = maskWhatsAppRecipient(opts.to);
+  if (isDemoWhatsAppAllowlisted(opts.to)) {
+    console.info(`[WhatsApp] demo recipient ${masked} allowlisted`);
+    return null;
+  }
+  const eventType = demoOutboundEventType(opts.kind);
+  const matched = demoCapRows(opts.db, eventType, tenantId).filter((row) =>
+    demoCapRowMatches(row, {
+      phone: opts.to,
+      appointmentId: opts.appointmentId,
+      reminderWindow: opts.reminderWindow,
+      invoiceId: opts.invoiceId,
+    })
+  );
+  if (matched.some((row) => row.status === FAILED_FINAL) || matched.length >= DEMO_OUTBOUND_ATTEMPT_CAP) {
+    console.warn(`[WhatsApp] demo recipient ${masked} ${FAILED_FINAL}`);
+    try {
+      const { getDb, writeAudit } = await import("./db.ts");
+      writeAudit(opts.db || getDb(), null, "system", "whatsapp_demo_cap", `demo recipient ${masked} ${FAILED_FINAL}`, {
+        tenantId,
+        entityType: "whatsapp",
+        entityId: opts.appointmentId || opts.invoiceId || masked,
+      });
+    } catch {
+      /* audit is best-effort and must not block the skip */
+    }
+    return { ok: false, error: FAILED_FINAL, channel: "none", status: 422 };
+  }
+  const attempt = matched.length + 1;
+  const status = attempt >= DEMO_OUTBOUND_ATTEMPT_CAP ? FAILED_FINAL : SKIPPED_NOT_ALLOWLISTED;
+  console.warn(`[WhatsApp] demo recipient ${masked} ${status}`);
+  const eventId = recordDemoAllowlistEvent({
+    db: opts.db,
+    eventType,
+    phone: opts.to,
+    patientName: opts.patientName,
+    tenantId,
+    status,
+    appointmentId: opts.appointmentId,
+    reminderWindow: opts.reminderWindow,
+    invoiceId: opts.invoiceId,
+    attempt,
+    sentAt: opts.sentAt,
+  });
+  return { ok: false, error: status, channel: "none", status: 422, eventId };
+}
+
 /**
  * Dual-path Cloud send for Platform to import (reminders, book confirmations, receipts, OTP).
  * Does not schedule, look up appointments, or own invoice rows.
@@ -717,6 +968,8 @@ export async function dispatchWhatsAppCloudMessage(opts: {
   templateName?: string;
   templateLanguage?: string;
   templateParameters?: string[];
+  urlButtonParameter?: string;
+  receiptFields?: ReceiptFields;
   previewUrl?: boolean;
   db?: DatabaseSync | null;
   fetchImpl?: typeof fetch;
@@ -726,6 +979,11 @@ export async function dispatchWhatsAppCloudMessage(opts: {
   platformSend?: boolean;
   /** Staff typed this reply. Lapsed clinics may send it only inside the 24h window. */
   isManual?: boolean;
+  patientName?: string;
+  appointmentId?: string;
+  reminderWindow?: string;
+  invoiceId?: string;
+  sentAt?: string;
 }): Promise<CloudDispatchResult> {
   const kind: CloudMessageKind = opts.kind || (opts.otp ? "otp" : "text");
   const explicitTenantId = String(opts.tenantId || "").trim();
@@ -738,7 +996,11 @@ export async function dispatchWhatsAppCloudMessage(opts: {
   const configuredTemplate = platformSend || !tenantId
     ? templateConfigForKind(kind)
     : templateConfigForKind(kind, opts.db, tenantId);
-  const templateName = (opts.templateName || "").trim() || configuredTemplate?.name || "";
+  const requestedName = (opts.templateName || "").trim();
+  // A clinic send uses the approved clinic_* row, or the platform template when
+  // the clinic is on Lumera's number. A caller-supplied name cannot swap that.
+  const templateName =
+    platformSend || !tenantId ? requestedName || configuredTemplate?.name || "" : configuredTemplate?.name || "";
   const templateLanguage = (opts.templateLanguage || "").trim() || configuredTemplate?.language || "en";
   const isManual = Boolean(opts.isManual) && kind === "text" && !templateName;
 
@@ -761,12 +1023,54 @@ export async function dispatchWhatsAppCloudMessage(opts: {
     return { ok: false, channel: "none", error: WA_TOKEN_KEY_UNSET_ERROR, status: 503 };
   }
 
+  const allowlist = await demoAllowlistGate({
+    to: opts.to,
+    kind,
+    db: opts.db,
+    tenantId,
+    platformSend,
+    patientName: opts.patientName,
+    appointmentId: opts.appointmentId,
+    reminderWindow: opts.reminderWindow,
+    invoiceId: opts.invoiceId,
+    sentAt: opts.sentAt,
+  });
+  if (allowlist) return allowlist;
+
   const creds = resolveGraphCredentials(opts.db, platformSend ? undefined : tenantId || undefined, {
     platformSend,
   });
 
+  const catalogKind = clinicTemplateName(kind);
+  const clinicPlan: "template" | "text" | "blocked" | "default" =
+    platformSend || !tenantId || !catalogKind
+      ? "default"
+      : templateName
+        ? "template"
+        : inCustomerServiceWindow
+          ? "text"
+          : "blocked";
+
+  if (creds && clinicPlan === "blocked") {
+    return { ok: false, error: TEMPLATE_NOT_APPROVED_ERROR, channel: "none", status: 409 };
+  }
+
+  const templateBusiness =
+    clinicPlan === "template" || (clinicPlan !== "text" && ["appointment_reminder", "book_confirmation", "payment_receipt", "prescription_ready"].includes(kind));
+  const optInError = whatsAppOptInBlock({
+    db: opts.db,
+    tenantId,
+    to: opts.to,
+    kind,
+    templateSend: templateBusiness,
+  });
+  if (optInError) {
+    return { ok: false, error: optInError, channel: "none", status: 409 };
+  }
+
   if (creds) {
     let graph: GraphMessageResult;
+    const sendAsText = clinicPlan === "text";
     if (kind === "otp" && opts.otp && platformSend) {
       graph = await sendWhatsAppGraphMessage({
         credentials: creds,
@@ -794,27 +1098,35 @@ export async function dispatchWhatsAppCloudMessage(opts: {
         body: `Verification code: ${opts.otp}\nAction: ${opts.purpose || "verify"}\nValid for 5 minutes. Do not share this code.`,
         fetchImpl: opts.fetchImpl,
       });
-    } else if (templateName) {
+    } else if (templateName && !sendAsText) {
+      const bodyParameters =
+        kind === "payment_receipt"
+          ? receiptTemplateParameters(opts.receiptFields || {}, templateName)
+          : opts.templateParameters;
       graph = await sendWhatsAppGraphTemplate({
         credentials: creds,
         to: opts.to,
         name: templateName,
         language: templateLanguage,
-        bodyParameters: opts.templateParameters,
+        bodyParameters,
+        urlButtonParameter: opts.urlButtonParameter,
         fetchImpl: opts.fetchImpl,
         failureLabel: kind,
       });
+    } else if (kind === "appointment_reminder" || kind === "book_confirmation") {
+      // Reminders and booking confirmations are template-only. No session text.
+      return { ok: false, error: "no_approved_template", channel: "none", status: 422 };
     } else if (opts.buttons && Array.isArray(opts.buttons) && opts.buttons.length > 0) {
+      const footerClinic = lookupClinicName(opts.db, tenantId) || "your clinic";
       graph = await sendWhatsAppGraphInteractive({
         credentials: creds,
         to: opts.to,
         body: opts.textBody,
         buttons: opts.buttons,
-        footer: "Lumera Clinic Assistant",
+        footer: footerClinic,
         fetchImpl: opts.fetchImpl,
       });
       if (!graph.ok) {
-        // Fallback to text send if interactive payload had any restriction
         graph = await sendWhatsAppGraphText({
           credentials: creds,
           to: opts.to,
@@ -938,6 +1250,45 @@ function meterWhatsAppUsage(opts: {
   }
 }
 
+const GRAPH_WAMID = /^wamid\.\S+$/;
+
+async function auditTemplateSend(
+  db: DatabaseSync | null | undefined,
+  eventType: string,
+  tenantId: string,
+  sent: CloudDispatchResult
+) {
+  try {
+    const { getDb, writeAudit } = await import("./db.ts");
+    writeAudit(
+      db || getDb(),
+      null,
+      "system",
+      "whatsapp_template_send",
+      `tenant ${tenantId || "none"} template ${eventType} outcome ${sent.ok ? "sent" : "failed"}`,
+      { tenantId: tenantId || undefined, entityType: "whatsapp_template", entityId: eventType }
+    );
+  } catch {
+    /* audit is best-effort and must not block the send */
+  }
+}
+
+function invoicePatientId(db: DatabaseSync, tenantId: string, invoiceId: string): string {
+  try {
+    const rows = db
+      .prepare(`SELECT patient_id FROM invoices WHERE tenant_id = ? AND (id = ? OR invoice_number = ?)`)
+      .all(tenantId, invoiceId, invoiceId) as Array<{ patient_id?: string }>;
+    const ids = [...new Set(rows.map((row) => String(row.patient_id || "").trim()).filter(Boolean))];
+    return ids.length === 1 ? ids[0] : "";
+  } catch {
+    return "";
+  }
+}
+
+function graphAccepted(sent: CloudDispatchResult): boolean {
+  return sent.ok === true && sent.channel === "graph" && GRAPH_WAMID.test(String(sent.messageId || "").trim());
+}
+
 function requireClinicAndDoctor(opts: {
   tenantId?: string;
   db?: DatabaseSync | null;
@@ -964,23 +1315,41 @@ export async function sendAppointmentReminder(opts: {
   tokenNumber?: number;
   textBody?: string;
   templateName?: string;
+  templateLanguage?: string;
   templateParameters?: string[];
   db?: DatabaseSync | null;
   fetchImpl?: typeof fetch;
   tenantId?: string;
+  appointmentId?: string;
+  reminderWindow?: string;
+  sentAt?: string;
 }): Promise<CloudDispatchResult> {
   const names = requireClinicAndDoctor(opts);
-  if ("channel" in names) return names;
-  return dispatchWhatsAppCloudMessage({
+  if ("channel" in names) {
+    await auditTemplateSend(opts.db, "appointment_reminder", String(opts.tenantId || ""), names);
+    return names;
+  }
+  const clinicName = names.clinicName;
+  const doctorName = names.doctorName;
+  const parameters = opts.tenantId
+    ? reminderTemplateParameters({ ...opts, clinicName, doctorName })
+    : opts.templateParameters;
+  const sent = await dispatchWhatsAppCloudMessage({
     to: opts.to,
     kind: "appointment_reminder",
-    textBody: opts.textBody || buildReminderText({ ...opts, clinicName: names.clinicName, doctorName: names.doctorName }),
+    patientName: opts.patientName,
+    appointmentId: opts.appointmentId,
+    reminderWindow: opts.reminderWindow,
+    sentAt: opts.sentAt,
+    textBody: opts.textBody || buildReminderText({ ...opts, clinicName, doctorName }),
     templateName: opts.templateName,
-    templateParameters: opts.templateParameters,
+    templateParameters: parameters,
     db: opts.db,
     fetchImpl: opts.fetchImpl,
     tenantId: opts.tenantId,
   });
+  await auditTemplateSend(opts.db, "appointment_reminder", String(opts.tenantId || ""), sent);
+  return sent;
 }
 
 export async function sendBookConfirmation(opts: {
@@ -992,28 +1361,41 @@ export async function sendBookConfirmation(opts: {
   date?: string;
   timeSlot?: string;
   tokenNumber?: number;
-  uhid?: string;
   textBody?: string;
   templateName?: string;
+  templateLanguage?: string;
   templateParameters?: string[];
   db?: DatabaseSync | null;
   fetchImpl?: typeof fetch;
   tenantId?: string;
+  appointmentId?: string;
+  sentAt?: string;
 }): Promise<CloudDispatchResult> {
   const names = requireClinicAndDoctor(opts);
-  if ("channel" in names) return names;
-  return dispatchWhatsAppCloudMessage({
+  if ("channel" in names) {
+    await auditTemplateSend(opts.db, "book_confirmation", String(opts.tenantId || ""), names);
+    return names;
+  }
+  const clinicName = names.clinicName;
+  const doctorName = names.doctorName;
+  const parameters = opts.tenantId
+    ? bookConfirmationTemplateParameters({ ...opts, clinicName, doctorName })
+    : opts.templateParameters;
+  const sent = await dispatchWhatsAppCloudMessage({
     to: opts.to,
     kind: "book_confirmation",
-    textBody:
-      opts.textBody ||
-      buildBookConfirmationText({ ...opts, clinicName: names.clinicName, doctorName: names.doctorName }),
+    patientName: opts.patientName,
+    appointmentId: opts.appointmentId,
+    sentAt: opts.sentAt,
+    textBody: opts.textBody || buildBookConfirmationText({ ...opts, clinicName, doctorName }),
     templateName: opts.templateName,
-    templateParameters: opts.templateParameters,
+    templateParameters: parameters,
     db: opts.db,
     fetchImpl: opts.fetchImpl,
     tenantId: opts.tenantId,
   });
+  await auditTemplateSend(opts.db, "book_confirmation", String(opts.tenantId || ""), sent);
+  return sent;
 }
 
 /** #25 assist: Graph dual-path only. Platform owns Razorpay/invoices and can pass textBody. */
@@ -1021,6 +1403,7 @@ export async function sendPaymentReceipt(opts: {
   to: string;
   patientName?: string;
   clinicName?: string;
+  doctorName?: string;
   amount?: number | string;
   currency?: string;
   invoiceId?: string;
@@ -1034,18 +1417,64 @@ export async function sendPaymentReceipt(opts: {
   tenantId?: string;
 }): Promise<CloudDispatchResult> {
   const clinicName = String(opts.clinicName || "").trim() || lookupClinicName(opts.db, opts.tenantId);
+  const invoiceId = String(opts.invoiceId || "").trim();
+  const tenantId = String(opts.tenantId || "").trim();
   if (opts.tenantId && !opts.textBody && !clinicName) {
-    return { ok: false, channel: "none", error: CLINIC_DOCTOR_NAME_REQUIRED, status: 400 };
+    const blocked = { ok: false as const, channel: "none" as const, error: CLINIC_DOCTOR_NAME_REQUIRED, status: 400 };
+    await auditTemplateSend(opts.db, "payment_receipt", tenantId, blocked);
+    return blocked;
   }
-  return dispatchWhatsAppCloudMessage({
+  const optInError = whatsAppOptInBlock({
+    db: opts.db,
+    tenantId,
     to: opts.to,
     kind: "payment_receipt",
+    templateSend: true,
+  });
+  if (optInError) {
+    const blocked = { ok: false as const, channel: "none" as const, error: optInError, status: 409 };
+    await auditTemplateSend(opts.db, "payment_receipt", tenantId, blocked);
+    return blocked;
+  }
+  let receiptUrl = "";
+  let mintedToken = "";
+  const patientId = opts.db && tenantId && invoiceId ? invoicePatientId(opts.db, tenantId, invoiceId) : "";
+  if (patientId) {
+    const link = await mintPatientLinkToken({
+      tenantId,
+      patientId,
+      purpose: "receipt",
+      resourceId: invoiceId,
+    });
+    receiptUrl = link.url;
+    mintedToken = link.token;
+  }
+  const receiptFields: ReceiptFields = {
+    patientName: opts.patientName,
+    clinicName,
+    doctorName: opts.doctorName,
+    amount: opts.amount,
+    invoiceId: opts.invoiceId,
+    date: opts.date,
+    receiptUrl,
+  };
+  const sent = await dispatchWhatsAppCloudMessage({
+    to: opts.to,
+    kind: "payment_receipt",
+    patientName: opts.patientName,
+    invoiceId: opts.invoiceId,
     textBody: opts.textBody || buildReceiptText({ ...opts, clinicName }),
     previewUrl: opts.previewUrl,
     templateName: opts.templateName,
-    templateParameters: opts.templateParameters,
+    templateParameters: opts.templateParameters || receiptTemplateParameters(receiptFields),
+    receiptFields,
     db: opts.db,
     fetchImpl: opts.fetchImpl,
     tenantId: opts.tenantId,
   });
+  if (mintedToken && !graphAccepted(sent)) {
+    await revokePatientLinkToken(mintedToken);
+  }
+  await auditTemplateSend(opts.db, "payment_receipt", tenantId, sent);
+  return sent;
 }

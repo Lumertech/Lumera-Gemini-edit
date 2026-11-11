@@ -14,6 +14,7 @@ import { attachPublicPricingHtml } from "./pricing-html.ts";
 import { mountGeminiClinicalRoutes } from "./gemini-clinical.ts";
 import { protectWhatsAppDashboard } from "./whatsapp-dashboard-guard.ts";
 import { createLiveRegistrationRouter } from "./live-registration-routes.ts";
+import { createPatientDocumentLinkRouter } from "./patient-document-links.ts";
 import { metaWebhookRawBody } from "./meta-security.ts";
 import { attachUnknownApiJsonNotFound } from "./spa-fallback.ts";
 import { globalJsonParser } from "./json-body.ts";
@@ -56,6 +57,7 @@ export function createLumeraApp(): express.Express {
   app.use("/api", createLiveRegistrationRouter());
   app.use("/api", wrapAbdmRegistryJson(createApiRouter()));
   app.use("/meta", createMetaRouter());
+  app.use(createPatientDocumentLinkRouter());
   app.post("/data-deletion-callback", (req, res, next) => {
     req.url = "/data-deletion";
     createMetaRouter()(req, res, next);
