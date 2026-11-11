@@ -574,6 +574,65 @@ describe("forward security and voice fixes", () => {
     assert.equal(startOnly?.date, "2027-06-03");
   });
 
+  it("offers a Sunday slot and speaks the saved day, or says the desk must arrange a time", async () => {
+    const suffix = `${Date.now().toString(36)}sun`;
+    const tenantId = `tenant-sun-${suffix}`;
+    seedTenant(tenantId, { name: "North Clinic" });
+    saveClinicScheduleSettings(getDb(), tenantId, {
+      opdStartTime: "09:00 AM",
+      opdEndTime: "10:00 AM",
+      slotDurationMinutes: 30,
+      slotOverlapMax: 1,
+    });
+    const sunday = findNextBookableSlot({
+      tenantId,
+      doctorName: "Dr. Rao",
+      date: "2026-11-15",
+      now: new Date("2026-11-15T03:00:00.000Z"),
+    });
+    assert.deepEqual(sunday, { date: "2026-11-15", timeSlot: "09:00 AM" });
+
+    const rolled = await runGeminiVoiceReceptionist({
+      message: "Please book an appointment",
+      language: "English",
+      tenantId,
+      callerPhone: `+9171${String(Date.now()).slice(-8)}`,
+      now: new Date("2026-11-11T05:00:00.000Z"),
+    });
+    assert.equal(rolled.intent, "BOOKING");
+    assert.equal(rolled.appointment?.date, "2026-11-12");
+    assert.match(rolled.speechText, /12 Nov 2026/);
+    assert.match(rolled.suggestedAction, /2026-11-12/);
+    assert.doesNotMatch(rolled.speechText, /for today at/i);
+    assert.doesNotMatch(rolled.suggestedAction, /for today at/i);
+
+    const closedId = `tenant-closed-${suffix}`;
+    seedTenant(closedId, { name: "Closed Clinic" });
+    saveClinicScheduleSettings(getDb(), closedId, {
+      opdStartTime: "09:00 AM",
+      opdEndTime: "09:15 AM",
+      slotDurationMinutes: 15,
+      slotOverlapMax: 1,
+    });
+    for (let day = 0; day < 14; day++) {
+      const date = new Date(Date.UTC(2026, 10, 11 + day)).toISOString().slice(0, 10);
+      insertSlot({ id: `apt-full-${suffix}-${day}`, tenantId: closedId, date, time: "09:00 AM", status: "Waiting" });
+    }
+    const full = await runGeminiVoiceReceptionist({
+      message: "Please book an appointment",
+      language: "English",
+      tenantId: closedId,
+      callerPhone: `+9172${String(Date.now()).slice(-8)}`,
+      now: new Date("2026-11-11T04:00:00.000Z"),
+    });
+    assert.equal(full.intent, "INQUIRY");
+    assert.equal(full.appointment, undefined);
+    assert.match(full.speechText, /no open slot/i);
+    assert.doesNotMatch(full.speechText, /token/i);
+    const saved = getDb().prepare("SELECT COUNT(*) AS n FROM appointments WHERE tenant_id = ?").get(closedId) as { n: number };
+    assert.equal(saved.n, 14);
+  });
+
   it("answers Indic location and greeting in that language with the clinic and receptionist names", async () => {
     const suffix = `${Date.now().toString(36)}hi`;
     const tenantId = `tenant-hi-${suffix}`;

@@ -188,6 +188,7 @@ export function bookWhatsAppAppointment(opts: {
   date?: string;
   timeSlot?: string;
   type?: string;
+  now?: Date;
 }): { appointment: ReturnType<typeof mapAppointment>; reused: boolean; patient: ReturnType<typeof mapPatient> } {
   const tenantId = String(opts.tenantId || "").trim();
   if (!tenantId) {
@@ -221,6 +222,7 @@ export function bookWhatsAppAppointment(opts: {
         doctorId: doctor ? String(doctor.id) : opts.doctorId,
         doctorName: doctor ? String(doctor.name) : opts.doctorName,
         date: requestedDate,
+        now: opts.now,
       });
   if (!found) {
     throw Object.assign(new Error("No open clinic slot"), { status: 409 });
@@ -271,12 +273,6 @@ function addDaysIso(iso: string, days: number): string {
   if (!match) return iso;
   const utc = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]) + days));
   return utc.toISOString().slice(0, 10);
-}
-
-function isSunday(iso: string): boolean {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
-  if (!match) return false;
-  return new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]))).getUTCDay() === 0;
 }
 
 function clockTokenMinutes(timing: string | undefined, which: "start" | "end"): number | null {
@@ -364,7 +360,7 @@ function slotOnClinicDate(opts: {
   return null;
 }
 
-/** Next open chair on the requested day, or the next Mon–Sat day when that day is full or already over. */
+/** Next open chair on the requested day, or a later day inside the horizon when that day is full or already over. */
 export function findNextBookableSlot(opts: {
   tenantId: string;
   doctorId?: string;
@@ -379,17 +375,15 @@ export function findNextBookableSlot(opts: {
   let date = String(opts.date || "").trim() || today;
   const horizon = Math.max(1, opts.horizonDays ?? 14);
   for (let i = 0; i < horizon; i++) {
-    if (!isSunday(date)) {
-      const timeSlot = slotOnClinicDate({
-        tenantId,
-        doctorId: opts.doctorId,
-        doctorName: opts.doctorName,
-        date,
-        now,
-        today,
-      });
-      if (timeSlot) return { date, timeSlot };
-    }
+    const timeSlot = slotOnClinicDate({
+      tenantId,
+      doctorId: opts.doctorId,
+      doctorName: opts.doctorName,
+      date,
+      now,
+      today,
+    });
+    if (timeSlot) return { date, timeSlot };
     date = addDaysIso(date, 1);
   }
   return null;

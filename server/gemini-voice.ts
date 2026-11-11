@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import type { GoogleGenAI } from "@google/genai";
 import { CLINICIAN_ROLES, isPlatformAdminRole, requireAuth } from "./auth.ts";
 import { getDb } from "./db.ts";
+import { clinicCalendarDate } from "../src/lib/clinicDay.ts";
 import { clinicLine, getTenantLetterhead } from "./letterhead.ts";
 import { AI_RUPEE_OUTPUT_RULE } from "./india-currency-copy.ts";
 import { vertexGeminiModel } from "./vertex-gemini.ts";
@@ -32,6 +33,7 @@ export interface VoiceReceptionistInput {
     timing?: string;
   }>;
   getGenAI?: () => GoogleGenAI | null;
+  now?: Date;
 }
 
 export interface VoiceReceptionistResult {
@@ -211,7 +213,7 @@ export const INDIC_LANGUAGES: Record<
     name: string;
     localName: string;
     emergencyNotice: string;
-    bookingFormat: (name: string, doctor: string, specialty: string, slot: string, token: number) => string;
+    bookingFormat: (name: string, doctor: string, specialty: string, slot: string, token: number, when: string) => string;
     greetingText: (name: string, clinicName: string, receptionistName: string) => string;
     timingsText: string;
     locationText: (clinicName: string, address: string) => string;
@@ -228,8 +230,8 @@ export const INDIC_LANGUAGES: Record<
     name: "Hindi",
     localName: "हिन्दी",
     emergencyNotice: "यह एक गंभीर आपातकालीन स्थिति प्रतीत होती है। कृपया तुरंत नजदीकी अस्पताल के आपातकालीन कक्ष (ER) जाएं या 108 नंबर पर एम्बुलेंस बुलाएं। क्लिनिक स्टाफ को सूचित कर दिया गया है।",
-    bookingFormat: (name, doctor, specialty, slot, token) =>
-      `नमस्ते ${name}, मैंने ${doctor} (${specialty}) के साथ आपका अपॉइंटमेंट आज ${slot} के लिए बुक कर दिया है। आपका टोकन नंबर #${token} है। कृपया 10 मिनट पहले पहुंचें।`,
+    bookingFormat: (name, doctor, specialty, slot, token, when) =>
+      `नमस्ते ${name}, मैंने ${doctor} (${specialty}) के साथ आपका अपॉइंटमेंट ${when} ${slot} के लिए बुक कर दिया है। आपका टोकन नंबर #${token} है। कृपया 10 मिनट पहले पहुंचें।`,
     greetingText: (name, clinicName, receptionistName) =>
       `नमस्ते ${name}! ${clinicName} में आपका स्वागत है। मैं ${receptionistName}, आपकी एआई रिसेप्शनिस्ट हूँ। मैं अपॉइंटमेंट बुक करने, डॉक्टर की टाइमिंग बताने या मेडिकल रिपोर्ट देखने में सहायता कर सकती हूँ। मैं आपकी क्या मदद कर सकती हूँ?`,
     timingsText: "हमारे क्लिनिक की ओपीडी सोमवार से शनिवार सुबह 09:00 बजे से रात 08:00 बजे तक और रविवार सुबह 10:00 बजे से दोपहर 02:00 बजे तक खुली रहती है।",
@@ -248,8 +250,8 @@ export const INDIC_LANGUAGES: Record<
     name: "Bengali",
     localName: "বাংলা",
     emergencyNotice: "এটি একটি জরুরি চিকিৎসা পরিস্থিতি বলে মনে হচ্ছে। অনুগ্রহ করে অবিলম্বে নিকটস্থ হাসপাতালের জরুরি বিভাগে (ER) যান অথবা ১০৮ নম্বরে অ্যাম্বুলেন্স ডাকুন। ক্লিনিক টিমকে সতর্ক করা হয়েছে।",
-    bookingFormat: (name, doctor, specialty, slot, token) =>
-      `নমস্কার ${name}, আমি ${doctor} (${specialty}) এর সাথে আজ ${slot} এ আপনার অ্যাপয়েন্টমেন্ট বুক করেছি। আপনার টোকেন নম্বর #${token}। অনুগ্রহ করে ১০ মিনিট আগে পৌঁছাবেন।`,
+    bookingFormat: (name, doctor, specialty, slot, token, when) =>
+      `নমস্কার ${name}, আমি ${doctor} (${specialty}) এর সাথে ${when} ${slot} এ আপনার অ্যাপয়েন্টমেন্ট বুক করেছি। আপনার টোকেন নম্বর #${token}। অনুগ্রহ করে ১০ মিনিট আগে পৌঁছাবেন।`,
     greetingText: (name, clinicName, receptionistName) =>
       `নমস্কার ${name}! ${clinicName} আপনাকে স্বাগতম। আমি ${receptionistName}, আপনার এআই রিসেপশনিস্ট। ডাক্তার দেখানো, সময়সূচী ও প্রেসক্রিপশন সংক্রান্ত বিষয়ে আমি আপনাকে সাহায্য করতে পারি। আজ আপনাকে কীভাবে সাহায্য করতে পারি?`,
     timingsText: "আমাদের ক্লিনিক ওপিডি সোমবার থেকে শনিবার সকাল ০৯:০০ টা থেকে রাত ০৮:০০ টা এবং রবিবার সকাল ১০:০০ টা থেকে দুপুর ০২:০০ টা পর্যন্ত খোলা থাকে।",
@@ -268,8 +270,8 @@ export const INDIC_LANGUAGES: Record<
     name: "Telugu",
     localName: "తెలుగు",
     emergencyNotice: "ఇది తీవ్రమైన అత్యవసర పరిస్థితిగా కనిపిస్తోంది. దయచేసి వెంటనే సమీపంలోని ఆసుపత్రి ఎమర్జెన్సీ రూమ్ (ER) కి వెళ్లండి లేదా 108 కి కాల్ చేసి అంబులెన్స్‌ని పిలవండి. క్లినిక్ సిబ్బందికి సమాచారం అందించబడింది.",
-    bookingFormat: (name, doctor, specialty, slot, token) =>
-      `నమస్తే ${name}, నేను ${doctor} (${specialty}) గారితో ఈరోజు ${slot} కి మీ అపాయింట్‌మెంట్ బుక్ చేసాను. మీ టోకెన్ సంఖ్య #${token}. దయచేసి 10 నిమిషాల ముందుగా రండి.`,
+    bookingFormat: (name, doctor, specialty, slot, token, when) =>
+      `నమస్తే ${name}, నేను ${doctor} (${specialty}) గారితో ${when} ${slot} కి మీ అపాయింట్‌మెంట్ బుక్ చేసాను. మీ టోకెన్ సంఖ్య #${token}. దయచేసి 10 నిమిషాల ముందుగా రండి.`,
     greetingText: (name, clinicName, receptionistName) =>
       `నమస్తే ${name}! ${clinicName} స్వాగతం. నేను ${receptionistName}, మీ ఏఐ రిసెప్షనిస్ట్. డాక్టర్ అపాయింట్‌మెంట్స్, ఓపీడీ సమయాలు మరియు వైద్య నివేదికలలో నేను మీకు సహాయపడగలను. మీకు ఎలా సహాయపడగలను?`,
     timingsText: "మా క్లినిక్ ఓపీడీ సోమవారం నుండి శనివారం వరకు ఉదయం 09:00 నుండి రాత్రి 08:00 వరకు, ఆదివారం ఉదయం 10:00 నుండి మధ్యాహ్నం 02:00 వరకు అందుబాటులో ఉంటుంది.",
@@ -288,8 +290,8 @@ export const INDIC_LANGUAGES: Record<
     name: "Tamil",
     localName: "தமிழ்",
     emergencyNotice: "இது அவசர மருத்துவ சூழ்நிலையாகத் தெரிகிறது. தயவுசெய்து உடனடியாக அருகிலுள்ள அவசர சிகிச்சைப் பிரிவிற்கு (ER) செல்லவும் அல்லது 108 என்ற எண்ணில் ஆம்புலன்ஸை அழைக்கவும். மருத்துவமனை குழு எச்சரிக்கப்பட்டுள்ளது.",
-    bookingFormat: (name, doctor, specialty, slot, token) =>
-      `வணக்கம் ${name}, நான் ${doctor} (${specialty}) உடன் இன்று ${slot} மணிக்கு உங்கள் முன்பதிவை பதிவு செய்துள்ளேன். உங்கள் டோக்கன் எண் #${token}. தயவுசெய்து 10 நிமிடங்களுக்கு முன்னதாக வரவும்.`,
+    bookingFormat: (name, doctor, specialty, slot, token, when) =>
+      `வணக்கம் ${name}, நான் ${doctor} (${specialty}) உடன் ${when} ${slot} மணிக்கு உங்கள் முன்பதிவை பதிவு செய்துள்ளேன். உங்கள் டோக்கன் எண் #${token}. தயவுசெய்து 10 நிமிடங்களுக்கு முன்னதாக வரவும்.`,
     greetingText: (name, clinicName, receptionistName) =>
       `வணக்கம் ${name}! ${clinicName} வரவேற்கிறோம். நான் ${receptionistName}, உங்கள் ஏஐ வரவேற்பாளர். மருத்துவர் முன்பதிவு, நேரங்கள் மற்றும் மருத்துவ அறிக்கைகளுக்கு நான் உதவ முடியும். நான் உங்களுக்கு எவ்வாறு உதவ முடியும்?`,
     timingsText: "எங்கள் கிளினிக் ஓபிடி திங்கள் முதல் சனிக்கிழமை வரை காலை 09:00 முதல் இரவு 08:00 மணி வரையிலும், ஞாயிற்றுக்கிழமை காலை 10:00 முதல் மதியம் 02:00 மணி வரையிலும் இயங்கும்.",
@@ -308,8 +310,8 @@ export const INDIC_LANGUAGES: Record<
     name: "Kannada",
     localName: "ಕನ್ನಡ",
     emergencyNotice: "ಇದು ತುರ್ತು ವೈದ್ಯಕೀಯ ಪರಿಸ್ಥಿತಿಯಂತೆ ತೋರುತ್ತಿದೆ. ದಯವಿಟ್ಟು ತಕ್ಷಣ ಹತ್ತಿರದ ಆಸ್ಪತ್ರೆಯ ತುರ್ತು ಕೋಣೆಗೆ (ER) ತೆರಳಿ ಅಥವಾ 108 ಕ್ಕೆ ಕರೆ ಮಾಡಿ ಆಂಬ್ಯುಲೆನ್ಸ್ ಪಡೆಯಿರಿ. ಕ್ಲಿನಿಕ್ ಸಿಬ್ಬಂದಿಗೆ ಮಾಹಿತಿ ನೀಡಲಾಗಿದೆ.",
-    bookingFormat: (name, doctor, specialty, slot, token) =>
-      `ನಮಸ್ಕಾರ ${name}, ನಾನು ${doctor} (${specialty}) ಅವರೊಂದಿಗೆ ಇಂದು ${slot} ಕ್ಕೆ ನಿಮ್ಮ ಅಪಾಯಿಂಟ್‌ಮೆಂಟ್ ಬುಕ್ ಮಾಡಿದ್ದೇನೆ. ನಿಮ್ಮ ಟೋಕನ್ ಸಂಖ್ಯೆ #${token}. ದಯವಿಟ್ಟು 10 ನಿಮಿಷ ಮುಂಚಿತವಾಗಿ ಬನ್ನಿ.`,
+    bookingFormat: (name, doctor, specialty, slot, token, when) =>
+      `ನಮಸ್ಕಾರ ${name}, ನಾನು ${doctor} (${specialty}) ಅವರೊಂದಿಗೆ ${when} ${slot} ಕ್ಕೆ ನಿಮ್ಮ ಅಪಾಯಿಂಟ್‌ಮೆಂಟ್ ಬುಕ್ ಮಾಡಿದ್ದೇನೆ. ನಿಮ್ಮ ಟೋಕನ್ ಸಂಖ್ಯೆ #${token}. ದಯವಿಟ್ಟು 10 ನಿಮಿಷ ಮುಂಚಿತವಾಗಿ ಬನ್ನಿ.`,
     greetingText: (name, clinicName, receptionistName) =>
       `ನಮಸ್ಕಾರ ${name}! ${clinicName} ಸುಸ್ವಾಗತ. ನಾನು ${receptionistName}, ನಿಮ್ಮ ಎಐ ರಿಸೆಪ್ಷನಿಸ್ಟ್. ಅಪಾಯಿಂಟ್‌ಮೆಂಟ್ ಬುಕಿಂಗ್ ಮತ್ತು ವೈದ್ಯರ ವೇಳಾಪಟ್ಟಿಗೆ ನಾನು ನಿಮಗೆ ಸಹಾಯ ಮಾಡಬಲ್ಲೆ. ನಾನು ನಿಮಗೆ ಹೇಗೆ ಸಹಾಯ ಮಾಡಲಿ?`,
     timingsText: "ನಮ್ಮ ಕ್ಲಿನಿಕ್ ಒಪಿಡಿ ಸೋಮವಾರದಿಂದ ಶನಿವಾರದವರೆಗೆ ಬೆಳಿಗ್ಗೆ 09:00 ರಿಂದ ರಾತ್ರಿ 08:00 ರವರೆಗೆ ಮತ್ತು ಭಾನುವಾರ ಬೆಳಿಗ್ಗೆ 10:00 ರಿಂದ ಮಧ್ಯಾಹ್ನ 02:00 ರವರೆಗೆ ತೆರೆದಿರುತ್ತದೆ.",
@@ -328,8 +330,8 @@ export const INDIC_LANGUAGES: Record<
     name: "Marathi",
     localName: "मराठी",
     emergencyNotice: "ही एक गंभीर वैद्यकीय आणीबाणी परिस्थिती दिसते. कृपया त्वरित जवळच्या रुग्णालयातील आपत्कालीन कक्षात (ER) जा किंवा 108 वर रुग्णवाहिका बोलवा. क्लिनिक कर्मचाऱ्यांना सूचित करण्यात आले आहे.",
-    bookingFormat: (name, doctor, specialty, slot, token) =>
-      `नमस्कार ${name}, मी ${doctor} (${specialty}) यांच्यासोबत आज ${slot} साठी तुमची अपॉइंटमेंट बुक केली आहे. तुमचा टोकन क्रमांक #${token} आहे. कृपया १० मिनिटे आधी पोहोचा.`,
+    bookingFormat: (name, doctor, specialty, slot, token, when) =>
+      `नमस्कार ${name}, मी ${doctor} (${specialty}) यांच्यासोबत ${when} ${slot} साठी तुमची अपॉइंटमेंट बुक केली आहे. तुमचा टोकन क्रमांक #${token} आहे. कृपया १० मिनिटे आधी पोहोचा.`,
     greetingText: (name, clinicName, receptionistName) =>
       `नमस्कार ${name}! ${clinicName}मध्ये आपले स्वागत आहे. मी ${receptionistName}, तुमची एआय रिसेप्शनिस्ट आहे. अपॉइंटमेंट बुकिंग, डॉक्टरांच्या वेळा किंवा रिपोर्ट तपासण्यात मी मदत करू शकते. मी तुम्हाला कशी मदत करू?`,
     timingsText: "आमची ओपीडी सोमवार ते शनिवार सकाळी ०९:०० ते रात्री ०८:०० आणि रविवारी सकाळी १०:०० ते दुपारी ०२:०० वाजेपर्यंत सुरू असते.",
@@ -348,8 +350,8 @@ export const INDIC_LANGUAGES: Record<
     name: "Gujarati",
     localName: "ગુજરાતી",
     emergencyNotice: "આ એક ગંભીર તબીબી કટોકટી લાગે છે. કૃપા કરીને તાત્કાલિક નજીકની હોસ્પિટલના ઇમરજન્સી રૂમ (ER) માં જાઓ અથવા 108 નંબર પર એમ્બ્યુલન્સ બોલાવો. ક્લિનિક સ્ટાફને જાણ કરવામાં આવી છે.",
-    bookingFormat: (name, doctor, specialty, slot, token) =>
-      `નમસ્તે ${name}, મેં ${doctor} (${specialty}) સાથે આજે ${slot} વાગ્યે તમારી એપોઇન્ટમેન્ટ બુક કરી છે. તમારો ટોકન નંબર #${token} છે. કૃપા કરીને ૧૦ મિનિટ વહેલા પહોંચો.`,
+    bookingFormat: (name, doctor, specialty, slot, token, when) =>
+      `નમસ્તે ${name}, મેં ${doctor} (${specialty}) સાથે ${when} ${slot} વાગ્યે તમારી એપોઇન્ટમેન્ટ બુક કરી છે. તમારો ટોકન નંબર #${token} છે. કૃપા કરીને ૧૦ મિનિટ વહેલા પહોંચો.`,
     greetingText: (name, clinicName, receptionistName) =>
       `નમસ્તે ${name}! ${clinicName} તમારું સ્વાગત છે. હું ${receptionistName}, તમારી એઆઈ રિસેપ્શનિસ્ટ છું. એપોઇન્ટમેન્ટ બુકિંગ, ડોક્ટરનો સમય અને રિપોર્ટ જોવામાં હું મદદ કરી શકું છું. હું તમારી શું મદદ કરી શકું?`,
     timingsText: "અમારી ક્લિનિક ઓપીડી સોમવારથી શનિવાર સવારે ૦૯:૦૦ થી રાત્રે ૦૮:૦૦ અને રવિવારે સવારે ૧૦:૦૦ થી બપોરે ૦૨:૦૦ વાગ્યા સુધી કાર્યરત છે.",
@@ -368,8 +370,8 @@ export const INDIC_LANGUAGES: Record<
     name: "Malayalam",
     localName: "മലയാളം",
     emergencyNotice: "ഇതൊരു അത്യാഹിത മെഡിക്കൽ സാഹചര്യമായി തോന്നുന്നു. ദയവായി ഉടൻ അടുത്തുള്ള ആശുപത്രി അത്യാഹിത വിഭാഗത്തിലേക്ക് (ER) പോകുക അല്ലെങ്കിൽ 108 ലേക്ക് ആംബുലൻസ് വിളിക്കുക. ക്ലിനിക് ടീമിനെ അറിയിച്ചിട്ടുണ്ട്.",
-    bookingFormat: (name, doctor, specialty, slot, token) =>
-      `നമസ്കാരം ${name}, ${doctor} (${specialty}) മായി ഇന്ന് ${slot} ന് നിങ്ങളുടെ അപ്പോയിന്റ്മെന്റ് ബുക്ക് ചെയ്തിട്ടുണ്ട്. നിങ്ങളുടെ ടോക്കൺ നമ്പർ #${token} ആണ്. ദയവായി 10 മിനിറ്റ് മുമ്പ് എത്തുക.`,
+    bookingFormat: (name, doctor, specialty, slot, token, when) =>
+      `നമസ്കാരം ${name}, ${doctor} (${specialty}) മായി ${when} ${slot} ന് നിങ്ങളുടെ അപ്പോയിന്റ്മെന്റ് ബുക്ക് ചെയ്തിട്ടുണ്ട്. നിങ്ങളുടെ ടോക്കൺ നമ്പർ #${token} ആണ്. ദയവായി 10 മിനിറ്റ് മുമ്പ് എത്തുക.`,
     greetingText: (name, clinicName, receptionistName) =>
       `നമസ്കാരം ${name}! ${clinicName} സ്വാഗതം. ഞാൻ ${receptionistName}, നിങ്ങളുടെ എഐ റിസപ്ഷനിസ്റ്റ്. ഡോക്ടർ അപ്പോയിന്റ്മെന്റുകൾക്കും ഒപിഡി സമയങ്ങൾക്കും ഞാൻ നിങ്ങളെ സഹായിക്കാം. ഞാൻ എങ്ങനെ സഹായിക്കണം?`,
     timingsText: "ഞങ്ങളുടെ ഒപിഡി തിങ്കൾ മുതൽ ശനി വരെ രാവിലെ 09:00 മുതൽ രാത്രി 08:00 വരെയും ഞായറാഴ്ചകളിൽ രാവിലെ 10:00 മുതൽ ഉച്ചയ്ക്ക് 02:00 വരെയും പ്രവർത്തിക്കുന്നു.",
@@ -388,8 +390,8 @@ export const INDIC_LANGUAGES: Record<
     name: "Punjabi",
     localName: "ਪੰਜਾਬੀ",
     emergencyNotice: "ਇਹ ਇੱਕ ਗੰਭੀਰ ਮੈਡੀਕਲ ਐਮਰਜੈਂਸੀ ਲੱਗਦੀ ਹੈ। ਕਿਰਪਾ ਕਰਕੇ ਤੁਰੰਤ ਨਜ਼ਦੀਕੀ ਹਸਪਤਾਲ ਦੇ ਐਮਰਜੈਂਸੀ ਰੂਮ (ER) ਜਾਓ ਜਾਂ 108 'ਤੇ ਐਂਬੂਲੈਂਸ ਬੁਲਾਓ। ਕਲੀਨਿਕ ਸਟਾਫ ਨੂੰ ਸੂਚਿਤ ਕਰ ਦਿੱਤਾ ਗਿਆ ਹੈ।",
-    bookingFormat: (name, doctor, specialty, slot, token) =>
-      `ਸਤਿ ਸ਼੍ਰੀ ਅਕਾਲ ${name}, ਮੈਂ ${doctor} (${specialty}) ਨਾਲ ਅੱਜ ${slot} ਲਈ ਤੁਹਾਡੀ ਅਪਾਇੰਟਮੈਂਟ ਬੁੱਕ ਕਰ ਦਿੱਤੀ ਹੈ। ਤੁਹਾਡਾ ਟੋਕਨ ਨੰਬਰ #${token} ਹੈ। ਕਿਰਪਾ ਕਰਕੇ 10 ਮਿੰਟ ਪਹਿਲਾਂ ਪਹੁੰਚੋ।`,
+    bookingFormat: (name, doctor, specialty, slot, token, when) =>
+      `ਸਤਿ ਸ਼੍ਰੀ ਅਕਾਲ ${name}, ਮੈਂ ${doctor} (${specialty}) ਨਾਲ ${when} ${slot} ਲਈ ਤੁਹਾਡੀ ਅਪਾਇੰਟਮੈਂਟ ਬੁੱਕ ਕਰ ਦਿੱਤੀ ਹੈ। ਤੁਹਾਡਾ ਟੋਕਨ ਨੰਬਰ #${token} ਹੈ। ਕਿਰਪਾ ਕਰਕੇ 10 ਮਿੰਟ ਪਹਿਲਾਂ ਪਹੁੰਚੋ।`,
     greetingText: (name, clinicName, receptionistName) =>
       `ਸਤਿ ਸ਼੍ਰੀ ਅਕਾਲ ${name}! ${clinicName} ਵਿੱਚ ਤੁਹਾਡਾ ਸੁਆਗਤ ਹੈ। ਮੈਂ ${receptionistName}, ਤੁਹਾਡੀ ਏਆਈ ਰਿਸੈਪਸ਼ਨਿਸਟ ਹਾਂ। ਮੈਂ ਅਪਾਇੰਟਮੈਂਟ ਬੁੱਕ ਕਰਨ ਅਤੇ ਡਾਕਟਰ ਦੇ ਸਮੇਂ ਬਾਰੇ ਜਾਣਕਾਰੀ ਦੇਣ ਵਿੱਚ ਮਦਦ ਕਰ ਸਕਦੀ ਹਾਂ। ਮੈਂ ਤੁਹਾਡੀ ਕੀ ਮਦਦ ਕਰ ਸਕਦੀ ਹਾਂ?`,
     timingsText: "ਸਾਡੀ ਓਪੀਡੀ ਸੋਮਵਾਰ ਤੋਂ ਸ਼ਨੀਵਾਰ ਸਵੇਰੇ 09:00 ਤੋਂ ਰਾਤ 08:00 ਵਜੇ ਤੱਕ ਅਤੇ ਐਤਵਾਰ ਸਵੇਰੇ 10:00 ਤੋਂ ਦੁਪਹਿਰ 02:00 ਵਜੇ ਤੱਕ ਖੁੱਲ੍ਹੀ ਰਹਿੰਦੀ ਹੈ।",
@@ -408,8 +410,8 @@ export const INDIC_LANGUAGES: Record<
     name: "Odia",
     localName: "ଓଡ଼ିଆ",
     emergencyNotice: "ଏହା ଏକ ଜରୁରୀକାଳୀନ ଚିକିତ୍ସା ପରିସ୍ଥିତି ଭଳି ମନେହେଉଛି। ଦୟାକରି ତୁରନ୍ତ ନିକଟସ୍ଥ ହସ୍ପିଟାଲର ଜରୁରୀକାଳୀନ ବିଭାଗ (ER) କୁ ଯାଆନ୍ତୁ କିମ୍ବା ୧୦୮ କୁ କଲ୍ କରି ଆମ୍ବୁଲାନ୍ସ ଡାକନ୍ତୁ।",
-    bookingFormat: (name, doctor, specialty, slot, token) =>
-      `ନମସ୍କାର ${name}, ମୁଁ ${doctor} (${specialty}) ଙ୍କ ସହ ଆଜି ${slot} ପାଇଁ ଆପଣଙ୍କ ଅପଏଣ୍ଟମେଣ୍ଟ ବୁକ୍ କରିଛି। ଆପଣଙ୍କ ଟୋକନ୍ ନମ୍ବର #${token}। ଦୟାକରି ୧୦ ମିନିଟ୍ ପୂର୍ବରୁ ପହଞ୍ଚନ୍ତୁ।`,
+    bookingFormat: (name, doctor, specialty, slot, token, when) =>
+      `ନମସ୍କାର ${name}, ମୁଁ ${doctor} (${specialty}) ଙ୍କ ସହ ${when} ${slot} ପାଇଁ ଆପଣଙ୍କ ଅପଏଣ୍ଟମେଣ୍ଟ ବୁକ୍ କରିଛି। ଆପଣଙ୍କ ଟୋକନ୍ ନମ୍ବର #${token}। ଦୟାକରି ୧୦ ମିନିଟ୍ ପୂର୍ବରୁ ପହଞ୍ଚନ୍ତୁ।`,
     greetingText: (name, clinicName, receptionistName) =>
       `ନମସ୍କାର ${name}! ${clinicName} ସ୍ୱାଗତ। ମୁଁ ${receptionistName}, ଆପଣଙ୍କ ଏଆଇ ରିସେପ୍ସନିଷ୍ଟ। ଡାକ୍ତର ଅପଏଣ୍ଟମେଣ୍ଟ, ସମୟସୂଚୀ ଏବଂ ରିପୋର୍ଟ ସମ୍ବନ୍ଧରେ ମୁଁ ସାହାଯ୍ୟ କରିପାରିବି। ମୁଁ ଆପଣଙ୍କୁ କିପରି ସାହାଯ୍ୟ କରିପାରିବି?`,
     timingsText: "ଆମ କ୍ଲିନିକ୍ ଓପିଡି ସୋମବାରରୁ ଶନିବାର ସକାଳ ୦୯:୦୦ ରୁ ରାତି ୦୮:୦୦ ଏବଂ ରବିବାର ସକାଳ ୧୦:୦୦ ରୁ ଦିନ ୦୨:୦୦ ପର୍ଯ୍ୟନ୍ତ ଖୋଲା ରହେ।",
@@ -428,8 +430,8 @@ export const INDIC_LANGUAGES: Record<
     name: "Urdu",
     localName: "اردو",
     emergencyNotice: "یہ ایک ہنگامی طبی صورتحال معلوم ہوتی ہے۔ براہ کرم فوری طور پر قریبی ایمرجنسی روم (ER) جائیں یا 108 پر ایمبولینس کو کال کریں۔ کلینک عملے کو مطلع کر دیا گیا ہے۔",
-    bookingFormat: (name, doctor, specialty, slot, token) =>
-      `ہیلو ${name}، آپ کی اپائنٹمنٹ ${doctor} (${specialty}) کے ساتھ آج ${slot} پر بک کر دی گئی ہے۔ آپ کا ٹوکن نمبر #${token} ہے۔ براہ کرم 10 منٹ پہلے تشریف لائیں۔`,
+    bookingFormat: (name, doctor, specialty, slot, token, when) =>
+      `ہیلو ${name}، آپ کی اپائنٹمنٹ ${doctor} (${specialty}) کے ساتھ ${when} ${slot} پر بک کر دی گئی ہے۔ آپ کا ٹوکن نمبر #${token} ہے۔ براہ کرم 10 منٹ پہلے تشریف لائیں۔`,
     greetingText: (name, clinicName, receptionistName) =>
       `ہیلو ${name}! ${clinicName} میں خوش آمدید۔ میں ${receptionistName}, آپ کی اے آئی ریسپشنسٹ ہوں۔ میں اپائنٹمنٹ بک کرنے، ڈاکٹر کے اوقات اور رپورٹس میں مدد کر سکتی ہوں۔ میں آپ کی کیا مدد کر سکتی ہوں؟`,
     timingsText: "ہمارا کلینک او پی ڈی پیر سے ہفتہ صبح 09:00 سے رات 08:00 بجے تک اور اتوار صبح 10:00 سے دوپہر 02:00 بجے تک کھلا رہتا ہے۔",
@@ -448,8 +450,8 @@ export const INDIC_LANGUAGES: Record<
     name: "English",
     localName: "English",
     emergencyNotice: "This sounds like a critical medical emergency. Please proceed directly to the nearest Emergency Room or dial 108 for an ambulance. Our clinical emergency team has been alerted.",
-    bookingFormat: (name, doctor, specialty, slot, token) =>
-      `Hello ${name}, your consultation with ${doctor} (${specialty}) has been booked for today at ${slot}. Your OPD token is #${token}. Please arrive 10 minutes prior to your slot.`,
+    bookingFormat: (name, doctor, specialty, slot, token, when) =>
+      `Hello ${name}, your consultation with ${doctor} (${specialty}) has been booked for ${when} at ${slot}. Your OPD token is #${token}. Please arrive 10 minutes prior to your slot.`,
     greetingText: (name, clinicName, receptionistName) =>
       `Hello ${name}! Welcome to ${clinicName}. I am ${receptionistName}, your AI clinic receptionist. I can help you schedule an appointment, check doctor timings, or access your medical records. How may I assist you today?`,
     timingsText: "Our clinic OPD operates Monday through Saturday from 09:00 AM to 08:00 PM, and Sundays from 10:00 AM to 02:00 PM. Diagnostic lab sample collection begins at 08:00 AM daily.",
@@ -464,6 +466,94 @@ export const INDIC_LANGUAGES: Record<
     },
   },
 };
+
+const TODAY_WORD: Record<IndicLangCode, string> = {
+  en: "today",
+  hi: "आज",
+  bn: "আজ",
+  te: "ఈరోజు",
+  ta: "இன்று",
+  kn: "ಇಂದು",
+  mr: "आज",
+  gu: "આજે",
+  ml: "ഇന്ന്",
+  pa: "ਅੱਜ",
+  or: "ଆଜି",
+  ur: "آج",
+};
+
+const SLOT_FULL: Record<IndicLangCode, string> = {
+  en: "I'm sorry, there is no open slot in the coming days. Please ask the clinic desk to arrange a time.",
+  hi: "माफ़ कीजिए, आने वाले दिनों में कोई खाली स्लॉट नहीं है। कृपया क्लिनिक डेस्क से समय तय करें।",
+  bn: "দুঃখিত, আগামী দিনগুলোতে কোনো খালি স্লট নেই। অনুগ্রহ করে ক্লিনিক ডেস্কের সঙ্গে সময় ঠিক করুন।",
+  te: "క్షమించండి, రాబోయే రోజుల్లో ఖాళీ స్లాట్ లేదు. దయచేసి క్లినిక్ డెస్క్‌తో సమయం నిర్ణయించండి.",
+  ta: "மன்னிக்கவும், வரும் நாட்களில் காலியான நேரம் இல்லை. தயவுசெய்து கிளினிக் வரவேற்பறையில் நேரம் ஏற்பாடு செய்யுங்கள்.",
+  kn: "ಕ್ಷಮಿಸಿ, ಮುಂದಿನ ದಿನಗಳಲ್ಲಿ ಖಾಲಿ ಸ್ಲಾಟ್ ಇಲ್ಲ. ದಯವಿಟ್ಟು ಕ್ಲಿನಿಕ್ ಡೆಸ್ಕ್‌ನಲ್ಲಿ ಸಮಯವನ್ನು ಗೊತ್ತುಪಡಿಸಿ.",
+  mr: "माफ करा, येत्या दिवसांत मोकळी स्लॉट नाही. कृपया क्लिनिक डेस्कशी वेळ निश्चित करा.",
+  gu: "માફ કરશો, આગામી દિવસોમાં ખાલી સ્લોટ નથી. કૃપા કરીને ક્લિનિક ડેસ્ક પર સમય નક્કી કરો.",
+  ml: "ക്ഷമിക്കണം, വരുന്ന ദിവസങ്ങളിൽ ഒഴിഞ്ഞ സ്ലോട്ട് ഇല്ല. ദയവായി ക്ലിനിക് ഡെസ്കിൽ സമയം ക്രമീകരിക്കുക.",
+  pa: "ਮਾਫ਼ ਕਰਨਾ, ਆਉਣ ਵਾਲੇ ਦਿਨਾਂ ਵਿੱਚ ਕੋਈ ਖਾਲੀ ਸਲਾਟ ਨਹੀਂ ਹੈ। ਕਿਰਪਾ ਕਰਕੇ ਕਲੀਨਿਕ ਡੈਸਕ ਨਾਲ ਸਮਾਂ ਤੈਅ ਕਰੋ।",
+  or: "କ୍ଷମା କରନ୍ତୁ, ଆଗାମୀ ଦିନଗୁଡ଼ିକରେ ଖାଲି ସ୍ଲଟ୍ ନାହିଁ। ଦୟାକରି କ୍ଲିନିକ୍ ଡେସ୍କରେ ସମୟ ଠିକ୍ କରନ୍ତୁ।",
+  ur: "معاف کیجیے، آنے والے دنوں میں کوئی خالی سلاٹ نہیں ہے۔ براہ کرم کلینک ڈیسک سے وقت طے کریں۔",
+};
+
+function spokenBookingWhen(lang: IndicLangCode, date: string, now = new Date()): string {
+  const today = clinicCalendarDate(now, "Asia/Kolkata");
+  if (!date || date === today) return TODAY_WORD[lang];
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+  if (!match) return date;
+  const utc = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  return utc.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Kolkata" });
+}
+
+function bookingAction(token: number, date: string, timeSlot: string, now = new Date()): string {
+  const today = clinicCalendarDate(now, "Asia/Kolkata");
+  const when = !date || date === today ? "today" : date;
+  return `Confirmed token #${token} for ${when} at ${timeSlot}`;
+}
+
+function confirmedVoiceBooking(
+  langCode: IndicLangCode,
+  callerName: string,
+  appt: { doctorName: string; specialty: string; timeSlot: string; tokenNumber: number; date: string },
+  now = new Date()
+) {
+  const langInfo = INDIC_LANGUAGES[langCode] || INDIC_LANGUAGES.en;
+  return {
+    speechText: langInfo.bookingFormat(
+      callerName,
+      appt.doctorName,
+      appt.specialty,
+      appt.timeSlot,
+      appt.tokenNumber,
+      spokenBookingWhen(langCode, appt.date, now)
+    ),
+    suggestedAction: bookingAction(appt.tokenNumber, appt.date, appt.timeSlot, now),
+  };
+}
+
+const BOOKING_FAILED: Record<IndicLangCode, string> = {
+  en: "I'm sorry, I could not save that appointment. Please ask the clinic desk to arrange a time.",
+  hi: "माफ़ कीजिए, मैं यह अपॉइंटमेंट सेव नहीं कर पाई। कृपया क्लिनिक डेस्क से समय तय करें।",
+  bn: "দুঃখিত, আমি এই অ্যাপয়েন্টমেন্ট সেভ করতে পারিনি। অনুগ্রহ করে ক্লিনিক ডেস্কের সঙ্গে সময় ঠিক করুন।",
+  te: "క్షమించండి, ఈ అపాయింట్‌మెంట్ సేవ్ కాలేదు. దయచేసి క్లినిక్ డెస్క్‌తో సమయం నిర్ణయించండి.",
+  ta: "மன்னிக்கவும், இந்த முன்பதிவை சேமிக்க முடியவில்லை. தயவுசெய்து கிளினிக் வரவேற்பறையில் நேரம் ஏற்பாடு செய்யுங்கள்.",
+  kn: "ಕ್ಷಮಿಸಿ, ಈ ಅಪಾಯಿಂಟ್‌ಮೆಂಟ್ ಉಳಿಸಲಾಗಲಿಲ್ಲ. ದಯವಿಟ್ಟು ಕ್ಲಿನಿಕ್ ಡೆಸ್ಕ್‌ನಲ್ಲಿ ಸಮಯವನ್ನು ಗೊತ್ತುಪಡಿಸಿ.",
+  mr: "माफ करा, ही अपॉइंटमेंट सेव्ह होऊ शकली नाही. कृपया क्लिनिक डेस्कशी वेळ निश्चित करा.",
+  gu: "માફ કરશો, આ એપોઇન્ટમેન્ટ સેવ થઈ નથી. કૃપા કરીને ક્લિનિક ડેસ્ક પર સમય નક્કી કરો.",
+  ml: "ക്ഷമിക്കണം, ഈ അപ്പോയിന്റ്മെന്റ് സേവ് ചെയ്യാനായില്ല. ദയവായി ക്ലിനിക് ഡെസ്കിൽ സമയം ക്രമീകരിക്കുക.",
+  pa: "ਮਾਫ਼ ਕਰਨਾ, ਇਹ ਅਪਾਇੰਟਮੈਂਟ ਸੇਵ ਨਹੀਂ ਹੋ ਸਕੀ। ਕਿਰਪਾ ਕਰਕੇ ਕਲੀਨਿਕ ਡੈਸਕ ਨਾਲ ਸਮਾਂ ਤੈਅ ਕਰੋ।",
+  or: "କ୍ଷମା କରନ୍ତୁ, ଏହି ଅପଏଣ୍ଟମେଣ୍ଟ ସେଭ୍ ହେଲା ନାହିଁ। ଦୟାକରି କ୍ଲିନିକ୍ ଡେସ୍କରେ ସମୟ ଠିକ୍ କରନ୍ତୁ।",
+  ur: "معاف کیجیے، یہ اپائنٹمنٹ محفوظ نہیں ہو سکی۔ براہ کرم کلینک ڈیسک سے وقت طے کریں۔",
+};
+
+function bookingFailureSpeech(langCode: IndicLangCode, err: unknown): { speechText: string; suggestedAction: string } {
+  const message = err instanceof Error ? err.message : "";
+  if (message === "No open clinic slot") {
+    return { speechText: SLOT_FULL[langCode] || SLOT_FULL.en, suggestedAction: "No open clinic slot" };
+  }
+  return { speechText: BOOKING_FAILED[langCode] || BOOKING_FAILED.en, suggestedAction: "Booking was not saved" };
+}
 
 export interface TenantVoiceDoctor {
   name: string;
@@ -559,7 +649,7 @@ export function getTenantVoiceContext(tenantId: string, callerPhone: string): Te
 }
 
 export async function runGeminiVoiceReceptionist(opts: VoiceReceptionistInput): Promise<VoiceReceptionistResult> {
-  const { message, callerName = "Patient", callerPhone = "+919999973271", language = "English", tenantId = "", getGenAI } = opts;
+  const { message, callerName = "Patient", callerPhone = "+919999973271", language = "English", tenantId = "", getGenAI, now } = opts;
   const lowerMsg = String(message || "").toLowerCase();
   const db = getDb();
   const tenantContext = getTenantVoiceContext(tenantId, callerPhone);
@@ -658,12 +748,14 @@ Output strict JSON:
                   patientPhone: callerPhone,
                   patientName: cleanCallerName !== "there" ? cleanCallerName : "Patient",
                   doctorName: docToBook,
+                  now,
                 });
                 const appt = booked.appointment;
+                const spoken = confirmedVoiceBooking(langCode, cleanCallerName, appt, now);
                 return {
-                  speechText: parsed.speechText,
+                  speechText: spoken.speechText,
                   intent: "BOOKING",
-                  suggestedAction: `Confirmed token #${appt.tokenNumber} for today at ${appt.timeSlot}`,
+                  suggestedAction: spoken.suggestedAction,
                   isEmergency: false,
                   appointment: {
                     id: String(appt.id),
@@ -679,6 +771,14 @@ Output strict JSON:
                 };
               } catch (bErr) {
                 console.warn("[Voice Gemini Booking Error]", bErr);
+                const failed = bookingFailureSpeech(langCode, bErr);
+                return {
+                  speechText: failed.speechText,
+                  intent: "INQUIRY",
+                  suggestedAction: failed.suggestedAction,
+                  isEmergency: false,
+                  buttons: langInfo.buttons.inquiry,
+                };
               }
             }
 
@@ -789,20 +889,14 @@ Output strict JSON:
         patientPhone: callerPhone,
         patientName: cleanCallerName !== "there" ? cleanCallerName : "Patient",
         doctorName,
+        now,
       });
       const appt = booked.appointment;
-      const speechText = langInfo.bookingFormat(
-        cleanCallerName,
-        appt.doctorName,
-        appt.specialty,
-        appt.timeSlot,
-        appt.tokenNumber
-      );
-
+      const spoken = confirmedVoiceBooking(langCode, cleanCallerName, appt, now);
       return {
-        speechText,
+        speechText: spoken.speechText,
         intent: "BOOKING",
-        suggestedAction: `Confirmed token #${appt.tokenNumber} for today at ${appt.timeSlot}`,
+        suggestedAction: spoken.suggestedAction,
         isEmergency: false,
         appointment: {
           id: String(appt.id),
@@ -818,6 +912,14 @@ Output strict JSON:
       };
     } catch (bookingErr) {
       console.warn("[Voice Receptionist Booking Fallback]", bookingErr);
+      const failed = bookingFailureSpeech(langCode, bookingErr);
+      return {
+        speechText: failed.speechText,
+        intent: "INQUIRY",
+        suggestedAction: failed.suggestedAction,
+        isEmergency: false,
+        buttons: langInfo.buttons.inquiry,
+      };
     }
   }
 
@@ -1218,10 +1320,17 @@ Output strict JSON:
             uhid: appt.uhid,
             status: appt.status,
           };
+          const spoken = confirmedVoiceBooking(detectIndicLanguage(message, language), cleanCallerName, appt);
+          speechText = spoken.speechText;
           intent = "BOOKING";
-          suggestedAction = `Confirmed token #${appt.tokenNumber} for today at ${appt.timeSlot}`;
+          suggestedAction = spoken.suggestedAction;
         } catch (bErr) {
           console.warn("[Voice Booking Error]", bErr);
+          const failed = bookingFailureSpeech(detectIndicLanguage(message, language), bErr);
+          appointmentData = undefined;
+          intent = "INQUIRY";
+          speechText = failed.speechText;
+          suggestedAction = failed.suggestedAction;
         }
       }
 
