@@ -9,6 +9,7 @@ import { saveClinicScheduleSettings, listSlotOccupancy, scheduleSlotFreeStatusSq
 import { getDb, initDatabase } from "./db.ts";
 import { INDIC_LANGUAGES, mountGeminiVoiceRoutes, runGeminiVoiceReceptionist } from "./gemini-voice.ts";
 import { findNextBookableSlot } from "./whatsapp-calendar-booking.ts";
+import { resetWithheldGatewaySecretWarningForTests, voiceGatewayAnswerRequest } from "./meta.ts";
 import { saveWhatsAppTenantVoiceSettings } from "./whatsapp-numbers-store.ts";
 import { ensureTenantSlugColumn } from "./tenant-slug.ts";
 import { jsonRequest, startTestServer } from "./test-http.ts";
@@ -190,6 +191,8 @@ describe("forward security and voice fixes", () => {
       assert.equal(ok.json.gatewayIp, "203.0.113.10");
       const status = await jsonRequest(port, "GET", "/api/meta/register-gateway");
       assert.equal(status.status, 403);
+      const querySecret = await jsonRequest(port, "GET", "/api/meta/register-gateway?secret=gateway-secret-value");
+      assert.equal(querySecret.status, 403);
     } finally {
       restoreEnv({
         NODE_ENV: envSnapshot.NODE_ENV,
@@ -338,6 +341,14 @@ describe("forward security and voice fixes", () => {
         { Authorization: `Bearer ${patient}` }
       );
       assert.equal(asPatient.status, 403);
+      const simulator = await jsonRequest(
+        port,
+        "POST",
+        "/api/gemini/voice-bot",
+        { message: "Where is the clinic located?", callerPhone: "+919111122233", language: "English" },
+        { Authorization: `Bearer ${patient}` }
+      );
+      assert.equal(simulator.status, 403);
       const asDoctor = await jsonRequest(
         port,
         "POST",
@@ -347,6 +358,15 @@ describe("forward security and voice fixes", () => {
       );
       assert.equal(asDoctor.status, 200);
       assert.match(String(asDoctor.json.speechText), /Staff Clinic|1 Staff Road/);
+      const staffSimulator = await jsonRequest(
+        port,
+        "POST",
+        "/api/gemini/voice-bot",
+        { message: "Where is the clinic located?", callerPhone: "+919111122233", language: "English" },
+        { Authorization: `Bearer ${doctor}` }
+      );
+      assert.equal(staffSimulator.status, 200);
+      assert.match(String(staffSimulator.json.speechText), /Staff Clinic|1 Staff Road/);
       assert.doesNotMatch(String(asDoctor.json.speechText), /Other Clinic|9 Other Road/);
       const admin = seedUser({
         id: `user-staff-admin-${suffix}`,
@@ -700,6 +720,15 @@ describe("forward security and voice fixes", () => {
     assert.doesNotMatch(health, /sdpAnswer/);
     const meta = fs.readFileSync(path.join(root, "server/meta.ts"), "utf8");
     assert.match(meta, /X-Voice-Gateway-Secret/);
+    assert.doesNotMatch(meta, /req\.query\?\.secret/);
+    resetWithheldGatewaySecretWarningForTests();
+    const plain = voiceGatewayAnswerRequest("http://34.46.39.52:3000", "gateway-secret-value");
+    assert.equal(plain.withheldSecret, true);
+    assert.equal(plain.headers["X-Voice-Gateway-Secret"], undefined);
+    assert.equal(plain.url, "http://34.46.39.52:3000/webrtc/answer-offer");
+    const secure = voiceGatewayAnswerRequest("https://voice.example.com", "gateway-secret-value");
+    assert.equal(secure.withheldSecret, false);
+    assert.equal(secure.headers["X-Voice-Gateway-Secret"], "gateway-secret-value");
     assert.doesNotMatch(fs.readFileSync(path.join(root, "deploy/webrtc-voice-gateway/provision-free-vm.sh"), "utf8"), /lumera_webhook_verify_2026/);
   });
 });

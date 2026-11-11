@@ -362,6 +362,7 @@ export async function handleMetaInboundCallAction(opts: {
   let sdpAnswer = cachedCallAnswers.get(opts.callId) || "";
   const needsGateway = !sdpAnswer || (Boolean(opts.offerSdp) && sdpAnswer.includes("10000"));
   if (needsGateway && (action === "accept" || action === "pre_accept")) {
+    const gatewayIp = getVoiceGatewayIp() || "34.46.39.52";
     try {
       const callTenantId = opts.tenantId || "tenant-lumera-main";
       const db = getDb();
@@ -374,11 +375,12 @@ export async function handleMetaInboundCallAction(opts: {
       const customGreeting = voiceSettings.customGreeting || "";
 
       const gatewaySecret = readVoiceGatewaySecret();
-      const gwHeaders: Record<string, string> = { "Content-Type": "application/json" };
-      if (gatewaySecret) gwHeaders["X-Voice-Gateway-Secret"] = gatewaySecret;
-      const gwRes = await fetch("http://34.46.39.52:3000/webrtc/answer-offer", {
+      const configuredGateway = String(process.env.VOICE_GATEWAY_URL || "").trim();
+      const gatewayBase = configuredGateway || `http://${gatewayIp}:3000`;
+      const gatewayCall = voiceGatewayAnswerRequest(gatewayBase, gatewaySecret);
+      const gwRes = await fetch(gatewayCall.url, {
         method: "POST",
-        headers: gwHeaders,
+        headers: gatewayCall.headers,
         body: JSON.stringify({
           callId: opts.callId,
           callerPhone: opts.fromPhone || "",
@@ -388,7 +390,7 @@ export async function handleMetaInboundCallAction(opts: {
           receptionistName,
           customGreeting,
           offerSdp: opts.offerSdp,
-          publicIp: "34.46.39.52",
+          publicIp: gatewayIp,
         }),
         signal: AbortSignal.timeout(1200),
       });
@@ -405,7 +407,7 @@ export async function handleMetaInboundCallAction(opts: {
       console.warn(`[Meta Inbound Call] Gateway fetch timeout/error (<1.2s fast-path fallback) for callId=${opts.callId}:`, gwErr);
     }
     if (!sdpAnswer) {
-      sdpAnswer = buildWebRtcSdpAnswer(opts.offerSdp, "34.46.39.52");
+      sdpAnswer = buildWebRtcSdpAnswer(opts.offerSdp, gatewayIp);
     }
     cachedCallAnswers.set(opts.callId, sdpAnswer);
   }
@@ -700,9 +702,36 @@ export function sessionMetaTenant(req: Request, res: Response): string | null {
 function presentedGatewaySecret(req: Request): string {
   const header = req.get("x-voice-gateway-secret");
   if (typeof header === "string" && header.trim()) return header.trim();
-  const bodySecret = String((req.body as { secret?: unknown } | undefined)?.secret || "").trim();
-  if (bodySecret) return bodySecret;
-  return String(req.query?.secret || "").trim();
+  return String((req.body as { secret?: unknown } | undefined)?.secret || "").trim();
+}
+
+let withheldGatewaySecretWarning = false;
+
+/** Header is attached only on https. A public http gateway must not see the shared secret. */
+export function voiceGatewayAnswerRequest(gatewayBaseUrl: string, secret: string): {
+  url: string;
+  headers: Record<string, string>;
+  withheldSecret: boolean;
+} {
+  const base = String(gatewayBaseUrl || "").trim().replace(/\/$/, "");
+  const url = base.endsWith("/webrtc/answer-offer") ? base : `${base}/webrtc/answer-offer`;
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const trimmed = secret.trim();
+  if (trimmed && url.startsWith("https://")) {
+    headers["X-Voice-Gateway-Secret"] = trimmed;
+    return { url, headers, withheldSecret: false };
+  }
+  if (trimmed && !withheldGatewaySecretWarning) {
+    withheldGatewaySecretWarning = true;
+    console.warn(
+      "[Meta Inbound Call] VOICE_GATEWAY_SECRET was not sent because the voice gateway URL is not https. Set VOICE_GATEWAY_URL to an https endpoint before relying on the gateway lock."
+    );
+  }
+  return { url, headers, withheldSecret: Boolean(trimmed) };
+}
+
+export function resetWithheldGatewaySecretWarningForTests() {
+  withheldGatewaySecretWarning = false;
 }
 
 function redactTokenMaterial(value: string): string {

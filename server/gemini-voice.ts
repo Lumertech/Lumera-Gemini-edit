@@ -1019,12 +1019,15 @@ Guidelines:
 
 export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI | null) {
   // 4. Voice Bot & Triage Simulator with Emergency Escalation & Resilient Offline Fallback
-  app.post("/api/gemini/voice-bot", async (req: Request, res: Response) => {
+  app.post("/api/gemini/voice-bot", requireAuth, async (req: Request, res: Response) => {
     try {
       const { message, callerName = "Patient", language = "English", callerPhone = "+919999973271", availableDoctors } = req.body;
       if (!message) return res.status(400).json({ error: "Message is required" });
+      if (!isVoiceStaffRole(req.user?.role)) {
+        return res.status(403).json({ error: "Insufficient permissions" });
+      }
 
-      const tenantId = String((req as Request & { user?: { tenantId?: string } }).user?.tenantId || "").trim();
+      const tenantId = String(req.user?.tenantId || "").trim();
       if (!tenantId) return res.status(403).json({ error: "No clinic tenant is linked to this account." });
 
       const result = await runGeminiVoiceReceptionist({
