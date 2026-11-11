@@ -10,6 +10,9 @@ import {
   clinicDateFromIso,
   clinicDayUtcBounds,
   clinicToday,
+  clinicWeekDates,
+  clinicWeekStart,
+  formatClinicWeekRange,
   formatClinicDateLabel,
   formatClinicDayLabel,
   formatClinicMonthLabel,
@@ -60,6 +63,19 @@ describe("clinic day queue filter", () => {
       "2026-10-16"
     );
     assert.equal(formatClinicDateLabel("2026-10-16"), "16 Oct 2026");
+    assert.equal(clinicWeekStart("2026-10-16"), "2026-10-12");
+    assert.equal(clinicWeekStart("2026-10-18"), "2026-10-12");
+    assert.deepEqual(clinicWeekDates("2026-10-18"), [
+      "2026-10-12",
+      "2026-10-13",
+      "2026-10-14",
+      "2026-10-15",
+      "2026-10-16",
+      "2026-10-17",
+      "2026-10-18",
+    ]);
+    assert.equal(formatClinicWeekRange("2026-10-18"), "12 Oct 2026 – 18 Oct 2026");
+    assert.equal(clinicWeekStart("nope"), "");
     assert.equal(formatClinicMonthLabel(2026, 9), "October 2026");
     assert.equal(Number.isNaN(clinicDateFromIso("nope").getTime()), true);
   });
