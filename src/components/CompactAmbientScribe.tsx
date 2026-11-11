@@ -2,30 +2,31 @@ import React, { useEffect, useImperativeHandle, useRef, useState } from "react";
 import {
   Mic,
   MicOff,
-  Sparkles,
   RefreshCw,
-  CheckCircle2,
   Zap,
   X,
   Eraser,
   AlertTriangle,
-  ArrowRight,
 } from "lucide-react";
 import { SoapNote, Patient, Doctor } from "../types";
 import { useAuth } from "../auth/AuthContext";
 import { ABHA_LINKING_STATUS, showsAbhaSandboxStatus } from "../lib/clinicNav";
 import { AmbientRecordingDisclosure, AmbientScribeConsentDialog } from "./AmbientScribeConsentDialog";
 import {
+  bindOpenTabMicrophoneGrant,
   commitAmbientTap,
   MIC_STOPPED_RESUME,
   microphoneStatusLabel,
+  openTabGrantNotice,
   resetAmbientMicrophoneSession,
   startAmbientCaptureRun,
   transcriptBadge,
   type AmbientRunSnapshot,
   type AmbientTapSlot,
+  type MicrophonePermissionState,
   type TranscriptOrigin,
 } from "../lib/ambientMic";
+import { AmbientScribeDraftEditor } from "./AmbientScribeDraftEditor";
 import { useAmbientScribeConsent } from "../lib/useAmbientScribeConsent";
 import { extractClinicalTokens, type PulseExtractSource } from "../lib/pulseClinicalTokens";
 import { resolveRxModule } from "../lib/specialtyWorkflow";
@@ -41,7 +42,7 @@ export interface CompactAmbientScribeHandle {
 interface CompactAmbientScribeProps {
   currentPatient: Patient;
   currentDoctor: Doctor;
-  onApplyToRx: (soap: SoapNote, meta: { transcript: string; source: string }) => boolean | void;
+  onApplyToRx: (soap: SoapNote, meta: { transcript: string; source: string; accepted: boolean }) => boolean | void;
   isOpen?: boolean;
   onClose?: () => void;
   onStatusChange?: (status: AmbientScribeStatus) => void;
@@ -162,6 +163,7 @@ export const CompactAmbientScribe = React.forwardRef<CompactAmbientScribeHandle,
   const [extractSource, setExtractSource] = useState<PulseExtractSource | null>(null);
   const [appliedSuccess, setAppliedSuccess] = useState(false);
   const [micError, setMicError] = useState<string | null>(null);
+  const [grantWhileOpen, setGrantWhileOpen] = useState(false);
   const [audioLevel, setAudioLevel] = useState(0);
   const slotRef = useRef<AmbientTapSlot>({ phase: "idle", sessions: 0 });
   const runRef = useRef<{ stop: () => void } | null>(null);
@@ -216,6 +218,18 @@ export const CompactAmbientScribe = React.forwardRef<CompactAmbientScribeHandle,
       runRef.current = null;
       resetAmbientMicrophoneSession();
     };
+  }, []);
+
+  useEffect(() => {
+    if (typeof navigator === "undefined") return;
+    let previous: MicrophonePermissionState | null = null;
+    return bindOpenTabMicrophoneGrant(navigator.permissions, (state) => {
+      if (openTabGrantNotice(previous, state)) {
+        setGrantWhileOpen(true);
+        setMicError((current) => (current && /microphone|timed out|blocked/i.test(current) ? null : current));
+      }
+      previous = state;
+    });
   }, []);
 
   const applySnap = (snap: AmbientRunSnapshot) => {
@@ -310,10 +324,10 @@ export const CompactAmbientScribe = React.forwardRef<CompactAmbientScribeHandle,
     setExtractSource(null);
   };
 
-  const handleGenerateAndMaybeApply = async (apply: boolean) => {
+  const handleDraftSoap = async () => {
     const text = (transcriptRef.current || finalTranscript || transcript).trim();
     if (!text) {
-      setMicError("Capture or type a consult transcript before extracting clinical tokens.");
+      setMicError("Capture or type a consult transcript before drafting a SOAP note.");
       return;
     }
     stopMic();
@@ -330,18 +344,26 @@ export const CompactAmbientScribe = React.forwardRef<CompactAmbientScribeHandle,
       });
       setGeneratedSoap(soap);
       setExtractSource(source);
-      if (apply) {
-        const applied = onApplyToRx(soap, { transcript: text, source });
-        if (applied === false) return;
-        setAppliedSuccess(true);
-        window.setTimeout(() => flashPopulatedRxFields(), 80);
-        setTimeout(() => setAppliedSuccess(false), 4000);
-      }
     } catch (err) {
-      setMicError(err instanceof Error ? err.message : "Pulse AI could not extract clinical tokens.");
+      setGeneratedSoap(null);
+      setMicError(err instanceof Error ? err.message : "Could not draft a SOAP note. Nothing was written to the chart.");
     } finally {
       setIsGenerating(false);
     }
+  };
+
+  const handleAcceptDraft = (soap: SoapNote) => {
+    const text = (transcriptRef.current || finalTranscript || transcript).trim();
+    setGeneratedSoap(soap);
+    const applied = onApplyToRx(soap, {
+      transcript: text,
+      source: extractSource || "Pulse AI",
+      accepted: true,
+    });
+    if (applied === false) return;
+    setAppliedSuccess(true);
+    window.setTimeout(() => flashPopulatedRxFields(), 80);
+    window.setTimeout(() => setAppliedSuccess(false), 4000);
   };
 
   const formatTimer = (seconds: number) => {
@@ -416,7 +438,7 @@ export const CompactAmbientScribe = React.forwardRef<CompactAmbientScribeHandle,
               )}
             </div>
             <p className="text-[11px] text-slate-500">
-              Microphone for this {resolveRxModule(practiceSpecialty || currentDoctor.specialty)} consult. Notes stay suggestions until you apply them — nothing is printed or sent on WhatsApp from here.
+              Microphone for this {resolveRxModule(practiceSpecialty || currentDoctor.specialty)} consult. The draft stays here until you accept it. Nothing is printed or sent on WhatsApp from here.
             </p>
             {showAbhaStatus ? (
               <p className="no-print text-[10px] leading-snug text-slate-400" data-testid="abha-linking-status">
@@ -454,6 +476,16 @@ export const CompactAmbientScribe = React.forwardRef<CompactAmbientScribeHandle,
         >
           <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
           <span>{consent.notice}</span>
+        </div>
+      )}
+
+      {grantWhileOpen && !isRecording && (
+        <div
+          role="status"
+          data-testid="ambient-mic-grant-open-tab"
+          className="mx-4 mt-3 px-3 py-2 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-900 text-xs"
+        >
+          Microphone permission is saved for this site. Tap Start listening. You do not need to reload this tab.
         </div>
       )}
 
@@ -548,12 +580,13 @@ export const CompactAmbientScribe = React.forwardRef<CompactAmbientScribeHandle,
             </button>
             <button
               type="button"
-              onClick={() => void handleGenerateAndMaybeApply(false)}
+              data-testid="ambient-draft-soap"
+              onClick={() => void handleDraftSoap()}
               disabled={isGenerating || !transcript.trim()}
               className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-semibold text-xs flex items-center gap-1.5"
             >
               {isGenerating ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
-              <span>{isGenerating ? "Extracting tokens…" : "Extract clinical tokens"}</span>
+              <span>{isGenerating ? "Drafting SOAP note…" : "Draft SOAP note and Rx"}</span>
             </button>
           </div>
           <AmbientRecordingDisclosure />
@@ -603,80 +636,17 @@ export const CompactAmbientScribe = React.forwardRef<CompactAmbientScribeHandle,
       </div>
 
       <div className="px-4 pb-4 space-y-3">
-        <button
-          type="button"
-          onClick={() => void handleGenerateAndMaybeApply(true)}
-          disabled={isGenerating || !transcript.trim()}
-          className={`w-full px-4 py-2.5 rounded-lg font-bold text-sm inline-flex items-center justify-center gap-2 shadow-sm ${
-            appliedSuccess ? "bg-emerald-600 text-white" : "bg-violet-700 hover:bg-violet-800 text-white disabled:opacity-50"
-          }`}
-        >
-          {isGenerating ? (
-            <>
-              <RefreshCw className="w-4 h-4 animate-spin" />
-              Pulse AI is extracting tokens…
-            </>
-          ) : appliedSuccess ? (
-            <>
-              <CheckCircle2 className="w-4 h-4" />
-              Suggestions applied — review before sign, print, or WhatsApp
-            </>
-          ) : (
-            <>
-              <Sparkles className="w-4 h-4" />
-              Apply suggestions to Rx draft
-              <ArrowRight className="w-4 h-4" />
-            </>
-          )}
-        </button>
+        {appliedSuccess && (
+          <p role="status" className="text-xs font-semibold text-emerald-800">
+            Accepted into this consult. Review the prescription before you sign, print, or send WhatsApp.
+          </p>
+        )}
         <p className="text-[11px] text-slate-500">
-          Extracted notes, diagnosis, and medicines stay suggestions until you apply them. Applying fills this draft only. It does not print or send WhatsApp.
+          The SOAP note and prescription stay in this draft until you accept them. Accepting fills this consult. It does not print or send WhatsApp.
         </p>
 
         {generatedSoap && (
-          <div className="p-3 bg-violet-50 rounded-lg border border-violet-200 space-y-2">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5 text-violet-800">
-                <Sparkles className="w-3.5 h-3.5" />
-                <span className="font-bold text-xs">Extracted clinical tokens — edit highlighted Rx fields</span>
-              </div>
-              <span className="text-[10px] font-mono text-emerald-700 bg-white px-1.5 py-0.5 rounded border border-emerald-200">
-                ICD {generatedSoap.assessment.icd10Code}
-                {extractSource && !/gemini|gpt|claude|flash/i.test(extractSource) ? ` · ${extractSource}` : ""}
-              </span>
-            </div>
-            <p className="text-xs text-slate-800">
-              <strong>{generatedSoap.assessment.primaryDiagnosis}</strong>
-            </p>
-            <ul className="list-disc list-inside text-[11px] text-slate-700 space-y-0.5">
-              {generatedSoap.subjective.chiefComplaints.map((c, i) => (
-                <li key={i}>{c}</li>
-              ))}
-            </ul>
-            {generatedSoap.physiotherapyAssessment && (
-              <p className="text-[11px] text-slate-600">
-                ROM {generatedSoap.physiotherapyAssessment.jointRomFindings.map((r) => `${r.movement} ${r.degrees}`).join("; ")}
-              </p>
-            )}
-            {(generatedSoap.prescribedExercises || []).length > 0 && (
-              <div className="flex flex-wrap gap-1">
-                {generatedSoap.prescribedExercises!.map((m, i) => (
-                  <span key={i} className="text-[10px] bg-white border border-violet-200 rounded px-1.5 py-0.5 text-slate-700">
-                    HEP · {m.exerciseName}
-                  </span>
-                ))}
-              </div>
-            )}
-            {generatedSoap.plan.medicines.length > 0 && (
-              <div className="flex flex-wrap gap-1">
-                {generatedSoap.plan.medicines.map((m, i) => (
-                  <span key={i} className="text-[10px] bg-white border border-violet-200 rounded px-1.5 py-0.5 text-slate-700">
-                    {m.drugName} · {m.frequency}
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
+          <AmbientScribeDraftEditor soap={generatedSoap} onChange={setGeneratedSoap} onAccept={handleAcceptDraft} />
         )}
       </div>
     </section>

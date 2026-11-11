@@ -186,6 +186,71 @@ export async function queryMicrophonePermission(
   }
 }
 
+export interface MicrophonePermissionStatus {
+  state: string;
+  onchange: ((this: PermissionStatus, ev: Event) => unknown) | null;
+}
+
+/**
+ * A live track is the grant. permissions.query can stay "denied" on a document
+ * that was already open when the user allowed the microphone.
+ */
+export function shouldReleaseStreamForPermission(input: {
+  queryState: MicrophonePermissionState;
+  streamLive: boolean;
+}): boolean {
+  if (input.streamLive) return false;
+  return input.queryState === "denied";
+}
+
+/** True when a grant arrives after this document had already loaded a non-grant. */
+export function openTabGrantNotice(
+  previous: MicrophonePermissionState | null,
+  next: MicrophonePermissionState
+): boolean {
+  return previous !== null && previous !== "granted" && next === "granted";
+}
+
+function asPermissionState(state: string): MicrophonePermissionState {
+  if (state === "granted" || state === "denied" || state === "prompt") return state;
+  return "unsupported";
+}
+
+/**
+ * Subscribe while the document is open. Chrome and Android Chrome deliver a
+ * later Allow to this listener; the page does not need a reload.
+ */
+export function bindOpenTabMicrophoneGrant(
+  permissions: { query?: (desc: { name: "microphone" }) => Promise<MicrophonePermissionStatus> } | null | undefined,
+  onState: (state: MicrophonePermissionState) => void
+): () => void {
+  let cancelled = false;
+  let status: MicrophonePermissionStatus | null = null;
+  const query = permissions?.query;
+  if (!query) {
+    onState("unsupported");
+    return () => {};
+  }
+  void query
+    .call(permissions, { name: "microphone" })
+    .then((next) => {
+      if (cancelled) return;
+      status = next;
+      const publish = () => onState(asPermissionState(next.state));
+      publish();
+      next.onchange = () => {
+        if (!cancelled) publish();
+      };
+    })
+    .catch(() => {
+      if (!cancelled) onState("unsupported");
+    });
+  return () => {
+    cancelled = true;
+    if (status) status.onchange = null;
+  };
+}
+
 export function micErrorMessage(err: unknown): { code: AmbientMicErrorCode; message: string } {
   if (err instanceof AmbientMicError) {
     return { code: err.code, message: err.message };
@@ -519,22 +584,6 @@ export async function startAmbientMic(options: StartAmbientMicOptions): Promise<
   const gesture = options.gesture ?? beginAmbientMicGesture();
   const timeoutMs = options.streamTimeoutMs ?? MIC_PROMPT_TIMEOUT_MS;
   const timeoutError = () => new AmbientMicError("permission-denied", micPromptTimeoutMessage());
-  let permission: MicrophonePermissionState;
-  try {
-    permission = await withTimeout(gesture.permissionPromise, timeoutMs, timeoutError);
-  } catch (err) {
-    void gesture.audioContext.close().catch(() => {});
-    if (err instanceof AmbientMicError) throw err;
-    const mapped = micErrorMessage(err);
-    throw new AmbientMicError(mapped.code, mapped.message);
-  }
-  if (permission === "denied") {
-    releaseStream(gesture.streamPromise);
-    void gesture.audioContext.close().catch(() => {});
-    const mapped = mapAmbientCaptureFailure({ kind: "exception", name: "NotAllowedError" });
-    throw new AmbientMicError(mapped.code, mapped.message);
-  }
-
   let stream: MediaStream;
   try {
     stream = await withTimeout(gesture.streamPromise, timeoutMs, timeoutError);
@@ -542,6 +591,31 @@ export async function startAmbientMic(options: StartAmbientMicOptions): Promise<
     void gesture.audioContext.close().catch(() => {});
     if (err instanceof AmbientMicError) throw err;
     const mapped = micErrorMessage(err);
+    throw new AmbientMicError(mapped.code, mapped.message);
+  }
+
+  const streamLive = streamIsLive(stream);
+  let permission: MicrophonePermissionState = "unsupported";
+  if (streamLive) {
+    void gesture.permissionPromise.then(
+      () => undefined,
+      () => undefined
+    );
+  } else {
+    try {
+      permission = await withTimeout(gesture.permissionPromise, timeoutMs, timeoutError);
+    } catch (err) {
+      releaseStream(Promise.resolve(stream));
+      void gesture.audioContext.close().catch(() => {});
+      if (err instanceof AmbientMicError) throw err;
+      const mapped = micErrorMessage(err);
+      throw new AmbientMicError(mapped.code, mapped.message);
+    }
+  }
+  if (shouldReleaseStreamForPermission({ queryState: permission, streamLive })) {
+    releaseStream(Promise.resolve(stream));
+    void gesture.audioContext.close().catch(() => {});
+    const mapped = mapAmbientCaptureFailure({ kind: "exception", name: "NotAllowedError" });
     throw new AmbientMicError(mapped.code, mapped.message);
   }
 

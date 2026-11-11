@@ -37,7 +37,7 @@ import {
 import { Link } from "react-router-dom";
 import { LEGAL_ENTITY_NAME, PRODUCT_NAME } from "../brand";
 import { META_TECH_PROVIDER_STATEMENT } from "../lib/metaStatus";
-import { CONTACT_EMAIL } from "../lib/pricingCopy";
+import { AMBIENT_SCRIBE_MISSION, CONTACT_EMAIL } from "../lib/pricingCopy";
 import { BrandMark } from "./BrandMark";
 import { destinationAfterAuth, useAuth } from "../auth/AuthContext";
 import { goAfterAuth, useNav } from "../nav/NavigationContext";
@@ -106,7 +106,7 @@ const FALLBACK: SitePayload = {
     badgeText: "AI Healthcare OS & Voice Receptionist",
     heroTitle: "Next-Gen AI Receptionist & Ambient Clinical Scribe",
     heroSubtitle:
-      "Automate patient call answering, 3-click WhatsApp appointment scheduling, and ambient consultation SOAP notes across regional Indian languages.",
+      "In a consult, ambient capture starts only after a recorded patient-consent tick. Speech is drafted into an editable SOAP note and prescription that the doctor accepts before anything is saved.",
     contactEmail: CONTACT_EMAIL,
     ctaPrimary: "Experience Doctor EHR",
     ctaSecondary: "Open Clinical Demo",
@@ -491,31 +491,31 @@ export const LandingPage: React.FC = () => {
                   Ambient AI Scribe
                 </h3>
                 <p className="text-xs font-semibold text-purple-400 mt-0.5">
-                  Zero typing, instant SOAP &amp; FHIR Rx notes
+                  Draft SOAP note and prescription, accepted by the doctor
                 </p>
               </div>
               <p className="text-slate-300 text-xs leading-relaxed">
-                Zero typing during consultations. Ambiently transcribes natural doctor-patient dialogues in regional Indian languages.
+                During a consult, the doctor records that the patient agreed, then captures the conversation. The draft SOAP note and prescription stay editable. Nothing is saved until the doctor accepts.
               </p>
               <ul className="space-y-2 text-xs text-slate-400 pt-2 border-t border-slate-800">
                 <li className="flex items-center gap-2">
                   <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                  <span>Instant SOAP note generation in seconds</span>
+                  <span>Recorded patient-consent tick before the microphone starts</span>
                 </li>
                 <li className="flex items-center gap-2">
                   <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                  <span>Automated ICD-10 &amp; SNOMED-CT clinical coding</span>
+                  <span>Editable SOAP note and draft prescription</span>
                 </li>
                 <li className="flex items-center gap-2">
                   <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                  <span>FHIR R4 Bundle output</span>
+                  <span>Nothing is saved until the doctor accepts</span>
                 </li>
               </ul>
             </div>
 
             <div className="mt-6 pt-4 border-t border-slate-800/80">
               <span className="text-[11px] font-semibold text-purple-400 flex items-center gap-1">
-                Eliminates 3+ hours of daily documentation
+                Human review stays in the consult
               </span>
             </div>
           </div>
@@ -627,7 +627,7 @@ export const LandingPage: React.FC = () => {
                   <h3 className="font-bold text-sm text-white flex items-center gap-1.5">
                     Ambient AI Scribe Simulator
                   </h3>
-                  <span className="text-[10px] text-slate-400">Multi-Lingual Audio → Structured FHIR Rx</span>
+                  <span className="text-[10px] text-slate-400">Sample dialogue. Not a live consult.</span>
                 </div>
               </div>
 
@@ -698,10 +698,10 @@ export const LandingPage: React.FC = () => {
                     }`}
                   >
                     <FileCode2 className="w-3.5 h-3.5" />
-                    FHIR R4 JSON
+                    Sample FHIR JSON
                   </button>
                 </div>
-                <span className="text-[10px] text-emerald-400 font-mono">100% Extracted</span>
+                <span className="text-[10px] text-amber-300 font-mono">Sample/Demo</span>
               </div>
 
               <div className="mt-3 flex-1 overflow-hidden">
@@ -874,7 +874,7 @@ export const LandingPage: React.FC = () => {
                 {"★".repeat(5)}
               </div>
               <p className="text-slate-200 text-xs sm:text-sm leading-relaxed italic">
-                “Lumera's ambient scribe captures bilateral ROM, spine posture, and joint tenderness while I physically examine the athlete. Not a single keystroke during consults.”
+                “The ambient scribe drafts the note while I examine the patient. I edit it and accept it before it is saved.”
               </p>
             </div>
             <div className="pt-4 mt-4 border-t border-slate-800 flex items-center gap-3">
@@ -965,7 +965,7 @@ export const LandingPage: React.FC = () => {
             />
           </div>
           <p className="text-xs text-slate-400 max-w-2xl mx-auto">
-            Empowering Indian healthcare with multilingual ambient scribing, automated WhatsApp patient self-service, and ABDM records (sandbox — not yet live).
+            {AMBIENT_SCRIBE_MISSION}
           </p>
 
           {/* Policy Links */}

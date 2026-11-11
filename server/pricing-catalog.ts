@@ -1,4 +1,5 @@
 import {
+  AI_SCRIBE_LIVE_LABEL,
   CONTACT_EMAIL,
   WHATSAPP_BILLED_BY_META,
   WHATSAPP_INR_PAYMENT,
@@ -51,7 +52,7 @@ export function publicPlansResponse(env: NodeJS.ProcessEnv = process.env): Publi
           { label: "Doctor and receptionist", status: "live" },
           { label: "WhatsApp: connect your clinic's own number", status: "live" },
           { label: "ABHA linking (in ABDM sandbox testing; not yet live)", status: "sandbox" },
-          { label: "AI Scribe", status: "coming_soon" },
+          { label: AI_SCRIBE_LIVE_LABEL, status: "live" },
         ],
       },
       {
@@ -67,7 +68,7 @@ export function publicPlansResponse(env: NodeJS.ProcessEnv = process.env): Publi
           { label: "Clinic admin, branches, and up to 5 doctors, plus staff", status: "live" },
           { label: "WhatsApp: connect your clinic's own number", status: "live" },
           { label: "ABHA linking (in ABDM sandbox testing; not yet live)", status: "sandbox" },
-          { label: "AI Scribe", status: "coming_soon" },
+          { label: AI_SCRIBE_LIVE_LABEL, status: "live" },
         ],
       },
     ],
