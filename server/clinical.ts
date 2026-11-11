@@ -36,6 +36,7 @@ import {
   listSlotOccupancy,
 } from "./clinic-schedule.ts";
 import { deliverSignedVisitSummary, notifyTurnNearForDoctor } from "./patient-visit-delivery.ts";
+import { registerAfterVisitRoutes } from "./after-visit-routes.ts";
 
 function tenantIdOf(req: Request): string {
   return String(req.user?.tenantId || "").trim();
@@ -1906,5 +1907,6 @@ export function createClinicalRouter(): Router {
     res.json({ ok: true, date, availableSlots });
   });
 
+  registerAfterVisitRoutes(api);
   return api;
 }

@@ -95,7 +95,7 @@ function recordEvent(
   return id;
 }
 
-async function sendPatientWhatsApp(opts: {
+export async function deliverPatientNotice(opts: {
   db: DeliveryDb;
   tenantId: string;
   phone: string;
@@ -266,7 +266,7 @@ export async function deliverSignedVisitSummary(
     linkUrl: patientLinkUrl(minted.id, env),
     otp: minted.otp,
   });
-  return sendPatientWhatsApp({
+  return deliverPatientNotice({
     db,
     tenantId: input.tenantId,
     phone,
@@ -330,7 +330,7 @@ export async function notifyTurnNearForDoctor(
       ? `${buildTurnNearMessage(snapshot)}\n${patientLinkUrl(minted.id, env)}\nCode: ${minted.otp}`
       : buildTurnNearMessage(snapshot);
     results.push(
-      await sendPatientWhatsApp({
+      await deliverPatientNotice({
         db,
         tenantId,
         phone,

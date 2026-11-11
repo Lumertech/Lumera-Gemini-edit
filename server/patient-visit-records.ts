@@ -7,6 +7,10 @@ import { formatINR } from "../src/lib/currency.ts";
 import { HIDDEN_AMBIENT_SOURCES, hiddenVisitSourceSql } from "./ambient-walkin.ts";
 import { queueSnapshotFromAppointment, type QueueSnapshot } from "./patient-queue-status.ts";
 import type { PatientVisitLinkRow } from "./patient-visit-token.ts";
+import { patientFacingTranslation, readTranslation } from "./rx-translation.ts";
+import { carePlanForPatient, listGrowth, type GrowthPoint } from "./after-visit-care.ts";
+import { ensureCertificateTable } from "./clinic-certificate.ts";
+import type { VaccinePlan } from "../src/lib/iapSchedule.ts";
 
 export type VisitChart = {
   patient: { name: string; age: number; gender: string };
@@ -24,6 +28,10 @@ export type VisitChart = {
   }>;
   documents: Array<{ id: string; title: string; docType: string; documentDate: string }>;
   labReports: Array<{ id: string; date: string; labName: string; category: string }>;
+  care: { followUpDate: string; vaccines: VaccinePlan | null };
+  growth: GrowthPoint[];
+  certificates: Array<{ id: string; title: string; kind: string }>;
+  teleconsult: boolean;
 };
 
 function parseJsonArray(raw: unknown): unknown[] {
@@ -128,15 +136,8 @@ export function loadVisitChart(db: SqlDatabase, link: PatientVisitLinkRow): Visi
       tokenNumber: Number(row.token_number || 0),
       feeLabel: formatINR(Number(row.consultation_fee || 0)),
     })),
-    prescriptions: rxRows.map((row) => ({
-      id: String(row.id || ""),
-      rxNumber: String(row.rx_number || ""),
-      date: String(row.date || ""),
-      doctorName: String(row.doctor_name || ""),
-      diagnosis: String(row.diagnosis || ""),
-      advice: parseJsonArray(row.advice).map((item) => String(item)),
-      followUpDate: String(row.follow_up_date || ""),
-      medicines: parseJsonArray(row.medicines).map((item) => {
+    prescriptions: rxRows.map((row) => {
+      const medicines = parseJsonArray(row.medicines).map((item) => {
         const med = item && typeof item === "object" ? (item as Record<string, unknown>) : {};
         return {
           drugName: String(med.drugName || med.drug_name || ""),
@@ -145,9 +146,75 @@ export function loadVisitChart(db: SqlDatabase, link: PatientVisitLinkRow): Visi
           timing: String(med.timing || ""),
           instructions: String(med.instructions || ""),
         };
-      }),
-    })),
+      });
+      const approved = ["hi", "mr", "en"]
+        .map((language) => readTranslation(db, link.tenant_id, String(row.id || ""), language))
+        .find((item) => item?.status === "approved");
+      const facing = patientFacingTranslation(approved || null);
+      if (facing) {
+        medicines.forEach((medicine, index) => {
+          const line = facing.lines[index];
+          if (!line) return;
+          medicine.drugName = line.drugName || medicine.drugName;
+          const spoken = [line.directions, line.instructions].filter(Boolean).join(". ");
+          if (spoken) medicine.instructions = spoken;
+        });
+      }
+      return {
+        id: String(row.id || ""),
+        rxNumber: String(row.rx_number || ""),
+        date: String(row.date || ""),
+        doctorName: String(row.doctor_name || ""),
+        diagnosis: String(row.diagnosis || ""),
+        advice: facing?.aiApproved ? facing.advice : parseJsonArray(row.advice).map((item) => String(item)),
+        followUpDate: String(row.follow_up_date || ""),
+        medicines,
+      };
+    }),
     documents,
     labReports,
+    ...visitExtras(db, link),
   };
+}
+
+function visitExtras(db: SqlDatabase, link: PatientVisitLinkRow): Pick<VisitChart, "care" | "growth" | "certificates" | "teleconsult"> {
+  let care: VisitChart["care"] = { followUpDate: "", vaccines: null };
+  try {
+    const plan = carePlanForPatient(db, link.tenant_id, link.patient_id);
+    care = { followUpDate: plan.followUpDate, vaccines: plan.vaccines };
+  } catch {
+    care = { followUpDate: "", vaccines: null };
+  }
+  let growth: GrowthPoint[] = [];
+  try {
+    growth = listGrowth(db, link.tenant_id, link.patient_id);
+  } catch {
+    growth = [];
+  }
+  let certificates: VisitChart["certificates"] = [];
+  try {
+    ensureCertificateTable(db);
+    certificates = (
+      db
+        .prepare(
+          `SELECT id, title, kind FROM clinic_certificates
+           WHERE tenant_id = ? AND patient_id = ? ORDER BY created_at DESC LIMIT 20`
+        )
+        .all(link.tenant_id, link.patient_id) as Array<Record<string, unknown>>
+    ).map((row) => ({ id: String(row.id || ""), title: String(row.title || ""), kind: String(row.kind || "") }));
+  } catch {
+    certificates = [];
+  }
+  let teleconsult = false;
+  if (link.appointment_id) {
+    try {
+      const row = db
+        .prepare("SELECT type FROM appointments WHERE id = ? AND tenant_id = ? AND patient_id = ?")
+        .get(link.appointment_id, link.tenant_id, link.patient_id) as { type?: string } | undefined;
+      teleconsult = String(row?.type || "") === "Teleconsult";
+    } catch {
+      teleconsult = false;
+    }
+  }
+  return { care, growth, certificates, teleconsult };
 }

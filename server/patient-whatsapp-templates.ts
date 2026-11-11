@@ -34,6 +34,24 @@ export const PATIENT_WHATSAPP_TEMPLATES: readonly PatientWhatsAppTemplateDefinit
     body: "{{1}}: {{2}} has shared your visit summary. Reply to this chat for the secure link. The link expires and is only for you.",
     footer: "Do not forward medical messages.",
   },
+  {
+    name: "clinic_care_reminder",
+    category: "UTILITY",
+    language: "en",
+    status: "NOT_SUBMITTED",
+    variables: ["clinic_name", "doctor_name"],
+    body: "{{1}}: {{2}} has a follow-up and vaccine reminder for you. Reply in this chat for the secure link. It expires.",
+    footer: "Reply in this chat if you need the front desk.",
+  },
+  {
+    name: "clinic_teleconsult_join",
+    category: "UTILITY",
+    language: "en",
+    status: "NOT_SUBMITTED",
+    variables: ["clinic_name", "doctor_name"],
+    body: "{{1}}: your video visit with {{2}} is booked. Reply in this chat for the secure join link. It expires.",
+    footer: "Join only from the secure link.",
+  },
 ] as const;
 
 export function patientTemplateByName(name: string): PatientWhatsAppTemplateDefinition | undefined {
