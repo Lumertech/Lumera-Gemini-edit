@@ -560,7 +560,9 @@ describe("forward security and voice fixes", () => {
     assert.match(gateway, /def offer_presented_secret/);
     assert.match(gateway, /privileged and VOICE_GATEWAY_SECRET/);
     assert.match(gateway, /existing.get\("privileged"\) and not privileged/);
-    assert.match(gateway, /existing\["privileged"\] = True/);
+    assert.match(gateway, /privileged and not existing.get\("privileged"\)/);
+    assert.match(gateway, /status=409/);
+    assert.doesNotMatch(gateway, /existing\["privileged"\] = True/);
     assert.doesNotMatch(gateway, /if not offer_authorized/);
     const health = gateway.slice(gateway.indexOf("async def handle_health"), gateway.indexOf("def offer_presented_secret"));
     assert.doesNotMatch(health, /callId/);

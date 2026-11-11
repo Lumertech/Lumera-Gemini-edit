@@ -585,17 +585,15 @@ async def handle_answer_offer(request):
         return web.json_response({"error": "callId is required"}, status=400)
 
     # Reuse session if callId already exists (pre_accept followed by accept).
-    # A privileged session's SDP is only returned to a caller who presents the secret.
-    # A later request that presents the secret upgrades an unsigned session.
+    # Privilege is fixed by the first offer. A later secret must not be copied
+    # onto a session a public caller already opened, and that caller's SDP is
+    # not handed to Cloud Run.
     if call_id in active_calls:
         existing = active_calls[call_id]
         if existing.get("privileged") and not privileged:
             return web.json_response({"error": "Unauthorized"}, status=403)
         if privileged and not existing.get("privileged"):
-            existing["privileged"] = True
-            upgraded_phone = body.get("phoneNumberId") or body.get("phone_number_id") or ""
-            if upgraded_phone:
-                existing["phoneNumberId"] = upgraded_phone
+            return web.json_response({"error": "Conflict"}, status=409)
         logger.info(f"[{call_id}] Reusing active call session. State: {existing['pc'].connectionState}")
         return web.json_response({
             "ok": True,
