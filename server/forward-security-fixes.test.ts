@@ -7,7 +7,7 @@ import { createApiRouter } from "./api.ts";
 import { signJwtToken } from "./auth.ts";
 import { saveClinicScheduleSettings, listSlotOccupancy, scheduleSlotFreeStatusSql } from "./clinic-schedule.ts";
 import { getDb, initDatabase } from "./db.ts";
-import { mountGeminiVoiceRoutes } from "./gemini-voice.ts";
+import { INDIC_LANGUAGES, mountGeminiVoiceRoutes, runGeminiVoiceReceptionist } from "./gemini-voice.ts";
 import { findNextBookableSlot } from "./whatsapp-calendar-booking.ts";
 import { saveWhatsAppTenantVoiceSettings } from "./whatsapp-numbers-store.ts";
 import { ensureTenantSlugColumn } from "./tenant-slug.ts";
@@ -421,6 +421,67 @@ describe("forward security and voice fixes", () => {
     assert.match(scheduleSlotFreeStatusSql("status"), /Completed/);
     assert.match(scheduleSlotFreeStatusSql("status"), /Cancelled/);
     assert.match(scheduleSlotFreeStatusSql("status"), /No-Show/);
+  });
+
+  it("keeps an evening doctor bookable when clinic close is 5pm", () => {
+    const suffix = `${Date.now().toString(36)}eve`;
+    const tenantId = `tenant-eve-${suffix}`;
+    const userId = `user-eve-${suffix}`;
+    seedTenant(tenantId);
+    seedUser({ id: userId, tenantId, role: "doctor", email: `eve.${suffix}@example.com` });
+    saveClinicScheduleSettings(getDb(), tenantId, {
+      opdStartTime: "09:00 AM",
+      opdEndTime: "05:00 PM",
+      slotDurationMinutes: 30,
+    });
+    getDb()
+      .prepare(
+        `INSERT INTO doctors (id, user_id, name, qualification, reg_number, specialty, experience_years, consultation_fee, opd_room, available_days, opd_timing, phone, email, avatar_url, bio, hpr_id, active)
+         VALUES (?, ?, 'Dr. Evening', 'MBBS', 'REG-EVE', 'General Medicine', 5, 500, 'OPD-2', '[]', '06:00 PM - 09:00 PM', '', '', '', '', '', 1)`
+      )
+      .run(`doc-eve-${suffix}`, userId);
+    const evening = findNextBookableSlot({
+      tenantId,
+      doctorName: "Dr. Evening",
+      date: "2027-06-02",
+      now: new Date("2027-06-02T04:00:00.000Z"),
+    });
+    assert.deepEqual(evening, { date: "2027-06-02", timeSlot: "06:00 PM" });
+
+    getDb().prepare("UPDATE doctors SET opd_timing = '06:00 PM' WHERE id = ?").run(`doc-eve-${suffix}`);
+    const startOnly = findNextBookableSlot({
+      tenantId,
+      doctorName: "Dr. Evening",
+      date: "2027-06-03",
+      now: new Date("2027-06-03T04:00:00.000Z"),
+    });
+    assert.equal(startOnly?.timeSlot, "06:00 PM");
+    assert.equal(startOnly?.date, "2027-06-03");
+  });
+
+  it("answers Indic location and greeting in that language with the clinic and receptionist names", async () => {
+    const suffix = `${Date.now().toString(36)}hi`;
+    const tenantId = `tenant-hi-${suffix}`;
+    seedTenant(tenantId, { name: "North Clinic" });
+    getDb().prepare("UPDATE tenants SET address = '12 Lake Road', city = 'Pune' WHERE id = ?").run(tenantId);
+    saveWhatsAppTenantVoiceSettings(getDb(), tenantId, { receptionistName: "Asha" });
+    const location = await runGeminiVoiceReceptionist({
+      message: "क्लिनिक का पता बताइए",
+      language: "Hindi",
+      tenantId,
+    });
+    assert.equal(location.intent, "LOCATION");
+    assert.match(location.speechText, /North Clinic/);
+    assert.match(location.speechText, /12 Lake Road/);
+    assert.match(location.speechText, /पता/);
+    assert.doesNotMatch(location.speechText, /is located at/);
+    const greeting = INDIC_LANGUAGES.hi.greetingText("Ravi", "North Clinic", "Asha");
+    assert.match(greeting, /Asha/);
+    assert.doesNotMatch(greeting, /माया/);
+    const bengali = INDIC_LANGUAGES.bn.locationText("North Clinic", "12 Lake Road");
+    assert.match(bengali, /ঠিকানা/);
+    assert.match(bengali, /North Clinic/);
+    assert.doesNotMatch(bengali, /is located at/);
   });
 
   it("respects VERTEX_GEMINI_MODEL exactly, including gemini-3.5-flash-lite", () => {

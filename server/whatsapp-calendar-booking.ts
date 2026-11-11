@@ -334,9 +334,17 @@ function slotOnClinicDate(opts: {
   if (doctorStart != null) startMinutes = doctorStart;
   else if (scheduleSettings.opdStartTime) startMinutes = parseTimeToMinutes(scheduleSettings.opdStartTime, 540);
 
-  let endMinutes = parseTimeToMinutes(scheduleSettings.opdEndTime, 1020);
+  const clinicEnd = parseTimeToMinutes(scheduleSettings.opdEndTime, 1020);
   const doctorEnd = clockTokenMinutes(String(doctor?.opd_timing || ""), "end");
-  if (doctorEnd != null) endMinutes = Math.min(endMinutes, doctorEnd);
+  let endMinutes = clinicEnd;
+  if (doctorEnd != null && doctorEnd > startMinutes && startMinutes >= clinicEnd) {
+    // Evening (or any) hours that start after the clinic close keep the doctor's own end.
+    endMinutes = doctorEnd;
+  } else if (doctorEnd != null && doctorEnd > startMinutes) {
+    endMinutes = Math.min(clinicEnd, doctorEnd);
+  } else if (startMinutes >= clinicEnd) {
+    endMinutes = Math.min(startMinutes + 8 * 60, 24 * 60);
+  }
   if (endMinutes <= startMinutes) return null;
 
   let cursor = startMinutes;
