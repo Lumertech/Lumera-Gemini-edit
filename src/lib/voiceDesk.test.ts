@@ -6,10 +6,12 @@ describe("Maya voice desk copy", () => {
   it("uses the clinic name and a saved greeting", () => {
     assert.equal(
       mayaOpeningGreeting("Malhotra Individual Practice"),
-      "Hello! Thank you for calling Malhotra Individual Practice. How may I assist your health appointment today?"
+      "Namaste! Thank you for calling Malhotra Individual Practice. How can I help you today?"
     );
     assert.equal(mayaOpeningGreeting("Ignored", "Namaste, this is Maya."), "Namaste, this is Maya.");
+    assert.equal(mayaOpeningGreeting(""), "Namaste! Thank you for calling the clinic. How can I help you today?");
     assert.equal(mayaOpeningGreeting("").includes("Lumera Polyclinic"), false);
+    assert.equal(mayaOpeningGreeting("Malhotra Individual Practice").includes("health appointment"), false);
   });
 
   it("shows the connected number or says none is connected", () => {

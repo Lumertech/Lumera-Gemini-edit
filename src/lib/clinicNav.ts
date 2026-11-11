@@ -135,6 +135,12 @@ export function whatsAppPillFromStatus(status: string | null | undefined): {
   return { label: "WhatsApp disconnected", state: "disconnected" };
 }
 
+/** Spoken Maya default. Clinic name is a variable; a missing name stays neutral. */
+export function mayaDefaultGreeting(clinicName?: string | null): string {
+  const clinic = String(clinicName || "").trim() || "the clinic";
+  return `Namaste! Thank you for calling ${clinic}. How can I help you today?`;
+}
+
 export function greetingClinicName(name?: string | null): string {
   const trimmed = String(name || "").trim();
   if (!trimmed) return "your clinic";

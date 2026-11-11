@@ -1,7 +1,8 @@
 import type { Express, Request, Response } from "express";
 import type { GoogleGenAI } from "@google/genai";
-import { requireAuth } from "./auth.ts";
+import { CLINICIAN_ROLES, isPlatformAdminRole, requireAuth } from "./auth.ts";
 import { getDb } from "./db.ts";
+import { clinicCalendarDate } from "../src/lib/clinicDay.ts";
 import { clinicLine, getTenantLetterhead } from "./letterhead.ts";
 import { AI_RUPEE_OUTPUT_RULE } from "./india-currency-copy.ts";
 import { vertexGeminiModel } from "./vertex-gemini.ts";
@@ -10,6 +11,9 @@ import { findRegisteredPatient, resolveClinicFacingNames } from "./whatsapp.ts";
 import { dispatchPatientCloudText } from "./whatsapp-patient-dispatch.ts";
 import { getWhatsAppTenantVoiceSettings, saveWhatsAppTenantVoiceSettings } from "./whatsapp-numbers-store.ts";
 import { findTenantByPatientPhone } from "./meta.ts";
+import { voiceGatewayAuthorized } from "./voice-gateway-auth.ts";
+import { tenantIdFromReceivingPhoneNumberId } from "./whatsapp-tenant-resolve.ts";
+import { createVoiceCallbackTask } from "./voice-callback.ts";
 
 function errorName(err: unknown): string {
   return err && typeof err === "object" && "name" in err ? String((err as { name?: string }).name) : "Error";
@@ -29,6 +33,7 @@ export interface VoiceReceptionistInput {
     timing?: string;
   }>;
   getGenAI?: () => GoogleGenAI | null;
+  now?: Date;
 }
 
 export interface VoiceReceptionistResult {
@@ -145,16 +150,73 @@ export function detectIndicBooking(message: string): boolean {
   );
 }
 
+function isVoiceStaffRole(role: string | undefined): boolean {
+  const value = String(role || "");
+  if (value === "patient") return false;
+  return (CLINICIAN_ROLES as readonly string[]).includes(value) || isPlatformAdminRole(value);
+}
+
+function inboundVoiceAccess(req: Request): { tenantId: string; authenticated: boolean } | null {
+  const sessionTenant = String(req.user?.tenantId || "").trim();
+  // These routes skip cookie CSRF. A logged-in patient must not drive booking or
+  // clinic WhatsApp sends, even when the gateway secret is still unset.
+  // Clinic staff, including the legacy admin alias, may use their session.
+  if (req.user) {
+    if (!sessionTenant || !isVoiceStaffRole(req.user.role)) return null;
+    return { tenantId: sessionTenant, authenticated: true };
+  }
+  if (!voiceGatewayAuthorized(req.get("x-voice-gateway-secret"))) return null;
+  const body = (req.body || {}) as {
+    phoneNumberId?: unknown;
+    phone_number_id?: unknown;
+    metadata?: { phone_number_id?: unknown };
+  };
+  const phoneNumberId = String(body.phoneNumberId || body.phone_number_id || body.metadata?.phone_number_id || "").trim();
+  const tenantId = tenantIdFromReceivingPhoneNumberId(phoneNumberId);
+  if (!tenantId) return null;
+  return { tenantId, authenticated: false };
+}
+
+function voiceSettingsTenant(req: Request, res: Response): string | null {
+  if (!req.user) {
+    res.status(401).json({ error: "Authentication required" });
+    return null;
+  }
+  if (!isVoiceStaffRole(req.user.role)) {
+    res.status(403).json({ error: "Insufficient permissions" });
+    return null;
+  }
+  const tenantId = String(req.user.tenantId || "").trim();
+  if (!tenantId) {
+    res.status(403).json({ error: "No clinic tenant is linked to this account." });
+    return null;
+  }
+  return tenantId;
+}
+
+function patientClinicLabel(name: string | undefined): string {
+  const value = String(name || "").trim();
+  if (!value || /physio practice/i.test(value)) return "the clinic";
+  return value;
+}
+
+function clinicLocationSpeech(clinicName: string, address: string): string {
+  const clinic = String(clinicName || "").trim() || "the clinic";
+  const place = String(address || "").trim();
+  if (place) return `${clinic} is located at ${place}.`;
+  return `The front desk at ${clinic} can share the address.`;
+}
+
 export const INDIC_LANGUAGES: Record<
   IndicLangCode,
   {
     name: string;
     localName: string;
     emergencyNotice: string;
-    bookingFormat: (name: string, doctor: string, specialty: string, slot: string, token: number) => string;
-    greetingText: (name: string) => string;
+    bookingFormat: (name: string, doctor: string, specialty: string, slot: string, token: number, when: string) => string;
+    greetingText: (name: string, clinicName: string, receptionistName: string) => string;
     timingsText: string;
-    locationText: string;
+    locationText: (clinicName: string, address: string) => string;
     refillText: (name: string) => string;
     buttons: {
       emergency: string[];
@@ -168,12 +230,13 @@ export const INDIC_LANGUAGES: Record<
     name: "Hindi",
     localName: "हिन्दी",
     emergencyNotice: "यह एक गंभीर आपातकालीन स्थिति प्रतीत होती है। कृपया तुरंत नजदीकी अस्पताल के आपातकालीन कक्ष (ER) जाएं या 108 नंबर पर एम्बुलेंस बुलाएं। क्लिनिक स्टाफ को सूचित कर दिया गया है।",
-    bookingFormat: (name, doctor, specialty, slot, token) =>
-      `नमस्ते ${name}, मैंने ${doctor} (${specialty}) के साथ आपका अपॉइंटमेंट आज ${slot} के लिए बुक कर दिया है। आपका टोकन नंबर #${token} है। कृपया 10 मिनट पहले पहुंचें।`,
-    greetingText: (name) =>
-      `नमस्ते ${name}! लुमेरा अपेक्स पॉलीक्लिनिक में आपका स्वागत है। मैं आपकी एआई रिसेप्शनिस्ट माया हूँ। मैं अपॉइंटमेंट बुक करने, डॉक्टर की टाइमिंग बताने या मेडिकल रिपोर्ट देखने में सहायता कर सकती हूँ। मैं आपकी क्या मदद कर सकती हूँ?`,
+    bookingFormat: (name, doctor, specialty, slot, token, when) =>
+      `नमस्ते ${name}, मैंने ${doctor} (${specialty}) के साथ आपका अपॉइंटमेंट ${when} ${slot} के लिए बुक कर दिया है। आपका टोकन नंबर #${token} है। कृपया 10 मिनट पहले पहुंचें।`,
+    greetingText: (name, clinicName, receptionistName) =>
+      `नमस्ते ${name}! ${clinicName} में आपका स्वागत है। मैं ${receptionistName}, आपकी एआई रिसेप्शनिस्ट हूँ। मैं अपॉइंटमेंट बुक करने, डॉक्टर की टाइमिंग बताने या मेडिकल रिपोर्ट देखने में सहायता कर सकती हूँ। मैं आपकी क्या मदद कर सकती हूँ?`,
     timingsText: "हमारे क्लिनिक की ओपीडी सोमवार से शनिवार सुबह 09:00 बजे से रात 08:00 बजे तक और रविवार सुबह 10:00 बजे से दोपहर 02:00 बजे तक खुली रहती है।",
-    locationText: "लुमेरा अपेक्स पॉलीक्लिनिक 104-106, हेल्थ हब, सेक्टर 14, मेट्रो स्टेशन के सामने, गुड़गांव में स्थित है। ऑन-साइट पार्किंग उपलब्ध है।",
+    locationText: (clinicName, address) =>
+      address ? `${clinicName} का पता: ${address}.` : `${clinicName} का पता फ्रंट डेस्क पर मिलेगा।`,
     refillText: (name) =>
       `नमस्ते ${name}, आपका पिछला पर्चा हमारे रिकॉर्ड में दर्ज है। आप व्हाट्सऐप पर डॉक्टर द्वारा हस्ताक्षरित पर्चा देख सकते हैं या फार्मेसी रीफिल का अनुरोध कर सकते हैं।`,
     buttons: {
@@ -187,12 +250,13 @@ export const INDIC_LANGUAGES: Record<
     name: "Bengali",
     localName: "বাংলা",
     emergencyNotice: "এটি একটি জরুরি চিকিৎসা পরিস্থিতি বলে মনে হচ্ছে। অনুগ্রহ করে অবিলম্বে নিকটস্থ হাসপাতালের জরুরি বিভাগে (ER) যান অথবা ১০৮ নম্বরে অ্যাম্বুলেন্স ডাকুন। ক্লিনিক টিমকে সতর্ক করা হয়েছে।",
-    bookingFormat: (name, doctor, specialty, slot, token) =>
-      `নমস্কার ${name}, আমি ${doctor} (${specialty}) এর সাথে আজ ${slot} এ আপনার অ্যাপয়েন্টমেন্ট বুক করেছি। আপনার টোকেন নম্বর #${token}। অনুগ্রহ করে ১০ মিনিট আগে পৌঁছাবেন।`,
-    greetingText: (name) =>
-      `নমস্কার ${name}! লুমেরা অ্যাপেক্স পলিক্লিনিকে আপনাকে স্বাগতম। আমি আপনার এআই রিসেপশনিস্ট মায়া। ডাক্তার দেখানো, সময়সূচী ও প্রেসক্রিপশন সংক্রান্ত বিষয়ে আমি আপনাকে সাহায্য করতে পারি। আজ আপনাকে কীভাবে সাহায্য করতে পারি?`,
+    bookingFormat: (name, doctor, specialty, slot, token, when) =>
+      `নমস্কার ${name}, আমি ${doctor} (${specialty}) এর সাথে ${when} ${slot} এ আপনার অ্যাপয়েন্টমেন্ট বুক করেছি। আপনার টোকেন নম্বর #${token}। অনুগ্রহ করে ১০ মিনিট আগে পৌঁছাবেন।`,
+    greetingText: (name, clinicName, receptionistName) =>
+      `নমস্কার ${name}! ${clinicName} আপনাকে স্বাগতম। আমি ${receptionistName}, আপনার এআই রিসেপশনিস্ট। ডাক্তার দেখানো, সময়সূচী ও প্রেসক্রিপশন সংক্রান্ত বিষয়ে আমি আপনাকে সাহায্য করতে পারি। আজ আপনাকে কীভাবে সাহায্য করতে পারি?`,
     timingsText: "আমাদের ক্লিনিক ওপিডি সোমবার থেকে শনিবার সকাল ০৯:০০ টা থেকে রাত ০৮:০০ টা এবং রবিবার সকাল ১০:০০ টা থেকে দুপুর ০২:০০ টা পর্যন্ত খোলা থাকে।",
-    locationText: "লুমেরা অ্যাপেক্স পলিক্লিনিক ১০৪-১০৬, হেলথ হাব, সেক্টর ১৪, মেট্রো স্টেশনের বিপরীতে, গুরগাঁওতে অবস্থিত। রোগীর পার্কিং সুবিধা রয়েছে।",
+    locationText: (clinicName, address) =>
+      address ? `${clinicName}-এর ঠিকানা: ${address}.` : `${clinicName}-এর ঠিকানা ফ্রন্ট ডেস্কে পাবেন।`,
     refillText: (name) =>
       `নমস্কার ${name}, আপনার প্রেসক্রিপশন আমাদের রেকর্ডে রয়েছে। আপনি প্রেসক্রিপশন দেখতে পারেন বা ফার্মেসি রিফিলের অনুরোধ করতে পারেন।`,
     buttons: {
@@ -206,12 +270,13 @@ export const INDIC_LANGUAGES: Record<
     name: "Telugu",
     localName: "తెలుగు",
     emergencyNotice: "ఇది తీవ్రమైన అత్యవసర పరిస్థితిగా కనిపిస్తోంది. దయచేసి వెంటనే సమీపంలోని ఆసుపత్రి ఎమర్జెన్సీ రూమ్ (ER) కి వెళ్లండి లేదా 108 కి కాల్ చేసి అంబులెన్స్‌ని పిలవండి. క్లినిక్ సిబ్బందికి సమాచారం అందించబడింది.",
-    bookingFormat: (name, doctor, specialty, slot, token) =>
-      `నమస్తే ${name}, నేను ${doctor} (${specialty}) గారితో ఈరోజు ${slot} కి మీ అపాయింట్‌మెంట్ బుక్ చేసాను. మీ టోకెన్ సంఖ్య #${token}. దయచేసి 10 నిమిషాల ముందుగా రండి.`,
-    greetingText: (name) =>
-      `నమస్తే ${name}! లుమెరా అపెక్స్ పాలీక్లినిక్‌కి స్వాగతం. నేను మీ ఏఐ రిసెప్షనిస్ట్ మాయను. డాక్టర్ అపాయింట్‌మెంట్స్, ఓపీడీ సమయాలు మరియు వైద్య నివేదికలలో నేను మీకు సహాయపడగలను. మీకు ఎలా సహాయపడగలను?`,
+    bookingFormat: (name, doctor, specialty, slot, token, when) =>
+      `నమస్తే ${name}, నేను ${doctor} (${specialty}) గారితో ${when} ${slot} కి మీ అపాయింట్‌మెంట్ బుక్ చేసాను. మీ టోకెన్ సంఖ్య #${token}. దయచేసి 10 నిమిషాల ముందుగా రండి.`,
+    greetingText: (name, clinicName, receptionistName) =>
+      `నమస్తే ${name}! ${clinicName} స్వాగతం. నేను ${receptionistName}, మీ ఏఐ రిసెప్షనిస్ట్. డాక్టర్ అపాయింట్‌మెంట్స్, ఓపీడీ సమయాలు మరియు వైద్య నివేదికలలో నేను మీకు సహాయపడగలను. మీకు ఎలా సహాయపడగలను?`,
     timingsText: "మా క్లినిక్ ఓపీడీ సోమవారం నుండి శనివారం వరకు ఉదయం 09:00 నుండి రాత్రి 08:00 వరకు, ఆదివారం ఉదయం 10:00 నుండి మధ్యాహ్నం 02:00 వరకు అందుబాటులో ఉంటుంది.",
-    locationText: "లుమెరా అపెక్స్ పాలీక్లినిక్ 104-106, హెల్త్ హబ్, సెక్టార్ 14, మెట్రో స్టేషన్ ఎదురుగా, గుర్గావ్‌లో ఉంది. పార్కింగ్ సౌకర్యం ఉంది.",
+    locationText: (clinicName, address) =>
+      address ? `${clinicName} చిరునామా: ${address}.` : `${clinicName} చిరునామా ఫ్రంట్ డెస్క్‌లో అడగండి.`,
     refillText: (name) =>
       `నమస్తే ${name}, మీ ప్రిస్క్రిప్షన్ మా రికార్డులలో ఉంది. మీరు ప్రిస్క్రిప్షన్‌ను చూడవచ్చు లేదా ఫార్మసీ రీఫిల్‌ను అభ్యర్థించవచ్చు.`,
     buttons: {
@@ -225,12 +290,13 @@ export const INDIC_LANGUAGES: Record<
     name: "Tamil",
     localName: "தமிழ்",
     emergencyNotice: "இது அவசர மருத்துவ சூழ்நிலையாகத் தெரிகிறது. தயவுசெய்து உடனடியாக அருகிலுள்ள அவசர சிகிச்சைப் பிரிவிற்கு (ER) செல்லவும் அல்லது 108 என்ற எண்ணில் ஆம்புலன்ஸை அழைக்கவும். மருத்துவமனை குழு எச்சரிக்கப்பட்டுள்ளது.",
-    bookingFormat: (name, doctor, specialty, slot, token) =>
-      `வணக்கம் ${name}, நான் ${doctor} (${specialty}) உடன் இன்று ${slot} மணிக்கு உங்கள் முன்பதிவை பதிவு செய்துள்ளேன். உங்கள் டோக்கன் எண் #${token}. தயவுசெய்து 10 நிமிடங்களுக்கு முன்னதாக வரவும்.`,
-    greetingText: (name) =>
-      `வணக்கம் ${name}! லுமேரா அபெக்ஸ் பாலிகிளினிக்கிற்கு வரவேற்கிறோம். நான் உங்கள் ஏஐ வரவேற்பாளர் மாயா. மருத்துவர் முன்பதிவு, நேரங்கள் மற்றும் மருத்துவ அறிக்கைகளுக்கு நான் உதவ முடியும். நான் உங்களுக்கு எவ்வாறு உதவ முடியும்?`,
+    bookingFormat: (name, doctor, specialty, slot, token, when) =>
+      `வணக்கம் ${name}, நான் ${doctor} (${specialty}) உடன் ${when} ${slot} மணிக்கு உங்கள் முன்பதிவை பதிவு செய்துள்ளேன். உங்கள் டோக்கன் எண் #${token}. தயவுசெய்து 10 நிமிடங்களுக்கு முன்னதாக வரவும்.`,
+    greetingText: (name, clinicName, receptionistName) =>
+      `வணக்கம் ${name}! ${clinicName} வரவேற்கிறோம். நான் ${receptionistName}, உங்கள் ஏஐ வரவேற்பாளர். மருத்துவர் முன்பதிவு, நேரங்கள் மற்றும் மருத்துவ அறிக்கைகளுக்கு நான் உதவ முடியும். நான் உங்களுக்கு எவ்வாறு உதவ முடியும்?`,
     timingsText: "எங்கள் கிளினிக் ஓபிடி திங்கள் முதல் சனிக்கிழமை வரை காலை 09:00 முதல் இரவு 08:00 மணி வரையிலும், ஞாயிற்றுக்கிழமை காலை 10:00 முதல் மதியம் 02:00 மணி வரையிலும் இயங்கும்.",
-    locationText: "லுமேரா அபெக்ஸ் பாலிகிளினிக் 104-106, ஹெல்த் ஹப், செக்டர் 14, மெட்ரோ நிலையம் எதிரில், குருகிராமில் அமைந்துள்ளது. பார்க்கிங் வசதி உள்ளது.",
+    locationText: (clinicName, address) =>
+      address ? `${clinicName} முகவரி: ${address}.` : `${clinicName} முகவரியை வரவேற்பறையில் கேளுங்கள்.`,
     refillText: (name) =>
       `வணக்கம் ${name}, உங்கள் மருந்துச் சீட்டு எங்கள் பதிவுகளில் உள்ளது. நீங்கள் அதனை வாட்ஸ்அப்பில் பார்க்கலாம் அல்லது மருந்து ரீபில் கோரலாம்.`,
     buttons: {
@@ -244,12 +310,13 @@ export const INDIC_LANGUAGES: Record<
     name: "Kannada",
     localName: "ಕನ್ನಡ",
     emergencyNotice: "ಇದು ತುರ್ತು ವೈದ್ಯಕೀಯ ಪರಿಸ್ಥಿತಿಯಂತೆ ತೋರುತ್ತಿದೆ. ದಯವಿಟ್ಟು ತಕ್ಷಣ ಹತ್ತಿರದ ಆಸ್ಪತ್ರೆಯ ತುರ್ತು ಕೋಣೆಗೆ (ER) ತೆರಳಿ ಅಥವಾ 108 ಕ್ಕೆ ಕರೆ ಮಾಡಿ ಆಂಬ್ಯುಲೆನ್ಸ್ ಪಡೆಯಿರಿ. ಕ್ಲಿನಿಕ್ ಸಿಬ್ಬಂದಿಗೆ ಮಾಹಿತಿ ನೀಡಲಾಗಿದೆ.",
-    bookingFormat: (name, doctor, specialty, slot, token) =>
-      `ನಮಸ್ಕಾರ ${name}, ನಾನು ${doctor} (${specialty}) ಅವರೊಂದಿಗೆ ಇಂದು ${slot} ಕ್ಕೆ ನಿಮ್ಮ ಅಪಾಯಿಂಟ್‌ಮೆಂಟ್ ಬುಕ್ ಮಾಡಿದ್ದೇನೆ. ನಿಮ್ಮ ಟೋಕನ್ ಸಂಖ್ಯೆ #${token}. ದಯವಿಟ್ಟು 10 ನಿಮಿಷ ಮುಂಚಿತವಾಗಿ ಬನ್ನಿ.`,
-    greetingText: (name) =>
-      `ನಮಸ್ಕಾರ ${name}! ಲುಮೆರಾ ಅಪೆಕ್ಸ್ ಪಾಲಿಕ್ಲಿನಿಕ್‌ಗೆ ಸುಸ್ವಾಗತ. ನಾನು ನಿಮ್ಮ ಎಐ ರಿಸೆಪ್ಷನಿಸ್ಟ್ ಮಾಯಾ. ಅಪಾಯಿಂಟ್‌ಮೆಂಟ್ ಬುಕಿಂಗ್ ಮತ್ತು ವೈದ್ಯರ ವೇಳಾಪಟ್ಟಿಗೆ ನಾನು ನಿಮಗೆ ಸಹಾಯ ಮಾಡಬಲ್ಲೆ. ನಾನು ನಿಮಗೆ ಹೇಗೆ ಸಹಾಯ ಮಾಡಲಿ?`,
+    bookingFormat: (name, doctor, specialty, slot, token, when) =>
+      `ನಮಸ್ಕಾರ ${name}, ನಾನು ${doctor} (${specialty}) ಅವರೊಂದಿಗೆ ${when} ${slot} ಕ್ಕೆ ನಿಮ್ಮ ಅಪಾಯಿಂಟ್‌ಮೆಂಟ್ ಬುಕ್ ಮಾಡಿದ್ದೇನೆ. ನಿಮ್ಮ ಟೋಕನ್ ಸಂಖ್ಯೆ #${token}. ದಯವಿಟ್ಟು 10 ನಿಮಿಷ ಮುಂಚಿತವಾಗಿ ಬನ್ನಿ.`,
+    greetingText: (name, clinicName, receptionistName) =>
+      `ನಮಸ್ಕಾರ ${name}! ${clinicName} ಸುಸ್ವಾಗತ. ನಾನು ${receptionistName}, ನಿಮ್ಮ ಎಐ ರಿಸೆಪ್ಷನಿಸ್ಟ್. ಅಪಾಯಿಂಟ್‌ಮೆಂಟ್ ಬುಕಿಂಗ್ ಮತ್ತು ವೈದ್ಯರ ವೇಳಾಪಟ್ಟಿಗೆ ನಾನು ನಿಮಗೆ ಸಹಾಯ ಮಾಡಬಲ್ಲೆ. ನಾನು ನಿಮಗೆ ಹೇಗೆ ಸಹಾಯ ಮಾಡಲಿ?`,
     timingsText: "ನಮ್ಮ ಕ್ಲಿನಿಕ್ ಒಪಿಡಿ ಸೋಮವಾರದಿಂದ ಶನಿವಾರದವರೆಗೆ ಬೆಳಿಗ್ಗೆ 09:00 ರಿಂದ ರಾತ್ರಿ 08:00 ರವರೆಗೆ ಮತ್ತು ಭಾನುವಾರ ಬೆಳಿಗ್ಗೆ 10:00 ರಿಂದ ಮಧ್ಯಾಹ್ನ 02:00 ರವರೆಗೆ ತೆರೆದಿರುತ್ತದೆ.",
-    locationText: "ಲುಮೆರಾ ಅಪೆಕ್ಸ್ ಪಾಲಿಕ್ಲಿನಿಕ್ 104-106, ಹೆಲ್ತ್ ಹಬ್, ಸೆಕ್ಟರ್ 14, ಮೆಟ್ರೋ ನಿಲ್ದಾಣದ ಎದುರು, ಗುರ್ಗಾಂವ್‌ನಲ್ಲಿದೆ. ಪಾರ್ಕಿಂಗ್ ಸೌಲಭ್ಯವಿದೆ.",
+    locationText: (clinicName, address) =>
+      address ? `${clinicName} ವಿಳಾಸ: ${address}.` : `${clinicName} ವಿಳಾಸವನ್ನು ರಿಸೆಪ್ಷನ್‌ನಲ್ಲಿ ಕೇಳಿ.`,
     refillText: (name) =>
       `ನಮಸ್ಕಾರ ${name}, ನಿಮ್ಮ ಪ್ರಿಸ್ಕ್ರಿಪ್ಷನ್ ನಮ್ಮ ದಾಖಲೆಯಲ್ಲಿದೆ. ನೀವು ಪ್ರಿಸ್ಕ್ರಿಪ್ಷನ್ ವೀಕ್ಷಿಸಬಹುದು ಅಥವಾ ಫಾರ್ಮಸಿ ರೀಫಿಲ್ ಕೋರಬಹುದು.`,
     buttons: {
@@ -263,12 +330,13 @@ export const INDIC_LANGUAGES: Record<
     name: "Marathi",
     localName: "मराठी",
     emergencyNotice: "ही एक गंभीर वैद्यकीय आणीबाणी परिस्थिती दिसते. कृपया त्वरित जवळच्या रुग्णालयातील आपत्कालीन कक्षात (ER) जा किंवा 108 वर रुग्णवाहिका बोलवा. क्लिनिक कर्मचाऱ्यांना सूचित करण्यात आले आहे.",
-    bookingFormat: (name, doctor, specialty, slot, token) =>
-      `नमस्कार ${name}, मी ${doctor} (${specialty}) यांच्यासोबत आज ${slot} साठी तुमची अपॉइंटमेंट बुक केली आहे. तुमचा टोकन क्रमांक #${token} आहे. कृपया १० मिनिटे आधी पोहोचा.`,
-    greetingText: (name) =>
-      `नमस्कार ${name}! लुमेरा अपेक्स पॉलीक्लिनिकमध्ये आपले स्वागत आहे. मी तुमची एआय रिसेप्शनिस्ट माया आहे. अपॉइंटमेंट बुकिंग, डॉक्टरांच्या वेळा किंवा रिपोर्ट तपासण्यात मी मदत करू शकते. मी तुम्हाला कशी मदत करू?`,
+    bookingFormat: (name, doctor, specialty, slot, token, when) =>
+      `नमस्कार ${name}, मी ${doctor} (${specialty}) यांच्यासोबत ${when} ${slot} साठी तुमची अपॉइंटमेंट बुक केली आहे. तुमचा टोकन क्रमांक #${token} आहे. कृपया १० मिनिटे आधी पोहोचा.`,
+    greetingText: (name, clinicName, receptionistName) =>
+      `नमस्कार ${name}! ${clinicName}मध्ये आपले स्वागत आहे. मी ${receptionistName}, तुमची एआय रिसेप्शनिस्ट आहे. अपॉइंटमेंट बुकिंग, डॉक्टरांच्या वेळा किंवा रिपोर्ट तपासण्यात मी मदत करू शकते. मी तुम्हाला कशी मदत करू?`,
     timingsText: "आमची ओपीडी सोमवार ते शनिवार सकाळी ०९:०० ते रात्री ०८:०० आणि रविवारी सकाळी १०:०० ते दुपारी ०२:०० वाजेपर्यंत सुरू असते.",
-    locationText: "लुमेरा अपेक्स पॉलीक्लिनिक १०४-१०६, हेल्थ हब, सेक्टर १४, मेट्रो स्टेशन समोर, गुडगाव येथे आहे. पार्किंगची सोय उपलब्ध आहे.",
+    locationText: (clinicName, address) =>
+      address ? `${clinicName}चा पत्ता: ${address}.` : `${clinicName}चा पत्ता रिसेप्शनवर मिळेल.`,
     refillText: (name) =>
       `नमस्कार ${name}, तुमचे औषधांचे प्रिस्क्रिप्शन आमच्याकडे नोंदणीकृत आहे. तुम्ही ते पाहू शकता किंवा फार्मसी रिफिल मागवू शकता.`,
     buttons: {
@@ -282,12 +350,13 @@ export const INDIC_LANGUAGES: Record<
     name: "Gujarati",
     localName: "ગુજરાતી",
     emergencyNotice: "આ એક ગંભીર તબીબી કટોકટી લાગે છે. કૃપા કરીને તાત્કાલિક નજીકની હોસ્પિટલના ઇમરજન્સી રૂમ (ER) માં જાઓ અથવા 108 નંબર પર એમ્બ્યુલન્સ બોલાવો. ક્લિનિક સ્ટાફને જાણ કરવામાં આવી છે.",
-    bookingFormat: (name, doctor, specialty, slot, token) =>
-      `નમસ્તે ${name}, મેં ${doctor} (${specialty}) સાથે આજે ${slot} વાગ્યે તમારી એપોઇન્ટમેન્ટ બુક કરી છે. તમારો ટોકન નંબર #${token} છે. કૃપા કરીને ૧૦ મિનિટ વહેલા પહોંચો.`,
-    greetingText: (name) =>
-      `નમસ્તે ${name}! લુમેરા એપેક્સ પોલીક્લિનિકમાં તમારું સ્વાગત છે. હું તમારી એઆઈ રિસેપ્શનિસ્ટ માયા છું. એપોઇન્ટમેન્ટ બુકિંગ, ડોક્ટરનો સમય અને રિપોર્ટ જોવામાં હું મદદ કરી શકું છું. હું તમારી શું મદદ કરી શકું?`,
+    bookingFormat: (name, doctor, specialty, slot, token, when) =>
+      `નમસ્તે ${name}, મેં ${doctor} (${specialty}) સાથે ${when} ${slot} વાગ્યે તમારી એપોઇન્ટમેન્ટ બુક કરી છે. તમારો ટોકન નંબર #${token} છે. કૃપા કરીને ૧૦ મિનિટ વહેલા પહોંચો.`,
+    greetingText: (name, clinicName, receptionistName) =>
+      `નમસ્તે ${name}! ${clinicName} તમારું સ્વાગત છે. હું ${receptionistName}, તમારી એઆઈ રિસેપ્શનિસ્ટ છું. એપોઇન્ટમેન્ટ બુકિંગ, ડોક્ટરનો સમય અને રિપોર્ટ જોવામાં હું મદદ કરી શકું છું. હું તમારી શું મદદ કરી શકું?`,
     timingsText: "અમારી ક્લિનિક ઓપીડી સોમવારથી શનિવાર સવારે ૦૯:૦૦ થી રાત્રે ૦૮:૦૦ અને રવિવારે સવારે ૧૦:૦૦ થી બપોરે ૦૨:૦૦ વાગ્યા સુધી કાર્યરત છે.",
-    locationText: "લુમેરા એપેક્સ પોલીક્લિનિક ૧૦૪-૧૦૬, હેલ્થ હબ, સેક્ટર ૧૪, મેટ્રો સ્ટેશન સામે, ગુડગાંવમાં આવેલું છે. પાર્કિંગની સુવિધા ઉપલબ્ધ છે.",
+    locationText: (clinicName, address) =>
+      address ? `${clinicName}નું સરનામું: ${address}.` : `${clinicName}નું સરનામું રિસેપ્શન પર મળશે.`,
     refillText: (name) =>
       `નમસ્તે ${name}, તમારું પ્રિસ્ક્રિપ્શન અમારા રેકોર્ડમાં છે. તમે પ્રિસ્ક્રિપ્શન ચકાસી શકો છો અથવા ફાર્મસી રિફિલની વિનંતી કરી શકો છો.`,
     buttons: {
@@ -301,12 +370,13 @@ export const INDIC_LANGUAGES: Record<
     name: "Malayalam",
     localName: "മലയാളം",
     emergencyNotice: "ഇതൊരു അത്യാഹിത മെഡിക്കൽ സാഹചര്യമായി തോന്നുന്നു. ദയവായി ഉടൻ അടുത്തുള്ള ആശുപത്രി അത്യാഹിത വിഭാഗത്തിലേക്ക് (ER) പോകുക അല്ലെങ്കിൽ 108 ലേക്ക് ആംബുലൻസ് വിളിക്കുക. ക്ലിനിക് ടീമിനെ അറിയിച്ചിട്ടുണ്ട്.",
-    bookingFormat: (name, doctor, specialty, slot, token) =>
-      `നമസ്കാരം ${name}, ${doctor} (${specialty}) മായി ഇന്ന് ${slot} ന് നിങ്ങളുടെ അപ്പോയിന്റ്മെന്റ് ബുക്ക് ചെയ്തിട്ടുണ്ട്. നിങ്ങളുടെ ടോക്കൺ നമ്പർ #${token} ആണ്. ദയവായി 10 മിനിറ്റ് മുമ്പ് എത്തുക.`,
-    greetingText: (name) =>
-      `നമസ്കാരം ${name}! ലുമേര അപെക്സ് പോളിക്ലിനിക്കിലേക്ക് സ്വാഗതം. ഞാൻ നിങ്ങളുടെ എഐ റിസപ്ഷനിസ്റ്റ് മായയാണ്. ഡോക്ടർ അപ്പോയിന്റ്മെന്റുകൾക്കും ഒപിഡി സമയങ്ങൾക്കും ഞാൻ നിങ്ങളെ സഹായിക്കാം. ഞാൻ എങ്ങനെ സഹായിക്കണം?`,
+    bookingFormat: (name, doctor, specialty, slot, token, when) =>
+      `നമസ്കാരം ${name}, ${doctor} (${specialty}) മായി ${when} ${slot} ന് നിങ്ങളുടെ അപ്പോയിന്റ്മെന്റ് ബുക്ക് ചെയ്തിട്ടുണ്ട്. നിങ്ങളുടെ ടോക്കൺ നമ്പർ #${token} ആണ്. ദയവായി 10 മിനിറ്റ് മുമ്പ് എത്തുക.`,
+    greetingText: (name, clinicName, receptionistName) =>
+      `നമസ്കാരം ${name}! ${clinicName} സ്വാഗതം. ഞാൻ ${receptionistName}, നിങ്ങളുടെ എഐ റിസപ്ഷനിസ്റ്റ്. ഡോക്ടർ അപ്പോയിന്റ്മെന്റുകൾക്കും ഒപിഡി സമയങ്ങൾക്കും ഞാൻ നിങ്ങളെ സഹായിക്കാം. ഞാൻ എങ്ങനെ സഹായിക്കണം?`,
     timingsText: "ഞങ്ങളുടെ ഒപിഡി തിങ്കൾ മുതൽ ശനി വരെ രാവിലെ 09:00 മുതൽ രാത്രി 08:00 വരെയും ഞായറാഴ്ചകളിൽ രാവിലെ 10:00 മുതൽ ഉച്ചയ്ക്ക് 02:00 വരെയും പ്രവർത്തിക്കുന്നു.",
-    locationText: "ലുമേര അപെക്സ് പോളിക്ലിനിക് 104-106, ഹെൽത്ത് ഹബ്, സെക്ടർ 14, മെട്രോ സ്റ്റേഷന് എതിർവശം, ഗുഡ്ഗാവിലാണ് സ്ഥിതി ചെയ്യുന്നത്.",
+    locationText: (clinicName, address) =>
+      address ? `${clinicName} വിലാസം: ${address}.` : `${clinicName} വിലാസം റിസപ്ഷനിൽ ചോദിക്കുക.`,
     refillText: (name) =>
       `നമസ്കാരം ${name}, നിങ്ങളുടെ കുറിപ്പടി ഞങ്ങളുടെ രേഖകളിലുണ്ട്. നിങ്ങൾക്ക് കുറിപ്പടി കാണാനോ ഫാർമസി റീഫിൽ അഭ്യർത്ഥിക്കാനോ കഴിയും.`,
     buttons: {
@@ -320,12 +390,13 @@ export const INDIC_LANGUAGES: Record<
     name: "Punjabi",
     localName: "ਪੰਜਾਬੀ",
     emergencyNotice: "ਇਹ ਇੱਕ ਗੰਭੀਰ ਮੈਡੀਕਲ ਐਮਰਜੈਂਸੀ ਲੱਗਦੀ ਹੈ। ਕਿਰਪਾ ਕਰਕੇ ਤੁਰੰਤ ਨਜ਼ਦੀਕੀ ਹਸਪਤਾਲ ਦੇ ਐਮਰਜੈਂਸੀ ਰੂਮ (ER) ਜਾਓ ਜਾਂ 108 'ਤੇ ਐਂਬੂਲੈਂਸ ਬੁਲਾਓ। ਕਲੀਨਿਕ ਸਟਾਫ ਨੂੰ ਸੂਚਿਤ ਕਰ ਦਿੱਤਾ ਗਿਆ ਹੈ।",
-    bookingFormat: (name, doctor, specialty, slot, token) =>
-      `ਸਤਿ ਸ਼੍ਰੀ ਅਕਾਲ ${name}, ਮੈਂ ${doctor} (${specialty}) ਨਾਲ ਅੱਜ ${slot} ਲਈ ਤੁਹਾਡੀ ਅਪਾਇੰਟਮੈਂਟ ਬੁੱਕ ਕਰ ਦਿੱਤੀ ਹੈ। ਤੁਹਾਡਾ ਟੋਕਨ ਨੰਬਰ #${token} ਹੈ। ਕਿਰਪਾ ਕਰਕੇ 10 ਮਿੰਟ ਪਹਿਲਾਂ ਪਹੁੰਚੋ।`,
-    greetingText: (name) =>
-      `ਸਤਿ ਸ਼੍ਰੀ ਅਕਾਲ ${name}! ਲੁਮੇਰਾ ਅਪੈਕਸ ਪੌਲੀਕਲੀਨਿਕ ਵਿੱਚ ਤੁਹਾਡਾ ਸੁਆਗਤ ਹੈ। ਮੈਂ ਤੁਹਾਡੀ ਏਆਈ ਰਿਸੈਪਸ਼ਨਿਸਟ ਮਾਇਆ ਹਾਂ। ਮੈਂ ਅਪਾਇੰਟਮੈਂਟ ਬੁੱਕ ਕਰਨ ਅਤੇ ਡਾਕਟਰ ਦੇ ਸਮੇਂ ਬਾਰੇ ਜਾਣਕਾਰੀ ਦੇਣ ਵਿੱਚ ਮਦਦ ਕਰ ਸਕਦੀ ਹਾਂ। ਮੈਂ ਤੁਹਾਡੀ ਕੀ ਮਦਦ ਕਰ ਸਕਦੀ ਹਾਂ?`,
+    bookingFormat: (name, doctor, specialty, slot, token, when) =>
+      `ਸਤਿ ਸ਼੍ਰੀ ਅਕਾਲ ${name}, ਮੈਂ ${doctor} (${specialty}) ਨਾਲ ${when} ${slot} ਲਈ ਤੁਹਾਡੀ ਅਪਾਇੰਟਮੈਂਟ ਬੁੱਕ ਕਰ ਦਿੱਤੀ ਹੈ। ਤੁਹਾਡਾ ਟੋਕਨ ਨੰਬਰ #${token} ਹੈ। ਕਿਰਪਾ ਕਰਕੇ 10 ਮਿੰਟ ਪਹਿਲਾਂ ਪਹੁੰਚੋ।`,
+    greetingText: (name, clinicName, receptionistName) =>
+      `ਸਤਿ ਸ਼੍ਰੀ ਅਕਾਲ ${name}! ${clinicName} ਵਿੱਚ ਤੁਹਾਡਾ ਸੁਆਗਤ ਹੈ। ਮੈਂ ${receptionistName}, ਤੁਹਾਡੀ ਏਆਈ ਰਿਸੈਪਸ਼ਨਿਸਟ ਹਾਂ। ਮੈਂ ਅਪਾਇੰਟਮੈਂਟ ਬੁੱਕ ਕਰਨ ਅਤੇ ਡਾਕਟਰ ਦੇ ਸਮੇਂ ਬਾਰੇ ਜਾਣਕਾਰੀ ਦੇਣ ਵਿੱਚ ਮਦਦ ਕਰ ਸਕਦੀ ਹਾਂ। ਮੈਂ ਤੁਹਾਡੀ ਕੀ ਮਦਦ ਕਰ ਸਕਦੀ ਹਾਂ?`,
     timingsText: "ਸਾਡੀ ਓਪੀਡੀ ਸੋਮਵਾਰ ਤੋਂ ਸ਼ਨੀਵਾਰ ਸਵੇਰੇ 09:00 ਤੋਂ ਰਾਤ 08:00 ਵਜੇ ਤੱਕ ਅਤੇ ਐਤਵਾਰ ਸਵੇਰੇ 10:00 ਤੋਂ ਦੁਪਹਿਰ 02:00 ਵਜੇ ਤੱਕ ਖੁੱਲ੍ਹੀ ਰਹਿੰਦੀ ਹੈ।",
-    locationText: "ਲੁਮੇਰਾ ਅਪੈਕਸ ਪੌਲੀਕਲੀਨਿਕ 104-106, ਹੈਲਥ ਹੱਬ, ਸੈਕਟਰ 14, ਮੈਟਰੋ ਸਟੇਸ਼ਨ ਦੇ ਸਾਹਮਣੇ, ਗੁੜਗਾਓਂ ਵਿਖੇ ਸਥਿਤ ਹੈ।",
+    locationText: (clinicName, address) =>
+      address ? `${clinicName} ਦਾ ਪਤਾ: ${address}.` : `${clinicName} ਦਾ ਪਤਾ ਰਿਸੈਪਸ਼ਨ ਤੇ ਮਿਲੇਗਾ.`,
     refillText: (name) =>
       `ਸਤਿ ਸ਼੍ਰੀ ਅਕਾਲ ${name}, ਤੁਹਾਡਾ ਨੁਸਖਾ ਸਾਡੇ ਕੋਲ ਮੌਜੂਦ ਹੈ। ਤੁਸੀਂ ਨੁਸਖਾ ਦੇਖ ਸਕਦੇ ਹੋ ਜਾਂ ਦਵਾਈ ਮੰਗਵਾ ਸਕਦੇ ਹੋ।`,
     buttons: {
@@ -339,12 +410,13 @@ export const INDIC_LANGUAGES: Record<
     name: "Odia",
     localName: "ଓଡ଼ିଆ",
     emergencyNotice: "ଏହା ଏକ ଜରୁରୀକାଳୀନ ଚିକିତ୍ସା ପରିସ୍ଥିତି ଭଳି ମନେହେଉଛି। ଦୟାକରି ତୁରନ୍ତ ନିକଟସ୍ଥ ହସ୍ପିଟାଲର ଜରୁରୀକାଳୀନ ବିଭାଗ (ER) କୁ ଯାଆନ୍ତୁ କିମ୍ବା ୧୦୮ କୁ କଲ୍ କରି ଆମ୍ବୁଲାନ୍ସ ଡାକନ୍ତୁ।",
-    bookingFormat: (name, doctor, specialty, slot, token) =>
-      `ନମସ୍କାର ${name}, ମୁଁ ${doctor} (${specialty}) ଙ୍କ ସହ ଆଜି ${slot} ପାଇଁ ଆପଣଙ୍କ ଅପଏଣ୍ଟମେଣ୍ଟ ବୁକ୍ କରିଛି। ଆପଣଙ୍କ ଟୋକନ୍ ନମ୍ବର #${token}। ଦୟାକରି ୧୦ ମିନିଟ୍ ପୂର୍ବରୁ ପହଞ୍ଚନ୍ତୁ।`,
-    greetingText: (name) =>
-      `ନମସ୍କାର ${name}! ଲୁମେରା ଆପେକ୍ସ ପଲିକ୍ଲିନିକ୍‌କୁ ସ୍ୱାଗତ। ମୁଁ ଆପଣଙ୍କ ଏଆଇ ରିସେପ୍ସନିଷ୍ଟ ମାୟା। ଡାକ୍ତର ଅପଏଣ୍ଟମେଣ୍ଟ, ସମୟସୂଚୀ ଏବଂ ରିପୋର୍ଟ ସମ୍ବନ୍ଧରେ ମୁଁ ସାହାଯ୍ୟ କରିପାରିବି। ମୁଁ ଆପଣଙ୍କୁ କିପରି ସାହାଯ୍ୟ କରିପାରିବି?`,
+    bookingFormat: (name, doctor, specialty, slot, token, when) =>
+      `ନମସ୍କାର ${name}, ମୁଁ ${doctor} (${specialty}) ଙ୍କ ସହ ${when} ${slot} ପାଇଁ ଆପଣଙ୍କ ଅପଏଣ୍ଟମେଣ୍ଟ ବୁକ୍ କରିଛି। ଆପଣଙ୍କ ଟୋକନ୍ ନମ୍ବର #${token}। ଦୟାକରି ୧୦ ମିନିଟ୍ ପୂର୍ବରୁ ପହଞ୍ଚନ୍ତୁ।`,
+    greetingText: (name, clinicName, receptionistName) =>
+      `ନମସ୍କାର ${name}! ${clinicName} ସ୍ୱାଗତ। ମୁଁ ${receptionistName}, ଆପଣଙ୍କ ଏଆଇ ରିସେପ୍ସନିଷ୍ଟ। ଡାକ୍ତର ଅପଏଣ୍ଟମେଣ୍ଟ, ସମୟସୂଚୀ ଏବଂ ରିପୋର୍ଟ ସମ୍ବନ୍ଧରେ ମୁଁ ସାହାଯ୍ୟ କରିପାରିବି। ମୁଁ ଆପଣଙ୍କୁ କିପରି ସାହାଯ୍ୟ କରିପାରିବି?`,
     timingsText: "ଆମ କ୍ଲିନିକ୍ ଓପିଡି ସୋମବାରରୁ ଶନିବାର ସକାଳ ୦୯:୦୦ ରୁ ରାତି ୦୮:୦୦ ଏବଂ ରବିବାର ସକାଳ ୧୦:୦୦ ରୁ ଦିନ ୦୨:୦୦ ପର୍ଯ୍ୟନ୍ତ ଖୋଲା ରହେ।",
-    locationText: "ଲୁମେରା ଆପେକ୍ସ ପଲିକ୍ଲିନିକ୍ ୧୦୪-୧୦୬, ହେଲଥ୍ ହବ୍, ସେକ୍ଟର ୧୪, ମେଟ୍ରୋ ଷ୍ଟେସନ ସମ୍ମୁଖ, ଗୁଡ଼ଗାଓଁରେ ଅବସ୍ଥିତ।",
+    locationText: (clinicName, address) =>
+      address ? `${clinicName} ଠିକଣା: ${address}.` : `${clinicName} ଠିକଣା ରିସେପ୍ସନରେ ମିଳିବ.`,
     refillText: (name) =>
       `ନମସ୍କାର ${name}, ଆପଣଙ୍କ ପ୍ରେସକ୍ରିପସନ୍ ଆମ ରେକର୍ଡରେ ଅଛି। ଆପଣ ଏହାକୁ ଦେଖିପାରିବେ କିମ୍ବା ଔଷଧ ପାଇଁ ଅନୁରୋଧ କରିପାରିବେ।`,
     buttons: {
@@ -358,12 +430,13 @@ export const INDIC_LANGUAGES: Record<
     name: "Urdu",
     localName: "اردو",
     emergencyNotice: "یہ ایک ہنگامی طبی صورتحال معلوم ہوتی ہے۔ براہ کرم فوری طور پر قریبی ایمرجنسی روم (ER) جائیں یا 108 پر ایمبولینس کو کال کریں۔ کلینک عملے کو مطلع کر دیا گیا ہے۔",
-    bookingFormat: (name, doctor, specialty, slot, token) =>
-      `ہیلو ${name}، آپ کی اپائنٹمنٹ ${doctor} (${specialty}) کے ساتھ آج ${slot} پر بک کر دی گئی ہے۔ آپ کا ٹوکن نمبر #${token} ہے۔ براہ کرم 10 منٹ پہلے تشریف لائیں۔`,
-    greetingText: (name) =>
-      `ہیلو ${name}! لومیرا اپیکس پولی کلینک میں خوش آمدید۔ میں آپ کی اے آئی ریسپشنسٹ مایا ہوں۔ میں اپائنٹمنٹ بک کرنے، ڈاکٹر کے اوقات اور رپورٹس میں مدد کر سکتی ہوں۔ میں آپ کی کیا مدد کر سکتی ہوں؟`,
+    bookingFormat: (name, doctor, specialty, slot, token, when) =>
+      `ہیلو ${name}، آپ کی اپائنٹمنٹ ${doctor} (${specialty}) کے ساتھ ${when} ${slot} پر بک کر دی گئی ہے۔ آپ کا ٹوکن نمبر #${token} ہے۔ براہ کرم 10 منٹ پہلے تشریف لائیں۔`,
+    greetingText: (name, clinicName, receptionistName) =>
+      `ہیلو ${name}! ${clinicName} میں خوش آمدید۔ میں ${receptionistName}, آپ کی اے آئی ریسپشنسٹ ہوں۔ میں اپائنٹمنٹ بک کرنے، ڈاکٹر کے اوقات اور رپورٹس میں مدد کر سکتی ہوں۔ میں آپ کی کیا مدد کر سکتی ہوں؟`,
     timingsText: "ہمارا کلینک او پی ڈی پیر سے ہفتہ صبح 09:00 سے رات 08:00 بجے تک اور اتوار صبح 10:00 سے دوپہر 02:00 بجے تک کھلا رہتا ہے۔",
-    locationText: "لومیرا اپیکس پولی کلینک 104-106، ہیلتھ ہب، سیکٹر 14، میٹرو اسٹیشن کے سامنے، گڑگاؤں میں واقع ہے۔ پارکنگ کی سہولت دستیاب ہے۔",
+    locationText: (clinicName, address) =>
+      address ? `${clinicName} کا پتہ: ${address}.` : `${clinicName} کا پتہ استقبالیہ پر ملے گا۔`,
     refillText: (name) =>
       `ہیلو ${name}، آپ کا نسخہ ہمارے ریکارڈ میں محفوظ ہے۔ آپ واٹس ایپ پر دیکھ سکتے ہیں یا فارمیسی ریفل کی درخواست کر سکتے ہیں۔`,
     buttons: {
@@ -377,12 +450,12 @@ export const INDIC_LANGUAGES: Record<
     name: "English",
     localName: "English",
     emergencyNotice: "This sounds like a critical medical emergency. Please proceed directly to the nearest Emergency Room or dial 108 for an ambulance. Our clinical emergency team has been alerted.",
-    bookingFormat: (name, doctor, specialty, slot, token) =>
-      `Hello ${name}, your consultation with ${doctor} (${specialty}) has been booked for today at ${slot}. Your OPD token is #${token}. Please arrive 10 minutes prior to your slot.`,
-    greetingText: (name) =>
-      `Hello ${name}! Welcome to Lumera Apex PolyClinic. I am Maya, your AI clinic receptionist. I can help you schedule an appointment, check doctor timings, or access your medical records. How may I assist you today?`,
+    bookingFormat: (name, doctor, specialty, slot, token, when) =>
+      `Hello ${name}, your consultation with ${doctor} (${specialty}) has been booked for ${when} at ${slot}. Your OPD token is #${token}. Please arrive 10 minutes prior to your slot.`,
+    greetingText: (name, clinicName, receptionistName) =>
+      `Hello ${name}! Welcome to ${clinicName}. I am ${receptionistName}, your AI clinic receptionist. I can help you schedule an appointment, check doctor timings, or access your medical records. How may I assist you today?`,
     timingsText: "Our clinic OPD operates Monday through Saturday from 09:00 AM to 08:00 PM, and Sundays from 10:00 AM to 02:00 PM. Diagnostic lab sample collection begins at 08:00 AM daily.",
-    locationText: "Lumera Apex PolyClinic is located at 104 to 106, Health Hub, Sector 14, Opposite Metro Station, Gurgaon. Dedicated on-site parking is available for all patients.",
+    locationText: clinicLocationSpeech,
     refillText: (name) =>
       `Hello ${name}, your verified prescription is on file. You can preview the dosage schedule or request a pharmacy refill directly via WhatsApp.`,
     buttons: {
@@ -393,6 +466,94 @@ export const INDIC_LANGUAGES: Record<
     },
   },
 };
+
+const TODAY_WORD: Record<IndicLangCode, string> = {
+  en: "today",
+  hi: "आज",
+  bn: "আজ",
+  te: "ఈరోజు",
+  ta: "இன்று",
+  kn: "ಇಂದು",
+  mr: "आज",
+  gu: "આજે",
+  ml: "ഇന്ന്",
+  pa: "ਅੱਜ",
+  or: "ଆଜି",
+  ur: "آج",
+};
+
+const SLOT_FULL: Record<IndicLangCode, string> = {
+  en: "I'm sorry, there is no open slot in the coming days. Please ask the clinic desk to arrange a time.",
+  hi: "माफ़ कीजिए, आने वाले दिनों में कोई खाली स्लॉट नहीं है। कृपया क्लिनिक डेस्क से समय तय करें।",
+  bn: "দুঃখিত, আগামী দিনগুলোতে কোনো খালি স্লট নেই। অনুগ্রহ করে ক্লিনিক ডেস্কের সঙ্গে সময় ঠিক করুন।",
+  te: "క్షమించండి, రాబోయే రోజుల్లో ఖాళీ స్లాట్ లేదు. దయచేసి క్లినిక్ డెస్క్‌తో సమయం నిర్ణయించండి.",
+  ta: "மன்னிக்கவும், வரும் நாட்களில் காலியான நேரம் இல்லை. தயவுசெய்து கிளினிக் வரவேற்பறையில் நேரம் ஏற்பாடு செய்யுங்கள்.",
+  kn: "ಕ್ಷಮಿಸಿ, ಮುಂದಿನ ದಿನಗಳಲ್ಲಿ ಖಾಲಿ ಸ್ಲಾಟ್ ಇಲ್ಲ. ದಯವಿಟ್ಟು ಕ್ಲಿನಿಕ್ ಡೆಸ್ಕ್‌ನಲ್ಲಿ ಸಮಯವನ್ನು ಗೊತ್ತುಪಡಿಸಿ.",
+  mr: "माफ करा, येत्या दिवसांत मोकळी स्लॉट नाही. कृपया क्लिनिक डेस्कशी वेळ निश्चित करा.",
+  gu: "માફ કરશો, આગામી દિવસોમાં ખાલી સ્લોટ નથી. કૃપા કરીને ક્લિનિક ડેસ્ક પર સમય નક્કી કરો.",
+  ml: "ക്ഷമിക്കണം, വരുന്ന ദിവസങ്ങളിൽ ഒഴിഞ്ഞ സ്ലോട്ട് ഇല്ല. ദയവായി ക്ലിനിക് ഡെസ്കിൽ സമയം ക്രമീകരിക്കുക.",
+  pa: "ਮਾਫ਼ ਕਰਨਾ, ਆਉਣ ਵਾਲੇ ਦਿਨਾਂ ਵਿੱਚ ਕੋਈ ਖਾਲੀ ਸਲਾਟ ਨਹੀਂ ਹੈ। ਕਿਰਪਾ ਕਰਕੇ ਕਲੀਨਿਕ ਡੈਸਕ ਨਾਲ ਸਮਾਂ ਤੈਅ ਕਰੋ।",
+  or: "କ୍ଷମା କରନ୍ତୁ, ଆଗାମୀ ଦିନଗୁଡ଼ିକରେ ଖାଲି ସ୍ଲଟ୍ ନାହିଁ। ଦୟାକରି କ୍ଲିନିକ୍ ଡେସ୍କରେ ସମୟ ଠିକ୍ କରନ୍ତୁ।",
+  ur: "معاف کیجیے، آنے والے دنوں میں کوئی خالی سلاٹ نہیں ہے۔ براہ کرم کلینک ڈیسک سے وقت طے کریں۔",
+};
+
+function spokenBookingWhen(lang: IndicLangCode, date: string, now = new Date()): string {
+  const today = clinicCalendarDate(now, "Asia/Kolkata");
+  if (!date || date === today) return TODAY_WORD[lang];
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+  if (!match) return date;
+  const utc = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  return utc.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Kolkata" });
+}
+
+function bookingAction(token: number, date: string, timeSlot: string, now = new Date()): string {
+  const today = clinicCalendarDate(now, "Asia/Kolkata");
+  const when = !date || date === today ? "today" : date;
+  return `Confirmed token #${token} for ${when} at ${timeSlot}`;
+}
+
+function confirmedVoiceBooking(
+  langCode: IndicLangCode,
+  callerName: string,
+  appt: { doctorName: string; specialty: string; timeSlot: string; tokenNumber: number; date: string },
+  now = new Date()
+) {
+  const langInfo = INDIC_LANGUAGES[langCode] || INDIC_LANGUAGES.en;
+  return {
+    speechText: langInfo.bookingFormat(
+      callerName,
+      appt.doctorName,
+      appt.specialty,
+      appt.timeSlot,
+      appt.tokenNumber,
+      spokenBookingWhen(langCode, appt.date, now)
+    ),
+    suggestedAction: bookingAction(appt.tokenNumber, appt.date, appt.timeSlot, now),
+  };
+}
+
+const BOOKING_FAILED: Record<IndicLangCode, string> = {
+  en: "I'm sorry, I could not save that appointment. Please ask the clinic desk to arrange a time.",
+  hi: "माफ़ कीजिए, मैं यह अपॉइंटमेंट सेव नहीं कर पाई। कृपया क्लिनिक डेस्क से समय तय करें।",
+  bn: "দুঃখিত, আমি এই অ্যাপয়েন্টমেন্ট সেভ করতে পারিনি। অনুগ্রহ করে ক্লিনিক ডেস্কের সঙ্গে সময় ঠিক করুন।",
+  te: "క్షమించండి, ఈ అపాయింట్‌మెంట్ సేవ్ కాలేదు. దయచేసి క్లినిక్ డెస్క్‌తో సమయం నిర్ణయించండి.",
+  ta: "மன்னிக்கவும், இந்த முன்பதிவை சேமிக்க முடியவில்லை. தயவுசெய்து கிளினிக் வரவேற்பறையில் நேரம் ஏற்பாடு செய்யுங்கள்.",
+  kn: "ಕ್ಷಮಿಸಿ, ಈ ಅಪಾಯಿಂಟ್‌ಮೆಂಟ್ ಉಳಿಸಲಾಗಲಿಲ್ಲ. ದಯವಿಟ್ಟು ಕ್ಲಿನಿಕ್ ಡೆಸ್ಕ್‌ನಲ್ಲಿ ಸಮಯವನ್ನು ಗೊತ್ತುಪಡಿಸಿ.",
+  mr: "माफ करा, ही अपॉइंटमेंट सेव्ह होऊ शकली नाही. कृपया क्लिनिक डेस्कशी वेळ निश्चित करा.",
+  gu: "માફ કરશો, આ એપોઇન્ટમેન્ટ સેવ થઈ નથી. કૃપા કરીને ક્લિનિક ડેસ્ક પર સમય નક્કી કરો.",
+  ml: "ക്ഷമിക്കണം, ഈ അപ്പോയിന്റ്മെന്റ് സേവ് ചെയ്യാനായില്ല. ദയവായി ക്ലിനിക് ഡെസ്കിൽ സമയം ക്രമീകരിക്കുക.",
+  pa: "ਮਾਫ਼ ਕਰਨਾ, ਇਹ ਅਪਾਇੰਟਮੈਂਟ ਸੇਵ ਨਹੀਂ ਹੋ ਸਕੀ। ਕਿਰਪਾ ਕਰਕੇ ਕਲੀਨਿਕ ਡੈਸਕ ਨਾਲ ਸਮਾਂ ਤੈਅ ਕਰੋ।",
+  or: "କ୍ଷମା କରନ୍ତୁ, ଏହି ଅପଏଣ୍ଟମେଣ୍ଟ ସେଭ୍ ହେଲା ନାହିଁ। ଦୟାକରି କ୍ଲିନିକ୍ ଡେସ୍କରେ ସମୟ ଠିକ୍ କରନ୍ତୁ।",
+  ur: "معاف کیجیے، یہ اپائنٹمنٹ محفوظ نہیں ہو سکی۔ براہ کرم کلینک ڈیسک سے وقت طے کریں۔",
+};
+
+function bookingFailureSpeech(langCode: IndicLangCode, err: unknown): { speechText: string; suggestedAction: string } {
+  const message = err instanceof Error ? err.message : "";
+  if (message === "No open clinic slot") {
+    return { speechText: SLOT_FULL[langCode] || SLOT_FULL.en, suggestedAction: "No open clinic slot" };
+  }
+  return { speechText: BOOKING_FAILED[langCode] || BOOKING_FAILED.en, suggestedAction: "Booking was not saved" };
+}
 
 export interface TenantVoiceDoctor {
   name: string;
@@ -488,7 +649,7 @@ export function getTenantVoiceContext(tenantId: string, callerPhone: string): Te
 }
 
 export async function runGeminiVoiceReceptionist(opts: VoiceReceptionistInput): Promise<VoiceReceptionistResult> {
-  const { message, callerName = "Patient", callerPhone = "+919999973271", language = "English", tenantId = "tenant-lumera-main", getGenAI } = opts;
+  const { message, callerName = "Patient", callerPhone = "+919999973271", language = "English", tenantId = "", getGenAI, now } = opts;
   const lowerMsg = String(message || "").toLowerCase();
   const db = getDb();
   const tenantContext = getTenantVoiceContext(tenantId, callerPhone);
@@ -497,9 +658,9 @@ export async function runGeminiVoiceReceptionist(opts: VoiceReceptionistInput): 
     registered?.firstName ||
     (callerName && !/^patient(\s*\(\+?\d+\))?$/i.test(callerName) && callerName !== "A1 Test Recipient" ? callerName.split(/\s+/)[0] : "there");
   const receptionistName = voiceSettings.receptionistName || "Maya";
-  const clinicName = letterhead.clinicName || "Lumera Clinic";
-  const clinicAddress = [letterhead.address, letterhead.city].filter(Boolean).join(", ") || "Main Medical Center";
-  const clinicPhone = letterhead.phone || letterhead.whatsappNumber || "+91 98233 73271";
+  const clinicName = patientClinicLabel(letterhead.clinicName);
+  const clinicAddress = [letterhead.address, letterhead.city].filter(Boolean).join(", ");
+  const clinicPhone = letterhead.phone || letterhead.whatsappNumber || "";
 
   const langCode = detectIndicLanguage(message, language);
   const langInfo = INDIC_LANGUAGES[langCode] || INDIC_LANGUAGES.en;
@@ -587,12 +748,14 @@ Output strict JSON:
                   patientPhone: callerPhone,
                   patientName: cleanCallerName !== "there" ? cleanCallerName : "Patient",
                   doctorName: docToBook,
+                  now,
                 });
                 const appt = booked.appointment;
+                const spoken = confirmedVoiceBooking(langCode, cleanCallerName, appt, now);
                 return {
-                  speechText: parsed.speechText,
+                  speechText: spoken.speechText,
                   intent: "BOOKING",
-                  suggestedAction: `Confirmed token #${appt.tokenNumber} for today at ${appt.timeSlot}`,
+                  suggestedAction: spoken.suggestedAction,
                   isEmergency: false,
                   appointment: {
                     id: String(appt.id),
@@ -608,6 +771,14 @@ Output strict JSON:
                 };
               } catch (bErr) {
                 console.warn("[Voice Gemini Booking Error]", bErr);
+                const failed = bookingFailureSpeech(langCode, bErr);
+                return {
+                  speechText: failed.speechText,
+                  intent: "INQUIRY",
+                  suggestedAction: failed.suggestedAction,
+                  isEmergency: false,
+                  buttons: langInfo.buttons.inquiry,
+                };
               }
             }
 
@@ -718,20 +889,14 @@ Output strict JSON:
         patientPhone: callerPhone,
         patientName: cleanCallerName !== "there" ? cleanCallerName : "Patient",
         doctorName,
+        now,
       });
       const appt = booked.appointment;
-      const speechText = langInfo.bookingFormat(
-        cleanCallerName,
-        appt.doctorName,
-        appt.specialty,
-        appt.timeSlot,
-        appt.tokenNumber
-      );
-
+      const spoken = confirmedVoiceBooking(langCode, cleanCallerName, appt, now);
       return {
-        speechText,
+        speechText: spoken.speechText,
         intent: "BOOKING",
-        suggestedAction: `Confirmed token #${appt.tokenNumber} for today at ${appt.timeSlot}`,
+        suggestedAction: spoken.suggestedAction,
         isEmergency: false,
         appointment: {
           id: String(appt.id),
@@ -747,6 +912,14 @@ Output strict JSON:
       };
     } catch (bookingErr) {
       console.warn("[Voice Receptionist Booking Fallback]", bookingErr);
+      const failed = bookingFailureSpeech(langCode, bookingErr);
+      return {
+        speechText: failed.speechText,
+        intent: "INQUIRY",
+        suggestedAction: failed.suggestedAction,
+        isEmergency: false,
+        buttons: langInfo.buttons.inquiry,
+      };
     }
   }
 
@@ -771,7 +944,7 @@ Output strict JSON:
     message.includes("कहाँ") || message.includes("पता") || message.includes("చిరునామా") || message.includes("முகவரி") || message.includes("ವಿಳಾಸ")
   ) {
     return {
-      speechText: langInfo.locationText,
+      speechText: langInfo.locationText(clinicName, clinicAddress),
       intent: "LOCATION",
       suggestedAction: "Provided address and directions to clinic",
       isEmergency: false,
@@ -798,13 +971,13 @@ Output strict JSON:
     const ai = getGenAI();
     if (ai) {
       try {
-        const prompt = `You are Maya, Senior AI Clinic Receptionist at Lumera Apex PolyClinic.
+        const prompt = `You are ${receptionistName}, the AI Clinic Receptionist at ${clinicName}.
 Caller Name: ${cleanCallerName}
 Caller Message: "${message}"
 Detected Language: ${langInfo.name} (${langInfo.localName})
 
 Guidelines:
-1. Respond warmly and politely as Maya the receptionist directly in ${langInfo.name} (${langInfo.localName}).
+1. Respond warmly and politely as ${receptionistName} the receptionist directly in ${langInfo.name} (${langInfo.localName}).
 2. Keep the answer spoken, natural, concise (under 30-40 words) suitable for voice audio playback over telephone/WhatsApp voice note.
 3. Offer relevant clinical help: OPD booking, timings (Mon-Sat 9AM-8PM), doctor availability, or connecting to reception.
 4. Output strict JSON only:
@@ -836,7 +1009,7 @@ Guidelines:
 
   // 8. General Receptionist Inquiry & Greeting in the caller's detected Indian language
   return {
-    speechText: langInfo.greetingText(cleanCallerName),
+    speechText: langInfo.greetingText(cleanCallerName, clinicName, receptionistName),
     intent: "INQUIRY",
     suggestedAction: "Greeted patient and offered clinical services in " + langInfo.name,
     isEmergency: false,
@@ -846,12 +1019,16 @@ Guidelines:
 
 export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI | null) {
   // 4. Voice Bot & Triage Simulator with Emergency Escalation & Resilient Offline Fallback
-  app.post("/api/gemini/voice-bot", async (req: Request, res: Response) => {
+  app.post("/api/gemini/voice-bot", requireAuth, async (req: Request, res: Response) => {
     try {
       const { message, callerName = "Patient", language = "English", callerPhone = "+919999973271", availableDoctors } = req.body;
       if (!message) return res.status(400).json({ error: "Message is required" });
+      if (!isVoiceStaffRole(req.user?.role)) {
+        return res.status(403).json({ error: "Insufficient permissions" });
+      }
 
-      const tenantId = String(req.body?.tenantId || (req as any).user?.tenantId || "tenant-lumera-main");
+      const tenantId = String(req.user?.tenantId || "").trim();
+      if (!tenantId) return res.status(403).json({ error: "No clinic tenant is linked to this account." });
 
       const result = await runGeminiVoiceReceptionist({
         message,
@@ -868,7 +1045,7 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
       console.error("[Voice Bot Error]", err);
       // Resilient fallback: never fail with 503, always return comforting receptionist response
       return res.json({
-        speechText: "Thank you for reaching Lumera Apex PolyClinic. Our front desk has noted your request and is ready to assist you.",
+        speechText: "Thank you for calling. Our front desk has noted your request and is ready to assist you.",
         intent: "INQUIRY",
         suggestedAction: "Routed to front desk support",
         isEmergency: false,
@@ -928,7 +1105,11 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
       const language = String(req.body?.language || "English").trim();
 
       const db = getDb();
-      let tenantId = String(req.body?.tenantId || (req as any).user?.tenantId || "tenant-lumera-main").trim();
+      const access = inboundVoiceAccess(req);
+      if (!access) {
+        return res.status(403).json({ error: "Forbidden" });
+      }
+      const tenantId = access.tenantId;
 
       const tenantContext = getTenantVoiceContext(tenantId, from);
       const { letterhead, voiceSettings, registered, doctors, callerProfile } = tenantContext;
@@ -936,12 +1117,10 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
         registered?.firstName ||
         (callerName && !/^patient(\s*\(\+?\d+\))?$/i.test(callerName) && callerName !== "A1 Test Recipient" ? callerName.split(/\s+/)[0] : "there");
       const receptionistName = voiceSettings.receptionistName || "Maya";
-      const clinicName = (letterhead.clinicName && !/physio practice/i.test(letterhead.clinicName))
-        ? letterhead.clinicName
-        : "Lumera Health";
-      const clinicAddress = [letterhead.address, letterhead.city].filter(Boolean).join(", ") || "Main Medical Center";
-      const clinicPhone = letterhead.phone || letterhead.whatsappNumber || "+91 98233 73271";
-      const escalationPhone = voiceSettings.escalationPhone || clinicPhone;
+      const clinicName = patientClinicLabel(letterhead.clinicName);
+      const clinicAddress = [letterhead.address, letterhead.city].filter(Boolean).join(", ");
+      const clinicPhone = letterhead.phone || letterhead.whatsappNumber || "";
+      const escalationPhone = String(voiceSettings.escalationPhone || clinicPhone || "").trim();
 
       const doctorRosterText = doctors
         .map((d) => `  * Dr. ${d.name.replace(/^dr\.?\s*/i, "")} (${d.specialty}) - OPD: ${d.timing} (${d.days}), Fee ₹${d.fee}`)
@@ -1078,14 +1257,32 @@ Output strict JSON:
       // Transfer after 3 unclear attempts (i.e. already had 2 previous clarifications + current turn is also unclear)
       const isFailoverTriggered = isTransferRequested || (isCurrentTurnUnclear && previousClarifications >= 2);
 
+      let callbackTaskId = "";
       if (isFailoverTriggered) {
         intent = "TRANSFER";
         const callerSpeaksHindi = /[\u0900-\u097F]|aap|karna|hoga|baat|hai|tha|kripya/i.test(message) ||
           history.some(h => /[\u0900-\u097F]|नमस्ते|माफ़/i.test(h.text));
-        speechText = callerSpeaksHindi
-          ? `माफ़ कीजिए, मुझे आपकी आवाज़ साफ़ नहीं आ रही है। मैं आपकी कॉल हमारे क्लिनिक स्टाफ ${escalationPhone} पर ट्रांसफर कर रही हूँ। कृपया एक मिनट रुकिए।`
-          : `I apologize, I'm having trouble hearing you clearly over the line. Let me connect you directly to our clinic staff at ${escalationPhone}. One moment, please.`;
-        suggestedAction = `Transferred caller to clinic desk (${escalationPhone})`;
+        if (escalationPhone) {
+          speechText = callerSpeaksHindi
+            ? `माफ़ कीजिए, मुझे आपकी आवाज़ साफ़ नहीं आ रही है। इस कॉल को दूसरी लाइन पर ट्रांसफर नहीं किया जा सकता। कृपया हमारे क्लिनिक स्टाफ को ${escalationPhone} पर कॉल करें। मैं यह नंबर व्हाट्सऐप पर भेज रही हूँ।`
+            : `I'm sorry, I still can't hear you clearly. I can't transfer this WhatsApp call, so please call our clinic staff at ${escalationPhone}. I'm sending that number on WhatsApp.`;
+          suggestedAction = `Asked caller to phone the clinic desk (${escalationPhone}); WhatsApp card sent`;
+        } else {
+          speechText = callerSpeaksHindi
+            ? `माफ़ कीजिए, मुझे आपकी आवाज़ साफ़ नहीं आ रही है। क्लिनिक का फ़ोन नंबर फ़ाइल में नहीं है। हमारे स्टाफ आपको वापस कॉल करेंगे।`
+            : `I'm sorry, I still can't hear you clearly. A staff member from the clinic will call you back.`;
+          suggestedAction = "No clinic number on file; callback task created";
+          try {
+            callbackTaskId = createVoiceCallbackTask({
+              tenantId,
+              patientPhone: from,
+              patientName: cleanCallerName,
+              reason: "Voice caller was unclear after 3 attempts and the clinic has no phone on file",
+            });
+          } catch (callbackErr) {
+            console.warn("[Voice callback task]", callbackErr);
+          }
+        }
       } else if (!message && !speechText) {
         const rawAudio = String(req.body?.audioBase64 || "");
         if (rawAudio.length > 500) {
@@ -1126,10 +1323,17 @@ Output strict JSON:
             uhid: appt.uhid,
             status: appt.status,
           };
+          const spoken = confirmedVoiceBooking(detectIndicLanguage(message, language), cleanCallerName, appt);
+          speechText = spoken.speechText;
           intent = "BOOKING";
-          suggestedAction = `Confirmed token #${appt.tokenNumber} for today at ${appt.timeSlot}`;
+          suggestedAction = spoken.suggestedAction;
         } catch (bErr) {
           console.warn("[Voice Booking Error]", bErr);
+          const failed = bookingFailureSpeech(detectIndicLanguage(message, language), bErr);
+          appointmentData = undefined;
+          intent = "INQUIRY";
+          speechText = failed.speechText;
+          suggestedAction = failed.suggestedAction;
         }
       }
 
@@ -1226,11 +1430,14 @@ Output strict JSON:
         }
 
         if (from.startsWith("+91") || from.startsWith("91")) {
+          const textBody = escalationPhone
+            ? `Please call the clinic front desk. This WhatsApp call cannot be transferred to another phone.\n\n📞 *Call:* ${escalationPhone}\n🏥 *Clinic:* ${clinicName}`
+            : `We could not hear you clearly. A staff member from ${clinicName} will call you back.`;
           void dispatchPatientCloudText({
             tenantId,
             to: from,
-            textBody: `🚨 *Clinic Front Desk Transfer*\n\nHello! We noticed the audio connection on your call was unclear.\n\nYou can speak directly with our clinic team right now:\n📞 *Call Front Desk:* ${escalationPhone}\n🏥 *Clinic:* ${clinicName}\n\nOur front desk has been alerted and is ready to assist you.`,
-            buttons: ["📞 Call Front Desk", "💬 Chat with Staff", "📅 Book Online"],
+            textBody,
+            buttons: escalationPhone ? ["📞 Call Front Desk", "💬 Chat with Staff", "📅 Book Online"] : ["💬 Chat with Staff", "📅 Book Online"],
           }).catch((err) => console.error("[Voice Escalation WhatsApp Card Error]", err));
         }
       }
@@ -1240,18 +1447,20 @@ Output strict JSON:
         audioBase64 = await synthesizeSpeechNeural(speechText);
       }
 
-      return res.json({
+      const payload: Record<string, unknown> = {
         success: true,
         from,
         transcript: message,
         speechText,
         intent,
         shouldTransfer: intent === "TRANSFER",
-        escalationPhone,
         suggestedAction,
         appointment: appointmentData,
         audioBase64,
-      });
+      };
+      if (access.authenticated) payload.escalationPhone = escalationPhone;
+      if (callbackTaskId) payload.callbackTaskId = callbackTaskId;
+      return res.json(payload);
     } catch (err) {
       console.error("[WhatsApp Voice Call Handler Error]", err);
       return res.status(500).json({ error: "Failed to process voice call" });
@@ -1262,9 +1471,10 @@ Output strict JSON:
   app.post("/meta/voice-call", handleInboundVoiceCall);
 
   // Tenant Voice Settings API for WhatsApp Dashboard
-  app.get("/api/whatsapp/voice-settings", async (req: Request, res: Response) => {
+  app.get("/api/whatsapp/voice-settings", requireAuth, async (req: Request, res: Response) => {
     try {
-      const tenantId = String((req as any).user?.tenantId || req.query.tenantId || "tenant-lumera-main").trim();
+      const tenantId = voiceSettingsTenant(req, res);
+      if (!tenantId) return;
       const db = getDb();
       const settings = getWhatsAppTenantVoiceSettings(db, tenantId);
       const letterhead = getTenantLetterhead(tenantId);
@@ -1276,9 +1486,9 @@ Output strict JSON:
         voiceEnabled: settings.voiceEnabled,
         receptionistName: settings.receptionistName,
         customGreeting: settings.customGreeting,
-        escalationPhone: settings.escalationPhone || letterhead.phone || letterhead.whatsappNumber || "+91 98233 73271",
+        escalationPhone: settings.escalationPhone || letterhead.phone || letterhead.whatsappNumber || "",
         clinic: {
-          name: letterhead.clinicName && !/physio practice/i.test(letterhead.clinicName) ? letterhead.clinicName : "Lumera Health",
+          name: letterhead.clinicName && !/physio practice/i.test(letterhead.clinicName) ? letterhead.clinicName : "",
           address: letterhead.address,
           city: letterhead.city,
           phone: letterhead.phone || letterhead.whatsappNumber,
@@ -1291,9 +1501,10 @@ Output strict JSON:
     }
   });
 
-  app.post("/api/whatsapp/voice-settings", async (req: Request, res: Response) => {
+  app.post("/api/whatsapp/voice-settings", requireAuth, async (req: Request, res: Response) => {
     try {
-      const tenantId = String((req as any).user?.tenantId || req.body?.tenantId || "tenant-lumera-main").trim();
+      const tenantId = voiceSettingsTenant(req, res);
+      if (!tenantId) return;
       const db = getDb();
       const { voiceEnabled, receptionistName, customGreeting, escalationPhone } = req.body || {};
       const updated = saveWhatsAppTenantVoiceSettings(db, tenantId, {

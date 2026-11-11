@@ -1,5 +1,5 @@
 import { Router, type NextFunction, type Request, type Response } from "express";
-import { isPlatformAdminRole, requireAuth } from "./auth.ts";
+import { isPlatformAdminRole, requireAuth, requirePlatformAdmin } from "./auth.ts";
 import { findDataDeletionRequest, getDb } from "./db.ts";
 import { appPublicUrl, envFlag, isProduction, readSecret, sandboxSimulatorsEnabled } from "./runtime.ts";
 import { reportCaughtError } from "./error-tracker.ts";
@@ -27,6 +27,7 @@ import { processBotActionOrQuery, findRegisteredPatient } from "./whatsapp.ts";
 import { runGeminiVoiceReceptionist } from "./gemini-voice.ts";
 import { getWhatsAppTenantVoiceSettings } from "./whatsapp-numbers-store.ts";
 import { getTenantLetterhead } from "./letterhead.ts";
+import { readVoiceGatewaySecret, voiceGatewayAuthorized } from "./voice-gateway-auth.ts";
 
 /** read and failed are terminal. delivered can still become read. */
 function isPendingOutboundStatus(status: string): boolean {
@@ -361,6 +362,7 @@ export async function handleMetaInboundCallAction(opts: {
   let sdpAnswer = cachedCallAnswers.get(opts.callId) || "";
   const needsGateway = !sdpAnswer || (Boolean(opts.offerSdp) && sdpAnswer.includes("10000"));
   if (needsGateway && (action === "accept" || action === "pre_accept")) {
+    const gatewayIp = getVoiceGatewayIp() || "34.46.39.52";
     try {
       const callTenantId = opts.tenantId || "tenant-lumera-main";
       const db = getDb();
@@ -368,22 +370,27 @@ export async function handleMetaInboundCallAction(opts: {
       const voiceSettings = getWhatsAppTenantVoiceSettings(db, callTenantId);
       const clinicName = letterhead.clinicName && !/physio practice/i.test(letterhead.clinicName)
         ? letterhead.clinicName
-        : "Lumera Health";
+        : "the clinic";
       const receptionistName = voiceSettings.receptionistName || "Maya";
       const customGreeting = voiceSettings.customGreeting || "";
 
-      const gwRes = await fetch("http://34.46.39.52:3000/webrtc/answer-offer", {
+      const gatewaySecret = readVoiceGatewaySecret();
+      const configuredGateway = String(process.env.VOICE_GATEWAY_URL || "").trim();
+      const gatewayBase = configuredGateway || `http://${gatewayIp}:3000`;
+      const gatewayCall = voiceGatewayAnswerRequest(gatewayBase, gatewaySecret);
+      const gwRes = await fetch(gatewayCall.url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: gatewayCall.headers,
         body: JSON.stringify({
           callId: opts.callId,
           callerPhone: opts.fromPhone || "",
           tenantId: callTenantId,
+          phoneNumberId: opts.phoneNumberId,
           clinicName,
           receptionistName,
           customGreeting,
           offerSdp: opts.offerSdp,
-          publicIp: "34.46.39.52",
+          publicIp: gatewayIp,
         }),
         signal: AbortSignal.timeout(1200),
       });
@@ -400,7 +407,7 @@ export async function handleMetaInboundCallAction(opts: {
       console.warn(`[Meta Inbound Call] Gateway fetch timeout/error (<1.2s fast-path fallback) for callId=${opts.callId}:`, gwErr);
     }
     if (!sdpAnswer) {
-      sdpAnswer = buildWebRtcSdpAnswer(opts.offerSdp, "34.46.39.52");
+      sdpAnswer = buildWebRtcSdpAnswer(opts.offerSdp, gatewayIp);
     }
     cachedCallAnswers.set(opts.callId, sdpAnswer);
   }
@@ -692,6 +699,50 @@ export function sessionMetaTenant(req: Request, res: Response): string | null {
   return sessionTenant;
 }
 
+function presentedGatewaySecret(req: Request): string {
+  const header = req.get("x-voice-gateway-secret");
+  if (typeof header === "string" && header.trim()) return header.trim();
+  return String((req.body as { secret?: unknown } | undefined)?.secret || "").trim();
+}
+
+let withheldGatewaySecretWarning = false;
+
+/** Header is attached only on https. A public http gateway must not see the shared secret. */
+export function voiceGatewayAnswerRequest(gatewayBaseUrl: string, secret: string): {
+  url: string;
+  headers: Record<string, string>;
+  withheldSecret: boolean;
+} {
+  const base = String(gatewayBaseUrl || "").trim().replace(/\/$/, "");
+  const url = base.endsWith("/webrtc/answer-offer") ? base : `${base}/webrtc/answer-offer`;
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const trimmed = secret.trim();
+  if (trimmed && url.startsWith("https://")) {
+    headers["X-Voice-Gateway-Secret"] = trimmed;
+    return { url, headers, withheldSecret: false };
+  }
+  if (trimmed && !withheldGatewaySecretWarning) {
+    withheldGatewaySecretWarning = true;
+    console.warn(
+      "[Meta Inbound Call] VOICE_GATEWAY_SECRET was not sent because the voice gateway URL is not https. Set VOICE_GATEWAY_URL to an https endpoint before relying on the gateway lock."
+    );
+  }
+  return { url, headers, withheldSecret: Boolean(trimmed) };
+}
+
+export function resetWithheldGatewaySecretWarningForTests() {
+  withheldGatewaySecretWarning = false;
+}
+
+function redactTokenMaterial(value: string): string {
+  return value
+    .replace(/EAA[A-Za-z0-9]{8,}/g, "[redacted]")
+    .replace(/"(?:access_token|token|tokenPrefix)"\s*:\s*"[^"]*/gi, (match) => {
+      const splitAt = match.indexOf(":");
+      return `${match.slice(0, splitAt)}: "[redacted]`;
+    });
+}
+
 /** Admin desk (platform admin) keeps the full catalog. Clinic admins read their session clinic only. */
 function catalogReadScope(req: Request, res: Response): "all" | string | null {
   if (isPlatformAdminRole(req.user?.role)) return "all";
@@ -721,34 +772,36 @@ export function createMetaRouter(): Router {
     return res.status(403).json({ error: "Verification token mismatch" });
   });
 
-  // GET /api/meta/webhook-debug-log - Diagnostic endpoint to view recent inbound webhook and calling actions
-  router.get("/webhook-debug-log", (_req: Request, res: Response) => {
-    const phoneId = readSecret("META_PHONE_NUMBER_ID", "WHATSAPP_PHONE_NUMBER_ID") || "1294483843748285";
+  // GET /api/meta/webhook-debug-log - platform super-admin only. No token material.
+  router.get("/webhook-debug-log", requireAuth, requirePlatformAdmin, (_req: Request, res: Response) => {
+    const phoneId = readSecret("META_PHONE_NUMBER_ID", "WHATSAPP_PHONE_NUMBER_ID");
     const token = readSecret(
       "META_ACCESS_TOKEN",
       "META_SYSTEM_USER_TOKEN",
       "WHATSAPP_TOKEN",
       "WHATSAPP_ACCESS_TOKEN"
     );
+    const events = webhookDebugLogs.slice(-40).reverse().map((entry) => ({
+      ...entry,
+      summary: redactTokenMaterial(String(entry.summary || "")),
+    }));
     return res.json({
       callingConfig: {
-        phoneId,
+        phoneId: phoneId || "",
         hasToken: Boolean(token),
-        tokenPrefix: token ? token.slice(0, 10) + "..." : "(none)",
       },
       voiceGatewayIp: getVoiceGatewayIp() || "none",
       eventsCount: webhookDebugLogs.length,
-      events: webhookDebugLogs.slice(-40).reverse(),
+      events,
     });
   });
 
-  // POST /api/meta/register-gateway - Automatically registered by Always-Free VM on boot
+  // POST /api/meta/register-gateway - voice gateway boot registration. Shared secret, not the Meta verify token.
   router.post("/register-gateway", (req: Request, res: Response) => {
-    const { gatewayIp, secret } = req.body || {};
-    const verifyToken = getMetaVerifyToken() || "lumera_webhook_verify_2026";
-    if (secret !== verifyToken && secret !== "lumera_webhook_verify_2026") {
+    if (!voiceGatewayAuthorized(presentedGatewaySecret(req))) {
       return res.status(403).json({ error: "Unauthorized" });
     }
+    const { gatewayIp } = req.body || {};
     const cleanIp = String(gatewayIp || "").trim();
     if (cleanIp) {
       setVoiceGatewayIp(cleanIp);
@@ -764,8 +817,11 @@ export function createMetaRouter(): Router {
     return res.status(400).json({ error: "Missing gatewayIp" });
   });
 
-  // GET /api/meta/register-gateway - Query gateway status
-  router.get("/register-gateway", (_req: Request, res: Response) => {
+  // GET /api/meta/register-gateway - Query gateway status. Same secret as registration.
+  router.get("/register-gateway", (req: Request, res: Response) => {
+    if (!voiceGatewayAuthorized(presentedGatewaySecret(req))) {
+      return res.status(403).json({ error: "Unauthorized" });
+    }
     const currentIp = getVoiceGatewayIp();
     return res.json({
       status: currentIp ? "connected" : "waiting",
@@ -797,10 +853,15 @@ export function createMetaRouter(): Router {
       console.warn(
         `[Meta Webhook] Signature rejected: ${signatureDecision.error} reason=${signatureDecision.reason} secretEnv=${names}`
       );
-      if (envFlag(META_UNSIGNED_WEBHOOK_FLAG)) {
-        console.warn("[Meta Webhook] SANDBOX / LIVE TESTING: accepting inbound webhook via META_WEBHOOK_ALLOW_UNSIGNED.");
+      // The flag cannot accept a failed signature in production. Non-prod may still
+      // use it when a test or local sandbox has no other way to deliver a fixture.
+      if (!isProduction() && envFlag(META_UNSIGNED_WEBHOOK_FLAG)) {
+        console.warn("[Meta Webhook] SANDBOX / DEV-ONLY: accepting inbound webhook via META_WEBHOOK_ALLOW_UNSIGNED.");
       } else {
-        return res.status(signatureDecision.status).json({ error: signatureDecision.error });
+        // Signature failures are 403. A missing app secret stays 500 so a
+        // misconfigured deploy is distinct from a bad Meta signature.
+        const status = isProduction() && signatureDecision.status !== 500 ? 403 : signatureDecision.status;
+        return res.status(status).json({ error: signatureDecision.error });
       }
     }
 

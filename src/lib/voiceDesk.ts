@@ -1,12 +1,12 @@
+import { mayaDefaultGreeting } from "./clinicNav";
+
 export type MayaCallType = "whatsapp" | "ivrn";
 
 /** Opening line Maya speaks. A saved greeting wins. Otherwise the clinic's own name is used. */
 export function mayaOpeningGreeting(clinicName: string, customGreeting?: string): string {
   const custom = String(customGreeting || "").trim();
   if (custom) return custom;
-  const name = String(clinicName || "").trim();
-  if (!name) return "Hello! Thank you for calling. How may I assist your health appointment today?";
-  return `Hello! Thank you for calling ${name}. How may I assist your health appointment today?`;
+  return mayaDefaultGreeting(clinicName);
 }
 
 export function mayaWhatsAppLine(opts: { connected: boolean; displayNumber: string }): string {

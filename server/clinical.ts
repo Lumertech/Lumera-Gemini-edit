@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { Router, type Request, type Response } from "express";
 import {
   getDb,
+  type UserRole,
   mapAppointment,
   mapConsentArtefact,
   mapPatient,
@@ -10,7 +11,7 @@ import {
   writeAudit,
 } from "./db.ts";
 import { clinicLine, getTenantLetterhead } from "./letterhead.ts";
-import { requireAuth } from "./auth.ts";
+import { requireAuth, requireRole } from "./auth.ts";
 import { reportCaughtError } from "./error-tracker.ts";
 import { resolveAbdmMode, type AbdmMode } from "./abdm-mode.ts";
 import { maskedLast4 } from "./mask-last4.ts";
@@ -19,6 +20,7 @@ import { registerPatientDocumentConsentRoutes } from "./patient-document-consent
 import { buildPatientTimeline, presentPrescriptionForRole } from "./patient-timeline.ts";
 import { denyUnlessPatientRecordRole, denyUnlessPrescriber, isReceptionRole } from "./patient-access.ts";
 import { clinicCalendarDate, parseAppointmentListDate, resolveQueueDate } from "../src/lib/clinicDay.ts";
+import { ensureTenantSlugColumn, slugifyTenant } from "./tenant-slug.ts";
 import { HIDDEN_AMBIENT_SOURCES, hiddenVisitSourceSql, isHiddenVisitSource } from "./ambient-walkin.ts";
 import { allocateTokenNumber, writeAllocatedToken } from "./queue-tokens.ts";
 import {
@@ -151,6 +153,41 @@ function appointmentDoctorExtras(row: Record<string, unknown>): PatientTenantExt
     doctorName: String(row.doctor_name || ""),
     doctorRegNumber: String(doctor?.reg_number || ""),
   };
+}
+
+const CLINIC_SCHEDULE_ADMIN_ROLES: UserRole[] = ["super_admin", "polyclinic_admin", "CLINIC_ADMIN"];
+
+function tenantIdForPublicClinicSlug(raw: string): string {
+  const slug = slugifyTenant(raw);
+  if (!slug) return "";
+  try {
+    ensureTenantSlugColumn(getDb());
+    const row = getDb().prepare("SELECT id FROM tenants WHERE lower(slug) = ?").get(slug) as { id?: string } | undefined;
+    return String(row?.id || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+/** Session clinic, or a public slug. Query tenantId is never a fallback. */
+function resolveAvailableSlotsTenant(req: Request, res: Response): string | null {
+  const sessionTenant = String(req.user?.tenantId || "").trim();
+  const slug = String(req.query.slug || req.query.clinicSlug || "").trim();
+  const slugTenant = slug ? tenantIdForPublicClinicSlug(slug) : "";
+  if (slug && !slugTenant) {
+    res.status(404).json({ error: "Clinic not found" });
+    return null;
+  }
+  if (sessionTenant && slugTenant && sessionTenant !== slugTenant) {
+    res.status(403).json({ error: "Forbidden" });
+    return null;
+  }
+  const tenantId = sessionTenant || slugTenant;
+  if (!tenantId) {
+    res.status(404).json({ error: "Clinic not found" });
+    return null;
+  }
+  return tenantId;
 }
 
 function requireTenant(req: Request, res: Response): string | null {
@@ -1774,7 +1811,7 @@ export function createClinicalRouter(): Router {
     res.json({ ok: true, settings });
   });
 
-  api.post("/calendar/schedule-settings", requireAuth, (req, res) => {
+  api.post("/calendar/schedule-settings", requireAuth, requireRole(...CLINIC_SCHEDULE_ADMIN_ROLES), (req, res) => {
     const tenantId = requireTenant(req, res);
     if (!tenantId) return;
     const body = (req.body || {}) as Record<string, unknown>;
@@ -1813,7 +1850,8 @@ export function createClinicalRouter(): Router {
 
   // Public/Patient Slot Availability (Returns only available slot times, zero patient data)
   api.get("/calendar/available-slots", (req, res) => {
-    const tenantId = String(req.query.tenantId || (req as any).user?.tenantId || "tenant-lumera-main").trim();
+    const tenantId = resolveAvailableSlotsTenant(req, res);
+    if (!tenantId) return;
     const date = String(req.query.date || "").trim() || clinicCalendarDate(new Date(), tenantTimezone(tenantId));
     const doctorId = String(req.query.doctorId || "").trim();
     const data = listSlotOccupancy(getDb(), {
