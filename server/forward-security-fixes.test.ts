@@ -288,6 +288,21 @@ describe("forward security and voice fixes", () => {
       assert.equal(asDoctor.status, 200);
       assert.match(String(asDoctor.json.speechText), /Staff Clinic|1 Staff Road/);
       assert.doesNotMatch(String(asDoctor.json.speechText), /Other Clinic|9 Other Road/);
+      const admin = seedUser({
+        id: `user-staff-admin-${suffix}`,
+        tenantId: tenantA,
+        role: "admin",
+        email: `staff.admin.${suffix}@example.com`,
+      });
+      const asAdmin = await jsonRequest(
+        port,
+        "POST",
+        "/api/voice/inbound",
+        { from: "+919111122244", message: "Where is the clinic located?" },
+        { Authorization: `Bearer ${admin}` }
+      );
+      assert.equal(asAdmin.status, 200);
+      assert.match(String(asAdmin.json.speechText), /Staff Clinic|1 Staff Road/);
     } finally {
       restoreEnv({
         NODE_ENV: envSnapshot.NODE_ENV,
@@ -542,8 +557,9 @@ describe("forward security and voice fixes", () => {
     const payload = gateway.slice(gateway.indexOf("payload = {"), gateway.indexOf("logger.info", gateway.indexOf("payload = {")));
     assert.match(payload, /phoneNumberId/);
     assert.doesNotMatch(payload, /tenantId/);
-    assert.match(gateway, /def offer_authorized/);
-    assert.match(gateway, /if not offer_authorized\(request\)/);
+    assert.match(gateway, /def offer_presented_secret/);
+    assert.match(gateway, /privileged and VOICE_GATEWAY_SECRET/);
+    assert.doesNotMatch(gateway, /if not offer_authorized/);
     const meta = fs.readFileSync(path.join(root, "server/meta.ts"), "utf8");
     assert.match(meta, /X-Voice-Gateway-Secret/);
     assert.doesNotMatch(fs.readFileSync(path.join(root, "deploy/webrtc-voice-gateway/provision-free-vm.sh"), "utf8"), /lumera_webhook_verify_2026/);

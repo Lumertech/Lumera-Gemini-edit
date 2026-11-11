@@ -1,6 +1,6 @@
 import type { Express, Request, Response } from "express";
 import type { GoogleGenAI } from "@google/genai";
-import { CLINICIAN_ROLES, requireAuth } from "./auth.ts";
+import { CLINICIAN_ROLES, isPlatformAdminRole, requireAuth } from "./auth.ts";
 import { getDb } from "./db.ts";
 import { clinicLine, getTenantLetterhead } from "./letterhead.ts";
 import { AI_RUPEE_OUTPUT_RULE } from "./india-currency-copy.ts";
@@ -148,17 +148,17 @@ export function detectIndicBooking(message: string): boolean {
   );
 }
 
+function isVoiceStaffRole(role: string | undefined): boolean {
+  const value = String(role || "");
+  if (value === "patient") return false;
+  return (CLINICIAN_ROLES as readonly string[]).includes(value) || isPlatformAdminRole(value);
+}
+
 function inboundVoiceAccess(req: Request): { tenantId: string; authenticated: boolean } | null {
   const sessionTenant = String(req.user?.tenantId || "").trim();
-  const role = String(req.user?.role || "");
   // These routes skip cookie CSRF. A patient session must not drive booking or
-  // clinic WhatsApp sends. Only a clinic staff session may stand in for the gateway.
-  const staffSession = Boolean(
-    req.user &&
-      sessionTenant &&
-      role !== "patient" &&
-      (CLINICIAN_ROLES as readonly string[]).includes(role)
-  );
+  // clinic WhatsApp sends. Clinic staff, including the legacy admin alias, may.
+  const staffSession = Boolean(req.user && sessionTenant && isVoiceStaffRole(req.user.role));
   if (staffSession) return { tenantId: sessionTenant, authenticated: true };
   if (!voiceGatewayAuthorized(req.get("x-voice-gateway-secret"))) return null;
   const body = (req.body || {}) as {
@@ -177,7 +177,7 @@ function voiceSettingsTenant(req: Request, res: Response): string | null {
     res.status(401).json({ error: "Authentication required" });
     return null;
   }
-  if (req.user.role === "patient" || !(CLINICIAN_ROLES as readonly string[]).includes(req.user.role)) {
+  if (!isVoiceStaffRole(req.user.role)) {
     res.status(403).json({ error: "Insufficient permissions" });
     return null;
   }

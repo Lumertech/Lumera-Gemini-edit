@@ -318,14 +318,19 @@ async def handle_caller_utterance(call_id: str, pcm_16k: np.ndarray, out_track: 
             tenant_id = active_calls[call_id].get("tenantId") or ""
 
         # 3. Send to Lumera Cloud Run cognitive brain
+        privileged = False
         phone_number_id = ""
         if call_id in active_calls:
-            phone_number_id = active_calls[call_id].get("phoneNumberId", "") or ""
+            privileged = bool(active_calls[call_id].get("privileged"))
+            if privileged:
+                phone_number_id = active_calls[call_id].get("phoneNumberId", "") or ""
         headers = {
             "Content-Type": "application/json",
             "Origin": "https://www.mylumera.in",
         }
-        if VOICE_GATEWAY_SECRET:
+        # Only an offer that presented the secret may reuse it. A public offer
+        # still gets SDP so the live Cloud Run revision can answer during rollout.
+        if privileged and VOICE_GATEWAY_SECRET:
             headers["X-Voice-Gateway-Secret"] = VOICE_GATEWAY_SECRET
         async with aiohttp.ClientSession(headers=headers) as session:
             payload = {
@@ -561,11 +566,11 @@ async def handle_health(request):
         "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     })
 
-def offer_authorized(request) -> bool:
-    """When VOICE_GATEWAY_SECRET is set, only Cloud Run may open a call that will reuse it."""
+def offer_presented_secret(request) -> bool:
+    """True only when the caller proved it holds VOICE_GATEWAY_SECRET. Missing secret is not a 403."""
     expected = VOICE_GATEWAY_SECRET
     if not expected:
-        return True
+        return False
     provided = request.headers.get("X-Voice-Gateway-Secret", "") or ""
     expected_b = expected.encode("utf-8")
     provided_b = provided.encode("utf-8")
@@ -575,8 +580,7 @@ def offer_authorized(request) -> bool:
     return hmac.compare_digest(provided_b, expected_b)
 
 async def handle_answer_offer(request):
-    if not offer_authorized(request):
-        return web.json_response({"error": "Unauthorized"}, status=403)
+    privileged = offer_presented_secret(request)
     try:
         body = await request.json()
     except Exception:
@@ -605,6 +609,8 @@ async def handle_answer_offer(request):
     receptionist_name = body.get("receptionistName", "")
     custom_greeting = body.get("customGreeting", "")
     phone_number_id = body.get("phoneNumberId") or body.get("phone_number_id") or ""
+    if not privileged:
+        phone_number_id = ""
 
     logger.info(f"[{call_id}] Initializing WebRTC call for tenant='{tenant_id}' clinic='{clinic_name}' caller={caller_phone}")
 
@@ -660,6 +666,7 @@ async def handle_answer_offer(request):
         "callerPhone": caller_phone,
         "tenantId": tenant_id,
         "phoneNumberId": phone_number_id,
+        "privileged": privileged,
         "startTime": time.time(),
         "history": [],
         "sdpAnswer": final_sdp,
