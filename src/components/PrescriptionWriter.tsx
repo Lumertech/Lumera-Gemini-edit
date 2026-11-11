@@ -93,6 +93,7 @@ import {
   shouldConfirmAiReplace,
   type RxClinicalFields,
 } from '../lib/rxDraft';
+import { scribeAcceptanceAllowsPersist, unacceptedAiMustNotPersist } from '../lib/scribeAcceptance';
 
 interface PrescriptionWriterProps {
   currentPatient: Patient;
@@ -634,7 +635,9 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
       skipInitialAutosave.current = false;
       return;
     }
-    onAutoSave?.(buildCurrentRx());
+    const draft = buildCurrentRx();
+    if (unacceptedAiMustNotPersist(draft)) return;
+    onAutoSave?.(draft);
   }, [
     chiefComplaints,
     diagnosis,
@@ -692,7 +695,8 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     return { ...rx, reviewedBy: currentDoctor.id };
   };
 
-  const handleApplySoapToRx = (soap: SoapNote, meta: { transcript: string; source: string }): boolean => {
+  const handleApplySoapToRx = (soap: SoapNote, meta: { transcript: string; source: string; accepted?: boolean }): boolean => {
+    if (!scribeAcceptanceAllowsPersist({ accepted: meta.accepted })) return false;
     if (shouldConfirmAiReplace({ aiSource, aiGeneratedAt })) {
       const confirmed = window.confirm(
         'Replace the current AI draft with this transcript? Earlier AI-filled fields will be replaced.'
@@ -790,9 +794,9 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
       setTranscriptHashValue(mapped.transcriptHash || '');
       setTranscriptSummary(mapped.transcriptSummary || '');
       setAmbientRecordingDurationSec(mapped.ambientRecordingDurationSec);
-      setReviewedBy('');
-      setAiAcknowledged(false);
-      setPendingAiFields(mapped.pendingAiFields);
+      setReviewedBy(currentDoctor.id);
+      setAiAcknowledged(true);
+      setPendingAiFields([]);
       onAutoSave?.(
         {
           ...buildCurrentRx(),
@@ -830,9 +834,9 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
           transcriptHash: mapped.transcriptHash,
           transcriptSummary: mapped.transcriptSummary,
           ambientRecordingDurationSec: mapped.ambientRecordingDurationSec,
-          reviewedBy: undefined,
-          aiAcknowledged: false,
-          pendingAiFields: mapped.pendingAiFields,
+          reviewedBy: currentDoctor.id,
+          aiAcknowledged: true,
+          pendingAiFields: [],
         },
         { immediate: true }
       );
@@ -917,7 +921,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     : [];
 
   return (
-    <div className="space-y-4 w-full max-w-6xl min-w-0 mx-auto pb-16 overflow-x-hidden">
+    <div className="space-y-4 w-full max-w-6xl min-w-0 mx-auto pb-16 overflow-y-visible overflow-x-hidden">
       {hepToast && (
         <div
           role="status"

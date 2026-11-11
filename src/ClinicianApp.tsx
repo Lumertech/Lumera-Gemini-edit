@@ -69,6 +69,7 @@ import {
   writerKey,
   type PatientDraftSession,
 } from './lib/rxDraft';
+import { unacceptedAiMustNotPersist } from './lib/scribeAcceptance';
 
 export default function ClinicianApp() {
   const { user } = useAuth();
@@ -389,6 +390,7 @@ export default function ClinicianApp() {
 
   const handleAutoSaveDraft = (rx: Prescription, options?: { immediate?: boolean }) => {
     if (rx.patientId !== currentPatient.id) return;
+    if (unacceptedAiMustNotPersist(rx)) return;
     if (options?.immediate) saveImmediateRef.current = true;
     setCurrentDraftRx(rx);
   };
@@ -458,8 +460,9 @@ export default function ClinicianApp() {
       transcriptHash: mapped.transcriptHash,
       transcriptSummary: mapped.transcriptSummary,
       ambientRecordingDurationSec: mapped.ambientRecordingDurationSec,
-      pendingAiFields: mapped.pendingAiFields,
-      aiAcknowledged: false,
+      pendingAiFields: [],
+      aiAcknowledged: true,
+      reviewedBy: currentDoctor.id,
       whatsappSentStatus: 'unsent',
     });
   };
@@ -1061,7 +1064,7 @@ export default function ClinicianApp() {
           )}
 
           {showRxStudio && (
-            <div className="flex-1 flex flex-col overflow-y-auto relative">
+            <div className="flex-1 min-w-0 flex flex-col overflow-y-auto overflow-x-hidden relative">
               <div className="bg-white border-b border-slate-200 px-4 py-1.5 flex items-center justify-between text-xs text-slate-500 shadow-xs z-10 shrink-0">
                 <span className="font-medium flex items-center gap-1.5">
                   <span className={`inline-block w-2 h-2 rounded-full ${autoSaveStatus === 'saved' ? 'bg-emerald-500' : autoSaveStatus === 'saving' ? 'bg-amber-500 animate-pulse' : 'bg-slate-400'}`}></span>

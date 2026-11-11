@@ -3,7 +3,7 @@ import { escapeHtml } from "./policy-html.ts";
 import { applyHtmlDocumentSecurityHeaders } from "./html-security-headers.ts";
 import { publicPlansResponse } from "./pricing-catalog.ts";
 import { buildPricingPageModel, type PricingPageModel, type PublicPlans } from "../src/lib/pricingModel.ts";
-import { ANNUAL_REFUND, CONTACT_EMAIL, MONTHLY_REFUND, TRIAL_REFUND } from "../src/lib/pricingCopy.ts";
+import { AMBIENT_SCRIBE_MISSION, ANNUAL_REFUND, CONTACT_EMAIL, MONTHLY_REFUND, TRIAL_REFUND } from "../src/lib/pricingCopy.ts";
 import { LEGAL_ENTITY_NAME, PRODUCT_LOGO_ALT, PRODUCT_LOGO_SRC, PRODUCT_NAME } from "../src/brand.ts";
 
 export const PRICING_HTML_PATH = "/pricing";
@@ -249,7 +249,7 @@ function renderSiteFooter(): string {
           <span class="wordmark wordmark-sm">${escapeHtml(PRODUCT_NAME)}</span>
         </a>
       </div>
-      <p class="mission">Empowering Indian healthcare with multilingual ambient scribing (coming soon), automated WhatsApp patient self-service, and ABHA linking (in ABDM sandbox testing; not yet live).</p>
+      <p class="mission">${escapeHtml(AMBIENT_SCRIBE_MISSION)}</p>
       <nav class="footer-links" aria-label="Policies">
         <a href="/pricing">Pricing</a>
         <a href="/terms-of-service">Terms of Service</a>

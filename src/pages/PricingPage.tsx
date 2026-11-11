@@ -4,7 +4,7 @@ import { apiFetchResponse } from "../api/http";
 import { BrandMark } from "../components/BrandMark";
 import { LEGAL_ENTITY_NAME } from "../brand";
 import { buildPricingPageModel, type PricingPageModel, type PublicPlans } from "../lib/pricingModel";
-import { CONTACT_EMAIL } from "../lib/pricingCopy";
+import { AMBIENT_SCRIBE_MISSION, CONTACT_EMAIL } from "../lib/pricingCopy";
 
 export function PricingPage() {
   const [model, setModel] = useState<PricingPageModel | null>(null);
@@ -182,7 +182,7 @@ export function PricingPage() {
             <BrandMark size="sm" wordmarkClassName="font-manrope text-lg font-bold text-white" />
           </div>
           <p className="mx-auto max-w-2xl text-xs text-slate-400">
-            Empowering Indian healthcare with multilingual ambient scribing (coming soon), automated WhatsApp patient self-service, and ABHA linking (in ABDM sandbox testing; not yet live).
+            {AMBIENT_SCRIBE_MISSION}
           </p>
           <div className="flex flex-wrap justify-center gap-4 border-t border-slate-900 pt-4 text-xs font-medium text-slate-300 sm:gap-6">
             <a href="/pricing" className="no-underline hover:text-blue-400">Pricing</a>

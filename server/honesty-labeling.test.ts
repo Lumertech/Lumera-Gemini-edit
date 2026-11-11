@@ -50,7 +50,15 @@ describe("Compliance #18 honesty labeling (LandingPage / Admin Meta)", () => {
     const landing = readRepo("src/components/LandingPage.tsx");
     assert.match(landing, /badgeText: "AI Healthcare OS & Voice Receptionist"/);
     assert.match(landing, /ABDM records/);
-    assert.match(landing, /FHIR R4 Bundle output/);
+    assert.match(landing, /Nothing is saved until the doctor accepts/);
+    assert.match(landing, /Recorded patient-consent tick before the microphone starts/);
+    assert.match(landing, /Editable SOAP note and draft prescription/);
+    assert.doesNotMatch(landing, /Zero typing/);
+    assert.doesNotMatch(landing, /SNOMED-CT/);
+    assert.doesNotMatch(landing, /FHIR R4 Bundle output/);
+    assert.doesNotMatch(landing, /ambient scribing \(coming soon\)/);
+    assert.doesNotMatch(landing, /Eliminates 3\+ hours/);
+    assert.doesNotMatch(landing, /Not a single keystroke/);
     assert.doesNotMatch(landing, /ABDM-aligned/);
     assert.doesNotMatch(landing, /NHA sandbox/);
     assert.match(landing, /ABDM sandbox milestone path/);
