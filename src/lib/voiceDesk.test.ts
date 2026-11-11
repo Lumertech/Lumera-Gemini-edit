@@ -17,23 +17,29 @@ describe("Maya voice desk copy", () => {
     assert.match(mayaWhatsAppLine({ connected: true, displayNumber: "+91 98000 12000" }), /\+91 98000 12000/);
   });
 
-  it("reports 1-ring pickup instead of a static IVR standby", () => {
+  it("reports whether Maya answers calls instead of a pickup or IVR standby label", () => {
     assert.equal(
       mayaDeskStatus({ loaded: true, inCall: false, callType: "ivrn", voiceEnabled: true, connected: true }),
-      "1-ring WhatsApp pickup on — PSTN IVR status is not available"
+      "Maya answers WhatsApp calls — PSTN IVR status is not available"
     );
     assert.equal(
       mayaDeskStatus({ loaded: true, inCall: false, callType: "whatsapp", voiceEnabled: false, connected: true }),
-      "1-ring pickup off — messaging only"
+      "Maya is not answering calls — messaging only"
     );
-    assert.equal(mayaDeskStatus({ loaded: true, inCall: false, callType: "whatsapp", voiceEnabled: true, connected: false }).includes("IVR"), false);
+    assert.equal(
+      mayaDeskStatus({ loaded: true, inCall: false, callType: "whatsapp", voiceEnabled: true, connected: true }),
+      "Maya answers calls"
+    );
+    const standby = mayaDeskStatus({ loaded: true, inCall: false, callType: "whatsapp", voiceEnabled: true, connected: false });
+    assert.equal(standby.includes("IVR"), false);
+    assert.equal(standby.toLowerCase().includes("pickup"), false);
   });
 
-  it("lets clinic managers edit and keeps reception and platform admin read-only", () => {
-    assert.equal(canEditClinicVoiceSettings("doctor"), true);
+  it("lets clinic admins and super admin edit, and keeps doctors read-only", () => {
+    assert.equal(canEditClinicVoiceSettings("doctor"), false);
     assert.equal(canEditClinicVoiceSettings("CLINIC_ADMIN"), true);
     assert.equal(canEditClinicVoiceSettings("polyclinic_admin"), true);
+    assert.equal(canEditClinicVoiceSettings("super_admin"), true);
     assert.equal(canEditClinicVoiceSettings("receptionist"), false);
-    assert.equal(canEditClinicVoiceSettings("super_admin"), false);
   });
 });

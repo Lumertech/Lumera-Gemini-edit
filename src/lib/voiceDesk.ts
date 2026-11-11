@@ -32,12 +32,13 @@ export function mayaDeskStatus(opts: {
   }
   if (!opts.loaded) return "Checking voice desk status…";
   if (!opts.connected) return "WhatsApp number not connected";
-  if (!opts.voiceEnabled) return "1-ring pickup off — messaging only";
-  if (opts.callType === "ivrn") return "1-ring WhatsApp pickup on — PSTN IVR status is not available";
-  return "1-ring pickup on";
+  if (!opts.voiceEnabled) return "Maya is not answering calls — messaging only";
+  if (opts.callType === "ivrn") return "Maya answers WhatsApp calls — PSTN IVR status is not available";
+  return "Maya answers calls";
 }
 
-const CLINIC_VOICE_EDITOR_ROLES = new Set(["doctor", "polyclinic_admin", "CLINIC_ADMIN"]);
+/** Matches voice-settings save: clinic admin, polyclinic admin, and platform admin. Not doctors. */
+const CLINIC_VOICE_EDITOR_ROLES = new Set(["CLINIC_ADMIN", "polyclinic_admin", "super_admin", "admin"]);
 
 export function canEditClinicVoiceSettings(role?: string | null): boolean {
   return CLINIC_VOICE_EDITOR_ROLES.has(String(role || ""));

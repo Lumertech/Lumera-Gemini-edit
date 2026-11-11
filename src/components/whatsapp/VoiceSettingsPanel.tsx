@@ -230,7 +230,7 @@ export const VoiceSettingsPanel: React.FC = () => {
               ) : null}
             </div>
             {!canEdit ? (
-              <p className="text-[11px] text-slate-500 mt-1">Only a clinic admin or manager can edit these settings.</p>
+              <p className="text-[11px] text-slate-500 mt-1">Only a clinic admin can edit these settings.</p>
             ) : null}
           </div>
 
@@ -301,7 +301,7 @@ export const VoiceSettingsPanel: React.FC = () => {
               />
             </div>
             <p className="text-xs text-slate-600 mt-3 leading-relaxed">
-              When a patient calls your clinic's WhatsApp number, the call is answered live on the first ring. {receptionistName} speaks naturally in English, Hindi, or regional languages, answers queries with your clinic profile, and books appointments into your calendar.
+              When a patient calls your clinic's WhatsApp number, Maya answers the call. {receptionistName} speaks naturally in English, Hindi, or regional languages, answers queries with your clinic profile, and books appointments into your calendar.
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
               <span className="inline-flex items-center gap-1 text-[11px] font-medium bg-white px-2 py-0.5 rounded-md border border-slate-200 text-slate-700">

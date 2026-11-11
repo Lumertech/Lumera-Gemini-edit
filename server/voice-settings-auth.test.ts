@@ -61,24 +61,33 @@ describe("POST /api/whatsapp/voice-settings clinic manager guard", () => {
     );
     assert.equal(reception.status, 403);
 
-    const platform = await jsonRequest(
+    const doctor = await jsonRequest(
       port,
       "POST",
       "/api/whatsapp/voice-settings",
-      { escalationPhone: "+91 98200 11111" },
-      { "x-test-role": "super_admin" }
+      { voiceEnabled: true, escalationPhone: "+91 98200 11111" },
+      { "x-test-role": "doctor" }
     );
-    assert.equal(platform.status, 403);
+    assert.equal(doctor.status, 403);
 
     const invalid = await jsonRequest(
       port,
       "POST",
       "/api/whatsapp/voice-settings",
       { escalationPhone: "+1 202 555 0100" },
-      { "x-test-role": "doctor" }
+      { "x-test-role": "CLINIC_ADMIN" }
     );
     assert.equal(invalid.status, 400);
     assert.match(String(invalid.json.error || ""), /Indian/);
+
+    const platform = await jsonRequest(
+      port,
+      "POST",
+      "/api/whatsapp/voice-settings",
+      { voiceEnabled: true, escalationPhone: "+91 98200 33333" },
+      { "x-test-role": "super_admin" }
+    );
+    assert.equal(platform.status, 200);
 
     const saved = await jsonRequest(
       port,

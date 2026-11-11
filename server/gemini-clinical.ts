@@ -1,5 +1,5 @@
 import type { Express, Request, Response } from "express";
-import { CLINIC_MANAGER_ROLES, requireAuth, requireRole } from "./auth.ts";
+import { requireAuth, requireRole, USER_MANAGER_ROLES } from "./auth.ts";
 import { isIndianPhoneNumber } from "../src/lib/indianPhone.ts";
 import { cleanVisitId, hasAmbientScribeConsent, latestOpenConsentForPatient, mountAmbientScribeConsentRoutes, transcribeAppointmentId } from "./ambient-scribe-consent.ts";
 import { maxTranscribeBase64Chars, transcribeJsonParser } from "./json-body.ts";
@@ -281,12 +281,13 @@ export function mountGeminiClinicalRoutes(app: Express) {
   );
 
   mountAmbientScribeConsentRoutes(app);
-  // Runs before the voice-settings handler in gemini-voice.ts. Managers may save;
-  // an escalation number, when present, must be an Indian mobile or landline.
+  // Runs before the voice-settings handler in gemini-voice.ts.
+  // Clinic admin, polyclinic admin, and super admin may save. Doctors may not.
+  // An escalation number, when present, must be an Indian mobile or landline.
   app.post(
     "/api/whatsapp/voice-settings",
     requireAuth,
-    requireRole(...CLINIC_MANAGER_ROLES),
+    requireRole(...USER_MANAGER_ROLES),
     (req: Request, res: Response, next: NextFunction) => {
       const phone = (req.body as { escalationPhone?: unknown } | undefined)?.escalationPhone;
       if (typeof phone === "string" && phone.trim() && !isIndianPhoneNumber(phone)) {

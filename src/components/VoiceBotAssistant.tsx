@@ -354,8 +354,8 @@ export const VoiceBotAssistant: React.FC<VoiceBotAssistantProps> = ({
             <h2 className="text-sm font-bold text-slate-900">Maya voice settings</h2>
             <p className="text-xs text-slate-500 mt-1">
               {canEdit
-                ? 'Clinic admins and managers can change pickup and the transfer number. Saved through the voice-settings API.'
-                : 'Only a clinic admin or manager can edit these settings.'}
+                ? 'Clinic admins can change whether Maya answers calls, and the transfer number. Saved through the voice-settings API.'
+                : 'Only a clinic admin can edit these settings.'}
             </p>
           </div>
           {canEdit ? (
@@ -384,17 +384,17 @@ export const VoiceBotAssistant: React.FC<VoiceBotAssistantProps> = ({
             className="mt-1"
             checked={voiceEnabled}
             disabled={!canEdit}
-            data-testid="maya-one-ring-pickup"
+            data-testid="maya-answers-calls"
             onChange={(e) => {
               setVoiceEnabled(e.target.checked);
               setSettingsSaved(false);
             }}
           />
           <span>
-            <span className="font-semibold">1-ring pickup</span>
+            <span className="font-semibold">Maya answers calls</span>
             <span className="block text-xs text-slate-500 mt-0.5">
               {voiceEnabled
-                ? 'On. Maya answers WhatsApp calls on the first ring.'
+                ? 'On. WhatsApp calls are answered by Maya.'
                 : 'Off. Calls are declined and patients are sent to WhatsApp chat.'}
             </span>
           </span>
