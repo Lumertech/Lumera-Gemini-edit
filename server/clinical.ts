@@ -1652,8 +1652,14 @@ export function createClinicalRouter(): Router {
       res.status(201).json(withPatientTenant(req, tenantId, { appointment, notify }));
     } catch (err: unknown) {
       const status = typeof err === "object" && err && "status" in err ? Number((err as { status: number }).status) : 500;
-      console.error("Appointment create failed:", err instanceof Error ? err.name : "Error");
-      res.status(status || 500).json({ error: "Failed to create appointment" });
+      const safeStatus = status || 500;
+      if (safeStatus >= 500) {
+        console.error("Appointment create failed:", err instanceof Error ? err.name : "Error");
+        res.status(safeStatus).json({ error: "Failed to create appointment" });
+        return;
+      }
+      const message = err instanceof Error ? err.message : "Failed to create appointment";
+      res.status(safeStatus).json({ error: message });
     }
   });
 
