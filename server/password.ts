@@ -9,6 +9,16 @@ export function passwordRuleError(password: string): string | null {
   return null;
 }
 
+/** Clinic signup. Empty passwords stay on the temporary-password path. */
+export function signupPasswordRuleError(password: string): string | null {
+  const lengthError = passwordRuleError(password);
+  if (lengthError) return lengthError;
+  if (!/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/[0-9]/.test(password)) {
+    return "Password must include an uppercase letter, a lowercase letter, and a digit";
+  }
+  return null;
+}
+
 /** Usable temp credential for Admin UM create/reset. Never log the return value. */
 export function generateTemporaryPassword(): string {
   const token = randomBytes(6).toString("base64url");

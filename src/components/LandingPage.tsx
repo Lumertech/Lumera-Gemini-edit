@@ -39,8 +39,7 @@ import { LEGAL_ENTITY_NAME, PRODUCT_NAME } from "../brand";
 import { META_TECH_PROVIDER_STATEMENT } from "../lib/metaStatus";
 import { AMBIENT_SCRIBE_MISSION, CONTACT_EMAIL } from "../lib/pricingCopy";
 import { BrandMark } from "./BrandMark";
-import { destinationAfterAuth, useAuth } from "../auth/AuthContext";
-import { goAfterAuth, useNav } from "../nav/NavigationContext";
+import { useNav } from "../nav/NavigationContext";
 import { surfaceToPath } from "../nav/surfaces";
 
 interface SitePayload {
@@ -216,10 +215,7 @@ const AMBIENT_DEMOS = [
 
 export const LandingPage: React.FC = () => {
   const [site, setSite] = useState<SitePayload>(FALLBACK);
-  const { demoLogin, demoLoginEnabled } = useAuth();
-  const { go, loginNext, loginNextPath } = useNav();
-  const [demoBusy, setDemoBusy] = useState(false);
-  const [demoError, setDemoError] = useState("");
+  const { go } = useNav();
 
   // Ambient Scribe Interactive Simulator State
   const [selectedAmbientIndex, setSelectedAmbientIndex] = useState(0);
@@ -271,21 +267,6 @@ export const LandingPage: React.FC = () => {
   const handleResetChat = () => {
     setChatStep(1);
     setSelectedSlot(null);
-  };
-
-  const handleTryDemo = async () => {
-    setDemoBusy(true);
-    setDemoError("");
-    try {
-      const res = await demoLogin();
-      if (res.user) {
-        goAfterAuth(go, destinationAfterAuth(res.user, loginNext), loginNextPath);
-      }
-    } catch (err) {
-      setDemoError(err instanceof Error ? err.message : "Demo sign in failed.");
-    } finally {
-      setDemoBusy(false);
-    }
   };
 
   return (
@@ -352,23 +333,9 @@ export const LandingPage: React.FC = () => {
             <ArrowRight className="w-4 h-4 text-blue-200" />
           </a>
 
-          {demoLoginEnabled ? (
-            <button
-              type="button"
-              data-testid="landing-try-demo"
-              onClick={handleTryDemo}
-              disabled={demoBusy}
-              className="mt-4 inline-flex items-center gap-2 px-6 py-2.5 rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 text-sm font-semibold text-white transition-colors disabled:opacity-60"
-            >
-              <Play className="w-4 h-4 text-emerald-300" />
-              <span>{demoBusy ? "Starting demo…" : "Try the demo"}</span>
-            </button>
-          ) : null}
-          {demoError ? <p className="mt-2 text-xs text-rose-300">{demoError}</p> : null}
-
           <div className="mt-4 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-xs text-slate-400">
             <span className="flex items-center gap-1.5">
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> 30-day free trial
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> 7-day free trial
             </span>
             <span className="flex items-center gap-1.5">
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> No Credit Card Required
@@ -937,7 +904,7 @@ export const LandingPage: React.FC = () => {
             Ready to Experience the AI Clinical Operating System?
           </h3>
           <p className="text-slate-300 text-xs sm:text-sm max-w-xl mx-auto">
-            Start a 30-day free trial. No card needed. ABDM integration is in sandbox testing and not yet live. We follow India's DPDP Act in how we handle data.
+            Start a 7-day free trial. No card needed. ABDM integration is in sandbox testing and not yet live. We follow India's DPDP Act in how we handle data.
           </p>
           <div className="pt-2">
             <a

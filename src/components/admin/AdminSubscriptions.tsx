@@ -342,8 +342,9 @@ export const AdminSubscriptions: React.FC = () => {
             />
           </label>
           <label className="text-xs font-semibold">
-            Extend days
+            Extend trial (days)
             <input
+              data-testid="trial-extend-days"
               className="mt-1 w-full border rounded-lg px-2 py-1.5"
               type="number"
               value={form.extendDays}

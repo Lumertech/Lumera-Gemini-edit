@@ -15,7 +15,6 @@ import {
   MessageSquare,
   KeyRound,
   ArrowLeft,
-  Zap,
 } from "lucide-react";
 import { apiFetchResponse } from "../api/http";
 import { destinationAfterAuth, useAuth } from "../auth/AuthContext";
@@ -42,7 +41,6 @@ import {
 } from "../lib/practiceOnboarding";
 import { PolyclinicSpecialty } from "../types";
 import { BrandMark } from "../components/BrandMark";
-import { DEMO_LOGIN_MATRIX, DEMO_PASSWORD } from "../lib/demoAccounts";
 import { showFacebookOAuthButton, showGoogleOAuthButton } from "../lib/oauthUi";
 import { billingSelectionFromSearch, type BillingCycle, type PublicPlans } from "../lib/pricingModel";
 import { TrialTermsPanel } from "../components/TrialTermsPanel";
@@ -136,8 +134,6 @@ const WhatsAppPhoneRow: React.FC<{
 export const LoginPage: React.FC = () => {
   const {
     login,
-    demoLogin,
-    demoLoginEnabled,
     oauthLogin,
     verifyWhatsAppOtp,
     sendWhatsAppOtp,
@@ -480,31 +476,6 @@ export const LoginPage: React.FC = () => {
     }
   };
 
-  // Explicit one-click demo. Server holds the seeded credentials; shown only when DEMO_LOGIN_ENABLED is set.
-  const [demoNotice, setDemoNotice] = useState("");
-  const handleQuickDemoClinician = async (demoRole?: "doctor" | "admin") => {
-    setBusy(true);
-    setError("");
-    setDemoNotice("");
-
-    try {
-      const res = await demoLogin(demoRole);
-      if (res.user) {
-        goAfterAuth(go, destinationAfterAuth(res.user, loginNext), loginNextPath);
-      } else {
-        const message = "Demo sign-in did not start a session. Please try again.";
-        setError(message);
-        setDemoNotice(message);
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Demo sign in failed.";
-      setError(message);
-      setDemoNotice(message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
   // Handle Google & Facebook SSO
   const handleOAuthSignIn = async (
     provider: "google" | "facebook",
@@ -618,6 +589,10 @@ export const LoginPage: React.FC = () => {
     e.preventDefault();
     if (!agreedToTerms) {
       setError("Agree to the Terms of Service and Refund policy before starting the trial.");
+      return;
+    }
+    if (adminPassword.length < 8 || !/[a-z]/.test(adminPassword) || !/[A-Z]/.test(adminPassword) || !/[0-9]/.test(adminPassword)) {
+      setError("Password must be at least 8 characters and include an uppercase letter, a lowercase letter, and a digit.");
       return;
     }
     setBusy(true);
@@ -1293,66 +1268,9 @@ export const LoginPage: React.FC = () => {
                   )}
                 </div>
 
-                {/* SANDBOX demo matrix */}
-                <div className="pt-2 border-t border-slate-800/60 space-y-2">
-                  <p className="text-[10px] uppercase tracking-wider text-amber-400/90 font-semibold">SANDBOX / DEMO logins · password {DEMO_PASSWORD}</p>
-                  <p className="text-[10px] text-slate-500" data-testid="admin-password-login-note">
-                    `admin@lumera.me` / super_admin completes on email+password (no WhatsApp OTP). Clinician and patient logins still require OTP on production.
-                  </p>
-                  <select
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-[11px] text-slate-200"
-                    onChange={(e) => {
-                      const acct = DEMO_LOGIN_MATRIX.find((a) => a.email === e.target.value);
-                      if (!acct) return;
-                      setEmail(acct.email);
-                      setPassword(DEMO_PASSWORD);
-                    }}
-                    data-testid="demo-account-picker"
-                  >
-                    <option value="">Fill a demo account…</option>
-                    {DEMO_LOGIN_MATRIX.map((a) => (
-                      <option key={a.email} value={a.email}>
-                        {a.email} · {a.role} · {a.practiceLine}{a.displaySpecialty || a.specialty ? ` · ${a.displaySpecialty || a.specialty}` : ""}
-                      </option>
-                    ))}
-                  </select>
-                  {demoLoginEnabled ? (
-                    <div className="space-y-2">
-                      <div className="flex flex-col gap-2">
-                        <button
-                          type="button"
-                          onClick={() => void handleQuickDemoClinician()}
-                          disabled={busy}
-                          data-testid="quick-demo-login"
-                          className="w-full py-2 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 text-slate-300 hover:text-white text-xs font-medium transition-colors flex items-center justify-center gap-1.5"
-                        >
-                          <Zap className="w-3.5 h-3.5 text-amber-400" />
-                          <span>Quick Demo — Doctor</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void handleQuickDemoClinician("admin")}
-                          disabled={busy}
-                          data-testid="quick-demo-admin"
-                          className="w-full py-2 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 text-slate-300 hover:text-white text-xs font-medium transition-colors flex items-center justify-center gap-1.5"
-                        >
-                          <Zap className="w-3.5 h-3.5 text-amber-400" />
-                          <span>Quick Demo — Admin</span>
-                        </button>
-                      </div>
-                      {demoNotice ? (
-                        <p
-                          data-testid="quick-demo-error"
-                          className="text-[11px] text-rose-300 flex items-start gap-1.5"
-                          role="alert"
-                        >
-                          <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                          <span>{demoNotice}</span>
-                        </p>
-                      ) : null}
-                    </div>
-                  ) : null}
-                </div>
+                <p className="text-[10px] text-slate-500 pt-2 border-t border-slate-800/60" data-testid="admin-password-login-note">
+                  Platform admin sign-in uses email and password. Clinician and patient logins still require a WhatsApp code in production.
+                </p>
               </div>
             ) : (
               /* 2. CREATE CLINIC ACCOUNT FORM */
@@ -1610,7 +1528,7 @@ export const LoginPage: React.FC = () => {
                       type={showRegisterPassword ? "text" : "password"}
                       autoComplete="new-password"
                       required
-                      minLength={6}
+                      minLength={8}
                       value={adminPassword}
                       onChange={(e) => setAdminPassword(e.target.value)}
                       placeholder={REGISTER_PASSWORD_PLACEHOLDER}
@@ -1624,6 +1542,7 @@ export const LoginPage: React.FC = () => {
                       {showRegisterPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
                   </div>
+                  <p className="mt-1 text-[10px] text-slate-500">At least 8 characters, with an uppercase letter, a lowercase letter, and a digit.</p>
                 </div>
 
                 <TrialTermsPanel
@@ -1646,7 +1565,7 @@ export const LoginPage: React.FC = () => {
                 <div className="p-2.5 rounded-xl bg-purple-500/10 border border-purple-500/20 text-[11px] text-purple-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1.5">
                   <span className="flex items-start sm:items-center gap-1.5 font-medium min-w-0">
                     <Sparkles className="w-3.5 h-3.5 text-purple-400 shrink-0 mt-0.5 sm:mt-0" />
-                    <span className="leading-snug">Starter Enterprise Tier • 30-Day Free Trial • 500 AI Scribe Mins</span>
+                    <span className="leading-snug">7-day free trial after WhatsApp verification • 500 AI Scribe Mins</span>
                   </span>
                   <span className="font-mono text-xs text-emerald-400 font-bold shrink-0">ABHA (sandbox)</span>
                 </div>

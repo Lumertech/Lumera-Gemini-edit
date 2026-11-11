@@ -20,6 +20,66 @@ export function razorpayKeysConfigured(): boolean {
   return Boolean(getRazorpayKeyId() && getRazorpayKeySecret());
 }
 
+/** Clinic plan checkout. Does not mark the subscription paid — the verified webhook does. */
+export async function createRazorpayPlanOrder(opts: {
+  amountPaise: number;
+  tenantId: string;
+  planCode: string;
+  cycle: string;
+  fetchImpl?: typeof fetch;
+}): Promise<RazorpayLinkResult> {
+  if (!razorpayKeysConfigured()) {
+    return {
+      ok: false,
+      sandbox: false,
+      error: "Razorpay is not configured. Set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET. The clinic was not charged.",
+    };
+  }
+  const amountPaise = Math.round(Number(opts.amountPaise || 0));
+  if (amountPaise < 100) {
+    return { ok: false, sandbox: false, error: `Amount must be at least ${formatINR(1)}.` };
+  }
+  const notes = {
+    purpose: "plan_subscription",
+    tenant_id: opts.tenantId,
+    plan_code: opts.planCode,
+    cycle: opts.cycle,
+    amount_paise: String(amountPaise),
+  };
+  const receipt = `plan-${opts.tenantId.replace(/[^a-zA-Z0-9]/g, "").slice(-12)}-${Date.now()}`.slice(0, 40);
+  const fetchImpl = opts.fetchImpl || fetch;
+  try {
+    const order = await razorpayRequest(
+      "/orders",
+      {
+        amount: amountPaise,
+        currency: "INR",
+        receipt,
+        notes,
+        payment_capture: 1,
+      },
+      fetchImpl
+    );
+    if (order.status >= 400 || !order.json.id) {
+      const apiError =
+        (order.json.error as { description?: string } | undefined)?.description ||
+        `Razorpay order failed (HTTP ${order.status}).`;
+      return { ok: false, error: apiError, sandbox: false };
+    }
+    return {
+      ok: true,
+      sandbox: false,
+      orderId: String(order.json.id),
+      paymentLinkId: "",
+      payLink: "",
+      keyId: getRazorpayKeyId(),
+      raw: order.json,
+    };
+  } catch (err) {
+    return { ok: false, sandbox: false, error: err instanceof Error ? err.message : "Razorpay order failed." };
+  }
+}
+
 export function rupeesToPaise(rupees: number): number {
   return Math.max(0, Math.round(Number(rupees || 0) * 100));
 }
@@ -227,6 +287,8 @@ export type RazorpayPaidRefs = {
   event: string;
   purpose: string;
   amountRupees: number;
+  planCode: string;
+  cycle: string;
 };
 
 function notesOf(entity: Record<string, unknown> | undefined): Record<string, string> {
@@ -271,6 +333,8 @@ export function extractRazorpayPaidRefs(payload: unknown): RazorpayPaidRefs | nu
     event: event || "payment.captured",
     purpose: String(notes.purpose || "").trim(),
     amountRupees,
+    planCode: String(notes.plan_code || "").trim(),
+    cycle: String(notes.cycle || "").trim(),
   };
 }
 

@@ -257,6 +257,14 @@ export const plans = pgTable("plans", {
   sortOrder: integer("sort_order").notNull().default(0),
 });
 
+export const trialClaims = pgTable("trial_claims", {
+  id: text("id").primaryKey(),
+  emailKey: text("email_key").notNull(),
+  phoneKey: text("phone_key").notNull(),
+  tenantId: text("tenant_id").notNull(),
+  startedAt: text("started_at").notNull(),
+});
+
 export const tenantSubscriptions = pgTable("tenant_subscriptions", {
   id: text("id").primaryKey(),
   tenantId: text("tenant_id").notNull().unique(),
@@ -306,4 +314,5 @@ export const LUMERA_TABLE_NAMES = [
   "abdm_consent_artefacts",
   "plans",
   "tenant_subscriptions",
+  "trial_claims",
 ] as const;

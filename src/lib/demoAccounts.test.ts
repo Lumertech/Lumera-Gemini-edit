@@ -43,8 +43,10 @@ describe("demo login matrix", () => {
       assert.ok(DEMO_LOGIN_MATRIX.some((a) => a.email === email), email);
       assert.equal(DEMO_ACCOUNTS.some((a) => a.email === email), false, `${email} must not be re-seeded by #55`);
     }
-    assert.match(loginSrc, /DEMO_LOGIN_MATRIX/);
-    assert.match(loginSrc, /data-testid="demo-account-picker"/);
+    assert.doesNotMatch(loginSrc, /DEMO_LOGIN_MATRIX/);
+    assert.doesNotMatch(loginSrc, /data-testid="demo-account-picker"/);
+    assert.doesNotMatch(loginSrc, /Quick Demo/);
+    assert.doesNotMatch(loginSrc, /quick-demo-login/);
   });
 
   it("lists Product table emails first and keeps dentist@ / physio@ as extras", () => {

@@ -12,7 +12,7 @@ export const WHATSAPP_INR_PAYMENT =
 export const WHATSAPP_TRADEMARK =
   "WhatsApp and Meta are trademarks of Meta Platforms, Inc. Lumera uses these names only to describe its integration with the WhatsApp Business Platform and is not endorsed by Meta.";
 
-export const TRIAL_LEAD = "30 days free. No card needed for Lumera.";
+export const TRIAL_LEAD = "7 days free. No card needed for Lumera.";
 
 export const TRIAL_WHATSAPP_SIGNUP =
   "To send WhatsApp reminders, add a payment method to your clinic's WhatsApp Business account in Meta. Meta bills it for messages; your Lumera trial stays free.";

@@ -1,5 +1,6 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { getDb, writeAudit } from "./db.ts";
+import { activatePaidPlan } from "./trial-lifecycle.ts";
 import { requireAuth, requirePlatformAdmin } from "./auth.ts";
 import { rejectUntrustedTenantClaim } from "./tenant-guard.ts";
 import { isCloudDispatchFailure } from "./graph-whatsapp.ts";
@@ -73,6 +74,15 @@ export function createUsageBillingRouter(): Router {
       return res.status(decision.status).json({ error: decision.error });
     }
     const refs = extractRazorpayPaidRefs(req.body);
+    if (refs?.purpose === "plan_subscription" && refs.tenantId) {
+      activatePaidPlan(getDb(), {
+        tenantId: refs.tenantId,
+        planCode: refs.planCode || "individual",
+        cycle: refs.cycle || "monthly",
+        paymentId: refs.paymentId || refs.orderId,
+      });
+      return res.json({ ok: true, purpose: "plan_subscription", paid: true });
+    }
     if (!refs || refs.purpose !== "wallet_topup") {
       return next();
     }

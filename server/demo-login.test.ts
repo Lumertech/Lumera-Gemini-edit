@@ -166,8 +166,10 @@ describe("explicit demo login guard", () => {
     assert.doesNotMatch(app, /Lumera@2026/);
     assert.doesNotMatch(app, /doctor@lumera\.me/);
     assert.doesNotMatch(app, /\/api\/auth\/login/);
-    assert.match(login, /demoLogin\(/);
-    assert.match(login, /demoLoginEnabled/);
+    assert.doesNotMatch(login, /demoLogin\(/);
+    assert.doesNotMatch(login, /Quick Demo/);
+    assert.doesNotMatch(login, /quick-demo-login/);
+    assert.doesNotMatch(login, /data-testid="demo-account-picker"/);
     assert.doesNotMatch(login, /login\(\s*["']doctor@lumera\.me["']/);
     assert.equal(login.includes('setPassword("Lumera@2026")'), false);
 

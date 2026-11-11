@@ -64,7 +64,6 @@ import { denyUnlessPatientRecordRole } from "./patient-access.ts";
 import { bindUnboundPatientUser, loadPatientTenant, patientLetterhead, requestIsPatient } from "./patient-tenant.ts";
 import {
   createAdminTenant,
-  ensureTenantSubscription,
   findPlan,
   getAdminTenant,
   getAdminTenantSubscription,
@@ -77,7 +76,17 @@ import {
   resolvePlanCode,
   upsertTenantSubscription,
 } from "./platform-tenants.ts";
-import { generateTemporaryPassword, hashPassword, passwordRuleError, verifyPassword } from "./password.ts";
+import { liveRegistrationPasswordHash } from "./live-registration-password.ts";
+import { generateTemporaryPassword, hashPassword, passwordRuleError, signupPasswordRuleError, verifyPassword } from "./password.ts";
+import { hashOtp } from "./otp-hash.ts";
+import { trialAccessGuard } from "./trial-access.ts";
+import {
+  PENDING_VERIFICATION,
+  REPEAT_TRIAL_ERROR,
+  beginVerifiedWhatsAppTrial,
+  extendTenantTrial,
+  maybeStartTrialIfPending,
+} from "./trial-lifecycle.ts";
 import { rejectWrongOtp, reserveOtpSend, sendOtpLimited } from "./otp-attempt.ts";
 import { parseSpecialtyPackInput, resolveSpecialtyPack } from "./specialty-packs.ts";
 import { appPublicUrl, demoLoginEnabled, isProduction } from "./runtime.ts";
@@ -528,6 +537,7 @@ export function demoLoginTargetEmail(body: unknown): { ok: true; email: string }
 export function createApiRouter(): Router {
   const api = Router();
   api.use(rejectUntrustedTenantClaim);
+  api.use(trialAccessGuard);
 
   api.get("/public/plans", (_req, res) => {
     res.json(publicPlansResponse());
@@ -602,7 +612,7 @@ export function createApiRouter(): Router {
       verificationId,
       phone,
       user.email,
-      otp,
+      hashOtp(otp),
       JSON.stringify({ userId: user.id, email: user.email }),
       new Date().toISOString(),
       expiresAt
@@ -729,8 +739,9 @@ export function createApiRouter(): Router {
 
       issueLumeraSession(res, user);
       getDb()
-        .prepare("UPDATE users SET last_login = ?, whatsapp_verified = 1, avatar_url = COALESCE(NULLIF(?, ''), avatar_url) WHERE id = ?")
+        .prepare("UPDATE users SET last_login = ?, avatar_url = COALESCE(NULLIF(?, ''), avatar_url) WHERE id = ?")
         .run(new Date().toISOString(), identity.avatarUrl, user.id);
+      maybeStartTrialIfPending(getDb(), user.id);
       writeAudit(getDb(), user.id, user.name, "OAuth Sign In", `${user.email} signed in via google (Google-verified)`);
       // Browser navigation. The session is only the HttpOnly cookie. The redirect
       // must not carry the JWT. Native clients use POST /auth/oauth for `token`.
@@ -778,8 +789,9 @@ export function createApiRouter(): Router {
 
       issueLumeraSession(res, user);
       getDb()
-        .prepare("UPDATE users SET last_login = ?, whatsapp_verified = 1, avatar_url = COALESCE(NULLIF(?, ''), avatar_url) WHERE id = ?")
+        .prepare("UPDATE users SET last_login = ?, avatar_url = COALESCE(NULLIF(?, ''), avatar_url) WHERE id = ?")
         .run(new Date().toISOString(), identity.avatarUrl, user.id);
+      maybeStartTrialIfPending(getDb(), user.id);
       if (identity.facebookId) {
         try {
           rememberFacebookAppUser(getDb(), user.id, identity.facebookId);
@@ -863,8 +875,9 @@ export function createApiRouter(): Router {
     if (federatedVerified || skipOtp) {
       const jwtToken = issueLumeraSession(res, user);
       getDb()
-        .prepare("UPDATE users SET last_login = ?, whatsapp_verified = 1, avatar_url = COALESCE(NULLIF(?, ''), avatar_url) WHERE id = ?")
+        .prepare("UPDATE users SET last_login = ?, avatar_url = COALESCE(NULLIF(?, ''), avatar_url) WHERE id = ?")
         .run(new Date().toISOString(), identity.avatarUrl, user.id);
+      maybeStartTrialIfPending(getDb(), user.id);
       writeAudit(
         getDb(),
         user.id,
@@ -908,7 +921,7 @@ export function createApiRouter(): Router {
       verificationId,
       phone,
       user.email,
-      otp,
+      hashOtp(otp),
       JSON.stringify({ userId: user.id, provider: identity.provider, avatarUrl: identity.avatarUrl || user.avatar_url }),
       new Date().toISOString(),
       expiresAt
@@ -966,7 +979,7 @@ export function createApiRouter(): Router {
     getDb().prepare(`
       INSERT INTO otp_verifications (id, phone, email, otp, purpose, payload, created_at, expires_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(verificationId, phone, email, otp, purpose, payload, new Date().toISOString(), expiresAt);
+    `).run(verificationId, phone, email, hashOtp(otp), purpose, payload, new Date().toISOString(), expiresAt);
 
     const sent = await dispatchWhatsAppOtpMessage(phone, name, otp, purpose);
     if (otpDispatchFailure(res, sent)) return;
@@ -1100,16 +1113,17 @@ export function createApiRouter(): Router {
       let hfrId = payload.hfrId;
       let hprId = payload.hprId;
 
-      const trialEndsAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+      // The trial clock starts only after this WhatsApp code is accepted.
+      const trialEndsAt = now;
 
       // Ensure tenant exists
       if (!tenantId) {
         tenantId = `tenant-${crypto.randomUUID().slice(0, 8)}`;
         hfrId = `IN-HFR-${Math.floor(10000000 + Math.random() * 90000000)}`;
         getDb().prepare(`
-          INSERT INTO tenants (id, name, specialty, country, timezone, phone, trial_ends_at, ai_scribe_minutes_limit, ai_scribe_minutes_used, active_status, hfr_id, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, 500, 0, 1, ?, ?, ?)
-        `).run(tenantId, practiceName, specialty, country, timezone, updatedPhone || phone, trialEndsAt, hfrId, now, now);
+          INSERT INTO tenants (id, name, specialty, country, timezone, phone, trial_ends_at, ai_scribe_minutes_limit, ai_scribe_minutes_used, active_status, hfr_id, created_at, updated_at, lifecycle_status)
+          VALUES (?, ?, ?, ?, ?, ?, ?, 500, 0, 1, ?, ?, ?, ?)
+        `).run(tenantId, practiceName, specialty, country, timezone, updatedPhone || phone, trialEndsAt, hfrId, now, now, PENDING_VERIFICATION);
       } else if (updatedPhone) {
         getDb().prepare("UPDATE tenants SET phone = ?, updated_at = ? WHERE id = ?").run(updatedPhone, now, tenantId);
       }
@@ -1191,31 +1205,15 @@ export function createApiRouter(): Router {
         );
       }
 
-      // Ensure Subscription trial
-      const subId = `sub-${crypto.randomUUID().slice(0, 8)}`;
-      getDb().prepare(`
-        INSERT OR REPLACE INTO subscriptions (id, user_id, status, plan_type, monthly_price, auto_renew, started_at, ends_at, notes)
-        VALUES (?, ?, 'active', 'Enterprise Trial', 0, 1, ?, ?, ?)
-      `).run(
-        subId,
+      const started = beginVerifiedWhatsAppTrial(getDb(), {
+        tenantId,
+        email,
+        phone: updatedPhone || phone,
         userId,
-        now,
-        trialEndsAt,
-        JSON.stringify({
-          tenantId,
-          practiceName,
-          specialty,
-          country,
-          timezone,
-          hfrId,
-          hprId,
-          aiScribeMinutesLimit: 500,
-          dhisTransactionsLimit: 100,
-          trialDays: 30,
-          activeStatus: true,
-        })
-      );
-      ensureTenantSubscription(getDb(), tenantId, { planCode: "trial", status: "trial", billingSource: "sandbox" });
+      });
+      if (started.ok === false) {
+        return res.status(409).json({ error: REPEAT_TRIAL_ERROR, code: started.code, trialStarted: false });
+      }
 
       const updatedUser = getDb().prepare("SELECT * FROM users WHERE id = ?").get(userId) as unknown as DbUser;
       const jwtToken = issueLumeraSession(res, updatedUser);
@@ -1264,6 +1262,10 @@ export function createApiRouter(): Router {
     if (!practiceName || !phone || !name || !email) {
       return res.status(400).json({ error: "Practice Name, Director Name, Email, and WhatsApp Phone are required." });
     }
+    if (password) {
+      const passwordError = signupPasswordRuleError(password);
+      if (passwordError) return res.status(400).json({ error: passwordError });
+    }
 
     // Check if email already registered
     const existing = getDb().prepare("SELECT id FROM users WHERE email = ?").get(email);
@@ -1277,7 +1279,7 @@ export function createApiRouter(): Router {
     if (slot.limited === true) return sendOtpLimited(res, slot.retryAfterSec);
 
     const now = new Date().toISOString();
-    const trialEndsAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    const trialEndsAt = now;
 
     // 1. TENANT CREATION:
     const tenantId = `tenant-${crypto.randomUUID().slice(0, 8)}`;
@@ -1286,14 +1288,14 @@ export function createApiRouter(): Router {
 
     getDb().prepare(`
       INSERT INTO tenants (id, name, specialty, country, timezone, phone, trial_ends_at, ai_scribe_minutes_limit, ai_scribe_minutes_used, active_status, hfr_id, created_at, updated_at, practice_type, lifecycle_status, owner_name, owner_email, owner_phone, email)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 500, 0, 1, ?, ?, ?, ?, 'trial', ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 500, 0, 1, ?, ?, ?, ?, 'pending_verification', ?, ?, ?, ?)
     `).run(tenantId, practiceName, specialty, country, timezone, phone, trialEndsAt, hfrId, now, now, practiceType, name, email, phone, email);
 
     // 2. PRIMARY USER CREATION (doctor for individual practice, CLINIC_ADMIN for multispecialty clinic) mapped to new tenant ID:
     const userId = `user-${crypto.randomUUID().slice(0, 8)}`;
     // ABDM HPR (Healthcare Professionals Registry ID) placeholder
     const hprId = `IN-HPR-${Math.floor(10000000 + Math.random() * 90000000)}`;
-    const passwordHash = password ? hashPassword(password) : hashPassword("Lumera@2026");
+    const { passwordHash, generatedPassword } = liveRegistrationPasswordHash(password);
 
     getDb().prepare(`
       INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, clinic_name, avatar_url, whatsapp_verified, hpr_id, hfr_id, onboarding_completed, practice_type, specialty, pack_id, created_at)
@@ -1325,31 +1327,7 @@ export function createApiRouter(): Router {
       email
     );
 
-    // 5. Subscription seed:
-    const subId = `sub-${crypto.randomUUID().slice(0, 8)}`;
-    getDb().prepare(`
-      INSERT OR REPLACE INTO subscriptions (id, user_id, status, plan_type, monthly_price, auto_renew, started_at, ends_at, notes)
-      VALUES (?, ?, 'active', 'Enterprise Trial', 0, 1, ?, ?, ?)
-    `).run(
-      subId,
-      userId,
-      now,
-      trialEndsAt,
-      JSON.stringify({
-        tenantId,
-        practiceName,
-        specialty,
-        country,
-        timezone,
-        hfrId,
-        hprId,
-        aiScribeMinutesLimit: 500,
-        dhisTransactionsLimit: 100,
-        trialDays: 30,
-        activeStatus: true,
-        })
-      );
-    ensureTenantSubscription(getDb(), tenantId, { planCode: "trial", status: "trial", billingSource: "sandbox" });
+    // Trial subscription is created only after the WhatsApp code is verified.
 
     // 6. WHATSAPP OTP TRIGGER:
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
@@ -1376,7 +1354,7 @@ export function createApiRouter(): Router {
     getDb().prepare(`
       INSERT INTO otp_verifications (id, phone, email, otp, purpose, payload, created_at, expires_at)
       VALUES (?, ?, ?, ?, 'register', ?, ?, ?)
-    `).run(verificationId, phone, email, otp, JSON.stringify(otpPayload), now, expiresAt);
+    `).run(verificationId, phone, email, hashOtp(otp), JSON.stringify(otpPayload), now, expiresAt);
 
     const sent = await dispatchWhatsAppOtpMessage(phone, name, otp, "register");
     if (otpDispatchFailure(res, sent)) return;
@@ -1391,8 +1369,11 @@ export function createApiRouter(): Router {
       userId,
       hfrId,
       hprId,
+      ...(generatedPassword ? { temporaryPassword: generatedPassword } : {}),
+      trialPending: true,
       trialQuotas: {
-        trialEndsAt,
+        trialEndsAt: null,
+        trialDays: 7,
         aiScribeMinutesLimit: 500,
         dhisClaimsLimit: 100,
       },
@@ -1631,7 +1612,7 @@ export function createApiRouter(): Router {
       verificationId,
       phone,
       email,
-      otp,
+      hashOtp(otp),
       JSON.stringify({ userId: user?.id, email }),
       new Date().toISOString(),
       expiresAt
@@ -2419,6 +2400,9 @@ export function createApiRouter(): Router {
         endsAt,
         notes: String(notes || ""),
       });
+    }
+    if (tenantId && endsAt && String(status).toLowerCase() === "trial") {
+      extendTenantTrial(getDb(), tenantId, String(endsAt));
     }
     audit(req, "Subscription updated", `${req.params.id} ${status} ${planType} billingSource=${billing}`);
     const row = getDb()
