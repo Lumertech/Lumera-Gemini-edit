@@ -28,6 +28,7 @@ import { loadPatientTenant, requestIsPatient, sessionPatientId } from "./patient
 import { dayEndTotals, revenueTotals } from "./collected-revenue.ts";
 import { tenantTimezone } from "./clinical.ts";
 import { clinicCalendarDate, clinicDayUtcBounds, resolveQueueDate, shiftIsoDate } from "../src/lib/clinicDay.ts";
+import { billGst, consumeBilledLines, discardUnbilledInvoice } from "./accounts.ts";
 
 function tenantIdOf(req: Request): string {
   return String(req.user?.tenantId || "").trim();
@@ -445,11 +446,16 @@ function insertInvoice(tenantId: string, body: Record<string, unknown>, actor?: 
   }, 0);
   const subtotal = body.subtotal != null ? rupeeAmount(body.subtotal) : computedSubtotal;
   const discountAmount = rupeeAmount(body.discountAmount ?? body.discount_amount);
-  const taxAmount = rupeeAmount(body.taxAmount ?? body.tax_amount);
-  const totalAmount =
+  const gst = billGst(items);
+  let taxAmount = rupeeAmount(body.taxAmount ?? body.tax_amount);
+  let totalAmount =
     body.totalAmount != null || body.total_amount != null
       ? rupeeAmount(body.totalAmount ?? body.total_amount)
       : Math.max(0, subtotal - discountAmount + taxAmount);
+  if (gst.slices.length > 0) {
+    taxAmount = gst.tax;
+    totalAmount = Math.max(0, subtotal - discountAmount + taxAmount);
+  }
   if (totalAmount <= 0) {
     throw Object.assign(new Error("Invoice total must be greater than 0"), { status: 400 });
   }
@@ -507,7 +513,7 @@ function insertInvoice(tenantId: string, body: Record<string, unknown>, actor?: 
       subtotal,
       discountAmount,
       snapshot.gstin,
-      Number(body.gstPercent ?? body.gst_percent ?? 0),
+      gst.slices.length === 1 ? gst.slices[0].rate : Number(body.gstPercent ?? body.gst_percent ?? 0),
       taxAmount,
       totalAmount,
       snapshot.upiId,
@@ -516,6 +522,13 @@ function insertInvoice(tenantId: string, body: Record<string, unknown>, actor?: 
       consulting.name,
       now
     );
+
+  try {
+    consumeBilledLines(tenantId, id, items, { id: "", name: String(actor?.name || "") });
+  } catch (err) {
+    discardUnbilledInvoice(tenantId, id);
+    throw err;
+  }
 
   return getTenantInvoice(tenantId, id)!;
 }

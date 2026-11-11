@@ -84,6 +84,7 @@ import { followUpBookingRef } from '../lib/followUpSlots';
 import { installPrescriptionPrintHooks, joinPresent, printPrescriptionDocument } from '../lib/printPrescription';
 import { resolveRxModule } from '../lib/specialtyWorkflow';
 import { PatientRecordModal } from './PatientRecordModal';
+import { ConsultStock } from './ConsultStock';
 import {
   aiFieldClass,
   aiReviewAllowsDispatch,
@@ -2149,6 +2150,8 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
             </div>
           </div>
         </div>
+
+        <ConsultStock patientId={currentPatient.id} appointmentId={appointmentId} />
 
         {/* Rx Symbol & Medicines Table */}
         <div data-rx-meds="" className="space-y-2.5">
