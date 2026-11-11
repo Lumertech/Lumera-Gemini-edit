@@ -559,7 +559,13 @@ describe("forward security and voice fixes", () => {
     assert.doesNotMatch(payload, /tenantId/);
     assert.match(gateway, /def offer_presented_secret/);
     assert.match(gateway, /privileged and VOICE_GATEWAY_SECRET/);
+    assert.match(gateway, /existing.get\("privileged"\) and not privileged/);
+    assert.match(gateway, /existing\["privileged"\] = True/);
     assert.doesNotMatch(gateway, /if not offer_authorized/);
+    const health = gateway.slice(gateway.indexOf("async def handle_health"), gateway.indexOf("def offer_presented_secret"));
+    assert.doesNotMatch(health, /callId/);
+    assert.doesNotMatch(health, /callerPhone/);
+    assert.doesNotMatch(health, /sdpAnswer/);
     const meta = fs.readFileSync(path.join(root, "server/meta.ts"), "utf8");
     assert.match(meta, /X-Voice-Gateway-Secret/);
     assert.doesNotMatch(fs.readFileSync(path.join(root, "deploy/webrtc-voice-gateway/provision-free-vm.sh"), "utf8"), /lumera_webhook_verify_2026/);

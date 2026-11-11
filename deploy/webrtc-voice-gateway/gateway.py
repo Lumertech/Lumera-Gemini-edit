@@ -546,23 +546,12 @@ def fix_sdp_candidates(sdp: str, public_ip: str) -> str:
     return "\r\n".join(lines)
 
 async def handle_health(request):
-    calls_summary = [
-        {
-            "callId": cid,
-            "callerPhone": data.get("callerPhone"),
-            "duration": int(time.time() - data.get("startTime", time.time())),
-            "connectionState": data["pc"].connectionState,
-            "iceConnectionState": data["pc"].iceConnectionState,
-        }
-        for cid, data in active_calls.items()
-    ]
     return web.json_response({
         "status": "online",
         "service": "lumera-webrtc-voice-gateway",
         "engine": "aiortc (Continuous 48kHz Opus Audio Stream + Bidirectional Cognitive Speech)",
         "tier": "GCP Always Free (e2-micro)",
         "activeCallsCount": len(active_calls),
-        "activeCalls": calls_summary,
         "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     })
 
@@ -595,9 +584,18 @@ async def handle_answer_offer(request):
     if not call_id:
         return web.json_response({"error": "callId is required"}, status=400)
 
-    # Reuse session if callId already exists (pre_accept followed by accept)
+    # Reuse session if callId already exists (pre_accept followed by accept).
+    # A privileged session's SDP is only returned to a caller who presents the secret.
+    # A later request that presents the secret upgrades an unsigned session.
     if call_id in active_calls:
         existing = active_calls[call_id]
+        if existing.get("privileged") and not privileged:
+            return web.json_response({"error": "Unauthorized"}, status=403)
+        if privileged and not existing.get("privileged"):
+            existing["privileged"] = True
+            upgraded_phone = body.get("phoneNumberId") or body.get("phone_number_id") or ""
+            if upgraded_phone:
+                existing["phoneNumberId"] = upgraded_phone
         logger.info(f"[{call_id}] Reusing active call session. State: {existing['pc'].connectionState}")
         return web.json_response({
             "ok": True,
