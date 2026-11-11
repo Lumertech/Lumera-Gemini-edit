@@ -586,6 +586,11 @@ export interface BillItem {
   unitPrice: number;
   gstPercent?: number;
   total: number;
+  /** Set when the line comes from clinic stock. Saving the bill decrements it. */
+  inventoryItemId?: string;
+  inventoryBatchId?: string;
+  /** Already taken off stock by a vaccine record. */
+  administrationId?: string;
 }
 
 export interface InvoiceItem {

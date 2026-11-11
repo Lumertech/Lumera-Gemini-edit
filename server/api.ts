@@ -29,6 +29,7 @@ import { publicPlansResponse } from "./pricing-catalog.ts";
 import { reportCaughtError } from "./error-tracker.ts";
 import { createClinicalRouter } from "./clinical.ts";
 import { createBillingRouter } from "./billing.ts";
+import { createAccountsRouter } from "./accounts-api.ts";
 import {
   getTenantLetterhead,
   parseLetterheadPatch,
@@ -2765,6 +2766,7 @@ export function createApiRouter(): Router {
 
   api.use(createClinicalRouter());
   api.use(createBillingRouter());
+  api.use(createAccountsRouter());
 
   return api;
 }
