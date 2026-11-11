@@ -11,7 +11,13 @@ import {
   updateAppointment,
 } from "./clinical.ts";
 import { findDoctor, findPatientByPhoneInTenant } from "./whatsapp-tenant-resolve.ts";
-import { formatMinutesToTime, getClinicScheduleSettings, parseTimeToMinutes } from "./clinic-schedule.ts";
+import {
+  formatMinutesToTime,
+  getClinicScheduleSettings,
+  istClockMinutes,
+  parseTimeToMinutes,
+  scheduleSlotFreeStatusSql,
+} from "./clinic-schedule.ts";
 
 export function normalizePhoneDigits(phone: string): string {
   let digits = String(phone || "").replace(/[^\d]/g, "");
@@ -206,15 +212,21 @@ export function bookWhatsAppAppointment(opts: {
     name: opts.patientName,
   });
   const mappedPatient = mapPatient(patient);
-  const date = String(opts.date || "").trim() || clinicCalendarDate(new Date(), tenantTimezone(tenantId));
-  const timeSlot =
-    String(opts.timeSlot || "").trim() ||
-    getNextAvailableDoctorSlot({
-      tenantId,
-      doctorId: doctor ? String(doctor.id) : opts.doctorId,
-      doctorName: doctor ? String(doctor.name) : opts.doctorName,
-      date,
-    });
+  const requestedDate = String(opts.date || "").trim() || clinicCalendarDate(new Date(), tenantTimezone(tenantId));
+  const explicitSlot = String(opts.timeSlot || "").trim();
+  const found = explicitSlot
+    ? { date: requestedDate, timeSlot: explicitSlot }
+    : findNextBookableSlot({
+        tenantId,
+        doctorId: doctor ? String(doctor.id) : opts.doctorId,
+        doctorName: doctor ? String(doctor.name) : opts.doctorName,
+        date: requestedDate,
+      });
+  if (!found) {
+    throw Object.assign(new Error("No open clinic slot"), { status: 409 });
+  }
+  const date = found.date;
+  const timeSlot = found.timeSlot;
 
   const existing = findActiveAppointment({
     tenantId,
@@ -254,79 +266,135 @@ export function bookWhatsAppAppointment(opts: {
   return { appointment, reused: false, patient: mappedPatient };
 }
 
-export function getNextAvailableDoctorSlot(opts: {
+function addDaysIso(iso: string, days: number): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (!match) return iso;
+  const utc = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]) + days));
+  return utc.toISOString().slice(0, 10);
+}
+
+function isSunday(iso: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (!match) return false;
+  return new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]))).getUTCDay() === 0;
+}
+
+function clockTokenMinutes(timing: string | undefined, which: "start" | "end"): number | null {
+  const matches = [...String(timing || "").matchAll(/(\d{1,2}):(\d{2})\s*(AM|PM)/gi)];
+  const match = which === "start" ? matches[0] : matches[1];
+  if (!match) return null;
+  return parseTimeToMinutes(`${match[1]}:${match[2]} ${match[3]}`);
+}
+
+function slotOnClinicDate(opts: {
   tenantId: string;
   doctorId?: string;
   doctorName?: string;
-  date?: string;
-}): string {
+  date: string;
+  now: Date;
+  today: string;
+}): string | null {
   const db = getDb();
-  const tenantId = String(opts.tenantId || "").trim();
-  const date = String(opts.date || "").trim() || clinicCalendarDate(new Date(), tenantTimezone(tenantId));
-
+  const tenantId = opts.tenantId;
+  const date = opts.date;
   const doctor = findDoctor({
     tenantId,
     doctorId: opts.doctorId,
     doctorName: opts.doctorName,
   });
-
   const docId = doctor ? String(doctor.id) : "";
   const scheduleSettings = getClinicScheduleSettings(db, tenantId, docId);
   const duration = Math.max(1, scheduleSettings.slotDurationMinutes || 15);
   const maxOverlap = Math.max(1, scheduleSettings.slotOverlapMax || 1);
 
-  // Fetch all active appointments for this doctor on this date
   let bookedSlots: Array<{ time_slot?: string }> = [];
   try {
     bookedSlots = db
       .prepare(
         `SELECT time_slot FROM appointments
          WHERE tenant_id = ? AND date = ? AND (doctor_id = ? OR doctor_name = ?)
-           AND status NOT IN ('Completed', 'Cancelled', 'No-Show')`
+           AND ${scheduleSlotFreeStatusSql("status")}`
       )
       .all(tenantId, date, docId, String(doctor?.name || opts.doctorName || "")) as Array<{ time_slot?: string }>;
   } catch {
     bookedSlots = [];
   }
 
-  // Count active appointments per normalized slot
   const slotCountMap = new Map<string, number>();
-  for (const b of bookedSlots) {
-    const raw = String(b.time_slot || "").trim();
+  for (const booked of bookedSlots) {
+    const raw = String(booked.time_slot || "").trim();
     if (!raw) continue;
     const mins = parseTimeToMinutes(raw, -1);
     const key = mins >= 0 ? formatMinutesToTime(mins) : raw;
     slotCountMap.set(key, (slotCountMap.get(key) || 0) + 1);
   }
 
-  let startMinutes = 540; // 09:00 AM default
-  if (doctor?.opd_timing) {
-    const match = String(doctor.opd_timing).match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
-    if (match) {
-      let h = parseInt(match[1], 10);
-      const m = parseInt(match[2], 10);
-      const ampm = match[3].toUpperCase();
-      if (ampm === "PM" && h < 12) h += 12;
-      if (ampm === "AM" && h === 12) h = 0;
-      startMinutes = h * 60 + m;
+  let startMinutes = 540;
+  const doctorStart = clockTokenMinutes(String(doctor?.opd_timing || ""), "start");
+  if (doctorStart != null) startMinutes = doctorStart;
+  else if (scheduleSettings.opdStartTime) startMinutes = parseTimeToMinutes(scheduleSettings.opdStartTime, 540);
+
+  let endMinutes = parseTimeToMinutes(scheduleSettings.opdEndTime, 1020);
+  const doctorEnd = clockTokenMinutes(String(doctor?.opd_timing || ""), "end");
+  if (doctorEnd != null) endMinutes = Math.min(endMinutes, doctorEnd);
+  if (endMinutes <= startMinutes) return null;
+
+  let cursor = startMinutes;
+  if (date === opts.today) {
+    const nowMins = istClockMinutes(opts.now);
+    if (nowMins >= endMinutes) return null;
+    while (cursor <= nowMins) {
+      cursor += duration;
+      if (cursor >= endMinutes) return null;
     }
-  } else if (scheduleSettings.opdStartTime) {
-    startMinutes = parseTimeToMinutes(scheduleSettings.opdStartTime, 540);
   }
 
-  // Search for the earliest slot whose bookedCount < maxOverlap
-  let currentMins = startMinutes;
-  const maxSearchSlots = 200;
-  for (let i = 0; i < maxSearchSlots; i++) {
-    const candidateSlot = formatMinutesToTime(currentMins);
-    const count = slotCountMap.get(candidateSlot) || 0;
-    if (count < maxOverlap) {
-      return candidateSlot;
-    }
-    currentMins += duration;
+  for (; cursor < endMinutes; cursor += duration) {
+    const candidate = formatMinutesToTime(cursor);
+    if ((slotCountMap.get(candidate) || 0) < maxOverlap) return candidate;
   }
+  return null;
+}
 
-  return formatMinutesToTime(currentMins);
+/** Next open chair on the requested day, or the next Mon–Sat day when that day is full or already over. */
+export function findNextBookableSlot(opts: {
+  tenantId: string;
+  doctorId?: string;
+  doctorName?: string;
+  date?: string;
+  now?: Date;
+  horizonDays?: number;
+}): { date: string; timeSlot: string } | null {
+  const tenantId = String(opts.tenantId || "").trim();
+  const now = opts.now ?? new Date();
+  const today = clinicCalendarDate(now, "Asia/Kolkata");
+  let date = String(opts.date || "").trim() || today;
+  const horizon = Math.max(1, opts.horizonDays ?? 14);
+  for (let i = 0; i < horizon; i++) {
+    if (!isSunday(date)) {
+      const timeSlot = slotOnClinicDate({
+        tenantId,
+        doctorId: opts.doctorId,
+        doctorName: opts.doctorName,
+        date,
+        now,
+        today,
+      });
+      if (timeSlot) return { date, timeSlot };
+    }
+    date = addDaysIso(date, 1);
+  }
+  return null;
+}
+
+export function getNextAvailableDoctorSlot(opts: {
+  tenantId: string;
+  doctorId?: string;
+  doctorName?: string;
+  date?: string;
+  now?: Date;
+}): string {
+  return findNextBookableSlot(opts)?.timeSlot || "";
 }
 
 function defaultTimeSlot(): string {

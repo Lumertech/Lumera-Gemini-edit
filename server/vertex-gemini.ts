@@ -6,9 +6,11 @@ import { GoogleGenAI, type GenerateContentParameters, type GenerateContentRespon
  *   VERTEX_PROJECT=gen-lang-client-0108182367
  *   VERTEX_LOCATION=asia-south1
  *
- * Pinned model id `gemini-3.5-flash-lite` (GA, not a preview or -latest alias).
- * VERTEX_GEMINI_MODEL overrides it. An unset value keeps this id, including in production.
- * Model card: GA, released 21 July 2026, retirement 21 July 2027 or later.
+ * Default model when VERTEX_GEMINI_MODEL is unset: `gemini-2.5-flash` (VERTEX_DEFAULT_GEMINI_MODEL).
+ * VERTEX_GEMINI_MODEL is used exactly as given, including `gemini-3.5-flash-lite`.
+ * An earlier build remapped that id onto gemini-2.5-flash and ignored the operator pin.
+ * That remap is removed. Do not substitute another model for an explicit setting.
+ * gemini-3.5-flash-lite model card: GA, released 21 July 2026, retirement 21 July 2027 or later.
  * Audio MIME types include audio/webm, audio/mp4, and audio/x-aac.
  * Supported regions include Asia Pacific asia-south1:
  * https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-5-flash-lite
@@ -22,10 +24,10 @@ export const VERTEX_DEFAULT_PROJECT = "gen-lang-client-0108182367";
 export const VERTEX_DEFAULT_LOCATION = "asia-south1";
 export const VERTEX_DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
 
-/** Resolved model id. Reads VERTEX_GEMINI_MODEL at call time so a deploy can swap it. */
+/** Resolved model id. An explicit VERTEX_GEMINI_MODEL is returned unchanged. */
 export function vertexGeminiModel(env: NodeJS.ProcessEnv = process.env): string {
   const id = String(env.VERTEX_GEMINI_MODEL || "").trim();
-  if (!id || id === "gemini-3.5-flash-lite") return "gemini-2.5-flash";
+  if (!id) return VERTEX_DEFAULT_GEMINI_MODEL;
   return id;
 }
 

@@ -29,12 +29,15 @@ logger = logging.getLogger("lumera-voice-gateway")
 
 PORT = int(os.environ.get("PORT", 3000))
 PUBLIC_IP = os.environ.get("PUBLIC_IP", "34.46.39.52")
-GREETING_FILE = "/opt/lumera-voice/maya_greeting.mp3"
 LUMERA_API_URL = os.environ.get("LUMERA_API_URL", "https://www.mylumera.in/api/voice/inbound")
+VOICE_GATEWAY_SECRET = os.environ.get("VOICE_GATEWAY_SECRET", "").strip()
+NEUTRAL_HOLD_TEXT = "Namaste, one moment please."
 
-# Preloaded greeting and conversational filler PCM in memory (48kHz mono 16-bit)
-cached_greeting_pcm = np.zeros(0, dtype=np.int16)
+# Preloaded neutral hold and conversational filler PCM (48kHz mono 16-bit).
+# The hold clip is the only audio played before a clinic greeting is ready.
+cached_hold_pcm = np.zeros(0, dtype=np.int16)
 cached_filler_pcm = np.zeros(0, dtype=np.int16)
+HOLD_FILE = "/opt/lumera-voice/maya_hold.mp3"
 FILLER_FILE = "/opt/lumera-voice/maya_filler.mp3"
 
 # Active call sessions: callId -> { pc, track, callerPhone, startTime, sdpAnswer, listenerTask }
@@ -156,17 +159,19 @@ class MayaVoiceTrack(MediaStreamTrack):
             return 0.0
         return max(0.0, time.time() - self._speech_start_time)
 
-    def queue_audio(self, new_pcm: np.ndarray, replace: bool = True):
+    def queue_audio(self, new_pcm: np.ndarray, replace: bool = True, after_current: bool = False):
         """Queues new audio PCM (Maya's cognitive voice response) to be played into WebRTC."""
         if len(new_pcm) == 0:
             return
-        if replace or self.cursor >= len(self.pcm):
+        if after_current:
+            self.pcm = np.concatenate([self.pcm, new_pcm])
+        elif replace or self.cursor >= len(self.pcm):
             self.pcm = new_pcm.copy()
             self.cursor = 0
         else:
             self.pcm = np.concatenate([self.pcm[:self.cursor], new_pcm])
         self._speech_start_time = time.time()
-        logger.info(f"Queued {len(new_pcm)} samples ({len(new_pcm)/self.sample_rate:.2f}s) of Maya voice audio (replace={replace})")
+        logger.info(f"Queued {len(new_pcm)} samples ({len(new_pcm)/self.sample_rate:.2f}s) of Maya voice audio (replace={replace}, after_current={after_current})")
 
     def interrupt(self):
         """Stops playing current speech immediately."""
@@ -208,25 +213,21 @@ class MayaVoiceTrack(MediaStreamTrack):
         return frame
 
 async def ensure_greeting_audio():
-    """Preloads Maya's Google Cloud Neural2 AI Receptionist voice greeting and instant conversational fillers."""
-    global cached_greeting_pcm, cached_filler_pcm
-    if not os.path.exists(GREETING_FILE) or os.path.getsize(GREETING_FILE) < 1000:
-        logger.info("Generating Maya AI Receptionist greeting audio...")
-        text = (
-            "Namaste! Welcome to Lumera Apex Polyclinic. I am Maya, your AI Receptionist. "
-            "How can I help you today? Aap Doctor appointment book karna chahte hain, ya clinic timings janna chahte hain?"
-        )
+    """Preloads a neutral hold clip and conversational fillers. Never a named-clinic greeting."""
+    global cached_hold_pcm, cached_filler_pcm
+    if not os.path.exists(HOLD_FILE) or os.path.getsize(HOLD_FILE) < 1000:
+        logger.info("Generating neutral hold clip...")
         try:
             import edge_tts
-            communicate = edge_tts.Communicate(text, "en-IN-NeerjaNeural")
-            await communicate.save(GREETING_FILE)
-            logger.info(f"Successfully generated {GREETING_FILE} ({os.path.getsize(GREETING_FILE)} bytes)")
+            communicate = edge_tts.Communicate(NEUTRAL_HOLD_TEXT, "en-IN-NeerjaNeural")
+            await communicate.save(HOLD_FILE)
+            logger.info(f"Successfully generated {HOLD_FILE} ({os.path.getsize(HOLD_FILE)} bytes)")
         except Exception as e:
-            logger.error(f"Failed to generate greeting audio with edge-tts: {e}")
+            logger.error(f"Failed to generate neutral hold clip with edge-tts: {e}")
 
-    if os.path.exists(GREETING_FILE):
-        cached_greeting_pcm = load_audio_pcm(GREETING_FILE, 48000)
-        logger.info(f"Preloaded Maya greeting into memory: {len(cached_greeting_pcm)/48000:.2f}s")
+    if os.path.exists(HOLD_FILE):
+        cached_hold_pcm = load_audio_pcm(HOLD_FILE, 48000)
+        logger.info(f"Preloaded neutral hold clip into memory: {len(cached_hold_pcm)/48000:.2f}s")
 
     # Preload natural conversational filler ("Ji, ek second main check karti hoon...")
     if not os.path.exists(FILLER_FILE) or os.path.getsize(FILLER_FILE) < 1000:
@@ -246,51 +247,51 @@ async def ensure_greeting_audio():
 
 tenant_greetings: dict = {}
 
-async def get_tenant_greeting(tenant_id: str, clinic_name: str = "", receptionist_name: str = "", custom_greeting: str = "") -> np.ndarray:
-    """
-    Returns greeting audio for a specific clinic tenant.
-    Never blocks the SDP handshake: returns preloaded RAM greeting immediately for 1-ring pickup,
-    while warming up the custom tenant greeting asynchronously in the background.
-    """
-    global cached_greeting_pcm
-    cache_key = f"{tenant_id}:{clinic_name}:{receptionist_name}:{custom_greeting}"
-    if cache_key in tenant_greetings:
-        return tenant_greetings[cache_key]
-
-    # If it's the default tenant without overrides, return global default
-    if (tenant_id == "tenant-lumera-main" or not tenant_id) and not custom_greeting and not clinic_name:
-        return cached_greeting_pcm
-
-    rec_name = receptionist_name.strip() or "Maya"
-    cl_name = clinic_name.strip() or "Lumera Health"
-
+def clinic_greeting_text(clinic_name: str = "", receptionist_name: str = "", custom_greeting: str = "") -> str:
+    """Patient-facing greeting. Clinic and receptionist names are variables. Missing name stays neutral."""
     if custom_greeting and custom_greeting.strip():
-        text = custom_greeting.strip()
-    else:
-        text = (
-            f"Hello! Welcome to {cl_name}. I am {rec_name}, your AI Receptionist. "
-            "How can I help you today? Would you like to book an appointment or check clinic timings?"
-        )
+        return custom_greeting.strip()
+    rec_name = receptionist_name.strip() or "Maya"
+    cl_name = clinic_name.strip() or "the clinic"
+    return (
+        f"Hello! Welcome to {cl_name}. I am {rec_name}, your AI Receptionist. "
+        "How can I help you today? Would you like to book an appointment or check clinic timings?"
+    )
 
-    # Warmup asynchronously in background so the call connects on 1st ring without blocking (<15ms)
-    async def _async_warmup():
-        try:
-            import edge_tts
-            communicate = edge_tts.Communicate(text, "en-IN-NeerjaNeural")
-            audio_bytes = b""
-            async for chunk in communicate.stream():
-                if chunk["type"] == "audio":
-                    audio_bytes += chunk["data"]
+async def synthesize_tts_pcm(text: str) -> np.ndarray:
+    try:
+        import edge_tts
+        communicate = edge_tts.Communicate(text, "en-IN-NeerjaNeural")
+        audio_bytes = b""
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                audio_bytes += chunk["data"]
+        return decode_mp3_bytes_to_pcm(audio_bytes, 48000)
+    except Exception as e:
+        logger.error(f"Failed to synthesize greeting: {e}")
+        return np.zeros(0, dtype=np.int16)
 
-            pcm = decode_mp3_bytes_to_pcm(audio_bytes, 48000)
-            if len(pcm) > 0:
-                tenant_greetings[cache_key] = pcm
-                logger.info(f"Warmup cached greeting for tenant '{tenant_id}' ({len(pcm)/48000:.2f}s): {text[:50]}...")
-        except Exception as e:
-            logger.error(f"Failed background warmup greeting for tenant {tenant_id}: {e}")
+async def prepare_call_greeting(tenant_id: str, clinic_name: str = "", receptionist_name: str = "", custom_greeting: str = ""):
+    """
+    1-ring pickup. Cache hit returns the clinic greeting immediately.
+    Cache miss returns the neutral hold clip and the text to speak after it.
+    The SDP answer is never blocked on TTS.
+    """
+    cache_key = f"{tenant_id}:{clinic_name}:{receptionist_name}:{custom_greeting}"
+    cached = tenant_greetings.get(cache_key)
+    if cached is not None and len(cached) > 0:
+        return cached, None
+    text = clinic_greeting_text(clinic_name, receptionist_name, custom_greeting)
+    hold = cached_hold_pcm if len(cached_hold_pcm) > 0 else np.zeros(0, dtype=np.int16)
+    return hold, (cache_key, text)
 
-    asyncio.create_task(_async_warmup())
-    return cached_greeting_pcm
+async def warmup_and_queue(cache_key: str, text: str, track: MayaVoiceTrack):
+    pcm = await synthesize_tts_pcm(text)
+    if len(pcm) == 0:
+        return
+    tenant_greetings[cache_key] = pcm
+    track.queue_audio(pcm, replace=False, after_current=True)
+    logger.info(f"Queued clinic greeting after neutral hold ({len(pcm)/48000:.2f}s): {text[:60]}...")
 
 def _encode_wav_sync(pcm: np.ndarray) -> str:
     wav_io = io.BytesIO()
@@ -310,23 +311,28 @@ async def handle_caller_utterance(call_id: str, pcm_16k: np.ndarray, out_track: 
 
         # 2. Retrieve ongoing conversation history and tenantId for this call
         conv_history = []
-        tenant_id = "tenant-lumera-main"
+        tenant_id = ""
         if call_id in active_calls:
             conv_history = active_calls[call_id].get("history", [])
-            tenant_id = active_calls[call_id].get("tenantId", "tenant-lumera-main")
+            tenant_id = active_calls[call_id].get("tenantId") or ""
 
         # 3. Send to Lumera Cloud Run cognitive brain
+        phone_number_id = ""
+        if call_id in active_calls:
+            phone_number_id = active_calls[call_id].get("phoneNumberId", "") or ""
         headers = {
             "Content-Type": "application/json",
-            "Origin": "https://www.mylumera.in"
+            "Origin": "https://www.mylumera.in",
         }
+        if VOICE_GATEWAY_SECRET:
+            headers["X-Voice-Gateway-Secret"] = VOICE_GATEWAY_SECRET
         async with aiohttp.ClientSession(headers=headers) as session:
             payload = {
-                "from": caller_phone or "+919999973271",
+                "from": caller_phone or "",
                 "audioBase64": audio_b64,
                 "mimeType": "audio/wav",
                 "callerName": "Patient",
-                "tenantId": tenant_id,
+                "phoneNumberId": phone_number_id,
                 "conversationHistory": conv_history,
             }
             logger.info(f"[{call_id}] Sending caller speech ({len(pcm_16k)/16000:.2f}s) for tenant {tenant_id} to Lumera AI...")
@@ -373,7 +379,10 @@ async def handle_caller_utterance(call_id: str, pcm_16k: np.ndarray, out_track: 
                             logger.info(f"[{call_id}] Streaming Maya's response into call ({dur_s:.2f}s)")
 
                             if intent == "TRANSFER":
-                                logger.info(f"[{call_id}] Call transfer announced. Scheduling graceful call completion in {dur_s + 2.0:.1f}s")
+                                # WhatsApp Cloud API calling on this gateway can accept, reject, or
+                                # terminate the WebRTC leg. It cannot bridge the caller to a PSTN
+                                # or SIP desk. The spoken line and WhatsApp card carry the clinic number.
+                                logger.info(f"[{call_id}] Escalation spoken. No live transfer on this stack. Ending media in {dur_s + 2.0:.1f}s")
                                 loop.call_later(dur_s + 2.0, lambda: asyncio.create_task(cleanup_call(call_id)))
                 else:
                     err_txt = await resp.text()
@@ -559,7 +568,7 @@ async def handle_answer_offer(request):
 
     call_id = body.get("callId")
     caller_phone = body.get("callerPhone", "+919999973271")
-    tenant_id = body.get("tenantId", "tenant-lumera-main")
+    tenant_id = body.get("tenantId") or ""
     offer_sdp = body.get("offerSdp", "")
     public_ip = body.get("publicIp", PUBLIC_IP)
 
@@ -579,17 +588,21 @@ async def handle_answer_offer(request):
     clinic_name = body.get("clinicName", "")
     receptionist_name = body.get("receptionistName", "")
     custom_greeting = body.get("customGreeting", "")
+    phone_number_id = body.get("phoneNumberId") or body.get("phone_number_id") or ""
 
     logger.info(f"[{call_id}] Initializing WebRTC call for tenant='{tenant_id}' clinic='{clinic_name}' caller={caller_phone}")
 
-    # Fetch pre-cached or synthesize tenant-specific greeting
-    greeting_pcm = await get_tenant_greeting(tenant_id, clinic_name, receptionist_name, custom_greeting)
+    # Neutral hold on cache miss, then the clinic greeting. SDP is not blocked on TTS.
+    greeting_pcm, followup = await prepare_call_greeting(tenant_id, clinic_name, receptionist_name, custom_greeting)
 
     # Create RTCPeerConnection
     pc = RTCPeerConnection()
 
-    # Attach Maya Voice Track with tenant greeting PCM
-    track = MayaVoiceTrack(greeting_pcm, 48000)
+    # Attach Maya Voice Track. Empty PCM still answers on the first ring.
+    track = MayaVoiceTrack(greeting_pcm if len(greeting_pcm) else np.zeros(0, dtype=np.int16), 48000)
+    if followup:
+        cache_key, followup_text = followup
+        asyncio.create_task(warmup_and_queue(cache_key, followup_text, track))
     pc.addTrack(track)
     logger.info(f"[{call_id}] Attached MayaVoiceTrack ({len(greeting_pcm)/48000:.2f}s) to WebRTC peer")
 
@@ -630,6 +643,7 @@ async def handle_answer_offer(request):
         "track": track,
         "callerPhone": caller_phone,
         "tenantId": tenant_id,
+        "phoneNumberId": phone_number_id,
         "startTime": time.time(),
         "history": [],
         "sdpAnswer": final_sdp,

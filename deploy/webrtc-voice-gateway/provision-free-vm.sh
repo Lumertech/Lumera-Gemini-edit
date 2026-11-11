@@ -90,10 +90,11 @@ else
       
       # Fetch VM External IP
       EXT_IP=$(curl -s -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/access-configs/0/external-ip || true)
-      if [ -n "$EXT_IP" ]; then
+      if [ -n "$EXT_IP" ] && [ -n "$VOICE_GATEWAY_SECRET" ]; then
         curl -s -X POST https://www.mylumera.in/api/meta/register-gateway \
           -H "Content-Type: application/json" \
-          -d "{\"gatewayIp\":\"$EXT_IP\",\"secret\":\"lumera_webhook_verify_2026\"}" || true
+          -H "X-Voice-Gateway-Secret: $VOICE_GATEWAY_SECRET" \
+          -d "{\"gatewayIp\":\"$EXT_IP\"}" || true
       fi
 
       # Setup systemd service
@@ -111,6 +112,7 @@ Restart=always
 RestartSec=5
 Environment=PORT=3000
 Environment=NODE_ENV=production
+# Environment=VOICE_GATEWAY_SECRET=same-value-as-cloud-run
 
 [Install]
 WantedBy=multi-user.target
@@ -133,14 +135,17 @@ echo "Instance:    ${INSTANCE_NAME}"
 echo "External IP: ${EXTERNAL_IP}"
 echo ""
 
-if [ -n "${EXTERNAL_IP}" ]; then
+if [ -n "${EXTERNAL_IP}" ] && [ -n "${VOICE_GATEWAY_SECRET}" ]; then
   echo "--> Registering Voice Gateway IP (${EXTERNAL_IP}) with Lumera Cloud Run..."
   REG_RES=$(curl -s -X POST https://www.mylumera.in/api/meta/register-gateway \
     -H "Content-Type: application/json" \
-    -d "{\"gatewayIp\":\"${EXTERNAL_IP}\",\"secret\":\"lumera_webhook_verify_2026\"}")
+    -H "X-Voice-Gateway-Secret: ${VOICE_GATEWAY_SECRET}" \
+    -d "{\"gatewayIp\":\"${EXTERNAL_IP}\"}")
   echo "    Registration Response: ${REG_RES}"
+elif [ -n "${EXTERNAL_IP}" ]; then
+  echo "--> Skipping gateway registration: set VOICE_GATEWAY_SECRET to the same value as Cloud Run."
 fi
 
 echo ""
 echo "Done! The instance is online and 100% covered under GCP's permanent Always Free Tier."
-echo "WhatsApp voice calls to +91 98233 73271 will now connect directly to the WebRTC Voice Gateway!"
+echo "WhatsApp voice calls connect to this WebRTC gateway when VOICE_GATEWAY_SECRET matches Cloud Run."

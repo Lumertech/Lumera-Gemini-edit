@@ -52,6 +52,8 @@ describe("Vertex PHI client", () => {
     assert.equal(vertexGeminiModel({}), "gemini-2.5-flash");
     assert.equal(vertexGeminiModel({ NODE_ENV: "production" }), "gemini-2.5-flash");
     assert.equal(vertexGeminiModel({ VERTEX_GEMINI_MODEL: "  gemini-3.5-flash  " }), "gemini-3.5-flash");
+    assert.equal(vertexGeminiModel({ VERTEX_GEMINI_MODEL: "gemini-3.5-flash-lite" }), "gemini-3.5-flash-lite");
+    assert.equal(vertexGeminiModel({ VERTEX_GEMINI_MODEL: " gemini-2.5-flash " }), "gemini-2.5-flash");
     assert.equal(AI_TRANSCRIPTION_NOT_CONFIGURED, "AI_TRANSCRIPTION_NOT_CONFIGURED");
     assert.equal(AI_TRANSCRIPTION_UNAVAILABLE, "AI_TRANSCRIPTION_UNAVAILABLE");
     assert.equal(VERTEX_REQUIRED_LOCATION, "asia-south1");

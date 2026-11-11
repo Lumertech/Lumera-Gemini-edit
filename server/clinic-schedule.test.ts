@@ -176,34 +176,55 @@ describe("Clinic Schedule Settings, Overlap Allocation & 3-Attempt Voice Failove
   });
 
   it("8. Maya Voicebot transfers to reception/helpdesk after 3 listening attempts", async () => {
+    const phoneNumberId = `1555${String(Date.now()).slice(-10)}`;
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO tenants (id, name, specialty, country, timezone, phone, trial_ends_at, ai_scribe_minutes_limit, ai_scribe_minutes_used, active_status, hfr_id, phone_number_id, created_at, updated_at)
+       VALUES (?, 'Schedule Clinic', 'General Medicine', 'India', 'IST (UTC+5:30)', '+919800011122', ?, 500, 0, 1, '', ?, ?, ?)`
+    ).run(testTenant, now, phoneNumberId, now, now);
     // Configure clinic escalation number
     saveWhatsAppTenantVoiceSettings(db, testTenant, {
       escalationPhone: "+91 98233 11111",
       receptionistName: "Maya",
     });
 
-    // Simulate 3rd listening attempt with 2 previous clarification attempts in conversation history
-    const res = await fetch(`${baseUrl}/api/whatsapp/voice-call`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        from: "+919999988888",
-        message: "", // inaudible / unclear speech
-        tenantId: testTenant,
-        conversationHistory: [
-          { role: "caller", text: "..." },
-          { role: "maya", text: "I'm sorry, I couldn't hear that clearly. Could you please repeat?" },
-          { role: "caller", text: "..." },
-          { role: "maya", text: "I'm sorry, I couldn't hear that clearly. Could you please repeat?" },
-        ],
-      }),
-    });
+    const prevSecret = process.env.VOICE_GATEWAY_SECRET;
+    process.env.VOICE_GATEWAY_SECRET = "schedule-voice-gateway-secret";
+    try {
+      // Simulate 3rd listening attempt with 2 previous clarification attempts in conversation history.
+      // A body tenantId for a different clinic must be ignored; the line id selects the clinic.
+      const res = await fetch(`${baseUrl}/api/whatsapp/voice-call`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Voice-Gateway-Secret": "schedule-voice-gateway-secret",
+        },
+        body: JSON.stringify({
+          from: "+919999988888",
+          message: "", // inaudible / unclear speech
+          tenantId: "tenant-not-this-clinic",
+          phoneNumberId,
+          conversationHistory: [
+            { role: "caller", text: "..." },
+            { role: "maya", text: "I'm sorry, I couldn't hear that clearly. Could you please repeat?" },
+            { role: "caller", text: "..." },
+            { role: "maya", text: "I'm sorry, I couldn't hear that clearly. Could you please repeat?" },
+          ],
+        }),
+      });
 
-    assert.equal(res.status, 200);
-    const data = await res.json() as any;
-    assert.equal(data.intent, "TRANSFER", "After 3 unclear attempts, Maya must trigger TRANSFER intent");
-    assert.equal(data.shouldTransfer, true);
-    assert.match(data.speechText, /98233 11111|क्लिनिक स्टाफ|clinic staff/i, "Speech text must direct caller to clinic helpdesk");
-    assert.match(data.suggestedAction, /Transferred caller to clinic desk/i);
+      assert.equal(res.status, 200);
+      const data = await res.json() as any;
+      assert.equal(data.intent, "TRANSFER", "After 3 unclear attempts, Maya must trigger TRANSFER intent");
+      assert.equal(data.shouldTransfer, true);
+      assert.match(data.speechText, /98233 11111/, "Speech text must direct caller to this clinic's desk number");
+      assert.match(data.speechText, /clinic staff/i);
+      assert.doesNotMatch(data.speechText, /98233\s*73271/);
+      assert.match(data.suggestedAction, /clinic desk/i);
+      assert.equal(data.escalationPhone, undefined);
+    } finally {
+      if (prevSecret === undefined) delete process.env.VOICE_GATEWAY_SECRET;
+      else process.env.VOICE_GATEWAY_SECRET = prevSecret;
+    }
   });
 });

@@ -118,14 +118,17 @@ describe("Gemini Voicebot & Inbound WhatsApp Voice Call Receptionist", () => {
   });
 
   it("5. POST /api/whatsapp/voice-call records voice call and responds with receptionist audio text", async () => {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (process.env.VOICE_GATEWAY_SECRET) headers["X-Voice-Gateway-Secret"] = process.env.VOICE_GATEWAY_SECRET;
     const response = await fetch(`http://127.0.0.1:${port}/api/whatsapp/voice-call`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify({
         from: "+919999973271",
         callerName: "Ravee",
         message: "Where is the clinic located?",
-        tenantId: "tenant-lumera-main",
+        tenantId: "tenant-someone-else",
+        phoneNumberId: "1294483843748285",
         language: "English",
       }),
     });
@@ -134,8 +137,9 @@ describe("Gemini Voicebot & Inbound WhatsApp Voice Call Receptionist", () => {
     const data = await response.json();
     assert.equal(data.success, true);
     assert.equal(data.intent, "LOCATION");
-    assert.match(data.speechText, /Health Hub/i);
-    assert.match(data.speechText, /Gurgaon/i);
+    assert.match(data.speechText, /Park Circus/i);
+    assert.match(data.speechText, /Kolkata/i);
+    assert.doesNotMatch(data.speechText, /Health Hub/i);
 
     // Verify written to database
     const db = getDb();
@@ -146,7 +150,7 @@ describe("Gemini Voicebot & Inbound WhatsApp Voice Call Receptionist", () => {
     `).get() as Record<string, unknown> | undefined;
 
     assert.ok(recorded, "Voice call bot response should be saved in whatsapp_messages");
-    assert.match(String(recorded.content), /Health Hub/i);
+    assert.match(String(recorded.content), /Park Circus/i);
   });
 
   it("6. Resilient offline voicebot never crashes with 503 when model API fails", async () => {

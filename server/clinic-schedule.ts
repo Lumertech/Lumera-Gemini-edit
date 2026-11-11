@@ -179,6 +179,31 @@ export function parseTimeToMinutes(timeStr: string, defaultMinutes = 540): numbe
   return h * 60 + m;
 }
 
+/**
+ * Completed, Cancelled, and No-Show do not take a bookable chair.
+ * Slot search and the calendar occupancy count must use this same list.
+ */
+export const SCHEDULE_SLOT_FREE_STATUSES = ["Completed", "Cancelled", "No-Show"] as const;
+
+export function scheduleSlotFreeStatusSql(column = "status"): string {
+  return `${column} NOT IN ('Completed', 'Cancelled', 'No-Show')`;
+}
+
+/** Minutes since midnight in Asia/Kolkata. */
+export function istClockMinutes(now = new Date()): number {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Kolkata",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(now);
+  let hour = Number(parts.find((part) => part.type === "hour")?.value ?? "0");
+  const minute = Number(parts.find((part) => part.type === "minute")?.value ?? "0");
+  if (!Number.isFinite(hour) || hour === 24) hour = 0;
+  if (!Number.isFinite(minute)) return hour * 60;
+  return hour * 60 + minute;
+}
+
 export function formatMinutesToTime(totalMins: number): string {
   const minsInDay = ((totalMins % 1440) + 1440) % 1440;
   const slotHour = Math.floor(minsInDay / 60);
@@ -226,7 +251,7 @@ export function listSlotOccupancy(
         .prepare(
           `SELECT * FROM appointments
            WHERE tenant_id = ? AND date = ? AND (doctor_id = ? OR doctor_name = ?)
-             AND status NOT IN ('Cancelled', 'No-Show')
+             AND ${scheduleSlotFreeStatusSql("status")}
            ORDER BY token_number ASC`
         )
         .all(tid, date, did, did) as Array<Record<string, unknown>>;
@@ -235,7 +260,7 @@ export function listSlotOccupancy(
         .prepare(
           `SELECT * FROM appointments
            WHERE tenant_id = ? AND date = ?
-             AND status NOT IN ('Cancelled', 'No-Show')
+             AND ${scheduleSlotFreeStatusSql("status")}
            ORDER BY token_number ASC`
         )
         .all(tid, date) as Array<Record<string, unknown>>;
