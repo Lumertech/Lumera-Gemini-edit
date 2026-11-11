@@ -11,7 +11,7 @@ import { findRegisteredPatient, resolveClinicFacingNames } from "./whatsapp.ts";
 import { dispatchPatientCloudText } from "./whatsapp-patient-dispatch.ts";
 import { getWhatsAppTenantVoiceSettings, saveWhatsAppTenantVoiceSettings } from "./whatsapp-numbers-store.ts";
 import { findTenantByPatientPhone } from "./meta.ts";
-import { voiceGatewayAuthorized } from "./voice-gateway-auth.ts";
+import { readVoiceGatewaySecret, voiceGatewayAuthorized } from "./voice-gateway-auth.ts";
 import { tenantIdFromReceivingPhoneNumberId } from "./whatsapp-tenant-resolve.ts";
 import { createVoiceCallbackTask } from "./voice-callback.ts";
 
@@ -156,6 +156,27 @@ function isVoiceStaffRole(role: string | undefined): boolean {
   return (CLINICIAN_ROLES as readonly string[]).includes(value) || isPlatformAdminRole(value);
 }
 
+let legacyVoiceTenantWarned = false;
+
+/** Test hook. The legacy tenantId warning is once per process. */
+export function resetLegacyVoiceTenantWarningForTests(): void {
+  legacyVoiceTenantWarned = false;
+}
+
+function warnLegacyVoiceTenantOnce(): void {
+  if (process.env.NODE_ENV !== "production" || legacyVoiceTenantWarned) return;
+  legacyVoiceTenantWarned = true;
+  console.warn(
+    "[Voice Gateway] VOICE_GATEWAY_SECRET is unset and this call has no phone_number_id. Accepting body.tenantId for the gateway that is still deployed. Send phone_number_id after that gateway is updated."
+  );
+}
+
+function tenantRowExists(tenantId: string): boolean {
+  if (!tenantId) return false;
+  const row = getDb().prepare("SELECT id FROM tenants WHERE id = ?").get(tenantId) as { id?: string } | undefined;
+  return Boolean(row?.id);
+}
+
 function inboundVoiceAccess(req: Request): { tenantId: string; authenticated: boolean } | null {
   const sessionTenant = String(req.user?.tenantId || "").trim();
   // These routes skip cookie CSRF. A logged-in patient must not drive booking or
@@ -170,11 +191,18 @@ function inboundVoiceAccess(req: Request): { tenantId: string; authenticated: bo
     phoneNumberId?: unknown;
     phone_number_id?: unknown;
     metadata?: { phone_number_id?: unknown };
+    tenantId?: unknown;
   };
   const phoneNumberId = String(body.phoneNumberId || body.phone_number_id || body.metadata?.phone_number_id || "").trim();
-  const tenantId = tenantIdFromReceivingPhoneNumberId(phoneNumberId);
-  if (!tenantId) return null;
-  return { tenantId, authenticated: false };
+  const fromLine = tenantIdFromReceivingPhoneNumberId(phoneNumberId);
+  if (fromLine) return { tenantId: fromLine, authenticated: false };
+  // A set secret still requires the receiving phone line. The body tenant is only
+  // for the gateway that is live today, and only while the secret is unset.
+  if (readVoiceGatewaySecret() || phoneNumberId) return null;
+  const legacyTenantId = String(body.tenantId || "").trim();
+  if (!tenantRowExists(legacyTenantId)) return null;
+  warnLegacyVoiceTenantOnce();
+  return { tenantId: legacyTenantId, authenticated: false };
 }
 
 function voiceSettingsTenant(req: Request, res: Response): string | null {

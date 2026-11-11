@@ -7,7 +7,7 @@ import { createApiRouter } from "./api.ts";
 import { signJwtToken } from "./auth.ts";
 import { saveClinicScheduleSettings, listSlotOccupancy, scheduleSlotFreeStatusSql } from "./clinic-schedule.ts";
 import { getDb, initDatabase } from "./db.ts";
-import { INDIC_LANGUAGES, mountGeminiVoiceRoutes, runGeminiVoiceReceptionist } from "./gemini-voice.ts";
+import { INDIC_LANGUAGES, mountGeminiVoiceRoutes, resetLegacyVoiceTenantWarningForTests, runGeminiVoiceReceptionist } from "./gemini-voice.ts";
 import { findNextBookableSlot } from "./whatsapp-calendar-booking.ts";
 import { resetWithheldGatewaySecretWarningForTests, voiceGatewayAnswerRequest } from "./meta.ts";
 import { saveWhatsAppTenantVoiceSettings } from "./whatsapp-numbers-store.ts";
@@ -312,6 +312,68 @@ describe("forward security and voice fixes", () => {
       );
       assert.equal(asPatient.status, 403);
     } finally {
+      restoreEnv({
+        NODE_ENV: envSnapshot.NODE_ENV,
+        VOICE_GATEWAY_SECRET: envSnapshot.VOICE_GATEWAY_SECRET,
+      });
+    }
+  });
+
+  it("accepts a legacy gateway tenantId only while the secret is unset", async () => {
+    const suffix = `${Date.now().toString(36)}leg`;
+    const tenantId = `tenant-legacy-${suffix}`;
+    seedTenant(tenantId, { name: "Legacy Clinic" });
+    getDb().prepare("UPDATE tenants SET address = '4 Legacy Road', city = 'Pune' WHERE id = ?").run(tenantId);
+    const patient = seedUser({
+      id: `user-leg-pt-${suffix}`,
+      tenantId,
+      role: "patient",
+      email: `leg.pt.${suffix}@example.com`,
+    });
+    const legacyBody = {
+      from: "+919800011122",
+      audioBase64: "",
+      mimeType: "audio/ogg",
+      callerName: "Ravi",
+      tenantId,
+      conversationHistory: [],
+      message: "Where is the clinic located?",
+    };
+    process.env.NODE_ENV = "production";
+    delete process.env.VOICE_GATEWAY_SECRET;
+    resetLegacyVoiceTenantWarningForTests();
+    const warnings: string[] = [];
+    const original = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map((part) => String(part)).join(" "));
+    };
+    try {
+      const accepted = await jsonRequest(port, "POST", "/api/voice/inbound", legacyBody);
+      assert.equal(accepted.status, 200);
+      assert.match(String(accepted.json.speechText), /Legacy Clinic|4 Legacy Road/);
+      assert.equal(warnings.filter((line) => line.includes("body.tenantId")).length, 1);
+
+      const unknown = await jsonRequest(port, "POST", "/api/voice/inbound", {
+        ...legacyBody,
+        tenantId: `tenant-missing-${suffix}`,
+      });
+      assert.equal(unknown.status, 403);
+
+      const asPatient = await jsonRequest(
+        port,
+        "POST",
+        "/api/voice/inbound",
+        legacyBody,
+        { Authorization: `Bearer ${patient}` }
+      );
+      assert.equal(asPatient.status, 403);
+
+      process.env.VOICE_GATEWAY_SECRET = "legacy-gateway-secret";
+      const locked = await jsonRequest(port, "POST", "/api/voice/inbound", legacyBody);
+      assert.equal(locked.status, 403);
+    } finally {
+      console.warn = original;
+      resetLegacyVoiceTenantWarningForTests();
       restoreEnv({
         NODE_ENV: envSnapshot.NODE_ENV,
         VOICE_GATEWAY_SECRET: envSnapshot.VOICE_GATEWAY_SECRET,
