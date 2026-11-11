@@ -11,6 +11,7 @@ import {
   updateAppointment,
 } from "./clinical.ts";
 import { findDoctor, findPatientByPhoneInTenant } from "./whatsapp-tenant-resolve.ts";
+import { recordWhatsAppOptIn } from "./whatsapp-opt-in.ts";
 import { formatMinutesToTime, getClinicScheduleSettings, parseTimeToMinutes } from "./clinic-schedule.ts";
 
 export function normalizePhoneDigits(phone: string): string {
@@ -249,8 +250,16 @@ export function bookWhatsAppAppointment(opts: {
     null,
     "WhatsApp Bot",
     "Appointment created",
-    `${appointment.patientName} token ${appointment.tokenNumber} via WhatsApp`
+    `${appointment.id} ${appointment.patientId}`
   );
+  recordWhatsAppOptIn(getDb(), {
+    tenantId,
+    phone: opts.patientPhone,
+    patientId: mappedPatient.id,
+    optedIn: true,
+    source: "whatsapp_booking",
+    actorId: "whatsapp",
+  });
   return { appointment, reused: false, patient: mappedPatient };
 }
 

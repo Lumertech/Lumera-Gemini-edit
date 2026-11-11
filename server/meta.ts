@@ -1070,6 +1070,7 @@ export function createMetaRouter(): Router {
                      "[Media/Attachment]");
 
                   const inboundText = String(textBody || "");
+                  const optKeyword = isWhatsAppOptOutMessage(inboundText) || isWhatsAppOptInMessage(inboundText);
                   if (isWhatsAppOptOutMessage(inboundText)) {
                     recordWhatsAppOptIn(db, {
                       tenantId: inboundTenantId,
@@ -1097,7 +1098,7 @@ export function createMetaRouter(): Router {
                   });
 
                   // Only dispatch bot text reply for actual user messages (text, voice note, interactive), NEVER for call events
-                  if (recordRes?.convId && !isCallNotice && isUserMessage) {
+                  if (recordRes?.convId && !isCallNotice && isUserMessage && !optKeyword) {
                     void dispatchInboundBotReply(db, {
                       convId: recordRes.convId,
                       fromPhone,

@@ -1032,6 +1032,7 @@ describe("Wave 2 WhatsApp calendar + reminders", () => {
       getDb()
         .prepare("UPDATE appointments SET status = 'Waiting', time_slot = '10:30 AM', date = ? WHERE id = ?")
         .run(date, ambientId);
+      approveTemplate(clinic.tenantId, "clinic_appointment_reminder");
       const run = await runAppointmentReminders({
         tenantId: clinic.tenantId,
         now: new Date("2026-11-19T05:00:00.000Z"),

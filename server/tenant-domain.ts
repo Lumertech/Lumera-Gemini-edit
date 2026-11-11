@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from "express";
 import type { SqlDatabase } from "./sql-engine.ts";
 import { getDb } from "./db.ts";
+import { SUNRISE_TENANT_ID } from "./tenant-slug.ts";
 
 export interface DomainTenantInfo {
   tenantId: string;
@@ -50,13 +51,26 @@ export function seedDemoTenantDomains(database: SqlDatabase): void {
       WHERE id = 'tenant-demo-polyclinic'
     `).run();
 
-    // 4. Sunrise Family Clinic
+    // 4. Sunrise Family Clinic. The domain row has to exist or a later
+    // "Sunrise …" slug (sunrise-family-clinic) steals sunrise.mylumera.in.
+    const sunrise = database.prepare("SELECT id FROM tenants WHERE id = ?").get(SUNRISE_TENANT_ID) as
+      | { id?: string }
+      | undefined;
+    if (!sunrise?.id) {
+      const now = new Date().toISOString();
+      database
+        .prepare(
+          `INSERT INTO tenants (id, name, specialty, country, timezone, phone, trial_ends_at, ai_scribe_minutes_limit, ai_scribe_minutes_used, active_status, hfr_id, created_at, updated_at)
+           VALUES (?, 'Sunrise Family Clinic', 'General Medicine', 'India', 'IST (UTC+5:30)', '', ?, 500, 0, 1, '', ?, ?)`
+        )
+        .run(SUNRISE_TENANT_ID, now, now, now);
+    }
     database.prepare(`
       UPDATE tenants
       SET slug = 'sunrise-clinic',
           custom_domain = 'sunrise.mylumera.in'
-      WHERE id = 'tenant-543feff7'
-    `).run();
+      WHERE id = ?
+    `).run(SUNRISE_TENANT_ID);
   } catch (err) {
     console.warn("[Tenant Domains] seed error (ignored):", err);
   }

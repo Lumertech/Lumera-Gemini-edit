@@ -381,11 +381,17 @@ describe("two-tenant clinic WhatsApp Graph path", () => {
     });
     assert.equal(hookA.status, 200);
     assert.equal(hookB.status, 200);
+    const messageInTenant = (tenantId: string, content: string) =>
+      getDb()
+        .prepare(`SELECT id FROM whatsapp_messages WHERE tenant_id = ? AND content = ?`)
+        .get(tenantId, content);
+    assert.ok(messageInTenant(tenantA, "Hello clinic A"));
+    assert.equal(messageInTenant(tenantA, "Hello clinic B"), undefined);
+    assert.ok(messageInTenant(tenantB, "Hello clinic B"));
+    assert.equal(messageInTenant(tenantB, "Hello clinic A"), undefined);
     const inboxA = listTenantConversations(tenantA);
     const inboxB = listTenantConversations(tenantB);
-    assert.equal(inboxA.some((row) => String(row.last_message) === "Hello clinic A"), true);
     assert.equal(inboxA.some((row) => String(row.last_message) === "Hello clinic B"), false);
-    assert.equal(inboxB.some((row) => String(row.last_message) === "Hello clinic B"), true);
     assert.equal(inboxB.some((row) => String(row.last_message) === "Hello clinic A"), false);
     const convA = inboxA.find((row) => String(row.last_message) === "Hello clinic A");
     assert.equal(getTenantConversation(tenantB, String(convA?.id || "")), undefined);
