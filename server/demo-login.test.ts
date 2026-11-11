@@ -84,6 +84,35 @@ describe("explicit demo login guard", () => {
     assert.ok(AUTH_RATE_LIMITED_PATHS.includes("/api/auth/demo-login"));
   });
 
+  it("signs in the admin sandbox the same way as doctor and refuses every other demoRole", async () => {
+    process.env.DEMO_LOGIN_ENABLED = "true";
+    const admin = await jsonRequest(port, "POST", "/api/auth/demo-login", { demoRole: "admin" });
+    assert.equal(admin.status, 200);
+    assert.equal(admin.json.requiresOtp, false);
+    const adminUser = admin.json.user as { email?: string; role?: string } | undefined;
+    assert.equal(adminUser?.email, "admin@lumera.me");
+    assert.equal(adminUser?.role, "super_admin");
+
+    const doctor = await jsonRequest(port, "POST", "/api/auth/demo-login", { demoRole: "doctor" });
+    assert.equal(doctor.status, 200);
+    assert.equal((doctor.json.user as { email?: string } | undefined)?.email, "doctor@lumera.me");
+
+    for (const demoRole of ["receptionist", "patient", "super_admin", "clinic.admin@lumera.me"]) {
+      const refused = await jsonRequest(port, "POST", "/api/auth/demo-login", { demoRole });
+      assert.equal(refused.status, 403, demoRole);
+      assert.match(String(refused.json.error || ""), /doctor and admin/);
+      assert.equal(refused.json.user, undefined);
+    }
+
+    const spoof = await jsonRequest(port, "POST", "/api/auth/demo-login", {
+      email: "admin@lumera.me",
+      password: "not-the-demo-password",
+      role: "super_admin",
+    });
+    assert.equal(spoof.status, 200);
+    assert.equal((spoof.json.user as { email?: string } | undefined)?.email, "doctor@lumera.me");
+  });
+
   it("does not auto-login on boot or embed the demo password in the boot client", () => {
     const auth = fs.readFileSync(path.join(root, "src/auth/AuthContext.tsx"), "utf8");
     const app = fs.readFileSync(path.join(root, "src/App.tsx"), "utf8");

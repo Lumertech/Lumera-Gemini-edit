@@ -451,6 +451,23 @@ function withSessionCredential<T extends Record<string, unknown>>(
   return { ...issued, token: credential };
 }
 
+/**
+ * Quick Demo account allowlist. Same DEMO_LOGIN_ENABLED gate as the doctor sandbox.
+ * `email`, `password`, and `role` in the body are not selectors — a posted admin
+ * email still lands on the doctor account unless `demoRole` is exactly "admin".
+ */
+export function demoLoginTargetEmail(body: unknown): { ok: true; email: string } | { ok: false; status: 403; error: string } {
+  const record = body && typeof body === "object" && !Array.isArray(body) ? (body as Record<string, unknown>) : {};
+  const demoRole = String(record.demoRole ?? "").trim().toLowerCase();
+  if (!demoRole || demoRole === "doctor") return { ok: true, email: "doctor@lumera.me" };
+  if (demoRole === "admin") return { ok: true, email: "admin@lumera.me" };
+  return {
+    ok: false,
+    status: 403,
+    error: "Demo login is only available for the doctor and admin sandbox accounts.",
+  };
+}
+
 export function createApiRouter(): Router {
   const api = Router();
   api.use(rejectUntrustedTenantClaim);
@@ -555,13 +572,19 @@ export function createApiRouter(): Router {
 
   /**
    * Explicit one-click demo. Credentials stay on the server. Disabled unless
-   * DEMO_LOGIN_ENABLED is set. Client email/password are ignored.
+   * DEMO_LOGIN_ENABLED is set. Client email, password, and role are ignored.
+   * The only selector is `demoRole`: omitted or "doctor" is the clinician sandbox;
+   * "admin" is the same gate for admin@lumera.me. Any other demoRole is refused.
    */
   api.post("/auth/demo-login", (req: Request, res: Response) => {
     if (!demoLoginEnabled()) {
       return res.status(404).json({ error: "Demo login is disabled" });
     }
-    const email = "doctor@lumera.me";
+    const target = demoLoginTargetEmail(req.body);
+    if (target.ok === false) {
+      return res.status(target.status).json({ error: target.error });
+    }
+    const email = target.email;
     const user = getDb().prepare("SELECT * FROM users WHERE email = ?").get(email) as unknown as DbUser | undefined;
     if (!user || !verifyPassword(DEMO_PASSWORD, user.password_hash)) {
       return res.status(503).json({ error: "Demo account is not available" });
