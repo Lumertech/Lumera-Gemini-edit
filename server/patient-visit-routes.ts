@@ -11,6 +11,7 @@ import {
 } from "./patient-visit-page.ts";
 import { loadVisitChart } from "./patient-visit-records.ts";
 import { queueSnapshotFromAppointment } from "./patient-queue-status.ts";
+import { appendTeleconsultSignal, listTeleconsultSignals } from "./teleconsult.ts";
 import {
   issueVisitUnlock,
   readPatientVisitLink,
@@ -153,5 +154,51 @@ export function mountPatientVisitRoutes(app: Express): void {
 
   app.delete("/api/public/visit/:token/documents/:documentId", (_req, res) => {
     res.status(405).json({ error: "Reports on a visit link cannot be deleted." });
+  });
+
+  app.get("/api/public/visit/:token/certificates/:certificateId", (req, res) => {
+    const found = readPatientVisitLink(getDb(), String(req.params.token || ""));
+    if (!found || found.expired) return res.status(404).json({ error: "This link is not valid." });
+    if (!unlocked(req, found.row.id)) return res.status(401).json({ error: "Enter the WhatsApp code to open records." });
+    const row = getDb()
+      .prepare("SELECT pdf_base64, title FROM clinic_certificates WHERE id = ? AND tenant_id = ? AND patient_id = ?")
+      .get(req.params.certificateId, found.row.tenant_id, found.row.patient_id) as
+      | { pdf_base64?: string; title?: string }
+      | undefined;
+    if (!row?.pdf_base64) return res.status(404).json({ error: "Certificate not found." });
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Cache-Control", "no-store");
+    res.send(Buffer.from(row.pdf_base64, "base64"));
+  });
+
+  app.post("/api/public/visit/:token/teleconsult/signal", (req, res) => {
+    const found = readPatientVisitLink(getDb(), String(req.params.token || ""));
+    if (!found || found.expired) return res.status(404).json({ error: "This link is not valid." });
+    if (!unlocked(req, found.row.id)) return res.status(401).json({ error: "Enter the WhatsApp code to join." });
+    if (!found.row.appointment_id) return res.status(404).json({ error: "Video visit not found." });
+    try {
+      const saved = appendTeleconsultSignal(getDb(), {
+        tenantId: found.row.tenant_id,
+        appointmentId: found.row.appointment_id,
+        senderRole: "patient",
+        kind: String(req.body?.kind || ""),
+        payload: String(req.body?.payload || ""),
+      });
+      res.status(201).json({ ok: true, signal: saved });
+    } catch (err) {
+      const status = typeof err === "object" && err && "status" in err ? Number((err as { status: number }).status) : 400;
+      res.status(status || 400).json({ error: err instanceof Error ? err.message : "Could not join." });
+    }
+  });
+
+  app.get("/api/public/visit/:token/teleconsult/signals", (req, res) => {
+    const found = readPatientVisitLink(getDb(), String(req.params.token || ""));
+    if (!found || found.expired) return res.status(404).json({ error: "This link is not valid." });
+    if (!unlocked(req, found.row.id)) return res.status(401).json({ error: "Enter the WhatsApp code to join." });
+    if (!found.row.appointment_id) return res.status(404).json({ error: "Video visit not found." });
+    res.json({
+      ok: true,
+      signals: listTeleconsultSignals(getDb(), found.row.tenant_id, found.row.appointment_id, String(req.query.after || "")),
+    });
   });
 }
