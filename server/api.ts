@@ -94,7 +94,7 @@ import { appPublicUrl, demoLoginEnabled, isProduction } from "./runtime.ts";
 import { DEMO_PASSWORD } from "../src/lib/demoAccounts.ts";
 import { POLYCLINIC_DEMO_NAME, POLYCLINIC_DEMO_TENANT_ID } from "./demo-workspace-tenants.ts";
 import { dispatchWhatsAppCloudMessage, isCloudDispatchFailure, resolveGraphCredentials } from "./graph-whatsapp.ts";
-import { toE164Phone } from "./clinical.ts";
+import { phoneMatchKey, toE164Phone } from "./clinical.ts";
 import { inboundTenantIdFromPhoneNumberId } from "./meta.ts";
 import {
   FacebookOAuthError,
@@ -1119,6 +1119,24 @@ export function createApiRouter(): Router {
       if (String(pendingTenant?.lifecycle_status || "") !== PENDING_VERIFICATION) {
         tenantId = "";
         userId = "";
+      } else {
+        const bound = userId
+          ? (getDb().prepare("SELECT id, tenant_id, email, phone FROM users WHERE id = ?").get(userId) as
+              | { id: string; tenant_id?: string; email?: string; phone?: string }
+              | undefined)
+          : (getDb()
+              .prepare("SELECT id, tenant_id, email, phone FROM users WHERE tenant_id = ? AND lower(email) = ?")
+              .get(tenantId, String(email || "").trim().toLowerCase()) as
+              | { id: string; tenant_id?: string; email?: string; phone?: string }
+              | undefined);
+        const samePhone = Boolean(bound) && phoneMatchKey(String(bound?.phone || "")) === phoneMatchKey(phone);
+        const sameEmail =
+          Boolean(bound) &&
+          String(bound?.email || "").trim().toLowerCase() === String(record.email || email || "").trim().toLowerCase();
+        if (!bound || String(bound.tenant_id || "") !== tenantId || !samePhone || !sameEmail) {
+          tenantId = "";
+          userId = "";
+        }
       }
       let hfrId = payload.hfrId;
       let hprId = payload.hprId;

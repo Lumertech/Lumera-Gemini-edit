@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { signJwtToken } from "./auth.ts";
+import { phoneMatchKey } from "./clinical.ts";
+import { hashPassword } from "./password.ts";
 import { createApiRouter } from "./api.ts";
 import { getDb, initDatabase } from "./db.ts";
 import { createLiveRegistrationRouter } from "./live-registration-routes.ts";
@@ -212,6 +214,75 @@ describe("production signup trial", () => {
     assert.equal(started?.ok, true);
     const row = getDb().prepare("SELECT lifecycle_status FROM tenants WHERE id = ?").get(tenantId) as { lifecycle_status: string };
     assert.equal(row.lifecycle_status, "trial");
+  });
+
+  it("does not let a second OTP take over a pending clinic", async () => {
+    resetSendOtpRateLimits();
+    const stamp = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+    const phone = `+9191${String(Date.now()).slice(-8)}`;
+    const email = `pending.${stamp}@signup-test.example`;
+    const created = await jsonRequest(server.port, "POST", "/api/auth/register-practice", {
+      clinicName: "Pending Hijack Clinic",
+      specialty: "General Medicine",
+      phone,
+      name: "Pending Owner",
+      email,
+      password: "Lumera@2026",
+    });
+    assert.equal(created.status, 200, String(created.json.error || created.status));
+    const victimId = String(created.json.tenantId);
+    const ownerId = String(created.json.userId);
+    const attackerPhone = `+9192${String(Date.now()).slice(-8)}`;
+    const verificationId = crypto.randomUUID();
+    const now = new Date().toISOString();
+    getDb()
+      .prepare(
+        `INSERT INTO otp_verifications (id, phone, email, otp, purpose, payload, created_at, expires_at)
+         VALUES (?, ?, ?, '135790', 'register', ?, ?, ?)`
+      )
+      .run(
+        verificationId,
+        attackerPhone,
+        email,
+        JSON.stringify({ tenantId: victimId, userId: ownerId, email, phone: attackerPhone, name: "Attacker" }),
+        now,
+        new Date(Date.now() + 5 * 60 * 1000).toISOString()
+      );
+    const stolen = await jsonRequest(server.port, "POST", "/api/auth/whatsapp/verify-otp", {
+      verificationId,
+      otp: "135790",
+    });
+    assert.equal(stolen.status, 400);
+    const owner = getDb().prepare("SELECT phone FROM users WHERE id = ?").get(ownerId) as { phone: string };
+    assert.equal(phoneMatchKey(owner.phone), phoneMatchKey(phone));
+    const clinic = getDb().prepare("SELECT lifecycle_status FROM tenants WHERE id = ?").get(victimId) as {
+      lifecycle_status: string;
+    };
+    assert.equal(clinic.lifecycle_status, "pending_verification");
+  });
+
+  it("blocks Gemini clinical writes for a clinic that has not started its trial", async () => {
+    const stamp = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+    const tenantId = `tenant-gemini-${stamp}`;
+    const userId = `user-gemini-${stamp}`;
+    const email = `gemini.${stamp}@signup-test.example`;
+    const now = new Date().toISOString();
+    getDb()
+      .prepare(
+        `INSERT INTO tenants (id, name, specialty, country, timezone, phone, trial_ends_at, ai_scribe_minutes_limit, ai_scribe_minutes_used, active_status, hfr_id, created_at, updated_at, lifecycle_status)
+         VALUES (?, 'Gemini Pending', 'General Medicine', 'India', 'IST (UTC+5:30)', '+919300000001', ?, 500, 0, 1, '', ?, ?, 'pending_verification')`
+      )
+      .run(tenantId, now, now, now);
+    getDb()
+      .prepare(
+        `INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, clinic_name, created_at)
+         VALUES (?, ?, ?, ?, 'Dr Pending', 'CLINIC_ADMIN', 'active', '+919300000001', 'Gemini Pending', ?)`
+      )
+      .run(userId, tenantId, email, hashPassword("Lumera@2026"), now);
+    const token = signJwtToken({ userId, tenantId, email, role: "CLINIC_ADMIN", name: "Dr Pending" });
+    const res = await authed(server.port, "POST", "/api/gemini/generate-soap", token, { transcript: "fever for two days" });
+    assert.equal(res.status, 403);
+    assert.equal(res.json.code, "TRIAL_NOT_STARTED");
   });
 
   it("does not let a register OTP or updatedPhone rewrite another clinic", async () => {
