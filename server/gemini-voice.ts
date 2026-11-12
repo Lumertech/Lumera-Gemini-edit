@@ -1,12 +1,17 @@
 import type { Express, Request, Response } from "express";
 import type { GoogleGenAI } from "@google/genai";
 import { CLINICIAN_ROLES, isPlatformAdminRole, requireAuth } from "./auth.ts";
-import { getDb } from "./db.ts";
+import { DEMO_TENANT_ID, getDb } from "./db.ts";
 import { clinicCalendarDate } from "../src/lib/clinicDay.ts";
 import { clinicLine, getTenantLetterhead } from "./letterhead.ts";
 import { AI_RUPEE_OUTPUT_RULE } from "./india-currency-copy.ts";
 import { vertexGeminiModel } from "./vertex-gemini.ts";
-import { bookWhatsAppAppointment } from "./whatsapp-calendar-booking.ts";
+import { bookWhatsAppAppointment, findNextBookableSlot } from "./whatsapp-calendar-booking.ts";
+import { getClinicScheduleSettings } from "./clinic-schedule.ts";
+import { mayaDemoMode } from "./voice-demo.ts";
+import { cloudTtsVoice, mayaSpokenLanguage } from "./voice-tts.ts";
+import { formatTenantVoiceFacts } from "./voice-vocabulary.ts";
+import { formatIstDateSpeech, parseVoiceBookingDraft, planVoiceBooking, speakablePhone, type VoiceBookingDraft } from "./voice-booking-confirm.ts";
 import { findRegisteredPatient, resolveClinicFacingNames } from "./whatsapp.ts";
 import { dispatchPatientCloudText } from "./whatsapp-patient-dispatch.ts";
 import { getWhatsAppTenantVoiceSettings, saveWhatsAppTenantVoiceSettings } from "./whatsapp-numbers-store.ts";
@@ -200,9 +205,12 @@ function inboundVoiceAccess(req: Request): { tenantId: string; authenticated: bo
   // for the gateway that is live today, and only while the secret is unset.
   if (readVoiceGatewaySecret() || phoneNumberId) return null;
   const legacyTenantId = String(body.tenantId || "").trim();
-  if (!tenantRowExists(legacyTenantId)) return null;
-  warnLegacyVoiceTenantOnce();
-  return { tenantId: legacyTenantId, authenticated: false };
+  if (tenantRowExists(legacyTenantId)) {
+    warnLegacyVoiceTenantOnce();
+    return { tenantId: legacyTenantId, authenticated: false };
+  }
+  if (mayaDemoMode()) return { tenantId: DEMO_TENANT_ID, authenticated: false };
+  return null;
 }
 
 function voiceSettingsTenant(req: Request, res: Response): string | null {
@@ -226,6 +234,26 @@ function patientClinicLabel(name: string | undefined): string {
   const value = String(name || "").trim();
   if (!value || /physio practice/i.test(value)) return "the clinic";
   return value;
+}
+
+function cleanRosterDoctor(name: string): string {
+  const clean = String(name || "").replace(/^dr\.?\s*/i, "").trim();
+  if (!clean || /on-duty physician/i.test(clean)) return "";
+  return clean;
+}
+
+function tenantVoiceFacts(tenantId: string, clinicName: string, doctors: TenantVoiceDoctor[]): string {
+  const schedule = getClinicScheduleSettings(getDb(), tenantId);
+  const roster = doctors.filter((doctor) => !/on-duty physician/i.test(doctor.name));
+  return formatTenantVoiceFacts({
+    clinicName,
+    doctors: roster,
+    schedule: {
+      opdStartTime: schedule.opdStartTime,
+      opdEndTime: schedule.opdEndTime,
+      slotDurationMinutes: schedule.slotDurationMinutes,
+    },
+  });
 }
 
 function clinicLocationSpeech(clinicName: string, address: string): string {
@@ -731,7 +759,7 @@ Clinic Information:
 - Clinic: ${clinicName}
 - Doctors & OPD:
 ${doctorRosterText}
-- OPD Timings: Mon-Sat 09:00 AM to 08:00 PM, Sun 10:00 AM to 02:00 PM.
+${tenantVoiceFacts(tenantId, clinicName, doctors)}
 - Address: ${clinicAddress}.
 - Phone: ${clinicPhone}.
 ${voiceSettings.customGreeting ? `- Greeting Preference: "${voiceSettings.customGreeting}"` : ""}
@@ -1007,7 +1035,8 @@ Detected Language: ${langInfo.name} (${langInfo.localName})
 Guidelines:
 1. Respond warmly and politely as ${receptionistName} the receptionist directly in ${langInfo.name} (${langInfo.localName}).
 2. Keep the answer spoken, natural, concise (under 30-40 words) suitable for voice audio playback over telephone/WhatsApp voice note.
-3. Offer relevant clinical help: OPD booking, timings (Mon-Sat 9AM-8PM), doctor availability, or connecting to reception.
+3. Offer relevant clinical help using only the clinic schedule and doctor list below. Do not invent hours.
+${tenantVoiceFacts(tenantId, clinicName, doctors)}
 4. Output strict JSON only:
 {"speechText": "Spoken text in ${langInfo.name}", "suggestedAction": "English summary"}`;
 
@@ -1081,10 +1110,11 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
     }
   });
 
-  async function synthesizeSpeechNeural(text: string): Promise<string | null> {
+  async function synthesizeSpeechNeural(text: string, spoken: "hi" | "mr" | "en" = "en"): Promise<string | null> {
     try {
-      const lang = "en-IN";
-      const voiceName = "en-IN-Neural2-A";
+      const voice = cloudTtsVoice(spoken);
+      const lang = voice.languageCode;
+      const voiceName = voice.name;
 
       const tokenRes = await fetch("http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token", {
         headers: { "Metadata-Flavor": "Google" },
@@ -1119,7 +1149,7 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
         return data.audioContent || null;
       }
     } catch (err) {
-      console.warn("[Neural2 TTS Synthesis Error]", err);
+      console.warn("[Cloud TTS WaveNet synthesis error]", err);
     }
     return null;
   }
@@ -1174,6 +1204,8 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
       let shouldBook = false;
       let shouldTransfer = false;
       let doctorToBook = "";
+      let modelLanguage = "";
+      let bookingDraftOut: VoiceBookingDraft | null = parseVoiceBookingDraft(req.body?.bookingDraft);
 
       // Single-pass Multimodal Inference: Transcribe & Formulate Receptionist Spoken Reply in 1 Roundtrip
       if (!message && req.body?.audioBase64) {
@@ -1192,7 +1224,7 @@ ${memoryProfileText ? `${memoryProfileText}\n` : ""}Clinic Information:
 - Clinic: ${clinicName}
 - Doctors & OPD:
 ${doctorRosterText}
-- OPD Timings: Mon-Sat 09:00 AM to 08:00 PM, Sun 10:00 AM to 02:00 PM.
+${tenantVoiceFacts(tenantId, clinicName, doctors)}
 - Address: ${clinicAddress}.
 - Phone: ${clinicPhone}.
 - Escalation Line: ${escalationPhone}.
@@ -1205,7 +1237,7 @@ Instructions:
 1. Listen carefully to the caller's audio clip. Indian English, Hindi, Hinglish, Marathi, Bengali, Tamil, Telugu, and other Indian regional languages are spoken.
 2. In "transcript", transcribe what the caller said.
    - The caller may speak fast, softly, or in Hinglish (e.g. "appointment chahiye", "doctor kab baithenge", "dr siddharth se milna hai", "kya timing hai", "aaj slot milega").
-   - Match phonetic doctor names to the clinic roster above (e.g. "sidart" -> Dr. Siddharth, "vikram" -> Dr. Vikram, "ananya" -> Dr. Ananya, "mukherji" -> Dr. Mukherjee).
+   - Match phonetic doctor names and medicine names to the clinic facts above. Do not substitute a doctor who is not on that list.
    - If the speech is muffled, faint, brief, or partially unclear, use context from previous turns to provide your best phonetic transcription instead of leaving it empty.
    - ONLY set "transcript": "" and "speechText": "" with "intent": "SILENCE" if the audio is strictly 100% dead digital silence with no human voice or background audio at all.
 3. LANGUAGE CONTINUITY RULE (STRICT):
@@ -1216,17 +1248,19 @@ Instructions:
    - If the caller's speech was completely inaudible or cut off, respond warmly asking them to repeat (in the caller's language, e.g. in Hindi "माफ़ कीजिए, मुझे आपकी आवाज़ साफ़ नहीं आई। क्या आप दोबारा बोलेंगे?" or in English "I'm sorry, I couldn't hear that clearly. Could you please repeat?").
    - Keep answers conversational, warm, and concise (1 to 2 short sentences, 15 to 25 words maximum) suitable for snappy live voice dialogue.
 5. If the caller asks to speak to a human, staff, doctor, receptionist, or operator (e.g. "transfer me", "talk to human", "doctor se baat karni hai", "receptionist chahiye", "operator", "emergency", "connect to staff"): set "intent": "TRANSFER", "shouldTransfer": true.
-6. If the caller asks to book an appointment (e.g. "book an appointment", "give me a slot", "book Dr. ...", "appointment chahiye", "ha book kardo", or names a doctor or confirms a time after you asked which doctor/slot): set "shouldBook": true and specify the matched doctor's name in "doctorName".
+6. If the caller asks to book an appointment, set "shouldBook": true and "doctorName" to a doctor from the clinic facts. Do not say the visit is already booked. The server reads the name, date, time, and phone back and books only after the caller confirms.
 7. If caller is asking for timings, fees, doctor availability, directions, or asking medical questions: answer their question warmly using the clinic facts above and ask if they would like to book. Do NOT book unless they ask or confirm!
+8. Set "language" to "hi" for Hindi or Hinglish, "mr" for Marathi, and "en" for English or any other language.
 
 Output strict JSON:
 {
   "transcript": "transcribed caller speech",
   "speechText": "spoken receptionist response in caller's language",
+  "language": "hi" | "mr" | "en",
   "intent": "BOOKING" | "TIMINGS" | "LOCATION" | "REFILL" | "DOCTOR_INFO" | "INQUIRY" | "TRANSFER" | "SILENCE",
   "shouldBook": false,
   "shouldTransfer": false,
-  "doctorName": "doctor name",
+  "doctorName": "doctor name from the clinic facts",
   "suggestedAction": "brief summary"
 }`;
 
@@ -1260,6 +1294,7 @@ Output strict JSON:
               shouldBook = Boolean(parsed.shouldBook);
               shouldTransfer = Boolean(parsed.shouldTransfer);
               doctorToBook = String(parsed.doctorName || "");
+              modelLanguage = String(parsed.language || "");
               console.log(`[Single-Pass Voice AI] Caller: "${message}" | ${receptionistName} (${intent}): "${speechText}" (fast-path)`);
             }
           }
@@ -1331,37 +1366,97 @@ Output strict JSON:
         }
       }
 
-      if (shouldBook) {
-        const docName = doctorToBook || (doctors[0]?.name ? doctors[0].name.replace(/^dr\.?\s*/i, "") : "General Physician");
+      const spokenForBooking = mayaSpokenLanguage(
+        message,
+        modelLanguage || language,
+        detectIndicLanguage(message, modelLanguage || language)
+      );
+      const wantsBooking =
+        !isFailoverTriggered &&
+        Boolean(message) &&
+        (shouldBook || Boolean(parseVoiceBookingDraft(req.body?.bookingDraft)) || detectIndicBooking(message));
+      if (wantsBooking) {
+        let proposed: { date: string; timeSlot: string } | null = null;
         try {
-          const booked = bookWhatsAppAppointment({
+          proposed = findNextBookableSlot({
             tenantId,
-            patientPhone: from,
-            patientName: cleanCallerName !== "there" ? cleanCallerName : "Patient",
-            doctorName: docName,
+            doctorName: doctorToBook || undefined,
           });
-          const appt = booked.appointment;
-          appointmentData = {
-            id: String(appt.id),
-            tokenNumber: appt.tokenNumber,
-            doctorName: appt.doctorName,
-            specialty: appt.specialty,
-            date: appt.date,
-            timeSlot: appt.timeSlot,
-            uhid: appt.uhid,
-            status: appt.status,
-          };
-          const spoken = confirmedVoiceBooking(detectIndicLanguage(message, language), cleanCallerName, appt);
-          speechText = spoken.speechText;
-          intent = "BOOKING";
-          suggestedAction = spoken.suggestedAction;
-        } catch (bErr) {
-          console.warn("[Voice Booking Error]", bErr);
-          const failed = bookingFailureSpeech(detectIndicLanguage(message, language), bErr);
-          appointmentData = undefined;
+        } catch (slotErr) {
+          console.warn("[Voice booking slot]", slotErr);
+        }
+        const plan = planVoiceBooking({
+          message,
+          draft: parseVoiceBookingDraft(req.body?.bookingDraft),
+          patientName: cleanCallerName,
+          phone: from,
+          doctorName: doctorToBook || cleanRosterDoctor(doctors[0]?.name || ""),
+          clinicName,
+          clinicPhone: escalationPhone,
+          proposed,
+          language: spokenForBooking,
+        });
+        speechText = plan.speechText || speechText;
+        bookingDraftOut = plan.draft;
+        suggestedAction = plan.callback
+          ? "Booking confirmation failed twice; callback task created"
+          : plan.commit
+            ? "Caller confirmed the booking read-back"
+            : "Read booking details back and waited for confirmation";
+        if (plan.commit) {
+          try {
+            const booked = bookWhatsAppAppointment({
+              tenantId,
+              patientPhone: plan.phone || from,
+              patientName: plan.patientName,
+              doctorName: plan.doctorName,
+              date: plan.date,
+              timeSlot: plan.timeSlot,
+            });
+            const appt = booked.appointment;
+            appointmentData = {
+              id: String(appt.id),
+              tokenNumber: appt.tokenNumber,
+              doctorName: appt.doctorName,
+              specialty: appt.specialty,
+              date: appt.date,
+              timeSlot: appt.timeSlot,
+              uhid: appt.uhid,
+              status: appt.status,
+            };
+            intent = "BOOKING";
+            bookingDraftOut = null;
+            const when = formatIstDateSpeech(String(appt.date || plan.date));
+            const phoneSpoken = speakablePhone(plan.phone || from);
+            const who = plan.patientName || cleanCallerName;
+            speechText =
+              spokenForBooking === "hi"
+                ? `बुक हो गया। ${who}, ${when} IST, ${appt.timeSlot}, फ़ोन ${phoneSpoken}. टोकन ${appt.tokenNumber}.`
+                : spokenForBooking === "mr"
+                  ? `बुक झाले. ${who}, ${when} IST, ${appt.timeSlot}, फोन ${phoneSpoken}. टोकन ${appt.tokenNumber}.`
+                  : `Booked. ${who} on ${when} at ${appt.timeSlot} IST, phone ${phoneSpoken}. Token ${appt.tokenNumber}.`;
+            suggestedAction = `Confirmed token #${appt.tokenNumber} for ${appt.date} at ${appt.timeSlot} IST`;
+          } catch (bErr) {
+            console.warn("[Voice Booking Error]", bErr);
+            intent = "INQUIRY";
+            speechText = escalationPhone
+              ? `I could not save that booking. Please call the clinic at ${escalationPhone}.`
+              : `I could not save that booking. A staff member from ${clinicName} will call you back.`;
+          }
+        } else if (plan.callback) {
           intent = "INQUIRY";
-          speechText = failed.speechText;
-          suggestedAction = failed.suggestedAction;
+          try {
+            callbackTaskId = createVoiceCallbackTask({
+              tenantId,
+              patientPhone: from,
+              patientName: plan.patientName || cleanCallerName,
+              reason: "Booking details were not confirmed after two attempts",
+            });
+          } catch (callbackErr) {
+            console.warn("[Voice callback task]", callbackErr);
+          }
+        } else {
+          intent = "INQUIRY";
         }
       }
 
@@ -1471,8 +1566,10 @@ Output strict JSON:
       }
 
       let audioBase64: string | null = null;
+      const spoken = mayaSpokenLanguage(message, modelLanguage || language, detectIndicLanguage(message, modelLanguage || language));
+      const ttsVoice = cloudTtsVoice(spoken);
       if (speechText) {
-        audioBase64 = await synthesizeSpeechNeural(speechText);
+        audioBase64 = await synthesizeSpeechNeural(speechText, spoken);
       }
 
       const payload: Record<string, unknown> = {
@@ -1485,6 +1582,9 @@ Output strict JSON:
         suggestedAction,
         appointment: appointmentData,
         audioBase64,
+        bookingDraft: bookingDraftOut,
+        ttsLanguage: ttsVoice.languageCode,
+        ttsVoice: ttsVoice.name,
       };
       if (access.authenticated) payload.escalationPhone = escalationPhone;
       if (callbackTaskId) payload.callbackTaskId = callbackTaskId;

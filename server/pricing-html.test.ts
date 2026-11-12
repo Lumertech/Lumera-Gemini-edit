@@ -234,7 +234,10 @@ describe("public /pricing HTML", () => {
       assert.match(html, /Patients pay your clinic directly\. Lumera never collects or holds patient money\./);
       assert.match(html, /locked and exportable for 90 days after cancellation/);
       assert.match(html, /Security and privacy statement/);
-      assert.match(html, /ambient scribing \(coming soon\)/);
+      assert.match(html, /in-consult ambient scribing \(live:/);
+      assert.match(html, /before they are saved/);
+      assert.doesNotMatch(html, /ambient scribing \(coming soon\)/);
+      assert.doesNotMatch(html, /AI Scribe \(coming soon\)/);
       assert.match(html, /ABDM integration is in sandbox testing and not yet live/);
       assert.doesNotMatch(html, /opening after Meta approval/);
       assert.doesNotMatch(html, /ABDM \/ ABHA sandbox integration/);

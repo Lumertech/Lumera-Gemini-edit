@@ -337,6 +337,7 @@ async def handle_caller_utterance(call_id: str, pcm_16k: np.ndarray, out_track: 
                 "callerName": "Patient",
                 "phoneNumberId": phone_number_id,
                 "conversationHistory": conv_history,
+                "bookingDraft": (active_calls.get(call_id) or {}).get("bookingDraft"),
             }
             logger.info(f"[{call_id}] Sending caller speech ({len(pcm_16k)/16000:.2f}s) for tenant {tenant_id} to Lumera AI...")
             async with session.post(LUMERA_API_URL, json=payload, timeout=aiohttp.ClientTimeout(total=18)) as resp:
@@ -349,6 +350,8 @@ async def handle_caller_utterance(call_id: str, pcm_16k: np.ndarray, out_track: 
 
                     if transcript and call_id in active_calls:
                         active_calls[call_id]["history"].append({"role": "caller", "text": transcript})
+                    if call_id in active_calls and "bookingDraft" in data:
+                        active_calls[call_id]["bookingDraft"] = data.get("bookingDraft")
 
                     if not speech_text and len(pcm_16k) >= 9600:
                         logger.warn(f"[{call_id}] Lumera AI returned empty speechText. Using polite clarification fallback.")
@@ -362,7 +365,7 @@ async def handle_caller_utterance(call_id: str, pcm_16k: np.ndarray, out_track: 
                         if data.get("audioBase64"):
                             try:
                                 resp_audio_bytes = base64.b64decode(data["audioBase64"])
-                                logger.info(f"[{call_id}] Received Google Cloud Neural2 audio ({len(resp_audio_bytes)} bytes)")
+                                logger.info(f"[{call_id}] Received Cloud TTS audio ({len(resp_audio_bytes)} bytes)")
                             except Exception as b64_err:
                                 logger.warn(f"[{call_id}] Error decoding audioBase64: {b64_err}")
 
@@ -393,6 +396,19 @@ async def handle_caller_utterance(call_id: str, pcm_16k: np.ndarray, out_track: 
     except Exception as e:
         logger.error(f"[{call_id}] Error handling caller utterance: {repr(e)}")
 
+def endpoint_silence_ms() -> int:
+    """End-of-turn silence. MAYA_ENDPOINT_SILENCE_MS defaults to about 500ms."""
+    try:
+        ms = int(os.environ.get("MAYA_ENDPOINT_SILENCE_MS", "500"))
+    except ValueError:
+        ms = 500
+    return max(320, min(ms, 900))
+
+
+def endpoint_silence_frames() -> int:
+    return max(10, int(round(endpoint_silence_ms() / 32.0)))
+
+
 async def process_inbound_audio(call_id: str, inbound_track, out_track: MayaVoiceTrack, caller_phone: str):
     """Listens to caller audio using Neural Silero VAD with pre-roll buffering & AGC to eliminate dropped speech."""
     logger.info(f"[{call_id}] Started neural inbound audio listener loop for caller: {caller_phone}")
@@ -402,14 +418,18 @@ async def process_inbound_audio(call_id: str, inbound_track, out_track: MayaVoic
     from collections import deque
     # Pre-roll ring buffer: keeps previous ~300ms (10 frames of 32ms) so first syllables are never cut
     pre_roll_buffer = deque(maxlen=10)
+    # Speech that arrives while Maya is talking. Kept so barge-in does not drop the caller's words.
+    overlap_buffer = deque(maxlen=60)
     speech_buffer = []
     chunk_accumulator = []
     is_speaking = False
     silence_frames = 0
     speech_frames = 0
     interruption_frames = 0
+    soft_hold = 0
+    was_talking = False
     min_speech_frames = 8         # ~250ms of neural speech minimum to trigger processing
-    silence_threshold_frames = 25 # ~800ms of natural human pause to finalize utterance
+    silence_threshold_frames = endpoint_silence_frames()
     max_speech_frames = 450       # ~14 seconds max cap
     is_processing = False         # Lock to serialize queries cleanly
     pending_utterance = None
@@ -435,25 +455,45 @@ async def process_inbound_audio(call_id: str, inbound_track, out_track: MayaVoic
                     speech_detected = vad.is_speech(block, threshold=0.42)
                     rms = np.sqrt(np.mean(block.astype(np.float32) ** 2))
 
-                    # If Maya is speaking:
-                    # Echo suppression with barge-in support:
-                    # Allow caller to interrupt if loud human voice is sustained for > 150ms after initial greeting grace
+                    # While Maya speaks, keep the caller audio. A sustained voice interrupts
+                    # playback and the buffered words become the start of the utterance.
                     if maya_talking:
-                        if out_track.speech_elapsed_s() > 1.2 and speech_detected and rms > 1500:
+                        was_talking = True
+                        overlap_buffer.append(block)
+                        if out_track.speech_elapsed_s() > 0.35 and speech_detected and rms > 1100:
                             interruption_frames += 1
-                            if interruption_frames >= 5: # ~160ms sustained human speech
+                            if interruption_frames >= 4:
                                 logger.info(f"[{call_id}] Caller interrupted Maya (RMS: {rms:.0f}, frames: {interruption_frames})")
                                 out_track.interrupt()
                                 maya_talking = False
+                                was_talking = False
                                 is_speaking = True
-                                speech_buffer = list(pre_roll_buffer) + [block]
-                                speech_frames = 5
+                                speech_buffer = list(overlap_buffer)
+                                speech_frames = max(4, len(speech_buffer))
                                 silence_frames = 0
+                                soft_hold = 0
                                 interruption_frames = 0
+                                overlap_buffer.clear()
                         else:
                             interruption_frames = 0
-                        pre_roll_buffer.append(block)
                         continue
+
+                    if was_talking and overlap_buffer and not is_speaking:
+                        promoted = list(overlap_buffer)
+                        overlap_buffer.clear()
+                        loud = 0
+                        for earlier in promoted:
+                            earlier_rms = float(np.sqrt(np.mean(earlier.astype(np.float32) ** 2)))
+                            if earlier_rms > 800:
+                                loud += 1
+                        if loud >= 3:
+                            logger.info(f"[{call_id}] Keeping caller speech that started while Maya was talking")
+                            is_speaking = True
+                            speech_buffer = promoted
+                            speech_frames = loud
+                            silence_frames = 0
+                            soft_hold = 0
+                    was_talking = False
 
                     interruption_frames = 0
 
@@ -474,7 +514,13 @@ async def process_inbound_audio(call_id: str, inbound_track, out_track: MayaVoic
                         pre_roll_buffer.append(block)
                         if is_speaking:
                             speech_buffer.append(block)
-                            silence_frames += 1
+                            if rms > 450:
+                                soft_hold += 1
+                                if soft_hold > silence_threshold_frames:
+                                    silence_frames = silence_threshold_frames + 1
+                            else:
+                                soft_hold = 0
+                                silence_frames += 1
                             if silence_frames > silence_threshold_frames:
                                 if speech_frames >= min_speech_frames:
                                     complete_pcm = np.concatenate(speech_buffer)
@@ -514,6 +560,7 @@ async def process_inbound_audio(call_id: str, inbound_track, out_track: MayaVoic
                                 speech_buffer = []
                                 is_speaking = False
                                 silence_frames = 0
+                                soft_hold = 0
                                 vad.reset()
     except asyncio.CancelledError:
         pass
@@ -549,6 +596,7 @@ async def handle_health(request):
         "engine": "aiortc (Continuous 48kHz Opus Audio Stream + Bidirectional Cognitive Speech)",
         "tier": "GCP Always Free (e2-micro)",
         "activeCallsCount": len(active_calls),
+        "endpointSilenceMs": endpoint_silence_ms(),
         "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     })
 

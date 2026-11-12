@@ -18,8 +18,11 @@ import {
   Copy,
   ExternalLink,
 } from 'lucide-react';
-import { BillItem, Patient, Doctor, ClinicSettings, PharmacyBatchItem, TherapyPackage, Prescription, Appointment } from '../types';
-import { MOCK_PHARMACY_BATCHES, MOCK_THERAPY_PACKAGES } from '../data/clinicalData';
+import { BillItem, Patient, Doctor, ClinicSettings, TherapyPackage, Prescription, Appointment } from '../types';
+import { MOCK_THERAPY_PACKAGES } from '../data/clinicalData';
+import { ClinicAccounts } from './ClinicAccounts';
+import { gstBreakdown } from '../lib/accountsMath';
+import type { StockBatchCard } from '../lib/accountsDesk';
 import { BLANK_CLINIC_SETTINGS } from '../lib/letterhead';
 import { isSampleTaxInvoice, SAMPLE_TAX_INVOICE_BANNER } from '../lib/sampleTaxInvoice';
 import { apiFetch } from '../api/http';
@@ -172,7 +175,7 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
   const pack = workflowForUser(user);
   const [invoiceNumber, setInvoiceNumber] = useState(DRAFT_INVOICE_LABEL);
   const [activeTab, setActiveTab] = useState<'invoice' | 'pharmacy_batches' | 'rehab_packages'>('invoice');
-  const [pharmacyStock, setPharmacyStock] = useState<PharmacyBatchItem[]>(MOCK_PHARMACY_BATCHES);
+  const [pharmacyStock, setPharmacyStock] = useState<StockBatchCard[]>([]);
 
   const [showCollectPaymentModal, setShowCollectPaymentModal] = useState(false);
   const [cashTendered, setCashTendered] = useState<number>(0);
@@ -334,6 +337,21 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
   }, []);
 
   useEffect(() => {
+    if (activeTab !== 'pharmacy_batches') return;
+    let cancelled = false;
+    void apiFetch<{ batches: StockBatchCard[] }>('/api/accounts/stock')
+      .then((data) => {
+        if (!cancelled) setPharmacyStock(Array.isArray(data.batches) ? data.batches : []);
+      })
+      .catch(() => {
+        if (!cancelled) setPharmacyStock([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, persistedInvoice?.id]);
+
+  useEffect(() => {
     const id = String(invoiceId || "").trim();
     if (!id) {
       setInvoiceMissing(false);
@@ -404,8 +422,17 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
 
   const draftSubtotal = items.reduce((sum, item) => sum + item.total, 0);
   const subtotal = serverBill ? serverBill.subtotal : draftSubtotal;
-  const totalAmount = serverBill ? serverBill.totalAmount : Math.max(0, draftSubtotal - discountAmount);
   const linesLocked = Boolean(serverBill && persistedInvoice?.id);
+  const gstSource = linesLocked ? savedInvoiceView(persistedInvoice || {}).items : items;
+  const gstView = gstBreakdown(
+    gstSource.map((line) => ({
+      taxable: line.total,
+      gstPercent: line.gstPercent || 0,
+    }))
+  );
+  const totalAmount = serverBill
+    ? serverBill.totalAmount
+    : Math.max(0, draftSubtotal - discountAmount + gstView.tax);
   const showInvoicePreview = linesLocked || composeBill;
   const billedName = persistedInvoice?.patientName || currentPatient.name;
   const billedUhid = persistedInvoice?.patientUhid || currentPatient.uhid;
@@ -593,25 +620,22 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
     setNewItemDesc('');
   };
 
-  const handleAddPharmacyDrugToBill = (drug: PharmacyBatchItem) => {
-    if (linesLocked || drug.currentStock <= 0) return;
+  const handleAddPharmacyDrugToBill = (drug: StockBatchCard) => {
+    if (linesLocked || drug.qty <= 0 || drug.expired) return;
+    const price = drug.sellPrice;
     const newItem: BillItem = {
       id: 'b-med-' + Date.now(),
-      description: `${drug.drugName} (Batch: ${drug.batchNumber}, Exp: ${drug.expiryDate})`,
+      description: `${drug.itemName} (Batch: ${drug.batchNo}, Exp: ${drug.expiryDate})`,
       category: 'Pharmacy',
-      hsnSacCode: '300490',
+      hsnSacCode: drug.hsn || '300490',
       quantity: 1,
-      unitPrice: drug.mrp,
-      gstPercent: 0,
-      total: drug.mrp,
+      unitPrice: price,
+      gstPercent: drug.gstPercent,
+      total: price,
+      inventoryItemId: drug.itemId,
+      inventoryBatchId: drug.id,
     };
     setItems([...items, newItem]);
-
-    setPharmacyStock((prev) =>
-      prev.map((item) =>
-        item.id === drug.id ? { ...item, currentStock: Math.max(0, item.currentStock - 1) } : item
-      )
-    );
     setActiveTab('invoice');
   };
 
@@ -736,6 +760,8 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
           Create bill
         </button>
       ) : null}
+
+      <ClinicAccounts refreshKey={`${dayEnd?.paidAmount || 0}-${dayEnd?.paidCount || 0}`} />
 
       {showInvoicePreview ? (
       <>
@@ -997,15 +1023,34 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
               </div>
             </div>
 
-            <div className="w-full sm:w-64 space-y-2 text-xs">
+            <div className="w-full sm:w-64 space-y-2 text-xs" data-testid="gst-breakdown">
               <div className="flex justify-between text-slate-600">
                 <span>Subtotal:</span>
                 <strong className="font-mono">{formatINR(subtotal)}</strong>
               </div>
-              <div className="flex justify-between text-slate-600">
-                <span>GST (Healthcare Exempt):</span>
-                <strong className="font-mono">{formatINR(0)}</strong>
-              </div>
+              {gstView.label === 'Exempt' ? (
+                <div className="flex justify-between text-slate-600">
+                  <span>GST: Exempt</span>
+                  <strong className="font-mono">{formatINR(0)}</strong>
+                </div>
+              ) : (
+                gstView.slices.map((slice) => (
+                  <div key={slice.rate} className="space-y-1 text-slate-600">
+                    <div className="flex justify-between">
+                      <span>Taxable {slice.rate}%:</span>
+                      <strong className="font-mono">{formatINR(slice.taxable)}</strong>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>CGST {slice.rate / 2}%:</span>
+                      <strong className="font-mono">{formatINR(slice.cgst)}</strong>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>SGST {slice.rate / 2}%:</span>
+                      <strong className="font-mono">{formatINR(slice.sgst)}</strong>
+                    </div>
+                  </div>
+                ))
+              )}
               <div className="flex justify-between text-slate-600 items-center no-print">
                 <span>Discount (₹):</span>
                 <input
@@ -1057,46 +1102,49 @@ export const BillingManager: React.FC<BillingManagerProps> = ({
             </span>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {pharmacyStock.map((batch) => {
+          <div className="flex flex-col gap-3 min-w-0 overflow-x-hidden">
+            {pharmacyStock.filter((batch) => batch.qty > 0).length === 0 && (
+              <p className="text-xs text-slate-600">No stock yet. Receive it in the day book on this page. Saving a bill with a batch decrements that batch.</p>
+            )}
+            {pharmacyStock.filter((batch) => batch.qty > 0).map((batch) => {
+              const status = batch.expired ? 'Expired' : batch.daysToExpiry != null && batch.daysToExpiry <= 30 ? 'Near Expiry' : 'In stock';
               let statusColor = 'bg-emerald-100 text-emerald-800 border-emerald-300';
-              if (batch.status === 'Near Expiry') statusColor = 'bg-amber-100 text-amber-800 border-amber-300';
-              if (batch.status === 'Expired') statusColor = 'bg-rose-100 text-rose-800 border-rose-300';
-              if (batch.status === 'Low Stock') statusColor = 'bg-purple-100 text-purple-800 border-purple-300';
+              if (status === 'Near Expiry') statusColor = 'bg-amber-100 text-amber-800 border-amber-300';
+              if (status === 'Expired') statusColor = 'bg-rose-100 text-rose-800 border-rose-300';
 
               return (
                 <div
                   key={batch.id}
-                  className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 space-y-2.5 flex flex-col justify-between"
+                  className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 space-y-2.5 flex flex-col justify-between min-w-0"
                 >
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between">
-                      <span className="font-mono text-[10px] text-slate-500 bg-white px-2 py-0.5 rounded border">
-                        {batch.batchNumber}
+                  <div className="space-y-1 min-w-0">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="font-mono text-[10px] text-slate-500 bg-white px-2 py-0.5 rounded border break-all">
+                        {batch.batchNo}
                       </span>
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${statusColor}`}>
-                        {batch.status}
+                        {status}
                       </span>
                     </div>
 
-                    <h4 className="font-bold text-xs text-slate-900 line-clamp-1">{batch.drugName}</h4>
-                    <p className="text-[11px] text-slate-500 line-clamp-1">{batch.composition}</p>
+                    <h4 className="font-bold text-xs text-slate-900 break-words">{batch.itemName}</h4>
+                    <p className="text-[11px] text-slate-500">GST {batch.gstPercent}%</p>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-700 bg-white p-2 rounded-lg border border-slate-200/80">
-                    <div>Stock: <strong className={batch.currentStock < batch.reorderLevel ? 'text-rose-600' : 'text-slate-900'}>{batch.currentStock} units</strong></div>
-                    <div>MRP: <strong className="text-teal-700">{formatINR(batch.mrp)}</strong></div>
-                    <div>Expiry: <strong className={batch.daysToExpiry < 60 ? 'text-amber-700' : 'text-slate-700'}>{batch.expiryDate}</strong></div>
-                    <div>Reorder: <strong>{batch.reorderLevel} units</strong></div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] text-slate-700 bg-white p-2 rounded-lg border border-slate-200/80">
+                    <div>Stock: <strong className="text-slate-900">{batch.qty} {batch.unit}</strong></div>
+                    <div>Rate: <strong className="text-teal-700">{formatINR(batch.sellPrice)}</strong></div>
+                    <div>Expiry: <strong className={batch.daysToExpiry != null && batch.daysToExpiry < 60 ? 'text-amber-700' : 'text-slate-700'}>{batch.expiryDate}</strong></div>
+                    <div>Cost: <strong>{formatINR(batch.unitCost)}</strong></div>
                   </div>
 
                   <button
                     onClick={() => handleAddPharmacyDrugToBill(batch)}
-                    disabled={linesLocked || batch.currentStock <= 0}
+                    disabled={linesLocked || batch.qty <= 0 || batch.expired}
                     className="w-full py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all shadow-xs"
                   >
                     <Plus className="w-3.5 h-3.5" />
-                    <span>Dispense & Add to Bill</span>
+                    <span>Add to bill</span>
                   </button>
                 </div>
               );

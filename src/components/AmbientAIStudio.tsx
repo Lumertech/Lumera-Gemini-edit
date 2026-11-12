@@ -3,20 +3,12 @@ import {
   Mic, 
   MicOff, 
   Sparkles, 
-  FileText, 
   RefreshCw, 
-  CheckCircle2, 
   AlertTriangle, 
   Clock, 
-  ArrowRight, 
-  Volume2, 
-  Pill, 
-  TestTube, 
-  Activity, 
   User, 
   BookOpen, 
   Zap,
-  Info,
   ShieldCheck
 } from 'lucide-react';
 import { SoapNote, Patient, Doctor, isAbhaLinked } from '../types';
@@ -25,17 +17,22 @@ import { apiFetchResponse } from '../api/http';
 import { ABHA_LINKING_STATUS, showsAbhaSandboxStatus } from '../lib/clinicNav';
 import { AmbientRecordingDisclosure, AmbientScribeConsentDialog } from './AmbientScribeConsentDialog';
 import {
+  bindOpenTabMicrophoneGrant,
   commitAmbientTap,
   MIC_STOPPED_RESUME,
   microphoneStatusLabel,
+  openTabGrantNotice,
   resetAmbientMicrophoneSession,
   startAmbientCaptureRun,
   transcriptBadge,
   type AmbientRunSnapshot,
   type AmbientTapSlot,
+  type MicrophonePermissionState,
   type TranscriptOrigin,
 } from '../lib/ambientMic';
 import { useAmbientScribeConsent } from '../lib/useAmbientScribeConsent';
+import { publicScribeDraftError } from '../lib/scribeAcceptance';
+import { AmbientScribeDraftEditor } from './AmbientScribeDraftEditor';
 
 interface AmbientAIStudioProps {
   currentPatient: Patient;
@@ -149,6 +146,7 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
   const [audioLevel, setAudioLevel] = useState(0);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [micError, setMicError] = useState<string | null>(null);
+  const [grantWhileOpen, setGrantWhileOpen] = useState(false);
   const slotRef = useRef<AmbientTapSlot>({ phase: 'idle', sessions: 0 });
   const runRef = useRef<{ stop: () => void } | null>(null);
   const finalTranscriptRef = React.useRef('');
@@ -172,6 +170,18 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
       if (interval) clearInterval(interval);
     };
   }, [isRecording]);
+
+  useEffect(() => {
+    if (typeof navigator === "undefined") return;
+    let previous: MicrophonePermissionState | null = null;
+    return bindOpenTabMicrophoneGrant(navigator.permissions, (state) => {
+      if (openTabGrantNotice(previous, state)) {
+        setGrantWhileOpen(true);
+        setMicError((current) => (current && /microphone|timed out|blocked/i.test(current) ? null : current));
+      }
+      previous = state;
+    });
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -300,7 +310,7 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
 
       const data = await response.json();
       if (!response.ok || !data.success || !data.soap) {
-        setMicError(data.error || 'Could not draft a SOAP note. Nothing was written to the chart.');
+        setMicError(publicScribeDraftError(data.message || data.error));
         return;
       }
       if (data.success && data.soap) {
@@ -317,14 +327,14 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
         setGenerationSource(data.source || 'Pulse AI');
       }
     } catch (err) {
-      setMicError(err instanceof Error ? err.message : 'Could not draft a SOAP note. Nothing was written to the chart.');
+      setMicError(publicScribeDraftError(err instanceof Error ? err.message : ''));
     } finally {
       setIsGenerating(false);
     }
   };
 
   return (
-    <div className="max-w-7xl mx-auto space-y-5 pb-8 min-w-0 overflow-x-hidden">
+    <div className="max-w-7xl mx-auto space-y-5 pb-8 min-w-0 overflow-x-hidden overflow-y-visible">
       {/* Header & Active Consultation Banner */}
       <div className="bg-white p-4 sm:p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div className="flex items-center space-x-3.5">
@@ -402,6 +412,16 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
                 </div>
               )}
             </div>
+
+            {grantWhileOpen && !isRecording && (
+              <div
+                role="status"
+                data-testid="studio-mic-grant-open-tab"
+                className="px-3 py-2 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-900 text-xs"
+              >
+                Microphone permission is saved for this site. Tap Start listening. You do not need to reload this tab.
+              </div>
+            )}
 
             {(isRequesting || consent.notice || micError) && (
               <div
@@ -682,190 +702,16 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
                     {generatedSoap.assessment.primaryDiagnosis}
                   </h2>
                 </div>
-
-                <div className="text-right space-y-1">
-                  <button
-                    type="button"
-                    onClick={() => onTransferToRx(generatedSoap)}
-                    className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-md bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs shadow-sm shadow-blue-100 transition-all"
-                  >
-                    <FileText className="w-3.5 h-3.5" />
-                    <span>Transfer suggestions to Rx</span>
-                    <ArrowRight className="w-3.5 h-3.5" />
-                  </button>
-                  <p className="text-[10px] text-slate-500 max-w-[220px]">
-                    Suggest-only. Fills the Rx draft for review. Does not sign, print, or send WhatsApp.
-                  </p>
-                </div>
               </div>
 
-              {/* 4-Section SOAP Grid */}
-              <div className="space-y-3.5">
-                {/* 1. S: Subjective */}
-                <div className="bg-slate-50 p-3.5 rounded-lg border border-slate-200/80 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
-                      <span className="w-4 h-4 rounded bg-blue-600 text-white flex items-center justify-center font-bold text-[10px]">S</span>
-                      Subjective
-                    </span>
-                  </div>
-                  <div className="text-xs text-slate-700 space-y-1.5">
-                    <div className="flex flex-wrap gap-1.5 items-center">
-                      <span className="font-semibold text-slate-900 text-[11px]">Chief Complaints:</span>
-                      {generatedSoap.subjective.chiefComplaints.map((cc, i) => (
-                        <span key={i} className="bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded font-medium text-[11px]">
-                          {cc}
-                        </span>
-                      ))}
-                    </div>
-                    <p className="leading-relaxed"><strong className="text-slate-900">HPI:</strong> {generatedSoap.subjective.historyOfPresentIllness}</p>
-                    {generatedSoap.subjective.pastMedicalHistory && (
-                      <p className="text-slate-600"><strong className="text-slate-900">Past History:</strong> {generatedSoap.subjective.pastMedicalHistory}</p>
-                    )}
-                  </div>
-                </div>
-
-                {/* 2. O: Objective */}
-                <div className="bg-slate-50 p-3.5 rounded-lg border border-slate-200/80 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
-                      <span className="w-4 h-4 rounded bg-cyan-600 text-white flex items-center justify-center font-bold text-[10px]">O</span>
-                      Objective (Vitals & Exam)
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-                    <div className="bg-white p-2 rounded border border-slate-200 text-center">
-                      <span className="text-[10px] text-slate-400 block uppercase font-bold">BP</span>
-                      <strong className="text-slate-800 font-mono text-xs">
-                        {generatedSoap.objective.vitals.bloodPressureSystolic || 120}/{generatedSoap.objective.vitals.bloodPressureDiastolic || 80}
-                      </strong>
-                      <span className="text-[9px] text-slate-400 block">mmHg</span>
-                    </div>
-                    <div className="bg-white p-2 rounded border border-slate-200 text-center">
-                      <span className="text-[10px] text-slate-400 block uppercase font-bold">Pulse</span>
-                      <strong className="text-slate-800 font-mono text-xs">
-                        {generatedSoap.objective.vitals.heartRate || 74}
-                      </strong>
-                      <span className="text-[9px] text-slate-400 block">bpm</span>
-                    </div>
-                    <div className="bg-white p-2 rounded border border-slate-200 text-center">
-                      <span className="text-[10px] text-slate-400 block uppercase font-bold">Temp</span>
-                      <strong className="text-slate-800 font-mono text-xs">
-                        {generatedSoap.objective.vitals.temperature || 98.6}°F
-                      </strong>
-                      <span className="text-[9px] text-slate-400 block">Oral</span>
-                    </div>
-                    <div className="bg-white p-2 rounded border border-slate-200 text-center">
-                      <span className="text-[10px] text-slate-400 block uppercase font-bold">SpO2</span>
-                      <strong className="text-blue-600 font-mono font-bold text-xs">
-                        {generatedSoap.objective.vitals.spO2 || 99}%
-                      </strong>
-                      <span className="text-[9px] text-slate-400 block">Room Air</span>
-                    </div>
-                  </div>
-                  <p className="text-xs text-slate-700 mt-1">
-                    <strong className="text-slate-900">Exam:</strong> {generatedSoap.objective.physicalExamination}
-                  </p>
-                </div>
-
-                {/* 3. A: Assessment */}
-                <div className="bg-slate-50 p-3.5 rounded-lg border border-slate-200/80 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
-                      <span className="w-4 h-4 rounded bg-indigo-600 text-white flex items-center justify-center font-bold text-[10px]">A</span>
-                      Assessment & Diagnosis
-                    </span>
-                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded ${
-                      generatedSoap.assessment.riskLevel === 'Low' ? 'bg-green-100 text-green-700' :
-                      generatedSoap.assessment.riskLevel === 'Moderate' ? 'bg-amber-100 text-amber-800' : 'bg-red-100 text-red-700'
-                    }`}>
-                      {generatedSoap.assessment.riskLevel} Risk
-                    </span>
-                  </div>
-                  <div className="text-xs text-slate-700 space-y-1">
-                    <p>
-                      <strong className="text-slate-900">Primary Diagnosis:</strong> {generatedSoap.assessment.primaryDiagnosis} ({generatedSoap.assessment.icd10Code})
-                    </p>
-                    {generatedSoap.assessment.differentialDiagnoses?.length > 0 && (
-                      <div className="flex flex-wrap items-center gap-1.5 mt-1">
-                        <span className="text-slate-500 font-medium text-[11px]">Differentials:</span>
-                        {generatedSoap.assessment.differentialDiagnoses.map((dd, idx) => (
-                          <span key={idx} className="bg-white border border-slate-200 text-slate-700 px-1.5 py-0.5 rounded text-[11px]">
-                            {dd}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* 4. P: Plan */}
-                <div className="bg-slate-50 p-3.5 rounded-lg border border-slate-200/80 space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
-                      <span className="w-4 h-4 rounded bg-emerald-600 text-white flex items-center justify-center font-bold text-[10px]">P</span>
-                      Plan: Rx & Investigations
-                    </span>
-                    <span className="text-xs text-slate-500 font-medium">
-                      Review in: <strong>{generatedSoap.plan.followUpDays || 5} days</strong>
-                    </span>
-                  </div>
-
-                  {/* Medications list */}
-                  <div className="space-y-1.5">
-                    <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
-                      <Pill className="w-3 h-3 text-blue-600" /> Prescribed Medications:
-                    </span>
-                    <div className="space-y-1">
-                      {generatedSoap.plan.medicines.map((med, idx) => (
-                        <div key={idx} className="bg-white p-2 rounded border border-slate-200 text-xs flex items-center justify-between">
-                          <div>
-                            <span className="font-semibold text-slate-900">{med.drugName}</span>
-                            <p className="text-[11px] text-slate-500">{med.composition} • {med.dosage}</p>
-                          </div>
-                          <div className="text-right">
-                            <span className="px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 font-mono font-semibold text-[10px]">
-                              {med.frequency}
-                            </span>
-                            <span className="text-[10px] text-slate-500 block">{med.timing} ({med.durationDays}d)</span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Lab Tests if any */}
-                  {generatedSoap.plan.labTests?.length > 0 && (
-                    <div className="space-y-1">
-                      <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
-                        <TestTube className="w-3 h-3 text-indigo-600" /> Recommended Tests:
-                      </span>
-                      <div className="flex flex-wrap gap-1.5">
-                        {generatedSoap.plan.labTests.map((t, idx) => (
-                          <span key={idx} className="bg-white border border-slate-200 text-slate-800 px-2 py-0.5 rounded text-xs font-medium">
-                            {t.testName}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Red Flags / Emergency Warnings */}
-                  {generatedSoap.plan.redFlags?.length > 0 && (
-                    <div className="bg-red-50 p-2.5 rounded border border-red-200 text-xs text-red-800 space-y-1">
-                      <div className="font-semibold flex items-center gap-1.5">
-                        <AlertTriangle className="w-3.5 h-3.5 text-red-600" />
-                        Red Flag Warnings:
-                      </div>
-                      <ul className="list-disc list-inside text-[11px] space-y-0.5 text-red-700">
-                        {generatedSoap.plan.redFlags.map((rf, idx) => (
-                          <li key={idx}>{rf}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                </div>
-              </div>
+              <AmbientScribeDraftEditor
+                soap={generatedSoap}
+                onChange={setGeneratedSoap}
+                onAccept={(next) => {
+                  setGeneratedSoap(next);
+                  onTransferToRx(next);
+                }}
+              />
             </div>
           ) : (
             /* Empty State / Instructional Display */
@@ -876,7 +722,7 @@ export const AmbientAIStudio: React.FC<AmbientAIStudioProps> = ({
               <div className="max-w-md space-y-1">
                 <h3 className="font-bold text-sm text-slate-800">No Consultation Synthesized Yet</h3>
                 <p className="text-xs text-slate-500 leading-relaxed">
-                  Start the microphone or load a Sample/Demo dialogue, then click <strong>"Generate Structured SOAP Note"</strong>. The note stays a suggestion until you transfer it.
+                  Start the microphone or load a Sample/Demo dialogue, then click <strong>"Generate Structured SOAP Note"</strong>. Edit the draft in place. Nothing is saved until you accept it.
                 </p>
               </div>
               <div className="pt-2">

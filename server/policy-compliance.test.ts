@@ -295,6 +295,30 @@ describe("Compliance #26 policy seed grep", () => {
     );
   });
 
+  it("names the AI processor as Google Cloud, Mumbai, India in public privacy and consent copy", () => {
+    const processor = "Google Cloud, Mumbai, India";
+    const banned = [/Vertex AI/, /Google Gemini API/, /Google Cloud Vertex/];
+    const surfaces = [
+      PRIVACY_POLICY_BODY,
+      readRepo("server/cms-policy-seed.ts"),
+      readRepo("server/db-seed-maps.ts"),
+      readRepo("server/ambient-scribe-consent.ts"),
+      readRepo("src/lib/ambientScribeConsent.ts"),
+    ];
+    assert.match(PRIVACY_POLICY_BODY, /Google Cloud, Mumbai, India/);
+    assert.match(PRIVACY_POLICY_BODY, /ravee@lumer\.me/);
+    for (const src of surfaces) {
+      assert.equal(src.includes(processor), true);
+      for (const pattern of banned) {
+        assert.equal(pattern.test(src), false, pattern.source);
+      }
+    }
+    assert.match(
+      readRepo("server/ambient-scribe-consent.ts"),
+      /TODO: remove after 2026-11-18/
+    );
+  });
+
   it("government data request policy covers Meta Data Handling four areas", () => {
     assert.match(GOVERNMENT_DATA_REQUEST_POLICY_BODY, /## Required Legal Review/);
     assert.match(GOVERNMENT_DATA_REQUEST_POLICY_BODY, /## Challenging Unlawful Requests/);

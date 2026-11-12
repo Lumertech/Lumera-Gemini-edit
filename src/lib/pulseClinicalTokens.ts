@@ -13,6 +13,7 @@ import type {
   PolyclinicSpecialty,
 } from "../types";
 import { clonePresetExercises } from "./rxPresetHep.ts";
+import { publicScribeDraftError } from "./scribeAcceptance.ts";
 import { resolveRxModule } from "./specialtyWorkflow.ts";
 
 export type PulseExtractSource = "gemini-3.7-flash" | "clinical-synthesis-engine" | "pulse-local-parser";
@@ -855,7 +856,7 @@ export async function extractClinicalTokens(params: {
       }),
     });
     const data = await res.json();
-    if (data.success && data.soap) {
+    if (res.ok && data.success && data.soap) {
       const full: SoapNote = {
         ...localSoap,
         ...data.soap,
@@ -872,9 +873,11 @@ export async function extractClinicalTokens(params: {
         source: (data.source as PulseExtractSource) || "clinical-synthesis-engine",
       };
     }
-  } catch {
-    /* fall through to local Pulse parser */
+    throw new Error(publicScribeDraftError(data.message || data.error));
+  } catch (err) {
+    if (err instanceof Error && err.message && !/gemini|api key|vertex|ai studio/i.test(err.message)) {
+      throw err;
+    }
+    throw new Error(publicScribeDraftError(err instanceof Error ? err.message : ""));
   }
-
-  return { soap: localSoap, source: "pulse-local-parser" };
 }
