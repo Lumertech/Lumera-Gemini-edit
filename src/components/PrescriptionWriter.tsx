@@ -85,6 +85,7 @@ import { installPrescriptionPrintHooks, joinPresent, printPrescriptionDocument }
 import { resolveRxModule } from '../lib/specialtyWorkflow';
 import { PatientRecordModal } from './PatientRecordModal';
 import { ConsultStock } from './ConsultStock';
+import { AfterVisitPanel } from './AfterVisitPanel';
 import {
   aiFieldClass,
   aiReviewAllowsDispatch,
@@ -1266,6 +1267,16 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
           onChange={(newAss) => setGynecologyAssessment(newAss)}
         />
       )}
+
+      <AfterVisitPanel
+        patient={currentPatient}
+        doctor={currentDoctor}
+        appointmentId={appointmentId}
+        medicines={medicines}
+        advice={adviceList}
+        followUpDate={followUpDate}
+        clinicName={clinicSettings.name}
+      />
 
       {/* MAIN PRESCRIPTION LETTERHEAD & CLINICAL FORM */}
       <div data-rx-document="" className="bg-white rounded-xl border border-slate-200 p-4 sm:p-6 shadow-xs space-y-5 print:border-none print:shadow-none print:p-0 min-w-0">

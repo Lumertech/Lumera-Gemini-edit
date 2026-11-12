@@ -53,6 +53,37 @@ export const PATIENT_VISIT_SCRIPT = `
       .catch(function () {});
   }
   setInterval(tick, 20000);
+  var join = document.getElementById("join-video");
+  if (!join) return;
+  var status = document.getElementById("video-status");
+  join.addEventListener("click", function () {
+    if (!navigator.mediaDevices) {
+      if (status) status.textContent = "This browser cannot open the camera.";
+      return;
+    }
+    var pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+    var remote = document.getElementById("remote-video");
+    pc.ontrack = function (event) {
+      if (remote && remote.srcObject !== event.streams[0]) remote.srcObject = event.streams[0];
+    };
+    navigator.mediaDevices.getUserMedia({ audio: true, video: true }).then(function (stream) {
+      stream.getTracks().forEach(function (track) { pc.addTrack(track, stream); });
+      return pc.createOffer();
+    }).then(function (offer) {
+      return pc.setLocalDescription(offer).then(function () { return offer; });
+    }).then(function (offer) {
+      return fetch("/api/public/visit/" + encodeURIComponent(id) + "/teleconsult/signal", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind: "offer", payload: JSON.stringify(offer) }),
+      });
+    }).then(function () {
+      if (status) status.textContent = "Waiting for the doctor to join.";
+    }).catch(function () {
+      if (status) status.textContent = "Camera or connection is unavailable.";
+    });
+  });
 })();
 `;
 
@@ -96,6 +127,35 @@ function recordsHtml(chart: VisitChart, linkId: string): string {
       </article>`;
     })
     .join("");
+  const vaccines = chart.care?.vaccines;
+  const vaccineItems = [
+    ...(vaccines?.overdue || []).map((dose) => `<li>Overdue: ${escapeHtml(dose.name)} (${escapeHtml(dose.dueOn)})</li>`),
+    ...(vaccines?.due || []).map((dose) => `<li>Due: ${escapeHtml(dose.name)} (${escapeHtml(dose.dueOn)})</li>`),
+  ].join("");
+  const followUp = chart.care?.followUpDate
+    ? `<p>Next visit: ${escapeHtml(chart.care.followUpDate)}</p>`
+    : "";
+  const growth = (chart.growth || [])
+    .slice(-6)
+    .map((point) => {
+      const bits = [
+        point.weightKg ? `weight ${point.weightKg} kg (${point.percentiles.weight ?? "–"})` : "",
+        point.heightCm ? `height ${point.heightCm} cm (${point.percentiles.height ?? "–"})` : "",
+        point.bmi ? `BMI ${point.bmi} (${point.percentiles.bmi ?? "–"})` : "",
+        point.headCm ? `head ${point.headCm} cm (${point.percentiles.head ?? "–"})` : "",
+      ].filter(Boolean);
+      return `<li>${escapeHtml(point.recordedOn)}: ${escapeHtml(bits.join(", "))}</li>`;
+    })
+    .join("");
+  const certificates = (chart.certificates || [])
+    .map(
+      (item) =>
+        `<li><a href="/api/public/visit/${encodeURIComponent(linkId)}/certificates/${encodeURIComponent(item.id)}">${escapeHtml(item.title)}</a></li>`
+    )
+    .join("");
+  const video = chart.teleconsult
+    ? `<section class="card" data-teleconsult="1"><h2>Video visit</h2><p class="muted">Join in the browser. Production needs HTTPS and a TURN server. No paid video vendor is used.</p><button type="button" id="join-video">Join video</button><p id="video-status" class="muted"></p><video id="remote-video" autoplay playsinline style="width:100%;max-height:240px;background:#0f172a"></video></section>`
+    : "";
   const docs = chart.documents
     .map(
       (doc) =>
@@ -106,9 +166,15 @@ function recordsHtml(chart: VisitChart, linkId: string): string {
     .map((lab) => `<li>${escapeHtml(lab.date)} · ${escapeHtml(lab.labName)} · ${escapeHtml(lab.category)}</li>`)
     .join("");
   return `<h2>Visits</h2><ul>${visits || "<li>No visits yet</li>"}</ul>
+    ${followUp}
     <h2>Prescriptions</h2>${rxs || "<p class='muted'>No prescription yet.</p>"}
+    <h2>Vaccines</h2><ul>${vaccineItems || "<li>No due doses on the IAP schedule</li>"}</ul>
+    <h2>Growth</h2><ul>${growth || "<li>No measurements yet</li>"}</ul>
+    <p class="muted">Percentiles are WHO/IAP checkpoint bands, not a full LMS z-score.</p>
+    <h2>Certificates</h2><ul>${certificates || "<li>No certificates</li>"}</ul>
     <h2>Reports</h2><ul>${docs || "<li>No uploaded reports</li>"}</ul>
-    <h2>Lab results</h2><ul>${labs || "<li>No lab results</li>"}</ul>`;
+    <h2>Lab results</h2><ul>${labs || "<li>No lab results</li>"}</ul>
+    ${video}`;
 }
 
 function shell(title: string, linkId: string, body: string): string {

@@ -12,6 +12,10 @@ import { migratePrescriptionDraftKey } from "./migrate-prescription-drafts.ts";
 import { ensureAppointmentTokenIndex } from "./queue-tokens.ts";
 import { ensureAccountsSchema } from "./accounts-schema.ts";
 import { ensurePatientVisitTables } from "./patient-visit-token.ts";
+import { ensureRxTranslationTable } from "./rx-translation.ts";
+import { ensureCertificateTable } from "./clinic-certificate.ts";
+import { ensureTeleconsultTables } from "./teleconsult.ts";
+import { ensureCareTables } from "./after-visit-care.ts";
 
 const DEMO_LETTERHEAD_SEED = {
   name: "Lumera Healthcare & Polyclinic Institute",
@@ -519,6 +523,10 @@ export function migrate(database: SqlDatabase) {
   }
   ensureAccountsSchema(database);
   ensurePatientVisitTables(database);
+  ensureRxTranslationTable(database);
+  ensureCertificateTable(database);
+  ensureTeleconsultTables(database);
+  ensureCareTables(database);
 }
 
 /**
