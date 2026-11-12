@@ -345,4 +345,74 @@ describe("production signup trial", () => {
     const row = getDb().prepare("SELECT lifecycle_status FROM tenants WHERE id = ?").get(tenantId) as { lifecycle_status: string };
     assert.equal(row.lifecycle_status, "active");
   });
+
+  it("registers with WhatsApp OTP when Google, Facebook, and Razorpay keys are absent", async () => {
+    const names = [
+      "GOOGLE_CLIENT_ID",
+      "GOOGLE_CLIENT_SECRET",
+      "GOOGLE_OAUTH_CLIENT_ID",
+      "GOOGLE_OAUTH_CLIENT_SECRET",
+      "FACEBOOK_APP_ID",
+      "FACEBOOK_APP_SECRET",
+      "META_APP_ID",
+      "META_APP_SECRET",
+      "RAZORPAY_KEY_ID",
+      "RAZORPAY_KEY_SECRET",
+      "RAZORPAY_WEBHOOK_SECRET",
+      "DEMO_LOGIN_ENABLED",
+    ];
+    const saved: Record<string, string | undefined> = {};
+    for (const name of names) {
+      saved[name] = process.env[name];
+      delete process.env[name];
+    }
+    const prevNode = process.env.NODE_ENV;
+    try {
+      delete process.env.NODE_ENV;
+      const stamp = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+      const phone = `+9176${String(Date.now()).slice(-8)}`;
+      const email = `nokeys.${stamp}@signup-test.example`;
+      const created = await jsonRequest(server.port, "POST", "/api/auth/register-practice", {
+        clinicName: "No Keys Clinic",
+        specialty: "General Medicine",
+        phone,
+        name: "No Keys Director",
+        email,
+        password: "Lumera@2026",
+      });
+      assert.equal(created.status, 200, String(created.json.error || created.status));
+      assert.equal(created.json.trialPending, true);
+      const verified = await jsonRequest(server.port, "POST", "/api/auth/whatsapp/verify-otp", {
+        verificationId: created.json.verificationId,
+        otp: created.json.demoOtp,
+      });
+      assert.equal(verified.status, 200, String(verified.json.error || verified.status));
+
+      process.env.NODE_ENV = "production";
+      const config = await jsonRequest(server.port, "GET", "/api/auth/oauth-config");
+      assert.equal(config.status, 200);
+      assert.equal(config.json.googleConfigured, false);
+      assert.equal(config.json.facebookConfigured, false);
+      assert.equal(config.json.sandboxClientOAuthAllowed, false);
+      assert.equal(config.json.demoLoginEnabled, false);
+      const blocked = await jsonRequest(server.port, "POST", "/api/auth/register-practice", {
+        clinicName: "Prod No Meta",
+        specialty: "General Medicine",
+        phone: `+9175${String(Date.now()).slice(-8)}`,
+        name: "Prod Director",
+        email: `prod.${stamp}@signup-test.example`,
+        password: "Lumera@2026",
+      });
+      assert.equal(blocked.status, 503);
+      assert.match(String(blocked.json.error), /META_ACCESS_TOKEN/);
+      assert.doesNotMatch(String(blocked.json.error), /GOOGLE_CLIENT|FACEBOOK_APP|RAZORPAY_KEY/);
+    } finally {
+      if (prevNode === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = prevNode;
+      for (const name of names) {
+        if (saved[name] === undefined) delete process.env[name];
+        else process.env[name] = saved[name];
+      }
+    }
+  });
 });

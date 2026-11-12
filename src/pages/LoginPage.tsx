@@ -1211,7 +1211,8 @@ export const LoginPage: React.FC = () => {
                   </form>
                 )}
 
-                {/* Google & Facebook SSO Section */}
+                {/* Google & Facebook SSO. Hidden when neither provider is configured. */}
+                {(showGoogleOAuth || showFacebookOAuth) && (
                 <div className="pt-3 border-t border-slate-800/80">
                   <div className="relative my-2.5">
                     <div className="absolute inset-0 flex items-center">
@@ -1267,6 +1268,7 @@ export const LoginPage: React.FC = () => {
                     </p>
                   )}
                 </div>
+                )}
 
                 <p className="text-[10px] text-slate-500 pt-2 border-t border-slate-800/60" data-testid="admin-password-login-note">
                   Platform admin sign-in uses email and password. Clinician and patient logins still require a WhatsApp code in production.
@@ -1297,7 +1299,7 @@ export const LoginPage: React.FC = () => {
                 )}
 
                 {/* Fast SSO Registration Strip */}
-                {!verifiedSsoNotice && (
+                {!verifiedSsoNotice && (showGoogleOAuth || showFacebookOAuth) && (
                   <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs">
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-slate-400 font-medium">Or pre-fill with single sign-on:</span>
