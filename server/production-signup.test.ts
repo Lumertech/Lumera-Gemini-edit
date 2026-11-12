@@ -168,6 +168,12 @@ describe("production signup trial", () => {
     assert.equal(write.status, 403);
     assert.equal(write.json.code, "TRIAL_READ_ONLY");
     assert.equal(write.json.upgradeRequired, true);
+    const manualReply = await authed(server.port, "POST", "/api/whatsapp/send", token, {
+      patientPhone: "+919800011199",
+      content: "We are open today",
+    });
+    assert.notEqual(manualReply.json.code, "TRIAL_NOT_STARTED");
+    assert.notEqual(manualReply.json.code, "TRIAL_READ_ONLY");
 
     const prevKey = process.env.RAZORPAY_KEY_ID;
     const prevSecret = process.env.RAZORPAY_KEY_SECRET;
@@ -283,6 +289,12 @@ describe("production signup trial", () => {
     const res = await authed(server.port, "POST", "/api/gemini/generate-soap", token, { transcript: "fever for two days" });
     assert.equal(res.status, 403);
     assert.equal(res.json.code, "TRIAL_NOT_STARTED");
+    const whatsapp = await authed(server.port, "POST", "/api/whatsapp/send", token, {
+      patientPhone: "+919300000099",
+      content: "Your prescription is ready",
+    });
+    assert.equal(whatsapp.status, 403);
+    assert.equal(whatsapp.json.code, "TRIAL_NOT_STARTED");
   });
 
   it("does not let a register OTP or updatedPhone rewrite another clinic", async () => {

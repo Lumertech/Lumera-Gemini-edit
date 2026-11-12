@@ -12,17 +12,21 @@ function requestPath(req: Request): string {
   return `${req.originalUrl || ""} ${req.path || ""}`.split("?")[0];
 }
 
-function writeAllowedWhileRestricted(path: string): boolean {
-  return (
+function writeAllowedWhileRestricted(path: string, pendingVerification: boolean): boolean {
+  if (
     path.includes("/auth/") ||
     path.includes("/admin/") ||
     path.includes("/billing/plan-checkout") ||
     path.includes("/billing/trial") ||
     path.includes("/billing/razorpay/webhook") ||
-    path.includes("/whatsapp") ||
     path.includes("/public/") ||
     path.includes("/meta/")
-  );
+  ) {
+    return true;
+  }
+  // Day-8 manual replies stay on the WhatsApp router, which still enforces the
+  // 24-hour window. A clinic that has not verified WhatsApp cannot send at all.
+  return !pendingVerification && path.includes("/whatsapp");
 }
 
 /**
@@ -33,7 +37,6 @@ function writeAllowedWhileRestricted(path: string): boolean {
 export function trialAccessGuard(req: Request, res: Response, next: NextFunction) {
   if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") return next();
   const path = requestPath(req);
-  if (writeAllowedWhileRestricted(path)) return next();
   const user = req.user;
   if (!user?.id) return next();
   if (isPlatformAdminRole(user.role) || user.isDemoWorkspace || isDemoWorkspaceUser({ id: user.id, email: user.email, tenant_id: user.tenantId })) {
@@ -48,6 +51,7 @@ export function trialAccessGuard(req: Request, res: Response, next: NextFunction
     return next();
   }
   if (!view.readOnly) return next();
+  if (writeAllowedWhileRestricted(path, view.whatsappVerificationRequired)) return next();
   if (view.whatsappVerificationRequired) {
     return res.status(403).json({
       error: TRIAL_NOT_STARTED_ERROR,
