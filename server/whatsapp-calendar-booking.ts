@@ -213,7 +213,8 @@ export function bookWhatsAppAppointment(opts: {
     name: opts.patientName,
   });
   const mappedPatient = mapPatient(patient);
-  const requestedDate = String(opts.date || "").trim() || clinicCalendarDate(new Date(), tenantTimezone(tenantId));
+  const requestedDate =
+    String(opts.date || "").trim() || clinicCalendarDate(opts.now ?? new Date(), tenantTimezone(tenantId));
   const explicitSlot = String(opts.timeSlot || "").trim();
   const found = explicitSlot
     ? { date: requestedDate, timeSlot: explicitSlot }
