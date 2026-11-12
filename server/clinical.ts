@@ -35,6 +35,7 @@ import {
   saveClinicScheduleSettings,
   listSlotOccupancy,
 } from "./clinic-schedule.ts";
+import { deliverSignedVisitSummary, notifyTurnNearForDoctor } from "./patient-visit-delivery.ts";
 
 function tenantIdOf(req: Request): string {
   return String(req.user?.tenantId || "").trim();
@@ -1554,11 +1555,38 @@ export function createClinicalRouter(): Router {
         id: req.user?.id || null,
         name: req.user?.name,
       });
-      res.json(withPatientTenant(req, tenantId, { appointment: mapAppointment(row) }));
+      const mappedVisit = mapAppointment(row);
+      const nextStatus = String(patch.status || "");
+      if (nextStatus === "In Consultation" || nextStatus === "Completed") {
+        void notifyTurnNearForDoctor(getDb(), {
+          tenantId,
+          doctorId: String(mappedVisit.doctorId || ""),
+          date: String(mappedVisit.date || ""),
+        }).catch((err) => reportCaughtError(err, "clinical.turnNear"));
+      }
+      res.json(withPatientTenant(req, tenantId, { appointment: mappedVisit }));
     } catch (err: unknown) {
       const status = typeof err === "object" && err && "status" in err ? Number((err as { status: number }).status) : 500;
       const message = err instanceof Error ? err.message : "Failed to update appointment";
       res.status(status || 500).json({ error: message });
+    }
+  });
+
+  api.post("/queue/turn-near", requireAuth, async (req, res) => {
+    const tenantId = requireTenant(req, res);
+    if (!tenantId) return;
+    const role = String(req.user?.role || "");
+    if (!new Set(["doctor", "receptionist", "CLINIC_ADMIN", "polyclinic_admin"]).has(role)) {
+      return res.status(403).json({ error: "Insufficient permissions", code: "ROLE_DENIED" });
+    }
+    const doctorId = String(req.body?.doctorId || req.body?.doctor_id || "").trim();
+    const date = String(req.body?.date || "").trim();
+    try {
+      const notified = await notifyTurnNearForDoctor(getDb(), { tenantId, doctorId, date });
+      res.json({ ok: true, notified: notified.length, results: notified.map((row) => ({ status: row.status, mode: row.mode })) });
+    } catch (err) {
+      reportCaughtError(err, "clinical.turnNearRoute");
+      res.status(500).json({ error: "Could not send queue alerts." });
     }
   });
 
@@ -1648,6 +1676,20 @@ export function createClinicalRouter(): Router {
       } catch (err: unknown) {
         reportCaughtError(err, "clinical.deleteDraftOnSign");
         draftCleanupError = "draft_cleanup_failed";
+      }
+      try {
+        void deliverSignedVisitSummary(getDb(), {
+          tenantId,
+          patientId: String(row.patient_id || patientId),
+          patientPhone: String(row.patient_phone || ""),
+          patientName: String(row.patient_name || ""),
+          doctorName: String(row.doctor_name || ""),
+          rxNumber: String(row.rx_number || ""),
+          rxId: String(row.id || ""),
+          appointmentId: appointmentIdForSignedDraft(tenantId, String(row.patient_id || patientId), req.body || {}),
+        }).catch((err) => reportCaughtError(err, "clinical.visitSummary"));
+      } catch (err) {
+        reportCaughtError(err, "clinical.visitSummary");
       }
       res.status(201).json(
         withPatientTenant(

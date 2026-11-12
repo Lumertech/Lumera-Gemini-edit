@@ -124,6 +124,7 @@ export function isSecurityExemptPath(path: string): boolean {
   if (p === "/meta/voice-call" || p === "/api/meta/voice-call") return true;
   if (p === "/api/gemini/voice-bot" || p === "/gemini/voice-bot") return true;
   if (p === "/api/billing/razorpay/webhook") return true;
+  if (p.startsWith("/v/") || p.startsWith("/api/public/visit/")) return true;
   return false;
 }
 

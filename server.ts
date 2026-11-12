@@ -53,6 +53,7 @@ async function startServer() {
         p.startsWith("/api") ||
         p.startsWith("/uploads") ||
         p.startsWith("/meta") ||
+        p.startsWith("/v/") ||
         p.startsWith("/v3") ||
         p.startsWith("/@") ||
         p.startsWith("/src") ||
