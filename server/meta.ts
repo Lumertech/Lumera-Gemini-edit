@@ -336,7 +336,100 @@ export function recordWebhookDebugLog(entry: WebhookDebugEntry) {
   }
 }
 
+/** Mumbai-to-US plus e2-micro aiortc setup often takes longer than the old 1.2s abort. */
+export const DEFAULT_VOICE_GATEWAY_ANSWER_TIMEOUT_MS = 5000;
+
+/** Positive milliseconds. Empty or invalid VOICE_GATEWAY_ANSWER_TIMEOUT_MS stays at the default. */
+export function voiceGatewayAnswerTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = String(env.VOICE_GATEWAY_ANSWER_TIMEOUT_MS ?? "").trim();
+  if (!raw) return DEFAULT_VOICE_GATEWAY_ANSWER_TIMEOUT_MS;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 1) return DEFAULT_VOICE_GATEWAY_ANSWER_TIMEOUT_MS;
+  return Math.round(parsed);
+}
+
+/** Real gateway SDP only. The local fallback is not stored: a slow gateway must not pin silence onto the next action. */
 const cachedCallAnswers = new Map<string, string>();
+const inflightGatewayAnswers = new Map<string, Promise<string>>();
+
+export function resetMetaCallAnswerStateForTests(): void {
+  cachedCallAnswers.clear();
+  inflightGatewayAnswers.clear();
+}
+
+type GatewayAnswerContext = {
+  callId: string;
+  offerSdp?: string;
+  fromPhone?: string;
+  tenantId: string;
+  phoneNumberId: string;
+  clinicName: string;
+  receptionistName: string;
+  customGreeting: string;
+  gatewayIp: string;
+};
+
+async function fetchVoiceGatewaySdp(opts: GatewayAnswerContext): Promise<{ sdpAnswer: string; elapsedMs: number }> {
+  const started = Date.now();
+  const timeoutMs = voiceGatewayAnswerTimeoutMs();
+  try {
+    const gatewaySecret = readVoiceGatewaySecret();
+    const configuredGateway = String(process.env.VOICE_GATEWAY_URL || "").trim();
+    const gatewayBase = configuredGateway || `http://${opts.gatewayIp}:3000`;
+    const gatewayCall = voiceGatewayAnswerRequest(gatewayBase, gatewaySecret);
+    const gwRes = await fetch(gatewayCall.url, {
+      method: "POST",
+      headers: gatewayCall.headers,
+      body: JSON.stringify({
+        callId: opts.callId,
+        callerPhone: opts.fromPhone || "",
+        tenantId: opts.tenantId,
+        phoneNumberId: opts.phoneNumberId,
+        clinicName: opts.clinicName,
+        receptionistName: opts.receptionistName,
+        customGreeting: opts.customGreeting,
+        offerSdp: opts.offerSdp,
+        publicIp: opts.gatewayIp,
+      }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    const elapsedMs = Date.now() - started;
+    if (!gwRes.ok) {
+      console.warn(
+        `[Meta Inbound Call] Gateway returned status ${gwRes.status} in ${elapsedMs}ms for callId=${opts.callId}`
+      );
+      return { sdpAnswer: "", elapsedMs };
+    }
+    const gwJson = (await gwRes.json()) as { sdpAnswer?: string };
+    const sdpAnswer = typeof gwJson?.sdpAnswer === "string" ? gwJson.sdpAnswer : "";
+    if (sdpAnswer.trim()) {
+      console.log(`[Meta Inbound Call] Gateway SDP answer received in ${elapsedMs}ms for callId=${opts.callId}`);
+      return { sdpAnswer, elapsedMs };
+    }
+    console.warn(`[Meta Inbound Call] Gateway returned no SDP answer in ${elapsedMs}ms for callId=${opts.callId}`);
+    return { sdpAnswer: "", elapsedMs };
+  } catch (gwErr) {
+    const elapsedMs = Date.now() - started;
+    console.warn(
+      `[Meta Inbound Call] Gateway fetch timeout/error after ${elapsedMs}ms for callId=${opts.callId}:`,
+      gwErr
+    );
+    return { sdpAnswer: "", elapsedMs };
+  }
+}
+
+/** One gateway POST per call. Waiters share it. Only a real answer is cached. */
+async function sharedVoiceGatewayAnswer(opts: GatewayAnswerContext): Promise<string> {
+  const attempt = await fetchVoiceGatewaySdp(opts);
+  if (attempt.sdpAnswer) {
+    cachedCallAnswers.set(opts.callId, attempt.sdpAnswer);
+    return attempt.sdpAnswer;
+  }
+  console.error(
+    `[Meta Inbound Call] Voice gateway SDP answer missing after ${attempt.elapsedMs}ms for callId=${opts.callId}. Using a local fallback SDP. The call will be silent.`
+  );
+  return buildWebRtcSdpAnswer(opts.offerSdp, opts.gatewayIp);
+}
 
 export async function handleMetaInboundCallAction(opts: {
   phoneNumberId: string;
@@ -360,10 +453,12 @@ export async function handleMetaInboundCallAction(opts: {
 
   const action = opts.action || "accept";
   let sdpAnswer = cachedCallAnswers.get(opts.callId) || "";
-  const needsGateway = !sdpAnswer || (Boolean(opts.offerSdp) && sdpAnswer.includes("10000"));
-  if (needsGateway && (action === "accept" || action === "pre_accept")) {
-    const gatewayIp = getVoiceGatewayIp() || "34.46.39.52";
-    try {
+  if (!sdpAnswer && (action === "accept" || action === "pre_accept")) {
+    const existing = inflightGatewayAnswers.get(opts.callId);
+    if (existing) {
+      sdpAnswer = await existing;
+    } else {
+      const gatewayIp = getVoiceGatewayIp() || "34.46.39.52";
       const callTenantId = opts.tenantId || "tenant-lumera-main";
       const db = getDb();
       const letterhead = getTenantLetterhead(callTenantId);
@@ -373,43 +468,26 @@ export async function handleMetaInboundCallAction(opts: {
         : "the clinic";
       const receptionistName = voiceSettings.receptionistName || "Maya";
       const customGreeting = voiceSettings.customGreeting || "";
-
-      const gatewaySecret = readVoiceGatewaySecret();
-      const configuredGateway = String(process.env.VOICE_GATEWAY_URL || "").trim();
-      const gatewayBase = configuredGateway || `http://${gatewayIp}:3000`;
-      const gatewayCall = voiceGatewayAnswerRequest(gatewayBase, gatewaySecret);
-      const gwRes = await fetch(gatewayCall.url, {
-        method: "POST",
-        headers: gatewayCall.headers,
-        body: JSON.stringify({
-          callId: opts.callId,
-          callerPhone: opts.fromPhone || "",
-          tenantId: callTenantId,
-          phoneNumberId: opts.phoneNumberId,
-          clinicName,
-          receptionistName,
-          customGreeting,
-          offerSdp: opts.offerSdp,
-          publicIp: gatewayIp,
-        }),
-        signal: AbortSignal.timeout(1200),
+      const gatewayPromise = sharedVoiceGatewayAnswer({
+        callId: opts.callId,
+        offerSdp: opts.offerSdp,
+        fromPhone: opts.fromPhone,
+        tenantId: callTenantId,
+        phoneNumberId: opts.phoneNumberId,
+        clinicName,
+        receptionistName,
+        customGreeting,
+        gatewayIp,
       });
-      if (gwRes.ok) {
-        const gwJson = (await gwRes.json()) as { sdpAnswer?: string };
-        if (gwJson?.sdpAnswer) {
-          sdpAnswer = gwJson.sdpAnswer;
-          console.log(`[Meta Inbound Call] Gateway SDP answer received in <1.2s for callId=${opts.callId}`);
+      inflightGatewayAnswers.set(opts.callId, gatewayPromise);
+      try {
+        sdpAnswer = await gatewayPromise;
+      } finally {
+        if (inflightGatewayAnswers.get(opts.callId) === gatewayPromise) {
+          inflightGatewayAnswers.delete(opts.callId);
         }
-      } else {
-        console.warn(`[Meta Inbound Call] Gateway returned status ${gwRes.status} for callId=${opts.callId}`);
       }
-    } catch (gwErr) {
-      console.warn(`[Meta Inbound Call] Gateway fetch timeout/error (<1.2s fast-path fallback) for callId=${opts.callId}:`, gwErr);
     }
-    if (!sdpAnswer) {
-      sdpAnswer = buildWebRtcSdpAnswer(opts.offerSdp, gatewayIp);
-    }
-    cachedCallAnswers.set(opts.callId, sdpAnswer);
   }
 
   try {
