@@ -213,7 +213,8 @@ export function bookWhatsAppAppointment(opts: {
     name: opts.patientName,
   });
   const mappedPatient = mapPatient(patient);
-  const requestedDate = String(opts.date || "").trim() || clinicCalendarDate(new Date(), tenantTimezone(tenantId));
+  const clock = opts.now ?? new Date();
+  const requestedDate = String(opts.date || "").trim() || clinicCalendarDate(clock, tenantTimezone(tenantId));
   const explicitSlot = String(opts.timeSlot || "").trim();
   const found = explicitSlot
     ? { date: requestedDate, timeSlot: explicitSlot }
@@ -222,7 +223,7 @@ export function bookWhatsAppAppointment(opts: {
         doctorId: doctor ? String(doctor.id) : opts.doctorId,
         doctorName: doctor ? String(doctor.name) : opts.doctorName,
         date: requestedDate,
-        now: opts.now,
+        now: clock,
       });
   if (!found) {
     throw Object.assign(new Error("No open clinic slot"), { status: 409 });
