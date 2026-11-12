@@ -52,6 +52,8 @@ describe("production signup trial", () => {
     const hashed = hashOtp("135790");
     assert.equal(otpMatches(hashed, "135790"), true);
     assert.equal(otpMatches(hashed, "000000"), false);
+    assert.equal(otpMatches(hashed, "1".repeat(200_000)), false);
+    assert.equal(otpMatches("246810", "1".repeat(200_000)), false);
     assert.equal(otpMatches("246810", "246810"), true);
     assert.equal(otpMatches("246810", "135790"), false);
   });
@@ -174,6 +176,12 @@ describe("production signup trial", () => {
     });
     assert.notEqual(manualReply.json.code, "TRIAL_NOT_STARTED");
     assert.notEqual(manualReply.json.code, "TRIAL_READ_ONLY");
+    const rx = await authed(server.port, "POST", "/api/whatsapp/send-rx", token, { patientPhone: "+919800011199" });
+    assert.equal(rx.status, 403);
+    assert.equal(rx.json.code, "TRIAL_READ_ONLY");
+    const onboard = await authed(server.port, "POST", "/api/auth/complete-onboarding", token, { doctorName: "Dr Lapsed" });
+    assert.equal(onboard.status, 403);
+    assert.equal(onboard.json.code, "TRIAL_READ_ONLY");
 
     const prevKey = process.env.RAZORPAY_KEY_ID;
     const prevSecret = process.env.RAZORPAY_KEY_SECRET;

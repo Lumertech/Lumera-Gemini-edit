@@ -1,6 +1,7 @@
 import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 
 const PREFIX = "otp1";
+const SIX_DIGITS = /^\d{6}$/;
 
 /** Store this value. Callers keep the plaintext only long enough to send it. */
 export function hashOtp(otp: string): string {
@@ -21,6 +22,11 @@ export function isHashedOtp(stored: string): boolean {
 export function otpMatches(stored: string, input: string): boolean {
   const record = String(stored || "");
   const given = String(input || "");
+  if (!SIX_DIGITS.test(given)) {
+    const filler = Buffer.alloc(32);
+    timingSafeEqual(filler, filler);
+    return false;
+  }
   if (isHashedOtp(record)) {
     const parts = record.split(":");
     const saltHex = parts[1] || "";

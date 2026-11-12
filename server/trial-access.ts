@@ -9,24 +9,31 @@ export const TRIAL_READ_ONLY_ERROR =
   "This clinic is read-only. Records stay available. Upgrade to change them. Manual WhatsApp replies inside Meta's 24-hour window are still allowed.";
 
 function requestPath(req: Request): string {
-  return `${req.originalUrl || ""} ${req.path || ""}`.split("?")[0];
+  const raw = String(req.originalUrl || req.path || "").split("?")[0];
+  return raw.length > 1 && raw.endsWith("/") ? raw.slice(0, -1) : raw;
 }
 
+const AUTH_AND_UPGRADE = new Set([
+  "/api/auth/login",
+  "/api/auth/logout",
+  "/api/auth/oauth",
+  "/api/auth/forgot-password",
+  "/api/auth/reset-password",
+  "/api/auth/whatsapp/send-otp",
+  "/api/auth/whatsapp/verify-otp",
+  "/api/auth/trial-phone/send",
+  "/api/auth/trial-phone/verify",
+  "/api/auth/register-practice",
+  "/api/auth/register-clinic",
+  "/api/billing/plan-checkout",
+  "/api/billing/razorpay/webhook",
+]);
+
 function writeAllowedWhileRestricted(path: string, pendingVerification: boolean): boolean {
-  if (
-    path.includes("/auth/") ||
-    path.includes("/admin/") ||
-    path.includes("/billing/plan-checkout") ||
-    path.includes("/billing/trial") ||
-    path.includes("/billing/razorpay/webhook") ||
-    path.includes("/public/") ||
-    path.includes("/meta/")
-  ) {
-    return true;
-  }
-  // Day-8 manual replies stay on the WhatsApp router, which still enforces the
-  // 24-hour window. A clinic that has not verified WhatsApp cannot send at all.
-  return !pendingVerification && path.includes("/whatsapp");
+  if (AUTH_AND_UPGRADE.has(path)) return true;
+  // Only the staff text reply. send-rx, outbound triggers, and number connect stay locked.
+  // The WhatsApp sender still requires a manual in-window reply.
+  return !pendingVerification && path === "/api/whatsapp/send";
 }
 
 /**
