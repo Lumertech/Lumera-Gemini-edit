@@ -15,7 +15,7 @@ import {
   speakablePhone,
 } from "./voice-booking-confirm.ts";
 import { mayaDemoMode } from "./voice-demo.ts";
-import { CLOUD_TTS_FREE_CHARACTERS_PER_MONTH, CLOUD_TTS_SKU, CLOUD_TTS_TIER, MAYA_TTS_VOICES, cloudTtsVoice, mayaSpokenLanguage, synthesizeCloudTts } from "./voice-tts.ts";
+import { CLOUD_TTS_FREE_CHARACTERS_PER_MONTH, CLOUD_TTS_SKU, CLOUD_TTS_TIER, CLOUD_TTS_WAVENET_FREE_CHARACTERS_PER_MONTH, CLOUD_TTS_WAVENET_SKU, CLOUD_TTS_WAVENET_TIER, MAYA_TTS_VOICES, MAYA_TTS_WAVENET_FALLBACK, cloudTtsVoice, mayaSpokenLanguage, synthesizeCloudTts } from "./voice-tts.ts";
 import { COMMON_INDIAN_MEDICINES, doctorNicknames, formatTenantVoiceFacts } from "./voice-vocabulary.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -84,22 +84,34 @@ describe("Maya listen-as-is pilot", () => {
     assert.match(health, /endpointSilenceMs/);
   });
 
-  it("uses free-tier WaveNet voices for Hindi and Marathi and en-IN otherwise", () => {
-    assert.deepEqual(cloudTtsVoice("hi", {}), { languageCode: "hi-IN", name: "hi-IN-Wavenet-A" });
-    assert.deepEqual(cloudTtsVoice("mr", {}), { languageCode: "mr-IN", name: "mr-IN-Wavenet-A" });
-    assert.deepEqual(cloudTtsVoice("en", {}), { languageCode: "en-IN", name: "en-IN-Wavenet-D" });
+  it("uses free-tier Chirp 3 HD voices by default and WaveNet only as the fallback", () => {
+    assert.deepEqual(cloudTtsVoice("hi", {}), { languageCode: "hi-IN", name: "hi-IN-Chirp3-HD-Aoede" });
+    assert.deepEqual(cloudTtsVoice("mr", {}), { languageCode: "mr-IN", name: "mr-IN-Chirp3-HD-Aoede" });
+    assert.deepEqual(cloudTtsVoice("en", {}), { languageCode: "en-IN", name: "en-IN-Chirp3-HD-Aoede" });
     assert.deepEqual(cloudTtsVoice("en", { MAYA_TTS_VOICE_EN: "en-IN-Wavenet-A" }), { languageCode: "en-IN", name: "en-IN-Wavenet-A" });
     assert.deepEqual(cloudTtsVoice("hi", { MAYA_TTS_VOICE_HI: "hi-IN-Standard-D" }), { languageCode: "hi-IN", name: "hi-IN-Standard-D" });
     assert.deepEqual(cloudTtsVoice("mr", { MAYA_TTS_VOICE_MR: "mr-IN-Wavenet-C" }), { languageCode: "mr-IN", name: "mr-IN-Wavenet-C" });
-    assert.deepEqual(cloudTtsVoice("en", { MAYA_TTS_VOICE_EN: "en-IN-Neural2-D" }), { languageCode: "en-IN", name: "en-IN-Wavenet-D" });
-    assert.deepEqual(cloudTtsVoice("en", { MAYA_TTS_VOICE_EN: "hi-IN-Wavenet-D" }), { languageCode: "en-IN", name: "en-IN-Wavenet-D" });
+    assert.deepEqual(cloudTtsVoice("en", { MAYA_TTS_VOICE_EN: "en-IN-Chirp3-HD-Kore" }), { languageCode: "en-IN", name: "en-IN-Chirp3-HD-Kore" });
+    assert.deepEqual(cloudTtsVoice("en", { MAYA_TTS_VOICE_EN: "en-IN-Neural2-D" }), { languageCode: "en-IN", name: "en-IN-Chirp3-HD-Aoede" });
+    assert.deepEqual(cloudTtsVoice("en", { MAYA_TTS_VOICE_EN: "hi-IN-Wavenet-D" }), { languageCode: "en-IN", name: "en-IN-Chirp3-HD-Aoede" });
+    assert.deepEqual(cloudTtsVoice("en", { MAYA_TTS_VOICE_EN: "en-US-Chirp3-HD-Aoede" }), { languageCode: "en-IN", name: "en-IN-Chirp3-HD-Aoede" });
+    assert.ok(MAYA_TTS_VOICES.en.includes("en-IN-Chirp3-HD-Aoede"));
+    assert.ok(MAYA_TTS_VOICES.hi.includes("hi-IN-Chirp3-HD-Aoede"));
+    assert.ok(MAYA_TTS_VOICES.mr.includes("mr-IN-Chirp3-HD-Aoede"));
     assert.ok(MAYA_TTS_VOICES.en.includes("en-IN-Wavenet-D"));
     assert.ok(MAYA_TTS_VOICES.en.includes("en-IN-Standard-A"));
     assert.equal((MAYA_TTS_VOICES.en as readonly string[]).includes("en-IN-Neural2-A"), false);
     assert.equal((MAYA_TTS_VOICES.en as readonly string[]).includes("en-US-Wavenet-D"), false);
-    assert.equal(CLOUD_TTS_TIER, "WaveNet");
-    assert.equal(CLOUD_TTS_SKU, "9D01-5995-B545");
-    assert.equal(CLOUD_TTS_FREE_CHARACTERS_PER_MONTH, 4_000_000);
+    assert.equal((MAYA_TTS_VOICES.en as readonly string[]).includes("en-IN-Studio-A"), false);
+    assert.equal(CLOUD_TTS_TIER, "Chirp3-HD");
+    assert.equal(CLOUD_TTS_SKU, "F977-2280-6F1B");
+    assert.equal(CLOUD_TTS_FREE_CHARACTERS_PER_MONTH, 1_000_000);
+    assert.equal(CLOUD_TTS_WAVENET_TIER, "WaveNet");
+    assert.equal(CLOUD_TTS_WAVENET_SKU, "9D01-5995-B545");
+    assert.equal(CLOUD_TTS_WAVENET_FREE_CHARACTERS_PER_MONTH, 4_000_000);
+    assert.equal(MAYA_TTS_WAVENET_FALLBACK.en, "en-IN-Wavenet-D");
+    assert.equal(MAYA_TTS_WAVENET_FALLBACK.hi, "hi-IN-Wavenet-A");
+    assert.equal(MAYA_TTS_WAVENET_FALLBACK.mr, "mr-IN-Wavenet-A");
     assert.equal(mayaSpokenLanguage("appointment chahiye", "", "hi"), "hi");
     assert.equal(mayaSpokenLanguage("doktor pahije", "mr"), "mr");
     assert.equal(mayaSpokenLanguage("I need a slot", "en"), "en");
@@ -291,7 +303,9 @@ describe("Maya listen-as-is pilot", () => {
       }, { "X-Voice-Gateway-Secret": "maya-listen-secret" });
       assert.equal(lined.status, 200);
       assert.match(String(lined.json.speechText), /Line Clinic|8 Line Road/);
-      assert.equal(lined.json.ttsVoice, "en-IN-Wavenet-D");
+      assert.equal(lined.json.ttsVoice, "en-IN-Chirp3-HD-Aoede");
+      assert.equal(lined.headers.get("x-maya-lookup"), null);
+      assert.equal(lined.json.lookup, undefined);
     } finally {
       restoreEnv(envSnapshot);
     }
@@ -322,6 +336,8 @@ describe("Maya listen-as-is pilot", () => {
         { "X-Voice-Gateway-Secret": "maya-listen-secret" }
       );
       assert.equal(first.status, 200);
+      assert.equal(first.headers.get("x-maya-lookup"), "1");
+      assert.equal(first.json.lookup, true);
       assert.notEqual(first.json.intent, "BOOKING");
       assert.equal(first.json.appointment, undefined);
       assert.match(String(first.json.speechText), /I have Meera /);
@@ -368,7 +384,7 @@ describe("Maya listen-as-is pilot", () => {
       );
       assert.equal(hindi.status, 200);
       assert.equal(hindi.json.ttsLanguage, "hi-IN");
-      assert.equal(hindi.json.ttsVoice, "hi-IN-Wavenet-A");
+      assert.equal(hindi.json.ttsVoice, "hi-IN-Chirp3-HD-Aoede");
     } finally {
       restoreEnv(envSnapshot);
     }
@@ -559,9 +575,10 @@ describe("Maya listen-as-is pilot", () => {
         clip: "hold",
       }, headers);
       assert.equal(clip.status, 200);
-      assert.equal(clip.json.ttsVoice, "en-IN-Wavenet-D");
+      assert.equal(clip.json.ttsVoice, "en-IN-Chirp3-HD-Aoede");
       assert.equal(clip.json.ttsLanguage, "en-IN");
-      assert.equal(clip.json.freeCharactersPerMonth, 4_000_000);
+      assert.equal(clip.json.ttsTier, "Chirp3-HD");
+      assert.equal(clip.json.freeCharactersPerMonth, 1_000_000);
       assert.equal(clip.json.audioBase64, null);
       const hindiClip = await jsonRequest(port, "POST", "/api/voice/clips", {
         text: "जी, एक क्षण।",
@@ -569,7 +586,7 @@ describe("Maya listen-as-is pilot", () => {
         clip: "filler",
       }, headers);
       assert.equal(hindiClip.status, 200);
-      assert.equal(hindiClip.json.ttsVoice, "hi-IN-Wavenet-A");
+      assert.equal(hindiClip.json.ttsVoice, "hi-IN-Chirp3-HD-Aoede");
     } finally {
       restoreEnv(envSnapshot);
     }

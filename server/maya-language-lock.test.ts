@@ -195,9 +195,9 @@ describe("Maya call language on a voice session", () => {
 
   function assertSpoken(json: Record<string, unknown>, language: "en" | "hi" | "mr") {
     const voices = {
-      en: { ttsLanguage: "en-IN", ttsVoice: "en-IN-Wavenet-D" },
-      hi: { ttsLanguage: "hi-IN", ttsVoice: "hi-IN-Wavenet-A" },
-      mr: { ttsLanguage: "mr-IN", ttsVoice: "mr-IN-Wavenet-A" },
+      en: { ttsLanguage: "en-IN", ttsVoice: "en-IN-Chirp3-HD-Aoede" },
+      hi: { ttsLanguage: "hi-IN", ttsVoice: "hi-IN-Chirp3-HD-Aoede" },
+      mr: { ttsLanguage: "mr-IN", ttsVoice: "mr-IN-Chirp3-HD-Aoede" },
     };
     const speech = String(json.speechText || "");
     assert.equal(json.spokenLanguage, language, speech);
