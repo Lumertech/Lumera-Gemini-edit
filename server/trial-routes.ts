@@ -52,6 +52,9 @@ export function createTrialRouter(): Router {
   });
 
   api.post("/billing/plan-checkout", requireAuth, async (req: Request, res: Response) => {
+    if (!TRIAL_PHONE_ROLES.has(String(req.user?.role || ""))) {
+      return res.status(403).json({ error: "Only the clinic account can start a plan payment.", paid: false });
+    }
     const tenantId = String(req.user?.tenantId || "").trim();
     if (!tenantId) return res.status(400).json({ error: "This account is not attached to a clinic." });
     const selection = planSelection(req.body as Record<string, unknown>);

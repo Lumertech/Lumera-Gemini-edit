@@ -202,6 +202,37 @@ describe("production signup trial", () => {
     assert.match(String(pay.json.error), /RAZORPAY_KEY_ID/);
   });
 
+  it("does not let a patient or receptionist start a plan checkout", async () => {
+    const stamp = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+    const tenantId = `tenant-payrole-${stamp}`;
+    const now = new Date().toISOString();
+    getDb()
+      .prepare(
+        `INSERT INTO tenants (id, name, specialty, country, timezone, phone, trial_ends_at, ai_scribe_minutes_limit, ai_scribe_minutes_used, active_status, hfr_id, created_at, updated_at, lifecycle_status)
+         VALUES (?, 'Pay Role Clinic', 'General Medicine', 'India', 'IST (UTC+5:30)', '+919555500044', ?, 500, 0, 1, '', ?, ?, 'active')`
+      )
+      .run(tenantId, now, now, now);
+    for (const role of ["patient", "receptionist"] as const) {
+      const userId = `user-payrole-${role}-${stamp}`;
+      const email = `${role}.${stamp}@signup-test.example`;
+      getDb()
+        .prepare(
+          `INSERT INTO users (id, tenant_id, email, password_hash, name, role, status, phone, clinic_name, created_at)
+           VALUES (?, ?, ?, 'x', ?, ?, 'active', '+919555500044', 'Pay Role Clinic', ?)`
+        )
+        .run(userId, tenantId, email, role, role, now);
+      const token = signJwtToken({ userId, tenantId, email, role, name: role });
+      const pay = await authed(server.port, "POST", "/api/billing/plan-checkout", token, {
+        planCode: "individual",
+        cycle: "monthly",
+      });
+      assert.equal(pay.status, 403, `${role} ${pay.status} ${pay.json.error || ""}`);
+      assert.equal(pay.json.paid, false);
+    }
+    const orders = getDb().prepare("SELECT COUNT(*) AS c FROM plan_checkouts WHERE tenant_id = ?").get(tenantId) as { c: number };
+    assert.equal(Number(orders.c), 0);
+  });
+
   it("does not start a trial on Google or Facebook sign-on until the phone is verified", () => {
     const stamp = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
     const tenantId = `tenant-social-${stamp}`;
