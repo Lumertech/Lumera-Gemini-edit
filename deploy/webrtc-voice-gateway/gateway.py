@@ -247,7 +247,7 @@ def voice_language_for_text(text: str, hinted: str = "en") -> str:
     return normalize_spoken_language(hinted)
 
 async def fetch_google_tts_pcm(text: str, language: str, clip: str, send_secret: bool) -> np.ndarray:
-    """One Google Cloud TTS voice. A failure is silence, never another voice."""
+    """Server-side Google TTS. The voice is MAYA_TTS_VOICE_* on Cloud Run, so greeting, hold, filler, and reply share it."""
     headers = {
         "Content-Type": "application/json",
         "Origin": "https://www.mylumera.in",

@@ -15,7 +15,7 @@ import {
   speakablePhone,
 } from "./voice-booking-confirm.ts";
 import { mayaDemoMode } from "./voice-demo.ts";
-import { CLOUD_TTS_FREE_CHARACTERS_PER_MONTH, CLOUD_TTS_SKU, CLOUD_TTS_TIER, cloudTtsVoice, mayaSpokenLanguage } from "./voice-tts.ts";
+import { CLOUD_TTS_FREE_CHARACTERS_PER_MONTH, CLOUD_TTS_SKU, CLOUD_TTS_TIER, MAYA_TTS_VOICES, cloudTtsVoice, mayaSpokenLanguage } from "./voice-tts.ts";
 import { COMMON_INDIAN_MEDICINES, doctorNicknames, formatTenantVoiceFacts } from "./voice-vocabulary.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -45,9 +45,15 @@ describe("Maya listen-as-is pilot", () => {
     JWT_SECRET: process.env.JWT_SECRET,
     VOICE_GATEWAY_SECRET: process.env.VOICE_GATEWAY_SECRET,
     MAYA_DEMO_MODE: process.env.MAYA_DEMO_MODE,
+    MAYA_TTS_VOICE_EN: process.env.MAYA_TTS_VOICE_EN,
+    MAYA_TTS_VOICE_HI: process.env.MAYA_TTS_VOICE_HI,
+    MAYA_TTS_VOICE_MR: process.env.MAYA_TTS_VOICE_MR,
   };
 
   before(async () => {
+    delete process.env.MAYA_TTS_VOICE_EN;
+    delete process.env.MAYA_TTS_VOICE_HI;
+    delete process.env.MAYA_TTS_VOICE_MR;
     if (!process.env.JWT_SECRET) process.env.JWT_SECRET = "maya-listen-jwt-secret-not-for-prod";
     initDatabase();
     ensureVoiceCallbackTasks();
@@ -77,9 +83,18 @@ describe("Maya listen-as-is pilot", () => {
   });
 
   it("uses free-tier WaveNet voices for Hindi and Marathi and en-IN otherwise", () => {
-    assert.deepEqual(cloudTtsVoice("hi"), { languageCode: "hi-IN", name: "hi-IN-Wavenet-A" });
-    assert.deepEqual(cloudTtsVoice("mr"), { languageCode: "mr-IN", name: "mr-IN-Wavenet-A" });
-    assert.deepEqual(cloudTtsVoice("en"), { languageCode: "en-IN", name: "en-IN-Wavenet-A" });
+    assert.deepEqual(cloudTtsVoice("hi", {}), { languageCode: "hi-IN", name: "hi-IN-Wavenet-A" });
+    assert.deepEqual(cloudTtsVoice("mr", {}), { languageCode: "mr-IN", name: "mr-IN-Wavenet-A" });
+    assert.deepEqual(cloudTtsVoice("en", {}), { languageCode: "en-IN", name: "en-IN-Wavenet-D" });
+    assert.deepEqual(cloudTtsVoice("en", { MAYA_TTS_VOICE_EN: "en-IN-Wavenet-A" }), { languageCode: "en-IN", name: "en-IN-Wavenet-A" });
+    assert.deepEqual(cloudTtsVoice("hi", { MAYA_TTS_VOICE_HI: "hi-IN-Standard-D" }), { languageCode: "hi-IN", name: "hi-IN-Standard-D" });
+    assert.deepEqual(cloudTtsVoice("mr", { MAYA_TTS_VOICE_MR: "mr-IN-Wavenet-C" }), { languageCode: "mr-IN", name: "mr-IN-Wavenet-C" });
+    assert.deepEqual(cloudTtsVoice("en", { MAYA_TTS_VOICE_EN: "en-IN-Neural2-D" }), { languageCode: "en-IN", name: "en-IN-Wavenet-D" });
+    assert.deepEqual(cloudTtsVoice("en", { MAYA_TTS_VOICE_EN: "hi-IN-Wavenet-D" }), { languageCode: "en-IN", name: "en-IN-Wavenet-D" });
+    assert.ok(MAYA_TTS_VOICES.en.includes("en-IN-Wavenet-D"));
+    assert.ok(MAYA_TTS_VOICES.en.includes("en-IN-Standard-A"));
+    assert.equal((MAYA_TTS_VOICES.en as readonly string[]).includes("en-IN-Neural2-A"), false);
+    assert.equal((MAYA_TTS_VOICES.en as readonly string[]).includes("en-US-Wavenet-D"), false);
     assert.equal(CLOUD_TTS_TIER, "WaveNet");
     assert.equal(CLOUD_TTS_SKU, "9D01-5995-B545");
     assert.equal(CLOUD_TTS_FREE_CHARACTERS_PER_MONTH, 4_000_000);
@@ -251,7 +266,7 @@ describe("Maya listen-as-is pilot", () => {
       }, { "X-Voice-Gateway-Secret": "maya-listen-secret" });
       assert.equal(lined.status, 200);
       assert.match(String(lined.json.speechText), /Line Clinic|8 Line Road/);
-      assert.equal(lined.json.ttsVoice, "en-IN-Wavenet-A");
+      assert.equal(lined.json.ttsVoice, "en-IN-Wavenet-D");
     } finally {
       restoreEnv(envSnapshot);
     }
@@ -517,7 +532,7 @@ describe("Maya listen-as-is pilot", () => {
         clip: "hold",
       }, headers);
       assert.equal(clip.status, 200);
-      assert.equal(clip.json.ttsVoice, "en-IN-Wavenet-A");
+      assert.equal(clip.json.ttsVoice, "en-IN-Wavenet-D");
       assert.equal(clip.json.ttsLanguage, "en-IN");
       assert.equal(clip.json.freeCharactersPerMonth, 4_000_000);
       assert.equal(clip.json.audioBase64, null);
