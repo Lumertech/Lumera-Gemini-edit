@@ -9,7 +9,8 @@ import { vertexGeminiModel } from "./vertex-gemini.ts";
 import { bookWhatsAppAppointment, findNextBookableSlot } from "./whatsapp-calendar-booking.ts";
 import { getClinicScheduleSettings } from "./clinic-schedule.ts";
 import { mayaDemoMode } from "./voice-demo.ts";
-import { cloudTtsVoice, mayaSpokenLanguage, synthesizeCloudTts, type MayaSpokenLanguage } from "./voice-tts.ts";
+import { cloudTtsBilling, cloudTtsVoice, mayaSpokenLanguage, synthesizeCloudTtsDetailed, type MayaSpokenLanguage } from "./voice-tts.ts";
+import { voiceTurnNeedsScheduleLookup } from "./voice-filler.ts";
 import { mayaLockedLanguageInstruction, resolveMayaCallLanguage, speechConflictsWithLockedLanguage } from "./voice-language-lock.ts";
 import { formatTenantVoiceFacts } from "./voice-vocabulary.ts";
 import { formatIstDateSpeech, collectVoiceSlots, mayaAskedForPatientName, parseVoiceBookingDraft, planVoiceBooking, speakablePhone, usablePatientName, withHeardSlots, type VoiceBookingDraft, type VoiceHistoryTurn } from "./voice-booking-confirm.ts";
@@ -1172,8 +1173,8 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
     }
   });
 
-  async function synthesizeSpeechNeural(text: string, spoken: MayaSpokenLanguage = "en"): Promise<string | null> {
-    return synthesizeCloudTts(text, spoken);
+  async function synthesizeSpeechNeural(text: string, spoken: MayaSpokenLanguage = "en", callKey = "") {
+    return synthesizeCloudTtsDetailed(text, spoken, callKey);
   }
 
   // 4b. Inbound WhatsApp Voice Call Receiver & Simulator (supports single-pass audioBase64 & direct text)
@@ -1183,6 +1184,28 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
       let message = String(req.body?.message || req.body?.transcript || req.body?.text || "").trim();
       const callerName = String(req.body?.callerName || "Patient").trim();
       const language = String(req.body?.language || "English").trim();
+      const callKey = String(req.body?.callId || "").trim()
+        || `${from}|${String(req.body?.phoneNumberId || req.body?.phone_number_id || "")}`;
+      let scheduleLookup = false;
+      const signalScheduleLookup = () => {
+        if (scheduleLookup || res.headersSent) return;
+        scheduleLookup = true;
+        res.status(200);
+        res.setHeader("X-Maya-Lookup", "1");
+        res.setHeader("Content-Type", "application/json; charset=utf-8");
+        res.flushHeaders();
+      };
+      const sendVoicePayload = (payload: Record<string, unknown>) => {
+        if (scheduleLookup) {
+          payload.lookup = true;
+          if (!res.headersSent) res.setHeader("X-Maya-Lookup", "1");
+        }
+        if (res.headersSent) {
+          res.end(JSON.stringify(payload));
+          return;
+        }
+        res.json(payload);
+      };
 
       const db = getDb();
       const access = inboundVoiceAccess(req);
@@ -1430,6 +1453,7 @@ Output strict JSON:
         Boolean(message) &&
         (shouldBook || detectIndicBooking(message) || continuesBookingConversation(message, priorDraft) || recoveringSlots);
       if (wantsBooking) {
+        signalScheduleLookup();
         authoredSpeech = true;
         let proposed: { date: string; timeSlot: string } | null = null;
         try {
@@ -1672,11 +1696,12 @@ Output strict JSON:
         }
       }
 
-      let audioBase64: string | null = null;
-      const ttsVoice = cloudTtsVoice(spoken);
-      if (speechText) {
-        audioBase64 = await synthesizeSpeechNeural(speechText, spoken);
+      if (voiceTurnNeedsScheduleLookup({ message, intent: String(intent), wantsBooking })) {
+        signalScheduleLookup();
       }
+      const synthesized = speechText ? await synthesizeSpeechNeural(speechText, spoken, callKey) : null;
+      const audioBase64 = synthesized?.audio ?? null;
+      const ttsVoice = synthesized?.voice ?? cloudTtsVoice(spoken);
 
       const payload: Record<string, unknown> = {
         success: true,
@@ -1696,9 +1721,13 @@ Output strict JSON:
       };
       if (access.authenticated) payload.escalationPhone = escalationPhone;
       if (callbackTaskId) payload.callbackTaskId = callbackTaskId;
-      return res.json(payload);
+      return sendVoicePayload(payload);
     } catch (err) {
       console.error("[WhatsApp Voice Call Handler Error]", err);
+      if (res.headersSent) {
+        res.end(JSON.stringify({ error: "Failed to process voice call" }));
+        return;
+      }
       return res.status(500).json({ error: "Failed to process voice call" });
     }
   };
@@ -1706,7 +1735,7 @@ Output strict JSON:
   app.post("/api/voice/inbound", handleInboundVoiceCall);
   app.post("/meta/voice-call", handleInboundVoiceCall);
 
-  // Greeting, hold, and filler clips for the WebRTC gateway. Same WaveNet voice as replies.
+  // Greeting, hold, and filler clips for the WebRTC gateway. Same Cloud TTS voice as replies.
   const handleVoiceClip = async (req: Request, res: Response) => {
     if (req.user) {
       const sessionTenant = String(req.user.tenantId || "").trim();
@@ -1725,17 +1754,19 @@ Output strict JSON:
     }
     const hinted = String(req.body?.language || "");
     const spoken = mayaSpokenLanguage(text, hinted, detectIndicLanguage(text, hinted));
-    const voice = cloudTtsVoice(spoken);
-    const audioBase64 = await synthesizeSpeechNeural(text, spoken);
+    const callKey = String(req.body?.callId || "").trim();
+    const synthesized = await synthesizeSpeechNeural(text, spoken, callKey);
+    const voice = synthesized.voice;
+    const billing = cloudTtsBilling(voice.name);
     return res.json({
       success: true,
       clip,
       text,
-      audioBase64,
+      audioBase64: synthesized.audio,
       ttsLanguage: voice.languageCode,
       ttsVoice: voice.name,
-      ttsTier: "WaveNet",
-      freeCharactersPerMonth: 4_000_000,
+      ttsTier: billing.tier,
+      freeCharactersPerMonth: billing.freeCharactersPerMonth,
     });
   };
   app.post("/api/voice/clips", handleVoiceClip);

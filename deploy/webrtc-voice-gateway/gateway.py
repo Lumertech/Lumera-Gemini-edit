@@ -33,15 +33,18 @@ PUBLIC_IP = os.environ.get("PUBLIC_IP", "34.46.39.52")
 LUMERA_API_URL = os.environ.get("LUMERA_API_URL", "https://www.mylumera.in/api/voice/inbound")
 VOICE_GATEWAY_SECRET = os.environ.get("VOICE_GATEWAY_SECRET", "").strip()
 NEUTRAL_HOLD_TEXT = "Namaste, one moment please."
+# Short schedule line, only after a slow lookup. English has no honorific prefix.
 FILLER_TEXT = {
-    "en": "Ji, one moment, I am checking.",
-    "hi": "जी, एक क्षण, मैं देख रही हूँ।",
-    "mr": "हो, एक क्षण, मी बघते.",
+    "en": "One moment, let me check the schedule.",
+    "hi": "एक पल, मैं शेड्यूल देख रही हूँ।",
+    "mr": "एक क्षण, मी शेड्यूल बघते.",
 }
+# Play only when the server has not started the answer by this point.
+FILLER_DELAY_S = 1.35
 
-# Preloaded neutral hold and conversational filler PCM (48kHz mono 16-bit).
+# Preloaded neutral hold and schedule filler PCM (48kHz mono 16-bit).
 # The hold clip is the only audio played before a clinic greeting is ready.
-# Audio comes from Lumera's Google Cloud TTS WaveNet voice. Never a second engine.
+# Audio comes from Lumera's Google Cloud TTS voice (Chirp 3 HD, WaveNet if that call fails). Never another provider.
 cached_hold_pcm = np.zeros(0, dtype=np.int16)
 cached_filler_pcm = np.zeros(0, dtype=np.int16)
 filler_by_lang = {}
@@ -230,6 +233,65 @@ def lumera_clips_url() -> str:
         return inbound[: -len("inbound")] + "clips"
     return inbound.rsplit("/", 1)[0] + "/clips"
 
+def filler_should_play(
+    elapsed_s: float,
+    lookup: bool,
+    reply_started: bool,
+    barge_in: bool,
+    already_played_this_turn: bool,
+    played_on_previous_turn: bool,
+    track_speaking: bool,
+    caller_speaking: bool,
+) -> bool:
+    """Same rules as server/voice-filler.ts shouldPlayFiller. One schedule line, then silence."""
+    if barge_in or already_played_this_turn or played_on_previous_turn:
+        return False
+    if reply_started or track_speaking or caller_speaking:
+        return False
+    if not lookup:
+        return False
+    if elapsed_s < FILLER_DELAY_S:
+        return False
+    return True
+
+
+async def play_schedule_filler(call_id: str, out_track: MayaVoiceTrack, filler_state: dict, eos_at: float, lookup: bool, barge_in: bool, generation: int):
+    """Waits out the delay, then queues one filler if the reply is still absent."""
+    try:
+        remaining = FILLER_DELAY_S - (time.monotonic() - eos_at)
+        if remaining > 0:
+            await asyncio.sleep(remaining)
+        call = active_calls.get(call_id) or {}
+        if int(call.get("utteranceGeneration") or 0) != generation:
+            return
+        spoken_lang = normalize_spoken_language(str(call.get("spokenLanguage") or "en"))
+        if not filler_should_play(
+            elapsed_s=time.monotonic() - eos_at,
+            lookup=lookup,
+            reply_started=bool(filler_state.get("reply_started")),
+            barge_in=barge_in or bool(call.get("bargeActive")),
+            already_played_this_turn=bool(filler_state.get("played")),
+            played_on_previous_turn=bool(call.get("fillerPlayedLastTurn")),
+            track_speaking=out_track.is_speaking(),
+            caller_speaking=bool(call.get("callerSpeaking")),
+        ):
+            return
+        filler_pcm = filler_by_lang.get(spoken_lang)
+        if (filler_pcm is None or len(filler_pcm) == 0) and spoken_lang == "en":
+            filler_pcm = cached_filler_pcm
+        if filler_pcm is None or len(filler_pcm) == 0:
+            return
+        if filler_state.get("reply_started") or out_track.is_speaking():
+            return
+        if int((active_calls.get(call_id) or {}).get("utteranceGeneration") or 0) != generation:
+            return
+        out_track.queue_audio(filler_pcm, replace=False)
+        filler_state["played"] = True
+        logger.info(f"[{call_id}] Playing schedule filler in {spoken_lang} after {time.monotonic() - eos_at:.2f}s")
+    except asyncio.CancelledError:
+        return
+
+
 def normalize_spoken_language(value: str) -> str:
     text = (value or "").strip().lower()
     if text.startswith("hi"):
@@ -246,7 +308,7 @@ def voice_language_for_text(text: str, hinted: str = "en") -> str:
         return "hi"
     return normalize_spoken_language(hinted)
 
-async def fetch_google_tts_pcm(text: str, language: str, clip: str, send_secret: bool) -> np.ndarray:
+async def fetch_google_tts_pcm(text: str, language: str, clip: str, send_secret: bool, call_id: str = "") -> np.ndarray:
     """Server-side Google TTS. The voice is MAYA_TTS_VOICE_* on Cloud Run, so greeting, hold, filler, and reply share it."""
     headers = {
         "Content-Type": "application/json",
@@ -254,12 +316,15 @@ async def fetch_google_tts_pcm(text: str, language: str, clip: str, send_secret:
     }
     if send_secret and VOICE_GATEWAY_SECRET:
         headers["X-Voice-Gateway-Secret"] = VOICE_GATEWAY_SECRET
+    body = {"text": text, "language": language, "clip": clip}
+    if call_id:
+        body["callId"] = call_id
     try:
         timeout = aiohttp.ClientTimeout(total=4)
         async with aiohttp.ClientSession(headers=headers) as session:
             async with session.post(
                 lumera_clips_url(),
-                json={"text": text, "language": language, "clip": clip},
+                json=body,
                 timeout=timeout,
             ) as resp:
                 if resp.status != 200:
@@ -309,15 +374,15 @@ def clinic_greeting_text(clinic_name: str = "", receptionist_name: str = "", cus
     cl_name = clinic_name.strip() or "the clinic"
     return f"Namaste! Thank you for calling {cl_name}. How can I help you today?"
 
-async def synthesize_tts_pcm(text: str, language: str = "en", clip: str = "greeting", send_secret: bool = False) -> np.ndarray:
-    """Google Cloud TTS only. A miss becomes silence and one retry, never another voice."""
+async def synthesize_tts_pcm(text: str, language: str = "en", clip: str = "greeting", send_secret: bool = False, call_id: str = "") -> np.ndarray:
+    """Google Cloud TTS only. A miss becomes silence and one retry, never another provider."""
     spoken = voice_language_for_text(text, language)
     cache_key = f"{spoken}:{clip}:{text}"
     cached = clip_pcm_cache.get(cache_key)
     if cached is not None and len(cached) > 0:
         return cached
     for attempt in range(2):
-        pcm = await fetch_google_tts_pcm(text, spoken, clip, send_secret)
+        pcm = await fetch_google_tts_pcm(text, spoken, clip, send_secret, call_id)
         if len(pcm) > 0:
             clip_pcm_cache[cache_key] = pcm
             return pcm
@@ -340,8 +405,8 @@ async def prepare_call_greeting(tenant_id: str, clinic_name: str = "", reception
     hold = cached_hold_pcm if len(cached_hold_pcm) > 0 else np.zeros(0, dtype=np.int16)
     return hold, (cache_key, text)
 
-async def warmup_and_queue(cache_key: str, text: str, track: MayaVoiceTrack, send_secret: bool = False):
-    pcm = await synthesize_tts_pcm(text, voice_language_for_text(text, "en"), "greeting", send_secret)
+async def warmup_and_queue(cache_key: str, text: str, track: MayaVoiceTrack, send_secret: bool = False, call_id: str = ""):
+    pcm = await synthesize_tts_pcm(text, voice_language_for_text(text, "en"), "greeting", send_secret, call_id)
     if len(pcm) == 0:
         logger.warning("Clinic greeting TTS unavailable. Keeping silence instead of another voice.")
         return
@@ -358,8 +423,22 @@ def _encode_wav_sync(pcm: np.ndarray) -> str:
         wf.writeframes(pcm.tobytes())
     return base64.b64encode(wav_io.getvalue()).decode("utf-8")
 
-async def handle_caller_utterance(call_id: str, pcm_16k: np.ndarray, out_track: MayaVoiceTrack, caller_phone: str, barge_in: bool = False):
+async def handle_caller_utterance(call_id: str, pcm_16k: np.ndarray, out_track: MayaVoiceTrack, caller_phone: str, barge_in: bool = False, eos_at: float = 0.0, generation: int = 0):
     """Encodes caller speech to WAV, queries Lumera Gemini AI, and queues the same Google voice."""
+    if eos_at <= 0:
+        eos_at = time.monotonic()
+    filler_state = {"reply_started": False, "played": False}
+    filler_task = None
+
+    async def stop_filler():
+        filler_state["reply_started"] = True
+        if filler_task is not None and not filler_task.done():
+            filler_task.cancel()
+            try:
+                await filler_task
+            except asyncio.CancelledError:
+                pass
+
     try:
         loop = asyncio.get_event_loop()
         # 1. Encode 16kHz mono PCM into in-memory WAV on worker thread (non-blocking)
@@ -412,11 +491,21 @@ async def handle_caller_utterance(call_id: str, pcm_16k: np.ndarray, out_track: 
                     "phoneNumberId": phone_number_id,
                     "conversationHistory": conv_history,
                     "bookingDraft": booking_draft,
+                    "callId": call_id,
                 }
                 logger.info(f"[{call_id}] Sending caller speech ({len(pcm_16k)/16000:.2f}s) for tenant {tenant_id} to Lumera AI...")
                 async with session.post(LUMERA_API_URL, json=payload, timeout=aiohttp.ClientTimeout(total=18)) as resp:
                     if resp.status == 200:
-                        data = await resp.json()
+                        lookup = (resp.headers.get("X-Maya-Lookup") or "").strip() == "1"
+                        body_task = asyncio.create_task(resp.json())
+                        await asyncio.sleep(0)
+                        if not body_task.done() and lookup and not barge_in:
+                            filler_task = asyncio.create_task(
+                                play_schedule_filler(call_id, out_track, filler_state, eos_at, lookup, barge_in, generation)
+                            )
+                        data = await body_task
+                        filler_state["reply_started"] = True
+                        await stop_filler()
                         speech_text = data.get("speechText", "") or ""
                         intent = data.get("intent", "INQUIRY")
                         transcript = data.get("transcript", "") or ""
@@ -460,8 +549,8 @@ async def handle_caller_utterance(call_id: str, pcm_16k: np.ndarray, out_track: 
         if resp_audio_bytes:
             resp_pcm = await loop.run_in_executor(None, decode_mp3_bytes_to_pcm, resp_audio_bytes, 48000)
         elif speech_text:
-            # Same Google voice as the brain. Silence if it fails. No second voice.
-            resp_pcm = await synthesize_tts_pcm(speech_text, spoken, "reply", send_secret)
+            # Same Google voice as the brain. Silence if it fails. No second provider.
+            resp_pcm = await synthesize_tts_pcm(speech_text, spoken, "reply", send_secret, call_id)
             if len(resp_pcm) == 0:
                 logger.warning(f"[{call_id}] Google TTS returned no audio. Staying silent instead of switching voice.")
 
@@ -484,6 +573,11 @@ async def handle_caller_utterance(call_id: str, pcm_16k: np.ndarray, out_track: 
                 loop.call_later(dur_s + 2.0, lambda: asyncio.create_task(cleanup_call(call_id)))
     except Exception as e:
         logger.error(f"[{call_id}] Error handling caller utterance: {repr(e)}")
+    finally:
+        await stop_filler()
+        call = active_calls.get(call_id)
+        if call is not None and int(call.get("utteranceGeneration") or 0) == generation:
+            call["fillerPlayedLastTurn"] = bool(filler_state["played"])
 
 def endpoint_silence_ms() -> int:
     """End-of-turn silence. MAYA_ENDPOINT_SILENCE_MS defaults to about 500ms."""
@@ -522,6 +616,7 @@ async def process_inbound_audio(call_id: str, inbound_track, out_track: MayaVoic
     max_speech_frames = 450       # ~14 seconds max cap
     is_processing = False         # Lock to serialize queries cleanly
     pending_utterances = deque()
+    pending_utterance_meta = deque()
     barge_capture = False
     if call_id in active_calls:
         active_calls[call_id]["pendingUtterances"] = pending_utterances
@@ -556,6 +651,9 @@ async def process_inbound_audio(call_id: str, inbound_track, out_track: MayaVoic
                             interruption_frames += 1
                             if interruption_frames >= 4:
                                 logger.info(f"[{call_id}] Caller interrupted Maya (RMS: {rms:.0f}, frames: {interruption_frames})")
+                                if call_id in active_calls:
+                                    active_calls[call_id]["bargeActive"] = True
+                                    active_calls[call_id]["callerSpeaking"] = True
                                 out_track.interrupt()
                                 maya_talking = False
                                 was_talking = False
@@ -581,6 +679,8 @@ async def process_inbound_audio(call_id: str, inbound_track, out_track: MayaVoic
                                 loud += 1
                         if loud >= 3:
                             logger.info(f"[{call_id}] Keeping caller speech that started while Maya was talking")
+                            if call_id in active_calls:
+                                active_calls[call_id]["callerSpeaking"] = True
                             is_speaking = True
                             speech_buffer = promoted
                             speech_frames = loud
@@ -593,6 +693,8 @@ async def process_inbound_audio(call_id: str, inbound_track, out_track: MayaVoic
                     if speech_detected:
                         if not is_speaking:
                             logger.info(f"[{call_id}] Caller speech detected via Neural VAD (RMS: {rms:.0f})")
+                            if call_id in active_calls:
+                                active_calls[call_id]["callerSpeaking"] = True
                             is_speaking = True
                             # Prepend pre-roll buffer so words like 'Hello', 'Dr', 'Appointment' are never clipped
                             speech_buffer = list(pre_roll_buffer)
@@ -626,35 +728,53 @@ async def process_inbound_audio(call_id: str, inbound_track, out_track: MayaVoic
                                     duration_s = len(complete_pcm) / 16000.0
                                     logger.info(f"[{call_id}] Neural VAD speech captured: {duration_s:.2f}s ({len(complete_pcm)} samples)")
 
-                                    # Play instant conversational filler in the call's Google voice.
-                                    spoken_lang = "en"
-                                    if call_id in active_calls:
-                                        spoken_lang = active_calls[call_id].get("spokenLanguage") or "en"
-                                    filler_pcm = filler_by_lang.get(spoken_lang)
-                                    if filler_pcm is not None and len(filler_pcm) > 0 and not out_track.is_speaking():
-                                        out_track.queue_audio(filler_pcm, replace=False)
-
+                                    # No filler here. A schedule line is queued later only when
+                                    # the lookup is still unanswered after FILLER_DELAY_S.
                                     this_barge = barge_capture
                                     barge_capture = False
+                                    utterance_eos = time.monotonic()
+                                    generation = 0
+                                    if call_id in active_calls:
+                                        active_calls[call_id]["callerSpeaking"] = False
+                                        if not this_barge:
+                                            active_calls[call_id]["bargeActive"] = False
+                                        generation = int(active_calls[call_id].get("utteranceGeneration") or 0) + 1
+                                        active_calls[call_id]["utteranceGeneration"] = generation
+                                    utterance_meta = {"eos": utterance_eos, "barge": this_barge, "generation": generation}
                                     if not is_processing:
                                         is_processing = True
 
-                                        async def run_utterance(b_pcm, was_barge=False):
+                                        async def run_utterance(b_pcm, was_barge=False, started_at=0.0, utterance_generation=0):
                                             nonlocal is_processing
                                             try:
-                                                await handle_caller_utterance(call_id, b_pcm, out_track, caller_phone, barge_in=was_barge)
+                                                await handle_caller_utterance(
+                                                    call_id,
+                                                    b_pcm,
+                                                    out_track,
+                                                    caller_phone,
+                                                    barge_in=was_barge,
+                                                    eos_at=started_at,
+                                                    generation=utterance_generation,
+                                                )
                                             finally:
                                                 if pending_utterances:
                                                     next_pcm = pending_utterances.popleft()
+                                                    next_meta = pending_utterance_meta.popleft()
                                                     is_processing = True
-                                                    asyncio.create_task(run_utterance(next_pcm, False))
+                                                    asyncio.create_task(run_utterance(
+                                                        next_pcm,
+                                                        next_meta["barge"],
+                                                        next_meta["eos"],
+                                                        next_meta["generation"],
+                                                    ))
                                                 else:
                                                     is_processing = False
 
-                                        asyncio.create_task(run_utterance(complete_pcm, this_barge))
+                                        asyncio.create_task(run_utterance(complete_pcm, this_barge, utterance_eos, generation))
                                     else:
                                         logger.info(f"[{call_id}] Queuing speech utterance while the previous request is in flight")
                                         pending_utterances.append(complete_pcm)
+                                        pending_utterance_meta.append(utterance_meta)
 
                                 barge_capture = False
                                 speech_buffer = []
@@ -766,7 +886,7 @@ async def handle_answer_offer(request):
     track = MayaVoiceTrack(greeting_pcm if len(greeting_pcm) else np.zeros(0, dtype=np.int16), 48000)
     if followup:
         cache_key, followup_text = followup
-        asyncio.create_task(warmup_and_queue(cache_key, followup_text, track, privileged and bool(VOICE_GATEWAY_SECRET)))
+        asyncio.create_task(warmup_and_queue(cache_key, followup_text, track, privileged and bool(VOICE_GATEWAY_SECRET), call_id))
     pc.addTrack(track)
     logger.info(f"[{call_id}] Attached MayaVoiceTrack ({len(greeting_pcm)/48000:.2f}s) to WebRTC peer")
 
