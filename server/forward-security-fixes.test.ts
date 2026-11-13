@@ -82,9 +82,11 @@ describe("forward security and voice fixes", () => {
     META_APP_SECRET: process.env.META_APP_SECRET,
     META_WEBHOOK_ALLOW_UNSIGNED: process.env.META_WEBHOOK_ALLOW_UNSIGNED,
     META_ACCESS_TOKEN: process.env.META_ACCESS_TOKEN,
+    MAYA_TTS_OFFLINE: process.env.MAYA_TTS_OFFLINE,
   };
 
   before(async () => {
+    process.env.MAYA_TTS_OFFLINE = "1";
     if (!process.env.JWT_SECRET) process.env.JWT_SECRET = "forward-fixes-jwt-secret-not-for-prod";
     initDatabase();
     const server = await startTestServer((app) => {

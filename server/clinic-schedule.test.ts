@@ -21,8 +21,19 @@ describe("Clinic Schedule Settings, Overlap Allocation & 3-Attempt Voice Failove
   let baseUrl: string;
   const testTenant = `test-sched-${Date.now()}`;
   const testTenantB = `test-sched-b-${Date.now()}`;
+  const envSnapshot = {
+    MAYA_TTS_OFFLINE: process.env.MAYA_TTS_OFFLINE,
+  };
+
+  function restoreEnv(snapshot: Record<string, string | undefined>) {
+    for (const [key, value] of Object.entries(snapshot)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
 
   before(async () => {
+    process.env.MAYA_TTS_OFFLINE = "1";
     db = initDatabase();
     ensureClinicScheduleSettingsTable(db);
 
@@ -40,6 +51,7 @@ describe("Clinic Schedule Settings, Overlap Allocation & 3-Attempt Voice Failove
   });
 
   after(() => {
+    restoreEnv(envSnapshot);
     if (server) server.close();
   });
 
