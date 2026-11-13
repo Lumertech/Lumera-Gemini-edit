@@ -85,12 +85,9 @@ export default function ClinicianApp() {
   };
   const [currentDoctor, setCurrentDoctor] = useState<Doctor>(() => sessionDoctor);
   const [currentPatient, setCurrentPatient] = useState<Patient>(() => UNASSIGNED_PATIENT);
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
-    if (typeof window !== 'undefined') {
-      return window.innerWidth < 1024;
-    }
-    return false;
-  });
+  // Expanded by default. Phones always render labels (see Sidebar phoneLayout).
+  // Widths under 1024 used to start as an icon-only rail.
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [intakeName, setIntakeName] = useState('');
 
@@ -810,7 +807,7 @@ export default function ClinicianApp() {
         <div
           className={
             mobileNavOpen
-              ? 'fixed inset-y-0 left-0 z-40 flex h-full md:static md:inset-auto md:z-auto'
+              ? 'fixed inset-y-0 left-0 z-40 flex h-full max-w-full overflow-x-hidden md:static md:inset-auto md:z-auto md:max-w-none md:overflow-visible'
               : 'hidden md:flex h-full'
           }
         >
