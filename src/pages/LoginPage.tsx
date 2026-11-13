@@ -824,7 +824,7 @@ export const LoginPage: React.FC = () => {
                   : "bg-gradient-to-r from-emerald-600 to-teal-600 text-white"
               }`}
             >
-              Start free trial
+              Try for free
             </button>
           </div>
         )}
@@ -1607,7 +1607,7 @@ export const LoginPage: React.FC = () => {
                           </>
                         ) : (
                           <>
-                            Start free trial <ArrowRight className="w-4 h-4" />
+                            Try for free <ArrowRight className="w-4 h-4" />
                           </>
                         )}
                       </button>
@@ -1638,7 +1638,7 @@ export const LoginPage: React.FC = () => {
               className="w-full min-h-11 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs sm:text-sm font-semibold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-emerald-600/30 group"
             >
               <Sparkles className="w-4 h-4 text-emerald-200 group-hover:text-white" />
-              <span>Start free trial</span>
+              <span>Try for free</span>
             </Link>
             <p className="mt-2 text-center text-[11px] text-slate-500">
               New accounts start as an <span className="text-slate-300">individual practice</span>. Multi-specialty is an explicit opt-in.
@@ -1683,7 +1683,7 @@ export const LoginPage: React.FC = () => {
                       </>
                     ) : (
                       <>
-                        Start free trial <ArrowRight className="w-4 h-4" />
+                        Try for free <ArrowRight className="w-4 h-4" />
                       </>
                     )}
                   </button>
