@@ -33,13 +33,19 @@ PUBLIC_IP = os.environ.get("PUBLIC_IP", "34.46.39.52")
 LUMERA_API_URL = os.environ.get("LUMERA_API_URL", "https://www.mylumera.in/api/voice/inbound")
 VOICE_GATEWAY_SECRET = os.environ.get("VOICE_GATEWAY_SECRET", "").strip()
 NEUTRAL_HOLD_TEXT = "Namaste, one moment please."
+FILLER_TEXT = {
+    "en": "Ji, one moment, I am checking.",
+    "hi": "जी, एक क्षण, मैं देख रही हूँ।",
+    "mr": "हो, एक क्षण, मी बघते.",
+}
 
 # Preloaded neutral hold and conversational filler PCM (48kHz mono 16-bit).
 # The hold clip is the only audio played before a clinic greeting is ready.
+# Audio comes from Lumera's Google Cloud TTS WaveNet voice. Never a second engine.
 cached_hold_pcm = np.zeros(0, dtype=np.int16)
 cached_filler_pcm = np.zeros(0, dtype=np.int16)
-HOLD_FILE = "/opt/lumera-voice/maya_hold.mp3"
-FILLER_FILE = "/opt/lumera-voice/maya_filler.mp3"
+filler_by_lang = {}
+clip_pcm_cache = {}
 
 # Active call sessions: callId -> { pc, track, callerPhone, startTime, sdpAnswer, listenerTask }
 active_calls = {}
@@ -213,38 +219,86 @@ class MayaVoiceTrack(MediaStreamTrack):
         self.pts += self.samples_per_frame
         return frame
 
-async def ensure_greeting_audio():
-    """Preloads a neutral hold clip and conversational fillers. Never a named-clinic greeting."""
+def lumera_clips_url() -> str:
+    """Same Lumera host as the inbound brain, on the shared Google TTS route."""
+    explicit = os.environ.get("LUMERA_CLIPS_URL", "").strip()
+    if explicit:
+        return explicit
+    inbound = LUMERA_API_URL.rstrip("/")
+    marker = "/api/voice/inbound"
+    if inbound.endswith(marker):
+        return inbound[: -len("inbound")] + "clips"
+    return inbound.rsplit("/", 1)[0] + "/clips"
+
+def normalize_spoken_language(value: str) -> str:
+    text = (value or "").strip().lower()
+    if text.startswith("hi"):
+        return "hi"
+    if text.startswith("mr"):
+        return "mr"
+    return "en"
+
+def voice_language_for_text(text: str, hinted: str = "en") -> str:
+    sample = text or ""
+    if re.search(r"आहे|नाही|झाले|मला|नमस्कार", sample):
+        return "mr"
+    if re.search(r"[\u0900-\u097F]", sample):
+        return "hi"
+    return normalize_spoken_language(hinted)
+
+async def fetch_google_tts_pcm(text: str, language: str, clip: str, send_secret: bool) -> np.ndarray:
+    """One Google Cloud TTS voice. A failure is silence, never another voice."""
+    headers = {
+        "Content-Type": "application/json",
+        "Origin": "https://www.mylumera.in",
+    }
+    if send_secret and VOICE_GATEWAY_SECRET:
+        headers["X-Voice-Gateway-Secret"] = VOICE_GATEWAY_SECRET
+    try:
+        timeout = aiohttp.ClientTimeout(total=4)
+        async with aiohttp.ClientSession(headers=headers) as session:
+            async with session.post(
+                lumera_clips_url(),
+                json={"text": text, "language": language, "clip": clip},
+                timeout=timeout,
+            ) as resp:
+                if resp.status != 200:
+                    logger.warning(f"Google TTS clip {clip} returned HTTP {resp.status}")
+                    return np.zeros(0, dtype=np.int16)
+                data = await resp.json()
+                audio_b64 = data.get("audioBase64") or ""
+                if not audio_b64:
+                    return np.zeros(0, dtype=np.int16)
+                return decode_mp3_bytes_to_pcm(base64.b64decode(audio_b64), 48000)
+    except Exception as exc:
+        logger.warning(f"Google TTS clip {clip} failed: {exc}")
+        return np.zeros(0, dtype=np.int16)
+
+async def ensure_greeting_audio(attempt: int = 0):
+    """Preloads a neutral hold clip and conversational fillers from Google TTS."""
     global cached_hold_pcm, cached_filler_pcm
-    if not os.path.exists(HOLD_FILE) or os.path.getsize(HOLD_FILE) < 1000:
-        logger.info("Generating neutral hold clip...")
-        try:
-            import edge_tts
-            communicate = edge_tts.Communicate(NEUTRAL_HOLD_TEXT, "en-IN-NeerjaNeural")
-            await communicate.save(HOLD_FILE)
-            logger.info(f"Successfully generated {HOLD_FILE} ({os.path.getsize(HOLD_FILE)} bytes)")
-        except Exception as e:
-            logger.error(f"Failed to generate neutral hold clip with edge-tts: {e}")
-
-    if os.path.exists(HOLD_FILE):
-        cached_hold_pcm = load_audio_pcm(HOLD_FILE, 48000)
+    send_secret = bool(VOICE_GATEWAY_SECRET)
+    hold = await synthesize_tts_pcm(NEUTRAL_HOLD_TEXT, "en", "hold", send_secret)
+    if len(hold) > 0:
+        cached_hold_pcm = hold
         logger.info(f"Preloaded neutral hold clip into memory: {len(cached_hold_pcm)/48000:.2f}s")
+    else:
+        logger.warning("Neutral hold clip unavailable from Google TTS. Callers hear silence until a retry succeeds.")
 
-    # Preload natural conversational filler ("Ji, ek second main check karti hoon...")
-    if not os.path.exists(FILLER_FILE) or os.path.getsize(FILLER_FILE) < 1000:
-        logger.info("Generating Maya conversational filler audio...")
-        filler_text = "Ji, ek second main check karti hoon."
-        try:
-            import edge_tts
-            communicate = edge_tts.Communicate(filler_text, "en-IN-NeerjaNeural")
-            await communicate.save(FILLER_FILE)
-            logger.info(f"Successfully generated {FILLER_FILE}")
-        except Exception as e:
-            logger.error(f"Failed to generate filler audio: {e}")
+    for lang, filler_text in FILLER_TEXT.items():
+        pcm = await synthesize_tts_pcm(filler_text, lang, "filler", send_secret)
+        if len(pcm) == 0:
+            continue
+        filler_by_lang[lang] = pcm
+        if lang == "en":
+            cached_filler_pcm = pcm
+            logger.info(f"Preloaded conversational filler into memory: {len(cached_filler_pcm)/48000:.2f}s")
 
-    if os.path.exists(FILLER_FILE):
-        cached_filler_pcm = load_audio_pcm(FILLER_FILE, 48000)
-        logger.info(f"Preloaded conversational filler into memory: {len(cached_filler_pcm)/48000:.2f}s")
+    if (len(cached_hold_pcm) == 0 or len(cached_filler_pcm) == 0) and attempt < 4:
+        asyncio.get_running_loop().call_later(
+            8,
+            lambda: asyncio.create_task(ensure_greeting_audio(attempt + 1)),
+        )
 
 tenant_greetings: dict = {}
 
@@ -255,26 +309,30 @@ def clinic_greeting_text(clinic_name: str = "", receptionist_name: str = "", cus
     cl_name = clinic_name.strip() or "the clinic"
     return f"Namaste! Thank you for calling {cl_name}. How can I help you today?"
 
-async def synthesize_tts_pcm(text: str) -> np.ndarray:
-    try:
-        import edge_tts
-        communicate = edge_tts.Communicate(text, "en-IN-NeerjaNeural")
-        audio_bytes = b""
-        async for chunk in communicate.stream():
-            if chunk["type"] == "audio":
-                audio_bytes += chunk["data"]
-        return decode_mp3_bytes_to_pcm(audio_bytes, 48000)
-    except Exception as e:
-        logger.error(f"Failed to synthesize greeting: {e}")
-        return np.zeros(0, dtype=np.int16)
+async def synthesize_tts_pcm(text: str, language: str = "en", clip: str = "greeting", send_secret: bool = False) -> np.ndarray:
+    """Google Cloud TTS only. A miss becomes silence and one retry, never another voice."""
+    spoken = voice_language_for_text(text, language)
+    cache_key = f"{spoken}:{clip}:{text}"
+    cached = clip_pcm_cache.get(cache_key)
+    if cached is not None and len(cached) > 0:
+        return cached
+    for attempt in range(2):
+        pcm = await fetch_google_tts_pcm(text, spoken, clip, send_secret)
+        if len(pcm) > 0:
+            clip_pcm_cache[cache_key] = pcm
+            return pcm
+        if attempt == 0:
+            await asyncio.sleep(0.35)
+    return np.zeros(0, dtype=np.int16)
 
-async def prepare_call_greeting(tenant_id: str, clinic_name: str = "", receptionist_name: str = "", custom_greeting: str = ""):
+async def prepare_call_greeting(tenant_id: str, clinic_name: str = "", receptionist_name: str = "", custom_greeting: str = "", language: str = "en"):
     """
     1-ring pickup. Cache hit returns the clinic greeting immediately.
     Cache miss returns the neutral hold clip and the text to speak after it.
     The SDP answer is never blocked on TTS.
     """
-    cache_key = f"{tenant_id}:{clinic_name}:{receptionist_name}:{custom_greeting}"
+    spoken = normalize_spoken_language(language)
+    cache_key = f"{tenant_id}:{spoken}:{clinic_name}:{receptionist_name}:{custom_greeting}"
     cached = tenant_greetings.get(cache_key)
     if cached is not None and len(cached) > 0:
         return cached, None
@@ -282,9 +340,10 @@ async def prepare_call_greeting(tenant_id: str, clinic_name: str = "", reception
     hold = cached_hold_pcm if len(cached_hold_pcm) > 0 else np.zeros(0, dtype=np.int16)
     return hold, (cache_key, text)
 
-async def warmup_and_queue(cache_key: str, text: str, track: MayaVoiceTrack):
-    pcm = await synthesize_tts_pcm(text)
+async def warmup_and_queue(cache_key: str, text: str, track: MayaVoiceTrack, send_secret: bool = False):
+    pcm = await synthesize_tts_pcm(text, voice_language_for_text(text, "en"), "greeting", send_secret)
     if len(pcm) == 0:
+        logger.warning("Clinic greeting TTS unavailable. Keeping silence instead of another voice.")
         return
     tenant_greetings[cache_key] = pcm
     track.queue_audio(pcm, replace=False, after_current=True)
@@ -299,100 +358,130 @@ def _encode_wav_sync(pcm: np.ndarray) -> str:
         wf.writeframes(pcm.tobytes())
     return base64.b64encode(wav_io.getvalue()).decode("utf-8")
 
-async def handle_caller_utterance(call_id: str, pcm_16k: np.ndarray, out_track: MayaVoiceTrack, caller_phone: str):
-    """Encodes caller speech to WAV, queries Lumera Gemini AI, synthesizes TTS, and queues audio to caller."""
+async def handle_caller_utterance(call_id: str, pcm_16k: np.ndarray, out_track: MayaVoiceTrack, caller_phone: str, barge_in: bool = False):
+    """Encodes caller speech to WAV, queries Lumera Gemini AI, and queues the same Google voice."""
     try:
         loop = asyncio.get_event_loop()
         # 1. Encode 16kHz mono PCM into in-memory WAV on worker thread (non-blocking)
         audio_b64 = await loop.run_in_executor(None, _encode_wav_sync, pcm_16k)
 
-        # 2. Retrieve ongoing conversation history and tenantId for this call
-        conv_history = []
-        tenant_id = ""
+        lock = asyncio.Lock()
         if call_id in active_calls:
-            conv_history = active_calls[call_id].get("history", [])
-            tenant_id = active_calls[call_id].get("tenantId") or ""
+            lock = active_calls[call_id].setdefault("turnLock", asyncio.Lock())
 
-        # 3. Send to Lumera Cloud Run cognitive brain
-        privileged = False
-        phone_number_id = ""
-        secret_required = bool(VOICE_GATEWAY_SECRET)
-        if call_id in active_calls:
-            privileged = bool(active_calls[call_id].get("privileged"))
-            # With no secret configured, forward the receiving line so the server
-            # can resolve the clinic. Once the secret is set, only a signed offer may.
-            if privileged or not secret_required:
-                phone_number_id = active_calls[call_id].get("phoneNumberId", "") or ""
-        headers = {
-            "Content-Type": "application/json",
-            "Origin": "https://www.mylumera.in",
-        }
-        if privileged and secret_required:
-            headers["X-Voice-Gateway-Secret"] = VOICE_GATEWAY_SECRET
-        async with aiohttp.ClientSession(headers=headers) as session:
-            payload = {
-                "from": caller_phone or "",
-                "audioBase64": audio_b64,
-                "mimeType": "audio/wav",
-                "callerName": "Patient",
-                "phoneNumberId": phone_number_id,
-                "conversationHistory": conv_history,
-                "bookingDraft": (active_calls.get(call_id) or {}).get("bookingDraft"),
+        speech_text = ""
+        intent = "INQUIRY"
+        resp_audio_bytes = b""
+        spoken = "en"
+        send_secret = False
+        # The lock covers the read of history and the append of this transcript,
+        # including while the brain request is in flight. A newer utterance waits.
+        async with lock:
+            conv_history = []
+            tenant_id = ""
+            known_name = ""
+            booking_draft = None
+            if call_id in active_calls:
+                conv_history = list(active_calls[call_id].get("history") or [])
+                tenant_id = active_calls[call_id].get("tenantId") or ""
+                known_name = active_calls[call_id].get("callerName") or ""
+                booking_draft = active_calls[call_id].get("bookingDraft")
+
+            privileged = False
+            phone_number_id = ""
+            secret_required = bool(VOICE_GATEWAY_SECRET)
+            if call_id in active_calls:
+                privileged = bool(active_calls[call_id].get("privileged"))
+                # With no secret configured, forward the receiving line so the server
+                # can resolve the clinic. Once the secret is set, only a signed offer may.
+                if privileged or not secret_required:
+                    phone_number_id = active_calls[call_id].get("phoneNumberId", "") or ""
+            send_secret = bool(privileged and secret_required)
+            headers = {
+                "Content-Type": "application/json",
+                "Origin": "https://www.mylumera.in",
             }
-            logger.info(f"[{call_id}] Sending caller speech ({len(pcm_16k)/16000:.2f}s) for tenant {tenant_id} to Lumera AI...")
-            async with session.post(LUMERA_API_URL, json=payload, timeout=aiohttp.ClientTimeout(total=18)) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    speech_text = data.get("speechText", "")
-                    intent = data.get("intent", "INQUIRY")
-                    transcript = data.get("transcript", "")
-                    logger.info(f"[{call_id}] Caller said: \"{transcript}\" | Maya reply ({intent}): \"{speech_text}\"")
+            if send_secret:
+                headers["X-Voice-Gateway-Secret"] = VOICE_GATEWAY_SECRET
+            async with aiohttp.ClientSession(headers=headers) as session:
+                payload = {
+                    "from": caller_phone or "",
+                    "audioBase64": audio_b64,
+                    "mimeType": "audio/wav",
+                    "callerName": known_name,
+                    "phoneNumberId": phone_number_id,
+                    "conversationHistory": conv_history,
+                    "bookingDraft": booking_draft,
+                }
+                logger.info(f"[{call_id}] Sending caller speech ({len(pcm_16k)/16000:.2f}s) for tenant {tenant_id} to Lumera AI...")
+                async with session.post(LUMERA_API_URL, json=payload, timeout=aiohttp.ClientTimeout(total=18)) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        speech_text = data.get("speechText", "") or ""
+                        intent = data.get("intent", "INQUIRY")
+                        transcript = data.get("transcript", "") or ""
+                        spoken = normalize_spoken_language(str(data.get("ttsLanguage") or ""))
+                        logger.info(f"[{call_id}] Caller said: \"{transcript}\" | Maya reply ({intent}): \"{speech_text}\"")
 
-                    if transcript and call_id in active_calls:
-                        active_calls[call_id]["history"].append({"role": "caller", "text": transcript})
-                    if call_id in active_calls and "bookingDraft" in data:
-                        active_calls[call_id]["bookingDraft"] = data.get("bookingDraft")
-
-                    if not speech_text and len(pcm_16k) >= 9600:
-                        logger.warn(f"[{call_id}] Lumera AI returned empty speechText. Using polite clarification fallback.")
-                        speech_text = "I'm sorry, I couldn't hear that clearly. Could you please repeat?"
-
-                    if speech_text:
                         if call_id in active_calls:
+                            if transcript:
+                                active_calls[call_id]["history"].append({"role": "caller", "text": transcript})
+                            if "bookingDraft" in data:
+                                active_calls[call_id]["bookingDraft"] = data.get("bookingDraft")
+                            learned = ""
+                            draft = data.get("bookingDraft")
+                            if isinstance(draft, dict):
+                                learned = str(draft.get("patientName") or "").strip()
+                            if not learned:
+                                learned = str(data.get("callerName") or "").strip()
+                            if learned:
+                                active_calls[call_id]["callerName"] = learned
+                            if spoken:
+                                active_calls[call_id]["spokenLanguage"] = spoken
+
+                        if not speech_text and len(pcm_16k) >= 9600:
+                            logger.warning(f"[{call_id}] Lumera AI returned empty speechText. Using polite clarification fallback.")
+                            speech_text = "I'm sorry, I couldn't hear that clearly. Could you please repeat?"
+
+                        if speech_text and call_id in active_calls:
                             active_calls[call_id]["history"].append({"role": "maya", "text": speech_text})
 
-                        resp_audio_bytes = b""
                         if data.get("audioBase64"):
                             try:
                                 resp_audio_bytes = base64.b64decode(data["audioBase64"])
                                 logger.info(f"[{call_id}] Received Cloud TTS audio ({len(resp_audio_bytes)} bytes)")
                             except Exception as b64_err:
-                                logger.warn(f"[{call_id}] Error decoding audioBase64: {b64_err}")
+                                logger.warning(f"[{call_id}] Error decoding audioBase64: {b64_err}")
+                    else:
+                        err_txt = await resp.text()
+                        logger.warning(f"[{call_id}] Lumera AI returned HTTP {resp.status}: {err_txt}")
 
-                        # Fallback to edge-tts if audioBase64 is absent
-                        if not resp_audio_bytes:
-                            import edge_tts
-                            communicate = edge_tts.Communicate(speech_text, "en-IN-NeerjaNeural")
-                            async for chunk in communicate.stream():
-                                if chunk["type"] == "audio":
-                                    resp_audio_bytes += chunk["data"]
+        resp_pcm = np.zeros(0, dtype=np.int16)
+        if resp_audio_bytes:
+            resp_pcm = await loop.run_in_executor(None, decode_mp3_bytes_to_pcm, resp_audio_bytes, 48000)
+        elif speech_text:
+            # Same Google voice as the brain. Silence if it fails. No second voice.
+            resp_pcm = await synthesize_tts_pcm(speech_text, spoken, "reply", send_secret)
+            if len(resp_pcm) == 0:
+                logger.warning(f"[{call_id}] Google TTS returned no audio. Staying silent instead of switching voice.")
 
-                        # Decode into 48kHz mono 16-bit PCM asynchronously on worker thread (non-blocking)
-                        resp_pcm = await loop.run_in_executor(None, decode_mp3_bytes_to_pcm, resp_audio_bytes, 48000)
-                        if len(resp_pcm) > 0:
-                            out_track.queue_audio(resp_pcm, replace=True)
-                            dur_s = len(resp_pcm) / 48000.0
-                            logger.info(f"[{call_id}] Streaming Maya's response into call ({dur_s:.2f}s)")
-
-                            if intent == "TRANSFER":
-                                # WhatsApp Cloud API calling on this gateway can accept, reject, or
-                                # terminate the WebRTC leg. It cannot bridge the caller to a PSTN
-                                # or SIP desk. The spoken line and WhatsApp card carry the clinic number.
-                                logger.info(f"[{call_id}] Escalation spoken. No live transfer on this stack. Ending media in {dur_s + 2.0:.1f}s")
-                                loop.call_later(dur_s + 2.0, lambda: asyncio.create_task(cleanup_call(call_id)))
-                else:
-                    err_txt = await resp.text()
-                    logger.warn(f"[{call_id}] Lumera AI returned HTTP {resp.status}: {err_txt}")
+        pending = (active_calls.get(call_id) or {}).get("pendingUtterances")
+        superseded = bool(pending) and len(pending) > 0
+        if superseded:
+            logger.info(f"[{call_id}] Kept the earlier transcript and skipped playback because a newer utterance is waiting")
+        elif len(resp_pcm) > 0:
+            if barge_in or not out_track.is_speaking():
+                out_track.queue_audio(resp_pcm, replace=True)
+            else:
+                out_track.queue_audio(resp_pcm, replace=False, after_current=True)
+            dur_s = len(resp_pcm) / 48000.0
+            logger.info(f"[{call_id}] Streaming Maya's response into call ({dur_s:.2f}s)")
+            if intent == "TRANSFER":
+                # WhatsApp Cloud API calling on this gateway can accept, reject, or
+                # terminate the WebRTC leg. It cannot bridge the caller to a PSTN
+                # or SIP desk. The spoken line and WhatsApp card carry the clinic number.
+                logger.info(f"[{call_id}] Escalation spoken. No live transfer on this stack. Ending media in {dur_s + 2.0:.1f}s")
+                loop.call_later(dur_s + 2.0, lambda: asyncio.create_task(cleanup_call(call_id)))
     except Exception as e:
         logger.error(f"[{call_id}] Error handling caller utterance: {repr(e)}")
 
@@ -432,7 +521,10 @@ async def process_inbound_audio(call_id: str, inbound_track, out_track: MayaVoic
     silence_threshold_frames = endpoint_silence_frames()
     max_speech_frames = 450       # ~14 seconds max cap
     is_processing = False         # Lock to serialize queries cleanly
-    pending_utterance = None
+    pending_utterances = deque()
+    barge_capture = False
+    if call_id in active_calls:
+        active_calls[call_id]["pendingUtterances"] = pending_utterances
 
     try:
         while True:
@@ -473,6 +565,7 @@ async def process_inbound_audio(call_id: str, inbound_track, out_track: MayaVoic
                                 silence_frames = 0
                                 soft_hold = 0
                                 interruption_frames = 0
+                                barge_capture = True
                                 overlap_buffer.clear()
                         else:
                             interruption_frames = 0
@@ -533,30 +626,37 @@ async def process_inbound_audio(call_id: str, inbound_track, out_track: MayaVoic
                                     duration_s = len(complete_pcm) / 16000.0
                                     logger.info(f"[{call_id}] Neural VAD speech captured: {duration_s:.2f}s ({len(complete_pcm)} samples)")
 
-                                    # Play instant conversational filler so caller receives immediate feedback (<250ms)
-                                    if len(cached_filler_pcm) > 0 and not out_track.is_speaking():
-                                        out_track.queue_audio(cached_filler_pcm, replace=False)
+                                    # Play instant conversational filler in the call's Google voice.
+                                    spoken_lang = "en"
+                                    if call_id in active_calls:
+                                        spoken_lang = active_calls[call_id].get("spokenLanguage") or "en"
+                                    filler_pcm = filler_by_lang.get(spoken_lang)
+                                    if filler_pcm is not None and len(filler_pcm) > 0 and not out_track.is_speaking():
+                                        out_track.queue_audio(filler_pcm, replace=False)
 
+                                    this_barge = barge_capture
+                                    barge_capture = False
                                     if not is_processing:
                                         is_processing = True
 
-                                        async def run_utterance(b_pcm):
-                                            nonlocal is_processing, pending_utterance
+                                        async def run_utterance(b_pcm, was_barge=False):
+                                            nonlocal is_processing
                                             try:
-                                                await handle_caller_utterance(call_id, b_pcm, out_track, caller_phone)
+                                                await handle_caller_utterance(call_id, b_pcm, out_track, caller_phone, barge_in=was_barge)
                                             finally:
-                                                is_processing = False
-                                                if pending_utterance is not None:
-                                                    next_pcm = pending_utterance
-                                                    pending_utterance = None
+                                                if pending_utterances:
+                                                    next_pcm = pending_utterances.popleft()
                                                     is_processing = True
-                                                    asyncio.create_task(run_utterance(next_pcm))
+                                                    asyncio.create_task(run_utterance(next_pcm, False))
+                                                else:
+                                                    is_processing = False
 
-                                        asyncio.create_task(run_utterance(complete_pcm))
+                                        asyncio.create_task(run_utterance(complete_pcm, this_barge))
                                     else:
-                                        logger.info(f"[{call_id}] Storing speech utterance as pending while previous completes")
-                                        pending_utterance = complete_pcm
+                                        logger.info(f"[{call_id}] Queuing speech utterance while the previous request is in flight")
+                                        pending_utterances.append(complete_pcm)
 
+                                barge_capture = False
                                 speech_buffer = []
                                 is_speaking = False
                                 silence_frames = 0
@@ -649,6 +749,7 @@ async def handle_answer_offer(request):
     clinic_name = body.get("clinicName", "")
     receptionist_name = body.get("receptionistName", "")
     custom_greeting = body.get("customGreeting", "")
+    spoken_language = normalize_spoken_language(body.get("language") or "en")
     phone_number_id = body.get("phoneNumberId") or body.get("phone_number_id") or ""
     if VOICE_GATEWAY_SECRET and not privileged:
         phone_number_id = ""
@@ -656,7 +757,7 @@ async def handle_answer_offer(request):
     logger.info(f"[{call_id}] Initializing WebRTC call for tenant='{tenant_id}' clinic='{clinic_name}' caller={caller_phone}")
 
     # Neutral hold on cache miss, then the clinic greeting. SDP is not blocked on TTS.
-    greeting_pcm, followup = await prepare_call_greeting(tenant_id, clinic_name, receptionist_name, custom_greeting)
+    greeting_pcm, followup = await prepare_call_greeting(tenant_id, clinic_name, receptionist_name, custom_greeting, spoken_language)
 
     # Create RTCPeerConnection
     pc = RTCPeerConnection()
@@ -665,7 +766,7 @@ async def handle_answer_offer(request):
     track = MayaVoiceTrack(greeting_pcm if len(greeting_pcm) else np.zeros(0, dtype=np.int16), 48000)
     if followup:
         cache_key, followup_text = followup
-        asyncio.create_task(warmup_and_queue(cache_key, followup_text, track))
+        asyncio.create_task(warmup_and_queue(cache_key, followup_text, track, privileged and bool(VOICE_GATEWAY_SECRET)))
     pc.addTrack(track)
     logger.info(f"[{call_id}] Attached MayaVoiceTrack ({len(greeting_pcm)/48000:.2f}s) to WebRTC peer")
 
@@ -710,6 +811,9 @@ async def handle_answer_offer(request):
         "privileged": privileged,
         "startTime": time.time(),
         "history": [],
+        "callerName": "",
+        "spokenLanguage": spoken_language,
+        "bookingDraft": None,
         "sdpAnswer": final_sdp,
         "listenerTask": listener_task,
     }
@@ -737,7 +841,7 @@ async def cleanup_call(call_id: str):
             pass
 
 async def init_app():
-    await ensure_greeting_audio()
+    asyncio.create_task(ensure_greeting_audio())
     app = web.Application()
     app.router.add_get("/", handle_health)
     app.router.add_get("/health", handle_health)
