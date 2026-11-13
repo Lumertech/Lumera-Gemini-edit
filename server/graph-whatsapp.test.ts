@@ -460,6 +460,34 @@ describe("Wave 2 reusable Meta Graph send helper (#24 / #25 assist)", () => {
     assert.equal(fetchCalled, false);
   });
 
+  it("production OTP refuses to send when the Meta template name is unset", async () => {
+    const prevName = process.env.META_OTP_TEMPLATE_NAME;
+    const prevToken = process.env.META_ACCESS_TOKEN;
+    const prevPhone = process.env.META_PHONE_NUMBER_ID;
+    delete process.env.META_OTP_TEMPLATE_NAME;
+    process.env.META_ACCESS_TOKEN = "graph-token";
+    process.env.META_PHONE_NUMBER_ID = "123456";
+    process.env.NODE_ENV = "production";
+    try {
+      const sent = await sendWhatsAppGraphMessage({
+        credentials: { token: "graph-token", phoneNumberId: "123456", source: "env" },
+        to: "+919800011122",
+        otp: "123456",
+        purpose: "register",
+      });
+      assert.equal(sent.ok, false);
+      assert.match(sent.error || "", /META_OTP_TEMPLATE_NAME=lumera_login_otp/);
+    } finally {
+      process.env.NODE_ENV = "test";
+      if (prevName === undefined) delete process.env.META_OTP_TEMPLATE_NAME;
+      else process.env.META_OTP_TEMPLATE_NAME = prevName;
+      if (prevToken === undefined) delete process.env.META_ACCESS_TOKEN;
+      else process.env.META_ACCESS_TOKEN = prevToken;
+      if (prevPhone === undefined) delete process.env.META_PHONE_NUMBER_ID;
+      else process.env.META_PHONE_NUMBER_ID = prevPhone;
+    }
+  });
+
   it("production hard-fails without creds (no fake Graph success)", async () => {
     delete process.env.META_ACCESS_TOKEN;
     delete process.env.META_PHONE_NUMBER_ID;

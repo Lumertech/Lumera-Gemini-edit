@@ -528,6 +528,7 @@ describe("Meta Tech Provider audit", () => {
         assert.equal(sent.error, WA_TOKEN_KEY_UNSET_ERROR);
       }
 
+      process.env.META_OTP_TEMPLATE_NAME = "lumera_login_otp";
       const otp = await dispatchWhatsAppCloudMessage({
         to: "+919812340078",
         kind: "otp",
@@ -538,6 +539,8 @@ describe("Meta Tech Provider audit", () => {
         fetchImpl: async (_input, init) => {
           const auth = String((init?.headers as Record<string, string> | undefined)?.Authorization || "");
           assert.match(auth, new RegExp(`Bearer ${ENV_TOKEN}`));
+          const body = JSON.parse(String(init?.body || "{}")) as { template?: { name?: string } };
+          assert.equal(body.template?.name, "lumera_login_otp");
           return new Response(JSON.stringify({ messages: [{ id: "wamid.OTP_STILL" }] }), { status: 200 });
         },
       });

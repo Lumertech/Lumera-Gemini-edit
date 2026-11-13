@@ -13,7 +13,6 @@ import {
   CheckCircle2,
   AlertCircle,
   MessageSquare,
-  KeyRound,
   ArrowLeft,
 } from "lucide-react";
 import { apiFetchResponse } from "../api/http";
@@ -212,7 +211,6 @@ export const LoginPage: React.FC = () => {
   const [otpEmail, setOtpEmail] = useState("");
   const [otpPurpose, setOtpPurpose] = useState<"login" | "register">("login");
   const [otpDigits, setOtpDigits] = useState<string[]>(["", "", "", "", "", ""]);
-  const [demoOtpCode, setDemoOtpCode] = useState("");
   const [otpCountdown, setOtpCountdown] = useState(60);
   const [canResendOtp, setCanResendOtp] = useState(false);
   const [otpError, setOtpError] = useState("");
@@ -226,7 +224,6 @@ export const LoginPage: React.FC = () => {
   const [forgotVerificationId, setForgotVerificationId] = useState("");
   const [forgotOtp, setForgotOtp] = useState("");
   const [forgotNewPassword, setForgotNewPassword] = useState("");
-  const [forgotDemoOtp, setForgotDemoOtp] = useState("");
   const [forgotBusy, setForgotBusy] = useState(false);
   const [forgotError, setForgotError] = useState("");
   const [forgotSuccess, setForgotSuccess] = useState("");
@@ -425,7 +422,6 @@ export const LoginPage: React.FC = () => {
         setOtpVerificationId(res.verificationId);
         setOtpPhone(res.phone || "+91 98234 55667");
         setOtpEmail(res.email || email);
-        setDemoOtpCode(res.demoOtp || "");
         setOtpPurpose("login");
         setOtpCountdown(60);
         setCanResendOtp(false);
@@ -461,7 +457,6 @@ export const LoginPage: React.FC = () => {
         setOtpVerificationId(res.verificationId);
         setOtpPhone(res.phone || fullPhone);
         setOtpEmail("");
-        setDemoOtpCode(res.demoOtp || "");
         setOtpPurpose("login");
         setOtpCountdown(60);
         setCanResendOtp(false);
@@ -545,7 +540,6 @@ export const LoginPage: React.FC = () => {
         setOtpVerificationId(res.verificationId);
         setOtpPhone(res.phone || "+91 98234 55667");
         setOtpEmail(res.email || targetEmail);
-        setDemoOtpCode(res.demoOtp || "");
         setOtpPurpose("login");
         setOtpCountdown(60);
         setCanResendOtp(false);
@@ -618,7 +612,6 @@ export const LoginPage: React.FC = () => {
         setOtpVerificationId(res.verificationId);
         setOtpPhone(res.phone || fullPhone);
         setOtpEmail(res.email || adminEmail);
-        setDemoOtpCode(res.demoOtp || "");
         setOtpPurpose("register");
         setOtpCountdown(60);
         setCanResendOtp(false);
@@ -711,21 +704,12 @@ export const LoginPage: React.FC = () => {
         mode === "register" ? adminName : "Clinician"
       );
       setOtpVerificationId(res.verificationId);
-      setDemoOtpCode(res.demoOtp || "");
       setOtpSuccess("Fresh 6-digit OTP code sent to your WhatsApp.");
       setTimeout(() => setOtpSuccess(""), 4000);
     } catch (err) {
       setOtpError(err instanceof Error ? err.message : "Failed to resend code.");
       setCanResendOtp(true);
     }
-  };
-
-  // Auto-fill OTP (for quick evaluation / testing)
-  const handleAutoFillOtp = () => {
-    if (!demoOtpCode) return;
-    setOtpDigits(demoOtpCode.slice(0, 6).split(""));
-    setOtpError("");
-    otpInputRefs.current[5]?.focus();
   };
 
   // Forgot Password Request
@@ -738,7 +722,6 @@ export const LoginPage: React.FC = () => {
     try {
       const res = await requestPasswordReset(forgotEmail.trim().toLowerCase());
       setForgotVerificationId(res.verificationId);
-      setForgotDemoOtp(res.demoOtp || "");
       setForgotStep("reset");
       setForgotSuccess("Verification OTP dispatched to your registered WhatsApp.");
     } catch (err) {
@@ -816,6 +799,46 @@ export const LoginPage: React.FC = () => {
           </button>
         </div>
 
+        {!showOtpView && !showForgot && (
+          <div className="grid grid-cols-2 gap-2 mb-5" data-testid="auth-mode-switch">
+            <button
+              type="button"
+              data-testid="auth-mode-signin"
+              onClick={() => {
+                setMode("signin");
+                setError("");
+              }}
+              className={`min-h-11 rounded-xl text-sm font-semibold ${
+                mode === "signin" ? "bg-slate-800 text-white border border-slate-600" : "bg-slate-950 text-slate-300 border border-slate-800"
+              }`}
+            >
+              Sign in
+            </button>
+            <button
+              type="button"
+              data-testid="start-free-trial"
+              onClick={openRegisterForm}
+              className={`min-h-11 rounded-xl text-sm font-semibold ${
+                mode === "register"
+                  ? "bg-emerald-600 text-white"
+                  : "bg-gradient-to-r from-emerald-600 to-teal-600 text-white"
+              }`}
+            >
+              Start free trial
+            </button>
+          </div>
+        )}
+
+        {oauthConfig && !oauthConfig.sandboxClientOAuthAllowed && (!oauthConfig.googleConfigured || !oauthConfig.facebookConfigured) && (
+          <p className="text-[11px] text-slate-400 mb-4" data-testid="oauth-unconfigured">
+            {!oauthConfig.googleConfigured && !oauthConfig.facebookConfigured
+              ? "Google and Facebook sign-in are unavailable until GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, FACEBOOK_APP_ID, and FACEBOOK_APP_SECRET are set. WhatsApp sign-up still works."
+              : !oauthConfig.googleConfigured
+                ? "Google sign-in is unavailable until GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are set."
+                : "Facebook sign-in is unavailable until FACEBOOK_APP_ID and FACEBOOK_APP_SECRET are set."}
+          </p>
+        )}
+
         {/* Global Notifications */}
         {error && (
           <div className="mb-4 p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-start gap-2">
@@ -845,23 +868,6 @@ export const LoginPage: React.FC = () => {
                 Enter the 6-digit code sent to <span className="font-semibold text-slate-200">{otpPhone}</span>
               </p>
             </div>
-
-            {/* Test Helper Chip (Shows live OTP for fast testing) */}
-            {demoOtpCode && (
-              <div className="p-2.5 rounded-xl bg-purple-500/10 border border-purple-500/30 flex items-center justify-between text-xs">
-                <span className="text-purple-300 flex items-center gap-1.5 font-medium">
-                  <KeyRound className="w-3.5 h-3.5 text-purple-400" />
-                  Test OTP: <strong className="font-mono text-white tracking-widest">{demoOtpCode}</strong>
-                </span>
-                <button
-                  type="button"
-                  onClick={handleAutoFillOtp}
-                  className="px-2 py-1 rounded bg-purple-600 hover:bg-purple-500 text-white text-[11px] font-semibold transition-colors"
-                >
-                  Auto-fill
-                </button>
-              </div>
-            )}
 
             {otpError && (
               <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2">
@@ -999,11 +1005,6 @@ export const LoginPage: React.FC = () => {
               </form>
             ) : (
               <form onSubmit={handleForgotReset} className="space-y-3">
-                {forgotDemoOtp && (
-                  <div className="p-2 rounded bg-purple-500/10 border border-purple-500/30 text-xs text-purple-300">
-                    OTP Code: <strong>{forgotDemoOtp}</strong>
-                  </div>
-                )}
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1">6-Digit Code</label>
                   <input
@@ -1637,7 +1638,7 @@ export const LoginPage: React.FC = () => {
               className="w-full min-h-11 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs sm:text-sm font-semibold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-emerald-600/30 group"
             >
               <Sparkles className="w-4 h-4 text-emerald-200 group-hover:text-white" />
-              <span>Create new practice account</span>
+              <span>Start free trial</span>
             </Link>
             <p className="mt-2 text-center text-[11px] text-slate-500">
               New accounts start as an <span className="text-slate-300">individual practice</span>. Multi-specialty is an explicit opt-in.

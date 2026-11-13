@@ -517,6 +517,14 @@ export async function sendWhatsAppGraphMessage(opts: {
 }): Promise<GraphMessageResult> {
   const templateName = String(process.env.META_OTP_TEMPLATE_NAME || "").trim();
 
+  if (!templateName && isProduction()) {
+    return {
+      ok: false,
+      error:
+        "WhatsApp OTP template is not configured. Set META_OTP_TEMPLATE_NAME=lumera_login_otp, META_OTP_TEMPLATE_LANGUAGE=en, and META_OTP_TEMPLATE_BUTTON=true. The code was not sent.",
+    };
+  }
+
   if (templateName) {
     // Re-audit body for lumera_login_otp. `to` is added by postGraphWhatsAppMessage.
     // Manager body is "*{{1}}* is your verification code..."; footer expiry is

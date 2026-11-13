@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from "react";
 import { apiFetch } from "../api/http";
 import { formatINR } from "../lib/currency";
+import { trialCountdownLabel } from "../lib/trialCountdown";
 
 type TrialView = {
   status: "none" | "pending_whatsapp" | "active" | "read_only";
   daysLeft: number | null;
+  trialEndsAt?: string | null;
   upgradeRequired: boolean;
   whatsappVerificationRequired: boolean;
   readOnly: boolean;
@@ -36,6 +38,7 @@ function rupees(paise: number): string {
  */
 export function TrialAccessBanner() {
   const [trial, setTrial] = useState<TrialView | null>(null);
+  const [payEnv, setPayEnv] = useState("");
   const [plans, setPlans] = useState<PlansResponse | null>(null);
   const [open, setOpen] = useState(false);
   const [notice, setNotice] = useState("");
@@ -44,8 +47,11 @@ export function TrialAccessBanner() {
   const [verificationId, setVerificationId] = useState("");
 
   const load = () => {
-    apiFetch<{ trial: TrialView }>("/api/billing/trial")
-      .then((body) => setTrial(body.trial))
+    apiFetch<{ trial: TrialView; razorpayConfigured?: boolean; requiredEnv?: string[] }>("/api/billing/trial")
+      .then((body) => {
+        setTrial(body.trial);
+        setPayEnv(body.razorpayConfigured === false ? (body.requiredEnv || []).join(", ") : "");
+      })
       .catch(() => setTrial(null));
   };
 
@@ -90,7 +96,7 @@ export function TrialAccessBanner() {
         body: JSON.stringify({ phone }),
       });
       setVerificationId(result.verificationId);
-      setNotice(result.demoOtp ? `SANDBOX code ${result.demoOtp}` : "Check WhatsApp for the 6-digit code.");
+      setNotice("Check WhatsApp for the 6-digit code.");
     } catch (err) {
       setNotice(err instanceof Error ? err.message : "Could not send the code.");
     }
@@ -124,7 +130,7 @@ export function TrialAccessBanner() {
         </p>
       ) : (
         <p data-testid="trial-days-left">
-          {trial.daysLeft === 1 ? "1 day left" : `${trial.daysLeft ?? 0} days left`} in the free trial. No card was required to start.
+          {trialCountdownLabel({ status: "active", trialEndsAt: trial.trialEndsAt || null }) || `${trial.daysLeft ?? 0} days left`} in the free trial. No card was required to start.
         </p>
       )}
       <button
@@ -143,6 +149,11 @@ export function TrialAccessBanner() {
       {open ? (
         <div className="mt-3 space-y-2" data-testid="trial-paywall">
           <p className="text-xs">Polyclinic is ₹6,699/mo and Individual is ₹1,999/mo, exclusive of GST. The charge adds 18% GST.</p>
+          {payEnv ? (
+            <p className="text-xs" data-testid="trial-razorpay-missing">
+              Razorpay is not configured. Set {payEnv}. The clinic was not charged.
+            </p>
+          ) : null}
           <div className="flex flex-wrap gap-2">
             {(plans?.plans || [
               { code: "individual", name: "Individual", monthlyPaise: 199900, annualPaise: 1799900 },

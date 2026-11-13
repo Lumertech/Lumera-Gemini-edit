@@ -34,7 +34,10 @@ describe("try-for-free trial terms before AutoPay", () => {
     assert.match(login, /const \[showMandateStep, setShowMandateStep\] = useState\(false\)/);
     assert.match(login, /<TrialTermsPanel/);
     assert.ok(login.indexOf("<TrialTermsPanel") < login.indexOf('data-testid="add-payment-method"'));
+    assert.match(login, /data-testid="start-free-trial"/);
+    assert.match(login, /data-testid="auth-mode-signin"/);
     assert.match(login, /Start free trial/);
+    assert.doesNotMatch(login, /Quick Demo|Test OTP|OTP Code:/);
     assert.match(login, /Add payment method now/);
     assert.match(login, /Skip for now/);
     assert.doesNotMatch(login, /auto-debited/);
