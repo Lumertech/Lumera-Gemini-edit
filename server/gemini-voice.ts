@@ -10,6 +10,7 @@ import { bookWhatsAppAppointment, findNextBookableSlot } from "./whatsapp-calend
 import { getClinicScheduleSettings } from "./clinic-schedule.ts";
 import { mayaDemoMode } from "./voice-demo.ts";
 import { cloudTtsVoice, mayaSpokenLanguage, synthesizeCloudTts, type MayaSpokenLanguage } from "./voice-tts.ts";
+import { mayaLockedLanguageInstruction, resolveMayaCallLanguage, speechConflictsWithLockedLanguage } from "./voice-language-lock.ts";
 import { formatTenantVoiceFacts } from "./voice-vocabulary.ts";
 import { formatIstDateSpeech, collectVoiceSlots, mayaAskedForPatientName, parseVoiceBookingDraft, planVoiceBooking, speakablePhone, usablePatientName, withHeardSlots, type VoiceBookingDraft, type VoiceHistoryTurn } from "./voice-booking-confirm.ts";
 import { findRegisteredPatient, resolveClinicFacingNames } from "./whatsapp.ts";
@@ -29,6 +30,8 @@ export interface VoiceReceptionistInput {
   callerName?: string;
   callerPhone?: string;
   language?: string;
+  /** When set, receptionist speech stays in this call language instead of following the latest utterance. */
+  replyLanguage?: MayaSpokenLanguage;
   tenantId?: string;
   conversationHistory?: Array<{ role: "caller" | "maya"; text: string }>;
   bookingDraft?: VoiceBookingDraft | null;
@@ -229,6 +232,25 @@ function voiceSettingsTenant(req: Request, res: Response): string | null {
     return null;
   }
   return tenantId;
+}
+
+function lockedReplyFallback(language: MayaSpokenLanguage): string {
+  if (language === "hi") return "माफ़ कीजिए, मैं हिंदी में बात कर रही हूँ। बताइए, मैं आपकी क्या मदद करूँ?";
+  if (language === "mr") return "माफ करा, मी मराठीत बोलते आहे. सांगा, मी कशी मदत करू?";
+  return "I'll continue in English. How can I help you?";
+}
+
+function clinicGreetingLanguage(body: { clinicLanguage?: unknown } | null | undefined): MayaSpokenLanguage {
+  const value = String(body?.clinicLanguage || "").trim().toLowerCase();
+  if (value === "hi" || value === "mr" || value === "en") return value;
+  return "en";
+}
+
+function turnLanguageHint(modelLanguage: string, body: { language?: unknown } | null | undefined): string {
+  const model = String(modelLanguage || "").trim();
+  if (model) return model;
+  if (body && Object.prototype.hasOwnProperty.call(body, "language")) return String(body.language ?? "");
+  return "";
 }
 
 function capturedSlotPrompt(draft: VoiceBookingDraft | null): string {
@@ -755,8 +777,10 @@ export async function runGeminiVoiceReceptionist(opts: VoiceReceptionistInput): 
   const clinicAddress = [letterhead.address, letterhead.city].filter(Boolean).join(", ");
   const clinicPhone = letterhead.phone || letterhead.whatsappNumber || "";
 
-  const langCode = detectIndicLanguage(message, language);
+  const replyLanguage = opts.replyLanguage;
+  const langCode = replyLanguage || detectIndicLanguage(message, language);
   const langInfo = INDIC_LANGUAGES[langCode] || INDIC_LANGUAGES.en;
+  const lockedReplyRule = replyLanguage ? mayaLockedLanguageInstruction(replyLanguage, true) : "";
 
   // 1. Critical Medical Emergency Detection across Indian languages
   const isEmergency = detectIndicEmergency(message);
@@ -808,7 +832,7 @@ ${capturedSlotPrompt(opts.bookingDraft || null)}
 Latest Caller Speech: "${message}"
 
 Voice Persona Rules:
-1. Speak naturally and warmly like a real receptionist. Match the caller's language (${langInfo.name} / Hinglish / English).
+1. Speak naturally and warmly like a real receptionist. ${lockedReplyRule || `Match the caller's language (${langInfo.name} / Hinglish / English).`}
 2. Keep spoken responses short, concise, and conversational (1 to 2 sentences, 15 to 25 words max) so it sounds like real, natural voice dialogue.
 3. If caller explicitly asks to book an appointment (e.g. "book an appointment", "give me a slot", "book Dr. ...", "appointment chahiye", "ha book kardo"), set "shouldBook": true and specify the doctor's name. If the patient name, doctor, date, or time is already captured above, acknowledge it and ask only for what is still missing. Never ask for the patient's name again once it is known. Indian names and Hindi or Marathi transcripts count.
 4. If caller is just asking for timings, doctor availability, directions, or asking questions: answer their question warmly using the clinic profile above and ask if they'd like to book. Do NOT book unless they ask or confirm!
@@ -1071,7 +1095,7 @@ Caller Message: "${message}"
 Detected Language: ${langInfo.name} (${langInfo.localName})
 
 Guidelines:
-1. Respond warmly and politely as ${receptionistName} the receptionist directly in ${langInfo.name} (${langInfo.localName}).
+1. Respond warmly and politely as ${receptionistName} the receptionist directly in ${langInfo.name} (${langInfo.localName}).${lockedReplyRule ? ` ${lockedReplyRule}` : ""}
 2. Keep the answer spoken, natural, concise (under 30-40 words) suitable for voice audio playback over telephone/WhatsApp voice note.
 3. Offer relevant clinical help using only the clinic schedule and doctor list below. Do not invent hours.
 ${tenantVoiceFacts(tenantId, clinicName, doctors)}
@@ -1216,6 +1240,10 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
             const cleanBase64 = String(req.body.audioBase64).replace(/^data:audio\/\w+;base64,/, "");
             const mimeType = String(req.body.mimeType || "audio/wav");
 
+            const priorLanguage = resolveMayaCallLanguage({
+              greeting: clinicGreetingLanguage(req.body as { clinicLanguage?: unknown }),
+              history,
+            });
             const singlePassPrompt = `You are ${receptionistName}, the warm, polite, and intelligent AI Clinic Receptionist at ${clinicName} in ${letterhead.city || "India"}.
 You are speaking live to a caller on a WhatsApp voice phone call.
 
@@ -1242,10 +1270,8 @@ Instructions:
    - Match phonetic doctor names and medicine names to the clinic facts above. Do not substitute a doctor who is not on that list.
    - If the speech is muffled, faint, brief, or partially unclear, use context from previous turns to provide your best phonetic transcription instead of leaving it empty.
    - ONLY set "transcript": "" and "speechText": "" with "intent": "SILENCE" if the audio is strictly 100% dead digital silence with no human voice or background audio at all.
-3. LANGUAGE CONTINUITY RULE (STRICT):
-   - You MUST reply in the EXACT same language and dialect the caller is using (e.g., if caller speaks Hindi or Hinglish, reply in Hindi or Hinglish; if English, reply in English).
-   - NEVER switch languages on your own. Keep the active conversation language until the caller deliberately switches to another language for a full coherent sentence.
-4. In "speechText", formulate your spoken receptionist response in the caller's spoken language.
+3. ${mayaLockedLanguageInstruction(priorLanguage.language, priorLanguage.locked)}
+4. In "speechText", formulate your spoken receptionist response in that reply language, so the words match the voice.
    - If the caller just said their name, acknowledge it (for example "Thank you, Ravi" or "धन्यवाद, रवि") and ask only for details that are still missing.
    - Never ask for the patient's name, doctor, date, or time again once that slot is captured above or earlier in the conversation. Indian names and Hindi or Marathi transcripts count.
    - Always acknowledge what you heard rather than immediately asking to repeat whenever even 1-2 words are discernible.
@@ -1254,12 +1280,12 @@ Instructions:
 5. If the caller asks to speak to a human, staff, doctor, receptionist, or operator (e.g. "transfer me", "talk to human", "doctor se baat karni hai", "receptionist chahiye", "operator", "emergency", "connect to staff"): set "intent": "TRANSFER", "shouldTransfer": true.
 6. If the caller asks to book an appointment, set "shouldBook": true and "doctorName" to a doctor from the clinic facts. Do not say the visit is already booked. The server reads the name, date, time, and phone back and books only after the caller confirms.
 7. If caller is asking for timings, fees, doctor availability, directions, or asking medical questions: answer their question warmly using the clinic facts above and ask if they would like to book. Do NOT book unless they ask or confirm!
-8. Set "language" to "hi" for Hindi or Hinglish, "mr" for Marathi, and "en" for English or any other language.
+8. Set "language" to "hi", "mr", or "en" for the language you actually wrote in speechText. Do not set "hi" for Hinglish or for one Hindi word.
 
 Output strict JSON:
 {
   "transcript": "transcribed caller speech",
-  "speechText": "spoken receptionist response in caller's language",
+  "speechText": "spoken receptionist response in the locked reply language",
   "language": "hi" | "mr" | "en",
   "intent": "BOOKING" | "TIMINGS" | "LOCATION" | "REFILL" | "DOCTOR_INFO" | "INQUIRY" | "TRANSFER" | "SILENCE",
   "shouldBook": false,
@@ -1309,6 +1335,19 @@ Output strict JSON:
         }
       }
 
+      const voiceBody = (req.body || {}) as { clinicLanguage?: unknown; language?: unknown };
+      const turnHint = turnLanguageHint(modelLanguage, voiceBody);
+      const spoken = resolveMayaCallLanguage({
+        greeting: clinicGreetingLanguage(voiceBody),
+        history,
+        currentText: message,
+        currentHint: turnHint,
+        currentDetected: message ? detectIndicLanguage(message, turnHint) : "",
+      }).language;
+      if (speechText && speechConflictsWithLockedLanguage(speechText, spoken)) {
+        speechText = "";
+      }
+
       // Check Failover & 3-Attempt Unclear Transfer
       const previousClarifications = history.filter(
         (h) => h.role === "maya" && (
@@ -1326,19 +1365,23 @@ Output strict JSON:
       const isFailoverTriggered = isTransferRequested || (isCurrentTurnUnclear && previousClarifications >= 2);
 
       let callbackTaskId = "";
+      let authoredSpeech = false;
       if (isFailoverTriggered) {
         intent = "TRANSFER";
-        const callerSpeaksHindi = /[\u0900-\u097F]|aap|karna|hoga|baat|hai|tha|kripya/i.test(message) ||
-          history.some(h => /[\u0900-\u097F]|नमस्ते|माफ़/i.test(String(h.text || "")));
+        authoredSpeech = true;
         if (escalationPhone) {
-          speechText = callerSpeaksHindi
+          speechText = spoken === "hi"
             ? `माफ़ कीजिए, मुझे आपकी आवाज़ साफ़ नहीं आ रही है। इस कॉल को दूसरी लाइन पर ट्रांसफर नहीं किया जा सकता। कृपया हमारे क्लिनिक स्टाफ को ${escalationPhone} पर कॉल करें। मैं यह नंबर व्हाट्सऐप पर भेज रही हूँ।`
-            : `I'm sorry, I still can't hear you clearly. I can't transfer this WhatsApp call, so please call our clinic staff at ${escalationPhone}. I'm sending that number on WhatsApp.`;
+            : spoken === "mr"
+              ? `माफ करा, मला तुमचा आवाज स्पष्ट ऐकू येत नाही. ही कॉल दुसऱ्या लाईनवर ट्रान्सफर करता येत नाही. कृपया क्लिनिकला ${escalationPhone} वर कॉल करा.`
+              : `I'm sorry, I still can't hear you clearly. I can't transfer this WhatsApp call, so please call our clinic staff at ${escalationPhone}. I'm sending that number on WhatsApp.`;
           suggestedAction = `Asked caller to phone the clinic desk (${escalationPhone}); WhatsApp card sent`;
         } else {
-          speechText = callerSpeaksHindi
+          speechText = spoken === "hi"
             ? `माफ़ कीजिए, मुझे आपकी आवाज़ साफ़ नहीं आ रही है। क्लिनिक का फ़ोन नंबर फ़ाइल में नहीं है। हमारे स्टाफ आपको वापस कॉल करेंगे।`
-            : `I'm sorry, I still can't hear you clearly. A staff member from the clinic will call you back.`;
+            : spoken === "mr"
+              ? `माफ करा, मला तुमचा आवाज स्पष्ट ऐकू येत नाही. क्लिनिकचा फोन नंबर फाइलमध्ये नाही. स्टाफ तुम्हाला परत कॉल करतील.`
+              : `I'm sorry, I still can't hear you clearly. A staff member from the clinic will call you back.`;
           suggestedAction = "No clinic number on file; callback task created";
           try {
             callbackTaskId = createVoiceCallbackTask({
@@ -1354,10 +1397,12 @@ Output strict JSON:
       } else if (!message && !speechText) {
         const rawAudio = String(req.body?.audioBase64 || "");
         if (rawAudio.length > 500) {
-          const callerSpeaksHindi = history.some(h => /[\u0900-\u097F]|नमस्ते|माफ़/i.test(String(h.text || "")));
-          speechText = callerSpeaksHindi
+          authoredSpeech = true;
+          speechText = spoken === "hi"
             ? `माफ़ कीजिए, मुझे आपकी आवाज़ साफ़ नहीं आई। क्या आप दोबारा बोलेंगे?`
-            : `I'm sorry, I couldn't hear that clearly. Could you please repeat?`;
+            : spoken === "mr"
+              ? `माफ करा, मला तुमचा आवाज स्पष्ट ऐकू आला नाही. तुम्ही पुन्हा बोलाल का?`
+              : `I'm sorry, I couldn't hear that clearly. Could you please repeat?`;
           intent = "INQUIRY";
           suggestedAction = "Asked caller to repeat unclear utterance";
         } else {
@@ -1371,11 +1416,6 @@ Output strict JSON:
         }
       }
 
-      const spokenForBooking = mayaSpokenLanguage(
-        message,
-        modelLanguage || language,
-        detectIndicLanguage(message, modelLanguage || language)
-      );
       const todayIso = clinicCalendarDate(new Date(), "Asia/Kolkata");
       const heard = collectVoiceSlots(message, history, todayIso);
       const heardNow = collectVoiceSlots(message, [], todayIso);
@@ -1390,6 +1430,7 @@ Output strict JSON:
         Boolean(message) &&
         (shouldBook || detectIndicBooking(message) || continuesBookingConversation(message, priorDraft) || recoveringSlots);
       if (wantsBooking) {
+        authoredSpeech = true;
         let proposed: { date: string; timeSlot: string } | null = null;
         try {
           proposed = findNextBookableSlot({
@@ -1408,7 +1449,7 @@ Output strict JSON:
           clinicName,
           clinicPhone: escalationPhone,
           proposed,
-          language: spokenForBooking,
+          language: spoken,
           history,
         });
         speechText = plan.speechText || speechText;
@@ -1445,18 +1486,26 @@ Output strict JSON:
             const phoneSpoken = speakablePhone(plan.phone || from);
             const who = plan.patientName || cleanCallerName;
             speechText =
-              spokenForBooking === "hi"
+              spoken === "hi"
                 ? `बुक हो गया। ${who}, ${when} IST, ${appt.timeSlot}, फ़ोन ${phoneSpoken}. टोकन ${appt.tokenNumber}.`
-                : spokenForBooking === "mr"
+                : spoken === "mr"
                   ? `बुक झाले. ${who}, ${when} IST, ${appt.timeSlot}, फोन ${phoneSpoken}. टोकन ${appt.tokenNumber}.`
                   : `Booked. ${who} on ${when} at ${appt.timeSlot} IST, phone ${phoneSpoken}. Token ${appt.tokenNumber}.`;
             suggestedAction = `Confirmed token #${appt.tokenNumber} for ${appt.date} at ${appt.timeSlot} IST`;
           } catch (bErr) {
             console.warn("[Voice Booking Error]", bErr);
             intent = "INQUIRY";
-            speechText = escalationPhone
-              ? `I could not save that booking. Please call the clinic at ${escalationPhone}.`
-              : `I could not save that booking. A staff member from ${clinicName} will call you back.`;
+            speechText = spoken === "hi"
+              ? escalationPhone
+                ? `मैं बुकिंग सेव नहीं कर पाई। कृपया क्लिनिक को ${escalationPhone} पर कॉल करें।`
+                : `मैं बुकिंग सेव नहीं कर पाई। ${clinicName} का स्टाफ आपको कॉल करेगा।`
+              : spoken === "mr"
+                ? escalationPhone
+                  ? `मी बुकिंग सेव्ह करू शकले नाही. कृपया क्लिनिकला ${escalationPhone} वर कॉल करा.`
+                  : `मी बुकिंग सेव्ह करू शकले नाही. ${clinicName} चे स्टाफ तुम्हाला कॉल करेल.`
+                : escalationPhone
+                  ? `I could not save that booking. Please call the clinic at ${escalationPhone}.`
+                  : `I could not save that booking. A staff member from ${clinicName} will call you back.`;
           }
         } else if (plan.callback) {
           intent = "INQUIRY";
@@ -1483,6 +1532,7 @@ Output strict JSON:
           callerName: patientForPlan || callerName,
           callerPhone: from,
           language,
+          replyLanguage: spoken,
           tenantId,
           conversationHistory: history.map((turn) => ({
             role: turn.role === "maya" ? "maya" as const : "caller" as const,
@@ -1516,7 +1566,7 @@ Output strict JSON:
           clinicName,
           clinicPhone: escalationPhone,
           proposed: null,
-          language: spokenForBooking,
+          language: spoken,
           history,
         });
         if (repaired.speechText && !speechAsksForPatientName(repaired.speechText)) {
@@ -1524,8 +1574,13 @@ Output strict JSON:
           bookingDraftOut = repaired.draft;
         }
       } else if (!isFailoverTriggered && !wantsBooking && introducedNow && speechText && !speechText.includes(introducedNow)) {
-        const prefix = spokenForBooking === "en" ? `Thank you, ${introducedNow}.` : `धन्यवाद, ${introducedNow}.`;
+        const prefix = spoken === "en" ? `Thank you, ${introducedNow}.` : `धन्यवाद, ${introducedNow}.`;
         speechText = `${prefix} ${speechText}`;
+      }
+
+      if (!authoredSpeech && speechText && speechConflictsWithLockedLanguage(speechText, spoken)) {
+        speechText = lockedReplyFallback(spoken);
+        suggestedAction = `Kept the reply in the locked call language (${spoken})`;
       }
 
       const now = new Date().toISOString();
@@ -1618,7 +1673,6 @@ Output strict JSON:
       }
 
       let audioBase64: string | null = null;
-      const spoken = mayaSpokenLanguage(message, modelLanguage || language, detectIndicLanguage(message, modelLanguage || language));
       const ttsVoice = cloudTtsVoice(spoken);
       if (speechText) {
         audioBase64 = await synthesizeSpeechNeural(speechText, spoken);
@@ -1636,6 +1690,7 @@ Output strict JSON:
         audioBase64,
         bookingDraft: bookingDraftOut,
         callerName: rememberedName || "",
+        spokenLanguage: spoken,
         ttsLanguage: ttsVoice.languageCode,
         ttsVoice: ttsVoice.name,
       };

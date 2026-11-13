@@ -108,7 +108,10 @@ export function cloudTtsVoice(language: MayaSpokenLanguage, env: NodeJS.ProcessE
 }
 
 /**
- * Hindi and Marathi from the model hint or a detected Indic code.
+ * One utterance only. A hint of Hindi or Hinglish, a detected hi/mr code, or any
+ * Devanagari letter chooses the voice immediately. Live calls must not use this
+ * as the call language. resolveMayaCallLanguage in voice-language-lock.ts keeps
+ * one language for the call and is what /api/voice/inbound speaks with.
  * `detectedCode` is the result of detectIndicLanguage. Every other language stays en-IN.
  */
 export function mayaSpokenLanguage(transcript: string, hinted?: string, detectedCode?: string): MayaSpokenLanguage {
