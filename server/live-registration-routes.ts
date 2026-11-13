@@ -6,7 +6,9 @@ import { reserveOtpSend, sendOtpLimited } from "./otp-attempt.ts";
 import { liveRegistrationPasswordHash } from "./live-registration-password.ts";
 import { dispatchWhatsAppCloudMessage, isCloudDispatchFailure } from "./graph-whatsapp.ts";
 import { ensureTenantSlugColumn, generateUniqueTenantSlug } from "./tenant-slug.ts";
-import { ensureTenantSubscription } from "./platform-tenants-schema.ts";
+import { signupPasswordRuleError } from "./password.ts";
+import { hashOtp } from "./otp-hash.ts";
+import { createTrialRouter } from "./trial-routes.ts";
 
 /**
  * Production-safe live clinic registration. Mounted in server.ts before
@@ -56,6 +58,10 @@ async function handleRegisterPractice(req: Request, res: Response) {
   if (!practiceName || !phone || !name || !email) {
     return res.status(400).json({ error: "Practice Name, Director Name, Email, and WhatsApp Phone are required." });
   }
+  if (password) {
+    const passwordError = signupPasswordRuleError(password);
+    if (passwordError) return res.status(400).json({ error: passwordError });
+  }
 
   const existing = getDb().prepare("SELECT id FROM users WHERE email = ?").get(email);
   if (existing) {
@@ -68,7 +74,7 @@ async function handleRegisterPractice(req: Request, res: Response) {
   if (slot.limited === true) return sendOtpLimited(res, slot.retryAfterSec);
 
   const now = new Date().toISOString();
-  const trialEndsAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+  const trialEndsAt = now;
   const tenantId = `tenant-${crypto.randomUUID().slice(0, 8)}`;
   const hfrId = `IN-HFR-${Math.floor(10000000 + Math.random() * 90000000)}`;
   const userId = `user-${crypto.randomUUID().slice(0, 8)}`;
@@ -79,7 +85,7 @@ async function handleRegisterPractice(req: Request, res: Response) {
   getDb()
     .prepare(
       `INSERT INTO tenants (id, name, specialty, country, timezone, phone, trial_ends_at, ai_scribe_minutes_limit, ai_scribe_minutes_used, active_status, hfr_id, created_at, updated_at, practice_type, lifecycle_status, owner_name, owner_email, owner_phone, email, slug)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 500, 0, 1, ?, ?, ?, ?, 'trial', ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, 500, 0, 1, ?, ?, ?, ?, 'pending_verification', ?, ?, ?, ?, ?)`
     )
     .run(tenantId, practiceName, specialty, country, timezone, phone, trialEndsAt, hfrId, now, now, practiceType, name, email, phone, email, tenantSlug);
 
@@ -107,33 +113,6 @@ async function handleRegisterPractice(req: Request, res: Response) {
     )
     .run(docId, userId, name.startsWith("Dr.") ? name : `Dr. ${name}`, specialty, avatarUrl, hprId, phone, email);
 
-  const subId = `sub-${crypto.randomUUID().slice(0, 8)}`;
-  getDb()
-    .prepare(
-      `INSERT OR REPLACE INTO subscriptions (id, user_id, status, plan_type, monthly_price, auto_renew, started_at, ends_at, notes)
-       VALUES (?, ?, 'active', 'Enterprise Trial', 0, 1, ?, ?, ?)`
-    )
-    .run(
-      subId,
-      userId,
-      now,
-      trialEndsAt,
-      JSON.stringify({
-        tenantId,
-        practiceName,
-        specialty,
-        country,
-        timezone,
-        hfrId,
-        hprId,
-        aiScribeMinutesLimit: 500,
-        dhisTransactionsLimit: 100,
-        trialDays: 30,
-        activeStatus: true,
-      })
-    );
-  ensureTenantSubscription(getDb(), tenantId, { planCode: "trial", status: "trial", billingSource: "sandbox" });
-
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
   const verificationId = crypto.randomUUID();
   const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
@@ -158,7 +137,7 @@ async function handleRegisterPractice(req: Request, res: Response) {
       `INSERT INTO otp_verifications (id, phone, email, otp, purpose, payload, created_at, expires_at)
        VALUES (?, ?, ?, ?, 'register', ?, ?, ?)`
     )
-    .run(verificationId, phone, email, otp, JSON.stringify(otpPayload), now, expiresAt);
+    .run(verificationId, phone, email, hashOtp(otp), JSON.stringify(otpPayload), now, expiresAt);
 
   const sent = await dispatchRegisterOtp(phone, name, otp, "register", tenantId);
   if (otpDispatchFailure(res, sent)) return;
@@ -174,8 +153,10 @@ async function handleRegisterPractice(req: Request, res: Response) {
     hfrId,
     hprId,
     ...(generatedPassword ? { temporaryPassword: generatedPassword } : {}),
+    trialPending: true,
     trialQuotas: {
-      trialEndsAt,
+      trialEndsAt: null,
+      trialDays: 7,
       aiScribeMinutesLimit: 500,
       dhisClaimsLimit: 100,
     },
@@ -231,6 +212,7 @@ function interceptRegisterVerifyOtp(req: Request, res: Response, next: NextFunct
 
 export function createLiveRegistrationRouter(): Router {
   const api = Router();
+  api.use(createTrialRouter());
   api.post("/auth/register-practice", handleRegisterPractice);
   api.post("/auth/register-clinic", handleRegisterPractice);
   api.post("/auth/whatsapp/verify-otp", interceptRegisterVerifyOtp);

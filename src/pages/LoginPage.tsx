@@ -13,9 +13,7 @@ import {
   CheckCircle2,
   AlertCircle,
   MessageSquare,
-  KeyRound,
   ArrowLeft,
-  Zap,
 } from "lucide-react";
 import { apiFetchResponse } from "../api/http";
 import { destinationAfterAuth, useAuth } from "../auth/AuthContext";
@@ -42,7 +40,6 @@ import {
 } from "../lib/practiceOnboarding";
 import { PolyclinicSpecialty } from "../types";
 import { BrandMark } from "../components/BrandMark";
-import { DEMO_LOGIN_MATRIX, DEMO_PASSWORD } from "../lib/demoAccounts";
 import { showFacebookOAuthButton, showGoogleOAuthButton } from "../lib/oauthUi";
 import { billingSelectionFromSearch, type BillingCycle, type PublicPlans } from "../lib/pricingModel";
 import { TrialTermsPanel } from "../components/TrialTermsPanel";
@@ -136,8 +133,6 @@ const WhatsAppPhoneRow: React.FC<{
 export const LoginPage: React.FC = () => {
   const {
     login,
-    demoLogin,
-    demoLoginEnabled,
     oauthLogin,
     verifyWhatsAppOtp,
     sendWhatsAppOtp,
@@ -216,7 +211,6 @@ export const LoginPage: React.FC = () => {
   const [otpEmail, setOtpEmail] = useState("");
   const [otpPurpose, setOtpPurpose] = useState<"login" | "register">("login");
   const [otpDigits, setOtpDigits] = useState<string[]>(["", "", "", "", "", ""]);
-  const [demoOtpCode, setDemoOtpCode] = useState("");
   const [otpCountdown, setOtpCountdown] = useState(60);
   const [canResendOtp, setCanResendOtp] = useState(false);
   const [otpError, setOtpError] = useState("");
@@ -230,7 +224,6 @@ export const LoginPage: React.FC = () => {
   const [forgotVerificationId, setForgotVerificationId] = useState("");
   const [forgotOtp, setForgotOtp] = useState("");
   const [forgotNewPassword, setForgotNewPassword] = useState("");
-  const [forgotDemoOtp, setForgotDemoOtp] = useState("");
   const [forgotBusy, setForgotBusy] = useState(false);
   const [forgotError, setForgotError] = useState("");
   const [forgotSuccess, setForgotSuccess] = useState("");
@@ -429,7 +422,6 @@ export const LoginPage: React.FC = () => {
         setOtpVerificationId(res.verificationId);
         setOtpPhone(res.phone || "+91 98234 55667");
         setOtpEmail(res.email || email);
-        setDemoOtpCode(res.demoOtp || "");
         setOtpPurpose("login");
         setOtpCountdown(60);
         setCanResendOtp(false);
@@ -465,7 +457,6 @@ export const LoginPage: React.FC = () => {
         setOtpVerificationId(res.verificationId);
         setOtpPhone(res.phone || fullPhone);
         setOtpEmail("");
-        setDemoOtpCode(res.demoOtp || "");
         setOtpPurpose("login");
         setOtpCountdown(60);
         setCanResendOtp(false);
@@ -475,31 +466,6 @@ export const LoginPage: React.FC = () => {
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to dispatch WhatsApp verification code.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  // Explicit one-click demo. Server holds the seeded credentials; shown only when DEMO_LOGIN_ENABLED is set.
-  const [demoNotice, setDemoNotice] = useState("");
-  const handleQuickDemoClinician = async (demoRole?: "doctor" | "admin") => {
-    setBusy(true);
-    setError("");
-    setDemoNotice("");
-
-    try {
-      const res = await demoLogin(demoRole);
-      if (res.user) {
-        goAfterAuth(go, destinationAfterAuth(res.user, loginNext), loginNextPath);
-      } else {
-        const message = "Demo sign-in did not start a session. Please try again.";
-        setError(message);
-        setDemoNotice(message);
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Demo sign in failed.";
-      setError(message);
-      setDemoNotice(message);
     } finally {
       setBusy(false);
     }
@@ -574,7 +540,6 @@ export const LoginPage: React.FC = () => {
         setOtpVerificationId(res.verificationId);
         setOtpPhone(res.phone || "+91 98234 55667");
         setOtpEmail(res.email || targetEmail);
-        setDemoOtpCode(res.demoOtp || "");
         setOtpPurpose("login");
         setOtpCountdown(60);
         setCanResendOtp(false);
@@ -620,6 +585,10 @@ export const LoginPage: React.FC = () => {
       setError("Agree to the Terms of Service and Refund policy before starting the trial.");
       return;
     }
+    if (adminPassword.length < 8 || !/[a-z]/.test(adminPassword) || !/[A-Z]/.test(adminPassword) || !/[0-9]/.test(adminPassword)) {
+      setError("Password must be at least 8 characters and include an uppercase letter, a lowercase letter, and a digit.");
+      return;
+    }
     setBusy(true);
     setError("");
     setSuccessMsg("");
@@ -643,7 +612,6 @@ export const LoginPage: React.FC = () => {
         setOtpVerificationId(res.verificationId);
         setOtpPhone(res.phone || fullPhone);
         setOtpEmail(res.email || adminEmail);
-        setDemoOtpCode(res.demoOtp || "");
         setOtpPurpose("register");
         setOtpCountdown(60);
         setCanResendOtp(false);
@@ -736,21 +704,12 @@ export const LoginPage: React.FC = () => {
         mode === "register" ? adminName : "Clinician"
       );
       setOtpVerificationId(res.verificationId);
-      setDemoOtpCode(res.demoOtp || "");
       setOtpSuccess("Fresh 6-digit OTP code sent to your WhatsApp.");
       setTimeout(() => setOtpSuccess(""), 4000);
     } catch (err) {
       setOtpError(err instanceof Error ? err.message : "Failed to resend code.");
       setCanResendOtp(true);
     }
-  };
-
-  // Auto-fill OTP (for quick evaluation / testing)
-  const handleAutoFillOtp = () => {
-    if (!demoOtpCode) return;
-    setOtpDigits(demoOtpCode.slice(0, 6).split(""));
-    setOtpError("");
-    otpInputRefs.current[5]?.focus();
   };
 
   // Forgot Password Request
@@ -763,7 +722,6 @@ export const LoginPage: React.FC = () => {
     try {
       const res = await requestPasswordReset(forgotEmail.trim().toLowerCase());
       setForgotVerificationId(res.verificationId);
-      setForgotDemoOtp(res.demoOtp || "");
       setForgotStep("reset");
       setForgotSuccess("Verification OTP dispatched to your registered WhatsApp.");
     } catch (err) {
@@ -841,6 +799,46 @@ export const LoginPage: React.FC = () => {
           </button>
         </div>
 
+        {!showOtpView && !showForgot && (
+          <div className="grid grid-cols-2 gap-2 mb-5" data-testid="auth-mode-switch">
+            <button
+              type="button"
+              data-testid="auth-mode-signin"
+              onClick={() => {
+                setMode("signin");
+                setError("");
+              }}
+              className={`min-h-11 rounded-xl text-sm font-semibold ${
+                mode === "signin" ? "bg-slate-800 text-white border border-slate-600" : "bg-slate-950 text-slate-300 border border-slate-800"
+              }`}
+            >
+              Sign in
+            </button>
+            <button
+              type="button"
+              data-testid="start-free-trial"
+              onClick={openRegisterForm}
+              className={`min-h-11 rounded-xl text-sm font-semibold ${
+                mode === "register"
+                  ? "bg-emerald-600 text-white"
+                  : "bg-gradient-to-r from-emerald-600 to-teal-600 text-white"
+              }`}
+            >
+              Try for free
+            </button>
+          </div>
+        )}
+
+        {oauthConfig && !oauthConfig.sandboxClientOAuthAllowed && (!oauthConfig.googleConfigured || !oauthConfig.facebookConfigured) && (
+          <p className="text-[11px] text-slate-400 mb-4" data-testid="oauth-unconfigured">
+            {!oauthConfig.googleConfigured && !oauthConfig.facebookConfigured
+              ? "Google and Facebook sign-in are unavailable until GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, FACEBOOK_APP_ID, and FACEBOOK_APP_SECRET are set. WhatsApp sign-up still works."
+              : !oauthConfig.googleConfigured
+                ? "Google sign-in is unavailable until GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are set."
+                : "Facebook sign-in is unavailable until FACEBOOK_APP_ID and FACEBOOK_APP_SECRET are set."}
+          </p>
+        )}
+
         {/* Global Notifications */}
         {error && (
           <div className="mb-4 p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-start gap-2">
@@ -870,23 +868,6 @@ export const LoginPage: React.FC = () => {
                 Enter the 6-digit code sent to <span className="font-semibold text-slate-200">{otpPhone}</span>
               </p>
             </div>
-
-            {/* Test Helper Chip (Shows live OTP for fast testing) */}
-            {demoOtpCode && (
-              <div className="p-2.5 rounded-xl bg-purple-500/10 border border-purple-500/30 flex items-center justify-between text-xs">
-                <span className="text-purple-300 flex items-center gap-1.5 font-medium">
-                  <KeyRound className="w-3.5 h-3.5 text-purple-400" />
-                  Test OTP: <strong className="font-mono text-white tracking-widest">{demoOtpCode}</strong>
-                </span>
-                <button
-                  type="button"
-                  onClick={handleAutoFillOtp}
-                  className="px-2 py-1 rounded bg-purple-600 hover:bg-purple-500 text-white text-[11px] font-semibold transition-colors"
-                >
-                  Auto-fill
-                </button>
-              </div>
-            )}
 
             {otpError && (
               <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2">
@@ -1024,11 +1005,6 @@ export const LoginPage: React.FC = () => {
               </form>
             ) : (
               <form onSubmit={handleForgotReset} className="space-y-3">
-                {forgotDemoOtp && (
-                  <div className="p-2 rounded bg-purple-500/10 border border-purple-500/30 text-xs text-purple-300">
-                    OTP Code: <strong>{forgotDemoOtp}</strong>
-                  </div>
-                )}
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1">6-Digit Code</label>
                   <input
@@ -1236,7 +1212,8 @@ export const LoginPage: React.FC = () => {
                   </form>
                 )}
 
-                {/* Google & Facebook SSO Section */}
+                {/* Google & Facebook SSO. Hidden when neither provider is configured. */}
+                {(showGoogleOAuth || showFacebookOAuth) && (
                 <div className="pt-3 border-t border-slate-800/80">
                   <div className="relative my-2.5">
                     <div className="absolute inset-0 flex items-center">
@@ -1292,67 +1269,11 @@ export const LoginPage: React.FC = () => {
                     </p>
                   )}
                 </div>
+                )}
 
-                {/* SANDBOX demo matrix */}
-                <div className="pt-2 border-t border-slate-800/60 space-y-2">
-                  <p className="text-[10px] uppercase tracking-wider text-amber-400/90 font-semibold">SANDBOX / DEMO logins · password {DEMO_PASSWORD}</p>
-                  <p className="text-[10px] text-slate-500" data-testid="admin-password-login-note">
-                    `admin@lumera.me` / super_admin completes on email+password (no WhatsApp OTP). Clinician and patient logins still require OTP on production.
-                  </p>
-                  <select
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-[11px] text-slate-200"
-                    onChange={(e) => {
-                      const acct = DEMO_LOGIN_MATRIX.find((a) => a.email === e.target.value);
-                      if (!acct) return;
-                      setEmail(acct.email);
-                      setPassword(DEMO_PASSWORD);
-                    }}
-                    data-testid="demo-account-picker"
-                  >
-                    <option value="">Fill a demo account…</option>
-                    {DEMO_LOGIN_MATRIX.map((a) => (
-                      <option key={a.email} value={a.email}>
-                        {a.email} · {a.role} · {a.practiceLine}{a.displaySpecialty || a.specialty ? ` · ${a.displaySpecialty || a.specialty}` : ""}
-                      </option>
-                    ))}
-                  </select>
-                  {demoLoginEnabled ? (
-                    <div className="space-y-2">
-                      <div className="flex flex-col gap-2">
-                        <button
-                          type="button"
-                          onClick={() => void handleQuickDemoClinician()}
-                          disabled={busy}
-                          data-testid="quick-demo-login"
-                          className="w-full py-2 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 text-slate-300 hover:text-white text-xs font-medium transition-colors flex items-center justify-center gap-1.5"
-                        >
-                          <Zap className="w-3.5 h-3.5 text-amber-400" />
-                          <span>Quick Demo — Doctor</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void handleQuickDemoClinician("admin")}
-                          disabled={busy}
-                          data-testid="quick-demo-admin"
-                          className="w-full py-2 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 text-slate-300 hover:text-white text-xs font-medium transition-colors flex items-center justify-center gap-1.5"
-                        >
-                          <Zap className="w-3.5 h-3.5 text-amber-400" />
-                          <span>Quick Demo — Admin</span>
-                        </button>
-                      </div>
-                      {demoNotice ? (
-                        <p
-                          data-testid="quick-demo-error"
-                          className="text-[11px] text-rose-300 flex items-start gap-1.5"
-                          role="alert"
-                        >
-                          <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                          <span>{demoNotice}</span>
-                        </p>
-                      ) : null}
-                    </div>
-                  ) : null}
-                </div>
+                <p className="text-[10px] text-slate-500 pt-2 border-t border-slate-800/60" data-testid="admin-password-login-note">
+                  Platform admin sign-in uses email and password. Clinician and patient logins still require a WhatsApp code in production.
+                </p>
               </div>
             ) : (
               /* 2. CREATE CLINIC ACCOUNT FORM */
@@ -1379,7 +1300,7 @@ export const LoginPage: React.FC = () => {
                 )}
 
                 {/* Fast SSO Registration Strip */}
-                {!verifiedSsoNotice && (
+                {!verifiedSsoNotice && (showGoogleOAuth || showFacebookOAuth) && (
                   <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs">
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-slate-400 font-medium">Or pre-fill with single sign-on:</span>
@@ -1610,7 +1531,7 @@ export const LoginPage: React.FC = () => {
                       type={showRegisterPassword ? "text" : "password"}
                       autoComplete="new-password"
                       required
-                      minLength={6}
+                      minLength={8}
                       value={adminPassword}
                       onChange={(e) => setAdminPassword(e.target.value)}
                       placeholder={REGISTER_PASSWORD_PLACEHOLDER}
@@ -1624,6 +1545,7 @@ export const LoginPage: React.FC = () => {
                       {showRegisterPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
                   </div>
+                  <p className="mt-1 text-[10px] text-slate-500">At least 8 characters, with an uppercase letter, a lowercase letter, and a digit.</p>
                 </div>
 
                 <TrialTermsPanel
@@ -1646,7 +1568,7 @@ export const LoginPage: React.FC = () => {
                 <div className="p-2.5 rounded-xl bg-purple-500/10 border border-purple-500/20 text-[11px] text-purple-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1.5">
                   <span className="flex items-start sm:items-center gap-1.5 font-medium min-w-0">
                     <Sparkles className="w-3.5 h-3.5 text-purple-400 shrink-0 mt-0.5 sm:mt-0" />
-                    <span className="leading-snug">Starter Enterprise Tier • 30-Day Free Trial • 500 AI Scribe Mins</span>
+                    <span className="leading-snug">7-day free trial after WhatsApp verification • 500 AI Scribe Mins</span>
                   </span>
                   <span className="font-mono text-xs text-emerald-400 font-bold shrink-0">ABHA (sandbox)</span>
                 </div>
@@ -1685,7 +1607,7 @@ export const LoginPage: React.FC = () => {
                           </>
                         ) : (
                           <>
-                            Start free trial <ArrowRight className="w-4 h-4" />
+                            Try for free <ArrowRight className="w-4 h-4" />
                           </>
                         )}
                       </button>
@@ -1716,7 +1638,7 @@ export const LoginPage: React.FC = () => {
               className="w-full min-h-11 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs sm:text-sm font-semibold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-emerald-600/30 group"
             >
               <Sparkles className="w-4 h-4 text-emerald-200 group-hover:text-white" />
-              <span>Create new practice account</span>
+              <span>Try for free</span>
             </Link>
             <p className="mt-2 text-center text-[11px] text-slate-500">
               New accounts start as an <span className="text-slate-300">individual practice</span>. Multi-specialty is an explicit opt-in.
@@ -1761,7 +1683,7 @@ export const LoginPage: React.FC = () => {
                       </>
                     ) : (
                       <>
-                        Start free trial <ArrowRight className="w-4 h-4" />
+                        Try for free <ArrowRight className="w-4 h-4" />
                       </>
                     )}
                   </button>

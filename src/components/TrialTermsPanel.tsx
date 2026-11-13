@@ -67,9 +67,9 @@ export function TrialTermsPanel({
         <p data-testid="trial-monthly-contact">{MONTHLY_BILLING_CONTACT}</p>
       ) : null}
       <p data-testid="trial-terms-copy">
-        <strong>30 days free. No card needed for Lumera.</strong>{" "}
+        <strong>7 days free. No card needed for Lumera.</strong>{" "}
         {trialIntro(planName, usedCycle, schedule.trialEndLabel).replace(
-          "30 days free. No card needed for Lumera. ",
+          "7 days free. No card needed for Lumera. ",
           ""
         )}
       </p>

@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import { toE164Phone } from "./clinical.ts";
 import { getDb } from "./db.ts";
 import type { SqlDatabase } from "./sql-engine.ts";
+import { otpMatches } from "./otp-hash.ts";
 import { consumeSendOtpAttempt, otpSubjectKey, requestClientIp } from "./otp-rate-limit.ts";
 
 export const OTP_SEND_LIMIT_ERROR = "Too many OTP requests. Try again later.";
@@ -85,7 +86,7 @@ export function rejectWrongOtp(
   if (attempts >= VERIFY_OTP_MAX_FAILURES || !String(record.otp || "")) {
     return { ok: false, status: 429, error: OTP_VERIFY_LOCK_ERROR };
   }
-  if (record.otp === inputOtp) return { ok: true };
+  if (otpMatches(String(record.otp || ""), inputOtp)) return { ok: true };
   const next = attempts + 1;
   if (next >= VERIFY_OTP_MAX_FAILURES) {
     getDb().prepare("UPDATE otp_verifications SET failed_attempts = ?, otp = '' WHERE id = ?").run(next, record.id);

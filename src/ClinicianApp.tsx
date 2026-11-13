@@ -18,6 +18,7 @@ import { GeminiAssistant } from './components/GeminiAssistant';
 import { Reception } from './components/Reception';
 import { DhisMeter } from './components/dhis/DhisMeter';
 import { PracticeHome } from './components/PracticeHome';
+import { TrialAccessBanner } from './components/TrialAccessBanner';
 import { ClinicProfileSettings } from './components/ClinicProfileSettings';
 import { PharmacyDiagnosticsHub } from './components/PharmacyDiagnosticsHub';
 import {
@@ -841,6 +842,7 @@ export default function ClinicianApp() {
               {workspaceError}
             </div>
           )}
+          <TrialAccessBanner />
           {isDemo && (
             <div className="mb-3 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-900" data-testid="demo-sandbox-banner">
               Sandbox workspace. Sample data only.

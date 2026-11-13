@@ -73,9 +73,9 @@ export function publicPlansResponse(env: NodeJS.ProcessEnv = process.env): Publi
       },
     ],
     trial: {
-      days: 30,
-      reminderDays: [20, 25, 28, 30],
-      readOnlyDay: 31,
+      days: 7,
+      reminderDays: [5, 6, 7],
+      readOnlyDay: 8,
       cardRequired: false,
     },
     refund: {

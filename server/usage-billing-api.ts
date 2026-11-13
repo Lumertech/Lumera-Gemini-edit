@@ -1,5 +1,6 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { getDb, writeAudit } from "./db.ts";
+import { settlePlanCheckoutWebhook } from "./trial-lifecycle.ts";
 import { requireAuth, requirePlatformAdmin } from "./auth.ts";
 import { rejectUntrustedTenantClaim } from "./tenant-guard.ts";
 import { isCloudDispatchFailure } from "./graph-whatsapp.ts";
@@ -71,6 +72,11 @@ export function createUsageBillingRouter(): Router {
     });
     if (decision.ok === false) {
       return res.status(decision.status).json({ error: decision.error });
+    }
+    const planPayment = settlePlanCheckoutWebhook(getDb(), req.body);
+    if (planPayment.matched) {
+      if (planPayment.ok === false) return res.status(planPayment.status).json({ error: planPayment.error, paid: false });
+      return res.json({ ok: true, purpose: "plan_subscription", paid: true });
     }
     const refs = extractRazorpayPaidRefs(req.body);
     if (!refs || refs.purpose !== "wallet_topup") {

@@ -39,7 +39,10 @@ export function allowOtpEcho(nodeEnv = process.env.NODE_ENV): boolean {
 }
 
 export function otpEchoPayload(otp: string): { demoOtp?: string } {
-  return allowOtpEcho() ? { demoOtp: otp } : {};
+  if (!allowOtpEcho()) return {};
+  // Never echo a stored hash. The plaintext is echoed only at the moment it is sent.
+  if (String(otp || "").startsWith("otp1:")) return {};
+  return { demoOtp: otp };
 }
 
 export function getJwtSecret(): string {

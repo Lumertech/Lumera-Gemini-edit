@@ -36,7 +36,9 @@ describe("usage wallet is not a clinic product", () => {
 
   it("leaves subscription trial setup in place", () => {
     const api = read("server/api.ts");
+    const trial = read("server/trial-lifecycle.ts");
     assert.match(api, /trialEndsAt/);
-    assert.match(api, /status: "trial"/);
+    assert.match(api, /beginVerifiedWhatsAppTrial/);
+    assert.match(trial, /status: "trial"/);
   });
 });

@@ -16,9 +16,9 @@ describe("try-for-free trial terms before AutoPay", () => {
     const annual = quoteFor(plans, "individual", "annual");
     const monthly = quoteFor(plans, "individual", "monthly");
     const intro = trialIntro("Individual", "annual", "13 November 2026");
-    assert.match(intro, /30 days free\. No card needed for Lumera\./);
-    assert.match(intro, /days 20, 25, 28 and 30/);
-    assert.match(intro, /read-only on day 31/);
+    assert.match(intro, /7 days free\. No card needed for Lumera\./);
+    assert.match(intro, /days 5, 6 and 7/);
+    assert.match(intro, /read-only on day 8/);
     assert.match(intro, /nothing is charged/);
     assert.match(intro, /Read-only clinics can still reply to patients on WhatsApp manually within Meta's 24-hour window/);
     assert.match(monthlyAutopayCopy("Individual", monthly, "14 November 2026"), /Set up AutoPay now \(₹0 today\)/);
@@ -34,7 +34,11 @@ describe("try-for-free trial terms before AutoPay", () => {
     assert.match(login, /const \[showMandateStep, setShowMandateStep\] = useState\(false\)/);
     assert.match(login, /<TrialTermsPanel/);
     assert.ok(login.indexOf("<TrialTermsPanel") < login.indexOf('data-testid="add-payment-method"'));
-    assert.match(login, /Start free trial/);
+    assert.match(login, /data-testid="start-free-trial"/);
+    assert.match(login, /data-testid="auth-mode-signin"/);
+    assert.match(login, /Try for free/);
+    assert.doesNotMatch(login, /Start free trial|Create new practice account/);
+    assert.doesNotMatch(login, /Quick Demo|Test OTP|OTP Code:/);
     assert.match(login, /Add payment method now/);
     assert.match(login, /Skip for now/);
     assert.doesNotMatch(login, /auto-debited/);

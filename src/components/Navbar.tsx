@@ -11,6 +11,7 @@ import { Doctor, UserRole } from '../types';
 import { useAuth } from '../auth/AuthContext';
 import { useNav } from '../nav/NavigationContext';
 import { appViewToPath } from '../nav/surfaces';
+import { TrialHeaderCountdown } from './TrialHeaderCountdown';
 
 export type NavView = 
   | 'welcome'
@@ -138,6 +139,7 @@ export const Navbar: React.FC<NavbarProps> = ({
       </div>
 
       <div className="flex items-center gap-1.5 min-w-0 shrink-0">
+        <TrialHeaderCountdown />
         {canConsult && (
           <Link
             to={appViewToPath('rx', workspaceSlug)}
