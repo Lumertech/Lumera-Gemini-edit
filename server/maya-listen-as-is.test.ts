@@ -15,7 +15,7 @@ import {
   speakablePhone,
 } from "./voice-booking-confirm.ts";
 import { mayaDemoMode } from "./voice-demo.ts";
-import { CLOUD_TTS_FREE_CHARACTERS_PER_MONTH, CLOUD_TTS_SKU, CLOUD_TTS_TIER, MAYA_TTS_VOICES, cloudTtsVoice, mayaSpokenLanguage } from "./voice-tts.ts";
+import { CLOUD_TTS_FREE_CHARACTERS_PER_MONTH, CLOUD_TTS_SKU, CLOUD_TTS_TIER, MAYA_TTS_VOICES, cloudTtsVoice, mayaSpokenLanguage, synthesizeCloudTts } from "./voice-tts.ts";
 import { COMMON_INDIAN_MEDICINES, doctorNicknames, formatTenantVoiceFacts } from "./voice-vocabulary.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -48,12 +48,14 @@ describe("Maya listen-as-is pilot", () => {
     MAYA_TTS_VOICE_EN: process.env.MAYA_TTS_VOICE_EN,
     MAYA_TTS_VOICE_HI: process.env.MAYA_TTS_VOICE_HI,
     MAYA_TTS_VOICE_MR: process.env.MAYA_TTS_VOICE_MR,
+    MAYA_TTS_OFFLINE: process.env.MAYA_TTS_OFFLINE,
   };
 
   before(async () => {
     delete process.env.MAYA_TTS_VOICE_EN;
     delete process.env.MAYA_TTS_VOICE_HI;
     delete process.env.MAYA_TTS_VOICE_MR;
+    process.env.MAYA_TTS_OFFLINE = "1";
     if (!process.env.JWT_SECRET) process.env.JWT_SECRET = "maya-listen-jwt-secret-not-for-prod";
     initDatabase();
     ensureVoiceCallbackTasks();
@@ -107,6 +109,28 @@ describe("Maya listen-as-is pilot", () => {
     assert.match(voice, /vertexGeminiModel\(/);
     assert.doesNotMatch(voice, /Neural2/);
     assert.doesNotMatch(voice, /Lumera Health|Lumera Apex PolyClinic|Lumera Polyclinic|Lumera Clinic/);
+  });
+
+  it("skips the metadata server when MAYA_TTS_OFFLINE is 1 and still requests a token when it is unset", async () => {
+    const calls: string[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      calls.push(String(input));
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+    const probe = `offline probe ${Date.now()}`;
+    try {
+      process.env.MAYA_TTS_OFFLINE = "1";
+      assert.equal(await synthesizeCloudTts(probe, "en"), null);
+      assert.deepEqual(calls, []);
+      delete process.env.MAYA_TTS_OFFLINE;
+      assert.equal(await synthesizeCloudTts(probe, "en"), null);
+      assert.match(calls[0] || "", /metadata\.google\.internal/);
+      assert.equal(calls.length, 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+      restoreEnv(envSnapshot);
+    }
   });
 
   it("puts the called clinic, doctor nicknames, services, and medicines in the audio facts", () => {
@@ -211,6 +235,7 @@ describe("Maya listen-as-is pilot", () => {
     assert.equal(mayaDemoMode({ MAYA_DEMO_MODE: "true" }), true);
     process.env.NODE_ENV = "production";
     process.env.VOICE_GATEWAY_SECRET = "maya-listen-secret";
+    process.env.MAYA_TTS_OFFLINE = "1";
     delete process.env.MAYA_DEMO_MODE;
     try {
       const closed = await jsonRequest(port, "POST", "/api/voice/inbound", {
@@ -280,6 +305,7 @@ describe("Maya listen-as-is pilot", () => {
     saveWhatsAppTenantVoiceSettings(getDb(), tenantId, { escalationPhone: "+91 98000 33333", receptionistName: "Asha" });
     process.env.NODE_ENV = "production";
     process.env.VOICE_GATEWAY_SECRET = "maya-listen-secret";
+    process.env.MAYA_TTS_OFFLINE = "1";
     delete process.env.MAYA_DEMO_MODE;
     const from = `+9198765${String(Date.now()).slice(-5)}`;
     try {
@@ -447,6 +473,7 @@ describe("Maya listen-as-is pilot", () => {
     saveWhatsAppTenantVoiceSettings(getDb(), tenantId, { escalationPhone: "+91 98000 33333", receptionistName: "Asha" });
     process.env.NODE_ENV = "production";
     process.env.VOICE_GATEWAY_SECRET = "maya-listen-secret";
+    process.env.MAYA_TTS_OFFLINE = "1";
     delete process.env.MAYA_DEMO_MODE;
     const from = `+9191234${String(Date.now()).slice(-5)}`;
     const headers = { "X-Voice-Gateway-Secret": "maya-listen-secret" };

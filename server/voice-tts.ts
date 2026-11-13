@@ -127,8 +127,12 @@ export function mayaSpokenLanguage(transcript: string, hinted?: string, detected
  * Google Cloud Text-to-Speech WaveNet MP3, base64. Null when the metadata
  * token or the synthesize call fails. Callers keep silence and retry.
  * There is no other voice.
+ *
+ * MAYA_TTS_OFFLINE=1 returns null before any metadata or synthesize request.
+ * Unset, empty, and every other value leave this path unchanged.
  */
 export async function synthesizeCloudTts(text: string, spoken: MayaSpokenLanguage): Promise<string | null> {
+  if (process.env.MAYA_TTS_OFFLINE === "1") return null;
   const cleaned = String(text || "").replace(/\s+/g, " ").trim();
   if (!cleaned) return null;
   const voice = cloudTtsVoice(spoken);

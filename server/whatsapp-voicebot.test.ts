@@ -11,8 +11,19 @@ import { createMetaRouter } from "./meta.ts";
 describe("Gemini Voicebot & Inbound WhatsApp Voice Call Receptionist", () => {
   let server: Server;
   let port: number;
+  const envSnapshot = {
+    MAYA_TTS_OFFLINE: process.env.MAYA_TTS_OFFLINE,
+  };
+
+  function restoreEnv(snapshot: Record<string, string | undefined>) {
+    for (const [key, value] of Object.entries(snapshot)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
 
   before(async () => {
+    process.env.MAYA_TTS_OFFLINE = "1";
     const db = initDatabase();
     ensureMetaTechProviderAndPolicies(db);
 
@@ -31,6 +42,7 @@ describe("Gemini Voicebot & Inbound WhatsApp Voice Call Receptionist", () => {
   });
 
   after(async () => {
+    restoreEnv(envSnapshot);
     if (server) {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
