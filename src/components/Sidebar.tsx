@@ -32,7 +32,7 @@ import { useNav } from '../nav/NavigationContext';
 import { appViewToPath } from '../nav/surfaces';
 import { isPolyclinicPractice } from '../lib/sessionWorkspace';
 import { allowedViewsForWorkflow, clinicianHomeView, patientsNavLabel, workflowForUser } from '../lib/specialtyWorkflow';
-import { clinicNavItems, greetingClinicName, moreNavItems, primaryNavItems, whatsAppPillFromStatus, type WhatsAppPillState } from '../lib/clinicNav';
+import { clinicNavItems, greetingClinicName, moreNavItems, primaryNavItems, whatsAppPillFromStatus, type ClinicNavItem, type WhatsAppPillState } from '../lib/clinicNav';
 import { apiFetch } from '../api/http';
 
 export const ROLE_VISIBLE_VIEWS: Record<string, NavView[]> = {
@@ -58,6 +58,172 @@ export function sidebarShowsClinicalChrome(role: string | undefined | null): boo
   return role !== "super_admin" && role !== "admin";
 }
 
+const NAV_ICONS: Partial<Record<NavView, typeof Calendar>> = {
+  welcome: LayoutDashboard,
+  'gp-home': LayoutDashboard,
+  appointments: Calendar,
+  queue: Users,
+  rx: FileText,
+  billing: ReceiptIndianRupee,
+  patients: User,
+  reception: UserCheck,
+  'pharmacy-hub': Pill,
+  reports: Activity,
+  whatsapp: MessageSquare,
+  voicebot: PhoneCall,
+  kiosk: Monitor,
+  ambient: Sparkles,
+  dhis: Award,
+  team: Users,
+  polyclinic: Building2,
+  portal: User,
+  settings: Settings,
+  'physio-session': Sparkles,
+  'dental-chart': Sparkles,
+  wellness: Sparkles,
+  'therapy-session': Sparkles,
+  'consult-practice': Sparkles,
+};
+
+/** Phone widths always show labels. Desktop keeps the collapsible icon rail. */
+export function sidebarShowsLabels(isCollapsed: boolean, phoneLayout: boolean): boolean {
+  return phoneLayout || !isCollapsed;
+}
+
+function readPhoneLayout(): boolean {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
+  return window.matchMedia("(max-width: 767px)").matches;
+}
+
+function usePhoneLayout(): boolean {
+  const [phone, setPhone] = useState(readPhoneLayout);
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+    const media = window.matchMedia("(max-width: 767px)");
+    const update = () => setPhone(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+  return phone;
+}
+
+function navItemIsActive(
+  item: ClinicNavItem,
+  opts: { currentView: NavView; screen?: string; homeView: string; inMore: boolean }
+): boolean {
+  if (opts.inMore) return !item.payFocus && opts.currentView === item.id;
+  if (item.payFocus) return opts.screen === "payments";
+  if (item.id === "billing") {
+    return opts.screen === "invoices" || (opts.currentView === "billing" && opts.screen !== "payments");
+  }
+  return (
+    opts.currentView === item.id ||
+    (item.id === "queue" && (opts.currentView === "opd-queue" || opts.screen === "opd")) ||
+    (item.id === "rx" && (opts.currentView === "smart-rx" || opts.screen === "consultations" || opts.screen === "rx")) ||
+    (item.label === "Dashboard" && (opts.currentView === opts.homeView || opts.screen === "dashboard"))
+  );
+}
+
+function navLabelClass(phoneLayout: boolean): string {
+  return phoneLayout
+    ? "min-w-0 flex-1 text-left text-sm font-medium leading-5 line-clamp-2 break-words [overflow-wrap:anywhere]"
+    : "truncate";
+}
+
+export function ClinicSidebarLinks({
+  primaryItems,
+  moreItems,
+  phoneLayout,
+  isCollapsed,
+  currentView,
+  screen,
+  homeView,
+  workspaceSlug,
+  onNavigate,
+  activePatient,
+}: {
+  primaryItems: ClinicNavItem[];
+  moreItems: ClinicNavItem[];
+  phoneLayout: boolean;
+  isCollapsed: boolean;
+  currentView: NavView;
+  screen?: string;
+  homeView: string;
+  workspaceSlug?: string;
+  onNavigate?: () => void;
+  activePatient?: React.ReactNode;
+}) {
+  const showLabels = sidebarShowsLabels(isCollapsed, phoneLayout);
+  const linkLayout = phoneLayout
+    ? "min-h-11 gap-2.5 px-3 py-2"
+    : isCollapsed
+      ? "justify-center px-2 py-1.5"
+      : "gap-2.5 px-3 py-1.5";
+
+  const renderLink = (item: ClinicNavItem, inMore: boolean) => {
+    const Icon = NAV_ICONS[item.id] || Sparkles;
+    const isActive = navItemIsActive(item, { currentView, screen, homeView, inMore });
+    const idle = phoneLayout
+      ? "text-slate-800 hover:bg-slate-100 hover:text-slate-900"
+      : inMore
+        ? "text-slate-600 hover:bg-slate-100"
+        : "text-slate-600 hover:bg-slate-100 hover:text-slate-900";
+    return (
+      <Link
+        key={item.testId}
+        to={appViewToPath(item.id, workspaceSlug, undefined, { payFocus: Boolean(item.payFocus) })}
+        onClick={() => onNavigate?.()}
+        data-testid={item.testId}
+        aria-label={item.label}
+        aria-current={isActive ? "page" : undefined}
+        title={showLabels ? undefined : item.label}
+        className={`w-full flex items-center rounded-xl text-sm font-medium ${phoneLayout ? "" : inMore ? "" : "transition-colors"} ${linkLayout} ${
+          isActive ? "bg-blue-600 text-white" : idle
+        }`}
+      >
+        <Icon className={`w-4 h-4 shrink-0 ${isActive ? "text-white" : phoneLayout ? "text-slate-600" : "text-slate-400"}`} aria-hidden="true" />
+        {showLabels && (
+          <span data-nav-label={item.label} className={navLabelClass(phoneLayout)}>
+            {item.label}
+          </span>
+        )}
+      </Link>
+    );
+  };
+
+  return (
+    <nav
+      data-testid="clinic-nav-scroll"
+      aria-label="Clinic navigation"
+      className={
+        phoneLayout
+          ? "flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-y-contain p-2 space-y-0.5"
+          : "flex-1 min-h-0 overflow-hidden p-2 space-y-0.5"
+      }
+    >
+      {primaryItems.map((item) => renderLink(item, false))}
+      {phoneLayout && moreItems.map((item) => renderLink(item, true))}
+      {phoneLayout && activePatient}
+      {!phoneLayout && moreItems.length > 0 && (
+        <details className="group" data-testid="nav-more">
+          <summary
+            aria-label="More"
+            className={`cursor-pointer list-none flex items-center ${isCollapsed ? "justify-center px-2" : "gap-2.5 px-3"} py-1.5 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100`}
+          >
+            <ChevronRight className="w-4 h-4 shrink-0 text-slate-400 group-open:rotate-90" aria-hidden="true" />
+            {showLabels && <span className="truncate">More</span>}
+          </summary>
+          <div className="mt-0.5 space-y-0.5 max-h-40 overflow-y-auto">
+            {moreItems.map((item) => renderLink(item, true))}
+            {activePatient}
+          </div>
+        </details>
+      )}
+    </nav>
+  );
+}
+
 interface SidebarProps {
   currentView: NavView;
   onSelectView: (view: NavView) => void;
@@ -69,6 +235,8 @@ interface SidebarProps {
   currentDoctor: Doctor;
   onPatientCreated?: (patient: Patient) => void;
   onNavigate?: () => void;
+  /** Tests pin the phone layout. The app follows the viewport when omitted. */
+  phoneLayout?: boolean;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -82,9 +250,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
   currentDoctor,
   onPatientCreated,
   onNavigate,
+  phoneLayout: phoneLayoutProp,
 }) => {
   const { user, logout } = useAuth();
   const { go, workspaceSlug, screen } = useNav();
+  const autoPhone = usePhoneLayout();
+  const phoneLayout = phoneLayoutProp ?? autoPhone;
+  const expandedChrome = sidebarShowsLabels(isCollapsed, phoneLayout);
   const userRole = user?.role || 'doctor';
   let allowedViews = visibleViewsForRole(userRole);
   const polyclinic = isPolyclinicPractice(user);
@@ -166,140 +338,63 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const selectablePatients = allPatients.filter((p) => p.id);
-  const NAV_ICONS: Partial<Record<NavView, typeof Calendar>> = {
-    welcome: LayoutDashboard,
-    'gp-home': LayoutDashboard,
-    appointments: Calendar,
-    queue: Users,
-    rx: FileText,
-    billing: ReceiptIndianRupee,
-    patients: User,
-    reception: UserCheck,
-    'pharmacy-hub': Pill,
-    reports: Activity,
-    whatsapp: MessageSquare,
-    voicebot: PhoneCall,
-    kiosk: Monitor,
-    ambient: Sparkles,
-    dhis: Award,
-    team: Users,
-    polyclinic: Building2,
-    portal: User,
-    settings: Settings,
-    'physio-session': Sparkles,
-    'dental-chart': Sparkles,
-    wellness: Sparkles,
-    'therapy-session': Sparkles,
-    'consult-practice': Sparkles,
-  };
 
   return (
     <aside
       data-testid="app-sidebar"
       data-print-chrome=""
+      data-phone-layout={phoneLayout ? "true" : "false"}
       data-pack-kind={pack.kind}
       className={`${
-        isCollapsed ? 'w-16' : 'w-60'
+        phoneLayout ? "w-60 max-w-[calc(100vw-2.5rem)]" : isCollapsed ? "w-16" : "w-60"
       } h-full flex-shrink-0 bg-white border-r border-slate-200 text-slate-600 flex flex-col transition-all duration-200 select-none overflow-hidden`}
     >
-      <div className={`flex items-center gap-2 px-3 py-2.5 border-b border-slate-100 ${isCollapsed ? 'justify-center' : ''}`}>
+      <div className={`flex items-center gap-2 px-3 py-2.5 border-b border-slate-100 ${expandedChrome ? "" : "justify-center"}`}>
         <div className="w-9 h-9 rounded-xl bg-teal-600 text-white flex items-center justify-center font-semibold shrink-0">
           {clinicLabel.charAt(0).toUpperCase()}
         </div>
-        {!isCollapsed && (
+        {expandedChrome && (
           <div className="min-w-0">
             <p className="text-sm font-semibold text-slate-900 truncate">{clinicLabel}</p>
             <p className="text-[11px] text-slate-400 truncate">{pack.practiceLine}</p>
           </div>
         )}
       </div>
-      <div className="flex-1 min-h-0 overflow-hidden p-2 space-y-0.5">
-        {primaryItems.map((item) => {
-          const Icon = NAV_ICONS[item.id] || Sparkles;
-          const isActive = item.payFocus
-            ? screen === 'payments'
-            : item.id === 'billing'
-              ? screen === 'invoices' || (currentView === 'billing' && screen !== 'payments')
-              : currentView === item.id ||
-                (item.id === 'queue' && (currentView === 'opd-queue' || screen === 'opd')) ||
-                (item.id === 'rx' && (currentView === 'smart-rx' || screen === 'consultations' || screen === 'rx')) ||
-                (item.label === 'Dashboard' && (currentView === homeView || screen === 'dashboard'));
-          return (
-            <Link
-              key={item.testId}
-              to={appViewToPath(item.id, workspaceSlug, undefined, { payFocus: Boolean(item.payFocus) })}
-              onClick={() => {
-                onNavigate?.();
-              }}
-              data-testid={item.testId}
-              title={isCollapsed ? item.label : undefined}
-              className={`w-full flex items-center ${
-                isCollapsed ? 'justify-center px-2' : 'gap-2.5 px-3'
-              } py-1.5 rounded-xl text-sm font-medium transition-colors ${
-                isActive
-                  ? 'bg-blue-600 text-white'
-                  : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-              }`}
-            >
-              <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-white' : 'text-slate-400'}`} />
-              {!isCollapsed && <span className="truncate">{item.label}</span>}
-            </Link>
-          );
-        })}
-        {moreItems.length > 0 && (
-          <details className="group" data-testid="nav-more">
-            <summary className={`cursor-pointer list-none flex items-center ${isCollapsed ? 'justify-center px-2' : 'gap-2.5 px-3'} py-1.5 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100`}>
-              <ChevronRight className="w-4 h-4 shrink-0 text-slate-400 group-open:rotate-90" />
-              {!isCollapsed && <span>More</span>}
-            </summary>
-            <div className="mt-0.5 space-y-0.5 max-h-40 overflow-y-auto">
-              {moreItems.map((item) => {
-                const Icon = NAV_ICONS[item.id] || Sparkles;
-                const isActive = !item.payFocus && currentView === item.id;
-                return (
-                  <Link
-                    key={item.testId}
-                    to={appViewToPath(item.id, workspaceSlug)}
-                    onClick={() => onNavigate?.()}
-                    data-testid={item.testId}
-                    title={isCollapsed ? item.label : undefined}
-                    className={`w-full flex items-center ${
-                      isCollapsed ? 'justify-center px-2' : 'gap-2.5 px-3'
-                    } py-1.5 rounded-xl text-sm font-medium ${
-                      isActive ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100'
-                    }`}
-                  >
-                    <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-white' : 'text-slate-400'}`} />
-                    {!isCollapsed && <span className="truncate">{item.label}</span>}
-                  </Link>
-                );
-              })}
-              {selectablePatients.length > 0 && !isCollapsed && (
-                <label className="block px-2 pt-1 text-[10px] text-slate-400">
-                  Active patient
-                  <select
-                    aria-label="Quick Select Active Patient"
-                    value={currentPatient.id}
-                    onChange={(e) => {
-                      const p = allPatients.find((pat) => pat.id === e.target.value);
-                      if (p) onSelectPatient(p);
-                    }}
-                    className="mt-1 w-full bg-white border border-slate-200 text-slate-800 text-xs rounded px-2 py-1"
-                  >
-                    {!currentPatient.id && <option value="">No patient selected</option>}
-                    {selectablePatients.map((p) => (
-                      <option key={p.id} value={p.id}>{p.name}</option>
-                    ))}
-                  </select>
-                </label>
-              )}
-            </div>
-          </details>
-        )}
-      </div>
+      <ClinicSidebarLinks
+        primaryItems={primaryItems}
+        moreItems={moreItems}
+        phoneLayout={phoneLayout}
+        isCollapsed={isCollapsed}
+        currentView={currentView}
+        screen={screen}
+        homeView={homeView}
+        workspaceSlug={workspaceSlug}
+        onNavigate={onNavigate}
+        activePatient={
+          selectablePatients.length > 0 && expandedChrome ? (
+            <label className={phoneLayout ? "block px-2 pt-1 text-xs font-medium text-slate-600" : "block px-2 pt-1 text-[10px] text-slate-400"}>
+              Active patient
+              <select
+                aria-label="Quick Select Active Patient"
+                value={currentPatient.id}
+                onChange={(e) => {
+                  const p = allPatients.find((pat) => pat.id === e.target.value);
+                  if (p) onSelectPatient(p);
+                }}
+                className="mt-1 w-full bg-white border border-slate-200 text-slate-800 text-xs rounded px-2 py-1"
+              >
+                {!currentPatient.id && <option value="">No patient selected</option>}
+                {selectablePatients.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </label>
+          ) : null
+        }
+      />
 
       <div className="p-3 border-t border-slate-100 bg-white space-y-2.5 shrink-0">
-        {!isCollapsed && (
+        {expandedChrome && (
           <p
             data-testid="whatsapp-status-pill"
             data-state={waPill.state}
@@ -315,7 +410,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             {waPill.label}
           </p>
         )}
-        {canOpenAdminCms && !isCollapsed && (
+        {canOpenAdminCms && expandedChrome && (
           <Link
             to="/admin"
             className="w-full flex items-center px-3 py-2 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100"
@@ -325,7 +420,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </Link>
         )}
 
-        {!isCollapsed ? (
+        {expandedChrome ? (
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-full bg-blue-600 text-white text-xs font-semibold flex items-center justify-center shrink-0">
               {(user?.name || "U").charAt(0)}
@@ -337,8 +432,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <button
               type="button"
               onClick={() => setIsQuickAddOpen(true)}
-              className="text-blue-700 p-1 rounded hover:bg-blue-50"
+              className={phoneLayout ? "text-blue-700 min-h-11 min-w-11 inline-flex items-center justify-center rounded hover:bg-blue-50" : "text-blue-700 p-1 rounded hover:bg-blue-50"}
               title="Quick Add Patient"
+              aria-label="Quick Add Patient"
             >
               <UserPlus className="w-4 h-4" />
             </button>
@@ -437,19 +533,38 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         <button
           onClick={() => logout().then(() => go("landing"))}
-          className={`w-full flex items-center ${isCollapsed ? 'justify-center' : 'space-x-2 px-3'} py-2 text-xs text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg`}
+          aria-label="Logout"
+          className={
+            phoneLayout
+              ? "w-full min-h-11 flex items-center gap-2.5 px-3 py-2 text-sm font-medium text-slate-800 hover:text-slate-900 hover:bg-slate-100 rounded-lg"
+              : `w-full flex items-center ${isCollapsed ? "justify-center" : "space-x-2 px-3"} py-2 text-xs text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg`
+          }
           title="Logout"
         >
-          <LogOut className="w-4 h-4 shrink-0" />
-          {!isCollapsed && <span className="font-medium">Logout</span>}
+          <LogOut className="w-4 h-4 shrink-0" aria-hidden="true" />
+          {expandedChrome && (
+            <span data-nav-label="Logout" className={phoneLayout ? "text-sm font-medium" : "font-medium"}>
+              Logout
+            </span>
+          )}
         </button>
 
         <button
           onClick={onToggleCollapse}
-          className="w-full flex items-center justify-center space-x-1.5 py-1.5 text-xs text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-md transition-colors"
-          title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          className={
+            phoneLayout
+              ? "w-full min-h-11 flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-100 rounded-md"
+              : "w-full flex items-center justify-center space-x-1.5 py-1.5 text-xs text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-md transition-colors"
+          }
+          title={phoneLayout ? "Close navigation" : isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+          aria-label={phoneLayout ? "Close navigation" : isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
         >
-          {isCollapsed ? (
+          {phoneLayout ? (
+            <>
+              <X className="w-4 h-4" aria-hidden="true" />
+              <span data-nav-label="Close" className="text-sm font-medium">Close</span>
+            </>
+          ) : isCollapsed ? (
             <ChevronRight className="w-4 h-4" />
           ) : (
             <>

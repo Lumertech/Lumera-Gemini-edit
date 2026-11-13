@@ -120,7 +120,7 @@ export const Navbar: React.FC<NavbarProps> = ({
         {onToggleSidebar && (
           <button
             onClick={onToggleSidebar}
-            className="md:hidden p-1.5 rounded-lg text-slate-500 hover:bg-slate-100"
+            className="md:hidden min-h-11 min-w-11 inline-flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100"
             aria-label="Open navigation"
             title="Toggle Navigation Sidebar"
           >
