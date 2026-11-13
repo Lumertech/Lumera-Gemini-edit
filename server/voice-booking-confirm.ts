@@ -64,8 +64,13 @@ export function storedPhone(phone: string): string {
 
 export function usablePatientName(name: string): string {
   const value = String(name || "").trim();
-  if (!value || /^(there|patient|caller)$/i.test(value)) return "";
+  if (!value || /^(there|patient|caller|unknown)$/i.test(value)) return "";
   return value;
+}
+
+export interface VoiceHistoryTurn {
+  role?: string;
+  text?: string;
 }
 
 export function parseVoiceBookingDraft(value: unknown): VoiceBookingDraft | null {
@@ -99,14 +104,30 @@ export function classifyBookingReply(message: string): "yes" | "no" | "unclear" 
   return "unclear";
 }
 
-function parseSpokenTime(message: string): string {
-  const match = String(message || "").match(/\b(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)\b/i);
-  if (!match) return "";
-  const hour = Number(match[1]);
-  const minute = match[2] ? Number(match[2]) : 0;
+function formatClock(hour: number, minute: number, suffix: "AM" | "PM"): string {
   if (hour < 1 || hour > 12 || minute > 59) return "";
-  const suffix = match[3].toLowerCase().startsWith("p") ? "PM" : "AM";
   return `${hour}:${String(minute).padStart(2, "0")} ${suffix}`;
+}
+
+function parseSpokenTime(message: string): string {
+  const text = String(message || "");
+  const match = text.match(/\b(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)\b/i);
+  if (match) {
+    const suffix = match[3].toLowerCase().startsWith("p") ? "PM" : "AM";
+    return formatClock(Number(match[1]), match[2] ? Number(match[2]) : 0, suffix);
+  }
+  const daypart = text.match(/(सुबह|सकाळी|morning|subah|शाम|संध्याकाळी|evening|shaam|दोपहर|दुपारी|afternoon)\s*(\d{1,2})(?::(\d{2}))?/i);
+  if (daypart) {
+    const word = daypart[1].toLowerCase();
+    const pm = /शाम|संध्या|evening|shaam|दोपहर|दुपार|afternoon/.test(word);
+    return formatClock(Number(daypart[2]), daypart[3] ? Number(daypart[3]) : 0, pm ? "PM" : "AM");
+  }
+  const baje = text.match(/(\d{1,2})(?::(\d{2}))?\s*(?:बजे|वाजता)/);
+  if (!baje) return "";
+  const hour = Number(baje[1]);
+  const minute = baje[2] ? Number(baje[2]) : 0;
+  if (hour < 1 || hour > 12 || minute > 59) return "";
+  return formatClock(hour, minute, hour >= 1 && hour <= 7 ? "PM" : "AM");
 }
 
 function parseSpokenDate(message: string, todayIso: string): string {
@@ -117,12 +138,162 @@ function parseSpokenDate(message: string, todayIso: string): string {
   return iso ? iso[1] : "";
 }
 
-function parseSpokenName(message: string): string {
-  const match = String(message || "").match(
-    /\b(?:my name is|i am|i'm|naam hai|mera naam)\s+([A-Za-z][A-Za-z .'-]{1,40})/i
+const LATIN_NAME = "[A-Za-z][A-Za-z.'’\\-]*";
+const DEV_NAME = "[\\u0900-\\u097F][\\u0900-\\u097F.'’\\-]*";
+const NAME_TOKEN = `(?:${LATIN_NAME}|${DEV_NAME})`;
+const NAME_PHRASE = `${NAME_TOKEN}(?:\\s+${NAME_TOKEN}){0,2}`;
+
+const NOT_A_NAME = new Set([
+  "there", "patient", "caller", "unknown", "doctor", "dr", "appointment", "book", "booking", "slot",
+  "today", "tomorrow", "yesterday", "yes", "no", "yeah", "yep", "ok", "okay", "haan", "han", "ha", "ji",
+  "hello", "hi", "hey", "namaste", "namaskar", "aaj", "kal", "udya", "please", "thanks", "thank", "you",
+  "the", "and", "for", "with", "this", "that", "calling", "here", "speaking", "hmm", "uh", "um",
+  "नमस्ते", "नमस्कार", "हाँ", "हां", "नहीं", "आज", "कल", "डॉक्टर", "अपॉइंटमेंट", "जी",
+  "हो", "होय", "नाही", "उद्या",
+]);
+
+function takeName(raw: string): string {
+  const clipped = String(raw || "").split(
+    /(?:[।.!?,;]|\b(?:and|please|calling|here|speaking|bol|raha|rahi|hoon|hun|hai|hain|aahe|ahe|for|appointment|book|tomorrow|today|kal|aaj)\b|उद्या|आज|कल|है|हूँ|हूं|आहे|जी|बोल)/i
+  )[0] || "";
+  const parts = clipped.trim().split(/\s+/).filter(Boolean).slice(0, 3);
+  const kept: string[] = [];
+  for (const part of parts) {
+    if (/^[A-Za-z]\.$/.test(part)) {
+      kept.push(part);
+      continue;
+    }
+    const token = part.replace(/^[.'’\-]+|[.'’\-]+$/g, "");
+    if (!token || NOT_A_NAME.has(token) || NOT_A_NAME.has(token.toLowerCase())) break;
+    if (!/^[A-Za-z\u0900-\u097F][A-Za-z\u0900-\u097F.'’\-]*$/.test(token)) break;
+    if (token.length < 2) break;
+    kept.push(token);
+  }
+  return kept.join(" ").trim();
+}
+
+function withoutDoctor(message: string): string {
+  return String(message || "").replace(
+    /(?:^|\s)(?:dr\.?|doctor|डॉक्टर|डॉ\.?)\s+[A-Za-z\u0900-\u097F][A-Za-z\u0900-\u097F.'’\-]*(?:\s+[A-Za-z\u0900-\u097F][A-Za-z\u0900-\u097F.'’\-]*){0,2}/gi,
+    " "
   );
-  if (!match) return "";
-  return match[1].trim().split(/\s+/).slice(0, 3).join(" ");
+}
+
+function introducedName(message: string): string {
+  const text = String(message || "");
+  const patterns = [
+    new RegExp(`\\b(?:my name is|name is|i am|i'm|this is|patient(?:'s)? name is|booking for)\\s+(${NAME_PHRASE})`, "i"),
+    new RegExp(`\\b(?:mera naam(?:\\s+hai)?|naam hai|majhe naav(?:\\s+aahe)?|majha nav|maze nav|maza nav|majhe nav)\\s+(${NAME_PHRASE})`, "i"),
+    new RegExp(`\\b(?:main|mai)\\s+(${NAME_PHRASE})\\s+(?:bol|hoon|hun|hu)\\b`, "i"),
+    new RegExp(`(?:मेरा नाम(?:\\s+है)?|नाम है|माझे नाव(?:\\s+आहे)?|नाव आहे)\\s+(${NAME_PHRASE})`),
+    new RegExp(`(?:मैं|मी)\\s+(${NAME_PHRASE})\\s+(?:बोल|हूँ|हूं|आहे)`),
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    const name = match ? takeName(match[1]) : "";
+    if (name) return name;
+  }
+  return "";
+}
+
+function bareName(message: string): string {
+  const text = String(message || "").trim().replace(/[।.!?]+$/g, "");
+  if (!text || text.length > 48) return "";
+  if (classifyBookingReply(text) !== "unclear") return "";
+  if (parseSpokenTime(text)) return "";
+  if (/\b(today|tomorrow|aaj|kal|udya)\b|आज|कल|उद्या/i.test(text)) return "";
+  if (!new RegExp(`^${NAME_PHRASE}$`, "i").test(text)) return "";
+  return takeName(text);
+}
+
+function parseSpokenName(message: string, allowBareName = false): string {
+  const introduced = introducedName(withoutDoctor(message));
+  if (introduced) return introduced;
+  if (allowBareName) return bareName(withoutDoctor(message));
+  return "";
+}
+
+export function parseSpokenDoctor(message: string): string {
+  const match = String(message || "").match(
+    /(?:^|\s)(?:dr\.?|doctor|डॉक्टर|डॉ\.?)\s+([A-Za-z\u0900-\u097F][A-Za-z\u0900-\u097F.'’\-]*(?:\s+[A-Za-z\u0900-\u097F][A-Za-z\u0900-\u097F.'’\-]*){0,2})/i
+  );
+  return match ? takeName(match[1]) : "";
+}
+
+export function mayaAskedForPatientName(speech: string): boolean {
+  return /patient's name|may i have the (?:patient's )?name|what is your name|your name for the appointment|मरीज का नाम|नाम बता|रुग्णाचे नाव|नाव सांग/i.test(String(speech || ""));
+}
+
+function lastMayaText(history: VoiceHistoryTurn[] | undefined): string {
+  const turns = history || [];
+  for (let i = turns.length - 1; i >= 0; i--) {
+    if (String(turns[i]?.role || "") === "maya" && String(turns[i]?.text || "").trim()) {
+      return String(turns[i]?.text || "");
+    }
+  }
+  return "";
+}
+
+export interface CollectedVoiceSlots {
+  patientName: string;
+  doctorName: string;
+  date: string;
+  timeSlot: string;
+}
+
+/** Names, doctor, and date/time heard earlier in the call, including this utterance. */
+export function collectVoiceSlots(message: string, history: VoiceHistoryTurn[] | undefined, todayIso: string): CollectedVoiceSlots {
+  const sequence = [...(history || []), { role: "caller", text: message }];
+  let patientName = "";
+  let doctorName = "";
+  let date = "";
+  let timeSlot = "";
+  let previousMaya = "";
+  for (const turn of sequence) {
+    const role = String(turn?.role || "");
+    const text = String(turn?.text || "").trim();
+    if (!text) continue;
+    if (role === "maya") {
+      previousMaya = text;
+      continue;
+    }
+    if (role !== "caller") continue;
+    const name = parseSpokenName(text, mayaAskedForPatientName(previousMaya));
+    if (name) patientName = name;
+    const doctor = parseSpokenDoctor(text);
+    if (doctor) doctorName = doctor;
+    const spokenDate = parseSpokenDate(text, todayIso);
+    if (spokenDate) date = spokenDate;
+    const spokenTime = parseSpokenTime(text);
+    if (spokenTime) timeSlot = spokenTime;
+  }
+  return { patientName, doctorName, date, timeSlot };
+}
+
+export function withHeardSlots(prior: VoiceBookingDraft | null, heard: CollectedVoiceSlots): VoiceBookingDraft | null {
+  const learned = Boolean(heard.patientName || heard.doctorName || heard.date || heard.timeSlot);
+  if (!prior && !learned) return null;
+  const base: VoiceBookingDraft = prior || {
+    patientName: "",
+    date: "",
+    timeSlot: "",
+    phone: "",
+    doctorName: "",
+    failedConfirmations: 0,
+    status: "collecting",
+  };
+  return {
+    ...base,
+    patientName: heard.patientName || base.patientName,
+    doctorName: heard.doctorName || base.doctorName,
+    date: heard.date || base.date,
+    timeSlot: heard.timeSlot || base.timeSlot,
+  };
+}
+
+function thanksForName(name: string, language: Spoken): string {
+  if (language === "en") return `Thank you, ${name}.`;
+  return `धन्यवाद, ${name}.`;
 }
 
 function parseSpokenPhone(message: string): string {
@@ -188,6 +359,7 @@ export function planVoiceBooking(input: {
   proposed: { date: string; timeSlot: string } | null;
   language: Spoken;
   now?: Date;
+  history?: VoiceHistoryTurn[];
 }): VoiceBookingPlan {
   const todayIso = clinicCalendarDate(input.now ?? new Date(), "Asia/Kolkata");
   const message = String(input.message || "");
@@ -200,6 +372,10 @@ export function planVoiceBooking(input: {
     failedConfirmations: 0,
     status: "collecting",
   };
+  const heard = collectVoiceSlots(message, input.history, todayIso);
+  const allowBareName = mayaAskedForPatientName(lastMayaText(input.history)) || (!base.patientName && Boolean(input.draft));
+  const spokenName = parseSpokenName(message, allowBareName);
+  const namedThisTurn = Boolean(spokenName) && spokenName !== base.patientName;
 
   if (base.status === "awaiting_confirmation") {
     const kind = classifyBookingReply(message);
@@ -220,7 +396,8 @@ export function planVoiceBooking(input: {
         corrected.patientName !== base.patientName ||
         corrected.date !== base.date ||
         corrected.timeSlot !== base.timeSlot ||
-        corrected.phone !== base.phone;
+        corrected.phone !== base.phone ||
+        corrected.doctorName !== base.doctorName;
       if (changed && corrected.patientName && corrected.date && corrected.timeSlot && corrected.phone) {
         const next = { ...corrected, status: "awaiting_confirmation" as const, failedConfirmations: 0 };
         return emptyPlan(readBack(next, input.language), next);
@@ -233,6 +410,17 @@ export function planVoiceBooking(input: {
             ? "काय बदलायचे आहे: नाव, तारीख, वेळ की फोन?"
             : "What should I change: the name, the date, the time, or the phone?";
       return emptyPlan(ask, collecting);
+    }
+    const correctedAnyway = mergeDraft(base, message, input, todayIso, heard, allowBareName);
+    const slotChanged =
+      correctedAnyway.patientName !== base.patientName ||
+      correctedAnyway.date !== base.date ||
+      correctedAnyway.timeSlot !== base.timeSlot ||
+      correctedAnyway.phone !== base.phone ||
+      correctedAnyway.doctorName !== base.doctorName;
+    if (slotChanged && correctedAnyway.patientName && correctedAnyway.date && correctedAnyway.timeSlot && correctedAnyway.phone) {
+      const next = { ...correctedAnyway, status: "awaiting_confirmation" as const, failedConfirmations: 0 };
+      return emptyPlan(readBack(next, input.language), next);
     }
     const fails = base.failedConfirmations + 1;
     if (fails >= 2) {
@@ -255,7 +443,7 @@ export function planVoiceBooking(input: {
     return emptyPlan(again, pending);
   }
 
-  const next = mergeDraft(base, message, input, todayIso);
+  const next = mergeDraft(base, message, input, todayIso, heard, allowBareName);
   if (!next.patientName) {
     const ask =
       input.language === "hi"
@@ -272,10 +460,13 @@ export function planVoiceBooking(input: {
         : input.language === "mr"
           ? "कोणती तारीख आणि कोणती वेळ हवी? वेळ IST मध्ये असेल."
           : "What date and time should I book? The time will be in IST.";
-    return emptyPlan(ask, { ...next, status: "collecting" });
+    const speech = namedThisTurn ? `${thanksForName(next.patientName, input.language)} ${ask}` : ask;
+    return emptyPlan(speech, { ...next, status: "collecting" });
   }
   const ready = { ...next, status: "awaiting_confirmation" as const, failedConfirmations: 0 };
-  return emptyPlan(readBack(ready, input.language), ready);
+  const read = readBack(ready, input.language);
+  const speech = namedThisTurn ? `${thanksForName(ready.patientName, input.language)} ${read}` : read;
+  return emptyPlan(speech, ready);
 }
 
 function mergeDraft(
@@ -287,18 +478,21 @@ function mergeDraft(
     doctorName: string;
     proposed: { date: string; timeSlot: string } | null;
   },
-  todayIso: string
+  todayIso: string,
+  heard?: CollectedVoiceSlots,
+  allowBareName = false
 ): VoiceBookingDraft {
-  const spokenName = parseSpokenName(message);
+  const spokenName = parseSpokenName(message, allowBareName);
   const spokenPhone = parseSpokenPhone(message);
   const spokenDate = parseSpokenDate(message, todayIso);
   const spokenTime = parseSpokenTime(message);
+  const spokenDoctor = parseSpokenDoctor(message);
   return {
-    patientName: spokenName || base.patientName || usablePatientName(input.patientName),
-    date: spokenDate || base.date || input.proposed?.date || "",
-    timeSlot: spokenTime || base.timeSlot || input.proposed?.timeSlot || "",
+    patientName: spokenName || base.patientName || heard?.patientName || usablePatientName(input.patientName),
+    date: spokenDate || base.date || heard?.date || input.proposed?.date || "",
+    timeSlot: spokenTime || base.timeSlot || heard?.timeSlot || input.proposed?.timeSlot || "",
     phone: spokenPhone || base.phone || storedPhone(input.phone),
-    doctorName: base.doctorName || String(input.doctorName || "").trim(),
+    doctorName: spokenDoctor || base.doctorName || heard?.doctorName || String(input.doctorName || "").trim(),
     failedConfirmations: base.failedConfirmations,
     status: base.status,
   };
