@@ -11,6 +11,7 @@ import { getClinicScheduleSettings } from "./clinic-schedule.ts";
 import { mayaDemoMode } from "./voice-demo.ts";
 import { cloudTtsBilling, cloudTtsVoice, mayaSpokenLanguage, synthesizeCloudTtsDetailed, type MayaSpokenLanguage } from "./voice-tts.ts";
 import { voiceTurnNeedsScheduleLookup } from "./voice-filler.ts";
+import { shouldDropVoiceUtterance } from "./voice-listen-gate.ts";
 import { mayaLockedLanguageInstruction, resolveMayaCallLanguage, speechConflictsWithLockedLanguage } from "./voice-language-lock.ts";
 import { formatTenantVoiceFacts } from "./voice-vocabulary.ts";
 import { formatIstDateSpeech, collectVoiceSlots, mayaAskedForPatientName, parseVoiceBookingDraft, planVoiceBooking, speakablePhone, usablePatientName, withHeardSlots, type VoiceBookingDraft, type VoiceHistoryTurn } from "./voice-booking-confirm.ts";
@@ -1291,14 +1292,14 @@ Instructions:
 2. In "transcript", transcribe what the caller said.
    - The caller may speak fast, softly, or in Hinglish (e.g. "appointment chahiye", "doctor kab baithenge", "dr siddharth se milna hai", "kya timing hai", "aaj slot milega").
    - Match phonetic doctor names and medicine names to the clinic facts above. Do not substitute a doctor who is not on that list.
-   - If the speech is muffled, faint, brief, or partially unclear, use context from previous turns to provide your best phonetic transcription instead of leaving it empty.
-   - ONLY set "transcript": "" and "speechText": "" with "intent": "SILENCE" if the audio is strictly 100% dead digital silence with no human voice or background audio at all.
+   - If you hear words, transcribe those words, including soft or fast Indian English, Hindi, Hinglish, or Marathi.
+   - If the clip is silence, background noise, a cough, breath, or sounds with no words, set "transcript": "", "speechText": "", and "intent": "SILENCE". Do not invent words, a booking, or a question from noise.
 3. ${mayaLockedLanguageInstruction(priorLanguage.language, priorLanguage.locked)}
 4. In "speechText", formulate your spoken receptionist response in that reply language, so the words match the voice.
    - If the caller just said their name, acknowledge it (for example "Thank you, Ravi" or "धन्यवाद, रवि") and ask only for details that are still missing.
    - Never ask for the patient's name, doctor, date, or time again once that slot is captured above or earlier in the conversation. Indian names and Hindi or Marathi transcripts count.
-   - Always acknowledge what you heard rather than immediately asking to repeat whenever even 1-2 words are discernible.
-   - If the caller's speech was completely inaudible or cut off, respond warmly asking them to repeat (in the caller's language, e.g. in Hindi "माफ़ कीजिए, मुझे आपकी आवाज़ साफ़ नहीं आई। क्या आप दोबारा बोलेंगे?" or in English "I'm sorry, I couldn't hear that clearly. Could you please repeat?").
+   - When the transcript has real words, acknowledge what you heard.
+   - When the transcript is empty because the clip had no words, leave speechText empty. Do not ask the caller to repeat noise.
    - Keep answers conversational, warm, and concise (1 to 2 short sentences, 15 to 25 words maximum) suitable for snappy live voice dialogue.
 5. If the caller asks to speak to a human, staff, doctor, receptionist, or operator (e.g. "transfer me", "talk to human", "doctor se baat karni hai", "receptionist chahiye", "operator", "emergency", "connect to staff"): set "intent": "TRANSFER", "shouldTransfer": true.
 6. If the caller asks to book an appointment, set "shouldBook": true and "doctorName" to a doctor from the clinic facts. Do not say the visit is already booked. The server reads the name, date, time, and phone back and books only after the caller confirms.
@@ -1378,6 +1379,20 @@ Output strict JSON:
         )
       ).length;
 
+      // Empty or noise transcripts never start a lookup, a filler, or a reply.
+      // Two earlier unclear replies still reach the transfer below when the transcript is empty.
+      if (shouldDropVoiceUtterance(message, previousClarifications)) {
+        return sendVoicePayload({
+          success: true,
+          from,
+          transcript: "",
+          speechText: "",
+          intent: "SILENCE",
+          hasAudio: false,
+          dropped: true,
+        });
+      }
+
       const isTransferRequested =
         shouldTransfer ||
         intent === "TRANSFER" ||
@@ -1418,25 +1433,15 @@ Output strict JSON:
           }
         }
       } else if (!message && !speechText) {
-        const rawAudio = String(req.body?.audioBase64 || "");
-        if (rawAudio.length > 500) {
-          authoredSpeech = true;
-          speechText = spoken === "hi"
-            ? `माफ़ कीजिए, मुझे आपकी आवाज़ साफ़ नहीं आई। क्या आप दोबारा बोलेंगे?`
-            : spoken === "mr"
-              ? `माफ करा, मला तुमचा आवाज स्पष्ट ऐकू आला नाही. तुम्ही पुन्हा बोलाल का?`
-              : `I'm sorry, I couldn't hear that clearly. Could you please repeat?`;
-          intent = "INQUIRY";
-          suggestedAction = "Asked caller to repeat unclear utterance";
-        } else {
-          return res.json({
-            success: true,
-            from,
-            speechText: "",
-            intent: "SILENCE",
-            hasAudio: false,
-          });
-        }
+        return sendVoicePayload({
+          success: true,
+          from,
+          transcript: "",
+          speechText: "",
+          intent: "SILENCE",
+          hasAudio: false,
+          dropped: true,
+        });
       }
 
       const todayIso = clinicCalendarDate(new Date(), "Asia/Kolkata");

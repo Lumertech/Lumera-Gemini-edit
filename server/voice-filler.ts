@@ -22,9 +22,12 @@ export interface FillerTurnInput {
   playedOnPreviousTurn: boolean;
   trackSpeaking: boolean;
   callerSpeaking: boolean;
+  /** Set when the utterance was dropped as noise, empty, or still inside the greeting. */
+  utteranceDropped?: boolean;
 }
 
 export function shouldPlayFiller(input: FillerTurnInput): boolean {
+  if (input.utteranceDropped) return false;
   if (input.bargeIn || input.alreadyPlayedThisTurn || input.playedOnPreviousTurn) return false;
   if (input.replyStarted || input.trackSpeaking || input.callerSpeaking) return false;
   if (!input.lookup) return false;

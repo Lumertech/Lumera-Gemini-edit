@@ -32,7 +32,6 @@ PORT = int(os.environ.get("PORT", 3000))
 PUBLIC_IP = os.environ.get("PUBLIC_IP", "34.46.39.52")
 LUMERA_API_URL = os.environ.get("LUMERA_API_URL", "https://www.mylumera.in/api/voice/inbound")
 VOICE_GATEWAY_SECRET = os.environ.get("VOICE_GATEWAY_SECRET", "").strip()
-NEUTRAL_HOLD_TEXT = "Namaste, one moment please."
 # Short schedule line, only after a slow lookup. English has no honorific prefix.
 FILLER_TEXT = {
     "en": "One moment, let me check the schedule.",
@@ -41,11 +40,22 @@ FILLER_TEXT = {
 }
 # Play only when the server has not started the answer by this point.
 FILLER_DELAY_S = 1.35
+# Ignore caller audio until the clinic greeting has finished, plus this tail.
+GREETING_TAIL_S = 0.3
+# 512 samples at 16 kHz is 32ms. The frame count is the ceiling of 400ms.
+SPEECH_FRAME_MS = 32
+MIN_SPEECH_MS = 400
+MIN_SPEECH_FRAMES = (MIN_SPEECH_MS + SPEECH_FRAME_MS - 1) // SPEECH_FRAME_MS
+# Transcripts of only these tokens are noise. Empty is handled with them.
+NOISE_TRANSCRIPT_TOKENS = frozenset({
+    "uh", "um", "uhh", "umm", "hmm", "hm", "mm", "mmm",
+    "ah", "ahh", "er", "err", "noise", "static", "silence",
+    "inaudible", "background", "cough", "breath", "unintelligible",
+})
 
-# Preloaded neutral hold and schedule filler PCM (48kHz mono 16-bit).
-# The hold clip is the only audio played before a clinic greeting is ready.
+# Preloaded schedule filler PCM (48kHz mono 16-bit).
+# The first audio on a call is the clinic greeting. A cache miss stays silent until that greeting is ready.
 # Audio comes from Lumera's Google Cloud TTS voice (Chirp 3 HD, WaveNet if that call fails). Never another provider.
-cached_hold_pcm = np.zeros(0, dtype=np.int16)
 cached_filler_pcm = np.zeros(0, dtype=np.int16)
 filler_by_lang = {}
 clip_pcm_cache = {}
@@ -158,6 +168,34 @@ class MayaVoiceTrack(MediaStreamTrack):
         self.pts = 0
         self._start_time = None
         self._speech_start_time = time.time() if len(self.pcm) > 0 else 0.0
+        # Opening clip. Ready only when the clinic greeting PCM is queued.
+        self.greeting_samples = len(self.pcm)
+        self.greeting_ready = len(self.pcm) > 0
+        self._greeting_finished_at = 0.0
+        self._listen_open = False
+
+    def queue_greeting(self, new_pcm: np.ndarray):
+        """Plays the clinic greeting as the current audio. Replaces silence. Does not append a hold clip."""
+        if len(new_pcm) == 0:
+            return
+        self._listen_open = False
+        self._greeting_finished_at = 0.0
+        self.greeting_samples = len(new_pcm)
+        self.greeting_ready = True
+        self.queue_audio(new_pcm, replace=True)
+
+    def listening_closed(self) -> bool:
+        """True until the greeting has finished and the short tail has elapsed."""
+        if self._listen_open:
+            return False
+        if not self.greeting_ready or self.greeting_samples <= 0:
+            return True
+        if self._greeting_finished_at <= 0:
+            return True
+        if time.monotonic() < self._greeting_finished_at + GREETING_TAIL_S:
+            return True
+        self._listen_open = True
+        return False
 
     def is_speaking(self) -> bool:
         """Returns True if Maya is currently streaming voice audio (not silence)."""
@@ -215,6 +253,14 @@ class MayaVoiceTrack(MediaStreamTrack):
             # Keep media session active with continuous silence frames
             chunk = np.zeros(self.samples_per_frame, dtype=np.int16)
 
+        if (
+            self.greeting_ready
+            and self._greeting_finished_at <= 0
+            and self.greeting_samples > 0
+            and self.cursor >= self.greeting_samples
+        ):
+            self._greeting_finished_at = time.monotonic()
+
         frame = AudioFrame.from_ndarray(chunk.reshape(1, -1), format="s16", layout="mono")
         frame.sample_rate = self.sample_rate
         frame.pts = self.pts
@@ -233,6 +279,28 @@ def lumera_clips_url() -> str:
         return inbound[: -len("inbound")] + "clips"
     return inbound.rsplit("/", 1)[0] + "/clips"
 
+def transcript_is_noise(text: str) -> bool:
+    """True for punctuation-only clips and tokens such as uh or [noise]. Empty is not noise."""
+    raw = (text or "").strip().lower()
+    if not raw:
+        return False
+    cleaned = re.sub(r"[^\w\s]", " ", raw, flags=re.UNICODE)
+    cleaned = cleaned.replace("_", " ")
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    if not cleaned:
+        return True
+    return all(token in NOISE_TRANSCRIPT_TOKENS for token in cleaned.split(" "))
+
+
+def should_drop_utterance(transcript: str, speech_text: str, intent: str) -> bool:
+    """Empty or noise transcripts get no reply and no filler. A spoken transfer still plays."""
+    if str(intent or "").strip().upper() == "TRANSFER" and str(speech_text or "").strip():
+        return False
+    if not str(transcript or "").strip():
+        return True
+    return transcript_is_noise(transcript)
+
+
 def filler_should_play(
     elapsed_s: float,
     lookup: bool,
@@ -242,9 +310,10 @@ def filler_should_play(
     played_on_previous_turn: bool,
     track_speaking: bool,
     caller_speaking: bool,
+    utterance_dropped: bool = False,
 ) -> bool:
     """Same rules as server/voice-filler.ts shouldPlayFiller. One schedule line, then silence."""
-    if barge_in or already_played_this_turn or played_on_previous_turn:
+    if utterance_dropped or barge_in or already_played_this_turn or played_on_previous_turn:
         return False
     if reply_started or track_speaking or caller_speaking:
         return False
@@ -265,6 +334,8 @@ async def play_schedule_filler(call_id: str, out_track: MayaVoiceTrack, filler_s
         if int(call.get("utteranceGeneration") or 0) != generation:
             return
         spoken_lang = normalize_spoken_language(str(call.get("spokenLanguage") or "en"))
+        if out_track.listening_closed():
+            return
         if not filler_should_play(
             elapsed_s=time.monotonic() - eos_at,
             lookup=lookup,
@@ -274,6 +345,7 @@ async def play_schedule_filler(call_id: str, out_track: MayaVoiceTrack, filler_s
             played_on_previous_turn=bool(call.get("fillerPlayedLastTurn")),
             track_speaking=out_track.is_speaking(),
             caller_speaking=bool(call.get("callerSpeaking")),
+            utterance_dropped=bool(filler_state.get("dropped")),
         ):
             return
         filler_pcm = filler_by_lang.get(spoken_lang)
@@ -309,7 +381,7 @@ def voice_language_for_text(text: str, hinted: str = "en") -> str:
     return normalize_spoken_language(hinted)
 
 async def fetch_google_tts_pcm(text: str, language: str, clip: str, send_secret: bool, call_id: str = "") -> np.ndarray:
-    """Server-side Google TTS. The voice is MAYA_TTS_VOICE_* on Cloud Run, so greeting, hold, filler, and reply share it."""
+    """Server-side Google TTS. The voice is MAYA_TTS_VOICE_* on Cloud Run, so greeting, filler, and reply share it."""
     headers = {
         "Content-Type": "application/json",
         "Origin": "https://www.mylumera.in",
@@ -340,15 +412,9 @@ async def fetch_google_tts_pcm(text: str, language: str, clip: str, send_secret:
         return np.zeros(0, dtype=np.int16)
 
 async def ensure_greeting_audio(attempt: int = 0):
-    """Preloads a neutral hold clip and conversational fillers from Google TTS."""
-    global cached_hold_pcm, cached_filler_pcm
+    """Preloads schedule fillers from Google TTS. Per-clinic greetings are cached on first use. A miss stays silent."""
+    global cached_filler_pcm
     send_secret = bool(VOICE_GATEWAY_SECRET)
-    hold = await synthesize_tts_pcm(NEUTRAL_HOLD_TEXT, "en", "hold", send_secret)
-    if len(hold) > 0:
-        cached_hold_pcm = hold
-        logger.info(f"Preloaded neutral hold clip into memory: {len(cached_hold_pcm)/48000:.2f}s")
-    else:
-        logger.warning("Neutral hold clip unavailable from Google TTS. Callers hear silence until a retry succeeds.")
 
     for lang, filler_text in FILLER_TEXT.items():
         pcm = await synthesize_tts_pcm(filler_text, lang, "filler", send_secret)
@@ -359,7 +425,7 @@ async def ensure_greeting_audio(attempt: int = 0):
             cached_filler_pcm = pcm
             logger.info(f"Preloaded conversational filler into memory: {len(cached_filler_pcm)/48000:.2f}s")
 
-    if (len(cached_hold_pcm) == 0 or len(cached_filler_pcm) == 0) and attempt < 4:
+    if len(cached_filler_pcm) == 0 and attempt < 4:
         asyncio.get_running_loop().call_later(
             8,
             lambda: asyncio.create_task(ensure_greeting_audio(attempt + 1)),
@@ -392,9 +458,10 @@ async def synthesize_tts_pcm(text: str, language: str = "en", clip: str = "greet
 
 async def prepare_call_greeting(tenant_id: str, clinic_name: str = "", receptionist_name: str = "", custom_greeting: str = "", language: str = "en"):
     """
-    1-ring pickup. Cache hit returns the clinic greeting immediately.
-    Cache miss returns the neutral hold clip and the text to speak after it.
-    The SDP answer is never blocked on TTS.
+    Cache hit returns the clinic greeting.
+    Cache miss returns silence and the text to speak when TTS is ready.
+    The SDP answer does not wait on TTS. No hold clip is returned.
+    The same tenant, language, clinic, receptionist, and custom greeting stay cached, so a miss is the first call only.
     """
     spoken = normalize_spoken_language(language)
     cache_key = f"{tenant_id}:{spoken}:{clinic_name}:{receptionist_name}:{custom_greeting}"
@@ -402,17 +469,21 @@ async def prepare_call_greeting(tenant_id: str, clinic_name: str = "", reception
     if cached is not None and len(cached) > 0:
         return cached, None
     text = clinic_greeting_text(clinic_name, receptionist_name, custom_greeting)
-    hold = cached_hold_pcm if len(cached_hold_pcm) > 0 else np.zeros(0, dtype=np.int16)
-    return hold, (cache_key, text)
+    return np.zeros(0, dtype=np.int16), (cache_key, text)
 
-async def warmup_and_queue(cache_key: str, text: str, track: MayaVoiceTrack, send_secret: bool = False, call_id: str = ""):
+async def warmup_and_queue(cache_key: str, text: str, track: MayaVoiceTrack, send_secret: bool = False, call_id: str = "", attempt: int = 0):
+    """Synthesizes the clinic greeting, caches it for the next call, and plays it as the first audio."""
     pcm = await synthesize_tts_pcm(text, voice_language_for_text(text, "en"), "greeting", send_secret, call_id)
     if len(pcm) == 0:
-        logger.warning("Clinic greeting TTS unavailable. Keeping silence instead of another voice.")
+        if attempt < 2:
+            await asyncio.sleep(0.5)
+            await warmup_and_queue(cache_key, text, track, send_secret, call_id, attempt + 1)
+            return
+        logger.warning("Clinic greeting TTS unavailable. Keeping silence until a greeting exists.")
         return
     tenant_greetings[cache_key] = pcm
-    track.queue_audio(pcm, replace=False, after_current=True)
-    logger.info(f"Queued clinic greeting after neutral hold ({len(pcm)/48000:.2f}s): {text[:60]}...")
+    track.queue_greeting(pcm)
+    logger.info(f"Queued clinic greeting as the first audio ({len(pcm)/48000:.2f}s): {text[:60]}...")
 
 def _encode_wav_sync(pcm: np.ndarray) -> str:
     wav_io = io.BytesIO()
@@ -427,8 +498,9 @@ async def handle_caller_utterance(call_id: str, pcm_16k: np.ndarray, out_track: 
     """Encodes caller speech to WAV, queries Lumera Gemini AI, and queues the same Google voice."""
     if eos_at <= 0:
         eos_at = time.monotonic()
-    filler_state = {"reply_started": False, "played": False}
+    filler_state = {"reply_started": False, "played": False, "dropped": False}
     filler_task = None
+    dropped = False
 
     async def stop_filler():
         filler_state["reply_started"] = True
@@ -440,6 +512,11 @@ async def handle_caller_utterance(call_id: str, pcm_16k: np.ndarray, out_track: 
                 pass
 
     try:
+        if out_track.listening_closed():
+            dropped = True
+            filler_state["dropped"] = True
+            logger.info(f"[{call_id}] Ignored caller audio until the greeting and its tail finish")
+            return
         loop = asyncio.get_event_loop()
         # 1. Encode 16kHz mono PCM into in-memory WAV on worker thread (non-blocking)
         audio_b64 = await loop.run_in_executor(None, _encode_wav_sync, pcm_16k)
@@ -504,43 +581,51 @@ async def handle_caller_utterance(call_id: str, pcm_16k: np.ndarray, out_track: 
                                 play_schedule_filler(call_id, out_track, filler_state, eos_at, lookup, barge_in, generation)
                             )
                         data = await body_task
-                        filler_state["reply_started"] = True
-                        await stop_filler()
                         speech_text = data.get("speechText", "") or ""
                         intent = data.get("intent", "INQUIRY")
                         transcript = data.get("transcript", "") or ""
                         spoken = normalize_spoken_language(str(data.get("ttsLanguage") or ""))
-                        logger.info(f"[{call_id}] Caller said: \"{transcript}\" | Maya reply ({intent}): \"{speech_text}\"")
+                        if should_drop_utterance(transcript, speech_text, str(intent)):
+                            filler_state["dropped"] = True
+                            filler_state["reply_started"] = True
+                            await stop_filler()
+                            dropped = True
+                            speech_text = ""
+                            logger.info(f"[{call_id}] Dropped empty or noise utterance; no reply and no filler")
+                        else:
+                            filler_state["reply_started"] = True
+                            await stop_filler()
+                            logger.info(f"[{call_id}] Caller said: \"{transcript}\" | Maya reply ({intent}): \"{speech_text}\"")
 
-                        if call_id in active_calls:
-                            if transcript:
-                                active_calls[call_id]["history"].append({"role": "caller", "text": transcript})
-                            if "bookingDraft" in data:
-                                active_calls[call_id]["bookingDraft"] = data.get("bookingDraft")
-                            learned = ""
-                            draft = data.get("bookingDraft")
-                            if isinstance(draft, dict):
-                                learned = str(draft.get("patientName") or "").strip()
-                            if not learned:
-                                learned = str(data.get("callerName") or "").strip()
-                            if learned:
-                                active_calls[call_id]["callerName"] = learned
-                            if spoken:
-                                active_calls[call_id]["spokenLanguage"] = spoken
+                            if call_id in active_calls:
+                                if transcript:
+                                    active_calls[call_id]["history"].append({"role": "caller", "text": transcript})
+                                if "bookingDraft" in data:
+                                    active_calls[call_id]["bookingDraft"] = data.get("bookingDraft")
+                                learned = ""
+                                draft = data.get("bookingDraft")
+                                if isinstance(draft, dict):
+                                    learned = str(draft.get("patientName") or "").strip()
+                                if not learned:
+                                    learned = str(data.get("callerName") or "").strip()
+                                if learned:
+                                    active_calls[call_id]["callerName"] = learned
+                                if spoken:
+                                    active_calls[call_id]["spokenLanguage"] = spoken
 
-                        if not speech_text and len(pcm_16k) >= 9600:
-                            logger.warning(f"[{call_id}] Lumera AI returned empty speechText. Using polite clarification fallback.")
-                            speech_text = "I'm sorry, I couldn't hear that clearly. Could you please repeat?"
+                            if not speech_text and len(pcm_16k) >= 9600:
+                                logger.warning(f"[{call_id}] Lumera AI returned empty speechText. Using polite clarification fallback.")
+                                speech_text = "I'm sorry, I couldn't hear that clearly. Could you please repeat?"
 
-                        if speech_text and call_id in active_calls:
-                            active_calls[call_id]["history"].append({"role": "maya", "text": speech_text})
+                            if speech_text and call_id in active_calls:
+                                active_calls[call_id]["history"].append({"role": "maya", "text": speech_text})
 
-                        if data.get("audioBase64"):
-                            try:
-                                resp_audio_bytes = base64.b64decode(data["audioBase64"])
-                                logger.info(f"[{call_id}] Received Cloud TTS audio ({len(resp_audio_bytes)} bytes)")
-                            except Exception as b64_err:
-                                logger.warning(f"[{call_id}] Error decoding audioBase64: {b64_err}")
+                            if data.get("audioBase64"):
+                                try:
+                                    resp_audio_bytes = base64.b64decode(data["audioBase64"])
+                                    logger.info(f"[{call_id}] Received Cloud TTS audio ({len(resp_audio_bytes)} bytes)")
+                                except Exception as b64_err:
+                                    logger.warning(f"[{call_id}] Error decoding audioBase64: {b64_err}")
                     else:
                         err_txt = await resp.text()
                         logger.warning(f"[{call_id}] Lumera AI returned HTTP {resp.status}: {err_txt}")
@@ -576,7 +661,7 @@ async def handle_caller_utterance(call_id: str, pcm_16k: np.ndarray, out_track: 
     finally:
         await stop_filler()
         call = active_calls.get(call_id)
-        if call is not None and int(call.get("utteranceGeneration") or 0) == generation:
+        if call is not None and int(call.get("utteranceGeneration") or 0) == generation and not dropped:
             call["fillerPlayedLastTurn"] = bool(filler_state["played"])
 
 def endpoint_silence_ms() -> int:
@@ -611,13 +696,14 @@ async def process_inbound_audio(call_id: str, inbound_track, out_track: MayaVoic
     interruption_frames = 0
     soft_hold = 0
     was_talking = False
-    min_speech_frames = 8         # ~250ms of neural speech minimum to trigger processing
     silence_threshold_frames = endpoint_silence_frames()
     max_speech_frames = 450       # ~14 seconds max cap
     is_processing = False         # Lock to serialize queries cleanly
     pending_utterances = deque()
     pending_utterance_meta = deque()
     barge_capture = False
+    listen_latched = False
+    logged_greeting_gate = False
     if call_id in active_calls:
         active_calls[call_id]["pendingUtterances"] = pending_utterances
 
@@ -630,6 +716,31 @@ async def process_inbound_audio(call_id: str, inbound_track, out_track: MayaVoic
             maya_talking = out_track.is_speaking()
 
             for resampled in resampler.resample(frame):
+                # Greeting first. Noise before or during the greeting, and through the tail, is discarded.
+                if out_track.listening_closed():
+                    if not logged_greeting_gate:
+                        logged_greeting_gate = True
+                        logger.info(f"[{call_id}] Ignoring caller audio until the greeting finishes")
+                    chunk_accumulator.clear()
+                    listen_latched = False
+                    continue
+                if not listen_latched:
+                    listen_latched = True
+                    vad.reset()
+                    chunk_accumulator.clear()
+                    pre_roll_buffer.clear()
+                    overlap_buffer.clear()
+                    speech_buffer = []
+                    is_speaking = False
+                    silence_frames = 0
+                    speech_frames = 0
+                    interruption_frames = 0
+                    soft_hold = 0
+                    was_talking = False
+                    barge_capture = False
+                    if call_id in active_calls:
+                        active_calls[call_id]["callerSpeaking"] = False
+                        active_calls[call_id]["bargeActive"] = False
                 raw_data = resampled.to_ndarray().flatten()
                 chunk_accumulator.extend(raw_data)
 
@@ -717,7 +828,7 @@ async def process_inbound_audio(call_id: str, inbound_track, out_track: MayaVoic
                                 soft_hold = 0
                                 silence_frames += 1
                             if silence_frames > silence_threshold_frames:
-                                if speech_frames >= min_speech_frames:
+                                if speech_frames >= MIN_SPEECH_FRAMES:
                                     complete_pcm = np.concatenate(speech_buffer)
                                     # Apply soft AGC normalization if volume is low
                                     peak = np.max(np.abs(complete_pcm))
@@ -775,6 +886,11 @@ async def process_inbound_audio(call_id: str, inbound_track, out_track: MayaVoic
                                         logger.info(f"[{call_id}] Queuing speech utterance while the previous request is in flight")
                                         pending_utterances.append(complete_pcm)
                                         pending_utterance_meta.append(utterance_meta)
+                                else:
+                                    logger.info(f"[{call_id}] Dropped short audio ({speech_frames} speech frames < {MIN_SPEECH_FRAMES}); no reply and no filler")
+                                    if call_id in active_calls:
+                                        active_calls[call_id]["callerSpeaking"] = False
+                                        active_calls[call_id]["bargeActive"] = False
 
                                 barge_capture = False
                                 speech_buffer = []
@@ -876,7 +992,7 @@ async def handle_answer_offer(request):
 
     logger.info(f"[{call_id}] Initializing WebRTC call for tenant='{tenant_id}' clinic='{clinic_name}' caller={caller_phone}")
 
-    # Neutral hold on cache miss, then the clinic greeting. SDP is not blocked on TTS.
+    # Clinic greeting on a cache hit. Silence on a miss until that greeting is ready. SDP does not wait on TTS.
     greeting_pcm, followup = await prepare_call_greeting(tenant_id, clinic_name, receptionist_name, custom_greeting, spoken_language)
 
     # Create RTCPeerConnection
