@@ -87,6 +87,7 @@ import {
   extendTenantTrial,
   markPhoneOtpVerified,
   maybeStartTrialIfPending,
+  TRIAL_DAYS,
 } from "./trial-lifecycle.ts";
 import { rejectWrongOtp, reserveOtpSend, sendOtpLimited } from "./otp-attempt.ts";
 import { parseSpecialtyPackInput, resolveSpecialtyPack } from "./specialty-packs.ts";
@@ -1405,7 +1406,7 @@ export function createApiRouter(): Router {
       trialPending: true,
       trialQuotas: {
         trialEndsAt: null,
-        trialDays: 7,
+        trialDays: TRIAL_DAYS,
         aiScribeMinutesLimit: 500,
         dhisClaimsLimit: 100,
       },

@@ -8,7 +8,7 @@ import { getDb, initDatabase } from "./db.ts";
 import { createLiveRegistrationRouter } from "./live-registration-routes.ts";
 import { hashOtp, otpMatches } from "./otp-hash.ts";
 import { resetSendOtpRateLimits } from "./otp-rate-limit.ts";
-import { RAZORPAY_PLAN_ENV, maybeStartTrialIfPending, recordPlanCheckout, settlePlanCheckoutWebhook } from "./trial-lifecycle.ts";
+import { RAZORPAY_PLAN_ENV, TRIAL_DAYS, maybeStartTrialIfPending, recordPlanCheckout, settlePlanCheckoutWebhook } from "./trial-lifecycle.ts";
 import { jsonRequest, startTestServer, type TestHttpServer } from "./test-http.ts";
 import { upsertTenantSubscription } from "./platform-tenants-schema.ts";
 
@@ -74,6 +74,8 @@ describe("production signup trial", () => {
     });
     assert.equal(created.status, 200, String(created.json.error || created.status));
     assert.equal(created.json.trialPending, true);
+    assert.equal(TRIAL_DAYS, 30);
+    assert.equal((created.json.trialQuotas as { trialDays?: number }).trialDays, 30);
     const tenantId = String(created.json.tenantId || "");
     const pending = getDb().prepare("SELECT lifecycle_status, trial_ends_at FROM tenants WHERE id = ?").get(tenantId) as {
       lifecycle_status: string;
@@ -100,7 +102,8 @@ describe("production signup trial", () => {
     };
     assert.equal(started.lifecycle_status, "trial");
     const leftMs = Date.parse(started.trial_ends_at) - Date.now();
-    assert.ok(leftMs > 6 * 24 * 60 * 60 * 1000 && leftMs < 8 * 24 * 60 * 60 * 1000);
+    const dayMs = 24 * 60 * 60 * 1000;
+    assert.ok(leftMs > (TRIAL_DAYS - 1) * dayMs && leftMs < (TRIAL_DAYS + 1) * dayMs);
 
     resetSendOtpRateLimits();
     const email2 = `trial2.${stamp}@signup-test.example`;
@@ -504,6 +507,7 @@ describe("production signup trial", () => {
       });
       assert.equal(created.status, 200, String(created.json.error || created.status));
       assert.equal(created.json.trialPending, true);
+      assert.equal((created.json.trialQuotas as { trialDays?: number }).trialDays, 30);
       const verified = await jsonRequest(server.port, "POST", "/api/auth/whatsapp/verify-otp", {
         verificationId: created.json.verificationId,
         otp: created.json.demoOtp,

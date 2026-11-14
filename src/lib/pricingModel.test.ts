@@ -61,8 +61,13 @@ describe("pricing money format", () => {
       assert.equal(card.includes.some((line) => line.includes("opening after Meta approval")), false);
       assert.equal(card.includes.some((line) => line.includes("ABDM / ABHA sandbox integration")), false);
     }
-    assert.match(model.trial, /days 5, 6 and 7/);
-    assert.match(model.trial, /read-only on day 8/);
+    assert.match(model.description, /30-day card-free trial/);
+    assert.equal(publicPlansResponse().trial.days, 30);
+    assert.deepEqual(publicPlansResponse().trial.reminderDays, [28, 29, 30]);
+    assert.equal(publicPlansResponse().trial.readOnlyDay, 31);
+    assert.match(model.trial, /30 days free\. No card needed for Lumera\./);
+    assert.match(model.trial, /days 28, 29 and 30/);
+    assert.match(model.trial, /read-only on day 31/);
     assert.match(model.trial, /Read-only clinics can still reply to patients on WhatsApp manually within Meta's 24-hour window/);
     assert.equal(model.trademark, "WhatsApp and Meta are trademarks of Meta Platforms, Inc. Lumera uses these names only to describe its integration with the WhatsApp Business Platform and is not endorsed by Meta.");
     const payments = model.faqs.find((item) => item.q === "Does Lumera collect patient payments?");
@@ -95,10 +100,11 @@ describe("pricing money format", () => {
       plan: "individual",
       cycle: "annual",
     });
-    assert.equal(trialSchedule(new Date(Date.UTC(2026, 9, 15, 6, 30))).trialEndLabel, "21 October 2026");
-    assert.equal(trialSchedule(new Date(Date.UTC(2026, 9, 15, 6, 30))).day31Label, "22 October 2026");
+    assert.equal(trialSchedule(new Date(Date.UTC(2026, 9, 15, 6, 30))).trialEndLabel, "13 November 2026");
+    assert.equal(trialSchedule(new Date(Date.UTC(2026, 9, 15, 6, 30))).day31Label, "14 November 2026");
     assert.match(trialIntro("Individual", "annual", "13 November 2026"), /11:59 pm IST on 13 November 2026/);
-    assert.match(trialIntro("Individual", "annual", "13 November 2026"), /days 5, 6 and 7/);
+    assert.match(trialIntro("Individual", "annual", "13 November 2026"), /days 28, 29 and 30/);
+    assert.match(trialIntro("Individual", "annual", "13 November 2026"), /read-only on day 31/);
   });
 
   it("keeps rupee amounts out of the client pricing sources", () => {

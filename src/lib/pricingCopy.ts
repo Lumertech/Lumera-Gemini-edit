@@ -1,7 +1,11 @@
 /**
  * Public pricing and trial sentences from issue #119 amendments 2–4.
  * Prices are not stored here. The server catalog supplies paise.
+ * Trial length comes from server/trial-length.ts (re-exported by trial-lifecycle).
  */
+import { TRIAL_DAYS } from "../../server/trial-length.ts";
+
+export { TRIAL_DAYS };
 
 export const WHATSAPP_BILLED_BY_META =
   "WhatsApp message charges are billed by Meta directly to your clinic's own WhatsApp Business account. Lumera adds no markup. To send messages, trial and paid clinics add a payment method to their WhatsApp Business account in Meta.";
@@ -12,7 +16,10 @@ export const WHATSAPP_INR_PAYMENT =
 export const WHATSAPP_TRADEMARK =
   "WhatsApp and Meta are trademarks of Meta Platforms, Inc. Lumera uses these names only to describe its integration with the WhatsApp Business Platform and is not endorsed by Meta.";
 
-export const TRIAL_LEAD = "7 days free. No card needed for Lumera.";
+export const TRIAL_LEAD = `${TRIAL_DAYS} days free. No card needed for Lumera.`;
+
+/** Short label, e.g. "30-day free trial". */
+export const TRIAL_LENGTH_BADGE = `${TRIAL_DAYS}-day free trial`;
 
 export const TRIAL_WHATSAPP_SIGNUP =
   "To send WhatsApp reminders, add a payment method to your clinic's WhatsApp Business account in Meta. Meta bills it for messages; your Lumera trial stays free.";

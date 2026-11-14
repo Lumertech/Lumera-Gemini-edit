@@ -28,11 +28,11 @@ describe("trial countdown", () => {
     assert.equal(label, "0d 5h left");
   });
 
-  it("names the day-8 and pending states", () => {
+  it("names the day-31 and pending states", () => {
     assert.equal(trialCountdownLabel({ status: "read_only", trialEndsAt: "2026-11-13T00:00:00.000Z", now }), "Trial ended");
     assert.equal(
       trialCountdownLabel({ status: "pending_whatsapp", trialEndsAt: null, now }),
-      "Verify WhatsApp to start the 7-day trial",
+      "Verify WhatsApp to start the 30-day trial",
     );
     assert.equal(trialCountdownLabel({ status: "none", trialEndsAt: null, now }), null);
   });

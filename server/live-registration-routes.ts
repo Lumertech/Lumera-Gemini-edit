@@ -9,6 +9,7 @@ import { ensureTenantSlugColumn, generateUniqueTenantSlug } from "./tenant-slug.
 import { signupPasswordRuleError } from "./password.ts";
 import { hashOtp } from "./otp-hash.ts";
 import { createTrialRouter } from "./trial-routes.ts";
+import { TRIAL_DAYS } from "./trial-lifecycle.ts";
 
 /**
  * Production-safe live clinic registration. Mounted in server.ts before
@@ -156,7 +157,7 @@ async function handleRegisterPractice(req: Request, res: Response) {
     trialPending: true,
     trialQuotas: {
       trialEndsAt: null,
-      trialDays: 7,
+      trialDays: TRIAL_DAYS,
       aiScribeMinutesLimit: 500,
       dhisClaimsLimit: 100,
     },
