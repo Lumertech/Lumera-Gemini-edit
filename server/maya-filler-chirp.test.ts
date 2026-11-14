@@ -53,6 +53,7 @@ describe("Maya schedule filler and Chirp 3 HD voice", () => {
     assert.equal(shouldPlayFiller(turn({ bargeIn: true })), false);
     assert.equal(shouldPlayFiller(turn({ trackSpeaking: true })), false);
     assert.equal(shouldPlayFiller(turn({ callerSpeaking: true })), false);
+    assert.equal(shouldPlayFiller(turn({ utteranceDropped: true })), false);
 
     const slowLookup = turn({ elapsedMs: 1500 });
     assert.equal(shouldPlayFiller(slowLookup), true);

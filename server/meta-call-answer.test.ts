@@ -333,7 +333,9 @@ describe("voice gateway SDP answer", () => {
       gateway.indexOf("async def warmup_and_queue")
     );
     assert.doesNotMatch(prepare, /await /);
-    assert.match(prepare, /return hold, \(cache_key, text\)/);
+    assert.match(prepare, /return np\.zeros\(0, dtype=np\.int16\), \(cache_key, text\)/);
+    assert.doesNotMatch(prepare, /cached_hold_pcm/);
+    assert.doesNotMatch(prepare, /NEUTRAL_HOLD/);
 
     const offer = gateway.slice(
       gateway.indexOf("async def handle_answer_offer"),
