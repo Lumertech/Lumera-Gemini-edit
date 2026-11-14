@@ -206,8 +206,10 @@ describe("public /pricing HTML", () => {
       assert.match(html, /All prices are exclusive of GST/);
       assert.match(html, /7-day refund window/);
       assert.match(html, /15 business days/);
-      assert.match(html, /days 5, 6 and 7/);
-      assert.match(html, /read-only on day 8/);
+      assert.match(html, /30-day card-free trial/);
+      assert.match(html, /30 days free/);
+      assert.match(html, /days 28, 29 and 30/);
+      assert.match(html, /read-only on day 31/);
       assert.match(html, /nothing is charged/);
       const whatsappHtml = WHATSAPP_BILLED_BY_META.replace(/&/g, "&amp;").replace(/'/g, "&#39;");
       assert.ok(html.includes(whatsappHtml), "exact WhatsApp copy missing");

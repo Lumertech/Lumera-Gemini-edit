@@ -1,10 +1,10 @@
 import type { NextFunction, Request, Response } from "express";
 import { isPlatformAdminRole } from "./auth.ts";
 import { getDb, isDemoWorkspaceUser } from "./db.ts";
-import { describeTrialAccess } from "./trial-lifecycle.ts";
+import { describeTrialAccess, TRIAL_DAYS } from "./trial-lifecycle.ts";
 
 export const TRIAL_NOT_STARTED_ERROR =
-  "Verify your WhatsApp number to start the 7-day free trial. Nothing is charged.";
+  `Verify your WhatsApp number to start the ${TRIAL_DAYS}-day free trial. Nothing is charged.`;
 export const TRIAL_READ_ONLY_ERROR =
   "This clinic is read-only. Records stay available. Upgrade to change them. Manual WhatsApp replies inside Meta's 24-hour window are still allowed.";
 
@@ -37,7 +37,7 @@ function writeAllowedWhileRestricted(path: string, pendingVerification: boolean)
 }
 
 /**
- * Pending clinics cannot write clinical data. A trial that has reached day 8
+ * Pending clinics cannot write clinical data. A trial that has reached day 31
  * is read-only except the paths the existing lapsed-clinic rules already allow
  * (manual WhatsApp is enforced in graph-whatsapp, not here).
  */

@@ -41,6 +41,7 @@ import {
 import { PolyclinicSpecialty } from "../types";
 import { BrandMark } from "../components/BrandMark";
 import { showFacebookOAuthButton, showGoogleOAuthButton } from "../lib/oauthUi";
+import { TRIAL_LENGTH_BADGE } from "../lib/pricingCopy";
 import { billingSelectionFromSearch, type BillingCycle, type PublicPlans } from "../lib/pricingModel";
 import { TrialTermsPanel } from "../components/TrialTermsPanel";
 
@@ -1568,7 +1569,7 @@ export const LoginPage: React.FC = () => {
                 <div className="p-2.5 rounded-xl bg-purple-500/10 border border-purple-500/20 text-[11px] text-purple-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1.5">
                   <span className="flex items-start sm:items-center gap-1.5 font-medium min-w-0">
                     <Sparkles className="w-3.5 h-3.5 text-purple-400 shrink-0 mt-0.5 sm:mt-0" />
-                    <span className="leading-snug">7-day free trial after WhatsApp verification • 500 AI Scribe Mins</span>
+                    <span className="leading-snug">{TRIAL_LENGTH_BADGE} after WhatsApp verification • 500 AI Scribe Mins</span>
                   </span>
                   <span className="font-mono text-xs text-emerald-400 font-bold shrink-0">ABHA (sandbox)</span>
                 </div>

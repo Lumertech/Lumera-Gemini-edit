@@ -1,3 +1,4 @@
+import { TRIAL_DAYS, TRIAL_READ_ONLY_DAY, trialReminderPhrase } from "../../server/trial-length.ts";
 import { formatINR } from "./currency.ts";
 import {
   ANNUAL_REFUND,
@@ -122,13 +123,17 @@ function formatYmd(part: { y: number; m: number; d: number }): string {
   return `${part.d} ${MONTHS[part.m]} ${part.y}`;
 }
 
-/** Day 1 is the signup day in IST. The trial ends at 11:59 pm IST on day 7. Day 8 is read-only. */
+/** Day 1 is the signup day in IST. The trial ends at 11:59 pm IST on day TRIAL_DAYS. The next day is read-only. */
 export function trialSchedule(from = new Date()): { trialEndLabel: string; day31Label: string } {
   const start = istYmd(from);
   return {
-    trialEndLabel: formatYmd(addCalendarDays(start.y, start.m, start.d, 6)),
-    day31Label: formatYmd(addCalendarDays(start.y, start.m, start.d, 7)),
+    trialEndLabel: formatYmd(addCalendarDays(start.y, start.m, start.d, TRIAL_DAYS - 1)),
+    day31Label: formatYmd(addCalendarDays(start.y, start.m, start.d, TRIAL_DAYS)),
   };
+}
+
+function trialReminderAndReadOnly(ifYouDont: "one" | "a payment method"): string {
+  return `We'll remind you in the app, on WhatsApp and by email on ${trialReminderPhrase()}. If you don't add ${ifYouDont}, your account becomes read-only on day ${TRIAL_READ_ONLY_DAY}: your records stay safe and exportable, and nothing is charged. Read-only clinics can still reply to patients on WhatsApp manually within Meta's 24-hour window.`;
 }
 
 export function planByCode(plans: PublicPlans, code: BillingPlanCode): PublicPlan {
@@ -172,7 +177,7 @@ export function quoteFor(plans: PublicPlans, code: BillingPlanCode, cycle: Billi
 
 export function trialIntro(planName: string, cycle: BillingCycle, trialEndLabel: string): string {
   const cycleWord = cycle === "monthly" ? "monthly" : "annual";
-  return `${TRIAL_LEAD} Your trial of the ${planName} ${cycleWord} plan ends at 11:59 pm IST on ${trialEndLabel}. We won't charge you anything unless you add a payment method. We'll remind you in the app, on WhatsApp and by email on days 5, 6 and 7. If you don't add one, your account becomes read-only on day 8: your records stay safe and exportable, and nothing is charged. Read-only clinics can still reply to patients on WhatsApp manually within Meta's 24-hour window.`;
+  return `${TRIAL_LEAD} Your trial of the ${planName} ${cycleWord} plan ends at 11:59 pm IST on ${trialEndLabel}. We won't charge you anything unless you add a payment method. ${trialReminderAndReadOnly("one")}`;
 }
 
 export function planAfterTrial(quote: MoneyQuote): string {
@@ -251,20 +256,20 @@ export function buildPricingPageModel(plans: PublicPlans): PricingPageModel {
   return {
     title: "Pricing",
     description:
-      "Lumera clinic plans for an individual doctor or a polyclinic. Prices exclude GST. 7-day card-free trial. WhatsApp messages are billed by Meta to the clinic.",
+      `Lumera clinic plans for an individual doctor or a polyclinic. Prices exclude GST. ${TRIAL_DAYS}-day card-free trial. WhatsApp messages are billed by Meta to the clinic.`,
     gstNote: "All prices are exclusive of GST.",
     cards,
     extraDoctor,
     whatsapp: plans.whatsappCopy,
     whatsappInr: plans.whatsappInrCopy,
     trademark: plans.trademarkCopy,
-    trial: `${TRIAL_LEAD} Optional AutoPay. We'll remind you in the app, on WhatsApp and by email on days 5, 6 and 7. If you don't add a payment method, your account becomes read-only on day 8: your records stay safe and exportable, and nothing is charged. Read-only clinics can still reply to patients on WhatsApp manually within Meta's 24-hour window.`,
+    trial: `${TRIAL_LEAD} Optional AutoPay. ${trialReminderAndReadOnly("a payment method")}`,
     refund: `${ANNUAL_REFUND} ${MONTHLY_REFUND} ${TRIAL_REFUND}`,
     contactEmail: plans.contactEmail,
     faqs: [
       {
         q: "How does the free trial work?",
-        a: `${TRIAL_LEAD} Optional AutoPay. We'll remind you in the app, on WhatsApp and by email on days 5, 6 and 7. If you don't add a payment method, your account becomes read-only on day 8: your records stay safe and exportable, and nothing is charged. Read-only clinics can still reply to patients on WhatsApp manually within Meta's 24-hour window.`,
+        a: `${TRIAL_LEAD} Optional AutoPay. ${trialReminderAndReadOnly("a payment method")}`,
       },
       {
         q: "How do I cancel?",

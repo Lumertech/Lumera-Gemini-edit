@@ -6,6 +6,7 @@ import {
   WHATSAPP_TRADEMARK,
 } from "../src/lib/pricingCopy.ts";
 import type { PublicPlans } from "../src/lib/pricingModel.ts";
+import { TRIAL_DAYS, TRIAL_READ_ONLY_DAY, TRIAL_REMINDER_DAYS } from "./trial-length.ts";
 
 /**
  * Locked list prices from issue #119 amendments 2–4 (paise, GST exclusive).
@@ -73,9 +74,9 @@ export function publicPlansResponse(env: NodeJS.ProcessEnv = process.env): Publi
       },
     ],
     trial: {
-      days: 7,
-      reminderDays: [5, 6, 7],
-      readOnlyDay: 8,
+      days: TRIAL_DAYS,
+      reminderDays: [...TRIAL_REMINDER_DAYS],
+      readOnlyDay: TRIAL_READ_ONLY_DAY,
       cardRequired: false,
     },
     refund: {

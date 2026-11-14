@@ -37,7 +37,7 @@ import {
 import { Link } from "react-router-dom";
 import { LEGAL_ENTITY_NAME, PRODUCT_NAME } from "../brand";
 import { META_TECH_PROVIDER_STATEMENT } from "../lib/metaStatus";
-import { AMBIENT_SCRIBE_MISSION, CONTACT_EMAIL } from "../lib/pricingCopy";
+import { AMBIENT_SCRIBE_MISSION, CONTACT_EMAIL, TRIAL_LENGTH_BADGE } from "../lib/pricingCopy";
 import { BrandMark } from "./BrandMark";
 import { useNav } from "../nav/NavigationContext";
 import { surfaceToPath } from "../nav/surfaces";
@@ -335,7 +335,7 @@ export const LandingPage: React.FC = () => {
 
           <div className="mt-4 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-xs text-slate-400">
             <span className="flex items-center gap-1.5">
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> 7-day free trial
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> {TRIAL_LENGTH_BADGE}
             </span>
             <span className="flex items-center gap-1.5">
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> No Credit Card Required
@@ -904,7 +904,7 @@ export const LandingPage: React.FC = () => {
             Ready to Experience the AI Clinical Operating System?
           </h3>
           <p className="text-slate-300 text-xs sm:text-sm max-w-xl mx-auto">
-            Start a 7-day free trial. No card needed. ABDM integration is in sandbox testing and not yet live. We follow India's DPDP Act in how we handle data.
+            Start a {TRIAL_LENGTH_BADGE}. No card needed. ABDM integration is in sandbox testing and not yet live. We follow India's DPDP Act in how we handle data.
           </p>
           <div className="pt-2">
             <a

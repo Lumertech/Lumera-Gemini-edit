@@ -4,10 +4,14 @@ import { phoneMatchKey } from "./clinical.ts";
 import { writeAudit } from "./db-seed-maps.ts";
 import { isSandboxOrDemoTenant } from "./graph-whatsapp.ts";
 import { upsertTenantSubscription } from "./platform-tenants-schema.ts";
+import { TRIAL_DAYS, TRIAL_READ_ONLY_DAY, TRIAL_REMINDER_DAYS, trialReminderPhrase } from "./trial-length.ts";
 
-/** Card-free clinic trial. Day 8 is read-only. */
-export const TRIAL_DAYS = 7;
-export const TRIAL_READ_ONLY_DAY = 8;
+/**
+ * Card-free clinic trial. TRIAL_DAYS is assigned in trial-length.ts so the
+ * browser can import the same number. Server callers import it from here.
+ * Day 1 is signup. The next day (TRIAL_READ_ONLY_DAY) is read-only.
+ */
+export { TRIAL_DAYS, TRIAL_READ_ONLY_DAY, TRIAL_REMINDER_DAYS, trialReminderPhrase };
 export const PENDING_VERIFICATION = "pending_verification";
 
 export const RAZORPAY_PLAN_ENV = ["RAZORPAY_KEY_ID", "RAZORPAY_KEY_SECRET", "RAZORPAY_WEBHOOK_SECRET"] as const;
@@ -85,7 +89,7 @@ export function markPhoneOtpVerified(database: SqlDatabase, userId: string, at =
 }
 
 /**
- * Starts the 7-day trial after a verified WhatsApp number.
+ * Starts the card-free trial (TRIAL_DAYS) after a verified WhatsApp number.
  * One claim per email and per phone. A second clinic cannot reuse either.
  * Audit text is the tenant id and the day count — no phone, email, or OTP.
  */

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { apiFetch } from "../api/http";
 import { formatINR } from "../lib/currency";
+import { TRIAL_DAYS, TRIAL_READ_ONLY_DAY } from "../../server/trial-length.ts";
 import { trialCountdownLabel } from "../lib/trialCountdown";
 
 type TrialView = {
@@ -33,7 +34,7 @@ function rupees(paise: number): string {
 }
 
 /**
- * Days left during the trial. On day 8 every clinic screen asks the clinic to upgrade.
+ * Days left during the trial. On day 31 every clinic screen asks the clinic to upgrade.
  * Payment stays unpaid until Razorpay keys exist and a verified webhook arrives.
  */
 export function TrialAccessBanner() {
@@ -123,10 +124,10 @@ export function TrialAccessBanner() {
       className={`mb-3 rounded-lg border px-3 py-2 text-sm ${prominent ? "bg-amber-50 border-amber-300 text-amber-950" : "bg-sky-50 border-sky-200 text-sky-950"}`}
     >
       {trial.whatsappVerificationRequired ? (
-        <p data-testid="trial-whatsapp-required">Verify your WhatsApp number to start the 7-day free trial. No card is required.</p>
+        <p data-testid="trial-whatsapp-required">Verify your WhatsApp number to start the {TRIAL_DAYS}-day free trial. No card is required.</p>
       ) : trial.status === "read_only" ? (
         <p data-testid="trial-readonly-prompt">
-          Day 8: this clinic is read-only. Records stay available. Upgrade to pay. Manual WhatsApp replies inside the 24-hour window still work.
+          Day {TRIAL_READ_ONLY_DAY}: this clinic is read-only. Records stay available. Upgrade to pay. Manual WhatsApp replies inside the 24-hour window still work.
         </p>
       ) : (
         <p data-testid="trial-days-left">

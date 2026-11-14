@@ -12,7 +12,7 @@ import {
   type BillingPlanCode,
   type PublicPlans,
 } from "../lib/pricingModel";
-import { MONTHLY_BILLING_CONTACT, TRIAL_WHATSAPP_INR, TRIAL_WHATSAPP_SIGNUP } from "../lib/pricingCopy";
+import { MONTHLY_BILLING_CONTACT, TRIAL_LEAD, TRIAL_WHATSAPP_INR, TRIAL_WHATSAPP_SIGNUP } from "../lib/pricingCopy";
 
 export function TrialTermsPanel({
   plans,
@@ -67,11 +67,8 @@ export function TrialTermsPanel({
         <p data-testid="trial-monthly-contact">{MONTHLY_BILLING_CONTACT}</p>
       ) : null}
       <p data-testid="trial-terms-copy">
-        <strong>7 days free. No card needed for Lumera.</strong>{" "}
-        {trialIntro(planName, usedCycle, schedule.trialEndLabel).replace(
-          "7 days free. No card needed for Lumera. ",
-          ""
-        )}
+        <strong>{TRIAL_LEAD}</strong>{" "}
+        {trialIntro(planName, usedCycle, schedule.trialEndLabel).replace(`${TRIAL_LEAD} `, "")}
       </p>
       <p>
         <strong>WhatsApp:</strong> {TRIAL_WHATSAPP_SIGNUP} {TRIAL_WHATSAPP_INR}

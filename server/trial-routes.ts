@@ -16,6 +16,7 @@ import {
   describeTrialAccess,
   markPhoneOtpVerified,
   recordPlanCheckout,
+  TRIAL_DAYS,
 } from "./trial-lifecycle.ts";
 
 const TRIAL_PHONE_ROLES = new Set(["doctor", "CLINIC_ADMIN", "polyclinic_admin"]);
@@ -204,7 +205,7 @@ export function createTrialRouter(): Router {
       ok: true,
       trialStarted: true,
       trialEndsAt: started.trialEndsAt,
-      message: "WhatsApp number verified. Your 7-day free trial has started.",
+      message: `WhatsApp number verified. Your ${TRIAL_DAYS}-day free trial has started.`,
     });
   });
 
