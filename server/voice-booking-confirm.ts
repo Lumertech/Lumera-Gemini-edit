@@ -1,4 +1,5 @@
 import { clinicCalendarDate } from "../src/lib/clinicDay.ts";
+import { prepareMayaSpokenText, stripDoctorTitles, withSingleDoctorTitle } from "./voice-doctor-name.ts";
 
 export interface VoiceBookingDraft {
   patientName: string;
@@ -217,7 +218,7 @@ export function parseSpokenDoctor(message: string): string {
   const match = String(message || "").match(
     /(?:^|\s)(?:dr\.?|doctor|डॉक्टर|डॉ\.?)\s+([A-Za-z\u0900-\u097F][A-Za-z\u0900-\u097F.'’\-]*(?:\s+[A-Za-z\u0900-\u097F][A-Za-z\u0900-\u097F.'’\-]*){0,2})/i
   );
-  return match ? takeName(match[1]) : "";
+  return match ? takeName(stripDoctorTitles(match[1])) : "";
 }
 
 export function mayaAskedForPatientName(speech: string): boolean {
@@ -301,17 +302,24 @@ function parseSpokenPhone(message: string): string {
   return match ? `+91${match[1]}` : "";
 }
 
+function titledDoctor(name: string, language: Spoken): string {
+  const titled = withSingleDoctorTitle(name, language);
+  if (titled) return titled;
+  if (language === "hi" || language === "mr") return "डॉक्टर";
+  return "the doctor on duty";
+}
+
 function readBack(draft: VoiceBookingDraft, language: Spoken): string {
   const when = formatIstDateSpeech(draft.date);
   const phone = speakablePhone(draft.phone);
-  const doctor = draft.doctorName.trim() || "the doctor on duty";
+  const doctor = titledDoctor(draft.doctorName, language);
   if (language === "hi") {
-    return `मैंने नोट किया: नाम ${draft.patientName}, तारीख ${when} IST, समय ${draft.timeSlot}, डॉक्टर ${doctor}, फ़ोन ${phone}. क्या मैं यह अपॉइंटमेंट बुक कर दूँ?`;
+    return prepareMayaSpokenText(`मैंने नोट किया: नाम ${draft.patientName}, तारीख ${when} IST, समय ${draft.timeSlot}, ${doctor}, फ़ोन ${phone}. क्या मैं यह अपॉइंटमेंट बुक कर दूँ?`);
   }
   if (language === "mr") {
-    return `मी नोंद केली: नाव ${draft.patientName}, तारीख ${when} IST, वेळ ${draft.timeSlot}, डॉक्टर ${doctor}, फोन ${phone}. मी ही अपॉइंटमेंट बुक करू का?`;
+    return prepareMayaSpokenText(`मी नोंद केली: नाव ${draft.patientName}, तारीख ${when} IST, वेळ ${draft.timeSlot}, ${doctor}, फोन ${phone}. मी ही अपॉइंटमेंट बुक करू का?`);
   }
-  return `I have ${draft.patientName} on ${when} at ${draft.timeSlot} IST with ${doctor}, phone ${phone}. Shall I book this?`;
+  return prepareMayaSpokenText(`I have ${draft.patientName} on ${when} at ${draft.timeSlot} IST with ${doctor}, phone ${phone}. Shall I book this?`);
 }
 
 function callbackSpeech(clinicName: string, clinicPhone: string, language: Spoken): string {
@@ -487,12 +495,13 @@ function mergeDraft(
   const spokenDate = parseSpokenDate(message, todayIso);
   const spokenTime = parseSpokenTime(message);
   const spokenDoctor = parseSpokenDoctor(message);
+  const doctorSource = spokenDoctor || base.doctorName || heard?.doctorName || String(input.doctorName || "");
   return {
     patientName: spokenName || base.patientName || heard?.patientName || usablePatientName(input.patientName),
     date: spokenDate || base.date || heard?.date || input.proposed?.date || "",
     timeSlot: spokenTime || base.timeSlot || heard?.timeSlot || input.proposed?.timeSlot || "",
     phone: spokenPhone || base.phone || storedPhone(input.phone),
-    doctorName: spokenDoctor || base.doctorName || heard?.doctorName || String(input.doctorName || "").trim(),
+    doctorName: stripDoctorTitles(doctorSource) || doctorSource.trim(),
     failedConfirmations: base.failedConfirmations,
     status: base.status,
   };

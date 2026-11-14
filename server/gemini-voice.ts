@@ -12,7 +12,8 @@ import { mayaDemoMode } from "./voice-demo.ts";
 import { cloudTtsBilling, cloudTtsVoice, mayaSpokenLanguage, synthesizeCloudTtsDetailed, type MayaSpokenLanguage } from "./voice-tts.ts";
 import { voiceTurnNeedsScheduleLookup } from "./voice-filler.ts";
 import { shouldDropVoiceUtterance } from "./voice-listen-gate.ts";
-import { mayaLockedLanguageInstruction, resolveMayaCallLanguage, speechConflictsWithLockedLanguage } from "./voice-language-lock.ts";
+import { mayaLockedLanguageInstruction, resolveMayaCallLanguage, speechMissesCallLanguage } from "./voice-language-lock.ts";
+import { MAYA_DOCTOR_TITLE_RULE, prepareMayaSpokenText, stripDoctorTitles, withSingleDoctorTitle } from "./voice-doctor-name.ts";
 import { formatTenantVoiceFacts } from "./voice-vocabulary.ts";
 import { formatIstDateSpeech, collectVoiceSlots, mayaAskedForPatientName, parseVoiceBookingDraft, planVoiceBooking, speakablePhone, usablePatientName, withHeardSlots, type VoiceBookingDraft, type VoiceHistoryTurn } from "./voice-booking-confirm.ts";
 import { findRegisteredPatient, resolveClinicFacingNames } from "./whatsapp.ts";
@@ -32,7 +33,7 @@ export interface VoiceReceptionistInput {
   callerName?: string;
   callerPhone?: string;
   language?: string;
-  /** When set, receptionist speech stays in this call language instead of following the latest utterance. */
+  /** Call language already chosen for this turn, including a switch on the latest clear utterance. */
   replyLanguage?: MayaSpokenLanguage;
   tenantId?: string;
   conversationHistory?: Array<{ role: "caller" | "maya"; text: string }>;
@@ -257,7 +258,7 @@ function turnLanguageHint(modelLanguage: string, body: { language?: unknown } | 
 
 function capturedSlotPrompt(draft: VoiceBookingDraft | null): string {
   const name = usablePatientName(draft?.patientName || "") || "not yet";
-  const doctor = String(draft?.doctorName || "").trim() || "not yet";
+  const doctor = withSingleDoctorTitle(draft?.doctorName || "", "en") || "not yet";
   const date = String(draft?.date || "").trim() || "not yet";
   const time = String(draft?.timeSlot || "").trim() || "not yet";
   return `Captured this call. Do not ask again for a line that is filled:
@@ -298,9 +299,19 @@ function patientClinicLabel(name: string | undefined): string {
 }
 
 function cleanRosterDoctor(name: string): string {
-  const clean = String(name || "").replace(/^dr\.?\s*/i, "").trim();
+  const clean = stripDoctorTitles(name);
   if (!clean || /on-duty physician/i.test(clean)) return "";
   return clean;
+}
+
+function voiceDoctorRosterLine(doctor: TenantVoiceDoctor): string {
+  const name = withSingleDoctorTitle(doctor.name, "en") || "the doctor on duty";
+  return `  * ${name} (${doctor.specialty}) - OPD: ${doctor.timing} (${doctor.days}), Fee ₹${doctor.fee}`;
+}
+
+function spokenBookingDoctor(name: string, lang: IndicLangCode): string {
+  const style = lang === "hi" || lang === "mr" ? lang : "en";
+  return withSingleDoctorTitle(name, style) || String(name || "").trim();
 }
 
 function tenantVoiceFacts(tenantId: string, clinicName: string, doctors: TenantVoiceDoctor[]): string {
@@ -637,14 +648,14 @@ function confirmedVoiceBooking(
 ) {
   const langInfo = INDIC_LANGUAGES[langCode] || INDIC_LANGUAGES.en;
   return {
-    speechText: langInfo.bookingFormat(
+    speechText: prepareMayaSpokenText(langInfo.bookingFormat(
       callerName,
-      appt.doctorName,
+      spokenBookingDoctor(appt.doctorName, langCode),
       appt.specialty,
       appt.timeSlot,
       appt.tokenNumber,
       spokenBookingWhen(langCode, appt.date, now)
-    ),
+    )),
     suggestedAction: bookingAction(appt.tokenNumber, appt.date, appt.timeSlot, now),
   };
 }
@@ -747,7 +758,7 @@ export function getTenantVoiceContext(tenantId: string, callerPhone: string): Te
       if (pastAppts && pastAppts.length > 0) {
         callerProfile = {
           previousVisitsCount: pastAppts.length,
-          lastDoctorName: String(pastAppts[0].doctor_name || "").replace(/^dr\.?\s*/i, ""),
+          lastDoctorName: stripDoctorTitles(String(pastAppts[0].doctor_name || "")),
           lastSpecialty: String(pastAppts[0].specialty || ""),
         };
       }
@@ -807,9 +818,7 @@ export async function runGeminiVoiceReceptionist(opts: VoiceReceptionistInput): 
           .map((h) => `${h.role === "caller" ? "Caller" : receptionistName}: "${h.text}"`)
           .join("\n");
 
-        const doctorRosterText = doctors
-          .map((d) => `  * Dr. ${d.name.replace(/^dr\.?\s*/i, "")} (${d.specialty}) - OPD: ${d.timing} (${d.days}), Fee ₹${d.fee}`)
-          .join("\n");
+        const doctorRosterText = doctors.map((d) => voiceDoctorRosterLine(d)).join("\n");
 
         const prompt = `You are ${receptionistName}, the warm, polite, and intelligent AI Clinic Receptionist at ${clinicName} in ${letterhead.city || "India"}.
 You are speaking live to a caller on a WhatsApp voice phone call.
@@ -825,7 +834,7 @@ ${doctorRosterText}
 ${tenantVoiceFacts(tenantId, clinicName, doctors)}
 - Address: ${clinicAddress}.
 - Phone: ${clinicPhone}.
-${voiceSettings.customGreeting ? `- Greeting Preference: "${voiceSettings.customGreeting}"` : ""}
+${voiceSettings.customGreeting ? `- Greeting Preference: "${prepareMayaSpokenText(voiceSettings.customGreeting)}"` : ""}
 
 Previous Call Conversation (if any):
 ${historyText || "(Start of call)"}
@@ -835,6 +844,7 @@ Latest Caller Speech: "${message}"
 
 Voice Persona Rules:
 1. Speak naturally and warmly like a real receptionist. ${lockedReplyRule || `Match the caller's language (${langInfo.name} / Hinglish / English).`}
+${MAYA_DOCTOR_TITLE_RULE}
 2. Keep spoken responses short, concise, and conversational (1 to 2 sentences, 15 to 25 words max) so it sounds like real, natural voice dialogue.
 3. If caller explicitly asks to book an appointment (e.g. "book an appointment", "give me a slot", "book Dr. ...", "appointment chahiye", "ha book kardo"), set "shouldBook": true and specify the doctor's name. If the patient name, doctor, date, or time is already captured above, acknowledge it and ask only for what is still missing. Never ask for the patient's name again once it is known. Indian names and Hindi or Marathi transcripts count.
 4. If caller is just asking for timings, doctor availability, directions, or asking questions: answer their question warmly using the clinic profile above and ask if they'd like to book. Do NOT book unless they ask or confirm!
@@ -861,7 +871,7 @@ Output strict JSON:
           const parsed = JSON.parse(jsonMatch[0]);
           if (parsed.speechText) {
             if (parsed.shouldBook) {
-              const docToBook = parsed.doctorName || (doctors[0]?.name ? doctors[0].name.replace(/^dr\.?\s*/i, "") : "General Physician");
+              const docToBook = stripDoctorTitles(String(parsed.doctorName || "")) || (doctors[0]?.name ? stripDoctorTitles(doctors[0].name) : "") || "General Physician";
               try {
                 const booked = bookWhatsAppAppointment({
                   tenantId,
@@ -1099,7 +1109,7 @@ Detected Language: ${langInfo.name} (${langInfo.localName})
 Guidelines:
 1. Respond warmly and politely as ${receptionistName} the receptionist directly in ${langInfo.name} (${langInfo.localName}).${lockedReplyRule ? ` ${lockedReplyRule}` : ""}
 2. Keep the answer spoken, natural, concise (under 30-40 words) suitable for voice audio playback over telephone/WhatsApp voice note.
-3. Offer relevant clinical help using only the clinic schedule and doctor list below. Do not invent hours.
+3. Offer relevant clinical help using only the clinic schedule and doctor list below. Do not invent hours. ${MAYA_DOCTOR_TITLE_RULE}
 ${tenantVoiceFacts(tenantId, clinicName, doctors)}
 4. Output strict JSON only:
 {"speechText": "Spoken text in ${langInfo.name}", "suggestedAction": "English summary"}`;
@@ -1161,7 +1171,7 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
         getGenAI,
       });
 
-      return res.json(result);
+      return res.json({ ...result, speechText: prepareMayaSpokenText(result.speechText) });
     } catch (err) {
       console.error("[Voice Bot Error]", err);
       // Resilient fallback: never fail with 503, always return comforting receptionist response
@@ -1226,16 +1236,15 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
       const clinicPhone = letterhead.phone || letterhead.whatsappNumber || "";
       const escalationPhone = String(voiceSettings.escalationPhone || clinicPhone || "").trim();
 
-      const doctorRosterText = doctors
-        .map((d) => `  * Dr. ${d.name.replace(/^dr\.?\s*/i, "")} (${d.specialty}) - OPD: ${d.timing} (${d.days}), Fee ₹${d.fee}`)
-        .join("\n");
+      const doctorRosterText = doctors.map((d) => voiceDoctorRosterLine(d)).join("\n");
 
       let memoryProfileText = "";
       if (callerProfile && callerProfile.previousVisitsCount > 0) {
+        const usualDoctor = withSingleDoctorTitle(callerProfile.lastDoctorName || "", "en") || "the doctor on file";
         memoryProfileText = `Caller Profile & Continuous Memory:
 - Returning Patient: Yes (${callerProfile.previousVisitsCount} prior visits at this clinic)
-- Last Consulted Doctor: Dr. ${callerProfile.lastDoctorName} (${callerProfile.lastSpecialty})
-- Personalization Tip: If the caller mentions a checkup, follow-up, or does not specify a doctor, warmly ask if they would like to book with their usual doctor, Dr. ${callerProfile.lastDoctorName}.`;
+- Last Consulted Doctor: ${usualDoctor} (${callerProfile.lastSpecialty})
+- Personalization Tip: If the caller mentions a checkup, follow-up, or does not specify a doctor, warmly ask if they would like to book with their usual doctor, ${usualDoctor}. ${MAYA_DOCTOR_TITLE_RULE}`;
       }
 
       const history = (req.body?.conversationHistory || []) as VoiceHistoryTurn[];
@@ -1281,7 +1290,7 @@ ${tenantVoiceFacts(tenantId, clinicName, doctors)}
 - Address: ${clinicAddress}.
 - Phone: ${clinicPhone}.
 - Escalation Line: ${escalationPhone}.
-${voiceSettings.customGreeting ? `- Greeting Preference: "${voiceSettings.customGreeting}"` : ""}
+${voiceSettings.customGreeting ? `- Greeting Preference: "${prepareMayaSpokenText(voiceSettings.customGreeting)}"` : ""}
 
 Previous Call Conversation (if any):
 ${historyText || "(Start of call)"}
@@ -1295,7 +1304,7 @@ Instructions:
    - If you hear words, transcribe those words, including soft or fast Indian English, Hindi, Hinglish, or Marathi.
    - If the clip is silence, background noise, a cough, breath, or sounds with no words, set "transcript": "", "speechText": "", and "intent": "SILENCE". Do not invent words, a booking, or a question from noise.
 3. ${mayaLockedLanguageInstruction(priorLanguage.language, priorLanguage.locked)}
-4. In "speechText", formulate your spoken receptionist response in that reply language, so the words match the voice.
+4. In "speechText", formulate your spoken receptionist response in that reply language, so the words match the Chirp 3 HD voice. ${MAYA_DOCTOR_TITLE_RULE}
    - If the caller just said their name, acknowledge it (for example "Thank you, Ravi" or "धन्यवाद, रवि") and ask only for details that are still missing.
    - Never ask for the patient's name, doctor, date, or time again once that slot is captured above or earlier in the conversation. Indian names and Hindi or Marathi transcripts count.
    - When the transcript has real words, acknowledge what you heard.
@@ -1348,7 +1357,7 @@ Output strict JSON:
               suggestedAction = String(parsed.suggestedAction || "Answered patient inquiry");
               shouldBook = Boolean(parsed.shouldBook);
               shouldTransfer = Boolean(parsed.shouldTransfer);
-              doctorToBook = String(parsed.doctorName || "");
+              doctorToBook = stripDoctorTitles(String(parsed.doctorName || ""));
               modelPatientName = String(parsed.patientName || "");
               modelLanguage = String(parsed.language || "");
               console.log(`[Single-Pass Voice AI] Caller: "${message}" | ${receptionistName} (${intent}): "${speechText}" (fast-path)`);
@@ -1368,7 +1377,7 @@ Output strict JSON:
         currentHint: turnHint,
         currentDetected: message ? detectIndicLanguage(message, turnHint) : "",
       }).language;
-      if (speechText && speechConflictsWithLockedLanguage(speechText, spoken)) {
+      if (speechText && speechMissesCallLanguage(speechText, spoken)) {
         speechText = "";
       }
 
@@ -1607,10 +1616,11 @@ Output strict JSON:
         speechText = `${prefix} ${speechText}`;
       }
 
-      if (!authoredSpeech && speechText && speechConflictsWithLockedLanguage(speechText, spoken)) {
+      if (!authoredSpeech && speechText && speechMissesCallLanguage(speechText, spoken)) {
         speechText = lockedReplyFallback(spoken);
         suggestedAction = `Kept the reply in the locked call language (${spoken})`;
       }
+      speechText = prepareMayaSpokenText(speechText);
 
       const now = new Date().toISOString();
       const timeDisplay = new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" });
@@ -1750,9 +1760,10 @@ Output strict JSON:
     } else if (!voiceGatewayAuthorized(req.get("x-voice-gateway-secret"))) {
       return res.status(403).json({ error: "Forbidden" });
     }
-    const text = String(req.body?.text || "").replace(/\s+/g, " ").trim();
-    if (!text) return res.status(400).json({ error: "text is required" });
-    if (text.length > 500) return res.status(400).json({ error: "text is too long" });
+    const raw = String(req.body?.text || "").replace(/\s+/g, " ").trim();
+    if (!raw) return res.status(400).json({ error: "text is required" });
+    if (raw.length > 500) return res.status(400).json({ error: "text is too long" });
+    const text = prepareMayaSpokenText(raw);
     const clip = String(req.body?.clip || "greeting").trim();
     if (!["hold", "filler", "greeting", "reply"].includes(clip)) {
       return res.status(400).json({ error: "clip must be hold, filler, greeting, or reply" });

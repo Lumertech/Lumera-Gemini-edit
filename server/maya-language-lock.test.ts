@@ -15,6 +15,7 @@ import {
   mayaLockedLanguageInstruction,
   resolveMayaCallLanguage,
   speechConflictsWithLockedLanguage,
+  speechMissesCallLanguage,
   type MayaCallLanguage,
   type MayaLanguageTurn,
 } from "./voice-language-lock.ts";
@@ -74,6 +75,12 @@ describe("Maya call language lock", () => {
     assert.match(mayaLockedLanguageInstruction("en", true), /Hindi mein baat karo/);
     assert.match(mayaLockedLanguageInstruction("en", true), /Marathi madhe bola/);
     assert.match(mayaLockedLanguageInstruction("en", true), /speak English/);
+    assert.match(mayaLockedLanguageInstruction("en", true), /Chirp 3 HD/);
+    assert.match(mayaLockedLanguageInstruction("hi", false), /Chirp 3 HD/);
+    assert.equal(isAmbiguousLanguageTurn("okay"), true);
+    assert.equal(isAmbiguousLanguageTurn("doctor"), true);
+    assert.equal(isAmbiguousLanguageTurn("appointment"), true);
+    assert.equal(isAmbiguousLanguageTurn("okay doctor appointment"), true);
   });
 
   it("locks from the first clear utterance and ignores names, haan, Hinglish, and one Devanagari word", () => {
@@ -110,7 +117,7 @@ describe("Maya call language lock", () => {
     assert.equal(thenEnglish.locked, true);
   });
 
-  it("switches on an explicit request, or after two consecutive clear turns, and not after one", () => {
+  it("switches on an explicit request or one clear sentence, and ignores loanwords and mixed Hinglish", () => {
     assert.equal(walk([{ text: "I need an appointment" }, { text: "Hindi mein baat karo" }]).language, "hi");
     assert.equal(walk([{ text: "मुझे डॉक्टर चाहिए" }, { text: "speak English" }]).language, "en");
     assert.equal(walk([{ text: "I need an appointment" }, { text: "Marathi madhe bola" }]).language, "mr");
@@ -120,26 +127,41 @@ describe("Maya call language lock", () => {
       { text: "I need an appointment" },
       { text: "मला उद्या डॉक्टरकडे दाखवायचे आहे" },
     ]);
-    assert.equal(oneMarathi.language, "en");
-    assert.equal(oneMarathi.pendingLanguage, "mr");
-    assert.equal(oneMarathi.pendingCount, 1);
+    assert.equal(oneMarathi.language, "mr");
+    assert.equal(oneMarathi.pendingLanguage, null);
+    assert.equal(oneMarathi.pendingCount, 0);
 
-    const twoMarathi = walk([
+    const oneHindi = walk([
       { text: "I need an appointment" },
-      { text: "मला उद्या डॉक्टरकडे दाखवायचे आहे" },
-      { text: "तुमच्या क्लिनिकमध्ये कोणते डॉक्टर आहेत" },
+      { text: "मुझे कल डॉक्टर के पास जाना है" },
     ]);
-    assert.equal(twoMarathi.language, "mr");
-    assert.equal(twoMarathi.pendingCount, 0);
+    assert.equal(oneHindi.language, "hi");
+    assert.equal(oneHindi.pendingCount, 0);
 
-    const broken = walk([
+    const backToEnglish = walk([
       { text: "I need an appointment" },
       { text: "मला उद्या डॉक्टरकडे दाखवायचे आहे" },
       { text: "I need the clinic address please" },
-      { text: "तुमच्या क्लिनिकमध्ये कोणते डॉक्टर आहेत" },
     ]);
-    assert.equal(broken.language, "en");
-    assert.equal(broken.pendingCount, 1);
+    assert.equal(backToEnglish.language, "en");
+    assert.equal(backToEnglish.pendingCount, 0);
+
+    const loanwords = walk([
+      { text: "I need an appointment please" },
+      { text: "okay" },
+      { text: "doctor" },
+      { text: "appointment" },
+      { text: "okay doctor appointment" },
+    ]);
+    assert.equal(loanwords.language, "en");
+    assert.equal(loanwords.locked, true);
+
+    const hinglish = walk([
+      { text: "I need an appointment please" },
+      { text: "mujhe kal doctor chahiye but I need the address please" },
+    ]);
+    assert.equal(hinglish.language, "en");
+    assert.equal(hinglish.pendingLanguage, null);
 
     assert.equal(speechConflictsWithLockedLanguage("Thank you, प्रिया शर्मा. What date and time should I book?", "en"), false);
     assert.equal(speechConflictsWithLockedLanguage("माफ़ कीजिए, मुझे आपकी आवाज़ साफ़ नहीं आई। क्या आप दोबारा बोलेंगे?", "en"), true);
@@ -147,6 +169,9 @@ describe("Maya call language lock", () => {
     assert.equal(speechConflictsWithLockedLanguage("अपॉइंटमेंट के लिए मरीज का नाम बता दीजिए।", "hi"), false);
     assert.equal(speechConflictsWithLockedLanguage("अपॉइंटमेंटसाठी रुग्णाचे नाव सांगा.", "mr"), false);
     assert.equal(speechConflictsWithLockedLanguage("अपॉइंटमेंट के लिए मरीज का नाम बता दीजिए।", "mr"), true);
+    assert.equal(speechMissesCallLanguage("How can I help you?", "hi"), true);
+    assert.equal(speechMissesCallLanguage("धन्यवाद, रवि। कौन सी तारीख और कौन सा समय चाहिए?", "hi"), false);
+    assert.equal(speechMissesCallLanguage("How can I help you?", "en"), false);
   });
 });
 
@@ -254,18 +279,28 @@ describe("Maya call language on a voice session", () => {
     assertSpoken(await call(from, "haan", state, { language: "English" }), "hi");
   });
 
-  it("switches when the caller asks, and only after two consecutive Marathi turns otherwise", async () => {
+  it("switches on an explicit request or one clear sentence, and keeps the Chirp 3 HD voice", async () => {
     const asked = { history: [] as Array<{ role: string; text: string }>, draft: null as unknown };
     const from = "+919710000003";
-    assertSpoken(await call(from, "I need an appointment please", asked), "en");
-    assertSpoken(await call(from, "Hindi mein baat karo", asked), "hi");
+    const english = await call(from, "I need an appointment please", asked);
+    assertSpoken(english, "en");
+    const hindi = await call(from, "Hindi mein baat karo", asked);
+    assertSpoken(hindi, "hi");
+    assert.equal(String(hindi.ttsVoice).split("-Chirp3-HD-")[1], String(english.ttsVoice).split("-Chirp3-HD-")[1]);
+    assertSpoken(await call(from, "okay", asked), "hi");
+    assertSpoken(await call(from, "doctor", asked), "hi");
     assertSpoken(await call(from, "speak English", asked), "en");
 
     const marathi = { history: [] as Array<{ role: string; text: string }>, draft: null as unknown };
     const other = "+919710000004";
     assertSpoken(await call(other, "I need an appointment please", marathi), "en");
-    assertSpoken(await call(other, "मला उद्या डॉक्टरकडे दाखवायचे आहे", marathi, { language: "mr" }), "en");
-    assertSpoken(await call(other, "तुमच्या क्लिनिकमध्ये कोणते डॉक्टर आहेत", marathi), "mr");
+    assertSpoken(await call(other, "appointment", marathi), "en");
+    const switched = await call(other, "मला उद्या डॉक्टरकडे दाखवायचे आहे", marathi, { language: "mr" });
+    assertSpoken(switched, "mr");
+    assert.equal(switched.ttsVoice, "mr-IN-Chirp3-HD-Aoede");
+    assert.equal(String(switched.ttsVoice).split("-Chirp3-HD-")[1], String(english.ttsVoice).split("-Chirp3-HD-")[1]);
+    assertSpoken(await call(other, "okay doctor appointment", marathi), "mr");
+    assertSpoken(await call(other, "mujhe kal doctor chahiye but I need the address please", marathi), "mr");
   });
 
   it("starts from the clinic greeting language, then locks the caller's first clear sentence", async () => {

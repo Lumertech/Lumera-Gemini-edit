@@ -1,3 +1,5 @@
+import { stripDoctorTitles, withSingleDoctorTitle } from "./voice-doctor-name.ts";
+
 export interface VoiceFactDoctor {
   name: string;
   specialty: string;
@@ -48,8 +50,7 @@ export const COMMON_INDIAN_MEDICINES = [
 ] as const;
 
 export function doctorNicknames(name: string): string[] {
-  const clean = String(name || "")
-    .replace(/^dr\.?\s*/i, "")
+  const clean = stripDoctorTitles(name)
     .replace(/\(.*?\)/g, "")
     .trim();
   const parts = clean.split(/\s+/).filter((part) => part.length > 2);
@@ -77,7 +78,8 @@ export function formatTenantVoiceFacts(input: {
           const specialty = doctor.specialty.trim() || "General Medicine";
           const timing = doctor.timing.trim() || "hours on file";
           const days = doctor.days.trim() || "days on file";
-          return `  * Dr. ${doctor.name.replace(/^dr\.?\s*/i, "")}${alias} — ${specialty}; OPD ${timing} (${days})`;
+          const titled = withSingleDoctorTitle(doctor.name, "en") || "the doctor on duty";
+          return `  * ${titled}${alias} — ${specialty}; OPD ${timing} (${days})`;
         })
         .join("\n")
     : "  * No doctor is saved on this clinic yet.";

@@ -11,12 +11,16 @@ import type { MayaSpokenLanguage } from "./voice-tts.ts";
  * on the call without a second store.
  *
  * The greeting language (English, or an explicit clinic default) is used until
- * the first substantive utterance. After that the lock moves only when the
- * caller asks ("Hindi mein baat karo", "Marathi madhe bola", "speak English")
- * or two consecutive turns are clearly in another language. Names, numbers,
- * yes/no, haan, ok, dates, and doctor names do not move it and do not wipe a
- * pending switch. Roman Hinglish counts as Hindi only with several Hindi
- * words, not from a model hint or one word.
+ * the first substantive utterance. After that Maya follows the caller on the
+ * same turn when the utterance is clearly English, Hindi, or Marathi: enough
+ * words, and more than one language signal. An explicit request
+ * ("Hindi mein baat karo", "Marathi madhe bola", "speak English") also
+ * switches immediately. A name, number, yes/no, haan, ok, date, doctor name,
+ * or a loanword such as okay, doctor, or appointment does not move the lock.
+ * Mixed Hinglish, where English and Hindi are both strong, stays put. That
+ * confidence and word-count check replaces the old two-turn wait. Roman
+ * Hinglish counts as Hindi only with several Hindi words, not from a model
+ * hint or one word.
  */
 
 export interface MayaLanguageTurn {
@@ -27,9 +31,17 @@ export interface MayaLanguageTurn {
 export interface MayaCallLanguage {
   language: MayaSpokenLanguage;
   locked: boolean;
+  /** Always empty. A clear utterance switches on this turn, so nothing waits. */
   pendingLanguage: MayaSpokenLanguage | null;
   pendingCount: number;
 }
+
+/** A clear utterance needs at least this many words, not a single loanword. */
+export const MIN_CLEAR_LANGUAGE_WORDS = 3;
+
+const LOANWORDS = new Set([
+  "okay", "ok", "doctor", "dr", "appointment", "slot", "clinic", "token", "opd",
+]);
 
 const ENGLISH_FUNCTION = new Set([
   "i", "im", "me", "my", "mine", "you", "your", "we", "our", "the", "a", "an",
@@ -140,6 +152,13 @@ function isYesNo(tokens: string[]): boolean {
   return tokens.length > 0 && tokens.every((token) => YES_NO.has(fold(token)) || YES_NO.has(token));
 }
 
+function isLoanwordOnly(tokens: string[]): boolean {
+  return tokens.length > 0 && tokens.every((token) => {
+    const key = fold(token);
+    return LOANWORDS.has(key) || YES_NO.has(key) || YES_NO.has(token);
+  });
+}
+
 function isDoctorOnly(text: string): boolean {
   const trimmed = String(text || "").trim().replace(/[।.!?]+$/g, "");
   return /^(?:dr\.?|doctor|डॉक्टर|डॉ\.?)\s+[\p{L}\p{M}.''’-]+(?:\s+[\p{L}\p{M}.''’-]+){0,2}$/iu.test(trimmed);
@@ -171,7 +190,7 @@ export function isAmbiguousLanguageTurn(text: string): boolean {
   if (explicitSwitch(trimmed)) return false;
   const tokens = tokenize(trimmed);
   if (tokens.length === 0) return true;
-  if (isYesNo(tokens) || isDoctorOnly(trimmed) || isDateOrNumberOnly(tokens) || isBareName(tokens)) return true;
+  if (isYesNo(tokens) || isLoanwordOnly(tokens) || isDoctorOnly(trimmed) || isDateOrNumberOnly(tokens) || isBareName(tokens)) return true;
   return false;
 }
 
@@ -189,6 +208,7 @@ export function assessCallerLanguage(text: string, hinted?: string, detectedCode
   const romanHi = tokens.filter((token) => ROMAN_HINDI.has(fold(token)));
   const romanMr = tokens.filter((token) => ROMAN_MARATHI.has(fold(token)));
   const english = tokens.filter((token) => ENGLISH_FUNCTION.has(fold(token)));
+  if (tokens.length < MIN_CLEAR_LANGUAGE_WORDS) return null;
 
   if (devTokens.length >= 2 && (mrMarkers.length + hiMarkers.length > 0 || devTokens.length >= 4)) {
     if (mrMarkers.length > hiMarkers.length) return "mr";
@@ -223,17 +243,7 @@ function applyTurn(
   if (isAmbiguousLanguageTurn(text)) return state;
   const assessed = assessCallerLanguage(text, hinted, detectedCode);
   if (!assessed) return state;
-  if (!state.locked) {
-    return { language: assessed, locked: true, pendingLanguage: null, pendingCount: 0 };
-  }
-  if (assessed === state.language) {
-    return { ...state, pendingLanguage: null, pendingCount: 0 };
-  }
-  const pendingCount = state.pendingLanguage === assessed ? state.pendingCount + 1 : 1;
-  if (pendingCount >= 2) {
-    return { language: assessed, locked: true, pendingLanguage: null, pendingCount: 0 };
-  }
-  return { ...state, pendingLanguage: assessed, pendingCount };
+  return { language: assessed, locked: true, pendingLanguage: null, pendingCount: 0 };
 }
 
 export function resolveMayaCallLanguage(input: {
@@ -258,10 +268,11 @@ export function resolveMayaCallLanguage(input: {
 
 export function mayaLockedLanguageInstruction(language: MayaSpokenLanguage, locked: boolean): string {
   const name = language === "hi" ? "Hindi" : language === "mr" ? "Marathi" : "English";
+  const examples = `"Hindi mein baat karo", "Marathi madhe bola", or "speak English"`;
   if (!locked) {
-    return `The greeting language is ${name}. A call language is not locked yet. Reply in ${name} unless the caller speaks a full sentence in English, Hindi, or Marathi. A name, number, yes or no, haan, ok, date, doctor name, one Devanagari word, or a Hinglish phrase is not a full sentence. Do not choose Hindi just because the hint says Hinglish.`;
+    return `The greeting language is ${name}. A call language is not locked yet. Reply in ${name} with the ${name} Chirp 3 HD voice unless the caller says a clear sentence of at least ${MIN_CLEAR_LANGUAGE_WORDS} words in English, Hindi, or Marathi, or explicitly asks (${examples}). A name, number, yes or no, haan, ok, okay, doctor, appointment, date, one Devanagari word, or mixed Hinglish is not a clear sentence. Do not choose Hindi just because the hint says Hinglish.`;
   }
-  return `LOCKED CALL LANGUAGE: ${name}. Write speechText only in ${name} so the reply matches the ${name} voice. Do not switch for a name, number, yes or no, haan, ok, date, doctor name, one Devanagari word, or Hinglish. Switch only when the caller explicitly asks, for example "Hindi mein baat karo", "Marathi madhe bola", or "speak English".`;
+  return `LOCKED CALL LANGUAGE: ${name}. Write speechText only in ${name} so the reply matches the ${name} Chirp 3 HD voice. The server already followed this turn: one clear sentence in English, Hindi, or Marathi switches immediately, and so does an explicit request such as ${examples}. Do not switch for a name, number, yes or no, haan, ok, okay, doctor, appointment, a date, one Devanagari word, or mixed Hinglish.`;
 }
 
 function hasMarathiReply(text: string): boolean {
@@ -270,6 +281,19 @@ function hasMarathiReply(text: string): boolean {
 
 function hasHindiReply(text: string): boolean {
   return /है|हैं|मुझे|मेरा|चाहिए|क्या |मैंने|माफ़|माफ कीजिए|कृपया|बोलें|आप/.test(text);
+}
+
+/**
+ * True when reply text should not be spoken in this call language.
+ * The long-script check stays, and a short Latin reply is also dropped for
+ * a Hindi or Marathi voice so a switch is not read by the previous voice.
+ */
+export function speechMissesCallLanguage(speech: string, language: MayaSpokenLanguage): boolean {
+  if (speechConflictsWithLockedLanguage(speech, language)) return true;
+  if (language === "en") return false;
+  const lat = (String(speech || "").match(/[A-Za-z]/g) || []).length;
+  const dev = (String(speech || "").match(/[\u0900-\u097F]/g) || []).length;
+  return lat >= 12 && dev < 6;
 }
 
 /** True when the reply text would be spoken by the wrong voice. */
