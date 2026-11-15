@@ -16,6 +16,8 @@ describe("specialty pack id SoT", () => {
     assert.equal(mapSpecialtyToPackId("Wellness & Spas"), "spa_salon");
     assert.equal(mapSpecialtyToPackId("Physiotherapy & Rehabilitation"), "physio");
     assert.equal(mapSpecialtyToPackId("General Medicine"), "gp");
+    assert.equal(mapSpecialtyToPackId("Pediatrics"), "gp");
+    assert.equal(mapSpecialtyToPackId("Veterinary"), null);
     assert.equal(mapSpecialtyToPackId("Psychiatry & Mental Health"), "therapist");
     assert.equal(mapSpecialtyToPackId("Consulting"), "consultant");
     assert.equal(mapSpecialtyToPackId("gp"), "gp");

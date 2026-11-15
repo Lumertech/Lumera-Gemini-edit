@@ -72,6 +72,7 @@ import { PhysiotherapyRxModule } from './specialty-rx/PhysiotherapyRxModule';
 import { CardiologyRxModule } from './specialty-rx/CardiologyRxModule';
 import { DermatologyRxModule } from './specialty-rx/DermatologyRxModule';
 import { PediatricsRxModule } from './specialty-rx/PediatricsRxModule';
+import { VeterinaryRxModule } from './specialty-rx/VeterinaryRxModule';
 import { OrthopedicsRxModule } from './specialty-rx/OrthopedicsRxModule';
 import { OphthalmologyRxModule } from './specialty-rx/OphthalmologyRxModule';
 import { DentalSurgeryRxModule } from './specialty-rx/DentalSurgeryRxModule';
@@ -1235,8 +1236,14 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
           assessment={pediatricAssessment}
           patientAge={currentPatient.age}
           patientWeight={currentPatient.age <= 12 ? 16 : 45}
+          patientId={currentPatient.id}
+          canRecord
           onUpdateAssessment={(newAss) => setPediatricAssessment(newAss)}
         />
+      )}
+
+      {activeSpecialty === 'Veterinary' && (
+        <VeterinaryRxModule patientId={currentPatient.id} canRecord />
       )}
 
       {activeSpecialty === 'Orthopedics' && (

@@ -10,6 +10,7 @@ const SPECIALTIES: PolyclinicSpecialty[] = [
   "General Medicine",
   "Cardiology",
   "Pediatrics",
+  "Veterinary",
   "Dermatology",
   "Orthopedics",
   "Physiotherapy & Rehabilitation",

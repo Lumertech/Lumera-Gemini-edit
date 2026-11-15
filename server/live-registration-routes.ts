@@ -1,5 +1,5 @@
 import { Router, type NextFunction, type Request, type Response } from "express";
-import { persistSpecialtyPackId } from "../src/lib/specialtyPack.ts";
+import { registrationSpecialty } from "../src/lib/specialtyWorkflow.ts";
 import { assignedRoleForPracticeType, getDb, normalizePracticeType } from "./db.ts";
 import { otpEchoPayload } from "./auth.ts";
 import { reserveOtpSend, sendOtpLimited } from "./otp-attempt.ts";
@@ -41,11 +41,12 @@ function otpDispatchFailure(res: Response, result: Awaited<ReturnType<typeof dis
 
 async function handleRegisterPractice(req: Request, res: Response) {
   const practiceName = String(req.body?.practiceName || req.body?.clinicName || "").trim();
-  const mappedSpecialty = persistSpecialtyPackId(req.body?.specialty || "General Medicine", { required: true });
-  if (!mappedSpecialty.ok) {
+  const mappedSpecialty = registrationSpecialty(req.body?.specialty || "General Medicine");
+  if (mappedSpecialty.ok === false) {
     return res.status(400).json({ error: mappedSpecialty.error });
   }
-  const specialty = mappedSpecialty.id;
+  const specialty = mappedSpecialty.packId;
+  const doctorSpecialty = mappedSpecialty.moduleLabel === "Veterinary" ? "Veterinary" : specialty;
   const country = String(req.body?.country || "India").trim();
   const timezone = String(req.body?.timezone || "IST (UTC+5:30)").trim();
   const phone = String(req.body?.phone || "").trim();
@@ -112,7 +113,7 @@ async function handleRegisterPractice(req: Request, res: Response) {
       `INSERT INTO doctors (id, user_id, name, qualification, reg_number, specialty, experience_years, consultation_fee, opd_room, available_days, opd_timing, avatar_url, bio, hpr_id, phone, email, signature_url, slot_duration_minutes, rx_template, active)
        VALUES (?, ?, ?, '', '', ?, 0, 0, '', '["Mon","Tue","Wed","Thu","Fri","Sat"]', '', ?, '', ?, ?, ?, '', 15, 'classic', 1)`
     )
-    .run(docId, userId, name.startsWith("Dr.") ? name : `Dr. ${name}`, specialty, avatarUrl, hprId, phone, email);
+    .run(docId, userId, name.startsWith("Dr.") ? name : `Dr. ${name}`, doctorSpecialty, avatarUrl, hprId, phone, email);
 
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
   const verificationId = crypto.randomUUID();

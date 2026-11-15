@@ -37,6 +37,7 @@ export const PolyclinicManager: React.FC<PolyclinicManagerProps> = ({
   const departments = [
     { name: 'General Medicine', icon: '🩺', head: 'Dr. Vikram Malhotra', rooms: '101, 102', patientsToday: 24, revenueToday: 14400 },
     { name: 'Pediatrics', icon: '👶', head: 'Dr. Ananya Sen', rooms: '104, 105', patientsToday: 18, revenueToday: 12600 },
+    { name: 'Veterinary', icon: '🐾', head: 'On duty', rooms: '109', patientsToday: 0, revenueToday: 0 },
     { name: 'Cardiology', icon: '❤️', head: 'Dr. Rajesh Sharma', rooms: '201, 202', patientsToday: 12, revenueToday: 12000 },
     { name: 'Dermatology', icon: '✨', head: 'Dr. Meera Vasudevan', rooms: '108', patientsToday: 15, revenueToday: 11250 },
     { name: 'Orthopedics', icon: '🦴', head: 'Dr. Harshvardhan Patel', rooms: '106, 107', patientsToday: 14, revenueToday: 11200 },

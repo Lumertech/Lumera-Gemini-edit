@@ -4,7 +4,15 @@ import { isReceptionRole } from "./patient-access.ts";
 import { consentMethodLabel } from "../src/lib/healthDocumentNotice.ts";
 import { formatINR } from "../src/lib/currency.ts";
 
-export type PatientTimelineType = "visit" | "prescription" | "invoice" | "upload" | "consent" | "whatsapp" | "vitals";
+export type PatientTimelineType =
+  | "visit"
+  | "prescription"
+  | "invoice"
+  | "upload"
+  | "consent"
+  | "whatsapp"
+  | "vitals"
+  | "immunization";
 
 export type PatientTimelineItem = {
   id: string;
@@ -231,6 +239,40 @@ export function buildPatientTimeline(tenantId: string, patientId: string, role: 
         ? "New reports will not be stored. Existing reports stay for the retention period."
         : [consentMethodLabel(asText(row.method)), asText(row.language).toUpperCase()].filter(Boolean).join(" · "),
     });
+  }
+
+  try {
+    const doses = db
+      .prepare(
+        `SELECT id, antigen, dose_label, status, given_on, brand, batch_no, given_by_name, reason, updated_at
+         FROM immunization_dose_records WHERE tenant_id = ? AND patient_id = ?`
+      )
+      .all(tenantId, patientId) as Record<string, unknown>[];
+    for (const row of doses) {
+      const status = asText(row.status);
+      const title = status === "given" ? `${asText(row.antigen)} recorded` : `${asText(row.antigen)} ${status}`;
+      const summary = patientView
+        ? [asText(row.dose_label), asText(row.given_on)].filter(Boolean).join(" · ")
+        : [
+            asText(row.dose_label),
+            asText(row.given_on),
+            asText(row.brand),
+            asText(row.batch_no) ? `batch ${asText(row.batch_no)}` : "",
+            asText(row.given_by_name),
+            asText(row.reason),
+          ]
+            .filter(Boolean)
+            .join(" · ");
+      items.push({
+        id: `immunization:${asText(row.id)}`,
+        type: "immunization",
+        at: asText(row.given_on) || asText(row.updated_at),
+        title,
+        summary,
+      });
+    }
+  } catch (err) {
+    if (!/no such table/i.test(err instanceof Error ? err.message : String(err))) throw err;
   }
 
   items.sort((a, b) => sortKey(b.at).localeCompare(sortKey(a.at)));

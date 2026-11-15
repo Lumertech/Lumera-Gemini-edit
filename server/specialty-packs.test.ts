@@ -27,6 +27,7 @@ describe("specialty packs (Admin UM)", () => {
   it("maps major medical specialties onto gp via config", () => {
     assert.equal(resolveSpecialtyPack("Cardiology")?.id, "gp");
     assert.equal(resolveSpecialtyPack("Pediatrics")?.id, "gp");
+    assert.equal(resolveSpecialtyPack("veterinary"), null);
     assert.equal(resolveSpecialtyPack("gp")?.id, "gp");
     assert.equal(resolveSpecialtyPack("physio")?.id, "physio");
     assert.equal(resolveSpecialtyPack("Dental Surgery")?.id, "dentist");

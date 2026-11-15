@@ -26,6 +26,7 @@ export const ALL_SPECIALTIES: PolyclinicSpecialty[] = [
   'General Medicine',
   'Cardiology',
   'Pediatrics',
+  'Veterinary',
   'Dermatology',
   'Orthopedics',
   'Physiotherapy & Rehabilitation',
