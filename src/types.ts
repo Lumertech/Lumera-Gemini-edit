@@ -120,6 +120,7 @@ export type PolyclinicSpecialty =
   | 'General Medicine'
   | 'Cardiology'
   | 'Pediatrics'
+  | 'Veterinary'
   | 'Dermatology'
   | 'Orthopedics'
   | 'Physiotherapy & Rehabilitation'
@@ -162,6 +163,12 @@ export interface Patient {
   uhid: string; // Unique Healthcare ID (e.g. LUM-2026-0042)
   name: string;
   age: number;
+  dateOfBirth?: string;
+  /** Empty for a person. Dog and cat select the veterinary immunization chart. */
+  species?: '' | 'human' | 'dog' | 'cat' | 'other' | string;
+  breed?: string;
+  /** Veterinary owner. Same value as the existing emergency / guardian contact. */
+  ownerName?: string;
   gender: 'Male' | 'Female' | 'Other';
   phone: string;
   email?: string;

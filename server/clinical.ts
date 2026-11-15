@@ -20,6 +20,7 @@ import { registerPatientDocumentConsentRoutes } from "./patient-document-consent
 import { buildPatientTimeline, presentPrescriptionForRole } from "./patient-timeline.ts";
 import { denyUnlessPatientRecordRole, denyUnlessPrescriber, isReceptionRole } from "./patient-access.ts";
 import { clinicCalendarDate, parseAppointmentListDate, resolveQueueDate } from "../src/lib/clinicDay.ts";
+import { canonicalSpecies } from "../src/lib/immunizationSchedules.ts";
 import { ensureTenantSlugColumn, slugifyTenant } from "./tenant-slug.ts";
 import { HIDDEN_AMBIENT_SOURCES, hiddenVisitSourceSql, isHiddenVisitSource } from "./ambient-walkin.ts";
 import { allocateTokenNumber, writeAllocatedToken } from "./queue-tokens.ts";
@@ -606,12 +607,33 @@ function enrichPatientDemographics(tenantId: string, patientId: string, body: Re
   const gender = body.gender !== undefined ? String(body.gender) : mapped.gender;
   const email = body.email !== undefined ? String(body.email) : mapped.email;
   const address = body.address !== undefined ? String(body.address) : mapped.address;
+  const animal = readAnimalFields(body);
+  const dob = body.dateOfBirth != null || body.date_of_birth != null || body.dob != null ? animal.dob : mapped.dateOfBirth || "";
+  const species = body.species != null ? animal.species : mapped.species || "";
+  const breed = body.breed != null ? animal.breed : mapped.breed || "";
+  const emergency =
+    body.emergencyContact != null || body.emergency_contact != null
+      ? String(body.emergencyContact || body.emergency_contact || "")
+      : animal.owner || mapped.emergencyContact || "";
   getDb()
     .prepare(
-      `UPDATE patients SET name = ?, age = ?, gender = ?, email = ?, address = ?
+      `UPDATE patients SET name = ?, age = ?, gender = ?, email = ?, address = ?,
+        date_of_birth = ?, species = ?, breed = ?, emergency_contact = ?
        WHERE id = ? AND tenant_id = ?`
     )
-    .run(name, Number(age || 0), String(gender || "Other"), String(email || ""), String(address || ""), patientId, tenantId);
+    .run(
+      name,
+      Number(age || 0),
+      String(gender || "Other"),
+      String(email || ""),
+      String(address || ""),
+      dob,
+      species,
+      breed,
+      emergency,
+      patientId,
+      tenantId
+    );
 }
 
 function resolveExistingPatient(
@@ -735,6 +757,19 @@ function scrubDraftForStorage(body: Record<string, unknown>): Record<string, unk
   return next;
 }
 
+/** Species and breed sit on the patient. The owner is the existing guardian / emergency contact. */
+function readAnimalFields(body: Record<string, unknown>) {
+  const dob = String(body.dateOfBirth || body.date_of_birth || body.dob || "").trim().slice(0, 10);
+  const owner = String(body.ownerName || body.owner_name || body.guardianName || body.guardian_name || "").trim().slice(0, 120);
+  return {
+    dob: /^\d{4}-\d{2}-\d{2}$/.test(dob) ? dob : "",
+    species: canonicalSpecies(body.species),
+    breed: String(body.breed || "").trim().slice(0, 80),
+    owner,
+    ageFromDob: ageFromDob(dob),
+  };
+}
+
 export function insertPatient(
   tenantId: string,
   body: Record<string, unknown>,
@@ -780,28 +815,31 @@ export function insertPatient(
   const lastVisit = body.lastVisit ? String(body.lastVisit) : now.slice(0, 10);
   const kycStatus = allowAbha && (abhaNumber || abhaAddress) ? KYC_LINKED_SANDBOX : "PENDING";
   const abhaLinkedAt = allowAbha && (abhaNumber || abhaAddress) ? now : "";
+  const animal = readAnimalFields(body);
+  const age = body.age != null && body.age !== "" ? Number(body.age) : animal.ageFromDob ?? 0;
   try {
     getDb()
       .prepare(
         `INSERT INTO patients (
           id, tenant_id, uhid, name, age, gender, phone, email, blood_group, allergies,
           chronic_conditions, emergency_contact, address, last_visit, created_at,
-          abha_number, abha_address, kyc_status, hfr_id, abha_linked_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          abha_number, abha_address, kyc_status, hfr_id, abha_linked_at,
+          date_of_birth, species, breed
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
         tenantId,
         uhid,
         name,
-        Number(body.age || 0),
+        Number(age || 0),
         String(body.gender || "Other"),
         phone,
         String(body.email || ""),
         String(body.bloodGroup || body.blood_group || "O+"),
         jsonText(body.allergies, "[]"),
         jsonText(body.chronicConditions ?? body.chronic_conditions, "[]"),
-        String(body.emergencyContact || body.emergency_contact || phone),
+        animal.owner || String(body.emergencyContact || body.emergency_contact || phone),
         String(body.address || ""),
         lastVisit,
         now,
@@ -809,7 +847,10 @@ export function insertPatient(
         abhaAddress,
         kycStatus,
         String(body.hfrId || body.hfr_id || ""),
-        abhaLinkedAt
+        abhaLinkedAt,
+        animal.dob,
+        animal.species,
+        animal.breed
       );
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
@@ -1421,12 +1462,24 @@ export function createClinicalRouter(): Router {
     }
     const mapped = mapPatient(existing);
     const next = { ...mapped, ...req.body };
+    const animal = readAnimalFields(req.body || {});
+    const dob =
+      req.body?.dateOfBirth != null || req.body?.date_of_birth != null || req.body?.dob != null
+        ? animal.dob
+        : mapped.dateOfBirth || "";
+    const species = req.body?.species != null ? animal.species : mapped.species || "";
+    const breed = req.body?.breed != null ? animal.breed : mapped.breed || "";
+    const emergency =
+      req.body?.ownerName != null || req.body?.owner_name != null
+        ? animal.owner || String(next.emergencyContact || "")
+        : String(next.emergencyContact || "");
     getDb()
       .prepare(
         `UPDATE patients SET
           name = ?, age = ?, gender = ?, phone = ?, email = ?, blood_group = ?,
           allergies = ?, chronic_conditions = ?, emergency_contact = ?, address = ?,
-          last_visit = ?, abha_number = ?, abha_address = ?, kyc_status = ?, hfr_id = ?
+          last_visit = ?, abha_number = ?, abha_address = ?, kyc_status = ?, hfr_id = ?,
+          date_of_birth = ?, species = ?, breed = ?
          WHERE id = ? AND tenant_id = ?`
       )
       .run(
@@ -1438,13 +1491,16 @@ export function createClinicalRouter(): Router {
         String(next.bloodGroup || ""),
         jsonText(next.allergies, "[]"),
         jsonText(next.chronicConditions, "[]"),
-        String(next.emergencyContact || ""),
+        emergency,
         String(next.address || ""),
         next.lastVisit || mapped.lastVisit || null,
         String(next.abhaNumber || ""),
         String(next.abhaAddress || ""),
         String(next.kycStatus || "PENDING"),
         String(next.hfrId || ""),
+        dob,
+        species,
+        breed,
         req.params.id,
         tenantId
       );

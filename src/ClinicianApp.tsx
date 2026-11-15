@@ -531,6 +531,10 @@ export default function ClinicianApp() {
       body: JSON.stringify({
         name: input.name,
         age: input.age,
+        ...(input.dateOfBirth ? { dateOfBirth: input.dateOfBirth } : {}),
+        ...(input.species ? { species: input.species } : {}),
+        ...(input.breed ? { breed: input.breed } : {}),
+        ...(input.ownerName ? { ownerName: input.ownerName } : {}),
         gender: input.gender,
         phone: input.phone,
         ...(input.email ? { email: input.email } : {}),

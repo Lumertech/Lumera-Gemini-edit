@@ -1,11 +1,14 @@
 import React, { useState } from 'react';
-import { Baby, Calculator, Syringe, Sparkles, CheckCircle2 } from 'lucide-react';
+import { Baby, Calculator, Syringe } from 'lucide-react';
 import { PediatricAssessment } from '../../types';
+import { ImmunizationChartPanel } from '../immunization/ImmunizationChart';
 
 interface PediatricsRxModuleProps {
   assessment: PediatricAssessment;
   patientAge: number;
   patientWeight?: number;
+  patientId?: string;
+  canRecord?: boolean;
   onUpdateAssessment: (assessment: PediatricAssessment) => void;
 }
 
@@ -13,6 +16,8 @@ export const PediatricsRxModule: React.FC<PediatricsRxModuleProps> = ({
   assessment,
   patientAge,
   patientWeight = 12,
+  patientId,
+  canRecord = false,
   onUpdateAssessment
 }) => {
   const [weightKg, setWeightKg] = useState<number>(patientWeight || 12);
@@ -56,6 +61,9 @@ export const PediatricsRxModule: React.FC<PediatricsRxModuleProps> = ({
       </div>
 
       <div className="p-5 space-y-4 bg-slate-50/50">
+        {patientId && (
+          <ImmunizationChartPanel patientId={patientId} audience="pediatric" canRecord={canRecord} />
+        )}
         {/* Weight-Based Dosage Calculator Box */}
         <div className="bg-emerald-50/80 p-4 rounded-xl border border-emerald-200 shadow-2xs">
           <div className="flex items-center justify-between mb-3">
@@ -129,11 +137,11 @@ export const PediatricsRxModule: React.FC<PediatricsRxModuleProps> = ({
             </select>
           </div>
 
-          {/* Vaccines Due */}
+          {/* Clinician note. The chart above is the schedule; this line still rides on the Rx. */}
           <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
             <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block mb-1 flex items-center gap-1">
               <Syringe className="w-3.5 h-3.5 text-emerald-600" />
-              Immunization / Vaccines Due
+              Note on the prescription
             </label>
             <input 
               type="text"
@@ -142,7 +150,8 @@ export const PediatricsRxModule: React.FC<PediatricsRxModuleProps> = ({
                 ...assessment,
                 immunizationsDue: e.target.value.split(',').map(s => s.trim()).filter(Boolean)
               })}
-              placeholder="e.g. MMR Booster, Typhoid Conjugate, Influenza Annual"
+              placeholder="Optional note, for example influenza discussed"
+              aria-label="Note on the prescription"
               className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs focus:ring-1 focus:ring-emerald-500"
             />
           </div>

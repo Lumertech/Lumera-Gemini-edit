@@ -4,6 +4,7 @@ import { apiFetch } from "../api/http";
 import { PatientDocuments } from "./PatientDocuments";
 import { type DocumentConsentStatus } from "./PatientDocumentConsentDialog";
 import { PatientTimeline, type PatientTimelineItem, type TimelineLinkView } from "./PatientTimeline";
+import { ImmunizationChartPanel } from "./immunization/ImmunizationChart";
 import { CLINIC_NAME_REQUIRED_MESSAGE } from "../lib/healthDocumentNotice";
 import { isAbhaLinked, type Appointment, type Patient, type Prescription } from "../types";
 
@@ -430,6 +431,8 @@ const PatientDetail: React.FC<{
               </div>
             </dl>
           </section>
+
+          <ImmunizationChartPanel patientId={patient.id} audience="auto" canRecord={canPrescribe} />
 
           <PatientTimeline
             items={chart?.timeline || []}

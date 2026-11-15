@@ -9,6 +9,7 @@ import {
   Eye, 
   Smile, 
   Brain,
+  PawPrint,
   Zap,
   BookmarkPlus,
   Lock
@@ -79,6 +80,14 @@ const SPECIALTY_CONFIGS: Array<{
     icon: Baby,
     color: 'text-emerald-700 border-emerald-500 bg-emerald-50',
     badgeBg: 'bg-emerald-700 text-white'
+  },
+  {
+    id: 'Veterinary',
+    name: 'Veterinary',
+    shortName: 'Veterinary',
+    icon: PawPrint,
+    color: 'text-amber-800 border-amber-500 bg-amber-50',
+    badgeBg: 'bg-amber-800 text-white'
   },
   {
     id: 'Ophthalmology',

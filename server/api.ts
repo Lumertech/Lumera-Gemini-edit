@@ -24,12 +24,14 @@ import {
   type UserStatus,
 } from "./db.ts";
 import { persistSpecialtyPackId } from "../src/lib/specialtyPack.ts";
+import { registrationSpecialty } from "../src/lib/specialtyWorkflow.ts";
 import { PRODUCT_NAME } from "../src/brand.ts";
 import { publicPlansResponse } from "./pricing-catalog.ts";
 import { reportCaughtError } from "./error-tracker.ts";
 import { createClinicalRouter } from "./clinical.ts";
 import { createBillingRouter } from "./billing.ts";
 import { createAccountsRouter } from "./accounts-api.ts";
+import { createImmunizationRouter } from "./immunization-api.ts";
 import {
   getTenantLetterhead,
   parseLetterheadPatch,
@@ -1100,8 +1102,12 @@ export function createApiRouter(): Router {
 
     if (record.purpose === "register") {
       const practiceName = payload.practiceName || payload.clinicName || "New Clinic";
-      const mappedRegisterSpecialty = persistSpecialtyPackId(payload.specialty || "General Medicine", { required: true });
-      const specialty = mappedRegisterSpecialty.ok ? mappedRegisterSpecialty.id : "gp";
+      const mappedRegisterSpecialty = registrationSpecialty(payload.specialty || "General Medicine");
+      const specialty = mappedRegisterSpecialty.ok ? mappedRegisterSpecialty.packId : "gp";
+      const registerDoctorSpecialty =
+        mappedRegisterSpecialty.ok && mappedRegisterSpecialty.moduleLabel === "Veterinary"
+          ? "Veterinary"
+          : specialty;
       const country = payload.country || "India";
       const timezone = payload.timezone || "IST (UTC+5:30)";
       const phone = String(record.phone || "").trim();
@@ -1228,7 +1234,7 @@ export function createApiRouter(): Router {
           docId,
           userId,
           name.startsWith("Dr.") ? name : `Dr. ${name}`,
-          specialty,
+          registerDoctorSpecialty,
           avatarUrl,
           hprId,
           phone,
@@ -1276,11 +1282,12 @@ export function createApiRouter(): Router {
   // Practice Registration Endpoint: Creates Tenant, CLINIC_ADMIN, ABDM HFR/HPR, DHIS threshold, and dispatches WhatsApp OTP
   const handleRegisterPractice = async (req: Request, res: Response) => {
     const practiceName = String(req.body?.practiceName || req.body?.clinicName || "").trim();
-    const mappedSpecialty = persistSpecialtyPackId(req.body?.specialty || "General Medicine", { required: true });
-    if (!mappedSpecialty.ok) {
+    const mappedSpecialty = registrationSpecialty(req.body?.specialty || "General Medicine");
+    if (mappedSpecialty.ok === false) {
       return res.status(400).json({ error: mappedSpecialty.error });
     }
-    const specialty = mappedSpecialty.id;
+    const specialty = mappedSpecialty.packId;
+    const registerDoctorSpecialty = mappedSpecialty.moduleLabel === "Veterinary" ? "Veterinary" : specialty;
     const country = String(req.body?.country || "India").trim();
     const timezone = String(req.body?.timezone || "IST (UTC+5:30)").trim();
     const phone = String(req.body?.phone || "").trim();
@@ -1353,7 +1360,7 @@ export function createApiRouter(): Router {
       docId,
       userId,
       name.startsWith("Dr.") ? name : `Dr. ${name}`,
-      specialty,
+      registerDoctorSpecialty,
       avatarUrl,
       hprId,
       phone,
@@ -1427,12 +1434,16 @@ export function createApiRouter(): Router {
     const doctorName = req.body?.doctorName ? String(req.body.doctorName).trim() : undefined;
     const clinicName = req.body?.clinicName ? String(req.body.clinicName).trim() : undefined;
     let specialty: string | undefined;
+    let moduleLabel: string | undefined;
     if (req.body?.specialty != null && String(req.body.specialty).trim()) {
-      const mappedOnboarding = persistSpecialtyPackId(req.body.specialty, { required: true });
-      if (!mappedOnboarding.ok) {
+      const mappedOnboarding = registrationSpecialty(req.body.specialty);
+      if (mappedOnboarding.ok === false) {
         return res.status(400).json({ error: mappedOnboarding.error });
       }
-      specialty = mappedOnboarding.id;
+      specialty = mappedOnboarding.packId;
+      // Pack id stays on the user. The doctor row keeps the clinical module
+      // (Pediatrics, Veterinary, Cardiology, …) so the consult can open it.
+      moduleLabel = mappedOnboarding.moduleLabel;
     }
     const regNumber = req.body?.regNumber ? String(req.body.regNumber).trim() : undefined;
     const consultationFee = req.body?.consultationFee !== undefined && req.body?.consultationFee !== null
@@ -1526,7 +1537,7 @@ export function createApiRouter(): Router {
         WHERE id = ?
       `).run(
         doctorName || null,
-        specialty || null,
+        moduleLabel || null,
         regNumber || null,
         consultationFee ?? null,
         qualification || null,
@@ -1548,7 +1559,7 @@ export function createApiRouter(): Router {
         doctorName || (req.user!.name.startsWith("Dr.") ? req.user!.name : `Dr. ${req.user!.name}`),
         qualification || "",
         regNumber || "",
-        specialty || "General Medicine",
+        moduleLabel || "General Medicine",
         consultationFee || 0,
         opdRoom || "",
         opdTiming || "",
@@ -2784,6 +2795,7 @@ export function createApiRouter(): Router {
   api.use(createClinicalRouter());
   api.use(createBillingRouter());
   api.use(createAccountsRouter());
+  api.use(createImmunizationRouter());
 
   return api;
 }

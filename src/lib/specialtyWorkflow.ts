@@ -1,6 +1,6 @@
 import type { AppUser, PolyclinicSpecialty } from "../types";
 import { demoAccountByEmail } from "./demoAccounts";
-import { mapSpecialtyToPackId } from "./specialtyPack";
+import { mapSpecialtyToPackId, persistSpecialtyPackId } from "./specialtyPack";
 
 /** Views a specialty pack may land on or deep-link to. Keep in sync with Navbar NavView. */
 export type WorkflowView =
@@ -160,6 +160,11 @@ const PACKS: Record<string, SpecialtyWorkflowPack> = {
   pediatrics: medicalPack("Pediatrics", [
     { key: "weightKg", label: "Weight (kg)", type: "number", placeholder: "Used for dose checks" },
     { key: "immunisation", label: "Immunisation due", placeholder: "e.g. MMR, none today" },
+  ]),
+  veterinary: medicalPack("Veterinary", [
+    { key: "species", label: "Species", type: "select", options: ["Dog", "Cat", "Other"] },
+    { key: "breed", label: "Breed", placeholder: "e.g. Indie, Labrador, Persian" },
+    { key: "ownerName", label: "Owner (guardian contact)", placeholder: "Person who brings the animal" },
   ]),
   gynecology: medicalPack("Gynecology", [
     { key: "lmp", label: "LMP date", placeholder: "YYYY-MM-DD if known" },
@@ -449,6 +454,7 @@ export const PRACTICE_SPECIALTIES: string[] = [
   "General Medicine",
   "Cardiology",
   "Pediatrics",
+  "Veterinary",
   "Dermatology",
   "Orthopedics",
   "Physiotherapy & Rehabilitation",
@@ -485,6 +491,7 @@ export function resolveRxModule(specialty?: string | null): PolyclinicSpecialty 
   if (s.includes("derm")) return "Dermatology";
   if (s.includes("ortho")) return "Orthopedics";
   if (s.includes("pediatr") || s.includes("paediatr")) return "Pediatrics";
+  if (s.includes("veterinar") || s === "vet" || /\bvet\b/.test(s)) return "Veterinary";
   if (s.includes("eye") || s.includes("ophthal")) return "Ophthalmology";
   if (s.includes("dent") || s.includes("oral")) return "Dental Surgery";
   if (s.includes("gyn") || s.includes("obstet")) return "Gynecology";
@@ -508,7 +515,32 @@ function packForSpecialty(specialty?: string | null): SpecialtyWorkflowPack {
 }
 
 /** Rx module for this login — demo emails use displaySpecialty so cardiology@ is not stuck on pack-id `gp`. */
+/**
+ * Clinic registration may choose Veterinary. The user row still stores the gp
+ * pack id. Admin user create/patch keeps rejecting the word "veterinary"
+ * because that field is the pack id, not this module.
+ */
+export function registrationSpecialty(
+  raw: unknown
+): { ok: true; packId: string; moduleLabel: PolyclinicSpecialty } | { ok: false; error: string } {
+  const text = String(raw ?? "").trim();
+  if (resolveRxModule(text) === "Veterinary") {
+    return { ok: true, packId: "gp", moduleLabel: "Veterinary" };
+  }
+  const mapped = persistSpecialtyPackId(text || "General Medicine", { required: true });
+  if (!mapped.ok) return { ok: false, error: mapped.error || "Unknown specialty" };
+  return { ok: true, packId: mapped.id, moduleLabel: resolveRxModule(text || mapped.id) };
+}
+
 export function clinicianRxSpecialty(user?: AppUser | null, doctorSpecialty?: string): PolyclinicSpecialty {
+  const fromEmail = demoAccountByEmail(user?.email)?.displaySpecialty;
+  if (fromEmail) return resolveRxModule(fromEmail);
+  const doctorModule = String(doctorSpecialty || "").trim() ? resolveRxModule(doctorSpecialty) : null;
+  const userPack = mapSpecialtyToPackId(user?.specialty || "");
+  if (doctorModule && doctorModule !== "General Medicine") {
+    const doctorPack = mapSpecialtyToPackId(doctorSpecialty) || mapSpecialtyToPackId(doctorModule);
+    if (!userPack || userPack === "gp" || (doctorPack && userPack === doctorPack)) return doctorModule;
+  }
   const pack = workflowForUser(user);
   if (pack.rxModule) return pack.rxModule;
   return resolveRxModule(doctorSpecialty || user?.specialty);

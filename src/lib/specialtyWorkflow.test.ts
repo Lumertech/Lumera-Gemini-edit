@@ -4,6 +4,7 @@ import { DEMO_ACCOUNTS, DEMO_PASSWORD } from "./demoAccounts.ts";
 import {
   clinicianHomeView,
   clinicianRxSpecialty,
+  registrationSpecialty,
   resolveRxModule,
   workflowFingerprint,
   workflowForUser,
@@ -133,6 +134,28 @@ describe("specialty workflow packs", () => {
     assert.equal(resolveRxModule("Physio"), "Physiotherapy & Rehabilitation");
     assert.equal(resolveRxModule("spa"), "Wellness & Spas");
     assert.equal(resolveRxModule("gp"), "General Medicine");
+    assert.equal(resolveRxModule("Veterinary"), "Veterinary");
+    assert.equal(resolveRxModule("vet"), "Veterinary");
+  });
+
+  it("keeps veterinary on the gp pack, with animal intake fields", () => {
+    const vet = workflowForUser(fakeUser("vet.clinic@example.com", "Veterinary"));
+    assert.equal(vet.id, "gp");
+    assert.equal(vet.kind, "medical");
+    assert.equal(vet.rxModule, "Veterinary");
+    assert.deepEqual(
+      vet.intakeFields.map((field) => field.key),
+      ["chiefComplaint", "species", "breed", "ownerName"]
+    );
+    assert.equal(clinicianRxSpecialty(fakeUser("vet.clinic@example.com", "gp"), "Veterinary"), "Veterinary");
+    assert.equal(clinicianRxSpecialty(fakeUser("new.clinic@example.com", "gp")), "General Medicine");
+    const registered = registrationSpecialty("Veterinary");
+    assert.equal(registered.ok, true);
+    if (registered.ok) {
+      assert.equal(registered.packId, "gp");
+      assert.equal(registered.moduleLabel, "Veterinary");
+    }
+    assert.equal(registrationSpecialty("not-a-real-specialty").ok, false);
   });
 
   it("resolves demo and new-user logins to the matching Rx module, not pack-id gp", () => {

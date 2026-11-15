@@ -88,6 +88,7 @@ export const Reception: React.FC<ReceptionProps> = ({
     name: '',
     phone: '',
     age: 35,
+    dateOfBirth: '',
     gender: 'Male' as 'Male' | 'Female' | 'Other',
     bloodGroup: 'B+',
     address: '',
@@ -254,19 +255,25 @@ export const Reception: React.FC<ReceptionProps> = ({
     const doctor = doctors.find((d) => d.id === formData.selectedDoctorId) || doctors[0];
     const generatedUHID = `LUM-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
 
+    const keptExtra = Object.entries(formData.extra).filter(
+      ([key, value]) => !["species", "breed", "ownerName"].includes(key) && String(value || "").trim()
+    );
+    const ownerName = String(formData.extra.ownerName || "").trim();
     const newPatient: Patient = {
       id: `pat-${Date.now()}`,
       uhid: generatedUHID,
       name: formData.name,
       age: formData.age,
+      dateOfBirth: formData.dateOfBirth,
+      species: formData.extra.species || "",
+      breed: formData.extra.breed || "",
+      ownerName,
       gender: formData.gender,
       phone: formData.phone,
       bloodGroup: formData.bloodGroup,
       allergies: ['None known'],
-      chronicConditions: Object.entries(formData.extra)
-        .filter(([, v]) => String(v || "").trim())
-        .map(([k, v]) => `${k}: ${v}`),
-      emergencyContact: formData.emergencyContact || formData.phone,
+      chronicConditions: keptExtra.map(([k, v]) => `${k}: ${v}`),
+      emergencyContact: ownerName || formData.emergencyContact || formData.phone,
       address: formData.address || '',
       lastVisit: 'Today',
       abhaNumber: verificationSuccess?.abhaNumber || '',
@@ -292,6 +299,7 @@ export const Reception: React.FC<ReceptionProps> = ({
         name: '',
         phone: '',
         age: 35,
+        dateOfBirth: '',
         gender: 'Male',
         bloodGroup: 'B+',
         address: '',
@@ -482,6 +490,17 @@ export const Reception: React.FC<ReceptionProps> = ({
                 value={formData.phone}
                 onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
                 placeholder="+91 98234 55667"
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-purple-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-slate-600 font-medium mb-1" htmlFor="intake-dob">Date of birth</label>
+              <input
+                id="intake-dob"
+                type="date"
+                value={formData.dateOfBirth}
+                onChange={(e) => setFormData({ ...formData, dateOfBirth: e.target.value })}
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-purple-500"
               />
             </div>

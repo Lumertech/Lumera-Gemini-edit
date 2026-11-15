@@ -1,0 +1,628 @@
+/**
+ * Versioned immunization schedules for Lumera clinics in India.
+ *
+ * These rows are reminders. A doctor confirms every dose. Nothing here
+ * administers a vaccine, and a clinic edit does not change the cited source.
+ *
+ * Day model: 1 week = 7 days, 1 month = 30 days, 1 year = 365 days.
+ * Due dates are anchors for the chart, not a substitute for the visit.
+ *
+ * Sources (see also docs/immunization-schedules.md):
+ *
+ * Pediatric default — IAP-ACVIP 2023
+ *   Indian Academy of Pediatrics, Advisory Committee on Vaccines and
+ *   Immunization Practices. Recommended Immunization Schedule (2023) and
+ *   Update on Immunization for Children Aged 0 Through 18 Years.
+ *   Indian Pediatrics. 2024;61:113-125. DOI 10.1007/s13312-024-3104-5.
+ *   Table I, IAP-ACVIP Immunization Timetable 2023.
+ *   https://www.indianpediatrics.net/feb2024/113.pdf
+ *
+ * Pediatric alternate — Government of India UIP / NIS
+ *   Ministry of Health and Family Welfare. Routine Immunization Manual for
+ *   Health Workers, 2024. National Immunization Schedule, Table 3.1 and the
+ *   infant/child summary (BCG, hepatitis B birth dose, bOPV, pentavalent,
+ *   rotavirus, fractional IPV, PCV 2+1, MR, JE in selected districts, DPT
+ *   boosters, Td at 10 and 16 years).
+ *   https://nccmis.mohfw.gov.in/document/RI_Manual_For_Health_Workers.pdf
+ *
+ * Dogs and cats — WSAVA 2024 as adapted for Indian practice
+ *   WSAVA Vaccination Guidelines Group. 2024 guidelines for the vaccination
+ *   of dogs and cats. Journal of Small Animal Practice.
+ *   https://wsava.org/wp-content/uploads/2024/04/WSAVA-Vaccination-guidelines-2024.pdf
+ *   Core DAP (CDV, CAV, CPV) and core FPV/FCV/FHV: doses every 2–4 weeks with
+ *   the last juvenile dose at 16 weeks or older, another dose at or after
+ *   26 weeks, then core revaccination no more often than every 3 years.
+ *   Leptospirosis is core where it is endemic. Rabies is core in endemic
+ *   regions; the interval follows local law and the product leaflet.
+ *   This chart's rabies (and the India-practice FVRCP / leptospirosis
+ *   boosters) default to annual boosters. The doctor in charge can lengthen
+ *   an interval on the clinic template when the leaflet and local rules allow.
+ */
+
+export const IMMUNIZATION_CATALOG_VERSION = "2026.11.1";
+
+export const IMMUNIZATION_SAFETY_NOTICE =
+  "Schedules are reminders only. A doctor confirms each dose before it is given. Lumera does not administer a vaccine automatically.";
+
+export type ScheduleId = "pediatric_iap" | "pediatric_uip" | "canine" | "feline";
+
+export type DoseStatus =
+  | "given"
+  | "due"
+  | "overdue"
+  | "upcoming"
+  | "skipped"
+  | "contraindicated"
+  | "not_indicated";
+
+export type RecordedDoseStatus = "given" | "skipped" | "contraindicated";
+
+export interface ScheduleDose {
+  code: string;
+  antigen: string;
+  doseLabel: string;
+  /** Age in days when the dose becomes due. */
+  dueAgeDays: number;
+  /** Age in days after which a missed dose is overdue. */
+  overdueAfterDays: number;
+  /** Age in days after which a missed dose is no longer indicated. */
+  maxAgeDays?: number;
+  recurringEveryDays?: number;
+  /** Keep the latest missed interval instead of every historical miss. */
+  collapseMissed?: boolean;
+  optional?: boolean;
+  endemicOnly?: boolean;
+  /** If that dose was never given and is past its window, this dose is not indicated. */
+  requiresPrior?: string;
+  notes?: string;
+}
+
+export interface ScheduleDefinition {
+  id: ScheduleId;
+  version: string;
+  family: "pediatric" | "veterinary";
+  species?: "dog" | "cat";
+  title: string;
+  citation: string;
+  doses: ScheduleDose[];
+}
+
+export interface DoseEdit {
+  scheduleId: string;
+  code: string;
+  dueAgeDays?: number;
+  overdueAfterDays?: number;
+  doseLabel?: string;
+  antigen?: string;
+  recurringEveryDays?: number | null;
+  disabled?: boolean;
+  notes?: string;
+}
+
+export interface ChartRecord {
+  id?: string;
+  occurrenceKey: string;
+  status: RecordedDoseStatus;
+  givenOn?: string;
+  brand?: string;
+  batchNo?: string;
+  givenByName?: string;
+  reason?: string;
+  stockAdministrationId?: string;
+}
+
+export interface ChartDose {
+  occurrenceKey: string;
+  code: string;
+  antigen: string;
+  doseLabel: string;
+  dueOn: string;
+  dueAgeDays: number;
+  status: DoseStatus;
+  catchUp: boolean;
+  catchUpNote: string;
+  notes: string;
+  optional: boolean;
+  endemicOnly: boolean;
+  givenOn: string;
+  brand: string;
+  batchNo: string;
+  givenByName: string;
+  reason: string;
+  recordId: string;
+  stockAdministrationId: string;
+}
+
+const IAP_CITATION =
+  "IAP-ACVIP Recommended Immunization Schedule (2023), Table I. Indian Pediatrics. 2024;61:113-125. DOI 10.1007/s13312-024-3104-5. https://www.indianpediatrics.net/feb2024/113.pdf";
+
+const UIP_CITATION =
+  "Ministry of Health and Family Welfare, Routine Immunization Manual for Health Workers, 2024. National Immunization Schedule (Table 3.1 and the infant/child summary). https://nccmis.mohfw.gov.in/document/RI_Manual_For_Health_Workers.pdf";
+
+const DOG_CITATION =
+  "WSAVA Vaccination Guidelines Group, 2024 guidelines for the vaccination of dogs and cats (https://wsava.org/wp-content/uploads/2024/04/WSAVA-Vaccination-guidelines-2024.pdf), adapted for Indian practice: DHPPiL/DAPP+Lepto puppy series ending at 16 weeks or older, a dose at or after 26 weeks, core DAP no more often than every 3 years, annual leptospirosis where endemic, and annual anti-rabies boosters. The doctor in charge can edit intervals.";
+
+const CAT_CITATION =
+  "WSAVA Vaccination Guidelines Group, 2024 guidelines for the vaccination of dogs and cats (https://wsava.org/wp-content/uploads/2024/04/WSAVA-Vaccination-guidelines-2024.pdf), adapted for Indian practice: FVRCP series ending at 16 weeks or older, a dose at or after 26 weeks, then recurring boosters (annual by default; WSAVA allows 3 years or longer for low-risk FPV), and annual anti-rabies boosters. The doctor in charge can edit intervals.";
+
+function row(
+  code: string,
+  antigen: string,
+  doseLabel: string,
+  dueAgeDays: number,
+  overdueAfterDays: number,
+  extra: Partial<ScheduleDose> = {}
+): ScheduleDose {
+  return { code, antigen, doseLabel, dueAgeDays, overdueAfterDays, ...extra };
+}
+
+const W = (weeks: number) => weeks * 7;
+const M = (months: number) => months * 30;
+const Y = (years: number) => years * 365;
+
+/** IAP-ACVIP 2023 routine table, birth to 18 years. JE is endemic-only (not in that routine table). */
+const IAP_DOSES: ScheduleDose[] = [
+  row("bcg", "BCG", "Birth dose", 0, 28, {
+    maxAgeDays: Y(1),
+    notes: "Give before discharge. UIP catch-up is up to the first birthday.",
+  }),
+  row("opv-0", "OPV", "Birth dose (OPV-0)", 0, 14, {
+    maxAgeDays: 28,
+    notes: "As soon as possible after birth. Later polio doses on this schedule are IPV.",
+  }),
+  row("hepb-1", "Hepatitis B", "Birth dose", 0, 1, {
+    maxAgeDays: 7,
+    notes: "Within 24 hours of birth. Later doses cover hepatitis B if the birth dose window has closed.",
+  }),
+  row("dtwp-1", "DTwP/DTaP", "Dose 1", W(6), W(10), {
+    maxAgeDays: Y(7),
+    notes: "DTwP or DTaP may be used. Record the brand when the dose is given.",
+  }),
+  row("ipv-1", "IPV", "Dose 1", W(6), W(10), {
+    maxAgeDays: Y(7),
+    notes: "IAP recommends full-dose IPV at 6, 10 and 14 weeks, plus boosters at 16–18 months and 4–6 years.",
+  }),
+  row("hib-1", "Hib", "Dose 1", W(6), W(10), { maxAgeDays: Y(5) }),
+  row("hepb-2", "Hepatitis B", "Dose 2", W(6), W(10), { maxAgeDays: Y(18) }),
+  row("rv-1", "Rotavirus", "Dose 1", W(6), W(10), {
+    maxAgeDays: W(15),
+    notes: "Start by 15 weeks. RV1 (for example Rotarix) is a 2-dose series; other brands use 3 doses.",
+  }),
+  row("pcv-1", "PCV", "Dose 1", W(6), W(10), {
+    maxAgeDays: Y(5),
+    notes: "IAP routine series is 3 infant doses plus a booster. This is not the UIP 2+1 series.",
+  }),
+  row("dtwp-2", "DTwP/DTaP", "Dose 2", W(10), W(14), { maxAgeDays: Y(7) }),
+  row("ipv-2", "IPV", "Dose 2", W(10), W(14), { maxAgeDays: Y(7) }),
+  row("hib-2", "Hib", "Dose 2", W(10), W(14), { maxAgeDays: Y(5) }),
+  row("hepb-3", "Hepatitis B", "Dose 3", W(10), W(14), { maxAgeDays: Y(18) }),
+  row("rv-2", "Rotavirus", "Dose 2", W(10), W(14), { maxAgeDays: W(32), requiresPrior: "rv-1" }),
+  row("pcv-2", "PCV", "Dose 2", W(10), W(14), { maxAgeDays: Y(5) }),
+  row("dtwp-3", "DTwP/DTaP", "Dose 3", W(14), W(18), { maxAgeDays: Y(7) }),
+  row("ipv-3", "IPV", "Dose 3", W(14), W(18), { maxAgeDays: Y(7) }),
+  row("hib-3", "Hib", "Dose 3", W(14), W(18), { maxAgeDays: Y(5) }),
+  row("hepb-4", "Hepatitis B", "Dose 4", W(14), W(18), {
+    maxAgeDays: Y(18),
+    notes: "An additional hepatitis B dose is permitted when it is part of a combination vaccine.",
+  }),
+  row("rv-3", "Rotavirus", "Dose 3", W(14), W(18), {
+    maxAgeDays: W(32),
+    optional: true,
+    requiresPrior: "rv-1",
+    notes: "Omit for a 2-dose rotavirus product (RV1). Finish the series by 32 weeks.",
+  }),
+  row("pcv-3", "PCV", "Dose 3", W(14), W(18), { maxAgeDays: Y(5) }),
+  row("iiv-1", "Influenza", "Dose 1", M(6), M(7), {
+    maxAgeDays: Y(5),
+    notes: "Inactivated influenza, 0.5 ml from 6 months. IAP 2023 repeats it yearly until 5 years of age.",
+  }),
+  row("tcv", "Typhoid conjugate", "Single dose", M(6), M(9), {
+    maxAgeDays: Y(18),
+    notes: "One dose at 6–9 months. The IAP-ACVIP 2023 table does not recommend a typhoid booster.",
+  }),
+  row("iiv-2", "Influenza", "Dose 2", M(7), M(8), {
+    maxAgeDays: Y(5),
+    notes: "Second priming dose, then a yearly dose until 5 years.",
+  }),
+  row("iiv-annual", "Influenza", "Yearly dose", M(18), M(18) + 60, {
+    maxAgeDays: Y(5),
+    recurringEveryDays: Y(1),
+    notes: "Yearly, in the pre-monsoon period, until 5 years of age (IAP-ACVIP 2023 table comment).",
+  }),
+  row("mmr-1", "MMR", "Dose 1", M(9), Y(1), { maxAgeDays: Y(18) }),
+  row("je-1", "Japanese Encephalitis", "Dose 1", M(9), M(11), {
+    maxAgeDays: Y(2),
+    endemicOnly: true,
+    notes: "Not in the IAP 2023 routine table. Shown only when the clinic marks an endemic district, using UIP ages (9–11 months).",
+  }),
+  row("hepa-1", "Hepatitis A", "Dose 1", M(12), M(15), {
+    maxAgeDays: Y(18),
+    notes: "A live attenuated vaccine may be a single dose. Inactivated vaccine needs dose 2.",
+  }),
+  row("mmr-2", "MMR", "Dose 2", M(15), M(16), { maxAgeDays: Y(18) }),
+  row("vari-1", "Varicella", "Dose 1", M(15), M(16), { maxAgeDays: Y(18) }),
+  row("pcv-b", "PCV", "Booster", M(15), M(18), { maxAgeDays: Y(5) }),
+  row("dtwp-b1", "DTwP/DTaP", "Booster 1", M(16), M(18), { maxAgeDays: Y(7) }),
+  row("hib-b1", "Hib", "Booster", M(16), M(18), { maxAgeDays: Y(5) }),
+  row("ipv-b1", "IPV", "Booster 1", M(16), M(18), { maxAgeDays: Y(7) }),
+  row("je-2", "Japanese Encephalitis", "Dose 2", M(16), M(23), {
+    maxAgeDays: Y(2),
+    endemicOnly: true,
+    notes: "Endemic districts only. Second dose at 16–23 months, matching UIP.",
+  }),
+  row("hepa-2", "Hepatitis A", "Dose 2", M(18), M(19), {
+    optional: true,
+    maxAgeDays: Y(18),
+    notes: "Only when inactivated hepatitis A was used. Omit after a single-dose live vaccine.",
+  }),
+  row("vari-2", "Varicella", "Dose 2", M(18), M(19), { maxAgeDays: Y(18) }),
+  row("dtwp-b2", "DTwP/DTaP", "Booster 2", Y(4), Y(6), { maxAgeDays: Y(7) }),
+  row("ipv-b2", "IPV", "Booster 2", Y(4), Y(6), { maxAgeDays: Y(7) }),
+  row("mmr-3", "MMR", "Dose 3", Y(4), Y(6), { maxAgeDays: Y(18) }),
+  row("hpv-1", "HPV", "Dose 1", Y(9), Y(14), {
+    maxAgeDays: Y(18),
+    notes: "Girls and boys. Two doses (0 and 6 months) when the series starts at 9–14 years. Three doses (0, 2 and 6 months) if it starts at 15 or older — add the middle dose on the clinic template.",
+  }),
+  row("hpv-2", "HPV", "Dose 2", Y(9) + M(6), Y(14) + M(6), {
+    maxAgeDays: Y(18),
+    notes: "Six months after dose 1 on the 2-dose 9–14 year schedule.",
+  }),
+  row("tdap", "Tdap", "Dose", Y(10), Y(11), {
+    maxAgeDays: Y(18),
+    notes: "Give Tdap at 10 years even if a DTP booster was given earlier.",
+  }),
+  row("td", "Td", "Dose", Y(16), Y(18), {
+    maxAgeDays: Y(20),
+    notes: "Td at 16–18 years.",
+  }),
+];
+
+/** Government of India national schedule. Vitamin A and antenatal Td are not vaccine rows. */
+const UIP_DOSES: ScheduleDose[] = [
+  row("bcg", "BCG", "Birth dose", 0, 28, { maxAgeDays: Y(1), notes: "Up to the first birthday if missed." }),
+  row("hepb-birth", "Hepatitis B", "Birth dose", 0, 1, {
+    maxAgeDays: 1,
+    notes: "Within 24 hours of birth. Later hepatitis B is inside pentavalent.",
+  }),
+  row("bopv-0", "bOPV", "Birth dose", 0, 15, { maxAgeDays: 15, notes: "Within the first 15 days." }),
+  row("bopv-1", "bOPV", "Dose 1", W(6), W(10), { maxAgeDays: Y(5) }),
+  row("penta-1", "Pentavalent (DPT + Hep B + Hib)", "Dose 1", W(6), W(10), { maxAgeDays: Y(1) }),
+  row("rv-1", "Rotavirus", "Dose 1", W(6), W(10), { maxAgeDays: Y(1) }),
+  row("fipv-1", "fIPV", "Dose 1", W(6), W(14), { maxAgeDays: Y(1), notes: "Fractional IPV, intradermal, at 6 weeks, 14 weeks and 9–11 months." }),
+  row("pcv-1", "PCV", "Dose 1", W(6), W(14), { maxAgeDays: Y(1), notes: "UIP is a 2+1 series: 6 weeks, 14 weeks, and a booster at 9–11 months." }),
+  row("bopv-2", "bOPV", "Dose 2", W(10), W(14), { maxAgeDays: Y(5) }),
+  row("penta-2", "Pentavalent (DPT + Hep B + Hib)", "Dose 2", W(10), W(14), { maxAgeDays: Y(1) }),
+  row("rv-2", "Rotavirus", "Dose 2", W(10), W(14), { maxAgeDays: Y(1) }),
+  row("bopv-3", "bOPV", "Dose 3", W(14), W(18), { maxAgeDays: Y(5) }),
+  row("penta-3", "Pentavalent (DPT + Hep B + Hib)", "Dose 3", W(14), W(18), { maxAgeDays: Y(1) }),
+  row("rv-3", "Rotavirus", "Dose 3", W(14), W(18), { maxAgeDays: Y(1) }),
+  row("fipv-2", "fIPV", "Dose 2", W(14), M(9), { maxAgeDays: Y(1) }),
+  row("pcv-2", "PCV", "Dose 2", W(14), M(9), { maxAgeDays: Y(1) }),
+  row("mr-1", "MR", "Dose 1", M(9), M(11), { maxAgeDays: Y(5), notes: "Measles-rubella, not MMR." }),
+  row("je-1", "Japanese Encephalitis", "Dose 1", M(9), M(11), {
+    maxAgeDays: Y(2),
+    endemicOnly: true,
+    notes: "Selected endemic districts only.",
+  }),
+  row("pcv-b", "PCV", "Booster", M(9), M(11), { maxAgeDays: Y(1) }),
+  row("fipv-3", "fIPV", "Dose 3", M(9), M(11), { maxAgeDays: Y(1) }),
+  row("bopv-b", "bOPV", "Booster", M(16), M(23), { maxAgeDays: Y(5) }),
+  row("mr-2", "MR", "Dose 2", M(16), M(23), { maxAgeDays: Y(5) }),
+  row("dpt-b1", "DPT", "Booster 1", M(16), M(23), { maxAgeDays: Y(7) }),
+  row("je-2", "Japanese Encephalitis", "Dose 2", M(16), M(23), {
+    maxAgeDays: Y(2),
+    endemicOnly: true,
+    notes: "Selected endemic districts only.",
+  }),
+  row("dpt-b2", "DPT", "Booster 2", Y(5), Y(6), { maxAgeDays: Y(7), notes: "At 5–6 years." }),
+  row("td-10", "Td", "10-year dose", Y(10), Y(11), { maxAgeDays: Y(16) }),
+  row("td-16", "Td", "16-year dose", Y(16), Y(18), { maxAgeDays: Y(20) }),
+];
+
+const DEWORM_NOTE =
+  "Optional. Not a vaccine. Common Indian small-animal practice is every 2 weeks until 12 weeks, then about every 3 months. The veterinarian confirms the product.";
+
+function dewormRows(): ScheduleDose[] {
+  return [
+    row("deworm-puppy", "Deworming", "Juvenile dose", 14, 28, {
+      optional: true,
+      recurringEveryDays: 14,
+      maxAgeDays: W(12),
+      collapseMissed: true,
+      notes: DEWORM_NOTE,
+    }),
+    row("deworm-maintain", "Deworming", "Maintenance dose", W(12) + 90, W(12) + 120, {
+      optional: true,
+      recurringEveryDays: 90,
+      collapseMissed: true,
+      notes: DEWORM_NOTE,
+    }),
+  ];
+}
+
+const DOG_DOSES: ScheduleDose[] = [
+  row("dhppil-1", "DHPPiL (DAPP + Lepto)", "Dose 1", W(8), W(12), {
+    notes: "Distemper, adenovirus/hepatitis, parvovirus, parainfluenza, plus leptospirosis. WSAVA core is CDV, CAV and CPV; parainfluenza rides along in Indian DHPPi products. Leptospirosis is treated as core here because it is endemic.",
+  }),
+  row("dhppil-2", "DHPPiL (DAPP + Lepto)", "Dose 2", W(12), W(16)),
+  row("dhppil-3", "DHPPiL (DAPP + Lepto)", "Dose 3 (final puppy dose)", W(16), W(20), {
+    notes: "WSAVA 2024: the last puppy dose should be at 16 weeks of age or older.",
+  }),
+  row("dhppil-26w", "DHPPiL (DAPP + Lepto)", "26-week dose", W(26), W(30), {
+    notes: "WSAVA 2024: a further dose at or after 26 weeks, so a puppy that still had maternal antibody at 16 weeks is not left waiting until the first birthday.",
+  }),
+  row("lepto-annual", "Leptospirosis", "Annual booster", Y(1), Y(1) + 60, {
+    recurringEveryDays: Y(1),
+    notes: "Bacterin vaccines are boosted about yearly. Core DAP is on its own 3-year row.",
+  }),
+  row("dap-triennial", "DAP (distemper, adenovirus, parvovirus)", "Core booster", Y(3), Y(3) + 90, {
+    recurringEveryDays: Y(3),
+    notes: "WSAVA 2024: after a response to core MLV vaccines, revaccinate no more often than every 3 years. Shorten this on the clinic template if the product leaflet says so.",
+  }),
+  row("rabies-1", "Anti-rabies", "Dose 1", W(12), W(16), {
+    notes: "From 12 weeks. Follow the leaflet of the vaccine used in this clinic.",
+  }),
+  row("rabies-2", "Anti-rabies", "Dose 2", W(16), W(20), {
+    notes: "About 4 weeks after dose 1, which is common Indian primary-series practice.",
+  }),
+  row("rabies-annual", "Anti-rabies", "Annual booster", Y(1), Y(1) + 30, {
+    recurringEveryDays: Y(1),
+    notes: "India is rabies-endemic. This chart defaults to an annual booster. Many products are licensed for a longer duration of immunity; change the interval only when the leaflet and local rules allow it.",
+  }),
+  ...dewormRows(),
+];
+
+const CAT_DOSES: ScheduleDose[] = [
+  row("fvrcp-1", "FVRCP", "Dose 1", W(8), W(12), {
+    notes: "Feline viral rhinotracheitis (herpesvirus), calicivirus and panleukopenia.",
+  }),
+  row("fvrcp-2", "FVRCP", "Dose 2", W(12), W(16)),
+  row("fvrcp-3", "FVRCP", "Dose 3 (final kitten dose)", W(16), W(20), {
+    notes: "WSAVA 2024: the last kitten dose should be at 16 weeks of age or older.",
+  }),
+  row("fvrcp-26w", "FVRCP", "26-week dose", W(26), W(30), {
+    notes: "WSAVA 2024: a further dose at or after 26 weeks.",
+  }),
+  row("fvrcp-booster", "FVRCP", "Booster", Y(1), Y(1) + 60, {
+    recurringEveryDays: Y(1),
+    notes: "Annual by default for Indian practice, especially where cats board or meet other cats. WSAVA allows core FPV revaccination every 3 years or longer in low-risk cats. Edit the interval on the clinic template.",
+  }),
+  row("rabies-1", "Anti-rabies", "Dose 1", W(12), W(16), {
+    notes: "From 12 weeks. Rabies is core in endemic India for cats as well as dogs.",
+  }),
+  row("rabies-2", "Anti-rabies", "Dose 2", W(16), W(20), {
+    notes: "About 4 weeks after dose 1.",
+  }),
+  row("rabies-annual", "Anti-rabies", "Annual booster", Y(1), Y(1) + 30, {
+    recurringEveryDays: Y(1),
+    notes: "Annual booster by default. Lengthen it on the clinic template only when the product leaflet and local rules allow.",
+  }),
+  ...dewormRows(),
+];
+
+export const IMMUNIZATION_SCHEDULES: Record<ScheduleId, ScheduleDefinition> = {
+  pediatric_iap: {
+    id: "pediatric_iap",
+    version: "iap-acvip-2023",
+    family: "pediatric",
+    title: "IAP-ACVIP 2023 (recommended)",
+    citation: IAP_CITATION,
+    doses: IAP_DOSES,
+  },
+  pediatric_uip: {
+    id: "pediatric_uip",
+    version: "uip-nis-2024",
+    family: "pediatric",
+    title: "India UIP / National Immunization Schedule (2024 manual)",
+    citation: UIP_CITATION,
+    doses: UIP_DOSES,
+  },
+  canine: {
+    id: "canine",
+    version: "wsava-2024-india-dog",
+    family: "veterinary",
+    species: "dog",
+    title: "Dog — WSAVA 2024 adapted for India",
+    citation: DOG_CITATION,
+    doses: DOG_DOSES,
+  },
+  feline: {
+    id: "feline",
+    version: "wsava-2024-india-cat",
+    family: "veterinary",
+    species: "cat",
+    title: "Cat — WSAVA 2024 adapted for India",
+    citation: CAT_CITATION,
+    doses: CAT_DOSES,
+  },
+};
+
+export function scheduleById(id: string): ScheduleDefinition | null {
+  if (id === "pediatric_iap" || id === "pediatric_uip" || id === "canine" || id === "feline") {
+    return IMMUNIZATION_SCHEDULES[id];
+  }
+  return null;
+}
+
+export function canonicalSpecies(value: unknown): "" | "human" | "dog" | "cat" | "other" {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) return "";
+  if (raw === "human" || raw === "child" || raw === "person") return "human";
+  if (raw === "dog" || raw === "canine" || raw === "puppy" || raw === "pup") return "dog";
+  if (raw === "cat" || raw === "feline" || raw === "kitten") return "cat";
+  return "other";
+}
+
+export function addDaysIso(isoDate: string, days: number): string {
+  const [year, month, day] = isoDate.slice(0, 10).split("-").map((part) => Number(part));
+  if (!year || !month || !day) return "";
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (Number.isNaN(date.getTime())) return "";
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+export function daysBetweenIso(fromIso: string, toIso: string): number | null {
+  const from = Date.parse(`${fromIso.slice(0, 10)}T00:00:00Z`);
+  const to = Date.parse(`${toIso.slice(0, 10)}T00:00:00Z`);
+  if (Number.isNaN(from) || Number.isNaN(to)) return null;
+  return Math.round((to - from) / 86400000);
+}
+
+export function isIsoDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  return addDaysIso(value, 0) === value;
+}
+
+export function applyScheduleEdits(doses: ScheduleDose[], edits: DoseEdit[], scheduleId: string): ScheduleDose[] {
+  const mine = edits.filter((edit) => edit.scheduleId === scheduleId);
+  const byCode = new Map(mine.map((edit) => [edit.code, edit]));
+  const next: ScheduleDose[] = [];
+  for (const dose of doses) {
+    const edit = byCode.get(dose.code);
+    if (edit?.disabled) continue;
+    const recurring =
+      edit && Object.prototype.hasOwnProperty.call(edit, "recurringEveryDays")
+        ? edit.recurringEveryDays || undefined
+        : dose.recurringEveryDays;
+    next.push({
+      ...dose,
+      dueAgeDays: edit?.dueAgeDays ?? dose.dueAgeDays,
+      overdueAfterDays: edit?.overdueAfterDays ?? dose.overdueAfterDays,
+      doseLabel: edit?.doseLabel?.trim() || dose.doseLabel,
+      antigen: edit?.antigen?.trim() || dose.antigen,
+      recurringEveryDays: recurring && recurring > 0 ? recurring : undefined,
+      notes: edit?.notes?.trim() ? [dose.notes, edit.notes.trim()].filter(Boolean).join(" ") : dose.notes,
+    });
+  }
+  for (const edit of mine) {
+    if (!edit.code.startsWith("clinic-") || edit.disabled) continue;
+    if (!edit.antigen?.trim() || edit.dueAgeDays == null) continue;
+    next.push({
+      code: edit.code,
+      antigen: edit.antigen.trim(),
+      doseLabel: edit.doseLabel?.trim() || "Clinic dose",
+      dueAgeDays: edit.dueAgeDays,
+      overdueAfterDays: edit.overdueAfterDays ?? edit.dueAgeDays + 28,
+      recurringEveryDays: edit.recurringEveryDays || undefined,
+      notes: edit.notes?.trim() || "Added by this clinic. Not part of the published schedule.",
+    });
+  }
+  return next;
+}
+
+const CATCH_UP_NOTE = "Late dose. Catch-up is a reminder only — the doctor confirms whether to give it.";
+const WINDOW_NOTE = "Outside the recommended age window.";
+
+function occurrenceAges(dose: ScheduleDose, ageDays: number): number[] {
+  if (!dose.recurringEveryDays || dose.recurringEveryDays < 1) return [dose.dueAgeDays];
+  const ages: number[] = [];
+  let cursor = dose.dueAgeDays;
+  const cap = dose.maxAgeDays ?? dose.dueAgeDays + dose.recurringEveryDays * 30;
+  const horizon = ageDays + dose.recurringEveryDays;
+  while (cursor <= cap && cursor <= horizon && ages.length < 40) {
+    ages.push(cursor);
+    const duePassed = cursor <= ageDays;
+    cursor += dose.recurringEveryDays;
+    if (!duePassed) break;
+  }
+  if (!ages.length) ages.push(dose.dueAgeDays);
+  return ages;
+}
+
+function classify(ageDays: number, dose: ScheduleDose, dueAge: number): { status: DoseStatus; catchUp: boolean; catchUpNote: string } {
+  const grace = Math.max(0, dose.overdueAfterDays - dose.dueAgeDays);
+  const overdueAt = dueAge + grace;
+  if (dose.maxAgeDays != null && ageDays > dose.maxAgeDays) {
+    return { status: "not_indicated", catchUp: false, catchUpNote: WINDOW_NOTE };
+  }
+  if (ageDays < dueAge) return { status: "upcoming", catchUp: false, catchUpNote: "" };
+  if (ageDays <= overdueAt) return { status: "due", catchUp: false, catchUpNote: "" };
+  return { status: "overdue", catchUp: true, catchUpNote: CATCH_UP_NOTE };
+}
+
+export function computeImmunizationChart(input: {
+  dateOfBirth: string;
+  today: string;
+  schedule: ScheduleDefinition;
+  records?: ChartRecord[];
+  endemicJe?: boolean;
+  includeOptional?: boolean;
+  edits?: DoseEdit[];
+}): { ok: true; doses: ChartDose[] } | { ok: false; error: string } {
+  if (!isIsoDate(input.dateOfBirth) || !isIsoDate(input.today)) {
+    return { ok: false, error: "A date of birth is required to compute the chart." };
+  }
+  const ageDays = daysBetweenIso(input.dateOfBirth, input.today);
+  if (ageDays == null || ageDays < 0) {
+    return { ok: false, error: "Date of birth is after the chart date." };
+  }
+  const edited = applyScheduleEdits(input.schedule.doses, input.edits || [], input.schedule.id);
+  const records = new Map((input.records || []).map((record) => [record.occurrenceKey, record]));
+  const built: ChartDose[] = [];
+  for (const dose of edited) {
+    if (dose.endemicOnly && !input.endemicJe) continue;
+    if (dose.optional && input.includeOptional === false) continue;
+    const ages = occurrenceAges(dose, ageDays);
+    const missedKeys: string[] = [];
+    for (const dueAge of ages) {
+      const occurrenceKey = dose.recurringEveryDays ? `${dose.code}@${dueAge}` : dose.code;
+      const record = records.get(occurrenceKey);
+      const base = classify(ageDays, dose, dueAge);
+      let status: DoseStatus = base.status;
+      let catchUp = base.catchUp;
+      let catchUpNote = base.catchUpNote;
+      if (record?.status === "given" || record?.status === "skipped" || record?.status === "contraindicated") {
+        status = record.status;
+        catchUp = false;
+        catchUpNote = "";
+      } else if (status === "overdue" && dose.collapseMissed) {
+        missedKeys.push(occurrenceKey);
+      }
+      built.push({
+        occurrenceKey,
+        code: dose.code,
+        antigen: dose.antigen,
+        doseLabel: dose.doseLabel,
+        dueOn: addDaysIso(input.dateOfBirth, dueAge),
+        dueAgeDays: dueAge,
+        status,
+        catchUp,
+        catchUpNote,
+        notes: dose.notes || "",
+        optional: Boolean(dose.optional),
+        endemicOnly: Boolean(dose.endemicOnly),
+        givenOn: record?.status === "given" ? record.givenOn || "" : "",
+        brand: record?.brand || "",
+        batchNo: record?.batchNo || "",
+        givenByName: record?.givenByName || "",
+        reason: record?.status === "given" ? "" : record?.reason || "",
+        recordId: record?.id || "",
+        stockAdministrationId: record?.stockAdministrationId || "",
+      });
+    }
+    if (dose.collapseMissed && missedKeys.length > 1) {
+      const drop = new Set(missedKeys.slice(0, -1));
+      for (let i = built.length - 1; i >= 0; i -= 1) {
+        if (drop.has(built[i].occurrenceKey)) built.splice(i, 1);
+      }
+      const kept = built.find((item) => item.occurrenceKey === missedKeys[missedKeys.length - 1]);
+      if (kept) {
+        kept.catchUpNote = `${CATCH_UP_NOTE} Earlier intervals were also missed.`;
+      }
+    }
+  }
+  const byCode = new Map(built.map((dose) => [dose.code, dose]));
+  for (const dose of edited) {
+    if (!dose.requiresPrior) continue;
+    const prior = byCode.get(dose.requiresPrior);
+    if (!prior || prior.status !== "not_indicated") continue;
+    for (const item of built) {
+      if (item.code !== dose.code || item.status === "given") continue;
+      item.status = "not_indicated";
+      item.catchUp = false;
+      item.catchUpNote = WINDOW_NOTE;
+    }
+  }
+  return { ok: true, doses: built };
+}

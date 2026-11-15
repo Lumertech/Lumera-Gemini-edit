@@ -231,6 +231,8 @@ export const patients = pgTable(
     allergies: text("allergies").notNull().default("[]"),
     chronicConditions: text("chronic_conditions").notNull().default("[]"),
     emergencyContact: text("emergency_contact").notNull().default(""),
+    species: text("species").notNull().default(""),
+    breed: text("breed").notNull().default(""),
     address: text("address").notNull().default(""),
     lastVisit: text("last_visit"),
     createdAt: text("created_at").notNull(),
