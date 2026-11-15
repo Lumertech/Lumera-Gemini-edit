@@ -381,6 +381,47 @@ describe("immunization charts", () => {
     const batches = stock.json.batches as { id: string; qty: number }[];
     assert.equal(batches.find((batch) => batch.id === batchId)?.qty, 1);
 
+    const corrected = await jsonRequest(
+      port,
+      "POST",
+      `/api/patients/${pet.id}/immunization-doses`,
+      {
+        occurrenceKey: "rabies-1",
+        status: "given",
+        givenOn: "2024-03-26",
+        brand: "Anti-rabies",
+        batchNo: "ARV-9",
+        doctorConfirmed: true,
+        audience: "veterinary",
+      },
+      doctor
+    );
+    assert.equal(corrected.status, 201, String(corrected.json.error || ""));
+    const kept = corrected.json.dose as { stockAdministrationId: string; givenOn: string };
+    assert.equal(kept.stockAdministrationId, recorded.stockAdministrationId);
+    assert.equal(kept.givenOn, "2024-03-26");
+
+    const secondVial = await jsonRequest(
+      port,
+      "POST",
+      `/api/patients/${pet.id}/immunization-doses`,
+      {
+        occurrenceKey: "rabies-1",
+        status: "given",
+        givenOn: "2024-03-26",
+        doctorConfirmed: true,
+        audience: "veterinary",
+        stockItemId: itemId,
+        stockBatchId: batchId,
+      },
+      doctor
+    );
+    assert.equal(secondVial.status, 400);
+    assert.match(String(secondVial.json.error), /already linked/i);
+    const stockHeld = await jsonRequest(port, "GET", "/api/accounts/stock", undefined, admin);
+    const held = (stockHeld.json.batches as { id: string; qty: number }[]).find((batch) => batch.id === batchId);
+    assert.equal(held?.qty, 1);
+
     const again = await jsonRequest(
       port,
       "POST",

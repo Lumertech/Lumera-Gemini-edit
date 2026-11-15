@@ -469,6 +469,19 @@ export function daysBetweenIso(fromIso: string, toIso: string): number | null {
   return Math.round((to - from) / 86400000);
 }
 
+/**
+ * A blank due-age field is not zero. Zero is a real birth dose, so the
+ * template editor must send it only when the doctor typed 0.
+ */
+export function parseTemplateDueAge(raw: string): { ok: true; days: number } | { ok: false; error: string } {
+  const text = String(raw ?? "").trim();
+  if (!text) return { ok: false, error: "Enter a due age in days before saving that dose." };
+  if (!/^\d+$/.test(text)) return { ok: false, error: "Due age must be a whole number of days." };
+  const days = Number(text);
+  if (days > 8000) return { ok: false, error: "Due age must be 8000 days or fewer." };
+  return { ok: true, days };
+}
+
 export function isIsoDate(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   return addDaysIso(value, 0) === value;

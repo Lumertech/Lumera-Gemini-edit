@@ -105,6 +105,30 @@ describe("practice type onboarding", () => {
     assert.equal(row.pack_id, "gp");
   });
 
+  it("live register of Veterinary stores pack gp and the Veterinary doctor module", async () => {
+    const stamp = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    const email = `vet.${stamp}@onboard-test.example`;
+    const res = await jsonRequest(port, "POST", "/api/auth/register-practice", {
+      clinicName: "Paws Clinic",
+      specialty: "Veterinary",
+      country: "India",
+      timezone: "IST (UTC+5:30)",
+      phone: `+91 98200 ${stamp.slice(0, 5)}`,
+      name: "Leela Rao",
+      email,
+      password: "Lumera@2026",
+    });
+    assert.equal(res.status, 200, String(res.json.error || "veterinary register failed"));
+    const row = getDb().prepare("SELECT specialty, pack_id FROM users WHERE email = ?").get(email) as {
+      specialty: string;
+      pack_id: string;
+    };
+    assert.equal(row.specialty, "gp");
+    assert.equal(row.pack_id, "gp");
+    const doctor = getDb().prepare("SELECT specialty FROM doctors WHERE email = ?").get(email) as { specialty: string };
+    assert.equal(doctor.specialty, "Veterinary");
+  });
+
   it("register-practice with multispecialty is an explicit polyclinic admin opt-in", async () => {
     const stamp = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
     const email = `poly.${stamp}@onboard-test.example`;

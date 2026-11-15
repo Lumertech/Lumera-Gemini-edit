@@ -5,6 +5,7 @@ import type { StockBatchCard } from "../../lib/accountsDesk";
 import { buildImmunizationPrintHtml, type ImmunizationPrintLetterhead } from "../../lib/immunizationPrint";
 import {
   IMMUNIZATION_SAFETY_NOTICE,
+  parseTemplateDueAge,
   type ChartDose,
   type DoseStatus,
 } from "../../lib/immunizationSchedules";
@@ -173,7 +174,8 @@ export const ImmunizationChartPanel: React.FC<{
     setBusy(true);
     setError("");
     try {
-      const chosen = vaccines.find((batch) => batch.id === stockBatchId);
+      const alreadyLinked = Boolean(active.stockAdministrationId);
+      const chosen = alreadyLinked ? undefined : vaccines.find((batch) => batch.id === stockBatchId);
       await apiFetch(`/api/patients/${encodeURIComponent(patientId)}/immunization-doses`, {
         method: "POST",
         body: JSON.stringify({
@@ -187,6 +189,7 @@ export const ImmunizationChartPanel: React.FC<{
           doctorConfirmed: confirmed,
           audience,
           scheduleId: chart?.schedule?.id || "",
+          ...(alreadyLinked ? { stockAdministrationId: active.stockAdministrationId } : {}),
           ...(chosen ? { stockItemId: chosen.itemId, stockBatchId: chosen.id } : {}),
         }),
       });
@@ -206,9 +209,14 @@ export const ImmunizationChartPanel: React.FC<{
     try {
       const scheduleId = audience === "veterinary" ? chart?.schedule?.id || "canine" : pediatricScheduleId;
       const edits = [...(chart?.settings?.edits || [])];
-      const dueAge = Number(editDueAge);
-      if (editCode.trim() && Number.isInteger(dueAge)) {
-        const next = { scheduleId, code: editCode.trim(), dueAgeDays: dueAge };
+      if (editCode.trim()) {
+        const parsedAge = parseTemplateDueAge(editDueAge);
+        if (parsedAge.ok === false) {
+          setError(parsedAge.error);
+          setBusy(false);
+          return;
+        }
+        const next = { scheduleId, code: editCode.trim(), dueAgeDays: parsedAge.days };
         const index = edits.findIndex((edit) => edit.scheduleId === next.scheduleId && edit.code === next.code);
         if (index >= 0) edits[index] = { ...edits[index], ...next };
         else edits.push(next);
@@ -482,19 +490,25 @@ export const ImmunizationChartPanel: React.FC<{
           <label className="text-xs font-semibold text-slate-700" htmlFor="imm-stock">
             Link a stock vial (optional)
           </label>
-          <select
-            id="imm-stock"
-            value={stockBatchId}
-            onChange={(event) => setStockBatchId(event.target.value)}
-            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white"
-          >
-            <option value="">Do not decrement stock</option>
-            {vaccines.map((batch) => (
-              <option key={batch.id} value={batch.id}>
-                {batch.itemName} · {batch.batchNo} · {batch.qty} left
-              </option>
-            ))}
-          </select>
+          {active.stockAdministrationId ? (
+            <p id="imm-stock" className="text-xs text-slate-700 break-words">
+              Already linked to a stock vial. This edit keeps that link and does not take another vial.
+            </p>
+          ) : (
+            <select
+              id="imm-stock"
+              value={stockBatchId}
+              onChange={(event) => setStockBatchId(event.target.value)}
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white"
+            >
+              <option value="">Do not decrement stock</option>
+              {vaccines.map((batch) => (
+                <option key={batch.id} value={batch.id}>
+                  {batch.itemName} · {batch.batchNo} · {batch.qty} left
+                </option>
+              ))}
+            </select>
+          )}
           <label className="text-xs font-semibold text-slate-700" htmlFor="imm-reason">
             Reason (required to skip or mark contraindicated)
           </label>

@@ -381,7 +381,21 @@ export function recordImmunizationDose(
   let batchNo = String(body.batchNo || body.batch_no || "").trim().slice(0, 80);
   let stockAdministrationId = String(body.stockAdministrationId || body.stock_administration_id || "").trim();
   const givenByName = String(body.givenByName || body.given_by_name || actor.name).trim().slice(0, 120) || actor.name;
-  if (status === "given" && (body.stockItemId || body.stock_item_id)) {
+  const now = new Date().toISOString();
+  const existing = dbReady()
+    .prepare(
+      "SELECT id, stock_administration_id FROM immunization_dose_records WHERE tenant_id = ? AND patient_id = ? AND occurrence_key = ?"
+    )
+    .get(tenantId, patientId, occurrenceKey) as { id: string; stock_administration_id?: string } | undefined;
+  const existingStockId = String(existing?.stock_administration_id || "").trim();
+  const wantsNewVial = Boolean(String(body.stockItemId || body.stock_item_id || "").trim());
+  if (wantsNewVial) {
+    if (existingStockId) {
+      throw immunizationError(
+        400,
+        "This dose is already linked to a stock vial. Correct the date or brand without choosing another vial."
+      );
+    }
     const administered = giveVaccine(
       tenantId,
       {
@@ -396,7 +410,7 @@ export function recordImmunizationDose(
     stockAdministrationId = administered.id;
     brand = brand || administered.vaccineName;
     batchNo = batchNo || administered.batchNo;
-  } else if (status === "given" && stockAdministrationId) {
+  } else if (stockAdministrationId) {
     const linked = dbReady()
       .prepare("SELECT id, vaccine_name, batch_no FROM vaccine_administrations WHERE id = ? AND tenant_id = ? AND patient_id = ?")
       .get(stockAdministrationId, tenantId, patientId) as { id: string; vaccine_name: string; batch_no: string } | undefined;
@@ -404,12 +418,8 @@ export function recordImmunizationDose(
     brand = brand || linked.vaccine_name;
     batchNo = batchNo || linked.batch_no;
   } else {
-    stockAdministrationId = status === "given" ? stockAdministrationId : "";
+    stockAdministrationId = existingStockId;
   }
-  const now = new Date().toISOString();
-  const existing = dbReady()
-    .prepare("SELECT id FROM immunization_dose_records WHERE tenant_id = ? AND patient_id = ? AND occurrence_key = ?")
-    .get(tenantId, patientId, occurrenceKey) as { id: string } | undefined;
   const id = existing?.id || `imm-${crypto.randomUUID().slice(0, 8)}`;
   if (existing) {
     dbReady()

@@ -10,6 +10,7 @@ import {
   applyScheduleEdits,
   canonicalSpecies,
   computeImmunizationChart,
+  parseTemplateDueAge,
 } from "./immunizationSchedules.ts";
 import { vaccineDueReminderHook } from "./vaccineDueReminderHook.ts";
 
@@ -294,6 +295,20 @@ describe("due-dose WhatsApp hook and printable letterhead", () => {
     assert.match(html, /Serum/);
     assert.match(html, /Schedules are reminders only/);
     assert.match(html, /IAP-ACVIP 2023/);
+  });
+});
+
+describe("template due age", () => {
+  it("does not treat a blank field as a birth dose", () => {
+    assert.equal(parseTemplateDueAge("").ok, false);
+    assert.equal(parseTemplateDueAge("   ").ok, false);
+    const zero = parseTemplateDueAge("0");
+    assert.equal(zero.ok, true);
+    if (zero.ok) assert.equal(zero.days, 0);
+    const three = parseTemplateDueAge("3");
+    assert.equal(three.ok, true);
+    if (three.ok) assert.equal(three.days, 3);
+    assert.equal(parseTemplateDueAge("3.5").ok, false);
   });
 });
 
