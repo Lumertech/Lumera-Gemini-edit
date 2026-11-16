@@ -78,11 +78,21 @@ def _join(base: str, leaf: str) -> str:
     return base.rstrip("/") + "/" + leaf.lstrip("/")
 
 
+def cache_bust_token(expect: str, attempt: int) -> str:
+    """A new query value on every try.
+
+    Firebase Hosting caches origin 404s for about ten minutes, keyed by the
+    full URL. Reusing ``?v=<sha>`` replays an early miss for the rest of this
+    window and for a later build of the same commit.
+    """
+    return f"{expect}.{attempt}.{time.time_ns()}"
+
+
 def fetch_identity(base_url: str, timeout: float = 20.0, cache_bust: str = "") -> tuple[int, str, str]:
     """GET /build.json. Returns (status, commit or '', header or '').
 
-    The query string is not part of the file lookup. It keeps Firebase Hosting
-    from replaying a cached 404 for the bare path (www 404s were max-age=600).
+    The query string is not part of the file lookup. A fresh value keeps
+    Firebase Hosting from replaying a cached 404 (www 404s were max-age=600).
     """
     leaf = "build.json"
     if cache_bust:
@@ -122,7 +132,9 @@ def check_url(
     last = "no response"
     for attempt in range(1, attempts + 1):
         try:
-            status, commit, header = fetch_identity(base_url, cache_bust=expect)
+            status, commit, header = fetch_identity(
+                base_url, cache_bust=cache_bust_token(expect, attempt)
+            )
         except Exception as err:  # noqa: BLE001 — network failures are retries
             last = f"{type(err).__name__}: {err}"
             status, commit, header = 0, "", ""
@@ -173,12 +185,26 @@ def self_test() -> None:
     }
     assert revision_commit_unix(revision) == 1794799925
     assert revision_commit_unix({"spec": {"containers": [{"env": []}]}}) is None
+    first = cache_bust_token(SHA, 1)
+    again = cache_bust_token(SHA, 1)
+    nxt = cache_bust_token(SHA, 2)
+    assert first != again and first != nxt and SHA in first
+
+    seen: list[str] = []
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
+            seen.append(self.path)
             if self.path.split("?", 1)[0] != "/build.json":
                 self.send_response(404)
                 self.end_headers()
+                return
+            # First hit is a 404, the way Firebase would cache an early miss.
+            if len(seen) == 1:
+                self.send_response(404)
+                self.send_header("Cache-Control", "max-age=600")
+                self.end_headers()
+                self.wfile.write(b"missing")
                 return
             body = json.dumps({"commit": SHA}).encode()
             self.send_response(200)
@@ -197,6 +223,8 @@ def self_test() -> None:
     base = f"http://127.0.0.1:{server.server_address[1]}"
     try:
         check_url(base, SHA, require_header=True, attempts=2, sleep_s=0.01)
+        queries = [path.split("?", 1)[1] for path in seen if path.startswith("/build.json?")]
+        assert len(queries) >= 2 and len(set(queries)) == len(queries), queries
         try:
             check_url(base, "0" * 40, require_header=True, attempts=1, sleep_s=0)
         except SystemExit as err:
