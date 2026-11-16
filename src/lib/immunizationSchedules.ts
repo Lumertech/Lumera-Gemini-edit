@@ -786,12 +786,13 @@ export function computeImmunizationChart(input: {
         const projected = ageDays + gap.days;
         if (projected > dueAge) dueAge = projected;
       }
-      if (dose.alsoAfterCode && dose.alsoAfterDays) {
-        const other = records.get(dose.alsoAfterCode);
-        if (other?.status === "given" && other.givenOn) {
-          const shifted = daysBetweenIso(input.dateOfBirth, addDaysIso(other.givenOn, dose.alsoAfterDays));
-          if (shifted != null && shifted > dueAge) dueAge = shifted;
-        }
+      const alsoPrior = dose.alsoAfterCode ? records.get(dose.alsoAfterCode) : undefined;
+      if (dose.alsoAfterCode && dose.alsoAfterDays && alsoPrior?.status === "given" && alsoPrior.givenOn) {
+        const shifted = daysBetweenIso(input.dateOfBirth, addDaysIso(alsoPrior.givenOn, dose.alsoAfterDays));
+        if (shifted != null && shifted > dueAge) dueAge = shifted;
+      } else if (dose.alsoAfterCode && dose.alsoAfterDays && alsoPrior?.status !== "given" && dueAge <= ageDays) {
+        const projected = ageDays + dose.alsoAfterDays;
+        if (projected > dueAge) dueAge = projected;
       }
       const base = classify(ageDays, dose, dueAge);
       let status: DoseStatus = base.status;
@@ -808,6 +809,14 @@ export function computeImmunizationChart(input: {
           status = "upcoming";
           catchUp = false;
           catchUpNote = gap.note;
+        }
+      } else if (dose.alsoAfterCode && alsoPrior?.status !== "given") {
+        const otherDose = edited.find((item) => item.code === dose.alsoAfterCode);
+        const otherWindowOpen = otherDose?.maxAgeDays == null || ageDays <= otherDose.maxAgeDays;
+        if (otherWindowOpen && (status === "due" || status === "overdue" || status === "upcoming")) {
+          status = "upcoming";
+          catchUp = false;
+          catchUpNote = gap?.note || "Give this dose after the previous one in the series.";
         }
       } else if (status === "overdue" && dose.collapseMissed) {
         missedKeys.push(occurrenceKey);

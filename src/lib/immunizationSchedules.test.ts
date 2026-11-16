@@ -470,6 +470,36 @@ describe("IAP 2025 and UIP age boundaries", () => {
     if (!startedLate.ok) return;
     assert.equal(dose(startedLate, "hpv-15-2").dueOn, addDaysIso(at(16), 60));
     assert.equal(dose(startedLate, "hpv-15-3").dueOn, addDaysIso(at(16), 180));
+    assert.equal(dose(startedLate, "hpv-15-3").status, "upcoming");
+
+    const doseOneOnly = computeImmunizationChart({
+      dateOfBirth: dob,
+      today: addDaysIso(at(15), 190),
+      schedule: IMMUNIZATION_SCHEDULES.pediatric_iap,
+      sex: "female",
+      records: [{ occurrenceKey: "hpv-15-1", status: "given", givenOn: at(15) }],
+    });
+    assert.equal(doseOneOnly.ok, true);
+    if (!doseOneOnly.ok) return;
+    assert.equal(dose(doseOneOnly, "hpv-15-2").status, "overdue");
+    assert.equal(dose(doseOneOnly, "hpv-15-3").status, "upcoming");
+    assert.equal(dose(doseOneOnly, "hpv-15-3").catchUp, false);
+    assert.ok((dose(doseOneOnly, "hpv-15-3").dueOn || "") > addDaysIso(at(15), 190));
+
+    const bothGiven = computeImmunizationChart({
+      dateOfBirth: dob,
+      today: addDaysIso(at(15), 180),
+      schedule: IMMUNIZATION_SCHEDULES.pediatric_iap,
+      sex: "female",
+      records: [
+        { occurrenceKey: "hpv-15-1", status: "given", givenOn: at(15) },
+        { occurrenceKey: "hpv-15-2", status: "given", givenOn: addDaysIso(at(15), 60) },
+      ],
+    });
+    assert.equal(bothGiven.ok, true);
+    if (!bothGiven.ok) return;
+    assert.equal(dose(bothGiven, "hpv-15-3").status, "due");
+    assert.equal(dose(bothGiven, "hpv-15-3").dueOn, addDaysIso(at(15), 180));
 
     const started = chart(16, "pediatric_iap", {
       sex: "female",
