@@ -44,14 +44,24 @@ def tag_url(service: dict, tag: str) -> str:
     """Direct URL of a --no-traffic revision tag.
 
     `describe` sometimes lists the tag before it fills `url`. The public form
-    is https://TAG---<service-host>, derived from status.url. An HTTP check
-    of that URL is still required before traffic moves.
+    is https://TAG---<service-host>, derived from status.url, but only when a
+    traffic entry actually has this tag. A missing tag stays empty so Cloud
+    Build aborts before traffic moves. An HTTP check of a returned URL is
+    still required.
     """
+    if not tag:
+        return ""
+    found = False
     for entry in _traffic_entries(service):
-        if entry.get("tag") == tag and entry.get("url"):
+        if entry.get("tag") != tag:
+            continue
+        found = True
+        if entry.get("url"):
             return str(entry["url"])
+    if not found:
+        return ""
     base = str((service.get("status") or {}).get("url") or "").strip()
-    if not tag or not base.startswith("https://"):
+    if not base.startswith("https://"):
         return ""
     host = base[len("https://") :].split("/")[0]
     return f"https://{tag}---{host}"
@@ -199,6 +209,13 @@ def self_test() -> None:
     }
     assert tag_url(tagged, "babc56f2") == "https://babc56f2---lumera.a.run.app"
     assert tag_url(tagged, "missing") == ""
+    host_only = {
+        "status": {
+            "url": "https://lumera-gemini-edit-v6kfnpsifq-el.a.run.app",
+            "traffic": [{"revisionName": "old", "percent": 100}],
+        }
+    }
+    assert tag_url(host_only, "b7ca4c2d") == ""
     bare = {
         "status": {
             "url": "https://lumera-gemini-edit-v6kfnpsifq-el.a.run.app",
