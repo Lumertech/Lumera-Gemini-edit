@@ -28,6 +28,14 @@ import { runGeminiVoiceReceptionist } from "./gemini-voice.ts";
 import { getWhatsAppTenantVoiceSettings } from "./whatsapp-numbers-store.ts";
 import { getTenantLetterhead } from "./letterhead.ts";
 import { readVoiceGatewaySecret, voiceGatewayAuthorized } from "./voice-gateway-auth.ts";
+import {
+  claimVoiceCallGateway,
+  loadCallGatewaySdp,
+  noteVoiceGatewaySeen,
+  recentVoiceGateways,
+  resetVoiceCallGatewaysForTests,
+  saveCallGatewaySdp,
+} from "./voice-call-gateway.ts";
 
 /** read and failed are terminal. delivered can still become read. */
 function isPendingOutboundStatus(status: string): boolean {
@@ -352,9 +360,14 @@ export function voiceGatewayAnswerTimeoutMs(env: NodeJS.ProcessEnv = process.env
 const cachedCallAnswers = new Map<string, string>();
 const inflightGatewayAnswers = new Map<string, Promise<string>>();
 
-export function resetMetaCallAnswerStateForTests(): void {
+export function resetMetaCallAnswerMemoryForTests(): void {
   cachedCallAnswers.clear();
   inflightGatewayAnswers.clear();
+}
+
+export function resetMetaCallAnswerStateForTests(): void {
+  resetMetaCallAnswerMemoryForTests();
+  resetVoiceCallGatewaysForTests();
 }
 
 type GatewayAnswerContext = {
@@ -404,6 +417,7 @@ async function fetchVoiceGatewaySdp(opts: GatewayAnswerContext): Promise<{ sdpAn
     const sdpAnswer = typeof gwJson?.sdpAnswer === "string" ? gwJson.sdpAnswer : "";
     if (sdpAnswer.trim()) {
       console.log(`[Meta Inbound Call] Gateway SDP answer received in ${elapsedMs}ms for callId=${opts.callId}`);
+      saveCallGatewaySdp(opts.callId, opts.gatewayIp, sdpAnswer);
       return { sdpAnswer, elapsedMs };
     }
     console.warn(`[Meta Inbound Call] Gateway returned no SDP answer in ${elapsedMs}ms for callId=${opts.callId}`);
@@ -454,37 +468,52 @@ export async function handleMetaInboundCallAction(opts: {
   const action = opts.action || "accept";
   let sdpAnswer = cachedCallAnswers.get(opts.callId) || "";
   if (!sdpAnswer && (action === "accept" || action === "pre_accept")) {
+    const stored = loadCallGatewaySdp(opts.callId);
+    if (stored) {
+      sdpAnswer = stored;
+      cachedCallAnswers.set(opts.callId, stored);
+    }
+  }
+  if (!sdpAnswer && (action === "accept" || action === "pre_accept")) {
     const existing = inflightGatewayAnswers.get(opts.callId);
     if (existing) {
       sdpAnswer = await existing;
     } else {
       const gatewayIp = getVoiceGatewayIp() || "34.46.39.52";
-      const callTenantId = opts.tenantId || "tenant-lumera-main";
-      const db = getDb();
-      const letterhead = getTenantLetterhead(callTenantId);
-      const voiceSettings = getWhatsAppTenantVoiceSettings(db, callTenantId);
-      const clinicName = letterhead.clinicName && !/physio practice/i.test(letterhead.clinicName)
-        ? letterhead.clinicName
-        : "the clinic";
-      const receptionistName = voiceSettings.receptionistName || "Maya";
-      const customGreeting = voiceSettings.customGreeting || "";
-      const gatewayPromise = sharedVoiceGatewayAnswer({
-        callId: opts.callId,
-        offerSdp: opts.offerSdp,
-        fromPhone: opts.fromPhone,
-        tenantId: callTenantId,
-        phoneNumberId: opts.phoneNumberId,
-        clinicName,
-        receptionistName,
-        customGreeting,
-        gatewayIp,
-      });
-      inflightGatewayAnswers.set(opts.callId, gatewayPromise);
-      try {
-        sdpAnswer = await gatewayPromise;
-      } finally {
-        if (inflightGatewayAnswers.get(opts.callId) === gatewayPromise) {
-          inflightGatewayAnswers.delete(opts.callId);
+      const claim = claimVoiceCallGateway(opts.callId, gatewayIp);
+      if (claim.status === "foreign") {
+        console.warn(
+          `[Meta Inbound Call] Call ${opts.callId} is owned by gateway ${claim.gatewayKey}. Not contacting ${gatewayIp}.`
+        );
+        sdpAnswer = claim.sdpAnswer || buildWebRtcSdpAnswer(opts.offerSdp, claim.gatewayKey);
+      } else {
+        const callTenantId = opts.tenantId || "tenant-lumera-main";
+        const db = getDb();
+        const letterhead = getTenantLetterhead(callTenantId);
+        const voiceSettings = getWhatsAppTenantVoiceSettings(db, callTenantId);
+        const clinicName = letterhead.clinicName && !/physio practice/i.test(letterhead.clinicName)
+          ? letterhead.clinicName
+          : "the clinic";
+        const receptionistName = voiceSettings.receptionistName || "Maya";
+        const customGreeting = voiceSettings.customGreeting || "";
+        const gatewayPromise = sharedVoiceGatewayAnswer({
+          callId: opts.callId,
+          offerSdp: opts.offerSdp,
+          fromPhone: opts.fromPhone,
+          tenantId: callTenantId,
+          phoneNumberId: opts.phoneNumberId,
+          clinicName,
+          receptionistName,
+          customGreeting,
+          gatewayIp,
+        });
+        inflightGatewayAnswers.set(opts.callId, gatewayPromise);
+        try {
+          sdpAnswer = await gatewayPromise;
+        } finally {
+          if (inflightGatewayAnswers.get(opts.callId) === gatewayPromise) {
+            inflightGatewayAnswers.delete(opts.callId);
+          }
         }
       }
     }
@@ -883,6 +912,11 @@ export function createMetaRouter(): Router {
     const cleanIp = String(gatewayIp || "").trim();
     if (cleanIp) {
       setVoiceGatewayIp(cleanIp);
+      try {
+        noteVoiceGatewaySeen(cleanIp);
+      } catch (err) {
+        console.warn("[Voice Gateway Online] Could not record the gateway IP", err);
+      }
       console.log(`[Voice Gateway Online] Registered public IP: ${cleanIp}`);
       recordWebhookDebugLog({
         id: `gw-${Date.now()}`,
@@ -901,9 +935,16 @@ export function createMetaRouter(): Router {
       return res.status(403).json({ error: "Unauthorized" });
     }
     const currentIp = getVoiceGatewayIp();
+    let recentGateways: Array<{ gatewayKey: string; lastSeenAt: string }> = [];
+    try {
+      recentGateways = recentVoiceGateways();
+    } catch (err) {
+      console.warn("[Voice Gateway Online] Could not list recent gateways", err);
+    }
     return res.json({
       status: currentIp ? "connected" : "waiting",
       gatewayIp: currentIp || "none",
+      recentGateways,
     });
   });
 

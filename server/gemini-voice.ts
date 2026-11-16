@@ -15,7 +15,8 @@ import { shouldDropVoiceUtterance } from "./voice-listen-gate.ts";
 import { mayaLockedLanguageInstruction, resolveMayaCallLanguage, speechMissesCallLanguage } from "./voice-language-lock.ts";
 import { MAYA_DOCTOR_TITLE_RULE, prepareMayaSpokenText, stripDoctorTitles, withSingleDoctorTitle } from "./voice-doctor-name.ts";
 import { formatTenantVoiceFacts } from "./voice-vocabulary.ts";
-import { formatIstDateSpeech, collectVoiceSlots, mayaAskedForPatientName, parseVoiceBookingDraft, planVoiceBooking, speakablePhone, usablePatientName, withHeardSlots, type VoiceBookingDraft, type VoiceHistoryTurn } from "./voice-booking-confirm.ts";
+import { applyRepeatedSlotGuard, formatIstDateSpeech, collectVoiceSlots, mayaAskedForPatientName, parseVoiceBookingDraft, planVoiceBooking, speakablePhone, usablePatientName, withHeardSlots, type VoiceBookingDraft, type VoiceHistoryTurn } from "./voice-booking-confirm.ts";
+import { claimVoiceCallGateway, voiceGatewayKeyFromRequest } from "./voice-call-gateway.ts";
 import { findRegisteredPatient, resolveClinicFacingNames } from "./whatsapp.ts";
 import { dispatchPatientCloudText } from "./whatsapp-patient-dispatch.ts";
 import { getWhatsAppTenantVoiceSettings, saveWhatsAppTenantVoiceSettings } from "./whatsapp-numbers-store.ts";
@@ -1223,6 +1224,29 @@ export function mountGeminiVoiceRoutes(app: Express, getGenAI: () => GoogleGenAI
       if (!access) {
         return res.status(403).json({ error: "Forbidden" });
       }
+      const callId = String(req.body?.callId || "").trim();
+      const gatewayKey = voiceGatewayKeyFromRequest(req);
+      if (callId && gatewayKey) {
+        try {
+          const claim = claimVoiceCallGateway(callId, gatewayKey);
+          if (claim.status === "foreign") {
+            console.warn(`[Voice Gateway] Ignored turn for call ${callId} from ${gatewayKey}. Owner is ${claim.gatewayKey}.`);
+            return sendVoicePayload({
+              success: true,
+              from,
+              transcript: "",
+              speechText: "",
+              intent: "SILENCE",
+              hasAudio: false,
+              dropped: true,
+              ignoredGateway: true,
+              gatewayOwner: claim.gatewayKey,
+            });
+          }
+        } catch (claimErr) {
+          console.warn("[Voice Gateway] Call owner check failed open", claimErr);
+        }
+      }
       const tenantId = access.tenantId;
 
       const tenantContext = getTenantVoiceContext(tenantId, from);
@@ -1619,6 +1643,36 @@ Output strict JSON:
       if (!authoredSpeech && speechText && speechMissesCallLanguage(speechText, spoken)) {
         speechText = lockedReplyFallback(spoken);
         suggestedAction = `Kept the reply in the locked call language (${spoken})`;
+      }
+      if (!isFailoverTriggered && speechText && !callbackTaskId) {
+        const guarded = applyRepeatedSlotGuard({
+          speech: speechText,
+          history,
+          draft: bookingDraftOut,
+          language: spoken,
+          clinicName,
+          clinicPhone: escalationPhone,
+        });
+        if (guarded.replaced) {
+          speechText = guarded.speech;
+          bookingDraftOut = guarded.draft;
+          authoredSpeech = true;
+          suggestedAction = guarded.callback
+            ? "A booking slot was still missing after two asks; callback task created"
+            : "Stopped repeating a booking question and confirmed or offered another way";
+          if (guarded.callback) {
+            try {
+              callbackTaskId = createVoiceCallbackTask({
+                tenantId,
+                patientPhone: from,
+                patientName: rememberedName || cleanCallerName,
+                reason: "A booking slot was still missing after two asks",
+              });
+            } catch (callbackErr) {
+              console.warn("[Voice callback task]", callbackErr);
+            }
+          }
+        }
       }
       speechText = prepareMayaSpokenText(speechText);
 
