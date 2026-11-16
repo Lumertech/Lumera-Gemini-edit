@@ -5,9 +5,13 @@ import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { buildImmunizationPrintHtml } from "./immunizationPrint.ts";
 import {
+  IAP_HIGH_RISK_NOTES,
   IMMUNIZATION_CATALOG_VERSION,
   IMMUNIZATION_SCHEDULES,
+  PEDIATRIC_SCHEDULE_CONTRASTS,
+  addDaysIso,
   applyScheduleEdits,
+  canonicalSex,
   canonicalSpecies,
   computeImmunizationChart,
   parseTemplateDueAge,
@@ -21,7 +25,7 @@ function antigens(id: keyof typeof IMMUNIZATION_SCHEDULES): string[] {
 }
 
 function dose(
-  chart: { doses: Array<{ code: string; occurrenceKey: string; status: string; catchUp: boolean; dueOn?: string }> },
+  chart: { doses: Array<{ code: string; occurrenceKey: string; status: string; catchUp: boolean; dueOn?: string; catchUpNote?: string }> },
   key: string
 ) {
   const found = chart.doses.find((item) => item.occurrenceKey === key || item.code === key);
@@ -312,6 +316,204 @@ describe("template due age", () => {
   });
 });
 
+describe("IAP 2025 and UIP age boundaries", () => {
+  const dob = "2010-01-01";
+  const at = (years: number) => addDaysIso(dob, years * 365);
+
+  function chart(years: number, schedule: "pediatric_iap" | "pediatric_uip", extra: { sex?: "" | "female" | "male"; records?: Parameters<typeof computeImmunizationChart>[0]["records"] } = {}) {
+    return computeImmunizationChart({
+      dateOfBirth: dob,
+      today: at(years),
+      schedule: IMMUNIZATION_SCHEDULES[schedule],
+      includeOptional: true,
+      sex: extra.sex,
+      records: extra.records,
+    });
+  }
+
+  it("cites the 2025 edition and keeps the 2023 table in the file", () => {
+    assert.match(IMMUNIZATION_SCHEDULES.pediatric_iap.citation, /10\.1007\/s13312-026-00311-w/);
+    assert.match(IMMUNIZATION_SCHEDULES.pediatric_iap.citation, /may2026\/311\.pdf/);
+    assert.equal(IMMUNIZATION_SCHEDULES.pediatric_iap.version, "iap-acvip-2025");
+    const source = fs.readFileSync(path.join(root, "src/lib/immunizationSchedules.ts"), "utf8");
+    assert.match(source, /indianpediatrics\.net\/may2026\/311\.pdf/);
+    assert.match(source, /10\.1007\/s13312-026-00311-w/);
+    const doc = fs.readFileSync(path.join(root, "docs/immunization-schedules.md"), "utf8");
+    assert.match(doc, /IAP-ACVIP 2025/);
+    assert.match(doc, /Td at 10 and 16 years/);
+    assert.equal(PEDIATRIC_SCHEDULE_CONTRASTS.some((item) => item.topic === "10 years" && /Tdap/.test(item.iap) && /Td at 10/.test(item.uip)), true);
+    assert.equal(PEDIATRIC_SCHEDULE_CONTRASTS.some((item) => item.topic === "16 years"), true);
+    assert.match(IAP_HIGH_RISK_NOTES.map((item) => item.title).join(" "), /Meningococcal/);
+    assert.match(IAP_HIGH_RISK_NOTES.map((item) => item.text).join(" "), /stops at 5 years/);
+    assert.match(IAP_HIGH_RISK_NOTES.map((item) => item.text).join(" "), /18 years and beyond/);
+  });
+
+  it("keeps routine influenza stopped at 5 years and typhoid as a single dose", () => {
+    const ten = chart(10, "pediatric_iap", { sex: "female" });
+    assert.equal(ten.ok, true);
+    if (!ten.ok) return;
+    const flu = ten.doses.filter((item) => item.antigen === "Influenza");
+    assert.ok(flu.length > 0);
+    assert.equal(flu.every((item) => item.status === "not_indicated"), true);
+    const typhoid = ten.doses.filter((item) => item.antigen === "Typhoid conjugate");
+    assert.equal(typhoid.length, 1);
+    assert.equal(typhoid[0].code, "tcv");
+    assert.equal(typhoid[0].status, "overdue");
+    assert.equal(typhoid[0].catchUp, true);
+    assert.equal(IMMUNIZATION_SCHEDULES.pediatric_iap.doses.some((item) => /typhoid booster/i.test(item.code)), false);
+  });
+
+  it("marks Tdap due at 10 and 12 years, catch-up after that, and Td due at 16 and 18", () => {
+    const ten = chart(10, "pediatric_iap", { sex: "female" });
+    const twelve = chart(12, "pediatric_iap", { sex: "male" });
+    const sixteen = chart(16, "pediatric_iap", { sex: "female" });
+    const eighteen = chart(18, "pediatric_iap", { sex: "female" });
+    for (const result of [ten, twelve, sixteen, eighteen]) assert.equal(result.ok, true);
+    if (!ten.ok || !twelve.ok || !sixteen.ok || !eighteen.ok) return;
+    assert.equal(dose(ten, "tdap").status, "due");
+    assert.equal(dose(ten, "tdap").catchUp, false);
+    assert.equal(dose(ten, "td").status, "upcoming");
+    assert.equal(dose(twelve, "tdap").status, "due");
+    assert.equal(dose(twelve, "tdap").catchUp, false);
+    const afterTwelve = computeImmunizationChart({
+      dateOfBirth: dob,
+      today: addDaysIso(dob, 13 * 365),
+      schedule: IMMUNIZATION_SCHEDULES.pediatric_iap,
+      sex: "female",
+    });
+    assert.equal(afterTwelve.ok, true);
+    if (!afterTwelve.ok) return;
+    assert.equal(dose(afterTwelve, "tdap").status, "overdue");
+    assert.equal(dose(afterTwelve, "tdap").catchUp, true);
+    assert.equal(dose(sixteen, "tdap").status, "overdue");
+    assert.equal(dose(sixteen, "tdap").catchUp, true);
+    assert.equal(dose(sixteen, "td").status, "due");
+    assert.equal(dose(sixteen, "td").catchUp, false);
+    assert.equal(dose(eighteen, "td").status, "due");
+    assert.equal(dose(eighteen, "td").catchUp, false);
+    assert.equal(dose(eighteen, "tdap").status, "overdue");
+    assert.equal(dose(eighteen, "tdap").catchUp, true);
+    const pastChart = computeImmunizationChart({
+      dateOfBirth: dob,
+      today: addDaysIso(dob, 19 * 365),
+      schedule: IMMUNIZATION_SCHEDULES.pediatric_iap,
+      sex: "female",
+    });
+    assert.equal(pastChart.ok, true);
+    if (!pastChart.ok) return;
+    assert.equal(dose(pastChart, "td").status, "not_indicated");
+    assert.equal(dose(pastChart, "tdap").status, "not_indicated");
+  });
+
+  it("marks UIP Td due at 10 and 16 years and catch-up when the 10-year dose was missed", () => {
+    const ten = chart(10, "pediatric_uip");
+    const twelve = chart(12, "pediatric_uip");
+    const sixteen = chart(16, "pediatric_uip");
+    const eighteen = chart(18, "pediatric_uip");
+    for (const result of [ten, twelve, sixteen, eighteen]) assert.equal(result.ok, true);
+    if (!ten.ok || !twelve.ok || !sixteen.ok || !eighteen.ok) return;
+    assert.equal(dose(ten, "td-10").status, "due");
+    assert.equal(dose(ten, "td-16").status, "upcoming");
+    assert.equal(dose(twelve, "td-10").status, "overdue");
+    assert.equal(dose(twelve, "td-10").catchUp, true);
+    assert.equal(dose(sixteen, "td-16").status, "due");
+    assert.equal(dose(sixteen, "td-10").status, "overdue");
+    assert.equal(dose(eighteen, "td-16").status, "due");
+    assert.equal(/HPV|Varicella|Typhoid/.test(eighteen.doses.map((item) => item.antigen).join(" ")), false);
+  });
+
+  it("uses the sex-specific HPV series and switches to three doses after the 15th birthday", () => {
+    const girl = chart(10, "pediatric_iap", { sex: "female" });
+    const boy = chart(12, "pediatric_iap", { sex: "male" });
+    const unknown = chart(10, "pediatric_iap", { sex: "" });
+    assert.equal(girl.ok && boy.ok && unknown.ok, true);
+    if (!girl.ok || !boy.ok || !unknown.ok) return;
+    assert.equal(dose(girl, "hpv-f").status, "due");
+    assert.equal(girl.doses.some((item) => item.code === "hpv-m1"), false);
+    assert.equal(girl.doses.some((item) => item.code.startsWith("hpv-15")), false);
+    assert.equal(dose(boy, "hpv-m1").status, "due");
+    assert.equal(dose(boy, "hpv-m2").status, "upcoming");
+    assert.match(dose(boy, "hpv-m2").catchUpNote || "", /5 months|6 months/i);
+    assert.equal(boy.doses.some((item) => item.code === "hpv-f"), false);
+    assert.equal(unknown.doses.some((item) => item.code === "hpv-f"), true);
+    assert.equal(unknown.doses.some((item) => item.code === "hpv-m1"), true);
+
+    const olderGirl = chart(16, "pediatric_iap", { sex: "female" });
+    assert.equal(olderGirl.ok, true);
+    if (!olderGirl.ok) return;
+    assert.equal(dose(olderGirl, "hpv-f").status, "not_indicated");
+    assert.equal(dose(olderGirl, "hpv-15-1").status, "overdue");
+    assert.equal(dose(olderGirl, "hpv-15-1").catchUp, true);
+    assert.equal(dose(olderGirl, "hpv-15-2").status, "upcoming");
+    assert.equal(dose(olderGirl, "hpv-15-3").status, "upcoming");
+    assert.match(dose(olderGirl, "hpv-15-2").catchUpNote || "", /dose 1/i);
+
+    const started = chart(16, "pediatric_iap", {
+      sex: "female",
+      records: [{ occurrenceKey: "hpv-f", status: "given", givenOn: at(10) }],
+    });
+    assert.equal(started.ok, true);
+    if (!started.ok) return;
+    assert.equal(dose(started, "hpv-f").status, "given");
+    assert.equal(started.doses.some((item) => item.code.startsWith("hpv-15")), false);
+
+    const boyLate = computeImmunizationChart({
+      dateOfBirth: dob,
+      today: at(15),
+      schedule: IMMUNIZATION_SCHEDULES.pediatric_iap,
+      sex: "male",
+      records: [{ occurrenceKey: "hpv-m1", status: "given", givenOn: at(14) }],
+    });
+    assert.equal(boyLate.ok, true);
+    if (!boyLate.ok) return;
+    assert.equal(dose(boyLate, "hpv-m1").status, "given");
+    assert.equal(boyLate.doses.some((item) => item.code.startsWith("hpv-15")), false);
+    const second = dose(boyLate, "hpv-m2");
+    assert.equal(second.status, "due");
+    assert.equal(second.dueOn, addDaysIso(at(14), 180));
+  });
+
+  it("waits 4 weeks for varicella dose 2 when catch-up starts after 12 years", () => {
+    const teen = chart(13, "pediatric_iap", { sex: "female" });
+    assert.equal(teen.ok, true);
+    if (!teen.ok) return;
+    assert.equal(dose(teen, "vari-1").status, "overdue");
+    assert.equal(dose(teen, "vari-1").catchUp, true);
+    assert.equal(dose(teen, "vari-2").status, "upcoming");
+    assert.match(dose(teen, "vari-2").catchUpNote || "", /4 weeks/);
+    const given = chart(13, "pediatric_iap", {
+      sex: "female",
+      records: [{ occurrenceKey: "vari-1", status: "given", givenOn: at(13) }],
+    });
+    assert.equal(given.ok, true);
+    if (!given.ok) return;
+    assert.equal(dose(given, "vari-2").dueOn, addDaysIso(at(13), 28));
+    assert.equal(dose(given, "vari-2").status, "upcoming");
+  });
+
+  it("prints both schedule labels and the high-risk notes", () => {
+    const html = buildImmunizationPrintHtml(
+      { clinicName: "Asha Clinic", address: "12 Lake Road", city: "Pune", phone: "", regId: "" },
+      {
+        patientName: "Meera",
+        dateOfBirth: dob,
+        scheduleTitle: "IAP-ACVIP 2025 (recommended)",
+        scheduleVersion: "iap-acvip-2025",
+        citation: IMMUNIZATION_SCHEDULES.pediatric_iap.citation,
+        doses: [],
+        contrasts: PEDIATRIC_SCHEDULE_CONTRASTS,
+        advisories: IAP_HIGH_RISK_NOTES,
+      }
+    );
+    assert.match(html, /Where IAP and UIP differ/);
+    assert.match(html, /<span class="label">IAP<\/span>/);
+    assert.match(html, /<span class="label">UIP<\/span>/);
+    assert.match(html, /Meningococcal/);
+    assert.match(html, /10\.1007\/s13312-026-00311-w/);
+    assert.match(html, /Schedules are reminders only/);
+  });
+});
+
 describe("species normalization", () => {
   it("maps dog and cat aliases and leaves people blank", () => {
     assert.equal(canonicalSpecies("Dog"), "dog");
@@ -320,5 +522,12 @@ describe("species normalization", () => {
     assert.equal(canonicalSpecies(""), "");
     assert.equal(canonicalSpecies("human"), "human");
     assert.equal(canonicalSpecies("rabbit"), "other");
+  });
+
+  it("maps female and male and leaves other blank", () => {
+    assert.equal(canonicalSex("Female"), "female");
+    assert.equal(canonicalSex("boy"), "male");
+    assert.equal(canonicalSex("Other"), "");
+    assert.equal(canonicalSex(""), "");
   });
 });

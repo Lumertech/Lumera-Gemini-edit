@@ -8,6 +8,7 @@ import {
   IMMUNIZATION_SAFETY_NOTICE,
   IMMUNIZATION_SCHEDULES,
   applyScheduleEdits,
+  canonicalSex,
   canonicalSpecies,
   computeImmunizationChart,
   isIsoDate,
@@ -253,6 +254,7 @@ export function buildImmunizationChart(
     species,
     breed: patient.breed || "",
     ownerName: patient.ownerName || "",
+    sex: canonicalSex(patient.gender),
     safetyNotice: IMMUNIZATION_SAFETY_NOTICE,
     catalogVersion: IMMUNIZATION_CATALOG_VERSION,
     reminder: vaccineDueReminderHook(),
@@ -312,6 +314,7 @@ export function buildImmunizationChart(
     endemicJe: settings.endemicJe,
     includeOptional: settings.includeOptional,
     edits: settings.edits,
+    sex: canonicalSex(patient.gender),
   });
   if (computed.ok === false) throw immunizationError(400, computed.error);
   return {

@@ -22,6 +22,8 @@ export interface ImmunizationPrintChart {
   scheduleVersion: string;
   citation: string;
   doses: ChartDose[];
+  contrasts?: Array<{ topic: string; iap: string; uip: string }>;
+  advisories?: Array<{ title: string; text: string }>;
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -76,6 +78,15 @@ export function buildImmunizationPrintHtml(
       return `<section class="dose"><h2>${esc(dose.antigen)} — ${esc(dose.doseLabel)}</h2>${bits}</section>`;
     })
     .join("");
+  const contrasts = (chart.contrasts || [])
+    .map(
+      (item) =>
+        `<section class="dose"><h2>${esc(item.topic)}</h2><p><span class="label">IAP</span> ${esc(item.iap)}</p><p><span class="label">UIP</span> ${esc(item.uip)}</p></section>`
+    )
+    .join("");
+  const advisories = (chart.advisories || [])
+    .map((item) => `<section class="dose"><h2>${esc(item.title)}</h2><p>${esc(item.text)}</p></section>`)
+    .join("");
   const identity = [
     row("Patient", chart.patientName),
     chart.uhid ? row("UHID", chart.uhid) : "",
@@ -114,6 +125,8 @@ export function buildImmunizationPrintHtml(
   <p><strong>${esc(chart.scheduleTitle)}</strong></p>
   <p class="muted">Schedule version ${esc(chart.scheduleVersion)}</p>
   ${identity}
+  ${contrasts ? `<h2>Where IAP and UIP differ</h2>${contrasts}` : ""}
+  ${advisories ? `<h2>High-risk and special situations</h2>${advisories}` : ""}
   ${doses || "<p>No doses on this chart.</p>"}
   <p class="safety">${esc(IMMUNIZATION_SAFETY_NOTICE)}</p>
   <p class="muted">${esc(chart.citation)}</p>
