@@ -19,6 +19,7 @@ import { attachUnknownApiJsonNotFound } from "./spa-fallback.ts";
 import { globalJsonParser } from "./json-body.ts";
 import { domainTenantMiddleware } from "./tenant-domain.ts";
 import { trialAccessGuard } from "./trial-access.ts";
+import { lumeraCommitHeaderMiddleware, readStampedCommit } from "./build-identity.ts";
 
 /**
  * Production Express app without listen() or database boot.
@@ -29,6 +30,7 @@ export function createLumeraApp(): express.Express {
   const app = express();
   app.disable("x-powered-by");
   app.set("trust proxy", 1);
+  app.use(lumeraCommitHeaderMiddleware(readStampedCommit()));
   attachHttpSecurity(app);
 
   // Before the global JSON parser. A later parser sets req._body and would

@@ -12,6 +12,11 @@ Cloud Run logs are checked.
    `DATABASE_URL is required in production (Cloud Run is stateless…`
    That crash happens **before** `listen`. Cloud Run then reports a PORT timeout
    even though `app.listen(PORT, "0.0.0.0")` is correct. JWT is checked first.
+   On Cloud Run (`K_SERVICE`), the same function also exits when `LUMERA_COMMIT_SHA`
+   is not the 40-char sha in `dist/build.json`. That keeps an image built outside
+   this commit (AI Studio Publish, `gcloud run deploy --source`) from taking
+   traffic: the new revision never listens, and the previous healthy revision
+   keeps serving. The log line starts with `LUMERA_COMMIT_SHA does not match`.
 3. Register `/healthz` (`200 ok`) and the rest of the Express app.
 4. `app.listen(0.0.0.0, resolveListenPort())` — honors injected `PORT` (`3000`
    on this AI Studio service; `8080` is only the Dockerfile default when unset).

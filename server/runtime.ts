@@ -1,6 +1,7 @@
 /** Shared environment helpers. Simulators stay SANDBOX / DEV-ONLY. */
 
 import { databaseUrlFromEnv } from "../src/db/url.ts";
+import { assertCloudRunCommitStamp } from "./build-identity.ts";
 
 export { databaseUrlFromEnv };
 
@@ -126,6 +127,9 @@ export function assertRequiredProductionEnv(env: NodeJS.ProcessEnv = process.env
       "[Lumera] APP_URL is unset. Set APP_URL=https://www.mylumera.in for Google/Meta OAuth and policy links."
     );
   }
+  // Cloud Run only. A mismatched stamp exits before listen so a stale
+  // AI Studio / --source image cannot replace the revision that matches git.
+  assertCloudRunCommitStamp(env);
 }
 
 /**

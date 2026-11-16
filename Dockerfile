@@ -22,9 +22,16 @@ ENV PORT=8080
 COPY package.json package-lock.json* ./
 RUN if [ -f package-lock.json ]; then npm ci --omit=dev; else npm install --omit=dev; fi
 COPY --from=build /app/dist ./dist
+# Commit baked into the image. Cloud Run refuses to listen unless
+# LUMERA_COMMIT_SHA matches this file (see server/build-identity.ts).
+COPY scripts/stamp-build-json.mjs /tmp/stamp-build-json.mjs
+ARG COMMIT_SHA=unknown
+RUN node /tmp/stamp-build-json.mjs "$COMMIT_SHA" /app/dist/build.json \
+ && rm -f /tmp/stamp-build-json.mjs \
+ && mkdir -p /app/data /app/uploads \
+ && chown -R node:node /app
 # pg-sync-worker.cjs is copied in `npm run build`; keep a local sqlite data dir
 # only for emergency non-production images — production requires DATABASE_URL.
-RUN mkdir -p /app/data /app/uploads && chown -R node:node /app
 USER node
 # Documentary. Cloud Run may probe PORT=3000; the process binds 0.0.0.0:$PORT.
 EXPOSE 8080

@@ -37,6 +37,8 @@ describe("Firebase Hosting → Cloud Run config (#26)", () => {
     assert.match(docker, /ENV PORT=8080/);
     assert.match(docker, /Cloud Run may probe PORT=3000/);
     assert.doesNotMatch(docker, /ENV PORT=3000/);
+    assert.match(docker, /ARG COMMIT_SHA=/);
+    assert.match(docker, /stamp-build-json\.mjs/);
   });
 
   it("cloudbuild deploy updates APP_URL, NODE_ENV, and Vertex env without wiping JWT_SECRET", () => {
@@ -74,6 +76,21 @@ describe("Firebase Hosting → Cloud Run config (#26)", () => {
     assert.ok(buildIdx < pushIdx, "docker build must still precede push");
     assert.match(yaml, /waitFor:\s*\['lint-test'\]/);
     assert.match(yaml, /waitFor:\s*\['build'\]/);
+  });
+
+  it("cloudbuild stamps the commit and fails the deploy when the served sha differs", () => {
+    const yaml = readRepo("cloudbuild.yaml");
+    assert.match(yaml, /docker build --build-arg COMMIT_SHA="\$\{COMMIT_SHA\}" -t "\$\{_IMAGE\}" \./);
+    assert.match(yaml, /verify_served_commit\.py --self-test/);
+    assert.match(yaml, /--no-traffic/);
+    assert.match(yaml, /update-traffic/);
+    assert.match(yaml, /LUMERA_COMMIT_SHA=\$\{COMMIT_SHA\}/);
+    assert.match(yaml, /--url "https:\/\/www\.mylumera\.in"/);
+    const noTraffic = yaml.indexOf("--no-traffic");
+    const shift = yaml.indexOf("update-traffic");
+    const tagCheck = yaml.indexOf("--tag-url");
+    assert.ok(noTraffic > 0 && tagCheck > noTraffic, "the tagged revision is checked after --no-traffic");
+    assert.ok(tagCheck < shift, "traffic moves only after the tagged revision is verified");
   });
 
   it("runbook is Firebase Hosting + Cloud Run, not Hostinger purchase", () => {
