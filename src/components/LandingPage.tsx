@@ -39,6 +39,7 @@ import { LEGAL_ENTITY_NAME, PRODUCT_NAME } from "../brand";
 import { META_TECH_PROVIDER_STATEMENT } from "../lib/metaStatus";
 import { AMBIENT_SCRIBE_MISSION, CONTACT_EMAIL, TRIAL_LENGTH_BADGE } from "../lib/pricingCopy";
 import { BrandMark } from "./BrandMark";
+import { ProspectAdvert } from "./ProspectAdvert";
 import { useNav } from "../nav/NavigationContext";
 import { surfaceToPath } from "../nav/surfaces";
 
@@ -272,7 +273,7 @@ export const LandingPage: React.FC = () => {
   return (
     <div
       data-testid="public-landing"
-      className="h-full overflow-y-auto text-white font-sans selection:bg-purple-600 selection:text-white bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 scroll-smooth"
+      className="h-full w-full max-w-full overflow-y-auto overflow-x-hidden text-white font-sans selection:bg-purple-600 selection:text-white bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 scroll-smooth"
     >
       {/* 1. TOP NAVIGATION BAR: Consolidated Single "Sign In" Button */}
       <header className="max-w-6xl mx-auto px-4 sm:px-6 py-5 flex items-center justify-between border-b border-white/10">
@@ -345,6 +346,8 @@ export const LandingPage: React.FC = () => {
             </span>
           </div>
         </div>
+
+        <ProspectAdvert />
 
         {/* 2. AUTO-SCROLLING REGIONAL NATIVE LANGUAGE TICKER */}
         <div className="mt-8 overflow-hidden relative max-w-5xl mx-auto py-2">

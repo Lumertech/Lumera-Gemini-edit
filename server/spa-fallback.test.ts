@@ -18,7 +18,9 @@ import {
 import {
   attachProductionSpaFallback,
   isBackendPath,
+  isProspectMediaAsset,
   isSpaHistoryFallbackPath,
+  PROSPECT_MEDIA_CACHE_CONTROL,
   resolveClientDist,
 } from "./spa-fallback.ts";
 import {
@@ -291,6 +293,70 @@ describe("production SPA history fallback", () => {
       assert.doesNotMatch(missingApiText, /<!doctype/i);
       const missingJs = await fetch(`${origin}/assets/missing.js`);
       assert.equal(missingJs.status, 404);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((err) => (err ? reject(err) : resolve()));
+      });
+    }
+  });
+
+  it("serves prospect advert media with a shared cache and byte ranges", async () => {
+    assert.equal(isProspectMediaAsset("/app/dist/media/lumera-prospect-16x9.mp4"), true);
+    assert.equal(isProspectMediaAsset("/app/dist/media/lumera-prospect-9x16.mp4"), true);
+    assert.equal(isProspectMediaAsset("/app/dist/media/lumera-poster-16x9.jpg"), true);
+    assert.equal(isProspectMediaAsset("/app/dist/index.html"), false);
+    assert.equal(isProspectMediaAsset("/app/dist/ok.txt"), false);
+
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "lumera-media-"));
+    const dist = path.join(root, "dist");
+    const media = path.join(dist, "media");
+    fs.mkdirSync(media, { recursive: true });
+    fs.writeFileSync(path.join(dist, "index.html"), "<!doctype html><html><body>Lumera SPA</body></html>");
+    const video = Buffer.alloc(8192);
+    for (let i = 0; i < video.length; i++) video[i] = i % 251;
+    fs.writeFileSync(path.join(media, "lumera-prospect-16x9.mp4"), video);
+    fs.writeFileSync(path.join(media, "lumera-poster-16x9.jpg"), Buffer.from("poster-bytes"));
+    fs.writeFileSync(path.join(dist, "ok.txt"), "static-ok");
+
+    const app = express();
+    attachProductionSpaFallback(app, dist);
+    const server: Server = await new Promise((resolve) => {
+      const s = app.listen(0, "127.0.0.1", () => resolve(s));
+    });
+    const addr = server.address();
+    if (!addr || typeof addr === "string") throw new Error("no port");
+    const origin = `http://127.0.0.1:${addr.port}`;
+
+    try {
+      const full = await fetch(`${origin}/media/lumera-prospect-16x9.mp4`);
+      assert.equal(full.status, 200);
+      assert.equal(full.headers.get("accept-ranges"), "bytes");
+      assert.equal(full.headers.get("cache-control"), PROSPECT_MEDIA_CACHE_CONTROL);
+      assert.match(full.headers.get("content-type") || "", /video\/mp4/);
+      assert.equal((await full.arrayBuffer()).byteLength, video.length);
+
+      const ranged = await fetch(`${origin}/media/lumera-prospect-16x9.mp4`, {
+        headers: { Range: "bytes=100-149" },
+      });
+      assert.equal(ranged.status, 206);
+      assert.equal(ranged.headers.get("accept-ranges"), "bytes");
+      assert.equal(ranged.headers.get("content-range"), `bytes 100-149/${video.length}`);
+      assert.equal(ranged.headers.get("cache-control"), PROSPECT_MEDIA_CACHE_CONTROL);
+      const body = Buffer.from(await ranged.arrayBuffer());
+      assert.equal(body.length, 50);
+      assert.deepEqual(body, video.subarray(100, 150));
+
+      const poster = await fetch(`${origin}/media/lumera-poster-16x9.jpg`);
+      assert.equal(poster.status, 200);
+      assert.equal(poster.headers.get("cache-control"), PROSPECT_MEDIA_CACHE_CONTROL);
+      assert.match(poster.headers.get("content-type") || "", /image\/jpeg/);
+
+      const other = await fetch(`${origin}/ok.txt`);
+      assert.equal(other.status, 200);
+      assert.notEqual(other.headers.get("cache-control"), PROSPECT_MEDIA_CACHE_CONTROL);
+
+      const shell = await fetch(`${origin}/`);
+      assert.equal(shell.headers.get("cache-control"), "private, no-cache");
     } finally {
       await new Promise<void>((resolve, reject) => {
         server.close((err) => (err ? reject(err) : resolve()));

@@ -7,6 +7,7 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
 COPY index.html metadata.json tsconfig.json vite.config.ts ./
+# public/media holds the prospect advert (mp4 + poster). Vite copies it into dist/.
 COPY public ./public
 COPY src ./src
 COPY server ./server

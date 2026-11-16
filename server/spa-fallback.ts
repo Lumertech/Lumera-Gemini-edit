@@ -72,6 +72,18 @@ export function resolveClientDist(cwd = process.cwd()): string {
   return path.join(cwd, "dist");
 }
 
+/**
+ * Prospect advert bytes in `public/media` (copied into `dist/media` by Vite).
+ * A day of shared caching. `send` still answers Range with 206 so seeking works.
+ * HTML shells keep the private no-cache policy below.
+ */
+export const PROSPECT_MEDIA_CACHE_CONTROL = "public, max-age=86400";
+
+export function isProspectMediaAsset(filePath: string): boolean {
+  const base = path.basename(filePath);
+  return /^lumera-prospect-.+\.mp4$/i.test(base) || /^lumera-poster-.+\.jpe?g$/i.test(base);
+}
+
 export function attachProductionSpaFallback(
   app: Express,
   distPath = resolveClientDist(),
@@ -82,9 +94,19 @@ export function attachProductionSpaFallback(
     express.static(distPath, {
       index: false,
       fallthrough: true,
+      acceptRanges: true,
       setHeaders(res, filePath) {
         if (filePath.endsWith(`${path.sep}index.html`) || filePath.endsWith("/index.html")) {
           res.setHeader("Cache-Control", HTML_DOCUMENT_CACHE_CONTROL);
+          return;
+        }
+        if (!isProspectMediaAsset(filePath)) return;
+        res.setHeader("Cache-Control", PROSPECT_MEDIA_CACHE_CONTROL);
+        res.setHeader("Accept-Ranges", "bytes");
+        if (filePath.toLowerCase().endsWith(".mp4")) {
+          res.setHeader("Content-Type", "video/mp4");
+        } else if (/\.jpe?g$/i.test(filePath)) {
+          res.setHeader("Content-Type", "image/jpeg");
         }
       },
     })
