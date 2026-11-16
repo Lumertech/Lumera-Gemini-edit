@@ -25,7 +25,7 @@ function antigens(id: keyof typeof IMMUNIZATION_SCHEDULES): string[] {
 }
 
 function dose(
-  chart: { doses: Array<{ code: string; occurrenceKey: string; status: string; catchUp: boolean; dueOn?: string; catchUpNote?: string }> },
+  chart: { doses: Array<{ code: string; occurrenceKey: string; status: string; catchUp: boolean; dueOn?: string; catchUpNote?: string; doseLabel?: string }> },
   key: string
 ) {
   const found = chart.doses.find((item) => item.occurrenceKey === key || item.code === key);
@@ -393,6 +393,17 @@ describe("IAP 2025 and UIP age boundaries", () => {
     assert.equal(dose(eighteen, "td").catchUp, false);
     assert.equal(dose(eighteen, "tdap").status, "overdue");
     assert.equal(dose(eighteen, "tdap").catchUp, true);
+    const dayAfterEighteen = computeImmunizationChart({
+      dateOfBirth: dob,
+      today: addDaysIso(dob, 18 * 365 + 1),
+      schedule: IMMUNIZATION_SCHEDULES.pediatric_iap,
+      sex: "female",
+    });
+    assert.equal(dayAfterEighteen.ok, true);
+    if (!dayAfterEighteen.ok) return;
+    assert.equal(dose(dayAfterEighteen, "td").status, "due");
+    assert.equal(dose(dayAfterEighteen, "td").catchUp, false);
+    assert.equal(dose(dayAfterEighteen, "tdap").status, "overdue");
     const pastChart = computeImmunizationChart({
       dateOfBirth: dob,
       today: addDaysIso(dob, 19 * 365),
@@ -428,33 +439,49 @@ describe("IAP 2025 and UIP age boundaries", () => {
     const unknown = chart(10, "pediatric_iap", { sex: "" });
     assert.equal(girl.ok && boy.ok && unknown.ok, true);
     if (!girl.ok || !boy.ok || !unknown.ok) return;
-    assert.equal(dose(girl, "hpv-f").status, "due");
-    assert.equal(girl.doses.some((item) => item.code === "hpv-m1"), false);
+    assert.equal(dose(girl, "hpv-1").status, "due");
+    assert.equal(dose(girl, "hpv-1").doseLabel, "Single dose (immunocompetent girls)");
+    assert.equal(girl.doses.some((item) => item.code === "hpv-2"), false);
     assert.equal(girl.doses.some((item) => item.code.startsWith("hpv-15")), false);
-    assert.equal(dose(boy, "hpv-m1").status, "due");
-    assert.equal(dose(boy, "hpv-m2").status, "upcoming");
-    assert.match(dose(boy, "hpv-m2").catchUpNote || "", /5 months|6 months/i);
-    assert.equal(boy.doses.some((item) => item.code === "hpv-f"), false);
-    assert.equal(unknown.doses.some((item) => item.code === "hpv-f"), true);
-    assert.equal(unknown.doses.some((item) => item.code === "hpv-m1"), true);
+    assert.equal(dose(boy, "hpv-1").status, "due");
+    assert.equal(dose(boy, "hpv-1").doseLabel, "Dose 1 (boys, 9 up to 15 years)");
+    assert.equal(dose(boy, "hpv-2").status, "upcoming");
+    assert.match(dose(boy, "hpv-2").catchUpNote || "", /5 months|6 months/i);
+    assert.equal(unknown.doses.some((item) => item.code === "hpv-1"), true);
+    assert.equal(unknown.doses.some((item) => item.code === "hpv-2"), true);
 
     const olderGirl = chart(16, "pediatric_iap", { sex: "female" });
     assert.equal(olderGirl.ok, true);
     if (!olderGirl.ok) return;
-    assert.equal(dose(olderGirl, "hpv-f").status, "not_indicated");
+    assert.equal(dose(olderGirl, "hpv-1").status, "not_indicated");
     assert.equal(dose(olderGirl, "hpv-15-1").status, "overdue");
     assert.equal(dose(olderGirl, "hpv-15-1").catchUp, true);
     assert.equal(dose(olderGirl, "hpv-15-2").status, "upcoming");
+    assert.equal(dose(olderGirl, "hpv-15-2").dueOn, addDaysIso(at(16), 60));
     assert.equal(dose(olderGirl, "hpv-15-3").status, "upcoming");
-    assert.match(dose(olderGirl, "hpv-15-2").catchUpNote || "", /dose 1/i);
+    assert.equal(dose(olderGirl, "hpv-15-3").dueOn, addDaysIso(at(16), 180));
+    assert.ok((dose(olderGirl, "hpv-15-3").dueOn || "") > at(16));
+
+    const startedLate = chart(16, "pediatric_iap", {
+      sex: "female",
+      records: [{ occurrenceKey: "hpv-15-1", status: "given", givenOn: at(16) }],
+    });
+    assert.equal(startedLate.ok, true);
+    if (!startedLate.ok) return;
+    assert.equal(dose(startedLate, "hpv-15-2").dueOn, addDaysIso(at(16), 60));
+    assert.equal(dose(startedLate, "hpv-15-3").dueOn, addDaysIso(at(16), 180));
 
     const started = chart(16, "pediatric_iap", {
       sex: "female",
-      records: [{ occurrenceKey: "hpv-f", status: "given", givenOn: at(10) }],
+      records: [
+        { occurrenceKey: "hpv-1", status: "given", givenOn: at(10) },
+        { occurrenceKey: "hpv-2", status: "given", givenOn: addDaysIso(at(10), 180) },
+      ],
     });
     assert.equal(started.ok, true);
     if (!started.ok) return;
-    assert.equal(dose(started, "hpv-f").status, "given");
+    assert.equal(dose(started, "hpv-1").status, "given");
+    assert.equal(dose(started, "hpv-2").status, "given");
     assert.equal(started.doses.some((item) => item.code.startsWith("hpv-15")), false);
 
     const boyLate = computeImmunizationChart({
@@ -462,13 +489,13 @@ describe("IAP 2025 and UIP age boundaries", () => {
       today: at(15),
       schedule: IMMUNIZATION_SCHEDULES.pediatric_iap,
       sex: "male",
-      records: [{ occurrenceKey: "hpv-m1", status: "given", givenOn: at(14) }],
+      records: [{ occurrenceKey: "hpv-1", status: "given", givenOn: at(14) }],
     });
     assert.equal(boyLate.ok, true);
     if (!boyLate.ok) return;
-    assert.equal(dose(boyLate, "hpv-m1").status, "given");
+    assert.equal(dose(boyLate, "hpv-1").status, "given");
     assert.equal(boyLate.doses.some((item) => item.code.startsWith("hpv-15")), false);
-    const second = dose(boyLate, "hpv-m2");
+    const second = dose(boyLate, "hpv-2");
     assert.equal(second.status, "due");
     assert.equal(second.dueOn, addDaysIso(at(14), 180));
   });

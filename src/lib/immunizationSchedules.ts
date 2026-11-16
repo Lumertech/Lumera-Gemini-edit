@@ -87,6 +87,11 @@ export interface ScheduleDose {
   afterDays?: number;
   /** Shown while the chart is waiting for `afterCode`. */
   afterNote?: string;
+  /** A second floor, for example HPV dose 3 at least 3 months after dose 2. */
+  alsoAfterCode?: string;
+  alsoAfterDays?: number;
+  /** Replaces doseLabel when the patient sex is known. The code stays stable for old records. */
+  labelForSex?: Partial<Record<"female" | "male", string>>;
   /** After this age, use `catchUpAfterDays` once `afterCode` is given. */
   catchUpAfterAgeDays?: number;
   catchUpAfterDays?: number;
@@ -293,54 +298,54 @@ const IAP_DOSES: ScheduleDose[] = [
   row("dtwp-b2", "DTwP/DTaP", "Booster 2", Y(4), Y(6), { maxAgeDays: Y(7) }),
   row("ipv-b2", "IPV", "Booster 2", Y(4), Y(6), { maxAgeDays: Y(7) }),
   row("mmr-3", "MMR", "Dose 3", Y(4), Y(6), { maxAgeDays: Y(18) }),
-  row("hpv-f", "HPV", "Single dose (immunocompetent girls)", Y(9), Y(15) - 1, {
+  row("hpv-1", "HPV", "Dose 1 (girls: single dose; boys: first of two)", Y(9), Y(15) - 1, {
     maxAgeDays: Y(15) - 1,
-    appliesToSex: "female",
-    notes: "IAP-ACVIP 2025: one intramuscular dose for immunocompetent girls from 9 years up to 15 years. If the series has not started by the 15th birthday, use the 3-dose schedule instead.",
+    labelForSex: {
+      female: "Single dose (immunocompetent girls)",
+      male: "Dose 1 (boys, 9 up to 15 years)",
+    },
+    notes: "IAP-ACVIP 2025: immunocompetent girls get this one intramuscular dose from 9 years up to 15 years. Boys get a second dose 6 months later, not sooner than 5 months. The code stays hpv-1 so a dose recorded on the previous chart still matches. If nothing was given by the 15th birthday, use the 3-dose schedule.",
   }),
-  row("hpv-m1", "HPV", "Dose 1 (boys, 9 up to 15 years)", Y(9), Y(15) - 1, {
-    maxAgeDays: Y(15) - 1,
+  row("hpv-2", "HPV", "Dose 2 (boys, 6 months after dose 1)", Y(9) + M(6), Y(15) - 1, {
+    maxAgeDays: Y(19) - 1,
     appliesToSex: "male",
-    notes: "IAP-ACVIP 2025: boys from 9 years up to 15 years get two doses, 0.5 ml at 0 and 6 months. The gap must not be under 5 months.",
-  }),
-  row("hpv-m2", "HPV", "Dose 2 (boys, 6 months after dose 1)", Y(9) + M(6), Y(15) - 1, {
-    maxAgeDays: Y(18),
-    appliesToSex: "male",
-    requiresPrior: "hpv-m1",
-    afterCode: "hpv-m1",
+    requiresPrior: "hpv-1",
+    afterCode: "hpv-1",
     afterDays: M(6),
     afterNote: "Six months after dose 1. Do not give it sooner than 5 months (IAP-ACVIP 2025).",
-    notes: "Completes the 2-dose series when dose 1 was given before the 15th birthday, even if dose 2 falls after that birthday.",
+    notes: "Boys only, unless this dose was already recorded. Completes the 2-dose series when dose 1 was given before the 15th birthday. The code stays hpv-2 so an earlier record still matches.",
   }),
   row("hpv-15-1", "HPV", "Dose 1 (series started at 15 years or older)", Y(15), Y(15) + 60, {
-    maxAgeDays: Y(18),
+    maxAgeDays: Y(19) - 1,
     showFromAgeDays: Y(15),
-    omitIfGiven: ["hpv-f", "hpv-m1", "hpv-m2"],
-    notes: "IAP-ACVIP 2025 Table 2: from 15 years (the paper also cites 15–26 years) the schedule is 3 doses, 0.5 ml at 0, 2 and 6 months. Dose 2 is at least 1 month after dose 1. Dose 3 is at least 3 months after dose 2. The same 3-dose schedule is for an immunocompromised child at any age; this chart does not start it early.",
+    omitIfGiven: ["hpv-1", "hpv-2"],
+    notes: "IAP-ACVIP 2025 Table 2: from 15 years (the paper also cites 15–26 years) the schedule is 3 doses, 0.5 ml at 0, 2 and 6 months. Dose 2 is at least 1 month after dose 1. Dose 3 is 6 months after dose 1 and at least 3 months after dose 2. The same 3-dose schedule is for an immunocompromised child at any age; this chart does not start it early.",
   }),
   row("hpv-15-2", "HPV", "Dose 2 (2 months after dose 1)", Y(15) + M(2), Y(15) + M(2) + 60, {
-    maxAgeDays: Y(18),
+    maxAgeDays: Y(19) - 1,
     showFromAgeDays: Y(15),
-    omitIfGiven: ["hpv-f", "hpv-m1", "hpv-m2"],
+    omitIfGiven: ["hpv-1", "hpv-2"],
     afterCode: "hpv-15-1",
     afterDays: M(2),
     afterNote: "At least 1 month after dose 1. The 2025 table places this dose at 2 months.",
   }),
   row("hpv-15-3", "HPV", "Dose 3 (6 months after dose 1)", Y(15) + M(6), Y(15) + M(6) + 60, {
-    maxAgeDays: Y(18),
+    maxAgeDays: Y(19) - 1,
     showFromAgeDays: Y(15),
-    omitIfGiven: ["hpv-f", "hpv-m1", "hpv-m2"],
-    afterCode: "hpv-15-2",
-    afterDays: M(3),
-    afterNote: "At least 3 months after dose 2. On time, this is 6 months after dose 1 (IAP-ACVIP 2025).",
+    omitIfGiven: ["hpv-1", "hpv-2"],
+    afterCode: "hpv-15-1",
+    afterDays: M(6),
+    alsoAfterCode: "hpv-15-2",
+    alsoAfterDays: M(3),
+    afterNote: "Six months after dose 1 (0, 2 and 6 months). Not sooner than 3 months after dose 2.",
   }),
   row("tdap", "Tdap", "10–12 year dose", Y(10), Y(13) - 1, {
-    maxAgeDays: Y(18),
-    notes: "IAP-ACVIP 2025 Figure 1: Tdap is necessary at 10–12 years, even if it was given earlier (including an inadvertent DTP booster). It is not the 4–6 year booster. If that booster was delayed, Tdap may be given after 7 years. If Tdap is unavailable or unaffordable, substitute Td. UIP gives Td at 10 years.",
+    maxAgeDays: Y(19) - 1,
+    notes: "IAP-ACVIP 2025 Figure 1: Tdap is necessary at 10–12 years, even if it was given earlier (including an inadvertent DTP booster). It is not the 4–6 year booster. If that booster was delayed, Tdap may be given after 7 years. If Tdap is unavailable or unaffordable, substitute Td. UIP gives Td at 10 years. Catch-up stays on the chart through the 18th year.",
   }),
   row("td", "Td", "16–18 year dose", Y(16), Y(19) - 1, {
-    maxAgeDays: Y(18),
-    notes: "IAP-ACVIP 2025 Table 2: Td or Tdap at 16–18 years. UIP gives Td at 16 years. This chart does not add a further Td after 18 years.",
+    maxAgeDays: Y(19) - 1,
+    notes: "IAP-ACVIP 2025 Table 2: Td or Tdap at 16–18 years, meaning through the year the child is 18. It leaves the chart on the 19th anniversary in this 365-day model. UIP gives Td at 16 years.",
   }),
 ];
 
@@ -777,6 +782,16 @@ export function computeImmunizationChart(input: {
       if (gap && prior?.status === "given" && prior.givenOn) {
         const shifted = daysBetweenIso(input.dateOfBirth, addDaysIso(prior.givenOn, gap.days));
         if (shifted != null && shifted > dueAge) dueAge = shifted;
+      } else if (gap && prior?.status !== "given" && dueAge <= ageDays) {
+        const projected = ageDays + gap.days;
+        if (projected > dueAge) dueAge = projected;
+      }
+      if (dose.alsoAfterCode && dose.alsoAfterDays) {
+        const other = records.get(dose.alsoAfterCode);
+        if (other?.status === "given" && other.givenOn) {
+          const shifted = daysBetweenIso(input.dateOfBirth, addDaysIso(other.givenOn, dose.alsoAfterDays));
+          if (shifted != null && shifted > dueAge) dueAge = shifted;
+        }
       }
       const base = classify(ageDays, dose, dueAge);
       let status: DoseStatus = base.status;
@@ -801,7 +816,7 @@ export function computeImmunizationChart(input: {
         occurrenceKey,
         code: dose.code,
         antigen: dose.antigen,
-        doseLabel: dose.doseLabel,
+        doseLabel: (sex && dose.labelForSex?.[sex]) || dose.doseLabel,
         dueOn: addDaysIso(input.dateOfBirth, dueAge),
         dueAgeDays: dueAge,
         status,

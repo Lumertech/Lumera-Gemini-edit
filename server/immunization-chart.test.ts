@@ -490,7 +490,8 @@ describe("immunization charts", () => {
     assert.equal(body.doses.find((item) => item.code === "tdap")?.status, "overdue");
     assert.equal(body.doses.find((item) => item.code === "tdap")?.catchUp, true);
     assert.equal(body.doses.find((item) => item.code === "hpv-15-1")?.status, "overdue");
-    assert.equal(body.doses.some((item) => item.code === "hpv-m1"), false);
+    assert.equal(body.doses.find((item) => item.code === "hpv-1")?.status, "not_indicated");
+    assert.equal(body.doses.some((item) => item.code === "hpv-2"), false);
     const uip = await jsonRequest(
       port,
       "GET",
