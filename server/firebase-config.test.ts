@@ -86,6 +86,8 @@ describe("Firebase Hosting → Cloud Run config (#26)", () => {
     assert.match(yaml, /update-traffic/);
     assert.match(yaml, /LUMERA_COMMIT_SHA=\$\{COMMIT_SHA\}/);
     assert.match(yaml, /--url "https:\/\/www\.mylumera\.in"/);
+    assert.match(yaml, /\/workspace\/image\.digest/);
+    assert.match(yaml, /command -v python3/);
     const noTraffic = yaml.indexOf("--no-traffic");
     const shift = yaml.indexOf("update-traffic");
     const tagCheck = yaml.indexOf("--tag-url");

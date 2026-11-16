@@ -34,11 +34,44 @@ def should_shift(our_unix: int, serving_unix: Optional[int]) -> bool:
     return our_unix >= serving_unix
 
 
+def _traffic_entries(service: dict) -> list:
+    status = (service.get("status") or {}).get("traffic") or []
+    spec = (service.get("spec") or {}).get("traffic") or []
+    return list(status) + list(spec)
+
+
 def tag_url(service: dict, tag: str) -> str:
-    """Direct URL of a --no-traffic revision tag. Empty when the tag is missing."""
-    for entry in (service.get("status") or {}).get("traffic") or []:
-        if entry.get("tag") == tag and entry.get("url"):
+    """Direct URL of a --no-traffic revision tag.
+
+    `describe` sometimes lists the tag before it fills `url`. The public form
+    is https://TAG---<service-host>, derived from status.url, but only when a
+    traffic entry actually has this tag. A missing tag stays empty so Cloud
+    Build aborts before traffic moves. An HTTP check of a returned URL is
+    still required.
+    """
+    if not tag:
+        return ""
+    found = False
+    for entry in _traffic_entries(service):
+        if entry.get("tag") != tag:
+            continue
+        found = True
+        if entry.get("url"):
             return str(entry["url"])
+    if not found:
+        return ""
+    base = str((service.get("status") or {}).get("url") or "").strip()
+    if not base.startswith("https://"):
+        return ""
+    host = base[len("https://") :].split("/")[0]
+    return f"https://{tag}---{host}"
+
+
+def tagged_revision_name(service: dict, tag: str) -> str:
+    """Revision name Cloud Run attached to this tag, if describe has it."""
+    for entry in _traffic_entries(service):
+        if entry.get("tag") == tag and entry.get("revisionName"):
+            return str(entry["revisionName"])
     return ""
 
 
@@ -176,6 +209,27 @@ def self_test() -> None:
     }
     assert tag_url(tagged, "babc56f2") == "https://babc56f2---lumera.a.run.app"
     assert tag_url(tagged, "missing") == ""
+    host_only = {
+        "status": {
+            "url": "https://lumera-gemini-edit-v6kfnpsifq-el.a.run.app",
+            "traffic": [{"revisionName": "old", "percent": 100}],
+        }
+    }
+    assert tag_url(host_only, "b7ca4c2d") == ""
+    bare = {
+        "status": {
+            "url": "https://lumera-gemini-edit-v6kfnpsifq-el.a.run.app",
+            "traffic": [
+                {"tag": "b7ca4c2d", "percent": 0, "revisionName": "lumera-gemini-edit-00051-abc"}
+            ],
+        }
+    }
+    assert (
+        tag_url(bare, "b7ca4c2d")
+        == "https://b7ca4c2d---lumera-gemini-edit-v6kfnpsifq-el.a.run.app"
+    )
+    assert tagged_revision_name(bare, "b7ca4c2d") == "lumera-gemini-edit-00051-abc"
+    assert tagged_revision_name(bare, "missing") == ""
     revision = {
         "spec": {
             "containers": [
@@ -252,6 +306,7 @@ def main(argv: list[str]) -> None:
     parser.add_argument("--revision-unix", default="")
     parser.add_argument("--tag-url", default="")
     parser.add_argument("--tag", default="")
+    parser.add_argument("--tagged-revision", default="")
     args = parser.parse_args(argv)
 
     if args.self_test:
@@ -262,6 +317,12 @@ def main(argv: list[str]) -> None:
         if not args.tag:
             parser.error("--tag-url requires --tag")
         print(tag_url(json.load(open(args.tag_url, encoding="utf-8")), args.tag))
+        return
+
+    if args.tagged_revision:
+        if not args.tag:
+            parser.error("--tagged-revision requires --tag")
+        print(tagged_revision_name(json.load(open(args.tagged_revision, encoding="utf-8")), args.tag))
         return
 
     if args.serving_revision:

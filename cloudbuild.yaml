@@ -80,12 +80,23 @@ steps:
         docker build --build-arg COMMIT_SHA="${COMMIT_SHA}" -t "${_IMAGE}" .
 
   # 2. Push before deploy — Cloud Build's `images:` push happens after steps.
+  #    Record the digest here. The cloud-sdk step must not depend on
+  #    `gcloud container images describe`, which can fail even after a push.
   - name: gcr.io/cloud-builders/docker
     id: push
     waitFor: ['build']
+    entrypoint: bash
     args:
-      - push
-      - ${_IMAGE}
+      - -c
+      - |
+        set -euo pipefail
+        docker push "${_IMAGE}" 2>&1 | tee /tmp/push.txt
+        DIGEST="$(grep -oE 'sha256:[0-9a-f]{64}' /tmp/push.txt | tail -1)"
+        if [[ -z "$$DIGEST" ]]; then
+          echo "docker push did not report a sha256 digest" >&2
+          exit 1
+        fi
+        printf '%s\n' "$$DIGEST" > /workspace/image.digest
 
   # 3. Clear AI Studio / --source metadata (sources, base-images,
   #    linux-base-image-update runtimeClassName, scratch placeholder).
@@ -122,6 +133,11 @@ steps:
       - -c
       - |
         set -euo pipefail
+        if ! command -v python3 >/dev/null 2>&1; then
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y -qq python3
+        fi
         python3 deploy/verify_served_commit.py --self-test
         if [[ ! "${COMMIT_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
           echo "COMMIT_SHA is missing; refusing to deploy an unstamped image." >&2
@@ -136,14 +152,21 @@ steps:
           echo "LUMERA_COMMIT_UNIX is empty" >&2
           exit 1
         fi
-        if ! DIGEST="$(gcloud container images describe "${_IMAGE}" --format='get(image_summary.digest)' 2>/tmp/digest.err)"; then
-          if ! DIGEST="$(gcloud artifacts docker images describe "${_IMAGE}" --format='get(image_summary.digest)' 2>>/tmp/digest.err)"; then
-            echo "Could not resolve a digest for ${_IMAGE}. Refusing to deploy a floating tag." >&2
-            cat /tmp/digest.err >&2
-            exit 1
-          fi
+        DIGEST=""
+        if [[ -f /workspace/image.digest ]]; then
+          DIGEST="$(tr -d '[:space:]' < /workspace/image.digest)"
         fi
-        DIGEST="$(printf '%s' "$$DIGEST" | tr -d '[:space:]')"
+        if [[ "$$DIGEST" != sha256:* ]]; then
+          if ! DIGEST="$(gcloud container images describe "${_IMAGE}" --format='get(image_summary.digest)' 2>/tmp/digest.err)"; then
+            if ! DIGEST="$(gcloud artifacts docker images describe "${_IMAGE}" --format='get(image_summary.digest)' 2>>/tmp/digest.err)"; then
+              echo "Could not resolve a digest for ${_IMAGE}. Refusing to deploy a floating tag." >&2
+              echo "If this is PERMISSION_DENIED, the Cloud Build service account needs roles/storage.objectViewer on the Container Registry bucket (or roles/artifactregistry.reader)." >&2
+              cat /tmp/digest.err >&2
+              exit 1
+            fi
+          fi
+          DIGEST="$(printf '%s' "$$DIGEST" | tr -d '[:space:]')"
+        fi
         if [[ "$$DIGEST" != sha256:* ]]; then
           echo "Refusing to deploy ${_IMAGE}: digest '$$DIGEST' is not sha256." >&2
           exit 1
@@ -158,6 +181,7 @@ steps:
         fi
         # No public traffic until the tagged revision serves this commit.
         # A services-replace of the previous template cannot remain what users hit.
+        echo "Deploying $$IMAGE_REF tag=$$SUFFIX with no traffic until /build.json is ${COMMIT_SHA}"
         gcloud run deploy "${_SERVICE}" \
           --image="$$IMAGE_REF" \
           --region="${_REGION}" \
@@ -174,13 +198,17 @@ steps:
           --project="${PROJECT_ID}" \
           --format=json > /tmp/lumera-service.json
         NEW_REV="$(python3 -c 'import json; print(json.load(open("/tmp/lumera-service.json")).get("status",{}).get("latestCreatedRevisionName",""))')"
-        case "$$NEW_REV" in
-          *"$$SUFFIX") ;;
-          *) echo "latest revision '$$NEW_REV' does not end with $$SUFFIX" >&2; exit 1 ;;
-        esac
+        TAG_REV="$(python3 deploy/verify_served_commit.py --tagged-revision /tmp/lumera-service.json --tag "$$SUFFIX")"
+        if [[ -n "$$TAG_REV" ]]; then
+          NEW_REV="$$TAG_REV"
+        fi
+        if [[ -z "$$NEW_REV" ]]; then
+          echo "Deploy did not create a revision for tag $$SUFFIX" >&2
+          exit 1
+        fi
         TAG_URL="$(python3 deploy/verify_served_commit.py --tag-url /tmp/lumera-service.json --tag "$$SUFFIX")"
         if [[ -z "$$TAG_URL" ]]; then
-          echo "Cloud Run did not return a URL for tag $$SUFFIX" >&2
+          echo "Cloud Run did not return a URL for tag $$SUFFIX; not moving traffic" >&2
           exit 1
         fi
         python3 deploy/verify_served_commit.py \
