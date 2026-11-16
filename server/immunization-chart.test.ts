@@ -6,6 +6,7 @@ import { ensureImmunizationSchema } from "./immunization-schema.ts";
 import { hashPassword } from "./password.ts";
 import { jsonRequest, startTestServer } from "./test-http.ts";
 import { clinicCalendarDate, shiftIsoDate } from "../src/lib/clinicDay.ts";
+import { addDaysIso } from "../src/lib/immunizationSchedules.ts";
 
 function suffix(): string {
   return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
@@ -459,5 +460,48 @@ describe("immunization charts", () => {
     const empty = otherSpecies.json.chart as { applicable: boolean; message: string };
     assert.equal(empty.applicable, false);
     assert.match(empty.message, /No published schedule/);
+  });
+
+  it("opens the 16-year IAP catch-up for a girl and leaves WhatsApp reminders off", async () => {
+    const clinic = seedClinic("teen");
+    const doctor = await login(clinic.doctor.email);
+    const dob = "2010-06-01";
+    const today = addDaysIso(dob, 16 * 365);
+    const child = await createChild(doctor, { name: "Teen Girl", gender: "Female", dateOfBirth: dob, age: 16 });
+    const res = await jsonRequest(
+      port,
+      "GET",
+      `/api/patients/${child.id}/immunization-chart?audience=pediatric&today=${today}`,
+      undefined,
+      doctor
+    );
+    assert.equal(res.status, 200, String(res.json.error || ""));
+    const body = res.json.chart as {
+      sex: string;
+      schedule: { version: string };
+      reminder: { enabled: boolean; sent: boolean };
+      doses: Array<{ code: string; status: string; catchUp: boolean }>;
+    };
+    assert.equal(body.sex, "female");
+    assert.equal(body.schedule.version, "iap-acvip-2025");
+    assert.equal(body.reminder.enabled, false);
+    assert.equal(body.reminder.sent, false);
+    assert.equal(body.doses.find((item) => item.code === "td")?.status, "due");
+    assert.equal(body.doses.find((item) => item.code === "tdap")?.status, "overdue");
+    assert.equal(body.doses.find((item) => item.code === "tdap")?.catchUp, true);
+    assert.equal(body.doses.find((item) => item.code === "hpv-15-1")?.status, "overdue");
+    assert.equal(body.doses.find((item) => item.code === "hpv-1")?.status, "not_indicated");
+    assert.equal(body.doses.some((item) => item.code === "hpv-2"), false);
+    const uip = await jsonRequest(
+      port,
+      "GET",
+      `/api/patients/${child.id}/immunization-chart?audience=pediatric&scheduleId=pediatric_uip&today=${today}`,
+      undefined,
+      doctor
+    );
+    assert.equal(uip.status, 200, String(uip.json.error || ""));
+    const government = uip.json.chart as { doses: Array<{ code: string; status: string; antigen: string }> };
+    assert.equal(government.doses.find((item) => item.code === "td-16")?.status, "due");
+    assert.equal(government.doses.some((item) => item.antigen === "HPV"), false);
   });
 });

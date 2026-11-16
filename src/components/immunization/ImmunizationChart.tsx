@@ -4,7 +4,9 @@ import { apiFetch } from "../../api/http";
 import type { StockBatchCard } from "../../lib/accountsDesk";
 import { buildImmunizationPrintHtml, type ImmunizationPrintLetterhead } from "../../lib/immunizationPrint";
 import {
+  IAP_HIGH_RISK_NOTES,
   IMMUNIZATION_SAFETY_NOTICE,
+  PEDIATRIC_SCHEDULE_CONTRASTS,
   parseTemplateDueAge,
   type ChartDose,
   type DoseStatus,
@@ -20,6 +22,7 @@ interface ChartPayload {
   species: string;
   breed: string;
   ownerName: string;
+  sex?: string;
   safetyNotice: string;
   applicable: boolean;
   needsDateOfBirth: boolean;
@@ -237,6 +240,7 @@ export const ImmunizationChartPanel: React.FC<{
 
   function printChart() {
     if (!chart) return;
+    const pediatricChart = chart.schedule?.id === "pediatric_iap" || chart.schedule?.id === "pediatric_uip";
     const html = buildImmunizationPrintHtml(chart.letterhead, {
       patientName: chart.patientName,
       uhid: chart.uhid,
@@ -248,6 +252,8 @@ export const ImmunizationChartPanel: React.FC<{
       scheduleVersion: chart.schedule?.version || "",
       citation: chart.schedule?.citation || "",
       doses: chart.doses,
+      contrasts: pediatricChart ? PEDIATRIC_SCHEDULE_CONTRASTS : undefined,
+      advisories: chart.schedule?.id === "pediatric_iap" ? IAP_HIGH_RISK_NOTES : undefined,
     });
     const win = window.open("", "_blank", "noopener,noreferrer");
     if (!win) {
@@ -368,6 +374,50 @@ export const ImmunizationChartPanel: React.FC<{
       )}
 
       {chart && !chart.applicable && chart.message && <p className="text-sm text-slate-700 break-words">{chart.message}</p>}
+
+      {chart?.applicable && (chart.schedule?.id === "pediatric_iap" || chart.schedule?.id === "pediatric_uip") && (
+        <section className="flex flex-col gap-2 min-w-0" data-testid="schedule-contrasts" aria-label="Where IAP and UIP differ">
+          <h3 className="text-sm font-bold text-slate-900">Where IAP and UIP differ</h3>
+          <p className="text-xs text-slate-600 break-words">
+            The doses below follow the schedule selected for this clinic. The other schedule is labelled beside each difference. The doctor records a dose on the selected schedule.
+          </p>
+          <ul className="flex flex-col gap-2 min-w-0">
+            {PEDIATRIC_SCHEDULE_CONTRASTS.map((item) => (
+              <li key={item.topic} className="rounded-lg border border-slate-200 p-3 min-w-0">
+                <p className="text-sm font-semibold text-slate-900 break-words">{item.topic}</p>
+                <p className="text-xs text-slate-700 break-words mt-1">
+                  <span className="font-bold uppercase tracking-wide text-[11px] text-emerald-900">IAP</span> {item.iap}
+                </p>
+                <p className="text-xs text-slate-700 break-words mt-1">
+                  <span className="font-bold uppercase tracking-wide text-[11px] text-sky-900">UIP</span> {item.uip}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {chart?.applicable && chart.schedule?.id === "pediatric_iap" && (
+        <section className="flex flex-col gap-2 min-w-0" data-testid="high-risk-notes" aria-label="High-risk and special situations">
+          <h3 className="text-sm font-bold text-slate-900">High-risk and special situations</h3>
+          <p className="text-xs text-slate-600 break-words" data-testid="hpv-sex">
+            HPV rows follow the sex on the patient record
+            {chart.sex === "female" ? " (female): one dose from 9 years up to 15 years." : ""}
+            {chart.sex === "male" ? " (male): two doses from 9 years up to 15 years." : ""}
+            {!chart.sex ? " (not recorded as female or male): both the girl row and the boy rows are shown, labelled." : ""}
+            {" "}
+            From the 15th birthday, a series that has not started uses three doses.
+          </p>
+          <ul className="flex flex-col gap-2 min-w-0">
+            {IAP_HIGH_RISK_NOTES.map((item) => (
+              <li key={item.id} className="rounded-lg border border-amber-200 bg-amber-50 p-3 min-w-0">
+                <p className="text-sm font-semibold text-amber-950 break-words">{item.title}</p>
+                <p className="text-xs text-amber-950 break-words mt-1">{item.text}</p>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {chart?.applicable && (
         <>
@@ -565,7 +615,7 @@ export const ImmunizationChartPanel: React.FC<{
                   onChange={(event) => setPediatricScheduleId(event.target.value as "pediatric_iap" | "pediatric_uip")}
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white"
                 >
-                  <option value="pediatric_iap">IAP 2023 recommended</option>
+                  <option value="pediatric_iap">IAP-ACVIP 2025 recommended</option>
                   <option value="pediatric_uip">India UIP / NIS (government)</option>
                 </select>
               </>

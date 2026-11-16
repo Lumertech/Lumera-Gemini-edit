@@ -10,17 +10,27 @@ Catalog version: `2026.11.1` in `src/lib/immunizationSchedules.ts`. Each schedul
 
 Day anchors used to place due dates: 1 week = 7 days, 1 month = 30 days, 1 year = 365 days.
 
-## Pediatric — IAP-ACVIP 2023 (clinic default)
+## Pediatric — IAP-ACVIP 2025 (clinic default)
 
-Indian Academy of Pediatrics, Advisory Committee on Vaccines and Immunization Practices. Recommended Immunization Schedule (2023) and Update on Immunization for Children Aged 0 Through 18 Years. Indian Pediatrics. 2024;61:113-125. DOI 10.1007/s13312-024-3104-5. Table I.
+Indian Academy of Pediatrics, Advisory Committee on Vaccines and Immunization Practices. Recommended Immunization Schedule (2025) and Update on Immunization for Children Aged 0 Through 18 Years. Indian Pediatrics. 2026;63:311-324. DOI 10.1007/s13312-026-00311-w. Tables 1–3 and Figure 1. Finalized 23 November 2025.
 
-https://www.indianpediatrics.net/feb2024/113.pdf
+https://www.indianpediatrics.net/may2026/311.pdf
 
-Birth through 18 years: BCG, OPV-0, hepatitis B, DTwP/DTaP, IPV, Hib, PCV (3+1), rotavirus, influenza through 5 years, typhoid conjugate (single dose, no booster in this table), MMR, hepatitis A, varicella, HPV (2 doses from 9 years for girls and boys), Tdap at 10 years, Td at 16–18 years.
+This edition updates IAP-ACVIP 2023 (Indian Pediatrics. 2024;61:113-125. DOI 10.1007/s13312-024-3104-5. https://www.indianpediatrics.net/feb2024/113.pdf). The chart rows follow 2025. Where a 2023 sentence is still the one 2025 points back to (meningococcal “as published earlier”), that sentence is quoted in the high-risk note.
 
-Japanese Encephalitis is not in that routine table. The chart shows the UIP JE ages only after the clinic marks an endemic district.
+Birth through 18 years: BCG, OPV-0, hepatitis B, DTwP/DTaP, IPV, Hib, PCV (3+1), rotavirus, influenza through 5 years (trivalent; high-risk continuation is a note, not an extra routine row), typhoid conjugate (single dose, no booster), MMR, hepatitis A, varicella, HPV, Tdap at 10–12 years, Td or Tdap at 16–18 years.
 
-Rotavirus dose 3 and hepatitis A dose 2 are optional because they depend on the product (2-dose rotavirus, live vs inactivated hepatitis A).
+HPV (IAP-ACVIP 2025): immunocompetent girls get one dose from 9 years up to 15 years. Boys in that age get two doses at 0 and 6 months, not closer than 5 months. A series that starts at 15 years or older is three doses at 0, 2 and 6 months (dose 2 at least 1 month after dose 1, dose 3 at least 3 months after dose 2). The same three-dose schedule is for an immunocompromised child at any age; the chart does not start it early. The sex on the patient record chooses the under-15 rows. A blank or other sex shows both, labelled.
+
+Tdap stays due through the 12th year of age (10–12 years) and is still given if an earlier Tdap or DTP booster was given. Td only replaces it when Tdap is unavailable or unaffordable. The 16–18 year dose is Td or Tdap. No further Td is added after 18 years.
+
+Japanese Encephalitis is not in the routine table. The chart shows the UIP JE ages only after the clinic marks an endemic district.
+
+Meningococcal vaccine, nirsevimab, and rabies post-exposure are high-risk or special-situation notes. They are not due rows for every child.
+
+Rotavirus dose 3 and hepatitis A dose 2 are optional because they depend on the product (2-dose rotavirus, live vs inactivated hepatitis A). Varicella dose 2 is 3–6 months after dose 1. In catch-up after 12 years, the second dose is 4 weeks after dose 1.
+
+The pediatric chart lists where IAP and UIP differ, with both labelled, on screen and on the printable letterhead.
 
 ## Pediatric — India UIP / NIS (selectable per clinic)
 
@@ -28,7 +38,7 @@ Ministry of Health and Family Welfare. Routine Immunization Manual for Health Wo
 
 https://nccmis.mohfw.gov.in/document/RI_Manual_For_Health_Workers.pdf
 
-BCG, hepatitis B birth dose, bOPV, pentavalent (DPT + Hep B + Hib), rotavirus, fractional IPV, PCV (2+1), MR, DPT boosters, Td at 10 and 16 years. JE only in selected districts.
+BCG, hepatitis B birth dose, bOPV, pentavalent (DPT + Hep B + Hib), rotavirus, fractional IPV, PCV (2+1), MR, DPT boosters, Td at 10 and 16 years. JE only in selected districts. HPV, varicella, hepatitis A, influenza, and typhoid conjugate are not UIP rows. Where that differs from IAP, the chart shows both labels.
 
 Vitamin A and antenatal Td are in the government schedule and are not rows on this vaccine chart.
 

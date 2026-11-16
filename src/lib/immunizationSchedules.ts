@@ -9,10 +9,15 @@
  *
  * Sources (see also docs/immunization-schedules.md):
  *
- * Pediatric default — IAP-ACVIP 2023
+ * Pediatric default — IAP-ACVIP 2025 (updates the 2023 timetable)
  *   Indian Academy of Pediatrics, Advisory Committee on Vaccines and
- *   Immunization Practices. Recommended Immunization Schedule (2023) and
+ *   Immunization Practices. Recommended Immunization Schedule (2025) and
  *   Update on Immunization for Children Aged 0 Through 18 Years.
+ *   Indian Pediatrics. 2026;63:311-324. DOI 10.1007/s13312-026-00311-w.
+ *   Tables 1–3 and Figure 1. Finalized 23 November 2025.
+ *   https://www.indianpediatrics.net/may2026/311.pdf
+ *   The 2025 paper revises the 2023 timetable. Rows below follow 2025.
+ *   Prior edition, kept so the 2023 table can be checked against this file:
  *   Indian Pediatrics. 2024;61:113-125. DOI 10.1007/s13312-024-3104-5.
  *   Table I, IAP-ACVIP Immunization Timetable 2023.
  *   https://www.indianpediatrics.net/feb2024/113.pdf
@@ -74,6 +79,27 @@ export interface ScheduleDose {
   endemicOnly?: boolean;
   /** If that dose was never given and is past its window, this dose is not indicated. */
   requiresPrior?: string;
+  /** Hide this row unless the patient sex matches. A blank sex shows every row. */
+  appliesToSex?: "female" | "male";
+  /** This dose is timed from `afterCode`, not as its own missed date. */
+  afterCode?: string;
+  /** Recommended gap, in days, after `afterCode` is given. */
+  afterDays?: number;
+  /** Shown while the chart is waiting for `afterCode`. */
+  afterNote?: string;
+  /** A second floor, for example HPV dose 3 at least 3 months after dose 2. */
+  alsoAfterCode?: string;
+  alsoAfterDays?: number;
+  /** Replaces doseLabel when the patient sex is known. The code stays stable for old records. */
+  labelForSex?: Partial<Record<"female" | "male", string>>;
+  /** After this age, use `catchUpAfterDays` once `afterCode` is given. */
+  catchUpAfterAgeDays?: number;
+  catchUpAfterDays?: number;
+  catchUpAfterNote?: string;
+  /** Omit the row until the child reaches this age (the older HPV series). */
+  showFromAgeDays?: number;
+  /** Omit the row when any of these doses was already given (series already started). */
+  omitIfGiven?: string[];
   notes?: string;
 }
 
@@ -134,7 +160,7 @@ export interface ChartDose {
 }
 
 const IAP_CITATION =
-  "IAP-ACVIP Recommended Immunization Schedule (2023), Table I. Indian Pediatrics. 2024;61:113-125. DOI 10.1007/s13312-024-3104-5. https://www.indianpediatrics.net/feb2024/113.pdf";
+  "IAP-ACVIP Recommended Immunization Schedule (2025), Tables 1–3 and Figure 1. Indian Pediatrics. 2026;63:311-324. DOI 10.1007/s13312-026-00311-w. https://www.indianpediatrics.net/may2026/311.pdf. Updates IAP-ACVIP 2023, Table I. Indian Pediatrics. 2024;61:113-125. DOI 10.1007/s13312-024-3104-5. https://www.indianpediatrics.net/feb2024/113.pdf.";
 
 const UIP_CITATION =
   "Ministry of Health and Family Welfare, Routine Immunization Manual for Health Workers, 2024. National Immunization Schedule (Table 3.1 and the infant/child summary). https://nccmis.mohfw.gov.in/document/RI_Manual_For_Health_Workers.pdf";
@@ -160,7 +186,11 @@ const W = (weeks: number) => weeks * 7;
 const M = (months: number) => months * 30;
 const Y = (years: number) => years * 365;
 
-/** IAP-ACVIP 2023 routine table, birth to 18 years. JE is endemic-only (not in that routine table). */
+/**
+ * IAP-ACVIP 2025 routine table (Table 2 and Figure 1), birth to 18 years.
+ * JE is endemic-only (Figure 1, not in the routine table).
+ * Meningococcal, nirsevimab, and rabies post-exposure are notes, not routine rows.
+ */
 const IAP_DOSES: ScheduleDose[] = [
   row("bcg", "BCG", "Birth dose", 0, 28, {
     maxAgeDays: Y(1),
@@ -214,26 +244,26 @@ const IAP_DOSES: ScheduleDose[] = [
   row("pcv-3", "PCV", "Dose 3", W(14), W(18), { maxAgeDays: Y(5) }),
   row("iiv-1", "Influenza", "Dose 1", M(6), M(7), {
     maxAgeDays: Y(5),
-    notes: "Inactivated influenza, 0.5 ml from 6 months. IAP 2023 repeats it yearly until 5 years of age.",
+    notes: "Inactivated influenza, trivalent (A/H1N1, A/H3N2, B/Victoria), 0.5 ml from 6 months. IAP-ACVIP 2025 replaced the quadrivalent vaccine. Routine doses stop at 5 years.",
   }),
   row("tcv", "Typhoid conjugate", "Single dose", M(6), M(9), {
     maxAgeDays: Y(18),
-    notes: "One dose at 6–9 months. The IAP-ACVIP 2023 table does not recommend a typhoid booster.",
+    notes: "One dose (0.5 ml intramuscular) from 6 months, scheduled at 6–9 months. IAP-ACVIP 2025 continues the single-dose strategy and does not recommend a typhoid booster.",
   }),
   row("iiv-2", "Influenza", "Dose 2", M(7), M(8), {
     maxAgeDays: Y(5),
-    notes: "Second priming dose, then a yearly dose until 5 years.",
+    notes: "Second priming dose, 4 weeks after dose 1, then a yearly dose until 5 years of age.",
   }),
   row("iiv-annual", "Influenza", "Yearly dose", M(18), M(18) + 60, {
     maxAgeDays: Y(5),
     recurringEveryDays: Y(1),
-    notes: "Yearly, in the pre-monsoon period, until 5 years of age (IAP-ACVIP 2023 table comment).",
+    notes: "Yearly, usually in the pre-monsoon period, until 5 years of age (IAP-ACVIP 2025 Figure 1). High-risk children continue yearly to 18 years and beyond; that is a note, not an extra routine row.",
   }),
   row("mmr-1", "MMR", "Dose 1", M(9), Y(1), { maxAgeDays: Y(18) }),
   row("je-1", "Japanese Encephalitis", "Dose 1", M(9), M(11), {
     maxAgeDays: Y(2),
     endemicOnly: true,
-    notes: "Not in the IAP 2023 routine table. Shown only when the clinic marks an endemic district, using UIP ages (9–11 months).",
+    notes: "Not in the IAP-ACVIP 2025 routine table. Figure 1 limits JE to endemic areas. Shown only when the clinic marks an endemic district, using UIP ages (9–11 months and 16–24 months).",
   }),
   row("hepa-1", "Hepatitis A", "Dose 1", M(12), M(15), {
     maxAgeDays: Y(18),
@@ -255,25 +285,67 @@ const IAP_DOSES: ScheduleDose[] = [
     maxAgeDays: Y(18),
     notes: "Only when inactivated hepatitis A was used. Omit after a single-dose live vaccine.",
   }),
-  row("vari-2", "Varicella", "Dose 2", M(18), M(19), { maxAgeDays: Y(18) }),
+  row("vari-2", "Varicella", "Dose 2", M(18), M(19), {
+    maxAgeDays: Y(18),
+    afterCode: "vari-1",
+    afterDays: M(3),
+    afterNote: "Routine second dose is 3–6 months after dose 1 (IAP-ACVIP 2025 Table 2 places it at 18–19 months).",
+    catchUpAfterAgeDays: Y(12),
+    catchUpAfterDays: 28,
+    catchUpAfterNote: "Catch-up after 12 years: the second dose is 4 weeks after dose 1 (IAP-ACVIP 2025 Figure 1).",
+    notes: "Give 3–6 months after dose 1. After the 12th birthday the catch-up interval is 4 weeks.",
+  }),
   row("dtwp-b2", "DTwP/DTaP", "Booster 2", Y(4), Y(6), { maxAgeDays: Y(7) }),
   row("ipv-b2", "IPV", "Booster 2", Y(4), Y(6), { maxAgeDays: Y(7) }),
   row("mmr-3", "MMR", "Dose 3", Y(4), Y(6), { maxAgeDays: Y(18) }),
-  row("hpv-1", "HPV", "Dose 1", Y(9), Y(14), {
-    maxAgeDays: Y(18),
-    notes: "Girls and boys. Two doses (0 and 6 months) when the series starts at 9–14 years. Three doses (0, 2 and 6 months) if it starts at 15 or older — add the middle dose on the clinic template.",
+  row("hpv-1", "HPV", "Dose 1 (girls: single dose; boys: first of two)", Y(9), Y(15) - 1, {
+    maxAgeDays: Y(15) - 1,
+    labelForSex: {
+      female: "Single dose (immunocompetent girls)",
+      male: "Dose 1 (boys, 9 up to 15 years)",
+    },
+    notes: "IAP-ACVIP 2025: immunocompetent girls get this one intramuscular dose from 9 years up to 15 years. Boys get a second dose 6 months later, not sooner than 5 months. The code stays hpv-1 so a dose recorded on the previous chart still matches. If nothing was given by the 15th birthday, use the 3-dose schedule.",
   }),
-  row("hpv-2", "HPV", "Dose 2", Y(9) + M(6), Y(14) + M(6), {
-    maxAgeDays: Y(18),
-    notes: "Six months after dose 1 on the 2-dose 9–14 year schedule.",
+  row("hpv-2", "HPV", "Dose 2 (boys, 6 months after dose 1)", Y(9) + M(6), Y(15) - 1, {
+    maxAgeDays: Y(19) - 1,
+    appliesToSex: "male",
+    requiresPrior: "hpv-1",
+    afterCode: "hpv-1",
+    afterDays: M(6),
+    afterNote: "Six months after dose 1. Do not give it sooner than 5 months (IAP-ACVIP 2025).",
+    notes: "Boys only, unless this dose was already recorded. Completes the 2-dose series when dose 1 was given before the 15th birthday. The code stays hpv-2 so an earlier record still matches.",
   }),
-  row("tdap", "Tdap", "Dose", Y(10), Y(11), {
-    maxAgeDays: Y(18),
-    notes: "Give Tdap at 10 years even if a DTP booster was given earlier.",
+  row("hpv-15-1", "HPV", "Dose 1 (series started at 15 years or older)", Y(15), Y(15) + 60, {
+    maxAgeDays: Y(19) - 1,
+    showFromAgeDays: Y(15),
+    omitIfGiven: ["hpv-1", "hpv-2"],
+    notes: "IAP-ACVIP 2025 Table 2: from 15 years (the paper also cites 15–26 years) the schedule is 3 doses, 0.5 ml at 0, 2 and 6 months. Dose 2 is at least 1 month after dose 1. Dose 3 is 6 months after dose 1 and at least 3 months after dose 2. The same 3-dose schedule is for an immunocompromised child at any age; this chart does not start it early.",
   }),
-  row("td", "Td", "Dose", Y(16), Y(18), {
-    maxAgeDays: Y(20),
-    notes: "Td at 16–18 years.",
+  row("hpv-15-2", "HPV", "Dose 2 (2 months after dose 1)", Y(15) + M(2), Y(15) + M(2) + 60, {
+    maxAgeDays: Y(19) - 1,
+    showFromAgeDays: Y(15),
+    omitIfGiven: ["hpv-1", "hpv-2"],
+    afterCode: "hpv-15-1",
+    afterDays: M(2),
+    afterNote: "At least 1 month after dose 1. The 2025 table places this dose at 2 months.",
+  }),
+  row("hpv-15-3", "HPV", "Dose 3 (6 months after dose 1)", Y(15) + M(6), Y(15) + M(6) + 60, {
+    maxAgeDays: Y(19) - 1,
+    showFromAgeDays: Y(15),
+    omitIfGiven: ["hpv-1", "hpv-2"],
+    afterCode: "hpv-15-1",
+    afterDays: M(6),
+    alsoAfterCode: "hpv-15-2",
+    alsoAfterDays: M(3),
+    afterNote: "Six months after dose 1 (0, 2 and 6 months). Not sooner than 3 months after dose 2.",
+  }),
+  row("tdap", "Tdap", "10–12 year dose", Y(10), Y(13) - 1, {
+    maxAgeDays: Y(19) - 1,
+    notes: "IAP-ACVIP 2025 Figure 1: Tdap is necessary at 10–12 years, even if it was given earlier (including an inadvertent DTP booster). It is not the 4–6 year booster. If that booster was delayed, Tdap may be given after 7 years. If Tdap is unavailable or unaffordable, substitute Td. UIP gives Td at 10 years. Catch-up stays on the chart through the 18th year.",
+  }),
+  row("td", "Td", "16–18 year dose", Y(16), Y(19) - 1, {
+    maxAgeDays: Y(19) - 1,
+    notes: "IAP-ACVIP 2025 Table 2: Td or Tdap at 16–18 years, meaning through the year the child is 18. It leaves the chart on the 19th anniversary in this 365-day model. UIP gives Td at 16 years.",
   }),
 ];
 
@@ -315,8 +387,14 @@ const UIP_DOSES: ScheduleDose[] = [
     notes: "Selected endemic districts only.",
   }),
   row("dpt-b2", "DPT", "Booster 2", Y(5), Y(6), { maxAgeDays: Y(7), notes: "At 5–6 years." }),
-  row("td-10", "Td", "10-year dose", Y(10), Y(11), { maxAgeDays: Y(16) }),
-  row("td-16", "Td", "16-year dose", Y(16), Y(18), { maxAgeDays: Y(20) }),
+  row("td-10", "Td", "10-year dose", Y(10), Y(11), {
+    maxAgeDays: Y(16),
+    notes: "Government UIP: Td at 10 years. IAP recommends Tdap across 10–12 years, and Td only if Tdap is unavailable.",
+  }),
+  row("td-16", "Td", "16-year dose", Y(16), Y(18), {
+    maxAgeDays: Y(20),
+    notes: "Government UIP: Td at 16 years. IAP recommends Td or Tdap across 16–18 years.",
+  }),
 ];
 
 const DEWORM_NOTE =
@@ -403,9 +481,9 @@ const CAT_DOSES: ScheduleDose[] = [
 export const IMMUNIZATION_SCHEDULES: Record<ScheduleId, ScheduleDefinition> = {
   pediatric_iap: {
     id: "pediatric_iap",
-    version: "iap-acvip-2023",
+    version: "iap-acvip-2025",
     family: "pediatric",
-    title: "IAP-ACVIP 2023 (recommended)",
+    title: "IAP-ACVIP 2025 (recommended)",
     citation: IAP_CITATION,
     doses: IAP_DOSES,
   },
@@ -444,6 +522,89 @@ export function scheduleById(id: string): ScheduleDefinition | null {
   return null;
 }
 
+export interface PediatricScheduleContrast {
+  topic: string;
+  iap: string;
+  uip: string;
+}
+
+/** Shown on every pediatric chart so a clinic sees both schedules where they differ. */
+export const PEDIATRIC_SCHEDULE_CONTRASTS: PediatricScheduleContrast[] = [
+  {
+    topic: "Polio",
+    iap: "OPV at birth, then full-dose IPV at 6, 10 and 14 weeks, with boosters at 16–18 months and 4–6 years.",
+    uip: "bOPV at birth, 6, 10 and 14 weeks, plus a booster at 16–24 months. Fractional IPV at 6 weeks, 14 weeks and 9–11 months.",
+  },
+  {
+    topic: "Diphtheria, tetanus, pertussis, hepatitis B, Hib",
+    iap: "DTwP or DTaP, hepatitis B and Hib at 6, 10 and 14 weeks, with DTwP/DTaP and Hib boosters at 16–18 months and a DTwP/DTaP booster at 4–6 years.",
+    uip: "Pentavalent (DPT + hepatitis B + Hib) at 6, 10 and 14 weeks. DPT boosters at 16–24 months and 5–6 years. No separate Hib booster.",
+  },
+  {
+    topic: "Pneumococcal",
+    iap: "PCV at 6, 10 and 14 weeks, plus a booster at 15 months (3+1).",
+    uip: "PCV at 6 and 14 weeks, plus a booster at 9–11 months (2+1).",
+  },
+  {
+    topic: "Measles",
+    iap: "MMR at 9 months, 15 months and 4–6 years.",
+    uip: "MR (measles-rubella, not MMR) at 9–12 months and 16–24 months.",
+  },
+  {
+    topic: "10 years",
+    iap: "Tdap at 10–12 years. Use Td only if Tdap is unavailable or unaffordable.",
+    uip: "Td at 10 years.",
+  },
+  {
+    topic: "16 years",
+    iap: "Td or Tdap at 16–18 years.",
+    uip: "Td at 16 years.",
+  },
+  {
+    topic: "HPV, varicella, hepatitis A, influenza, typhoid",
+    iap: "On the 2025 routine table. HPV is one dose for immunocompetent girls from 9 up to 15 years, two doses for boys in that age, and three doses when the series starts at 15 or older. Influenza is yearly until 5 years. Typhoid conjugate is a single dose, with no booster.",
+    uip: "Not on the government schedule.",
+  },
+  {
+    topic: "Japanese encephalitis",
+    iap: "Not in the routine table. The chart uses the UIP ages only after the clinic marks an endemic district.",
+    uip: "Selected endemic districts only, at 9–11 months and 16–24 months.",
+  },
+];
+
+export interface ScheduleAdvisory {
+  id: string;
+  title: string;
+  text: string;
+}
+
+/**
+ * High-risk and special-situation notes from IAP-ACVIP 2025.
+ * These are not routine due rows. Adding them as doses would put them on every child.
+ */
+export const IAP_HIGH_RISK_NOTES: ScheduleAdvisory[] = [
+  {
+    id: "influenza-high-risk",
+    title: "Influenza — high risk",
+    text: "Routine annual influenza stops at 5 years (IAP-ACVIP 2025 Figure 1). For a child at high risk of influenza complications, continue a yearly dose until 18 years and beyond. Use a trivalent vaccine (A/H1N1, A/H3N2, B/Victoria). The doctor adds those later doses on the clinic template; they are not routine rows.",
+  },
+  {
+    id: "meningococcal",
+    title: "Meningococcal — special situations only",
+    text: "Not a routine dose. IAP-ACVIP 2025 Table 3 recommends meningococcal conjugate vaccine only in special situations, as published earlier. IAP-ACVIP 2023 Figure 1: Menactra is two doses at 9–23 months, at least 3 months apart. Menveo is one dose after 2 years. From 2 to 55 years, Menactra or Menveo may be a single dose. Ongoing exposure: a booster every 5 years. MenFive (serogroups A, C, W, Y and X) is a single dose from 18 to 85 years, not a routine childhood dose.",
+  },
+  {
+    id: "nirsevimab",
+    title: "Nirsevimab (RSV) — high risk only",
+    text: "Not a routine vaccine row. IAP-ACVIP 2025 does not recommend nirsevimab for every infant. After talking with the parents, it may be considered for high-risk infants and children through 24 months (prematurity before 32 weeks, bronchopulmonary dysplasia, significant congenital heart disease, severe immunocompromise, or severe neuromuscular disease).",
+  },
+  {
+    id: "rabies-pep",
+    title: "Rabies — after a bite, not a routine childhood dose",
+    text: "IAP-ACVIP 2025 recommends five intramuscular doses on days 0, 3, 7, 14 and 28 for post-exposure prophylaxis, plus rabies immunoglobulin or a monoclonal antibody by wound category. That course is not on this routine chart.",
+  },
+];
+
 export function canonicalSpecies(value: unknown): "" | "human" | "dog" | "cat" | "other" {
   const raw = String(value || "").trim().toLowerCase();
   if (!raw) return "";
@@ -451,6 +612,14 @@ export function canonicalSpecies(value: unknown): "" | "human" | "dog" | "cat" |
   if (raw === "dog" || raw === "canine" || raw === "puppy" || raw === "pup") return "dog";
   if (raw === "cat" || raw === "feline" || raw === "kitten") return "cat";
   return "other";
+}
+
+/** Blank, other, and unknown stay blank so the chart can show both HPV rows. */
+export function canonicalSex(value: unknown): "" | "female" | "male" {
+  const raw = String(value || "").trim().toLowerCase();
+  if (raw === "female" || raw === "f" || raw === "girl") return "female";
+  if (raw === "male" || raw === "m" || raw === "boy") return "male";
+  return "";
 }
 
 export function addDaysIso(isoDate: string, days: number): string {
@@ -543,6 +712,26 @@ function occurrenceAges(dose: ScheduleDose, ageDays: number): number[] {
   return ages;
 }
 
+function seriesGap(dose: ScheduleDose, ageDays: number): { days: number; note: string } | null {
+  if (!dose.afterCode || !dose.afterDays || dose.recurringEveryDays) return null;
+  const catchUpGap =
+    dose.catchUpAfterAgeDays != null && ageDays > dose.catchUpAfterAgeDays && dose.catchUpAfterDays != null;
+  return {
+    days: catchUpGap ? dose.catchUpAfterDays! : dose.afterDays,
+    note:
+      (catchUpGap ? dose.catchUpAfterNote : dose.afterNote) ||
+      "Give this dose after the previous one in the series. It is not due on its own.",
+  };
+}
+
+function recordedGiven(records: Map<string, ChartRecord>, code: string): boolean {
+  for (const [key, record] of records) {
+    if (record.status !== "given") continue;
+    if (key === code || key.startsWith(`${code}@`)) return true;
+  }
+  return false;
+}
+
 function classify(ageDays: number, dose: ScheduleDose, dueAge: number): { status: DoseStatus; catchUp: boolean; catchUpNote: string } {
   const grace = Math.max(0, dose.overdueAfterDays - dose.dueAgeDays);
   const overdueAt = dueAge + grace;
@@ -562,6 +751,8 @@ export function computeImmunizationChart(input: {
   endemicJe?: boolean;
   includeOptional?: boolean;
   edits?: DoseEdit[];
+  /** Female or male selects the HPV series. Blank shows both, labelled on the dose. */
+  sex?: "" | "female" | "male";
 }): { ok: true; doses: ChartDose[] } | { ok: false; error: string } {
   if (!isIsoDate(input.dateOfBirth) || !isIsoDate(input.today)) {
     return { ok: false, error: "A date of birth is required to compute the chart." };
@@ -572,15 +763,37 @@ export function computeImmunizationChart(input: {
   }
   const edited = applyScheduleEdits(input.schedule.doses, input.edits || [], input.schedule.id);
   const records = new Map((input.records || []).map((record) => [record.occurrenceKey, record]));
+  const sex = input.sex || "";
   const built: ChartDose[] = [];
   for (const dose of edited) {
     if (dose.endemicOnly && !input.endemicJe) continue;
     if (dose.optional && input.includeOptional === false) continue;
+    if (dose.showFromAgeDays != null && ageDays < dose.showFromAgeDays) continue;
+    if (dose.omitIfGiven?.some((code) => recordedGiven(records, code))) continue;
+    if (dose.appliesToSex && sex && dose.appliesToSex !== sex && !recordedGiven(records, dose.code)) continue;
     const ages = occurrenceAges(dose, ageDays);
     const missedKeys: string[] = [];
-    for (const dueAge of ages) {
+    const gap = seriesGap(dose, ageDays);
+    for (const scheduledAge of ages) {
+      let dueAge = scheduledAge;
       const occurrenceKey = dose.recurringEveryDays ? `${dose.code}@${dueAge}` : dose.code;
       const record = records.get(occurrenceKey);
+      const prior = dose.afterCode ? records.get(dose.afterCode) : undefined;
+      if (gap && prior?.status === "given" && prior.givenOn) {
+        const shifted = daysBetweenIso(input.dateOfBirth, addDaysIso(prior.givenOn, gap.days));
+        if (shifted != null && shifted > dueAge) dueAge = shifted;
+      } else if (gap && prior?.status !== "given" && dueAge <= ageDays) {
+        const projected = ageDays + gap.days;
+        if (projected > dueAge) dueAge = projected;
+      }
+      const alsoPrior = dose.alsoAfterCode ? records.get(dose.alsoAfterCode) : undefined;
+      if (dose.alsoAfterCode && dose.alsoAfterDays && alsoPrior?.status === "given" && alsoPrior.givenOn) {
+        const shifted = daysBetweenIso(input.dateOfBirth, addDaysIso(alsoPrior.givenOn, dose.alsoAfterDays));
+        if (shifted != null && shifted > dueAge) dueAge = shifted;
+      } else if (dose.alsoAfterCode && dose.alsoAfterDays && alsoPrior?.status !== "given" && dueAge <= ageDays) {
+        const projected = ageDays + dose.alsoAfterDays;
+        if (projected > dueAge) dueAge = projected;
+      }
       const base = classify(ageDays, dose, dueAge);
       let status: DoseStatus = base.status;
       let catchUp = base.catchUp;
@@ -589,6 +802,22 @@ export function computeImmunizationChart(input: {
         status = record.status;
         catchUp = false;
         catchUpNote = "";
+      } else if (gap && prior?.status !== "given") {
+        const priorDose = edited.find((item) => item.code === dose.afterCode);
+        const priorWindowOpen = priorDose?.maxAgeDays == null || ageDays <= priorDose.maxAgeDays;
+        if (priorWindowOpen && (status === "due" || status === "overdue" || status === "upcoming")) {
+          status = "upcoming";
+          catchUp = false;
+          catchUpNote = gap.note;
+        }
+      } else if (dose.alsoAfterCode && alsoPrior?.status !== "given") {
+        const otherDose = edited.find((item) => item.code === dose.alsoAfterCode);
+        const otherWindowOpen = otherDose?.maxAgeDays == null || ageDays <= otherDose.maxAgeDays;
+        if (otherWindowOpen && (status === "due" || status === "overdue" || status === "upcoming")) {
+          status = "upcoming";
+          catchUp = false;
+          catchUpNote = gap?.note || "Give this dose after the previous one in the series.";
+        }
       } else if (status === "overdue" && dose.collapseMissed) {
         missedKeys.push(occurrenceKey);
       }
@@ -596,7 +825,7 @@ export function computeImmunizationChart(input: {
         occurrenceKey,
         code: dose.code,
         antigen: dose.antigen,
-        doseLabel: dose.doseLabel,
+        doseLabel: (sex && dose.labelForSex?.[sex]) || dose.doseLabel,
         dueOn: addDaysIso(input.dateOfBirth, dueAge),
         dueAgeDays: dueAge,
         status,
