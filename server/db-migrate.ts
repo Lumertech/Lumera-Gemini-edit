@@ -12,6 +12,7 @@ import { migratePrescriptionDraftKey } from "./migrate-prescription-drafts.ts";
 import { ensureAppointmentTokenIndex } from "./queue-tokens.ts";
 import { ensureAccountsSchema } from "./accounts-schema.ts";
 import { ensureImmunizationSchema } from "./immunization-schema.ts";
+import { ensureClinicalNotesSchema } from "./patient-record-schema.ts";
 
 const DEMO_LETTERHEAD_SEED = {
   name: "Lumera Healthcare & Polyclinic Institute",
@@ -519,6 +520,7 @@ export function migrate(database: SqlDatabase) {
   }
   ensureAccountsSchema(database);
   ensureImmunizationSchema(database);
+  ensureClinicalNotesSchema(database);
   database.exec(`
     CREATE TABLE IF NOT EXISTS trial_claims (
       id TEXT PRIMARY KEY,

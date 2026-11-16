@@ -1,6 +1,7 @@
 import { HIDDEN_AMBIENT_SOURCES, hiddenVisitSourceSql } from "./ambient-walkin.ts";
 import { getDb, mapAppointment, mapInvoice, mapPrescription } from "./db.ts";
 import { isReceptionRole } from "./patient-access.ts";
+import { listChartNoteRows } from "./patient-record.ts";
 import { consentMethodLabel } from "../src/lib/healthDocumentNotice.ts";
 import { formatINR } from "../src/lib/currency.ts";
 
@@ -12,7 +13,8 @@ export type PatientTimelineType =
   | "consent"
   | "whatsapp"
   | "vitals"
-  | "immunization";
+  | "immunization"
+  | "note";
 
 export type PatientTimelineItem = {
   id: string;
@@ -238,6 +240,19 @@ export function buildPatientTimeline(tenantId: string, patientId: string, role: 
       summary: withdrawn
         ? "New reports will not be stored. Existing reports stay for the retention period."
         : [consentMethodLabel(asText(row.method)), asText(row.language).toUpperCase()].filter(Boolean).join(" · "),
+    });
+  }
+
+  for (const row of listChartNoteRows(tenantId, patientId)) {
+    const at = asText(row.created_at);
+    items.push({
+      id: `note:${asText(row.id)}`,
+      type: "note",
+      at,
+      title: "Clinical note",
+      summary: reception
+        ? "Note recorded"
+        : [asText(row.author_name), clip(asText(row.body))].filter(Boolean).join(" · "),
     });
   }
 

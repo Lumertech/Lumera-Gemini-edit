@@ -18,6 +18,7 @@ import { maskedLast4 } from "./mask-last4.ts";
 import { registerPatientDocumentRoutes } from "./patient-documents.ts";
 import { registerPatientDocumentConsentRoutes } from "./patient-document-consent.ts";
 import { buildPatientTimeline, presentPrescriptionForRole } from "./patient-timeline.ts";
+import { insertClinicalNote, presentChartRecord } from "./patient-record.ts";
 import { denyUnlessPatientRecordRole, denyUnlessPrescriber, isReceptionRole } from "./patient-access.ts";
 import { clinicCalendarDate, parseAppointmentListDate, resolveQueueDate } from "../src/lib/clinicDay.ts";
 import { canonicalSpecies } from "../src/lib/immunizationSchedules.ts";
@@ -1350,17 +1351,47 @@ export function createClinicalRouter(): Router {
            ORDER BY date DESC, created_at DESC`
         )
         .all(tenantId, req.params.id) as Record<string, unknown>[];
+      const record = presentChartRecord(tenantId, req.params.id, role);
       res.json(
         withPatientTenant(req, tenantId, {
           patient: patientWithConsents(row, tenantId),
           visits: visits.map(mapAppointment),
           prescriptions: prescriptions.map((prescription) => prescriptionForViewer(req, tenantId, prescription)),
           timeline: buildPatientTimeline(tenantId, req.params.id, role),
+          notes: record.notes,
+          diagnoses: record.diagnoses,
+          vitalsHistory: record.vitalsHistory,
         })
       );
     } catch (err) {
       reportCaughtError(err, "clinical.patientChart");
       res.status(500).json({ error: "Failed to fetch patient chart" });
+    }
+  });
+
+  api.post("/patients/:id/notes", requireAuth, (req, res) => {
+    if (!denyUnlessPrescriber(req, res)) return;
+    const tenantId = requireTenant(req, res);
+    if (!tenantId) return;
+    try {
+      const note = insertClinicalNote(tenantId, req.params.id, (req.body || {}) as Record<string, unknown>, {
+        id: String(req.user?.id || ""),
+        name: String(req.user?.name || "Doctor"),
+        role: String(req.user?.role || ""),
+      });
+      writeAudit(getDb(), req.user?.id || null, req.user?.name || "Doctor", "clinical_note.recorded", "recorded", {
+        tenantId,
+        patientId: req.params.id,
+        actorRole: String(req.user?.role || ""),
+        entityType: "clinical_note",
+        entityId: note.id,
+      });
+      res.status(201).json({ note });
+    } catch (err: unknown) {
+      const status = errorStatus(err);
+      const message = err instanceof Error ? err.message : "Failed to save the note";
+      if (!status || status >= 500) reportCaughtError(err, "clinical.note");
+      res.status(status || 500).json({ error: status && status < 500 ? message : "Failed to save the note" });
     }
   });
 
@@ -1513,6 +1544,16 @@ export function createClinicalRouter(): Router {
              AND ${hiddenVisitSourceSql()}`
         )
         .run(syncedPhone, tenantId, req.params.id, ...HIDDEN_AMBIENT_SOURCES);
+    }
+    const patch = (req.body || {}) as Record<string, unknown>;
+    if (Object.prototype.hasOwnProperty.call(patch, "allergies")) {
+      writeAudit(getDb(), req.user?.id || null, req.user?.name || "Staff", "patient.allergies.updated", "updated", {
+        tenantId,
+        patientId: req.params.id,
+        actorRole: String(req.user?.role || ""),
+        entityType: "patient",
+        entityId: req.params.id,
+      });
     }
     res.json({ patient: mapPatient(getTenantPatient(tenantId, req.params.id)!) });
   });
