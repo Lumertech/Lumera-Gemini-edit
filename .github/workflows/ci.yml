@@ -50,6 +50,9 @@ jobs:
       - name: Test
         run: npx tsx --test --test-concurrency=1 server/*.test.ts src/lib/*.test.ts src/nav/*.test.ts src/pages/*.test.ts src/components/admin/*.test.ts src/db/*.test.ts
 
+      - name: Deploy-truth verifier self-test
+        run: python3 deploy/verify_served_commit.py --self-test
+
       - name: Build
         run: npm run build
 

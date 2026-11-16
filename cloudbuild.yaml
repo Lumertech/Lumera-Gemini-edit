@@ -25,7 +25,9 @@ options:
   logging: CLOUD_LOGGING_ONLY
   machineType: E2_HIGHCPU_8
 
-timeout: 1200s
+# Deploy + post-deploy verification of the served commit. The build used to
+# finish in ~11 minutes; the verify retries need headroom after that.
+timeout: 1800s
 
 steps:
   # 0. Lint + test hard gate. Cloud Build steps are separate containers, so this
@@ -38,6 +40,19 @@ steps:
       - -c
       - |
         set -euo pipefail
+        # Commit time, not build-finish time, so a slower build of an older
+        # commit cannot take traffic after a newer one has already shipped.
+        if [[ -d .git ]]; then
+          if ! command -v git >/dev/null 2>&1; then
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y -qq git
+          fi
+          git show -s --format=%ct HEAD > /workspace/.lumera-deploy-unix
+        else
+          date +%s > /workspace/.lumera-deploy-unix
+          echo "WARN: no .git in the workspace; LUMERA_COMMIT_UNIX is the build start time."
+        fi
         # Same as Dockerfile: npm ci when the lockfile is present, otherwise npm install.
         # A missing package-lock.json must not fail the lint-test gate.
         if [ -f package-lock.json ]; then npm ci; else npm install; fi
@@ -53,11 +68,16 @@ steps:
   - name: gcr.io/cloud-builders/docker
     id: build
     waitFor: ['lint-test']
+    entrypoint: bash
     args:
-      - build
-      - -t
-      - ${_IMAGE}
-      - .
+      - -c
+      - |
+        set -euo pipefail
+        if [[ ! "${COMMIT_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+          echo "COMMIT_SHA must be the 40-char git sha; refusing to build an unstamped image." >&2
+          exit 1
+        fi
+        docker build --build-arg COMMIT_SHA="${COMMIT_SHA}" -t "${_IMAGE}" .
 
   # 2. Push before deploy — Cloud Build's `images:` push happens after steps.
   - name: gcr.io/cloud-builders/docker
@@ -102,17 +122,102 @@ steps:
       - -c
       - |
         set -euo pipefail
+        python3 deploy/verify_served_commit.py --self-test
+        if [[ ! "${COMMIT_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+          echo "COMMIT_SHA is missing; refusing to deploy an unstamped image." >&2
+          exit 1
+        fi
+        if [[ -f /workspace/.lumera-deploy-unix ]]; then
+          OUR_UNIX="$(tr -cd '0-9' < /workspace/.lumera-deploy-unix)"
+        else
+          OUR_UNIX="$(date +%s)"
+        fi
+        if [[ -z "$$OUR_UNIX" ]]; then
+          echo "LUMERA_COMMIT_UNIX is empty" >&2
+          exit 1
+        fi
+        if ! DIGEST="$(gcloud container images describe "${_IMAGE}" --format='get(image_summary.digest)' 2>/tmp/digest.err)"; then
+          if ! DIGEST="$(gcloud artifacts docker images describe "${_IMAGE}" --format='get(image_summary.digest)' 2>>/tmp/digest.err)"; then
+            echo "Could not resolve a digest for ${_IMAGE}. Refusing to deploy a floating tag." >&2
+            cat /tmp/digest.err >&2
+            exit 1
+          fi
+        fi
+        DIGEST="$(printf '%s' "$$DIGEST" | tr -d '[:space:]')"
+        if [[ "$$DIGEST" != sha256:* ]]; then
+          echo "Refusing to deploy ${_IMAGE}: digest '$$DIGEST' is not sha256." >&2
+          exit 1
+        fi
+        IMAGE_WITH_TAG="${_IMAGE}"
+        IMAGE_REF="$${IMAGE_WITH_TAG%:*}@$${DIGEST}"
+        BID="$(printf '%s' "${BUILD_ID}" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9' | cut -c1-6)"
+        SUFFIX="b${SHORT_SHA}$${BID}"
         EXTRA=()
         if [[ -n "${_CLOUDSQL_INSTANCE}" && "${_CLOUDSQL_INSTANCE}" != "none" ]]; then
           EXTRA+=(--add-cloudsql-instances="${_CLOUDSQL_INSTANCE}")
         fi
+        # No public traffic until the tagged revision serves this commit.
+        # A services-replace of the previous template cannot remain what users hit.
         gcloud run deploy "${_SERVICE}" \
-          --image="${_IMAGE}" \
+          --image="$$IMAGE_REF" \
           --region="${_REGION}" \
           --project="${PROJECT_ID}" \
           --allow-unauthenticated \
-          --update-env-vars=NODE_ENV=production,APP_URL=https://www.mylumera.in,VERTEX_PROJECT=gen-lang-client-0108182367,VERTEX_LOCATION=asia-south1,VERTEX_GEMINI_MODEL=gemini-3.5-flash-lite,META_PHONE_NUMBER_ID=1294483843748285,META_WEBHOOK_ALLOW_UNSIGNED=true,META_VERIFY_TOKEN=lumera_webhook_verify_2026 \
-          "${EXTRA[@]}"
+          --no-traffic \
+          --tag="$$SUFFIX" \
+          --revision-suffix="$$SUFFIX" \
+          --update-env-vars=NODE_ENV=production,APP_URL=https://www.mylumera.in,VERTEX_PROJECT=gen-lang-client-0108182367,VERTEX_LOCATION=asia-south1,VERTEX_GEMINI_MODEL=gemini-3.5-flash-lite,META_PHONE_NUMBER_ID=1294483843748285,META_WEBHOOK_ALLOW_UNSIGNED=true,META_VERIFY_TOKEN=lumera_webhook_verify_2026,LUMERA_COMMIT_SHA=${COMMIT_SHA},LUMERA_COMMIT_UNIX=$$OUR_UNIX,LUMERA_DEPLOY_CHANNEL=cloudbuild \
+          "$${EXTRA[@]}"
+
+        gcloud run services describe "${_SERVICE}" \
+          --region="${_REGION}" \
+          --project="${PROJECT_ID}" \
+          --format=json > /tmp/lumera-service.json
+        NEW_REV="$(python3 -c 'import json; print(json.load(open("/tmp/lumera-service.json")).get("status",{}).get("latestCreatedRevisionName",""))')"
+        case "$$NEW_REV" in
+          *"$$SUFFIX") ;;
+          *) echo "latest revision '$$NEW_REV' does not end with $$SUFFIX" >&2; exit 1 ;;
+        esac
+        TAG_URL="$(python3 deploy/verify_served_commit.py --tag-url /tmp/lumera-service.json --tag "$$SUFFIX")"
+        if [[ -z "$$TAG_URL" ]]; then
+          echo "Cloud Run did not return a URL for tag $$SUFFIX" >&2
+          exit 1
+        fi
+        python3 deploy/verify_served_commit.py \
+          --expect "${COMMIT_SHA}" \
+          --require-header \
+          --attempts 10 \
+          --sleep 3 \
+          --url "$$TAG_URL"
+
+        SERVING_REV="$(python3 deploy/verify_served_commit.py --serving-revision /tmp/lumera-service.json)"
+        SERVING_UNIX=""
+        if [[ -n "$$SERVING_REV" && "$$SERVING_REV" != "$$NEW_REV" ]]; then
+          gcloud run revisions describe "$$SERVING_REV" \
+            --region="${_REGION}" \
+            --project="${PROJECT_ID}" \
+            --format=json > /tmp/lumera-serving-rev.json
+          SERVING_UNIX="$(python3 deploy/verify_served_commit.py --revision-unix /tmp/lumera-serving-rev.json)"
+        fi
+        python3 deploy/verify_served_commit.py --decide --our-unix "$$OUR_UNIX" --serving-unix "$$SERVING_UNIX"
+
+        gcloud run services update-traffic "${_SERVICE}" \
+          --region="${_REGION}" \
+          --project="${PROJECT_ID}" \
+          --to-revisions="$$NEW_REV=100"
+
+        RUN_URL="$(python3 -c 'import json; print(json.load(open("/tmp/lumera-service.json"))["status"]["url"])')"
+        python3 deploy/verify_served_commit.py \
+          --expect "${COMMIT_SHA}" \
+          --require-header \
+          --attempts 18 \
+          --sleep 5 \
+          --url "$$RUN_URL"
+        python3 deploy/verify_served_commit.py \
+          --expect "${COMMIT_SHA}" \
+          --attempts 18 \
+          --sleep 5 \
+          --url "https://www.mylumera.in"
 
 images:
   - ${_IMAGE}

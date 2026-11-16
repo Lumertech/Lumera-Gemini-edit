@@ -57,10 +57,12 @@ describe("production listen / env helpers", () => {
     const prevJwt = process.env.JWT_SECRET;
     const prevNode = process.env.NODE_ENV;
     const prevDb = process.env.DATABASE_URL;
+    const prevService = process.env.K_SERVICE;
     try {
       process.env.NODE_ENV = "production";
       delete process.env.JWT_SECRET;
       delete process.env.DATABASE_URL;
+      delete process.env.K_SERVICE;
       assert.throws(() => assertRequiredProductionEnv(), /JWT_SECRET/);
       process.env.JWT_SECRET = "change-me-to-a-long-random-secret";
       assert.throws(() => assertRequiredProductionEnv(), /JWT_SECRET/);
@@ -77,6 +79,8 @@ describe("production listen / env helpers", () => {
       else process.env.NODE_ENV = prevNode;
       if (prevDb === undefined) delete process.env.DATABASE_URL;
       else process.env.DATABASE_URL = prevDb;
+      if (prevService === undefined) delete process.env.K_SERVICE;
+      else process.env.K_SERVICE = prevService;
     }
   });
 
@@ -224,6 +228,7 @@ describe("production SPA history fallback", () => {
       "<!doctype html><html><body>Lumera SPA</body></html>"
     );
     fs.writeFileSync(path.join(dist, "ok.txt"), "static-ok");
+    fs.writeFileSync(path.join(dist, "build.json"), '{"commit":"abc56f2898c48e090bcade7212f506c960c9b0a8"}\n');
 
     const app = express();
     app.get("/api/ping", (_req, res) => res.json({ ok: true }));
@@ -272,6 +277,10 @@ describe("production SPA history fallback", () => {
       const asset = await fetch(`${origin}/ok.txt`);
       assert.equal(asset.status, 200);
       assert.equal(await asset.text(), "static-ok");
+      const buildJson = await fetch(`${origin}/build.json`);
+      assert.equal(buildJson.status, 200);
+      assert.equal(buildJson.headers.get("cache-control"), "no-store");
+      assert.equal((await buildJson.json()).commit, "abc56f2898c48e090bcade7212f506c960c9b0a8");
       const api = await fetch(`${origin}/api/ping`);
       assert.equal(api.status, 200);
       assert.equal((await api.json()).ok, true);

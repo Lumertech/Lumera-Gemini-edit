@@ -96,6 +96,10 @@ export function attachProductionSpaFallback(
       fallthrough: true,
       acceptRanges: true,
       setHeaders(res, filePath) {
+        if (path.basename(filePath) === "build.json") {
+          res.setHeader("Cache-Control", "no-store");
+          return;
+        }
         if (filePath.endsWith(`${path.sep}index.html`) || filePath.endsWith("/index.html")) {
           res.setHeader("Cache-Control", HTML_DOCUMENT_CACHE_CONTROL);
           return;

@@ -139,6 +139,8 @@ the image deploy. Retry Cloud Build with the trigger pointed at repo
 
 **Going forward:** image via `cloudbuild.yaml` only. Avoid mixing AI Studio Publish with Cloud Build image deploys without clearing the annotation first.
 
+The deploy step does not send traffic until the new revision's `/build.json` commit equals `$COMMIT_SHA`, then it checks `status.url` and `https://www.mylumera.in`. A mismatch fails the GitHub check `lumera-gemini-edit-main-deploy`. A revision already serving a newer `LUMERA_COMMIT_UNIX` keeps its traffic. A missing `LUMERA_COMMIT_SHA` on the process logs a boot warning and still listens, so a founder publish cannot crash-loop the service. Do not Publish this service from AI Studio; that path can still roll an image built before the commit stamp existed.
+
 ---
 
 ## 3. Required Cloud Run environment
