@@ -31,6 +31,7 @@ interface PatientDocument {
   mimeType: string;
   sizeBytes: number;
   createdAt: string;
+  appointmentId?: string;
   canDelete: boolean;
 }
 
@@ -40,6 +41,7 @@ interface PendingFile {
   title: string;
   docType: string;
   documentDate: string;
+  appointmentId: string;
   error: string;
   uploading: boolean;
 }
@@ -119,7 +121,8 @@ export const PatientDocuments: React.FC<{
   patientId: string;
   consent: DocumentConsentStatus | null;
   onConsentChange: (status: DocumentConsentStatus) => void;
-}> = ({ patientId, consent, onConsentChange }) => {
+  visits?: Array<{ id: string; label: string }>;
+}> = ({ patientId, consent, onConsentChange, visits = [] }) => {
   const [documents, setDocuments] = useState<PatientDocument[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -225,6 +228,7 @@ export const PatientDocuments: React.FC<{
         title: titleFromName(file.name),
         docType: "",
         documentDate: "",
+        appointmentId: "",
         error: "",
         uploading: false,
       });
@@ -284,6 +288,21 @@ export const PatientDocuments: React.FC<{
     if (next.active && action) action();
   }
 
+  async function attachVisit(doc: PatientDocument, appointmentId: string) {
+    setError("");
+    try {
+      const saved = await apiFetch<{ document: PatientDocument }>(
+        `/api/patients/${encodeURIComponent(patientId)}/documents/${encodeURIComponent(doc.id)}`,
+        { method: "PATCH", body: JSON.stringify({ appointmentId }) }
+      );
+      if (saved.document) {
+        setDocuments((prev) => prev.map((row) => (row.id === doc.id ? saved.document : row)));
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not attach this report to the visit");
+    }
+  }
+
   async function uploadOne(item: PendingFile) {
     if (!item.title.trim() || !item.docType || !item.documentDate) {
       updatePending(item.key, { error: "Add a title, type, and date before uploading." });
@@ -295,6 +314,7 @@ export const PatientDocuments: React.FC<{
     body.set("title", item.title.trim());
     body.set("docType", item.docType);
     body.set("documentDate", item.documentDate);
+    if (item.appointmentId) body.set("appointmentId", item.appointmentId);
     try {
       const res = await apiFetchResponse(`/api/patients/${encodeURIComponent(patientId)}/documents`, {
         method: "POST",
@@ -464,7 +484,7 @@ export const PatientDocuments: React.FC<{
       <div className="min-w-0">
         <h2 className="text-sm font-bold text-slate-900">Documents &amp; Reports</h2>
         <p className="text-xs text-slate-600 mt-1 break-words">
-          Attach earlier reports for this patient. Files stay private to this clinic. PDF, JPG, or PNG. {PATIENT_DOCUMENT_LIMIT_LABEL}
+          Attach earlier reports for this patient, including a lab report or imaging file on a visit. Files stay private to this clinic. PDF, JPG, or PNG. {PATIENT_DOCUMENT_LIMIT_LABEL}
         </p>
       </div>
 
@@ -625,6 +645,24 @@ export const PatientDocuments: React.FC<{
                   className="mt-1 w-full max-w-full min-w-0 rounded-lg border border-slate-300 px-2 py-1.5 text-sm text-slate-900"
                 />
               </label>
+              {visits.length > 0 && (item.docType === "lab_report" || item.docType === "imaging" || item.docType === "") && (
+                <label className="block min-w-0 text-xs font-semibold text-slate-600">
+                  Attach to visit
+                  <select
+                    data-testid="patient-document-visit"
+                    value={item.appointmentId}
+                    onChange={(event) => updatePending(item.key, { appointmentId: event.target.value })}
+                    className="mt-1 w-full max-w-full min-w-0 rounded-lg border border-slate-300 px-2 py-1.5 text-sm text-slate-900 bg-white"
+                  >
+                    <option value="">Not attached to a visit</option>
+                    {visits.map((visit) => (
+                      <option key={visit.id} value={visit.id}>
+                        {visit.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
               {item.error && (
                 <p className="text-xs text-rose-700 break-words" role="alert">
                   {item.error}
@@ -692,7 +730,26 @@ export const PatientDocuments: React.FC<{
                   <p className="text-sm font-semibold text-slate-900 break-words">{doc.title}</p>
                   <p className="text-xs text-slate-600 break-words mt-0.5">
                     {typeLabel(doc.docType)} · {formatDocDate(doc.documentDate)}
+                    {doc.appointmentId ? " · attached to a visit" : ""}
                   </p>
+                  {(doc.docType === "lab_report" || doc.docType === "imaging") && visits.length > 0 && (
+                    <label className="block mt-2 text-xs font-semibold text-slate-600">
+                      Visit
+                      <select
+                        data-testid={`patient-document-visit-${doc.id}`}
+                        value={doc.appointmentId || ""}
+                        onChange={(event) => void attachVisit(doc, event.target.value)}
+                        className="mt-1 w-full max-w-full min-w-0 rounded-lg border border-slate-300 px-2 py-1.5 text-sm bg-white"
+                      >
+                        <option value="">Not attached to a visit</option>
+                        {visits.map((visit) => (
+                          <option key={visit.id} value={visit.id}>
+                            {visit.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
                   <p className="text-xs text-slate-500 break-words mt-0.5">
                     Uploaded by {doc.uploadedByName || "Staff"}
                     {doc.createdAt ? ` · ${formatWhen(doc.createdAt)}` : ""}

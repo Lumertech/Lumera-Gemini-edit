@@ -20,6 +20,7 @@ import { getDb, publicUser, writeAudit, type DbUser } from "./db.ts";
 import { requireAuth } from "./auth.ts";
 import { reportCaughtError } from "./error-tracker.ts";
 import { assertActiveHealthDocumentConsent } from "./patient-document-consent.ts";
+import { visitBelongsToPatient } from "./investigations.ts";
 import {
   PATIENT_DOC_MAX_FILE_BYTES,
   PATIENT_REPORT_MAX_BYTES,
@@ -66,6 +67,7 @@ type DocumentRow = {
   storage_backend: string;
   created_at: string;
   deleted_at: string | null;
+  appointment_id?: string | null;
 };
 
 type PreviewTicketRow = {
@@ -275,8 +277,18 @@ function publicDocument(row: DocumentRow, req: Request) {
     mimeType: row.mime_type,
     sizeBytes: Number(row.size_bytes || 0),
     createdAt: row.created_at,
+    appointmentId: String(row.appointment_id || ""),
     canDelete: canDelete(req, row),
   };
+}
+
+function parseAppointmentId(tenantId: string, patientId: string, value: unknown): string {
+  const appointmentId = String(value || "").trim();
+  if (!appointmentId) return "";
+  if (!visitBelongsToPatient(tenantId, patientId, appointmentId)) {
+    throw httpError(400, "That visit is not on this chart.");
+  }
+  return appointmentId;
 }
 
 function audit(req: Request, action: string, details: Record<string, string>) {
@@ -533,6 +545,41 @@ export function registerPatientDocumentRoutes(api: Router) {
     });
   });
 
+  api.patch("/patients/:id/documents/:documentId", requireAuth, (req, res) => {
+    try {
+      if (!isDocumentStaff(req, res)) return;
+      const tenantId = tenantIdOf(req, res);
+      if (!tenantId) return;
+      if (!patientInTenant(tenantId, req.params.id)) {
+        return res.status(404).json({ error: "Patient not found" });
+      }
+      const row = loadDocument(tenantId, req.params.id, req.params.documentId);
+      if (!row) return res.status(404).json({ error: "Document not found" });
+      const body = (req.body || {}) as Record<string, unknown>;
+      if (!Object.prototype.hasOwnProperty.call(body, "appointmentId") && !Object.prototype.hasOwnProperty.call(body, "appointment_id")) {
+        return res.status(400).json({ error: "Choose a visit to attach this report." });
+      }
+      const appointmentId = parseAppointmentId(tenantId, req.params.id, body.appointmentId ?? body.appointment_id);
+      getDb()
+        .prepare(
+          `UPDATE patient_documents SET appointment_id = ?
+           WHERE id = ? AND tenant_id = ? AND patient_id = ? AND deleted_at IS NULL`
+        )
+        .run(appointmentId, row.id, tenantId, req.params.id);
+      audit(req, "patient_document.attach_visit", {
+        tenantId,
+        patientId: req.params.id,
+        documentId: row.id,
+        docType: row.doc_type,
+        appointmentId,
+      });
+      const next = loadDocument(tenantId, req.params.id, row.id);
+      res.json({ document: next ? publicDocument(next, req) : { id: row.id, appointmentId } });
+    } catch (err) {
+      sendKnownError(res, err, "Failed to attach the report");
+    }
+  });
+
   api.delete("/patients/:id/documents/:documentId", requireAuth, (req, res) => {
     void handleDelete(req, res);
   });
@@ -548,6 +595,7 @@ async function handleUpload(req: Request, res: Response, tenantId: string) {
     const title = parseTitle(req.body?.title);
     const docType = parseDocType(req.body?.docType);
     const documentDate = parseDocumentDate(req.body?.documentDate);
+    const appointmentId = parseAppointmentId(tenantId, req.params.id, req.body?.appointmentId ?? req.body?.appointment_id);
     assertActiveHealthDocumentConsent(tenantId, req.params.id);
     stored = await storePatientDocumentBytes(tenantId, req.params.id, file.buffer, mime);
     const id = `pdoc-${crypto.randomUUID().slice(0, 12)}`;
@@ -557,8 +605,9 @@ async function handleUpload(req: Request, res: Response, tenantId: string) {
         `INSERT INTO patient_documents (
           id, tenant_id, patient_id, title, doc_type, document_date,
           uploaded_by_id, uploaded_by_name, uploaded_by_role,
-          original_filename, mime_type, size_bytes, storage_key, storage_backend, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          original_filename, mime_type, size_bytes, storage_key, storage_backend, created_at,
+          appointment_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -575,7 +624,8 @@ async function handleUpload(req: Request, res: Response, tenantId: string) {
         file.buffer.length,
         stored.storageKey,
         stored.storageBackend,
-        now
+        now,
+        appointmentId
       );
     inserted = true;
     audit(req, "patient_document.upload", {

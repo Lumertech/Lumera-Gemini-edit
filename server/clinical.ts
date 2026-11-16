@@ -19,6 +19,7 @@ import { registerPatientDocumentRoutes } from "./patient-documents.ts";
 import { registerPatientDocumentConsentRoutes } from "./patient-document-consent.ts";
 import { buildPatientTimeline, presentPrescriptionForRole } from "./patient-timeline.ts";
 import { insertClinicalNote, presentChartRecord } from "./patient-record.ts";
+import { listInvestigations } from "./investigations.ts";
 import { denyUnlessPatientRecordRole, denyUnlessPrescriber, isReceptionRole } from "./patient-access.ts";
 import { clinicCalendarDate, parseAppointmentListDate, resolveQueueDate } from "../src/lib/clinicDay.ts";
 import { canonicalSpecies } from "../src/lib/immunizationSchedules.ts";
@@ -1361,6 +1362,7 @@ export function createClinicalRouter(): Router {
           notes: record.notes,
           diagnoses: record.diagnoses,
           vitalsHistory: record.vitalsHistory,
+          investigations: listInvestigations(tenantId, req.params.id),
         })
       );
     } catch (err) {
