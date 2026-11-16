@@ -47,6 +47,15 @@ function videoTag(html: string): string {
   return html.slice(start, end);
 }
 
+/** Opening tag of the box that reserves the cut. The video must not size this box. */
+function frameTag(html: string): string {
+  const start = html.indexOf('data-testid="landing-prospect-frame"');
+  assert.ok(start >= 0, "prospect frame missing");
+  const videoAt = html.indexOf("<video", start);
+  assert.ok(videoAt > start, "frame does not wrap the video");
+  return html.slice(start, videoAt);
+}
+
 function topLevelAtoms(filePath: string): { type: string; offset: number }[] {
   const data = fs.readFileSync(filePath);
   const atoms: { type: string; offset: number }[] = [];
@@ -77,6 +86,8 @@ describe("landing prospect advert", () => {
       assert.match(html, new RegExp(PROSPECT_ADVERT_HEADING));
       assert.match(html, /56-second prospect advert/);
       assert.match(html, /aria-labelledby="prospect-advert-heading"/);
+      const frame = frameTag(html);
+      assert.match(frame, /aspect-ratio:16 \/ 9/);
       const video = videoTag(html);
       assert.match(video, new RegExp(`aria-label="${PROSPECT_VIDEO_LABEL.replace(/[.]/g, "\\.")}"`));
       assert.match(video, /controls=""/);
@@ -85,6 +96,8 @@ describe("landing prospect advert", () => {
       assert.match(video, new RegExp(`poster="${PROSPECT_POSTER_SRC}"`));
       assert.match(video, new RegExp(`src="${PROSPECT_LANDSCAPE_SRC}"`));
       assert.match(video, /data-prospect-cut="landscape"/);
+      assert.match(video, /absolute inset-0 h-full w-full/);
+      assert.equal(/aspect-ratio/.test(video), false);
       assert.equal(video.includes(PROSPECT_PORTRAIT_SRC), false);
       assert.equal(/autoplay/i.test(video), false);
       assert.equal(/<track\b/i.test(html), false);
@@ -119,11 +132,15 @@ describe("landing prospect advert", () => {
     };
     try {
       const html = renderLanding();
+      const frame = frameTag(html);
+      assert.match(frame, /aspect-ratio:9 \/ 16/);
+      assert.match(frame, /min\(100%, calc\(78dvh \* 9 \/ 16\)\)/);
       const video = videoTag(html);
       assert.match(video, new RegExp(`src="${PROSPECT_PORTRAIT_SRC}"`));
       assert.match(video, /data-prospect-cut="portrait"/);
-      assert.match(video, /aspect-ratio:9 \/ 16/);
+      assert.match(video, /absolute inset-0 h-full w-full/);
       assert.match(video, /playsinline=""/i);
+      assert.equal(/aspect-ratio/.test(video), false);
       assert.equal(video.includes(PROSPECT_LANDSCAPE_SRC), false);
       assert.equal(/autoplay/i.test(video), false);
     } finally {

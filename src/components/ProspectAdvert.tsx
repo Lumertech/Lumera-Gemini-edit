@@ -71,25 +71,35 @@ export const ProspectAdvert: React.FC = () => {
         {PROSPECT_ADVERT_HEADING}
       </h2>
       <p className="mt-2 text-sm text-slate-400">Press play to watch. Sound stays off until you start it.</p>
-      <div className="mt-5 flex w-full min-w-0 max-w-full justify-center overflow-hidden rounded-2xl border border-white/10 bg-black shadow-xl shadow-indigo-950/40">
-        <video
-          key={src}
-          data-testid="landing-prospect-player"
-          data-prospect-cut={portrait ? "portrait" : "landscape"}
-          className={
+      <div className="mt-5 w-full min-w-0 max-w-full overflow-hidden rounded-2xl border border-white/10 bg-black shadow-xl shadow-indigo-950/40">
+        {/*
+          The ratio lives on this box, not the video. A video is a replaced
+          element, so the 16:9 poster would set the used size until metadata
+          arrived and the phone layout would jump to 9:16.
+        */}
+        <div
+          data-testid="landing-prospect-frame"
+          className="relative mx-auto min-w-0 max-w-full"
+          style={
             portrait
-              ? "mx-auto block h-auto w-auto min-w-0 max-h-[78dvh] max-w-full bg-black object-contain"
-              : "block h-auto w-full min-w-0 max-w-full bg-black object-contain"
+              ? { aspectRatio: "9 / 16", width: "min(100%, calc(78dvh * 9 / 16))" }
+              : { aspectRatio: "16 / 9", width: "100%" }
           }
-          style={{ aspectRatio: portrait ? "9 / 16" : "16 / 9" }}
-          controls
-          playsInline
-          preload="metadata"
-          poster={PROSPECT_POSTER_SRC}
-          title={PROSPECT_VIDEO_LABEL}
-          aria-label={PROSPECT_VIDEO_LABEL}
-          src={src}
-        />
+        >
+          <video
+            key={src}
+            data-testid="landing-prospect-player"
+            data-prospect-cut={portrait ? "portrait" : "landscape"}
+            className="absolute inset-0 h-full w-full max-w-full bg-black object-contain"
+            controls
+            playsInline
+            preload="metadata"
+            poster={PROSPECT_POSTER_SRC}
+            title={PROSPECT_VIDEO_LABEL}
+            aria-label={PROSPECT_VIDEO_LABEL}
+            src={src}
+          />
+        </div>
       </div>
     </section>
   );
