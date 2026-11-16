@@ -219,6 +219,13 @@ describe("lab report reading", () => {
     assert.equal((confirmed.json.report as { draft: boolean }).draft, false);
     assert.equal((confirmed.json.report as { results: Array<{ value: string }> }).results[0].value, VALUE);
 
+    const deskAfter = await jsonRequest(port, "GET", `/api/patients/${patientId}/lab-reports`, undefined, {
+      Authorization: `Bearer ${deskToken}`,
+    });
+    assert.equal(deskAfter.status, 200);
+    assert.equal(JSON.stringify(deskAfter.json).includes(VALUE), false);
+    assert.equal(((deskAfter.json.reports as Array<{ draft: boolean; status: string }>) || [])[0]?.status, "confirmed");
+
     const again = await jsonRequest(port, "POST", `/api/patients/${patientId}/documents/${documentId}/extract`, {}, auth);
     assert.equal(again.status, 409);
 

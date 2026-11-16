@@ -110,7 +110,7 @@ type LabRow = Record<string, unknown>;
 function presentReport(row: LabRow, role: string) {
   const status = String(row.status || "confirmed");
   const draft = status === "draft";
-  const hideValues = draft && (isReceptionRole(role) || role === "patient");
+  const hideValues = isReceptionRole(role) || (draft && role === "patient");
   const source = draft ? row.draft_results : row.results;
   return {
     id: String(row.id || ""),
