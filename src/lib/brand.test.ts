@@ -49,6 +49,11 @@ describe("product brand SSOT (founder P0)", () => {
     assert.match(logoSvg, /<svg/);
     assert.doesNotMatch(indexHtml, /Lumera Health/);
     assert.match(indexHtml, /<title>Lumera — Enterprise Clinical & Practice Suite<\/title>/);
+    assert.match(indexHtml, /name="google-site-verification" content="4Y9oWBvapgKnrtnwavx9AVncsss49PaqGudlD49AJUs"/);
+    assert.match(indexHtml, /"@context": "https:\/\/schema\.org"/);
+    assert.match(indexHtml, /Start 30-Day Free Trial/);
+    assert.doesNotMatch(indexHtml, /Quick Demo/);
+    assert.doesNotMatch(indexHtml, /an AI service/);
   });
 
   it("uses the restored Sparkles four-point star on a purple→indigo→blue tile (not the medical-cross mark)", () => {

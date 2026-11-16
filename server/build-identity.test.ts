@@ -8,6 +8,7 @@ import express from "express";
 import { fileURLToPath } from "node:url";
 import {
   assertCloudRunCommitStamp,
+  COMMIT_STAMP_MISSING_MESSAGE,
   COMMIT_STAMP_MISMATCH_MESSAGE,
   isFullCommitSha,
   LUMERA_COMMIT_HEADER,
@@ -58,7 +59,11 @@ describe("build identity stamp", () => {
     );
   });
 
-  it("refuses to listen on Cloud Run when the stamp and env sha differ", () => {
+  it("warns and keeps listening on Cloud Run when LUMERA_COMMIT_SHA is missing or different", () => {
+    const lines: string[] = [];
+    const warn = (message: string) => {
+      lines.push(message);
+    };
     const env = {
       NODE_ENV: "production",
       K_SERVICE: "lumera-gemini-edit",
@@ -66,11 +71,39 @@ describe("build identity stamp", () => {
       DATABASE_URL: "postgres://lumera:local@127.0.0.1:5432/lumera",
       LUMERA_COMMIT_SHA: SHA,
     } as NodeJS.ProcessEnv;
-    assert.throws(() => assertCloudRunCommitStamp(env, "unknown"), /stamped=unknown/);
-    assert.throws(() => assertCloudRunCommitStamp(env, "9734631fc2a80360e42fb246afb4a0e09aca6c38"), /claimed=/);
-    assert.doesNotThrow(() => assertCloudRunCommitStamp(env, SHA));
-    assert.throws(() => assertRequiredProductionEnv({ ...env, LUMERA_COMMIT_SHA: "" }), /dist\/build.json/);
-    assert.match(COMMIT_STAMP_MISMATCH_MESSAGE, /PORT timeout even though bind is not the bug/);
+
+    assert.doesNotThrow(() => assertCloudRunCommitStamp({ ...env, LUMERA_COMMIT_SHA: "" }, SHA, warn));
+    assert.match(lines.join("\n"), /BOOT WARNING: LUMERA_COMMIT_SHA is missing/);
+    assert.match(COMMIT_STAMP_MISSING_MESSAGE, /cannot crash-loop/);
+    assert.match(COMMIT_STAMP_MISSING_MESSAGE, /\/build\.json/);
+
+    lines.length = 0;
+    assert.doesNotThrow(() => assertCloudRunCommitStamp(env, "unknown", warn));
+    assert.doesNotThrow(() =>
+      assertCloudRunCommitStamp(env, "9734631fc2a80360e42fb246afb4a0e09aca6c38", warn)
+    );
+    assert.match(lines.join("\n"), /BOOT WARNING: LUMERA_COMMIT_SHA does not match/);
+    assert.match(lines.join("\n"), /stamped=unknown/);
+    assert.match(lines.join("\n"), /claimed=/);
+    assert.match(COMMIT_STAMP_MISMATCH_MESSAGE, /\/build\.json/);
+
+    lines.length = 0;
+    assert.doesNotThrow(() => assertCloudRunCommitStamp(env, SHA, warn));
+    assert.equal(lines.length, 0);
+
+    const orig = console.error;
+    const logged: string[] = [];
+    console.error = (...args: unknown[]) => {
+      logged.push(args.map(String).join(" "));
+    };
+    try {
+      assert.doesNotThrow(() =>
+        assertRequiredProductionEnv({ ...env, LUMERA_COMMIT_SHA: "" } as NodeJS.ProcessEnv)
+      );
+    } finally {
+      console.error = orig;
+    }
+    assert.match(logged.join("\n"), /BOOT WARNING: LUMERA_COMMIT_SHA is missing/);
   });
 
   it("sets X-Lumera-Commit on responses including /healthz", async () => {

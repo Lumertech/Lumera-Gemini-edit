@@ -1,8 +1,8 @@
 /**
- * Deploy truth: the image records the git commit it was built from, and
- * Cloud Run refuses to listen when that stamp does not match LUMERA_COMMIT_SHA.
- * An AI Studio / `--source` image that omits the build-arg therefore stays
- * unhealthy and cannot take traffic off the last good revision.
+ * Deploy truth: the image records the git commit it was built from.
+ * A missing or different LUMERA_COMMIT_SHA is a loud log line only. The process
+ * keeps listening so a founder publish (AI Studio / --source) cannot crash-loop
+ * Cloud Run. Traffic enforcement is the deploy check of /build.json.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -11,8 +11,11 @@ import type { NextFunction, Request, Response } from "express";
 export const LUMERA_COMMIT_HEADER = "X-Lumera-Commit";
 export const BUILD_JSON_NAME = "build.json";
 
+export const COMMIT_STAMP_MISSING_MESSAGE =
+  "[Lumera] BOOT WARNING: LUMERA_COMMIT_SHA is missing. Listening anyway so a founder publish cannot crash-loop Cloud Run. Traffic enforcement is the deploy check of /build.json, not this process.";
+
 export const COMMIT_STAMP_MISMATCH_MESSAGE =
-  "LUMERA_COMMIT_SHA does not match dist/build.json. Refusing to listen so an image that was not built from this commit cannot take traffic. This process exits before listen(0.0.0.0, PORT); Cloud Run will report a PORT timeout even though bind is not the bug, and the previous healthy revision keeps serving.";
+  "[Lumera] BOOT WARNING: LUMERA_COMMIT_SHA does not match dist/build.json. Listening anyway so a founder publish cannot crash-loop Cloud Run. Traffic enforcement is the deploy check of /build.json, not this process.";
 
 export function isFullCommitSha(value: string): boolean {
   return /^[0-9a-f]{40}$/.test(value);
@@ -33,18 +36,27 @@ export function readStampedCommit(cwd = process.cwd()): string {
 }
 
 /**
- * Cloud Run sets K_SERVICE. Anywhere else (tests, laptops) a missing stamp
- * must not block boot. On Cloud Run the baked file and the deploy env have
- * to be the same 40-char sha.
+ * Cloud Run sets K_SERVICE. Anywhere else (tests, laptops) this is a no-op.
+ * On Cloud Run a missing LUMERA_COMMIT_SHA, or one that differs from
+ * dist/build.json, is logged and ignored. The deploy step is what fails
+ * the GitHub check when /build.json is not this commit.
  */
-export function assertCloudRunCommitStamp(env: NodeJS.ProcessEnv, stamped?: string): void {
+export function assertCloudRunCommitStamp(
+  env: NodeJS.ProcessEnv,
+  stamped?: string,
+  warn: (message: string) => void = (message) => {
+    console.error(message);
+  }
+): void {
   if (!String(env.K_SERVICE || "").trim()) return;
   const onDisk = stamped ?? readStampedCommit();
   const claimed = String(env.LUMERA_COMMIT_SHA || "").trim();
+  if (!claimed) {
+    warn(`${COMMIT_STAMP_MISSING_MESSAGE} stamped=${onDisk || "(empty)"}`);
+    return;
+  }
   if (!isFullCommitSha(onDisk) || onDisk !== claimed) {
-    throw new Error(
-      `${COMMIT_STAMP_MISMATCH_MESSAGE} stamped=${onDisk || "(empty)"} claimed=${claimed || "(empty)"}`
-    );
+    warn(`${COMMIT_STAMP_MISMATCH_MESSAGE} stamped=${onDisk || "(empty)"} claimed=${claimed}`);
   }
 }
 

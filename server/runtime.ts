@@ -127,8 +127,8 @@ export function assertRequiredProductionEnv(env: NodeJS.ProcessEnv = process.env
       "[Lumera] APP_URL is unset. Set APP_URL=https://www.mylumera.in for Google/Meta OAuth and policy links."
     );
   }
-  // Cloud Run only. A mismatched stamp exits before listen so a stale
-  // AI Studio / --source image cannot replace the revision that matches git.
+  // Cloud Run only. A missing LUMERA_COMMIT_SHA warns and still listens.
+  // The deploy check of /build.json is what blocks a bad revision from traffic.
   assertCloudRunCommitStamp(env);
 }
 

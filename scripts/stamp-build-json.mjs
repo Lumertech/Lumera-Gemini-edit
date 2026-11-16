@@ -1,7 +1,7 @@
 /**
  * Write dist/build.json during docker build.
- * COMMIT_SHA is a 40-char hex git sha, or "unknown" for a local image that
- * must not be deployed to Cloud Run (the process refuses to listen there).
+ * COMMIT_SHA is a 40-char hex git sha, or "unknown" for a local image.
+ * Cloud Run still listens if LUMERA_COMMIT_SHA is unset; deploy checks /build.json.
  */
 import fs from "node:fs";
 

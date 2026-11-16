@@ -22,8 +22,8 @@ ENV PORT=8080
 COPY package.json package-lock.json* ./
 RUN if [ -f package-lock.json ]; then npm ci --omit=dev; else npm install --omit=dev; fi
 COPY --from=build /app/dist ./dist
-# Commit baked into the image. Cloud Run refuses to listen unless
-# LUMERA_COMMIT_SHA matches this file (see server/build-identity.ts).
+# Commit baked into the image. A missing LUMERA_COMMIT_SHA logs a warning
+# and still listens. The deploy check of /build.json is the traffic gate.
 COPY scripts/stamp-build-json.mjs /tmp/stamp-build-json.mjs
 ARG COMMIT_SHA=unknown
 RUN node /tmp/stamp-build-json.mjs "$COMMIT_SHA" /app/dist/build.json \
