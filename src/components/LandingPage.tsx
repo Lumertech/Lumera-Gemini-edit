@@ -545,7 +545,7 @@ export const LandingPage: React.FC = () => {
                 </p>
               </div>
               <p className="text-slate-300 text-xs leading-relaxed">
-                Evidence-based prescribing with automated drug interactions, specialty toolbars, and instant blood report OCR analytics.
+                Evidence-based prescribing with automated drug interactions, specialty toolbars, and lab-report reading that a doctor confirms.
               </p>
               <ul className="space-y-2 text-xs text-slate-400 pt-2 border-t border-slate-800">
                 <li className="flex items-center gap-2">
@@ -558,7 +558,7 @@ export const LandingPage: React.FC = () => {
                 </li>
                 <li className="flex items-center gap-2">
                   <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                  <span>One-click lab report OCR with trend graphing</span>
+                  <span>Lab report reading drafts values, ranges, and flags for a doctor to confirm, then graphs confirmed results</span>
                 </li>
               </ul>
             </div>

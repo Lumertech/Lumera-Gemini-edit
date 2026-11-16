@@ -20,6 +20,7 @@ import { registerPatientDocumentConsentRoutes } from "./patient-document-consent
 import { buildPatientTimeline, presentPrescriptionForRole } from "./patient-timeline.ts";
 import { insertClinicalNote, presentChartRecord } from "./patient-record.ts";
 import { listInvestigations } from "./investigations.ts";
+import { registerLabReadingRoutes } from "./lab-reading.ts";
 import { denyUnlessPatientRecordRole, denyUnlessPrescriber, isReceptionRole } from "./patient-access.ts";
 import { clinicCalendarDate, parseAppointmentListDate, resolveQueueDate } from "../src/lib/clinicDay.ts";
 import { canonicalSpecies } from "../src/lib/immunizationSchedules.ts";
@@ -1899,6 +1900,7 @@ export function createClinicalRouter(): Router {
   });
 
   registerPatientDocumentRoutes(api);
+  registerLabReadingRoutes(api);
   registerPatientDocumentConsentRoutes(api);
 
   // Calendar Schedule Settings (Appointment Duration & Overlap)

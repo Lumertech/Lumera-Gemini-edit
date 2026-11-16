@@ -14,6 +14,7 @@ import { ensureAccountsSchema } from "./accounts-schema.ts";
 import { ensureImmunizationSchema } from "./immunization-schema.ts";
 import { ensureClinicalNotesSchema } from "./patient-record-schema.ts";
 import { ensureInvestigationSchema } from "./investigation-schema.ts";
+import { ensureLabReadingSchema } from "./lab-reading-schema.ts";
 
 const DEMO_LETTERHEAD_SEED = {
   name: "Lumera Healthcare & Polyclinic Institute",
@@ -523,6 +524,7 @@ export function migrate(database: SqlDatabase) {
   ensureImmunizationSchema(database);
   ensureClinicalNotesSchema(database);
   ensureInvestigationSchema(database);
+  ensureLabReadingSchema(database);
   database.exec(`
     CREATE TABLE IF NOT EXISTS trial_claims (
       id TEXT PRIMARY KEY,
