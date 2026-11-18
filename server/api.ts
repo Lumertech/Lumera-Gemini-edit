@@ -117,6 +117,7 @@ import {
   signGoogleOAuthState,
   verifyGoogleOAuthState,
 } from "./google-oauth.ts";
+import { fireFounderNewUserSignupAlert } from "./signup-alert.ts";
 
 const uploadDir = path.join(process.cwd(), "uploads");
 fs.mkdirSync(uploadDir, { recursive: true });
@@ -1259,6 +1260,18 @@ export function createApiRouter(): Router {
 
       writeAudit(getDb(), updatedUser.id, updatedUser.name, "Practice Registered", `Registered and activated tenant: ${practiceName} (HFR: ${hfrId || "Active"})`);
 
+      fireFounderNewUserSignupAlert({
+        userId: updatedUser.id,
+        tenantId,
+        name: updatedUser.name,
+        email: updatedUser.email,
+        phone: updatedUser.phone,
+        clinicName: practiceName,
+        role: updatedUser.role,
+        specialty: updatedUser.specialty || specialty,
+        source: "WhatsApp Verified Signup",
+      });
+
       return res.json(withSessionCredential(req, res, {
         ok: true,
         user: publicUser(updatedUser),
@@ -1398,6 +1411,18 @@ export function createApiRouter(): Router {
 
     const sent = await dispatchWhatsAppOtpMessage(phone, name, otp, "register");
     if (otpDispatchFailure(res, sent)) return;
+
+    fireFounderNewUserSignupAlert({
+      userId,
+      tenantId,
+      name,
+      email,
+      phone,
+      clinicName: practiceName,
+      role: assignedRole,
+      specialty,
+      source: "Practice Registration",
+    });
 
     return res.json({
       requiresOtp: true,
@@ -2034,6 +2059,17 @@ export function createApiRouter(): Router {
     seedSubscriptionsIfMissing(getDb());
     audit(req, "Clinic member created", `${name} <${email}> as ${role}`);
     const user = getDb().prepare("SELECT * FROM users WHERE id = ?").get(id) as unknown as DbUser;
+    fireFounderNewUserSignupAlert({
+      userId: user.id,
+      tenantId: req.user?.tenantId || user.tenant_id || "",
+      name: user.name,
+      email: user.email,
+      phone: user.phone,
+      clinicName: req.user?.clinicName || user.clinic_name || "",
+      role: user.role,
+      specialty: String(specialty || user.specialty || ""),
+      source: "Clinic Team Member Added",
+    });
     res.status(201).json({ user: publicUser(user), temporaryPassword: password ? undefined : pwd });
   });
 
@@ -2262,6 +2298,17 @@ export function createApiRouter(): Router {
     const user = loadUserRow(id)!;
     syncDoctorPackProfile(user);
     const created = loadUserRow(id)!;
+    fireFounderNewUserSignupAlert({
+      userId: created.id,
+      tenantId,
+      name: created.name,
+      email: created.email,
+      phone: created.phone,
+      clinicName: created.clinic_name || "",
+      role: created.role,
+      specialty: created.specialty || "",
+      source: "Admin User Created",
+    });
     res.status(201).json({
       user: publicUser(created),
       temporaryPassword: passwordProvided ? undefined : pwd,

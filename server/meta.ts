@@ -36,6 +36,10 @@ import {
   resetVoiceCallGatewaysForTests,
   saveCallGatewaySdp,
 } from "./voice-call-gateway.ts";
+import {
+  maybeEnsureFounderSignupAlertTemplate,
+  retryFailedSignupAlertWithTemplate,
+} from "./signup-alert.ts";
 
 /** read and failed are terminal. delivered can still become read. */
 function isPendingOutboundStatus(status: string): boolean {
@@ -1044,6 +1048,9 @@ export function createMetaRouter(): Router {
                 continue;
               }
               const wabaId = String(entry?.id || "").trim();
+              if (inboundTenantId === "tenant-lumera-main" && wabaId) {
+                void maybeEnsureFounderSignupAlertTemplate(wabaId);
+              }
 
               // Handle message & call statuses inside this clinic only.
               if (val?.statuses && Array.isArray(val.statuses)) {
@@ -1064,6 +1071,9 @@ export function createMetaRouter(): Router {
                       sentAt: now,
                       tenantId: inboundTenantId,
                     });
+                    if (inboundTenantId === "tenant-lumera-main" && status === "failed") {
+                      void retryFailedSignupAlertWithTemplate(db, { messageId, status });
+                    }
                   } catch (err) {
                     reportCaughtError(err, "meta.webhook.outbound-status");
                   }

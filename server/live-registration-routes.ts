@@ -10,6 +10,7 @@ import { signupPasswordRuleError } from "./password.ts";
 import { hashOtp } from "./otp-hash.ts";
 import { createTrialRouter } from "./trial-routes.ts";
 import { TRIAL_DAYS } from "./trial-lifecycle.ts";
+import { fireFounderNewUserSignupAlert } from "./signup-alert.ts";
 
 /**
  * Production-safe live clinic registration. Mounted in server.ts before
@@ -143,6 +144,18 @@ async function handleRegisterPractice(req: Request, res: Response) {
 
   const sent = await dispatchRegisterOtp(phone, name, otp, "register", tenantId);
   if (otpDispatchFailure(res, sent)) return;
+
+  fireFounderNewUserSignupAlert({
+    userId,
+    tenantId,
+    name,
+    email,
+    phone,
+    clinicName: practiceName,
+    role: assignedRole,
+    specialty,
+    source: "Practice Registration",
+  });
 
   return res.json({
     requiresOtp: true,
