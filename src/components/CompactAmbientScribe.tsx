@@ -116,6 +116,31 @@ Patient: Lower left molar pain on biting for 4 days, sensitivity to cold.
 Doctor: Deep occlusal caries 36, tender on percussion. Plan RCT, paracetamol after food.`,
     },
   ],
+  Gynecology: [
+    {
+      id: "demo-anc-visit",
+      label: "Demo: 2nd trimester ANC",
+      text: `Doctor: Namaste Nisha ji, how are fetal movements?
+Patient: Active kicks daily doctor, 24 weeks pregnant, G2P1, mild ankle tiredness by evening.
+Doctor: BP 116/74, fundal height 24 cm cephalic, FHR 144 regular, Hb 11.2. Continue iron-folate morning and calcium night, schedule 75g DIPSI OGTT.`,
+    },
+    {
+      id: "demo-pcos",
+      label: "Demo: PCOS & delayed cycles",
+      text: `Doctor: Tell me about your menstrual cycles.
+Patient: Periods delayed every 45 to 60 days for 6 months, chin hair growth and facial acne.
+Doctor: Rotterdam PCOS phenotype with acanthosis nigricans. Starting myo-inositol twice daily, Day-2 LH FSH TSH prolactin and pelvic ultrasound.`,
+    },
+  ],
+  ENT: [
+    {
+      id: "demo-csom",
+      label: "Demo: ear discharge (CSOM)",
+      text: `Doctor: Kaunse kaan se discharge aa raha hai?
+Patient: Right ear discharge for 5 days after head bath, mild reduced hearing, no vertigo.
+Doctor: Right central tympanic perforation, left TM intact, Rinne negative right. Ciprofloxacin otic drops, dry ear precautions, audiometry.`,
+    },
+  ],
   "General Medicine": [
     {
       id: "demo-uri",

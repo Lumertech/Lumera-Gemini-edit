@@ -90,7 +90,11 @@ export const PracticeHome: React.FC<PracticeHomeProps> = ({
   const clinic = greetingClinicName(user.clinicName);
   const greeting = homeGreetingLine(user.name, user.role);
   const dateHeading = clinicDateHeading();
-  const visits: VisitLite[] = appointments.map((row) => ({
+  const doctorAppointments =
+    user.role === "doctor" && doctor?.id && appointments.some((row) => row.doctorId === doctor.id)
+      ? appointments.filter((row) => row.doctorId === doctor.id)
+      : appointments;
+  const visits: VisitLite[] = doctorAppointments.map((row) => ({
     id: row.id,
     date: row.date,
     status: row.status,
@@ -104,8 +108,8 @@ export const PracticeHome: React.FC<PracticeHomeProps> = ({
   }));
   const metrics = homeMetrics(visits);
   const nudge = homeNudge(metrics, patients.length);
-  const todayRows = appointments.filter((row) => row.date === metrics.today && row.status !== "Cancelled" && row.status !== "No-Show");
-  const next = pickNextVisit(appointments, metrics.today);
+  const todayRows = doctorAppointments.filter((row) => row.date === metrics.today && row.status !== "Cancelled" && row.status !== "No-Show");
+  const next = pickNextVisit(doctorAppointments, metrics.today);
   const [whatsAppConnected, setWhatsAppConnected] = useState(false);
   const [collectedToday, setCollectedToday] = useState<number | null>(null);
   const [branches, setBranches] = useState<Array<{ id: string; name?: string; address?: string }>>([]);

@@ -111,6 +111,46 @@ export const OrthopedicsRxModule: React.FC<OrthopedicsRxModuleProps> = ({
             />
           </div>
         </div>
+
+        {/* Mechanism of Onset, Distal Neurovascular Status & Indian Squatting/Cross-Legged ADL */}
+        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+          <div>
+            <label className="text-[10px] font-bold text-slate-500 uppercase block">Mechanism of Onset</label>
+            <select
+              value={assessment.mechanismOfOnset || 'Degenerative / Age-related'}
+              onChange={(e) => onUpdateAssessment({ ...assessment, mechanismOfOnset: e.target.value as any })}
+              className="w-full mt-1 px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-md font-semibold"
+            >
+              <option value="Degenerative / Age-related">Degenerative / Wear-and-Tear</option>
+              <option value="Fall at Home">Fall at Home / Slip</option>
+              <option value="Road Traffic Accident (RTA)">Road Traffic Accident (RTA)</option>
+              <option value="Sports / Gym Injury">Sports / Twisting Injury</option>
+              <option value="Postural / Ergonomic">Postural / Ergonomic Strain</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-[10px] font-bold text-slate-500 uppercase block">Distal Neurovascular Status (DNVS)</label>
+            <input
+              type="text"
+              value={assessment.distalNeurovascularStatus || ''}
+              onChange={(e) => onUpdateAssessment({ ...assessment, distalNeurovascularStatus: e.target.value })}
+              placeholder="e.g. Intact — DP/PT pulses +, sensation & active toe movement normal"
+              className="w-full mt-1 px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-md"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] font-bold text-slate-500 uppercase block">Squatting / Cross-Legged ADL (India)</label>
+            <select
+              value={assessment.indianAdlSquatCrossLeg || 'Painful Squatting / Indian Toilet'}
+              onChange={(e) => onUpdateAssessment({ ...assessment, indianAdlSquatCrossLeg: e.target.value as any })}
+              className="w-full mt-1 px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-md font-semibold"
+            >
+              <option value="Unrestricted">Unrestricted Floor Sitting &amp; Squatting</option>
+              <option value="Painful Squatting / Indian Toilet">Painful Squatting — Advise Western Commode</option>
+              <option value="Unable to Squat / Sit Cross-Legged">Unable to Squat / Avoid Floor Sitting</option>
+            </select>
+          </div>
+        </div>
       </div>
     </div>
   );

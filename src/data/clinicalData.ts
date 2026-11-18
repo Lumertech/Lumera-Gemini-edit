@@ -905,6 +905,191 @@ export const RX_PRESETS = [
         { item: '75g Oral Glucose Tolerance Test (OGTT)', completed: false, dueDate: '2026-09-08' }
       ]
     }
+  },
+  {
+    id: 'preset-gynecology-pcos',
+    specialty: 'Gynecology' as PolyclinicSpecialty,
+    name: 'PCOS & Insulin Resistance (FOGSI Rotterdam Protocol)',
+    diagnosis: 'Polycystic Ovary Syndrome (Phenotype A) with Insulin Resistance',
+    icd10: 'E28.2',
+    chiefComplaints: ['Irregular delayed cycles >45 days (6 months)', 'Facial hirsutism & persistent jawline acne'],
+    medicines: [
+      { id: 'm-pcos-1', drugName: 'Myo-Inositol + D-Chiro-Inositol + Folate (MyoIno-D)', composition: 'Myo-inositol 2000mg + D-Chiro-inositol 50mg + L-Methylfolate', form: 'Tablet' as const, dosage: '1 Sachet/Tab', frequency: '1-0-1' as const, timing: 'After Food' as const, durationDays: 90, instructions: 'Continue consistently for 3 menstrual cycles' },
+      { id: 'm-pcos-2', drugName: 'Metformin SR (Glycomet-GP / Glycomet SR 500)', composition: 'Metformin Sustained Release 500mg', form: 'Tablet' as const, dosage: '500 mg', frequency: '0-0-1' as const, timing: 'After Food' as const, durationDays: 60, instructions: 'Take immediately after dinner to minimize GI upset' },
+      { id: 'm-pcos-3', drugName: 'Cholecalciferol (Uprise-D3 60K)', composition: 'Vitamin D3 60,000 IU', form: 'Capsule' as const, dosage: '60K IU', frequency: 'Once a week' as const, timing: 'With Food' as const, durationDays: 56, instructions: 'Take once weekly with warm milk for 8 weeks' }
+    ],
+    labTests: [
+      { id: 'lab-pcos-1', testName: 'Day-2 LH, FSH, Prolactin, TSH & Total Testosterone', category: 'Biochemistry' as const, price: 1450 },
+      { id: 'lab-pcos-2', testName: 'Fasting Insulin, FBS & 75g 2-hr Glucose + Lipid Profile', category: 'Biochemistry' as const, price: 950 },
+      { id: 'lab-pcos-3', testName: 'USG Pelvis (Follicular / Ovarian Volume Assessment)', category: 'Radiology' as const, price: 900 }
+    ],
+    advice: [
+      'Target 5–7% weight reduction via 45 mins daily brisk walk + strength training',
+      'Adopt low-glycemic Indian balanced plate: millets/whole wheat, pulses, sprouts, paneer/curd; avoid refined sugar and bakery snacks',
+      'Maintain menstrual calendar; review with Day-2 hormonal panel and pelvic ultrasound'
+    ],
+    gynecologyAssessment: {
+      clinicalMode: 'Fertility & PCOS' as const,
+      lmpDate: '2026-09-20',
+      calculatedEdd: '',
+      gestationalAgeWeeks: 0,
+      gestationalAgeDays: 0,
+      trimester: '1st Trimester' as const,
+      gravidaPara: { g: 0, p: 0, l: 0, a: 0 },
+      menarcheAge: 12,
+      cycleRegularity: 'Oligomenorrhea (>35d)' as const,
+      menstrualFlowVolume: 'Scanty (Hypomenorrhea)' as const,
+      dysmenorrheaSeverity: 'Mild' as const,
+      intermenstrualOrPostcoitalBleeding: 'None' as const,
+      contraceptionMethod: 'None' as const,
+      pcosPhenotypeFlags: ['Oligo / Anovulation (>35d cycles)', 'Clinical Hirsutism (mFG >= 8)', 'Acanthosis Nigricans (Insulin Resistance)', 'PCOM on Pelvic USG'],
+      pelvicUsgSummary: 'Bilateral ovarian volume >11 cc with >20 peripheral follicles; ET 7.5 mm'
+    }
+  },
+  {
+    id: 'preset-gynecology-aub',
+    specialty: 'Gynecology' as PolyclinicSpecialty,
+    name: 'Abnormal Uterine Bleeding (AUB / Menorrhagia + Anemia)',
+    diagnosis: 'Abnormal Uterine Bleeding — Heavy Menstrual Bleeding with Moderate Iron Deficiency Anemia',
+    icd10: 'N92.0',
+    chiefComplaints: ['Heavy menstrual bleeding with clots for 8 days', 'Easy fatigability & exertional dyspnea'],
+    medicines: [
+      { id: 'm-aub-1', drugName: 'Tranexamic Acid + Mefenamic Acid (Trapic-MF)', composition: 'Tranexamic Acid 500mg + Mefenamic Acid 250mg', form: 'Tablet' as const, dosage: '1 Tablet', frequency: '1-1-1' as const, timing: 'After Food' as const, durationDays: 5, instructions: 'Take only during heavy bleeding days (Day 1 to Day 5)' },
+      { id: 'm-aub-2', drugName: 'Ferric Carboxymaltose / Ferrous Ascorbate (Orofer-XT)', composition: 'Elemental Iron 100mg + Folic Acid 1.5mg', form: 'Tablet' as const, dosage: '1 Tablet', frequency: '1-0-1' as const, timing: 'After Food' as const, durationDays: 60, instructions: 'Therapeutic iron replenishment for Hb < 10 g/dL' }
+    ],
+    labTests: [
+      { id: 'lab-aub-1', testName: 'CBC, Reticulocyte Count, Serum Ferritin & Coagulation Profile', category: 'Hematology' as const, price: 850 },
+      { id: 'lab-aub-2', testName: 'TSH & Transvaginal Ultrasound (TVS — PALM-COEIN)', category: 'Radiology' as const, price: 1100 },
+      { id: 'lab-aub-3', testName: 'Liquid-Based Cytology (Pap Smear)', category: 'Pathology' as const, price: 750 }
+    ],
+    advice: [
+      'Include iron-rich Indian foods: green leafy vegetables (palak/methi), dates, roasted chana, jaggery, and citrus fruits',
+      'Report urgently if soaking >1 pad/hour for 2 consecutive hours, dizziness, or syncope',
+      'Schedule Pap smear / endometrial evaluation once active bleeding subsides'
+    ],
+    gynecologyAssessment: {
+      clinicalMode: 'Gynaecology & Menstrual' as const,
+      lmpDate: '2026-11-10',
+      calculatedEdd: '',
+      gestationalAgeWeeks: 0,
+      gestationalAgeDays: 0,
+      trimester: '1st Trimester' as const,
+      gravidaPara: { g: 2, p: 2, l: 2, a: 0 },
+      menarcheAge: 13,
+      cycleRegularity: 'Irregular / AUB' as const,
+      menstrualFlowVolume: 'Heavy (Menorrhagia / Clots)' as const,
+      dysmenorrheaSeverity: 'Moderate' as const,
+      intermenstrualOrPostcoitalBleeding: 'None' as const,
+      maternalHemoglobinGdl: 9.2,
+      cervicalScreeningPapVia: 'LBC Pap smear advised post-menses',
+      chaperonePresent: true
+    }
+  },
+  // Pediatrics Presets (IAP India)
+  {
+    id: 'preset-pediatrics-age',
+    specialty: 'Pediatrics' as PolyclinicSpecialty,
+    name: 'Acute Viral Gastroenteritis (IAP ORS + Zinc 14d)',
+    diagnosis: 'Acute Watery Diarrhea (Viral Gastroenteritis) with No/Some Dehydration',
+    icd10: 'A09',
+    chiefComplaints: ['Loose watery stools 5–6 episodes/day (2 days)', 'Mild non-bilious vomiting'],
+    medicines: [
+      { id: 'm-ped-1', drugName: 'WHO Low-Osmolarity ORS (Electral)', composition: 'Sodium Chloride + Potassium Chloride + Trisodium Citrate + Dextrose', form: 'Syrup' as const, dosage: '10 ml/kg', frequency: 'SOS' as const, timing: 'After Food' as const, durationDays: 5, instructions: 'Dissolve 1 sachet in 1 litre cooled boiled water; give 100–150 ml after every loose stool' },
+      { id: 'm-ped-2', drugName: 'Zinc Gluconate Syrup (Z&D 20)', composition: 'Elemental Zinc 20mg / 5ml', form: 'Syrup' as const, dosage: '5 ml (20 mg)', frequency: '1-0-0' as const, timing: 'After Food' as const, durationDays: 14, instructions: 'Mandatory full 14-day IAP course even after stools normalize to prevent recurrence' },
+      { id: 'm-ped-3', drugName: 'Ondansetron Pediatric Syrup (Emeset)', composition: 'Ondansetron 2mg / 5ml', form: 'Syrup' as const, dosage: '0.15 mg/kg', frequency: 'SOS' as const, timing: 'Before Food' as const, durationDays: 3, instructions: 'Give 20 mins before oral feeds only if vomiting persists' }
+    ],
+    labTests: [],
+    advice: [
+      'Continue breastfeeding / home fluids (dal water, rice kanji, curd/buttermilk, mashed banana); do NOT withhold feeds',
+      'Avoid carbonated drinks, packaged fruit juices, and unnecessary OTC antibiotic/antimotility combinations',
+      'IMNCI Red Flags — return immediately if child becomes lethargic, unable to drink, passes blood in stool, or has sunken eyes / reduced urine (<6 wet diapers)'
+    ],
+    pediatricAssessment: {
+      developmentalMilestones: 'Age Appropriate' as const,
+      informant: 'Mother' as const,
+      feedingPattern: 'Breastfeeding + Complementary (IYCF)' as const,
+      imnciDangerSigns: ['No General Danger Signs'],
+      calculatedDosageBasis: 'ORS 10 ml/kg/stool + Elemental Zinc 20 mg OD x 14 days'
+    }
+  },
+  // ENT Presets
+  {
+    id: 'preset-ent-csom',
+    specialty: 'ENT' as PolyclinicSpecialty,
+    name: 'Tubotympanic CSOM (Safe Mucosal Ear Discharge)',
+    diagnosis: 'Chronic Suppurative Otitis Media — Tubotympanic Active Mucosal Disease',
+    icd10: 'H66.1',
+    chiefComplaints: ['Mucopurulent non-foul ear discharge (1 week)', 'Mild conductive hearing reduction'],
+    medicines: [
+      { id: 'm-ent-1', drugName: 'Ciprofloxacin Ear Drops (Ciplox-D / Ciplox Otic)', composition: 'Ciprofloxacin 0.3% w/v Sterile Otic', form: 'Drops' as const, dosage: '3 Drops', frequency: '1-1-1' as const, timing: 'After Food' as const, durationDays: 7, instructions: 'Dry mop outer ear gently, instil 3 drops with tragal pumping, lie on opposite side for 5 mins' },
+      { id: 'm-ent-2', drugName: 'Levocetirizine + Montelukast (Montair-LC)', composition: 'Levocetirizine 5mg + Montelukast 10mg', form: 'Tablet' as const, dosage: '1 Tablet', frequency: '0-0-1' as const, timing: 'At Bedtime' as const, durationDays: 10, instructions: 'Reduces Eustachian tube edema' }
+    ],
+    labTests: [
+      { id: 'lab-ent-1', testName: 'Pure Tone Audiometry (PTA) & Impedance', category: 'Pathology' as const, price: 650 }
+    ],
+    advice: [
+      'Strict dry-ear precautions: keep ear plugged with vaseline-coated cotton during bath/head wash; avoid swimming',
+      'Never insert cotton buds, keys, matchsticks, or warm oil into the ear canal',
+      'Review after ear becomes dry for cortical/tympanoplasty assessment'
+    ],
+    entAssessment: {
+      primarySite: 'Ear / Otology' as const,
+      otoscopyRight: 'Mucopurulent discharge in EAC; small central perforation in anteroinferior quadrant',
+      otoscopyLeft: 'EAC clear, tympanic membrane intact with normal cone of light',
+      tuningForkRinneWeber: 'Rinne negative right (BC > AC), positive left; Weber lateralized to right',
+      anteriorRhinoscopyDns: 'Mild DNS to right, inferior turbinates mildly congested',
+      oropharynxTonsilGrade: 'Grade I' as const,
+      oralMucosaSubmucousCheck: 'Buccal mucosa healthy, mouth opening 44mm, no OSMF bands'
+    }
+  },
+  // Neurology Preset
+  {
+    id: 'preset-neurology-migraine',
+    specialty: 'Neurology' as PolyclinicSpecialty,
+    name: 'Episodic Migraine Without Aura (Acute + Prophylaxis)',
+    diagnosis: 'Episodic Migraine Without Aura',
+    icd10: 'G43.0',
+    chiefComplaints: ['Recurrent unilateral throbbing headache with photophobia (3 months)', 'Nausea triggered by fasting & bright sun'],
+    medicines: [
+      { id: 'm-neuro-1', drugName: 'Naproxen + Domperidone (Naxdom 500)', composition: 'Naproxen 500mg + Domperidone 10mg', form: 'Tablet' as const, dosage: '1 Tablet', frequency: 'SOS' as const, timing: 'After Food' as const, durationDays: 10, instructions: 'Take at earliest onset of migraine headache; max 2 tablets/24 hrs' },
+      { id: 'm-neuro-2', drugName: 'Propranolol SR (Ciplar-LA 40)', composition: 'Propranolol Prolonged Release 40mg', form: 'Tablet' as const, dosage: '40 mg', frequency: '0-0-1' as const, timing: 'After Food' as const, durationDays: 30, instructions: 'Daily migraine prophylaxis; monitor pulse >55 bpm (avoid in asthma)' }
+    ],
+    labTests: [
+      { id: 'lab-neuro-1', testName: 'Serum Vitamin B12, Vitamin D3 & TSH', category: 'Biochemistry' as const, price: 1100 }
+    ],
+    advice: [
+      'Maintain headache diary; avoid skipping breakfast, dehydration, irregular sleep, and harsh afternoon sun exposure',
+      'Limit rescue analgesics to <10 days/month to prevent medication-overuse headache'
+    ],
+    neurologyAssessment: {
+      symptomCategory: 'Headache / Migraine' as const,
+      onsetCourse: 'Chronic / Episodic' as const,
+      episodeFrequencyTriggers: '4–5 attacks/month; triggered by fasting, travel, and sleep loss',
+      cranialNervesSummary: 'GCS 15/15, fundus normal (no papilledema), pupils PERL, EOM full',
+      motorSensorySummary: 'Power 5/5 all 4 limbs, DTRs 2+ symmetric, plantars flexor',
+      gaitAndCerebellar: 'Normal tandem gait, Romberg negative'
+    }
+  },
+  // General Medicine Tropical Fever Preset
+  {
+    id: 'preset-gp-dengue-screen',
+    specialty: 'General Medicine' as PolyclinicSpecialty,
+    name: 'Acute Tropical Febrile Illness (Dengue / Malaria Triage)',
+    diagnosis: 'Acute Undifferentiated Febrile Illness — Rule Out Dengue Fever',
+    icd10: 'A97.9',
+    chiefComplaints: ['High-grade fever with chills (3 days)', 'Retro-orbital headache & severe myalgia ("breakbone ache")'],
+    medicines: [
+      { id: 'm-gp-df-1', drugName: 'Paracetamol (Dolo 650)', composition: 'Paracetamol 650mg', form: 'Tablet' as const, dosage: '650 mg', frequency: '1-1-1' as const, timing: 'After Food' as const, durationDays: 5, instructions: 'Every 6 hours if temp >100°F (max 4g/day). STRICTLY AVOID Ibuprofen, Diclofenac, Aspirin, or Nimesulide' },
+      { id: 'm-gp-df-2', drugName: 'WHO ORS (Electral)', composition: 'Oral Rehydration Salts', form: 'Syrup' as const, dosage: '200 ml', frequency: '1-1-1' as const, timing: 'With Food' as const, durationDays: 5, instructions: 'Maintain 3 litres oral hydration daily (ORS, coconut water, buttermilk)' }
+    ],
+    labTests: [
+      { id: 'lab-gp-df-1', testName: 'CBC with Hematocrit (PCV) & Serial Platelet Count', category: 'Hematology' as const, urgent: true, price: 350 },
+      { id: 'lab-gp-df-2', testName: 'Dengue NS1 Antigen + IgM/IgG & Peripheral Smear for MP', category: 'Microbiology' as const, urgent: true, price: 950 }
+    ],
+    advice: [
+      'STRICTLY DO NOT take painkillers (NSAIDs/Aspirin) or steroids due to platelet/bleeding risk',
+      'Watch critical defervescence phase (Day 3–7): report urgently if abdominal pain, persistent vomiting, gum/mucosal bleeding, black stools, or postural giddiness occurs'
+    ]
   }
 ];
 

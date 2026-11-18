@@ -36,7 +36,6 @@ import {
 
 export const EMBEDDED_SIGNUP_SCOPES = [
   "whatsapp_business_management",
-  "business_management",
   "whatsapp_business_messaging",
 ] as const;
 
@@ -53,12 +52,51 @@ export class EmbeddedSignupError extends Error {
   }
 }
 
+function resolveEmbeddedSignupCredentials(): { appId: string; appSecret: string } {
+  const esAppId = readSecret("META_EMBEDDED_SIGNUP_APP_ID");
+  if (esAppId) {
+    return {
+      appId: esAppId,
+      appSecret: readSecret(
+        "META_EMBEDDED_SIGNUP_APP_SECRET",
+        "WHATSAPP_APP_SECRET",
+        "FACEBOOK_APP_SECRET",
+        "META_APP_SECRET"
+      ),
+    };
+  }
+  const waAppId = readSecret("WHATSAPP_APP_ID");
+  if (waAppId) {
+    return {
+      appId: waAppId,
+      appSecret: readSecret(
+        "WHATSAPP_APP_SECRET",
+        "META_EMBEDDED_SIGNUP_APP_SECRET",
+        "FACEBOOK_APP_SECRET",
+        "META_APP_SECRET"
+      ),
+    };
+  }
+  const fbAppId = readSecret("FACEBOOK_APP_ID");
+  if (fbAppId) {
+    return {
+      appId: fbAppId,
+      appSecret: readSecret("FACEBOOK_APP_SECRET", "META_APP_SECRET", "WHATSAPP_APP_SECRET"),
+    };
+  }
+  const metaAppId = readSecret("META_APP_ID");
+  return {
+    appId: metaAppId,
+    appSecret: metaAppId ? readSecret("META_APP_SECRET", "FACEBOOK_APP_SECRET", "WHATSAPP_APP_SECRET") : "",
+  };
+}
+
 export function facebookAppIdForEmbeddedSignup(): string {
-  return readSecret("FACEBOOK_APP_ID", "META_APP_ID");
+  return resolveEmbeddedSignupCredentials().appId;
 }
 
 export function facebookAppSecretForEmbeddedSignup(): string {
-  return readSecret("FACEBOOK_APP_SECRET", "META_APP_SECRET");
+  return resolveEmbeddedSignupCredentials().appSecret;
 }
 
 export function embeddedSignupConfigId(): string {
@@ -250,6 +288,7 @@ export async function confirmWabaAndPhoneGrants(opts: {
 
   const grantedWabaIds = new Set<string>();
   for (const row of opts.debugToken?.granularScopes || []) {
+    if (row.scope !== "whatsapp_business_management" && row.scope !== "whatsapp_business_messaging") continue;
     for (const id of row.targetIds) grantedWabaIds.add(id);
   }
   if (grantedWabaIds.size > 0 && !grantedWabaIds.has(wabaId)) {

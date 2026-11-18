@@ -534,4 +534,34 @@ describe("Embedded Signup checklist + onboarding caps", () => {
     assert.equal(caps.businessVerifiedFlag, false);
     assert.match(caps.notice, /not Meta-business-verified/i);
   });
+
+  it("prefers WHATSAPP_APP_ID + WHATSAPP_APP_SECRET over consumer META_APP_ID when both apps exist", async () => {
+    const { facebookAppIdForEmbeddedSignup, facebookAppSecretForEmbeddedSignup } = await import("./embedded-signup.ts");
+    const { facebookAppId } = await import("./facebook-oauth.ts");
+    const saved = {
+      META_EMBEDDED_SIGNUP_APP_ID: process.env.META_EMBEDDED_SIGNUP_APP_ID,
+      WHATSAPP_APP_ID: process.env.WHATSAPP_APP_ID,
+      WHATSAPP_APP_SECRET: process.env.WHATSAPP_APP_SECRET,
+      FACEBOOK_APP_ID: process.env.FACEBOOK_APP_ID,
+      META_APP_ID: process.env.META_APP_ID,
+      META_APP_SECRET: process.env.META_APP_SECRET,
+    };
+    try {
+      delete process.env.META_EMBEDDED_SIGNUP_APP_ID;
+      delete process.env.FACEBOOK_APP_ID;
+      process.env.META_APP_ID = "1790820278615581";
+      process.env.META_APP_SECRET = "consumer-oauth-secret";
+      process.env.WHATSAPP_APP_ID = "1771236634003867";
+      process.env.WHATSAPP_APP_SECRET = "whatsapp-tech-provider-secret";
+
+      assert.equal(facebookAppIdForEmbeddedSignup(), "1771236634003867");
+      assert.equal(facebookAppSecretForEmbeddedSignup(), "whatsapp-tech-provider-secret");
+      assert.equal(facebookAppId(), "1790820278615581");
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  });
 });

@@ -8,6 +8,7 @@ import {
   WHATSAPP_PERMISSIONS_STATUS_SENTENCE,
 } from "../lib/metaStatus";
 import {
+  isFacebookSdkReadyFor,
   launchEmbeddedSignupV4,
   loadFacebookSdk,
   type EmbeddedSignupConfig,
@@ -54,6 +55,22 @@ export const ClinicWabaConnect: React.FC = () => {
     setBusy(true);
     setError("");
     try {
+      // Launch synchronously when SDK + config are already warm so browser popup blockers don't block FB.login
+      if (config?.appId && config?.configId && isFacebookSdkReadyFor(config.appId)) {
+        const session = await launchEmbeddedSignupV4(config);
+        const data = await apiFetch<{ notice?: string }>("/api/whatsapp-numbers/embedded-signup/complete", {
+          method: "POST",
+          body: JSON.stringify({
+            ownerType: "tenant",
+            code: session.code,
+            wabaId: session.wabaId,
+            phoneNumberId: session.phoneNumberId,
+          }),
+        });
+        setMessage(data.notice || "Clinic WhatsApp number connected.");
+        await load();
+        return;
+      }
       const signup = config || (await apiFetch<EmbeddedSignupConfig>("/api/meta/embedded-signup-config"));
       setConfig(signup);
       if (!signup.appId || !signup.configId) {

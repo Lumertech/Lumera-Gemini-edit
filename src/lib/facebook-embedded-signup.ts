@@ -35,7 +35,6 @@ export function isFacebookEmbeddedSignupOrigin(origin: string): boolean {
 
 export const EMBEDDED_SIGNUP_SCOPES = [
   "whatsapp_business_management",
-  "business_management",
   "whatsapp_business_messaging",
 ] as const;
 
@@ -73,11 +72,40 @@ declare global {
 }
 
 let sdkPromise: Promise<void> | null = null;
+let initializedAppId = "";
+
+function normalizeGraphVersion(graphVersion = "v21.0"): string {
+  return graphVersion.startsWith("v") ? graphVersion : `v${graphVersion}`;
+}
+
+export function isFacebookSdkReadyFor(appId?: string | null): boolean {
+  const clean = String(appId || "").trim();
+  return Boolean(typeof window !== "undefined" && window.FB && clean && initializedAppId === clean);
+}
 
 export function loadFacebookSdk(appId: string, graphVersion = "v21.0"): Promise<void> {
   if (typeof window === "undefined") return Promise.reject(new Error("Facebook SDK requires a browser."));
-  if (window.FB) return Promise.resolve();
-  if (sdkPromise) return sdkPromise;
+  const version = normalizeGraphVersion(graphVersion);
+  if (window.FB) {
+    if (initializedAppId !== appId) {
+      window.FB.init({
+        appId,
+        autoLogAppEvents: true,
+        xfbml: false,
+        version,
+      });
+      initializedAppId = appId;
+    }
+    return Promise.resolve();
+  }
+  if (sdkPromise) {
+    return sdkPromise.then(() => {
+      if (window.FB && initializedAppId !== appId) {
+        window.FB.init({ appId, autoLogAppEvents: true, xfbml: false, version });
+        initializedAppId = appId;
+      }
+    });
+  }
 
   sdkPromise = new Promise((resolve, reject) => {
     const existing = document.getElementById("facebook-jssdk");
@@ -87,8 +115,9 @@ export function loadFacebookSdk(appId: string, graphVersion = "v21.0"): Promise<
           appId,
           autoLogAppEvents: true,
           xfbml: false,
-          version: graphVersion.startsWith("v") ? graphVersion : `v${graphVersion}`,
+          version,
         });
+        initializedAppId = appId;
         resolve();
       } catch (err) {
         reject(err instanceof Error ? err : new Error("FB.init failed"));
@@ -154,6 +183,24 @@ function isEmbeddedSignupFinish(data: Record<string, unknown>): boolean {
 }
 
 /**
+ * Build FB.login options for Meta Embedded Signup v4.
+ * When `config_id` is passed (Facebook Login for Business), `scope` MUST NOT be
+ * sent alongside it — Meta validates raw `scope` strings separately and rejects
+ * WhatsApp Business scopes with "Invalid Scopes" if passed outside `config_id`.
+ */
+export function buildEmbeddedSignupLoginOptions(configId: string): Record<string, unknown> {
+  return {
+    config_id: configId,
+    response_type: "code",
+    override_default_response_type: true,
+    extras: {
+      setup: {},
+      sessionInfoVersion: "3",
+    },
+  };
+}
+
+/**
  * Launch Embedded Signup v4 and resolve with code + WABA/phone ids.
  * postMessage (session info) and FB.login callback (code) may arrive in either order.
  */
@@ -170,8 +217,15 @@ export function launchEmbeddedSignupV4(config: EmbeddedSignupConfig): Promise<Em
   if (!window.FB) {
     return Promise.reject(new Error("Facebook JavaScript SDK is not loaded."));
   }
-
-  const scopes = (config.scopes && config.scopes.length ? config.scopes : [...EMBEDDED_SIGNUP_SCOPES]).join(",");
+  if (initializedAppId !== appId) {
+    window.FB.init({
+      appId,
+      autoLogAppEvents: true,
+      xfbml: false,
+      version: normalizeGraphVersion(config.graphVersion || "v21.0"),
+    });
+    initializedAppId = appId;
+  }
 
   return new Promise((resolve, reject) => {
     let code = "";
@@ -227,15 +281,7 @@ export function launchEmbeddedSignupV4(config: EmbeddedSignupConfig): Promise<Em
         code = nextCode;
         trySettle();
       },
-      {
-        config_id: configId,
-        response_type: "code",
-        override_default_response_type: true,
-        // v4 permissions normally come from the Login for Business configuration.
-        // Scope is still sent as requested; Meta may ignore it in favor of config_id.
-        scope: scopes,
-        extras: { setup: {} },
-      }
+      buildEmbeddedSignupLoginOptions(configId)
     );
   });
 }

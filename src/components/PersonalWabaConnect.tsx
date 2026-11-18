@@ -8,6 +8,7 @@ import {
   WHATSAPP_PERMISSIONS_STATUS_SENTENCE,
 } from "../lib/metaStatus";
 import {
+  isFacebookSdkReadyFor,
   launchEmbeddedSignupV4,
   loadFacebookSdk,
   type EmbeddedSignupConfig,
@@ -80,6 +81,11 @@ export const PersonalWabaConnect: React.FC<PersonalWabaConnectProps> = ({ varian
     setBusy(true);
     setError("");
     try {
+      if (config?.appId && config?.configId && isFacebookSdkReadyFor(config.appId)) {
+        const session = await launchEmbeddedSignupV4(config);
+        await completeSignup(session);
+        return;
+      }
       const signup =
         config || (await apiFetch<EmbeddedSignupConfig>("/api/meta/embedded-signup-config"));
       setConfig(signup);

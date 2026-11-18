@@ -271,18 +271,31 @@ export default function ClinicianApp() {
         }
 
         const nextDoctors = doctorRes.doctors || [];
+        const resolvedDoc = nextDoctors.length ? resolveSessionDoctor(user, nextDoctors) : doctorFromUser(user);
         if (nextDoctors.length) {
           setDoctors(nextDoctors);
-          setCurrentDoctor(() => resolveSessionDoctor(user, nextDoctors));
+          setCurrentDoctor(resolvedDoc);
         } else {
-          const fallback = doctorFromUser(user);
-          setDoctors(fallback.id ? [fallback] : []);
-          setCurrentDoctor(fallback);
+          setDoctors(resolvedDoc.id ? [resolvedDoc] : []);
+          setCurrentDoctor(resolvedDoc);
         }
 
-        const nextPatients = patientRes.patients || [];
+        const rawPatients = patientRes.patients || [];
         const nextAppointments = appointmentRes.appointments || [];
         const nextPrescriptions = prescriptionRes.prescriptions || [];
+        const ownPatientIds =
+          user?.role === 'doctor' && resolvedDoc?.id
+            ? new Set([
+                ...nextAppointments.filter((a) => a.doctorId === resolvedDoc.id).map((a) => a.patientId),
+                ...nextPrescriptions.filter((r) => r.doctorId === resolvedDoc.id).map((r) => r.patientId),
+              ])
+            : null;
+        const nextPatients =
+          ownPatientIds && ownPatientIds.size > 0
+            ? [...rawPatients].sort(
+                (a, b) => (ownPatientIds.has(b.id) ? 1 : 0) - (ownPatientIds.has(a.id) ? 1 : 0)
+              )
+            : rawPatients;
 
         setPatients(nextPatients);
         setAppointments(nextAppointments);

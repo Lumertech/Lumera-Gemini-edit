@@ -299,7 +299,7 @@ export interface PhysiotherapyAssessment {
 
 export interface DermatologyAssessment {
   fitzpatrickSkinType: 'Type I' | 'Type II' | 'Type III' | 'Type IV' | 'Type V' | 'Type VI';
-  lesionType: string[]; // e.g. "Erythematous Papules", "Comedones", "Plaques with Silvery Scale"
+  lesionType?: string[]; // e.g. "Erythematous Papules", "Comedones", "Plaques with Silvery Scale"
   distribution: string; // e.g. "Malar area of face", "Extensor surfaces of elbows & knees"
   inClinicProceduresPerformed?: Array<{
     procedureName: string;
@@ -307,6 +307,10 @@ export interface DermatologyAssessment {
     notes: string;
   }>;
   sunProtectionAdvice: string;
+  itchSeverityNrs?: number; // 0-10 pruritus scale
+  topicalSteroidMisuseHistory?: boolean;
+  priorTopicalsUsed?: string;
+  atopyOrContactTriggers?: string[];
 }
 
 export interface CardiologyAssessment {
@@ -318,15 +322,29 @@ export interface CardiologyAssessment {
   dailySodiumLimitGrams: number;
   dailyFluidLimitMl?: number;
   cardiacRehabGuidance?: string[];
+  chestPainPattern?: 'None' | 'Typical Angina' | 'Atypical Chest Pain' | 'Non-Cardiac' | 'Dyspnea Equivalent';
+  cadRiskFactors?: string[];
+  pastCardiacInterventions?: string;
+  antithromboticRegimen?: string;
 }
 
 export interface PediatricAssessment {
+  childWeightKg?: number;
+  childHeightCm?: number;
+  headCircumferenceCm?: number;
+  muacCm?: number;
   weightPercentileForAge?: string;
   heightPercentileForAge?: string;
   developmentalMilestones: 'Age Appropriate' | 'Mild Delay' | 'Needs Evaluation';
   immunizationsDue?: string[];
   feedingAdvice?: string;
   calculatedDosageBasis?: string; // e.g. "Paracetamol 15 mg/kg = 180 mg per dose"
+  informant?: 'Mother' | 'Father' | 'Both Parents' | 'Grandparent / Caregiver';
+  birthMode?: 'Term NVD' | 'Term LSCS' | 'Preterm (<37w) NVD' | 'Preterm (<37w) LSCS' | 'Instrumental';
+  birthWeightKg?: number;
+  neonatalHistory?: string;
+  feedingPattern?: 'Exclusive Breastfeeding (0-6m)' | 'Breastfeeding + Complementary (IYCF)' | 'Formula / Mixed Feeding' | 'Family Pot Balanced Diet' | 'Picky / Inadequate Intake';
+  imnciDangerSigns?: string[];
 }
 
 export interface OrthopedicAssessment {
@@ -335,6 +353,10 @@ export interface OrthopedicAssessment {
   splintOrBraceApplied?: string;
   xrayFindingsSummary?: string;
   inClinicInfiltration?: string;
+  mechanismOfOnset?: 'Degenerative / Age-related' | 'Fall at Home' | 'Road Traffic Accident (RTA)' | 'Sports / Gym Injury' | 'Postural / Ergonomic';
+  painCharacter?: 'Mechanical (Activity-related)' | 'Inflammatory (Morning Stiffness >30m)' | 'Radicular / Neuropathic' | 'Rest / Night Pain';
+  distalNeurovascularStatus?: string;
+  indianAdlSquatCrossLeg?: 'Unrestricted' | 'Painful Squatting / Indian Toilet' | 'Unable to Squat / Sit Cross-Legged';
 }
 
 export interface OphthalmologyAssessment {
@@ -361,28 +383,99 @@ export interface DentalToothCondition {
 export interface DentalAssessment {
   teethStatus: Record<number, DentalToothCondition>;
   periodontalStatus: 'Healthy' | 'Gingivitis' | 'Moderate Periodontitis' | 'Severe Bone Loss';
-  plaqueCalculusIndex: 'Low' | 'Moderate' | 'Heavy';
+  plaqueCalculusIndex?: 'Low' | 'Moderate' | 'Heavy';
   plannedProcedures: Array<{
     toothNumber?: number;
     procedure: string;
     estimatedCost: number;
     status: 'Planned' | 'In Progress' | 'Completed';
   }>;
+  oralTobaccoHabit?: 'None' | 'Gutkha / Khaini / Pan Masala' | 'Betel Quid (Paan)' | 'Smoking' | 'Combined';
+  mouthOpeningMm?: number;
+  medicalDentalPrecautions?: string[];
 }
 
 export interface GynecologyAssessment {
+  clinicalMode?: 'Antenatal / Obstetric' | 'Gynaecology & Menstrual' | 'Fertility & PCOS' | 'Postnatal / Menopause';
   lmpDate: string;
   calculatedEdd: string;
+  correctedUsgEdd?: string;
   gestationalAgeWeeks: number;
   gestationalAgeDays: number;
   trimester: '1st Trimester' | '2nd Trimester' | '3rd Trimester' | 'Postpartum';
   gravidaPara: { g: number; p: number; l: number; a: number };
+  ectopicCount?: number;
+  previousDeliveryMode?: 'Nulliparous' | 'NVD (Normal Vaginal)' | 'Previous 1 LSCS' | 'Previous >=2 LSCS' | 'Instrumental (Vacuum/Forceps)';
+  lastChildBirthYear?: string;
   fundalHeightCm?: number;
   fetalHeartRateBpm?: number;
-  presentation?: 'Cephalic / Vertex' | 'Breech' | 'Transverse' | 'Unstable';
+  presentation?: 'Cephalic / Vertex' | 'Breech' | 'Transverse' | 'Unstable' | 'Not Applicable (Early / Non-ANC)';
+  liquorAdequacy?: 'Adequate' | 'Borderline (AFI 5-8)' | 'Oligohydramnios (AFI <5)' | 'Polyhydramnios';
   quickeningPresent?: boolean;
+  pedalEdema?: 'Absent' | 'Mild (+)' | 'Moderate (++)' | 'Generalized / Facial';
+  urineAlbuminSugar?: string;
+  maternalHemoglobinGdl?: number;
+  maternalBloodGroupRh?: string;
+  tshMiuL?: number;
+  dipsiOgtt2HrMgDl?: number;
+  tdVaccineStatus?: 'Not Started' | 'Td-1 Given' | 'Td-2 / Booster Complete' | 'Tdap Given (27-36w)';
+  ifaCalciumStarted?: boolean;
+  pcpndtFormFLogged?: boolean;
   highRiskFactors?: string[];
   antenatalChecklist?: Array<{ item: string; completed: boolean; dueDate?: string }>;
+  // Gynaecology, Menstrual, PCOS & Preventive Screening
+  menarcheAge?: number;
+  cycleRegularity?: 'Regular (26-32d)' | 'Oligomenorrhea (>35d)' | 'Polymenorrhea (<21d)' | 'Irregular / AUB' | 'Amenorrhea' | 'Postmenopausal';
+  cycleIntervalDays?: number;
+  flowDurationDays?: number;
+  menstrualFlowVolume?: 'Moderate / Normal' | 'Heavy (Menorrhagia / Clots)' | 'Scanty (Hypomenorrhea)' | 'Spotting';
+  dysmenorrheaSeverity?: 'None' | 'Mild' | 'Moderate' | 'Severe (Secondary)';
+  intermenstrualOrPostcoitalBleeding?: 'None' | 'Intermenstrual (IMB)' | 'Postcoital (PCB)' | 'Both';
+  contraceptionMethod?: 'None' | 'Barrier' | 'Cu-IUCD (380A / 375)' | 'LNG-IUS (Mirena)' | 'COCPs' | 'Chhaya (Centchroman)' | 'Antara (Inj. MPA)' | 'Tubal Ligation';
+  maritalObstetricNotes?: string;
+  pcosPhenotypeFlags?: string[];
+  cervicalScreeningPapVia?: string;
+  hpvVaccineStatus?: 'Unvaccinated' | 'Dose 1 Given' | 'Completed (Cervavac / Gardasil)';
+  breastExamSummary?: string;
+  pelvicSpeculumSummary?: string;
+  pelvicUsgSummary?: string;
+  chaperonePresent?: boolean;
+}
+
+export interface EntAssessment {
+  primarySite: 'Ear / Otology' | 'Nose & PNS' | 'Throat & Larynx' | 'Head, Neck & Vertigo';
+  otoscopyRight: string;
+  otoscopyLeft: string;
+  tuningForkRinneWeber?: string;
+  anteriorRhinoscopyDns?: string;
+  oropharynxTonsilGrade?: 'Grade I' | 'Grade II' | 'Grade III' | 'Grade IV' | 'Post-Tonsillectomy';
+  oralMucosaSubmucousCheck?: string;
+  audiometryOrEndoscopyNotes?: string;
+  vertigoDixHallpike?: string;
+}
+
+export interface NeurologyAssessment {
+  symptomCategory: 'Headache / Migraine' | 'Seizure / Epilepsy' | 'Stroke / TIA' | 'Neuropathy / Spine' | 'Movement / Memory';
+  onsetCourse: 'Hyperacute (<6h)' | 'Acute (Days)' | 'Subacute (Weeks)' | 'Chronic / Episodic';
+  higherMentalAndSpeech?: string;
+  cranialNervesSummary?: string;
+  motorSensorySummary?: string;
+  gaitAndCerebellar?: string;
+  episodeFrequencyTriggers?: string;
+  neuroimagingEegSummary?: string;
+}
+
+export interface SpecialtyHistoryData {
+  specialty: PolyclinicSpecialty | string;
+  symptomDuration?: string;
+  onsetPattern?: string;
+  selectedSymptoms?: string[];
+  comorbidities?: string[];
+  personalSocialHabits?: string[];
+  medicationComplianceOtc?: string[];
+  indiaClinicalFlags?: string[];
+  familyAndConsanguinityHistory?: string;
+  menstrualOrDevelopmentalNotes?: string;
 }
 
 export interface LabResultParam {
@@ -491,6 +584,9 @@ export interface SoapNote {
   ophthalmologyAssessment?: OphthalmologyAssessment;
   dentalAssessment?: DentalAssessment;
   gynecologyAssessment?: GynecologyAssessment;
+  entAssessment?: EntAssessment;
+  neurologyAssessment?: NeurologyAssessment;
+  specialtyHistory?: SpecialtyHistoryData;
   transcriptSummary?: string;
   ambientRecordingDurationSec?: number;
 }
@@ -556,6 +652,9 @@ export interface Prescription {
   ophthalmologyAssessment?: OphthalmologyAssessment;
   dentalAssessment?: DentalAssessment;
   gynecologyAssessment?: GynecologyAssessment;
+  entAssessment?: EntAssessment;
+  neurologyAssessment?: NeurologyAssessment;
+  specialtyHistory?: SpecialtyHistoryData;
 }
 
 export interface Appointment {

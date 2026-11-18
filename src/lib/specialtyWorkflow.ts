@@ -144,9 +144,11 @@ const PACKS: Record<string, SpecialtyWorkflowPack> = {
   cardiology: medicalPack("Cardiology", [
     { key: "chestPain", label: "Chest pain / dyspnoea", placeholder: "Onset, character, at rest or exertion" },
     { key: "nyhaHint", label: "Functional class hint", type: "select", options: ["Unknown", "I", "II", "III", "IV"] },
+    { key: "priorCardiac", label: "Prior PTCA / CABG / DAPT", placeholder: "e.g. LAD stent 2024 on Ecosprin + Clopidogrel" },
   ]),
   dermatology: medicalPack("Dermatology", [
     { key: "lesion", label: "Lesion / rash", placeholder: "Site, duration, itch, previous treatment" },
+    { key: "priorTopicals", label: "Prior OTC / steroid creams", placeholder: "e.g. None, OTC combination tube" },
   ]),
   orthopedics: medicalPack("Orthopedics", [
     { key: "joint", label: "Affected joint / limb", placeholder: "e.g. Right knee, lumbar spine" },
@@ -156,10 +158,22 @@ const PACKS: Record<string, SpecialtyWorkflowPack> = {
       type: "select",
       options: ["Full", "Partial", "Non-weight bearing", "Unknown"],
     },
+    {
+      key: "traumaMechanism",
+      label: "Mechanism / ADL",
+      type: "select",
+      options: ["Degenerative / Gradual", "Fall / Slip", "RTA", "Sports", "Squatting painful"],
+    },
   ]),
   pediatrics: medicalPack("Pediatrics", [
     { key: "weightKg", label: "Weight (kg)", type: "number", placeholder: "Used for dose checks" },
     { key: "immunisation", label: "Immunisation due", placeholder: "e.g. MMR, none today" },
+    {
+      key: "feedingHistory",
+      label: "Feeding / birth note",
+      type: "select",
+      options: ["Exclusive BF (0-6m)", "Complementary IYCF", "Formula / Mixed", "Family diet"],
+    },
   ]),
   veterinary: medicalPack("Veterinary", [
     { key: "species", label: "Species", type: "select", options: ["Dog", "Cat", "Other"] },
@@ -167,19 +181,26 @@ const PACKS: Record<string, SpecialtyWorkflowPack> = {
     { key: "ownerName", label: "Owner (guardian contact)", placeholder: "Person who brings the animal" },
   ]),
   gynecology: medicalPack("Gynecology", [
+    {
+      key: "gynaeVisitCategory",
+      label: "Visit category",
+      type: "select",
+      options: ["Antenatal (ANC)", "Menstrual / AUB", "PCOS / Fertility", "Postnatal / Preventive Pap"],
+    },
     { key: "lmp", label: "LMP date", placeholder: "YYYY-MM-DD if known" },
     { key: "obstetric", label: "G / P / L / A", placeholder: "e.g. G2P1L1A0" },
+    { key: "menstrualCycle", label: "Cycle / screening note", placeholder: "e.g. 4/28d regular, Hb 10.8, Pap NILM" },
   ]),
   ent: medicalPack("ENT", [
-    { key: "entSite", label: "Primary site", type: "select", options: ["Ear", "Nose", "Throat", "Neck", "Mixed"] },
-    { key: "hearing", label: "Hearing / obstruction notes", placeholder: "Laterality, duration, discharge" },
+    { key: "entSite", label: "Primary site", type: "select", options: ["Ear", "Nose", "Throat", "Neck", "Vertigo", "Mixed"] },
+    { key: "hearing", label: "Hearing / obstruction notes", placeholder: "Laterality, duration, discharge, OSMF check" },
   ]),
   neurology: medicalPack("Neurology", [
-    { key: "neuroOnset", label: "Onset", placeholder: "Acute / subacute / chronic" },
+    { key: "neuroOnset", label: "Onset & semiology", placeholder: "Acute / episodic, aura, seizure/neuropathy note" },
   ]),
   ophthalmology: medicalPack("Ophthalmology", [
     { key: "eye", label: "Affected eye", type: "select", options: ["OD", "OS", "OU", "Unknown"] },
-    { key: "vision", label: "Vision complaint", placeholder: "Blur, pain, redness, flashes" },
+    { key: "vision", label: "Vision & systemic DR/HTN note", placeholder: "Blur, glare, diabetes duration, spectacles" },
   ]),
   "dental surgery": {
     id: "dental",

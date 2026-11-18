@@ -298,6 +298,70 @@ export const DentalSurgeryRxModule: React.FC<DentalSurgeryRxModuleProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Indian Oral Tobacco / OSMF Mouth Opening & Systemic Dental Precautions */}
+      <div className="bg-white rounded-lg border border-amber-200/80 p-3.5 grid grid-cols-1 md:grid-cols-3 gap-3 text-xs shadow-xs">
+        <div>
+          <label className="text-[10px] font-bold text-slate-500 uppercase block">
+            Oral Tobacco / Areca Nut Habit (OSMF Screen)
+          </label>
+          <select
+            value={assessment.oralTobaccoHabit || 'None'}
+            onChange={(e) => onChange({ ...assessment, oralTobaccoHabit: e.target.value as any })}
+            className="w-full mt-1 p-1.5 rounded border bg-slate-50 border-slate-200 font-semibold"
+          >
+            <option value="None">None</option>
+            <option value="Gutkha / Khaini / Pan Masala">Gutkha / Khaini / Pan Masala</option>
+            <option value="Betel Quid (Paan)">Betel Quid (Paan / Supari)</option>
+            <option value="Smoking">Cigarette / Bidi Smoking</option>
+            <option value="Combined">Combined Smokeless + Smoking</option>
+          </select>
+        </div>
+
+        <div>
+          <label className="text-[10px] font-bold text-slate-500 uppercase block">
+            Inter-Incisal Mouth Opening (mm; Normal &gt;35)
+          </label>
+          <input
+            type="number"
+            min={5}
+            max={65}
+            placeholder="42"
+            value={assessment.mouthOpeningMm ?? 42}
+            onChange={(e) => onChange({ ...assessment, mouthOpeningMm: Number(e.target.value) || undefined })}
+            className="w-full mt-1 p-1.5 rounded border bg-slate-50 border-slate-200 font-bold"
+          />
+        </div>
+
+        <div>
+          <label className="text-[10px] font-bold text-slate-500 uppercase block">
+            Pre-Procedure Medical Alerts
+          </label>
+          <div className="flex flex-wrap gap-1 mt-1">
+            {['None', 'Antiplatelets', 'Diabetes', 'Hypertension', 'Pregnancy'].map((flag) => {
+              const selected = (assessment.medicalDentalPrecautions || []).includes(flag);
+              return (
+                <button
+                  key={flag}
+                  type="button"
+                  onClick={() => {
+                    const cur = assessment.medicalDentalPrecautions || [];
+                    const next = cur.includes(flag) ? cur.filter((x) => x !== flag) : [...cur, flag];
+                    onChange({ ...assessment, medicalDentalPrecautions: next });
+                  }}
+                  className={`px-2 py-0.5 rounded text-[10px] font-semibold border ${
+                    selected
+                      ? 'bg-amber-100 text-amber-900 border-amber-300'
+                      : 'bg-slate-50 text-slate-600 border-slate-200'
+                  }`}
+                >
+                  {selected ? '✓ ' : ''}{flag}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
     </div>
   );
 };

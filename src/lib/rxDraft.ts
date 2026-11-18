@@ -2,9 +2,11 @@ import type {
   CardiologyAssessment,
   DentalAssessment,
   DermatologyAssessment,
+  EntAssessment,
   GynecologyAssessment,
   MedicineItem,
   LabTestItem,
+  NeurologyAssessment,
   OphthalmologyAssessment,
   OrthopedicAssessment,
   PediatricAssessment,
@@ -13,6 +15,7 @@ import type {
   PolyclinicSpecialty,
   PrescribedExercise,
   SoapNote,
+  SpecialtyHistoryData,
   Vitals,
 } from "../types.ts";
 
@@ -54,6 +57,9 @@ export interface RxClinicalFields {
   ophthalmologyAssessment?: OphthalmologyAssessment;
   dentalAssessment?: DentalAssessment;
   gynecologyAssessment?: GynecologyAssessment;
+  entAssessment?: EntAssessment;
+  neurologyAssessment?: NeurologyAssessment;
+  specialtyHistory?: SpecialtyHistoryData;
   aiSource?: string;
   aiGeneratedAt?: string;
   transcriptHash?: string;
@@ -93,6 +99,9 @@ export const SOAP_RX_FIELD_NAMES = [
   "ophthalmologyAssessment",
   "dentalAssessment",
   "gynecologyAssessment",
+  "entAssessment",
+  "neurologyAssessment",
+  "specialtyHistory",
 ] as const;
 
 export type SoapRxFieldName = (typeof SOAP_RX_FIELD_NAMES)[number];
@@ -269,6 +278,9 @@ export function mapSoapToRxDraft(soap: SoapNote, meta: SoapApplyMeta): RxClinica
     ophthalmologyAssessment: soap.ophthalmologyAssessment,
     dentalAssessment: soap.dentalAssessment,
     gynecologyAssessment: soap.gynecologyAssessment,
+    entAssessment: soap.entAssessment,
+    neurologyAssessment: soap.neurologyAssessment,
+    specialtyHistory: soap.specialtyHistory,
     aiSource: meta.source,
     aiGeneratedAt: meta.generatedAt,
     transcriptHash: meta.transcriptHash || undefined,
@@ -366,6 +378,9 @@ export function restoreRxDraft(raw: unknown): RxClinicalFields | null {
     ophthalmologyAssessment: source.ophthalmologyAssessment as OphthalmologyAssessment | undefined,
     dentalAssessment: source.dentalAssessment as DentalAssessment | undefined,
     gynecologyAssessment: source.gynecologyAssessment as GynecologyAssessment | undefined,
+    entAssessment: source.entAssessment as EntAssessment | undefined,
+    neurologyAssessment: source.neurologyAssessment as NeurologyAssessment | undefined,
+    specialtyHistory: source.specialtyHistory as SpecialtyHistoryData | undefined,
     aiSource: asString(source.aiSource) || undefined,
     aiGeneratedAt: asString(source.aiGeneratedAt) || undefined,
     transcriptHash: asString(source.transcriptHash) || undefined,

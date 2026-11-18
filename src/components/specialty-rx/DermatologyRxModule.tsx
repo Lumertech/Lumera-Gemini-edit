@@ -97,6 +97,65 @@ export const DermatologyRxModule: React.FC<DermatologyRxModuleProps> = ({
               placeholder="e.g. Centromial facial distribution, cheeks and forehead with inflammatory papules"
               className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs focus:ring-1 focus:ring-purple-500"
             />
+            <div className="flex flex-wrap gap-1 mt-2">
+              {['Papules', 'Comedones', 'Annular Plaques', 'Scaling', 'Hyperpigmentation', 'Vesicles', 'Wheals', 'Alopecia'].map((morph) => {
+                const selected = (assessment.lesionType || []).includes(morph);
+                return (
+                  <button
+                    key={morph}
+                    type="button"
+                    onClick={() => {
+                      const cur = assessment.lesionType || [];
+                      const next = cur.includes(morph) ? cur.filter((m) => m !== morph) : [...cur, morph];
+                      onUpdateAssessment({ ...assessment, lesionType: next });
+                    }}
+                    className={`px-2 py-0.5 rounded text-[10px] font-semibold border ${
+                      selected
+                        ? 'bg-purple-100 text-purple-900 border-purple-300'
+                        : 'bg-slate-50 text-slate-600 border-slate-200'
+                    }`}
+                  >
+                    {selected ? '✓ ' : ''}{morph}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* India Dermatology Screen: Itch NRS + OTC Topical Steroid Misuse Check */}
+        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+          <div>
+            <label className="text-[10px] font-bold text-slate-500 uppercase block">Pruritus / Itch NRS (0–10)</label>
+            <input
+              type="number"
+              min={0}
+              max={10}
+              value={assessment.itchSeverityNrs ?? 4}
+              onChange={(e) => onUpdateAssessment({ ...assessment, itchSeverityNrs: Math.min(10, Math.max(0, Number(e.target.value))) })}
+              className="w-full mt-1 px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-md font-bold"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] font-bold text-slate-500 uppercase block">Prior Topicals / OTC Creams Used</label>
+            <input
+              type="text"
+              value={assessment.priorTopicalsUsed || ''}
+              onChange={(e) => onUpdateAssessment({ ...assessment, priorTopicalsUsed: e.target.value })}
+              placeholder="e.g. None / OTC Clobetasol-Gentamicin-Miconazole tube"
+              className="w-full mt-1 px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-md"
+            />
+          </div>
+          <div className="flex items-end">
+            <label className="flex items-center gap-2 p-2 rounded-lg border border-amber-200 bg-amber-50/70 text-amber-950 font-semibold cursor-pointer w-full">
+              <input
+                type="checkbox"
+                checked={Boolean(assessment.topicalSteroidMisuseHistory)}
+                onChange={(e) => onUpdateAssessment({ ...assessment, topicalSteroidMisuseHistory: e.target.checked })}
+                className="rounded text-amber-600 h-3.5 w-3.5"
+              />
+              <span>OTC Steroid Cream Misuse (TSDF / Tinea Incognito)</span>
+            </label>
           </div>
         </div>
 

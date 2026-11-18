@@ -55,6 +55,9 @@ import {
   OphthalmologyAssessment,
   DentalAssessment,
   GynecologyAssessment,
+  EntAssessment,
+  NeurologyAssessment,
+  SpecialtyHistoryData,
   isAbhaLinked,
   Appointment
 } from '../types';
@@ -77,6 +80,9 @@ import { OrthopedicsRxModule } from './specialty-rx/OrthopedicsRxModule';
 import { OphthalmologyRxModule } from './specialty-rx/OphthalmologyRxModule';
 import { DentalSurgeryRxModule } from './specialty-rx/DentalSurgeryRxModule';
 import { GynecologyRxModule } from './specialty-rx/GynecologyRxModule';
+import { EntRxModule } from './specialty-rx/EntRxModule';
+import { NeurologyRxModule } from './specialty-rx/NeurologyRxModule';
+import { SpecialtyHistoryPanel } from './specialty-rx/SpecialtyHistoryPanel';
 import { PhysioProgressTracker } from './specialty-rx/PhysioProgressTracker';
 import { CompactAmbientScribe, AmbientScribeStatus, CompactAmbientScribeHandle } from './CompactAmbientScribe';
 import { FollowUpSlotPicker, ReservedFollowUp } from './FollowUpSlotPicker';
@@ -303,26 +309,65 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
 
   const [gynecologyAssessment, setGynecologyAssessment] = useState<GynecologyAssessment>(
     formSeed.gynecologyAssessment || {
-    lmpDate: '2026-03-17',
-    calculatedEdd: '2026-12-22',
-    gestationalAgeWeeks: 24,
-    gestationalAgeDays: 0,
-    gravidaPara: { g: 1, p: 0, l: 0, a: 0 },
+    clinicalMode: 'Antenatal / Obstetric',
+    lmpDate: '2026-06-05',
+    calculatedEdd: '2027-03-12',
+    gestationalAgeWeeks: 23,
+    gestationalAgeDays: 5,
+    gravidaPara: { g: 2, p: 1, l: 1, a: 0 },
+    ectopicCount: 0,
+    previousDeliveryMode: 'NVD (Normal Vaginal)',
     trimester: '2nd Trimester',
     fetalHeartRateBpm: 144,
     fundalHeightCm: 24,
     presentation: 'Cephalic / Vertex',
+    liquorAdequacy: 'Adequate',
+    pedalEdema: 'Absent',
+    urineAlbuminSugar: 'Nil / Nil',
+    maternalHemoglobinGdl: 11.4,
+    maternalBloodGroupRh: currentPatient.bloodGroup || 'B+',
+    tshMiuL: 2.1,
+    dipsiOgtt2HrMgDl: 118,
+    tdVaccineStatus: 'Td-1 Given',
+    ifaCalciumStarted: true,
+    pcpndtFormFLogged: true,
     quickeningPresent: true,
     highRiskFactors: [],
     antenatalChecklist: [
-      { item: 'First Trimester Dating Scan (CRL)', completed: true, dueDate: '2026-05-10' },
-      { item: 'NT / Dual Marker Screen', completed: true, dueDate: '2026-06-18' },
-      { item: 'Level II Anomaly Ultrasound (TIFFA)', completed: true, dueDate: '2026-07-24' },
-      { item: 'Oral Glucose Tolerance Test (OGTT 75g)', completed: false, dueDate: '2026-09-08' },
-      { item: 'Tdap Vaccine Dose 1', completed: true, dueDate: '2026-07-24' },
-      { item: 'Growth Scan & Color Doppler (32 Weeks)', completed: false, dueDate: '2026-10-28' }
+      { item: 'First Trimester Dating Scan (CRL)', completed: true },
+      { item: 'NT / Dual Marker Screen (11-13w)', completed: true },
+      { item: 'Level II Anomaly Ultrasound (TIFFA 18-20w)', completed: true },
+      { item: 'DIPSI 75g 2-hr Glucose Challenge (GDM Screen)', completed: true },
+      { item: 'Td-1 / Tdap Immunization', completed: true },
+      { item: 'Growth Scan & Color Doppler (32 Weeks)', completed: false }
     ]
   });
+
+  const [entAssessment, setEntAssessment] = useState<EntAssessment>(
+    formSeed.entAssessment || {
+      primarySite: 'Ear / Otology',
+      otoscopyRight: 'EAC clear, tympanic membrane intact with cone of light',
+      otoscopyLeft: 'EAC clear, tympanic membrane intact & mobile',
+      tuningForkRinneWeber: 'Rinne AC > BC bilateral; Weber central',
+      anteriorRhinoscopyDns: 'Mild DNS to left, mucosa pink, no discharge',
+      oropharynxTonsilGrade: 'Grade I',
+      oralMucosaSubmucousCheck: 'Buccal mucosa supple, mouth opening >40mm, no OSMF bands',
+    }
+  );
+
+  const [neurologyAssessment, setNeurologyAssessment] = useState<NeurologyAssessment>(
+    formSeed.neurologyAssessment || {
+      symptomCategory: 'Headache / Migraine',
+      onsetCourse: 'Chronic / Episodic',
+      cranialNervesSummary: 'GCS 15/15, pupils PERL, extraocular movements full, no facial asymmetry',
+      motorSensorySummary: 'Power 5/5 all limbs, DTRs 2+ symmetric, plantars flexor',
+      gaitAndCerebellar: 'Normal tandem gait, Romberg negative, no dysmetria',
+    }
+  );
+
+  const [specialtyHistory, setSpecialtyHistory] = useState<SpecialtyHistoryData | undefined>(
+    formSeed.specialtyHistory
+  );
 
   // Search & Drug adder state
   const [drugSearchQuery, setDrugSearchQuery] = useState('');
@@ -421,6 +466,10 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     if (preset.ophthalmologyAssessment) setOphthalmologyAssessment(preset.ophthalmologyAssessment);
     if (preset.dentalAssessment) setDentalAssessment(preset.dentalAssessment);
     if (preset.gynecologyAssessment) setGynecologyAssessment(preset.gynecologyAssessment);
+    if (preset.entAssessment) setEntAssessment(preset.entAssessment);
+    if (preset.neurologyAssessment) setNeurologyAssessment(preset.neurologyAssessment);
+    if (preset.chiefComplaints) setChiefComplaints(preset.chiefComplaints);
+    if (preset.historyOfPresentIllness) setHistoryOfPresentIllness(preset.historyOfPresentIllness);
   };
 
   // Run safety check when medicines change
@@ -621,6 +670,9 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     ophthalmologyAssessment: keepModule('ophthalmologyAssessment', activeSpecialty === 'Ophthalmology') ? ophthalmologyAssessment : undefined,
     dentalAssessment: keepModule('dentalAssessment', activeSpecialty === 'Dental Surgery') ? dentalAssessment : undefined,
     gynecologyAssessment: keepModule('gynecologyAssessment', activeSpecialty === 'Gynecology') ? gynecologyAssessment : undefined,
+    entAssessment: keepModule('entAssessment', activeSpecialty === 'ENT') ? entAssessment : undefined,
+    neurologyAssessment: keepModule('neurologyAssessment', activeSpecialty === 'Neurology') ? neurologyAssessment : undefined,
+    specialtyHistory: specialtyHistory ? { ...specialtyHistory, specialty: activeSpecialty } : undefined,
     aiSource: aiSource || undefined,
     aiGeneratedAt: aiGeneratedAt || undefined,
     transcriptHash: transcriptHashValue || undefined,
@@ -669,6 +721,9 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     ophthalmologyAssessment,
     dentalAssessment,
     gynecologyAssessment,
+    entAssessment,
+    neurologyAssessment,
+    specialtyHistory,
     activeSpecialty,
     aiSource,
     aiGeneratedAt,
@@ -781,6 +836,9 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
       setOphthalmologyAssessment(mapped.ophthalmologyAssessment || ophthalmologyAssessment);
       setDentalAssessment(mapped.dentalAssessment || dentalAssessment);
       setGynecologyAssessment(mapped.gynecologyAssessment || gynecologyAssessment);
+      setEntAssessment(mapped.entAssessment || entAssessment);
+      setNeurologyAssessment(mapped.neurologyAssessment || neurologyAssessment);
+      if (mapped.specialtyHistory) setSpecialtyHistory(mapped.specialtyHistory);
       const keys: string[] = [];
       if (mapped.physiotherapyAssessment) keys.push('physiotherapyAssessment');
       if (mapped.cardiologyAssessment) keys.push('cardiologyAssessment');
@@ -790,6 +848,8 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
       if (mapped.ophthalmologyAssessment) keys.push('ophthalmologyAssessment');
       if (mapped.dentalAssessment) keys.push('dentalAssessment');
       if (mapped.gynecologyAssessment) keys.push('gynecologyAssessment');
+      if (mapped.entAssessment) keys.push('entAssessment');
+      if (mapped.neurologyAssessment) keys.push('neurologyAssessment');
       setSavedModuleKeys(keys);
       setAiSource(mapped.aiSource || '');
       setAiGeneratedAt(mapped.aiGeneratedAt || '');
@@ -1235,10 +1295,11 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
         <PediatricsRxModule
           assessment={pediatricAssessment}
           patientAge={currentPatient.age}
-          patientWeight={currentPatient.age <= 12 ? 16 : 45}
+          patientWeight={vitals.weightKg ?? pediatricAssessment.childWeightKg ?? (currentPatient.age <= 1 ? 8.5 : currentPatient.age <= 5 ? 14 : currentPatient.age <= 12 ? 26 : 45)}
           patientId={currentPatient.id}
           canRecord
           onUpdateAssessment={(newAss) => setPediatricAssessment(newAss)}
+          onWeightChange={(wKg) => setVitals((prev) => ({ ...prev, weightKg: wKg }))}
         />
       )}
 
@@ -1273,6 +1334,46 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
           onChange={(newAss) => setGynecologyAssessment(newAss)}
         />
       )}
+
+      {activeSpecialty === 'ENT' && (
+        <EntRxModule
+          assessment={entAssessment}
+          onChange={(newAss) => setEntAssessment(newAss)}
+        />
+      )}
+
+      {activeSpecialty === 'Neurology' && (
+        <NeurologyRxModule
+          assessment={neurologyAssessment}
+          onChange={(newAss) => setNeurologyAssessment(newAss)}
+        />
+      )}
+
+      {/* STRUCTURED SPECIALTY HISTORY TAKING (e-Sushrut / DocMitra / eCW India OPD Desk) */}
+      <SpecialtyHistoryPanel
+        specialty={activeSpecialty}
+        value={specialtyHistory}
+        chiefComplaints={chiefComplaints}
+        onChange={(nextHist) => setSpecialtyHistory(nextHist)}
+        onAddComplaint={(comp) => {
+          touchAiField('chiefComplaints');
+          setChiefComplaints((prev) => (prev.includes(comp) ? prev : [...prev, comp]));
+        }}
+        onSyncToSoap={({ hpiText, pmhText, rosText }) => {
+          if (hpiText) {
+            touchAiField('historyOfPresentIllness');
+            setHistoryOfPresentIllness((prev) => (prev.trim() ? `${prev.trim()}\n${hpiText}` : hpiText));
+          }
+          if (pmhText) {
+            touchAiField('pastMedicalHistory');
+            setPastMedicalHistory((prev) => (prev.trim() ? `${prev.trim()}\n${pmhText}` : pmhText));
+          }
+          if (rosText && !reviewOfSystems.trim()) {
+            touchAiField('reviewOfSystems');
+            setReviewOfSystems(rosText);
+          }
+        }}
+      />
 
       {/* MAIN PRESCRIPTION LETTERHEAD & CLINICAL FORM */}
       <div data-rx-document="" className="bg-white rounded-xl border border-slate-200 p-4 sm:p-6 shadow-xs space-y-5 print:border-none print:shadow-none print:p-0 min-w-0">
@@ -1513,16 +1614,23 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
 
         <div
           data-rx-has-content={
-            [vitals.bloodPressureSystolic, vitals.bloodPressureDiastolic, vitals.heartRate, vitals.spO2, vitals.temperature].some(
-              (value) => typeof value === "number" && Number.isFinite(value)
-            )
+            [
+              vitals.bloodPressureSystolic,
+              vitals.bloodPressureDiastolic,
+              vitals.heartRate,
+              vitals.spO2,
+              vitals.temperature,
+              vitals.weightKg,
+              vitals.heightCm,
+              vitals.bloodSugarRandom,
+            ].some((value) => typeof value === "number" && Number.isFinite(value))
               ? "true"
               : "false"
           }
           className={`space-y-2 min-w-0 ${aiFieldClass(pendingAiFields, 'vitals')}`}
         >
-          <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Vitals</span>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2" data-rx-section-group="">
+          <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Vitals &amp; Anthropometry</span>
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2" data-rx-section-group="">
             <label data-rx-has-content={typeof vitals.bloodPressureSystolic === "number" ? "true" : "false"} className="text-[10px] text-slate-500 font-bold block min-w-0">
               BP systolic
               <input
@@ -1560,7 +1668,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
               />
             </label>
             <label data-rx-has-content={typeof vitals.spO2 === "number" ? "true" : "false"} className="text-[10px] text-slate-500 font-bold block min-w-0">
-              SpO2
+              SpO2 (%)
               <input
                 type="number"
                 value={vitals.spO2 ?? ''}
@@ -1575,10 +1683,55 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
               Temp (F)
               <input
                 type="number"
+                step="0.1"
                 value={vitals.temperature ?? ''}
                 onChange={(e) => {
                   touchAiField('vitals');
                   setVitals({ ...vitals, temperature: e.target.value === '' ? undefined : Number(e.target.value) });
+                }}
+                className="mt-1 w-full min-w-0 text-xs border border-slate-200 rounded px-2 py-1"
+              />
+            </label>
+            <label data-rx-has-content={typeof vitals.weightKg === "number" ? "true" : "false"} className="text-[10px] text-slate-500 font-bold block min-w-0">
+              Weight (kg)
+              <input
+                type="number"
+                step="0.1"
+                value={vitals.weightKg ?? ''}
+                onChange={(e) => {
+                  touchAiField('vitals');
+                  const weightKg = e.target.value === '' ? undefined : Number(e.target.value);
+                  const hM = vitals.heightCm ? vitals.heightCm / 100 : 0;
+                  const bmi = weightKg && hM > 0 ? Number((weightKg / (hM * hM)).toFixed(1)) : vitals.bmi;
+                  setVitals({ ...vitals, weightKg, bmi });
+                }}
+                className="mt-1 w-full min-w-0 text-xs border border-slate-200 rounded px-2 py-1"
+              />
+            </label>
+            <label data-rx-has-content={typeof vitals.heightCm === "number" ? "true" : "false"} className="text-[10px] text-slate-500 font-bold block min-w-0">
+              Height (cm)
+              <input
+                type="number"
+                step="0.5"
+                value={vitals.heightCm ?? ''}
+                onChange={(e) => {
+                  touchAiField('vitals');
+                  const heightCm = e.target.value === '' ? undefined : Number(e.target.value);
+                  const hM = heightCm ? heightCm / 100 : 0;
+                  const bmi = vitals.weightKg && hM > 0 ? Number((vitals.weightKg / (hM * hM)).toFixed(1)) : undefined;
+                  setVitals({ ...vitals, heightCm, bmi });
+                }}
+                className="mt-1 w-full min-w-0 text-xs border border-slate-200 rounded px-2 py-1"
+              />
+            </label>
+            <label data-rx-has-content={typeof vitals.bloodSugarRandom === "number" ? "true" : "false"} className="text-[10px] text-slate-500 font-bold block min-w-0">
+              RBS (mg/dL){vitals.bmi ? ` · BMI ${vitals.bmi}` : ''}
+              <input
+                type="number"
+                value={vitals.bloodSugarRandom ?? ''}
+                onChange={(e) => {
+                  touchAiField('vitals');
+                  setVitals({ ...vitals, bloodSugarRandom: e.target.value === '' ? undefined : Number(e.target.value) });
                 }}
                 className="mt-1 w-full min-w-0 text-xs border border-slate-200 rounded px-2 py-1"
               />

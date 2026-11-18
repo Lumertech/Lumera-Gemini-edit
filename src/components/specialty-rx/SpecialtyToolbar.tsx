@@ -9,6 +9,7 @@ import {
   Eye, 
   Smile, 
   Brain,
+  Ear,
   PawPrint,
   Zap,
   BookmarkPlus,
@@ -112,6 +113,22 @@ const SPECIALTY_CONFIGS: Array<{
     icon: Sparkles,
     color: 'text-pink-700 border-pink-500 bg-pink-50',
     badgeBg: 'bg-pink-700 text-white'
+  },
+  {
+    id: 'ENT',
+    name: 'ENT & Head-Neck',
+    shortName: 'ENT',
+    icon: Ear,
+    color: 'text-sky-700 border-sky-500 bg-sky-50',
+    badgeBg: 'bg-sky-700 text-white'
+  },
+  {
+    id: 'Neurology',
+    name: 'Neurology',
+    shortName: 'Neurology',
+    icon: Brain,
+    color: 'text-violet-700 border-violet-500 bg-violet-50',
+    badgeBg: 'bg-violet-700 text-white'
   }
 ];
 

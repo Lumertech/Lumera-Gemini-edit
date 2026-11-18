@@ -10,6 +10,8 @@ import type {
   DermatologyAssessment,
   PediatricAssessment,
   OrthopedicAssessment,
+  GynecologyAssessment,
+  EntAssessment,
   PolyclinicSpecialty,
 } from "../types";
 import { clonePresetExercises } from "./rxPresetHep.ts";
@@ -451,6 +453,8 @@ export interface SpecialtyTokenBundle {
   dermatologyAssessment?: DermatologyAssessment;
   pediatricAssessment?: PediatricAssessment;
   orthopedicAssessment?: OrthopedicAssessment;
+  gynecologyAssessment?: GynecologyAssessment;
+  entAssessment?: EntAssessment;
 }
 
 export function extractGpTokensFromTranscript(transcript: string): SpecialtyTokenBundle {
@@ -671,6 +675,127 @@ export function extractOrthoTokensFromTranscript(transcript: string): SpecialtyT
   };
 }
 
+function extractGynaeTokensFromTranscript(transcript: string): SpecialtyTokenBundle {
+  const t = transcript.toLowerCase();
+  const duration = extractDurationPhrase(transcript);
+  if (includesAny(t, ["pcos", "pcod", "delayed", "oligomenorrhea", "hirsutism", "inositol", "irregular"])) {
+    return {
+      chiefComplaints: [
+        duration ? `Irregular delayed menstrual cycles (${duration})` : "Irregular delayed menstrual cycles (>45 days)",
+        "Hyperandrogenic features (hirsutism / acne)",
+      ],
+      diagnosis: "Polycystic Ovary Syndrome (PCOS) with Insulin Resistance",
+      icd10: "E28.2",
+      medicines: [
+        {
+          id: "med-gyn-ino",
+          drugName: "Myo-Inositol + Folate",
+          composition: "Myo-inositol 2000mg + L-Methylfolate",
+          dosage: "1 Tablet",
+          form: "Tablet",
+          frequency: "1-0-1",
+          timing: "After Food",
+          durationDays: 90,
+          instructions: "Continue for 3 cycles",
+        },
+      ],
+      labs: [
+        { id: "lab-gyn-pcos", testName: "Day-2 LH, FSH, TSH, Prolactin & Pelvic USG", category: "Biochemistry" },
+      ],
+      advice: ["45 mins daily brisk walking", "Low-glycemic balanced Indian diet", "Maintain menstrual calendar"],
+      gynecologyAssessment: {
+        clinicalMode: "Fertility & PCOS",
+        lmpDate: "",
+        calculatedEdd: "",
+        gestationalAgeWeeks: 0,
+        gestationalAgeDays: 0,
+        trimester: "1st Trimester",
+        gravidaPara: { g: 0, p: 0, l: 0, a: 0 },
+        cycleRegularity: "Oligomenorrhea (>35d)",
+        pcosPhenotypeFlags: ["Oligo / Anovulation (>35d cycles)", "Clinical Hirsutism (mFG >= 8)"],
+      },
+    };
+  }
+  return {
+    chiefComplaints: ["Routine antenatal checkup — active fetal movements"],
+    diagnosis: "Supervised Antenatal Pregnancy — 2nd Trimester",
+    icd10: "Z34.8",
+    medicines: [
+      {
+        id: "med-gyn-ifa",
+        drugName: "Ferrous Ascorbate + Folic Acid (Orofer-XT)",
+        composition: "Elemental Iron 100mg + Folic Acid 1.5mg",
+        dosage: "1 Tablet",
+        form: "Tablet",
+        frequency: "1-0-0",
+        timing: "After Food",
+        durationDays: 30,
+        instructions: "Avoid milk/tea within 1 hour",
+      },
+      {
+        id: "med-gyn-cal",
+        drugName: "Calcium + Vitamin D3 (Shelcal 500)",
+        composition: "Calcium 500mg + Vitamin D3 250 IU",
+        dosage: "1 Tablet",
+        form: "Tablet",
+        frequency: "0-0-1",
+        timing: "After Food",
+        durationDays: 30,
+        instructions: "After dinner",
+      },
+    ],
+    labs: [{ id: "lab-gyn-dipsi", testName: "75g 2-hr DIPSI OGTT & CBC", category: "Biochemistry" }],
+    advice: ["Daily fetal kick count (>=10 movements in 2 hours)", "Left lateral rest", "Report bleeding, leaking PV, or reduced kicks"],
+    gynecologyAssessment: {
+      clinicalMode: "Antenatal / Obstetric",
+      lmpDate: "2026-06-02",
+      calculatedEdd: "2027-03-09",
+      gestationalAgeWeeks: 24,
+      gestationalAgeDays: 0,
+      trimester: "2nd Trimester",
+      gravidaPara: { g: 2, p: 1, l: 1, a: 0 },
+      fetalHeartRateBpm: 144,
+      fundalHeightCm: 24,
+      presentation: "Cephalic / Vertex",
+      quickeningPresent: true,
+      ifaCalciumStarted: true,
+      pcpndtFormFLogged: true,
+    },
+  };
+}
+
+function extractEntTokensFromTranscript(transcript: string): SpecialtyTokenBundle {
+  const duration = extractDurationPhrase(transcript);
+  return {
+    chiefComplaints: [
+      duration ? `Ear discharge and reduced hearing (${duration})` : "Mucopurulent ear discharge",
+    ],
+    diagnosis: "Chronic Suppurative Otitis Media (Tubotympanic)",
+    icd10: "H66.1",
+    medicines: [
+      {
+        id: "med-ent-cip",
+        drugName: "Ciprofloxacin Otic Drops 0.3%",
+        composition: "Ciprofloxacin 0.3% w/v",
+        dosage: "3 Drops",
+        form: "Drops",
+        frequency: "1-1-1",
+        timing: "After Food",
+        durationDays: 7,
+        instructions: "Instil after dry mopping; strict dry-ear care",
+      },
+    ],
+    advice: ["Keep ear dry during bath", "Avoid ear buds or oil instillation", "Pure tone audiometry review"],
+    entAssessment: {
+      primarySite: "Ear / Otology",
+      otoscopyRight: "Central tympanic membrane perforation with mucoid discharge",
+      otoscopyLeft: "Intact tympanic membrane",
+      tuningForkRinneWeber: "Rinne negative right; Weber lateralized right",
+      oropharynxTonsilGrade: "Grade I",
+    },
+  };
+}
+
 export function extractSpecialtyTokensFromTranscript(transcript: string, specialty: string): SpecialtyTokenBundle {
   const module = resolveRxModule(specialty);
   if (module === "Physiotherapy & Rehabilitation" || (isPhysioPractice(specialty) && detectPhysioRegion(transcript) !== "generic")) {
@@ -689,6 +814,8 @@ export function extractSpecialtyTokensFromTranscript(transcript: string, special
   if (module === "Dermatology") return extractDermTokensFromTranscript(transcript);
   if (module === "Pediatrics") return extractPediatricTokensFromTranscript(transcript);
   if (module === "Orthopedics") return extractOrthoTokensFromTranscript(transcript);
+  if (module === "Gynecology") return extractGynaeTokensFromTranscript(transcript);
+  if (module === "ENT") return extractEntTokensFromTranscript(transcript);
   if (module === "Dental Surgery") {
     const duration = extractDurationPhrase(transcript);
     return {
@@ -787,6 +914,8 @@ function localSoapFromBundle(
     dermatologyAssessment: bundle.dermatologyAssessment,
     pediatricAssessment: bundle.pediatricAssessment,
     orthopedicAssessment: bundle.orthopedicAssessment,
+    gynecologyAssessment: bundle.gynecologyAssessment,
+    entAssessment: bundle.entAssessment,
     transcriptSummary: bundle.chiefComplaints[0],
     ambientRecordingDurationSec: recordingSeconds,
   };
@@ -823,6 +952,8 @@ export function mergeSpecialtyIntoSoap(soap: SoapNote, transcript: string, speci
     dermatologyAssessment: soap.dermatologyAssessment || bundle.dermatologyAssessment,
     pediatricAssessment: soap.pediatricAssessment || bundle.pediatricAssessment,
     orthopedicAssessment: soap.orthopedicAssessment || bundle.orthopedicAssessment,
+    gynecologyAssessment: soap.gynecologyAssessment || bundle.gynecologyAssessment,
+    entAssessment: soap.entAssessment || bundle.entAssessment,
     physiotherapyAssessment: soap.physiotherapyAssessment,
     prescribedExercises: soap.prescribedExercises,
   };

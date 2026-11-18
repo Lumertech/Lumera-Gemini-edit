@@ -152,6 +152,72 @@ export const CardiologyRxModule: React.FC<CardiologyRxModuleProps> = ({
             </div>
           </div>
         </div>
+
+        {/* Indian CAD Risk Profile, Past Interventions & Antithrombotic Regimen */}
+        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs space-y-3">
+          <label className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+            <ShieldAlert className="w-4 h-4 text-rose-600" />
+            Indian Cardiovascular Risk Profile, Prior Interventions &amp; Antithrombotic Therapy
+          </label>
+          <div className="flex flex-wrap gap-1.5">
+            {[
+              'Type 2 Diabetes',
+              'Hypertension',
+              'Dyslipidemia (High Lp(a)/TG)',
+              'Tobacco / Smokeless Gutkha',
+              'Premature Family CAD (<55M/<65F)',
+              'Rheumatic Valve History (RHD)',
+              'CKD',
+            ].map((rf) => {
+              const active = (assessment.cadRiskFactors || []).includes(rf);
+              return (
+                <button
+                  key={rf}
+                  type="button"
+                  onClick={() => {
+                    const cur = assessment.cadRiskFactors || [];
+                    const next = cur.includes(rf) ? cur.filter((x) => x !== rf) : [...cur, rf];
+                    onUpdateAssessment({ ...assessment, cadRiskFactors: next });
+                  }}
+                  className={`px-2 py-0.5 rounded text-[11px] border transition-all ${
+                    active
+                      ? 'bg-rose-100 text-rose-900 border-rose-300 font-bold'
+                      : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                  }`}
+                >
+                  {active ? '✓ ' : ''}
+                  {rf}
+                </button>
+              );
+            })}
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+            <div>
+              <label className="text-[10px] font-bold text-slate-500 uppercase block">
+                Past Cardiac Events / Interventions (PTCA / CABG / Valve)
+              </label>
+              <input
+                type="text"
+                value={assessment.pastCardiacInterventions || ''}
+                onChange={(e) => onUpdateAssessment({ ...assessment, pastCardiacInterventions: e.target.value })}
+                placeholder="e.g. DES to proximal LAD (2024) / No prior ACS"
+                className="w-full mt-1 px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-md"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-slate-500 uppercase block">
+                Antiplatelet / Anticoagulation Status
+              </label>
+              <input
+                type="text"
+                value={assessment.antithromboticRegimen || ''}
+                onChange={(e) => onUpdateAssessment({ ...assessment, antithromboticRegimen: e.target.value })}
+                placeholder="e.g. DAPT (Aspirin 75mg + Clopidogrel 75mg) / Apixaban 5mg BD"
+                className="w-full mt-1 px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-md"
+              />
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );

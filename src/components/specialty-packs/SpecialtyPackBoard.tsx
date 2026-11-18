@@ -157,6 +157,46 @@ export const SpecialtyPackBoard: React.FC<Props> = ({
           </div>
         </div>
       </div>
+
+      {patients.length > 0 && (
+        <div className="bg-white border rounded-xl p-4 space-y-2.5" data-testid="specialty-pack-roster">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-bold text-slate-900">
+              Active {pack.patientsLabel} ({patients.length})
+            </h2>
+            <button
+              type="button"
+              className="text-xs font-semibold text-blue-700 hover:underline"
+              onClick={() => onSelectView("patients")}
+            >
+              View all {pack.patientsLabel.toLowerCase()}
+            </button>
+          </div>
+          <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-2">
+            {patients.slice(0, 6).map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => {
+                  onSelectPatient(p);
+                  onSelectView(pack.showMedicalRx ? "rx" : "patients");
+                }}
+                className="text-left border rounded-lg p-2.5 hover:bg-slate-50 transition-colors text-xs"
+              >
+                <div className="font-semibold text-slate-900 truncate">{p.name}</div>
+                <div className="text-slate-500 truncate">
+                  {p.age}y · {p.gender} · {p.uhid}
+                </div>
+                {(p.chronicConditions || []).length > 0 && (
+                  <div className="text-[11px] text-teal-800 mt-1 truncate">
+                    {p.chronicConditions.slice(0, 2).join(" · ")}
+                  </div>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
