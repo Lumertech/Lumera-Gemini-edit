@@ -37,9 +37,17 @@ export function escapeHtml(value: string): string {
     .replace(/'/g, "&#39;");
 }
 
-export function renderPolicyDocumentHtml(title: string, body: string, updatedAt?: string): string {
+export function renderPolicyDocumentHtml(
+  title: string,
+  body: string,
+  updatedAt?: string,
+  opts?: { routePath?: string; noindex?: boolean }
+): string {
   const safeTitle = escapeHtml(title);
   const safeBody = escapeHtml(body);
+  const routePath = opts?.routePath || "/privacy-policy";
+  const canonicalUrl = `https://www.mylumera.in${routePath}`;
+  const robots = opts?.noindex ? "noindex, nofollow" : "index, follow";
   const revision = updatedAt
     ? `<p class="meta">Last updated: ${escapeHtml(updatedAt)}</p>`
     : "";
@@ -48,14 +56,18 @@ export function renderPolicyDocumentHtml(title: string, body: string, updatedAt?
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/svg+xml" href="/lumera-logo.svg">
+  <link rel="canonical" href="${escapeHtml(canonicalUrl)}">
   <title>${safeTitle} · Lumera</title>
   <meta name="description" content="Lumera clinic software. ${POLICY_HTML_STATUS_LINE}">
-  <meta property="og:title" content="${safeTitle} · Lumera Polyclinic Suite">
+  <meta name="robots" content="${robots}">
+  <meta property="og:title" content="${safeTitle} · Lumera">
   <meta property="og:description" content="Lumera clinic software platform: secure OPD management, EMR, and WhatsApp Cloud API patient communications.">
   <meta property="og:image" content="https://www.mylumera.in/og-image.png">
-  <meta property="og:url" content="https://www.mylumera.in/privacy-policy">
+  <meta property="og:url" content="${escapeHtml(canonicalUrl)}">
   <meta property="og:type" content="website">
-  <meta property="og:site_name" content="Lumera Polyclinic">
+  <meta property="og:site_name" content="Lumera">
+  <meta name="twitter:card" content="summary_large_image">
   <style>
     body { font-family: system-ui, sans-serif; max-width: 48rem; margin: 2rem auto; padding: 0 1rem; color: #0f172a; line-height: 1.5; }
     header { border-bottom: 1px solid #e2e8f0; padding-bottom: 1rem; margin-bottom: 1.5rem; }
@@ -86,7 +98,7 @@ export function renderPolicyDocumentHtml(title: string, body: string, updatedAt?
 </html>`;
 }
 
-function sendPolicyHtml(res: Response, slug: string): void {
+function sendPolicyHtml(res: Response, slug: string, routePath: string): void {
   try {
     const row = getDb()
       .prepare("SELECT slug, title, body, updated_at FROM cms_policies WHERE slug = ?")
@@ -99,13 +111,18 @@ function sendPolicyHtml(res: Response, slug: string): void {
         .send(
           renderPolicyDocumentHtml(
             "Policy not found",
-            `This policy document is not available. ${POLICY_HTML_STATUS_LINE}`
+            `This policy document is not available. ${POLICY_HTML_STATUS_LINE}`,
+            undefined,
+            { routePath, noindex: true }
           )
         );
       return;
     }
     applyHtmlDocumentSecurityHeaders(res);
-    res.status(200).type("html").send(renderPolicyDocumentHtml(row.title, row.body, row.updated_at));
+    res
+      .status(200)
+      .type("html")
+      .send(renderPolicyDocumentHtml(row.title, row.body, row.updated_at, { routePath }));
   } catch (err) {
     reportCaughtError(err, "policy-html.send");
     applyHtmlDocumentSecurityHeaders(res);
@@ -115,7 +132,9 @@ function sendPolicyHtml(res: Response, slug: string): void {
       .send(
         renderPolicyDocumentHtml(
           "Policy temporarily unavailable",
-          `Unable to load this policy. ${POLICY_HTML_STATUS_LINE}`
+          `Unable to load this policy. ${POLICY_HTML_STATUS_LINE}`,
+          undefined,
+          { routePath, noindex: true }
         )
       );
   }
@@ -129,7 +148,7 @@ export function attachPublicPolicyHtml(app: Express): void {
   for (const route of PUBLIC_POLICY_HTML_PATHS) {
     const slug = PATH_TO_SLUG[route];
     app.get(route, (_req: Request, res: Response) => {
-      sendPolicyHtml(res, slug);
+      sendPolicyHtml(res, slug, route);
     });
   }
 }

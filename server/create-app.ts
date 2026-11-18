@@ -11,6 +11,7 @@ import { createAbdmRouter } from "./abdm.ts";
 import { attachHttpSecurity } from "./http-security.ts";
 import { attachPublicPolicyHtml } from "./policy-html.ts";
 import { attachPublicPricingHtml } from "./pricing-html.ts";
+import { attachPublicSeoRoutes } from "./seo.ts";
 import { mountGeminiClinicalRoutes } from "./gemini-clinical.ts";
 import { protectWhatsAppDashboard } from "./whatsapp-dashboard-guard.ts";
 import { createLiveRegistrationRouter } from "./live-registration-routes.ts";
@@ -64,6 +65,7 @@ export function createLumeraApp(): express.Express {
     req.url = "/data-deletion";
     createMetaRouter()(req, res, next);
   });
+  attachPublicSeoRoutes(app);
   attachPublicPolicyHtml(app);
   attachPublicPricingHtml(app);
   mountGeminiClinicalRoutes(app);

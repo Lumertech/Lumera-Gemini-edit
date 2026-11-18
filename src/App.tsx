@@ -14,6 +14,7 @@ import ClinicianApp from "./ClinicianApp";
 import PatientPortalApp from "./PatientPortalApp";
 import { OnboardingWizard } from "./pages/OnboardingWizard";
 import { needsOnboarding } from "./lib/sessionWorkspace";
+import { useDocumentSeo } from "./lib/seo";
 
 function PublicBootSplash() {
   return (
@@ -72,6 +73,7 @@ function SurfaceRoot() {
     go,
     pathname,
   } = useNav();
+  const { search } = useLocation();
   const { user, loading } = useAuth();
   const forceOnboarding = needsOnboarding(user);
   const roleHome = user ? destinationAfterAuth(user, loginNext) : "app";
@@ -82,6 +84,13 @@ function SurfaceRoot() {
     pathname,
     roleHome,
     needsOnboarding: forceOnboarding,
+  });
+
+  useDocumentSeo({
+    surface: chrome.renderSurface,
+    pathname,
+    search,
+    policySlug,
   });
 
   useEffect(() => {

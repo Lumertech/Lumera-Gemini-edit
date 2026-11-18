@@ -1,0 +1,19 @@
+{
+  "name": "Lumera — Enterprise Clinical & Practice Suite",
+  "short_name": "Lumera",
+  "description": "Lumera — Enterprise Clinical & Practice Suite with Pulse AI Ambient Scribe, Smart Rx Studio, Token Queue, Appointments, WhatsApp Bot, and Polyclinic Management.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#020617",
+  "theme_color": "#020617",
+  "lang": "en-IN",
+  "icons": [
+    {
+      "src": "/lumera-logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
+

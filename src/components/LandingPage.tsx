@@ -323,8 +323,8 @@ export const LandingPage: React.FC = () => {
 
         {/* HERO CTA BUTTON: Direct routing to single-card auth */}
         <div className="mt-8 flex flex-col items-center justify-center">
-          <a
-            href="/pricing"
+          <Link
+            to={surfaceToPath("login", { loginNext: "app", loginMode: "signin" })}
             data-testid="landing-try-free"
             data-default-practice="individual"
             className="inline-flex items-center gap-2.5 px-9 py-4 rounded-xl bg-blue-600 hover:bg-blue-500 font-manrope font-bold text-base text-white shadow-xl shadow-blue-600/30 hover:shadow-blue-600/50 hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer"
@@ -332,7 +332,7 @@ export const LandingPage: React.FC = () => {
             <Stethoscope className="w-5 h-5 text-blue-200" />
             <span>Try for free</span>
             <ArrowRight className="w-4 h-4 text-blue-200" />
-          </a>
+          </Link>
 
           <div className="mt-4 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-xs text-slate-400">
             <span className="flex items-center gap-1.5">
@@ -910,8 +910,8 @@ export const LandingPage: React.FC = () => {
             Start a {TRIAL_LENGTH_BADGE}. No card needed. ABDM integration is in sandbox testing and not yet live. We follow India's DPDP Act in how we handle data.
           </p>
           <div className="pt-2">
-            <a
-              href="/pricing"
+            <Link
+              to={surfaceToPath("login", { loginNext: "app", loginMode: "signin" })}
               data-testid="landing-try-free-banner"
               data-default-practice="individual"
               className="inline-flex items-center gap-2 px-8 py-3.5 rounded-xl bg-blue-600 hover:bg-blue-500 font-manrope font-bold text-sm text-white shadow-xl shadow-blue-600/40 hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer"
@@ -919,7 +919,7 @@ export const LandingPage: React.FC = () => {
               <Stethoscope className="w-4 h-4" />
               <span>Try for free</span>
               <ArrowRight className="w-4 h-4" />
-            </a>
+            </Link>
           </div>
         </div>
       </section>
@@ -939,39 +939,67 @@ export const LandingPage: React.FC = () => {
           </p>
 
           {/* Policy Links */}
-          <div className="flex flex-wrap justify-center gap-4 sm:gap-6 text-xs text-slate-300 font-medium pt-2 border-t border-slate-900">
+          <nav aria-label="Footer navigation" className="flex flex-wrap justify-center gap-4 sm:gap-6 text-xs text-slate-300 font-medium pt-2 border-t border-slate-900">
             <a href="/pricing" data-testid="landing-footer-pricing" className="hover:text-blue-400 transition">
               Pricing
             </a>
-            <button
-              type="button"
-              onClick={() => go("legal", { policySlug: "terms-of-service" })}
+            <a
+              href="/terms-of-service"
+              onClick={(e) => {
+                e.preventDefault();
+                go("legal", { policySlug: "terms-of-service" });
+              }}
               className="hover:text-blue-400 transition cursor-pointer"
             >
               Terms of Service
-            </button>
-            <button
-              type="button"
-              onClick={() => go("legal", { policySlug: "privacy-policy" })}
+            </a>
+            <a
+              href="/privacy-policy"
+              onClick={(e) => {
+                e.preventDefault();
+                go("legal", { policySlug: "privacy-policy" });
+              }}
               className="hover:text-blue-400 transition cursor-pointer"
             >
               Privacy Policy
-            </button>
-            <button
-              type="button"
-              onClick={() => go("legal", { policySlug: "data-deletion-instructions" })}
+            </a>
+            <a
+              href="/refund-policy"
+              className="hover:text-blue-400 transition"
+            >
+              Refund Policy
+            </a>
+            <a
+              href="/data-deletion-instructions"
+              onClick={(e) => {
+                e.preventDefault();
+                go("legal", { policySlug: "data-deletion-instructions" });
+              }}
               className="hover:text-blue-400 transition cursor-pointer"
             >
               Meta Data Deletion Callback
-            </button>
-            <button
-              type="button"
-              onClick={() => go("legal", { policySlug: "security" })}
+            </a>
+            <a
+              href="/government-data-request-policy"
+              onClick={(e) => {
+                e.preventDefault();
+                go("legal", { policySlug: "government-data-request-policy" });
+              }}
+              className="hover:text-blue-400 transition cursor-pointer"
+            >
+              Government Data Requests
+            </a>
+            <a
+              href="/security"
+              onClick={(e) => {
+                e.preventDefault();
+                go("legal", { policySlug: "security" });
+              }}
               className="hover:text-blue-400 transition cursor-pointer"
             >
               ABDM sandbox &amp; DPDP Security Statement
-            </button>
-          </div>
+            </a>
+          </nav>
 
           {/* Compliance declaration */}
           <div className="pt-2 text-[11px] text-slate-500 space-y-1">

@@ -1,0 +1,27 @@
+User-agent: *
+Allow: /
+Allow: /pricing
+Allow: /refund-policy
+Allow: /signup
+Allow: /login
+Allow: /privacy-policy
+Allow: /terms-of-service
+Allow: /data-deletion-instructions
+Allow: /government-data-request-policy
+Disallow: /api/
+Disallow: /meta/
+Disallow: /v3/
+Disallow: /uploads/
+Disallow: /app
+Disallow: /admin
+Disallow: /portal
+Disallow: /onboarding
+Disallow: /w/
+Disallow: /dashboard
+Disallow: /studio
+Disallow: /clinic
+Disallow: /data-deletion-callback
+Disallow: /healthz
+
+Sitemap: https://www.mylumera.in/sitemap.xml
+

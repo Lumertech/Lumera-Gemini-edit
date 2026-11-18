@@ -308,8 +308,18 @@ export function renderPricingDocumentHtml(plans: PublicPlans = publicPlansRespon
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/svg+xml" href="/lumera-logo.svg">
+  <link rel="canonical" href="https://www.mylumera.in/pricing">
   <title>${escapeHtml(model.title)} · Lumera</title>
   <meta name="description" content="${escapeHtml(model.description)}">
+  <meta name="robots" content="index, follow">
+  <meta property="og:title" content="${escapeHtml(model.title)} · Lumera">
+  <meta property="og:description" content="${escapeHtml(model.description)}">
+  <meta property="og:url" content="https://www.mylumera.in/pricing">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Lumera">
+  <meta property="og:image" content="https://www.mylumera.in/og-image.png">
+  <meta name="twitter:card" content="summary_large_image">
   ${FONT_LINKS}
   <style>${PRICING_CSS}</style>
 </head>
@@ -365,7 +375,18 @@ export function renderRefundPolicyHtml(): string {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/svg+xml" href="/lumera-logo.svg">
+  <link rel="canonical" href="https://www.mylumera.in/refund-policy">
   <title>Refund policy · Lumera</title>
+  <meta name="description" content="${escapeHtml(body)}">
+  <meta name="robots" content="index, follow">
+  <meta property="og:title" content="Refund policy · Lumera">
+  <meta property="og:description" content="${escapeHtml(body)}">
+  <meta property="og:url" content="https://www.mylumera.in/refund-policy">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Lumera">
+  <meta property="og:image" content="https://www.mylumera.in/og-image.png">
+  <meta name="twitter:card" content="summary_large_image">
   ${FONT_LINKS}
   <style>${PRICING_CSS}</style>
 </head>
