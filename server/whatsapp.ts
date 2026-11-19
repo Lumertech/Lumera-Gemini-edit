@@ -36,6 +36,40 @@ import { AI_RUPEE_OUTPUT_RULE } from "./india-currency-copy.ts";
 import { maxTranscribeBase64Chars } from "./json-body.ts";
 import { base64DecodedBytes, canonicalTranscribeMime, transcribeDurationTooLong } from "./transcribe-policy.ts";
 import {
+  buildLanguageSwitchConfirmation,
+  buildLocalizedFallbackReply,
+  detectWhatsAppMessageLanguage,
+  ensureFullTargetLanguageText,
+  isPureLanguageSwitchMessage,
+  localizeButtonsList,
+  localizePersonOrClinicName,
+  normalizeStoredLangCode,
+  persistConversationLanguage,
+  resolveWhatsAppConversationLanguage,
+  stripLanguageDirectiveFromQuery,
+  type WhatsAppLangCode,
+} from "./whatsapp-localization.ts";
+import {
+  renderLocalizedBookingConfirmed,
+  renderLocalizedCancelOrReschedule,
+  renderLocalizedClinicTimings,
+  renderLocalizedContact,
+  renderLocalizedDoctorMatch,
+  renderLocalizedDoctorRoster,
+  renderLocalizedEmergency,
+  renderLocalizedFees,
+  renderLocalizedFollowUp,
+  renderLocalizedGreeting,
+  renderLocalizedInsurance,
+  renderLocalizedIntakePrompt,
+  renderLocalizedIntakeSlots,
+  renderLocalizedLabReport,
+  renderLocalizedLocation,
+  renderLocalizedPrescription,
+  renderLocalizedQueueStatus,
+  renderLocalizedSpecialties,
+} from "./whatsapp-localized-replies.ts";
+import {
   clinicTenantId,
   getTenantConversation,
   listTenantConversations,
@@ -89,6 +123,7 @@ export function clinicOutboundCopy(opts: {
   patientText?: string;
   docOptions?: string;
   roster?: string;
+  preferredLanguage?: string;
 }): {
   handoverRestored: string;
   healthNotice: string;
@@ -104,7 +139,9 @@ export function clinicOutboundCopy(opts: {
   const clinic = String(opts.clinicName || "").trim() || "your clinic";
   const doctor = String(opts.doctorName || "").trim() || "your doctor";
   const patientText = String(opts.patientText || "");
-  const lang = detectLanguageSimple(patientText);
+  const lang = opts.preferredLanguage
+    ? normalizeStoredLangCode(opts.preferredLanguage)
+    : detectLanguageSimple(patientText);
   const langNames: Record<string, string> = {
     hi: "Hindi (हिन्दी)",
     bn: "Bengali (বাংলা)",
@@ -119,8 +156,12 @@ export function clinicOutboundCopy(opts: {
     ur: "Urdu (اردو)",
     en: "English",
   };
+  const marathiNote =
+    lang === "mr"
+      ? " Write strictly in natural, idiomatic Marathi (मराठी) — NOT Hindi."
+      : "";
   const langInstruction = lang !== "en" && langNames[lang]
-    ? `\nIMPORTANT: The patient is communicating in ${langNames[lang]}. Respond fluently in ${langNames[lang]} using native script with warm, reassuring, and respectful medical tone.`
+    ? `\nCRITICAL LANGUAGE REQUIREMENT: The patient wants the ENTIRE response in ${langNames[lang]}. Write 100% of the message — including every heading, bullet label, medical explanation, timing, and next-step instruction — strictly in ${langNames[lang]} using native script with warm, reassuring medical tone. Do NOT include ANY English words, English headings, or Romanized Hinglish/Marlish.${marathiNote}`
     : "";
 
   return {
@@ -512,9 +553,13 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
         }
       }
 
-      // If sent by user, detect language if non-English
+      // If sent by user, detect language if non-English and persist sticky conversation language
       if (sender === "user") {
-        detectedLanguage = detectLanguageSimple(content);
+        const resolved = resolveWhatsAppConversationLanguage(content, conv);
+        detectedLanguage = resolved.lang;
+        if (resolved.changed || !conv.preferred_language) {
+          persistConversationLanguage(db, conv, resolved.lang);
+        }
         if (detectedLanguage !== "en") {
           try {
             translatedContent = await translateWithGeminiOrFallback(content, "en", getGenAI());
@@ -591,11 +636,12 @@ export function createWhatsAppRouter(customGetGenAI?: () => GoogleGenAI | null):
         if (!botReply || !botReply.content) {
           const registered = findRegisteredPatient(db, patientPhone, sessionTenantId);
           const fName = registered?.firstName || "";
-          const greetingPrefix = fName ? `Hello ${fName}! 🙏` : `Hello! 🙏`;
-          botReply = {
-            content: `${greetingPrefix} I do not have an answer to that specific question right now, but our clinic front desk team is happy to assist you.\n\nHere is what I can help you with 24/7:\n\n• 📅 *Doctor Appointments* — check slots & instant token booking\n• ⏰ *Doctor Schedule & OPD Timings* — specialist availability\n• 💊 *Prescriptions & Refills* — view & download prescriptions\n• 🔔 *Follow-Up Status* — check your scheduled review dates\n• 🔬 *Diagnostic Reports* — lab & test results\n• 📍 *Clinic Location & Timings* — address, directions & helpline\n• 👤 *Speak with Front Desk* — connect with our clinic staff\n\nPlease let me know if you would like help with any of the above, or reply *front desk* to speak with our reception.`,
-            buttons: ["📅 Book Appointment", "⏰ Doctor Schedule", "📍 Clinic Location", "👤 Speak with Receptionist"],
-          };
+          const activeLang = normalizeStoredLangCode(conv?.preferred_language);
+          botReply = buildLocalizedFallbackReply({
+            lang: activeLang,
+            firstName: fName,
+            patientName,
+          });
         }
 
         const botMsgId = `bot-${crypto.randomUUID().slice(0, 8)}`;
@@ -1713,7 +1759,27 @@ export async function processBotActionOrQuery(
   buttons?: string[];
   media?: Record<string, unknown>;
 } | null> {
-  const q = text.toLowerCase().trim();
+  const langResolution = resolveWhatsAppConversationLanguage(text, conv);
+  const lang: WhatsAppLangCode = langResolution.lang;
+  if (langResolution.changed || (conv?.id && !conv?.preferred_language)) {
+    persistConversationLanguage(db, conv, lang);
+  }
+  const isHiOrMr = lang === "hi" || lang === "mr";
+  const effectiveText = langResolution.explicitRequest ? stripLanguageDirectiveFromQuery(text) : text;
+  const q = effectiveText.toLowerCase().trim();
+
+  const finalizeNonHiMrReply = async (reply: {
+    content: string;
+    buttons?: string[];
+    media?: Record<string, unknown>;
+  }) => {
+    if (lang === "en" || isHiOrMr) return reply;
+    return {
+      ...reply,
+      content: await ensureFullTargetLanguageText(reply.content, lang),
+    };
+  };
+
   const tenantId = resolveWhatsAppTenantId({
     tenantId: tenantHints.tenantId,
     sessionTenantId: tenantHints.sessionTenantId,
@@ -1729,7 +1795,7 @@ export async function processBotActionOrQuery(
   const convPatientName = String(conv?.patient_name || "").trim();
   const validConvName =
     convPatientName &&
-    !/^patient(\s*\(\+?\d+\))?$/i.test(convPatientName) &&
+    !/^patient(\s*\([+\d\s-]+\))?$/i.test(convPatientName) &&
     convPatientName !== "A1 Test Recipient" &&
     convPatientName !== "No Slot" &&
     !convPatientName.startsWith("Test ")
@@ -1737,7 +1803,7 @@ export async function processBotActionOrQuery(
       : "";
   const validParamName =
     patientName &&
-    !/^patient(\s*\(\+?\d+\))?$/i.test(patientName) &&
+    !/^patient(\s*\([+\d\s-]+\))?$/i.test(patientName) &&
     patientName !== "A1 Test Recipient" &&
     patientName !== "No Slot" &&
     !patientName.startsWith("Test ")
@@ -1751,6 +1817,24 @@ export async function processBotActionOrQuery(
     registered?.firstName ||
     (validConvName ? validConvName.replace(/^(dr\.?|mr\.?|ms\.?|mrs\.?)\s+/i, "").trim().split(/\s+/)[0] : "") ||
     (validParamName ? validParamName.replace(/^(dr\.?|mr\.?|ms\.?|mrs\.?)\s+/i, "").trim().split(/\s+/)[0] : "");
+
+  // 0. Explicit Language Switch Request ("Hindi", "Hindi mein baat karo", "मराठीत बोला", "Marathi", "speak English")
+  if (langResolution.explicitRequest && isPureLanguageSwitchMessage(text)) {
+    const directConfirm = buildLanguageSwitchConfirmation({
+      lang,
+      clinicName: clinicNames.clinicName,
+      firstName,
+      isRegistered,
+    });
+    if (directConfirm) return directConfirm;
+    const baseEn = buildLanguageSwitchConfirmation({
+      lang: "en",
+      clinicName: clinicNames.clinicName,
+      firstName,
+      isRegistered,
+    })!;
+    return finalizeNonHiMrReply(baseEn);
+  }
 
   // Intake state check from conversation tags
   const rawTags = (conv?.tags as string) || "[]";
@@ -1811,9 +1895,12 @@ export async function processBotActionOrQuery(
   // 1. Receptionist Intake Greeting & Introduction
   const words = q.replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(Boolean);
   const firstWord = words[0] || "";
+  const isIndicGreetingOnly =
+    /^(?:नमस्ते|नमस्कार|हॅलो|हेलो|हाय|मदत|मदद|मेनू|बॉट|🤖\s*बॉट.*?)[.!?।]*$/i.test(q);
   const isGreetingWord =
-    ["hi", "hello", "hey", "namaste", "hola", "greetings", "hii", "helo"].includes(q) ||
-    (words.length <= 4 && ["hi", "hello", "hey", "namaste", "hola", "greetings", "hii", "helo"].includes(firstWord));
+    isIndicGreetingOnly ||
+    ["hi", "hello", "hey", "namaste", "namaskar", "hola", "greetings", "hii", "helo"].includes(q) ||
+    (words.length <= 4 && ["hi", "hello", "hey", "namaste", "namaskar", "hola", "greetings", "hii", "helo"].includes(firstWord));
 
   if (
     isGreetingWord ||
@@ -1824,19 +1911,28 @@ export async function processBotActionOrQuery(
     q.includes("good morning") ||
     q.includes("good afternoon") ||
     q.includes("good evening") ||
-    q.includes("front desk")
+    q.includes("front desk") ||
+    q.includes("रिसेप्शन संपर्क")
   ) {
+    if (isHiOrMr) {
+      return renderLocalizedGreeting({
+        lang,
+        clinicName: clinicNames.clinicName,
+        isRegistered,
+        firstName,
+      });
+    }
     if (isRegistered && firstName) {
-      return {
+      return finalizeNonHiMrReply({
         content: `Hello ${firstName}! 🙏 Welcome to *${clinicNames.clinicName}*.\n\nHow may I help you today? I am your automated AI Clinic Receptionist, available 24/7 with:\n\n• 📅 *Doctor Appointments* — check slots & instant token booking\n• ⏰ *Doctor Schedule & OPD Timings* — specialist availability\n• 💊 *Prescriptions & Refills* — view & download signed Rx PDF\n• 🔔 *Follow-Up Status* — verify your next recommended review\n• 🔬 *Diagnostic Reports* — lab & test results\n• 📍 *Clinic Location & Timings* — address, directions & helpline\n\nPlease reply with what you need or tap an option below:`,
         buttons: ["📅 Book Appointment", "⏰ Doctor Schedule", "💊 My Prescription", "🔔 Follow-Up Status"],
-      };
+      });
     }
 
-    return {
+    return finalizeNonHiMrReply({
       content: `Hello! 🙏 Thank you for contacting *${clinicNames.clinicName}*, how may I help you today?\n\nI am your automated AI Clinic Receptionist, available 24/7 with:\n\n• 📅 *Doctor Appointments* — check slots & instant token booking\n• ⏰ *Doctor Schedule & OPD Timings* — specialist availability\n• 💊 *Prescriptions & Records* — view & download medical records\n• 🔔 *Follow-Up Status* — check your scheduled review dates\n• 🔬 *Diagnostic Reports* — lab & test results\n• 📍 *Clinic Location & Timings* — address, directions & helpline\n\nPlease reply with what you need or tap an option below:`,
       buttons: ["📅 Book Appointment", "⏰ Doctor Schedule", "📍 Clinic Location", "👤 Speak with Front Desk"],
-    };
+    });
   }
 
   // 1a. Clinic Location & Directions (Cognitive with Context Retention)
@@ -1852,8 +1948,25 @@ export async function processBotActionOrQuery(
     q.includes("map") ||
     q.includes("maps") ||
     q.includes("पता") ||
-    q.includes("कहाँ")
+    q.includes("कहाँ") ||
+    q.includes("कहां") ||
+    q.includes("पत्ता") ||
+    q.includes("कुठे") ||
+    /\b(patta|kuthe|kahan)\b/i.test(q)
   ) {
+    if (isHiOrMr) {
+      const lh = getTenantLetterhead(tenantId);
+      return renderLocalizedLocation({
+        lang,
+        clinicName: clinicNames.clinicName,
+        rawClinicNameForMap: clinicNames.clinicName,
+        customAddress: lh?.address || undefined,
+        customPhone: lh?.phone || undefined,
+        isRegistered,
+        firstName,
+        pendingDoctor,
+      });
+    }
     const greetingHeader = isRegistered && firstName ? `Hello ${firstName}! 🙏 ` : "";
     const doctorNote = pendingDoctor
       ? `\n\n📌 *For your visit with ${pendingDoctor}*:\nHis OPD Suite is at Room 105. Would you like me to reserve your slot now?`
@@ -1862,17 +1975,26 @@ export async function processBotActionOrQuery(
       ? [`Book ${pendingDoctor}`, "⏰ Other Slots", "📞 Call Helpline"]
       : ["📅 Book Appointment", "⏰ Doctor Schedule", "📞 Call Helpline"];
 
-    return {
+    return finalizeNonHiMrReply({
       content: `${greetingHeader}📍 *${clinicNames.clinicName} — Location & Directions*\n\n🏥 *Address*: 104-106, Health Hub, Sector 14, Opposite Metro Station, Gurgaon, Haryana 122001\n📌 *Landmark*: Next to Central Bank, Metro Pillar #42\n🚗 *Parking*: Dedicated patient parking available on-site\n🗺️ *Google Maps*: https://maps.google.com/?q=${encodeURIComponent(clinicNames.clinicName)}\n\n🕒 *OPD Working Hours*: Monday – Saturday: 09:00 AM – 08:00 PM | Sunday: 10:00 AM – 02:00 PM\n📞 *Front Desk / Helpline*: +91 99999 73271${doctorNote}`,
       buttons: actionButtons,
-    };
+    });
   }
 
   // 1b. Clinic Timings & Working Hours (Cognitive with Context Retention)
   if (
-    (q.includes("timing") || q.includes("hours") || q.includes("working hours") || q.includes("open") || q.includes("close") || q.includes("sunday") || q.includes("holiday") || q.includes("समय") || q.includes("कब खुलता")) &&
-    !q.includes("doctor") && !q.includes("dr") && !q.includes("dr.") && !q.includes("specialist")
+    (q.includes("timing") || q.includes("hours") || q.includes("working hours") || q.includes("open") || q.includes("close") || q.includes("sunday") || q.includes("holiday") || q.includes("समय") || q.includes("कब खुलता") || q.includes("कधी उघडते") || (q.includes("वेळ") && !q.includes("वेळापत्रक") && !q.includes("वेळ बदला"))) &&
+    !q.includes("doctor") && !q.includes("dr") && !q.includes("dr.") && !q.includes("specialist") && !q.includes("डॉक्टर") && !q.includes("डॉ.")
   ) {
+    if (isHiOrMr) {
+      return renderLocalizedClinicTimings({
+        lang,
+        clinicName: clinicNames.clinicName,
+        isRegistered,
+        firstName,
+        pendingDoctor,
+      });
+    }
     const greetingHeader = isRegistered && firstName ? `Hello ${firstName}! 🙏 ` : "";
     const doctorTimingsNote = pendingDoctor
       ? `\n\n👨‍⚕️ *${pendingDoctor} OPD Hours Today*:\n08:30 AM – 01:30 PM & 04:30 PM – 08:00 PM. Tap below to reserve your token:`
@@ -1881,10 +2003,10 @@ export async function processBotActionOrQuery(
       ? [`Book ${pendingDoctor}`, "⏰ All Doctor Timings", "📍 Clinic Location"]
       : ["⏰ Doctor Schedule", "📅 Book Appointment", "📍 Clinic Location"];
 
-    return {
+    return finalizeNonHiMrReply({
       content: `${greetingHeader}⏰ *${clinicNames.clinicName} — Clinic Working & OPD Hours*\n\n🗓️ *OPD Consultation Timings*:\n• *Monday to Saturday*: 09:00 AM – 08:00 PM\n• *Sunday*: 10:00 AM – 02:00 PM (Emergency & Scheduled Reviews)\n\n🔬 *Diagnostic Pathology Lab*:\n• Sample collection opens from 08:00 AM daily\n\n💊 *In-House Pharmacy*:\n• Open 08:30 AM – 08:30 PM daily${doctorTimingsNote}`,
       buttons: actionButtons,
-    };
+    });
   }
 
   // 1c. Contact & Helpline / Reception Phone
@@ -1896,13 +2018,22 @@ export async function processBotActionOrQuery(
     (q.includes("call") && !q.includes("recall")) ||
     (q.includes("number") && (q.includes("clinic") || q.includes("desk") || q.includes("help") || q.includes("contact"))) ||
     q.includes("संपर्क") ||
-    q.includes("फोन")
+    q.includes("फोन") ||
+    q.includes("हेल्पलाइन")
   ) {
+    if (isHiOrMr) {
+      return renderLocalizedContact({
+        lang,
+        clinicName: clinicNames.clinicName,
+        isRegistered,
+        firstName,
+      });
+    }
     const greetingHeader = isRegistered && firstName ? `Hello ${firstName}! 🙏 ` : "";
-    return {
+    return finalizeNonHiMrReply({
       content: `${greetingHeader}📞 *${clinicNames.clinicName} — Contact & Reception Desk*\n\n☎️ *Reception & Appointments*: +91 99999 73271\n💬 *WhatsApp Assistant*: 24/7 Automated Booking & EMR Records\n📧 *Email Support*: support@apexpolyclinic.com\n📍 *Address*: 104-106, Health Hub, Sector 14, Gurgaon\n\n🕒 *Front Desk Staff Available*: 09:00 AM – 08:00 PM (Mon–Sat)\n\nHow can our team assist you today?`,
       buttons: ["📅 Book Appointment", "⏰ Doctor Schedule", "📍 Clinic Location", "👤 Speak with Receptionist"],
-    };
+    });
   }
 
   // 1d. Consultation Fees & Charges (Cognitive with Context Retention)
@@ -1917,9 +2048,20 @@ export async function processBotActionOrQuery(
     q.includes("payment") ||
     q.includes("rate") ||
     q.includes("फीस") ||
+    q.includes("फी") ||
+    q.includes("शुल्क") ||
     q.includes("खर्च") ||
     q.includes("पैसे")
   ) {
+    if (isHiOrMr) {
+      return renderLocalizedFees({
+        lang,
+        clinicName: clinicNames.clinicName,
+        isRegistered,
+        firstName,
+        pendingDoctor,
+      });
+    }
     const greetingHeader = isRegistered && firstName ? `Hello ${firstName}! 🙏 ` : "";
     const doctorFeeNote = pendingDoctor
       ? `\n\n👨‍⚕️ *${pendingDoctor} Consultation Fee*: ₹700 (includes OPD triage and follow-up validity). Would you like to confirm your booking?`
@@ -1928,10 +2070,10 @@ export async function processBotActionOrQuery(
       ? [`Book ${pendingDoctor}`, "⏰ Other Doctors", "👤 Speak with Front Desk"]
       : ["⏰ Doctor Schedule", "📅 Book Appointment", "👤 Speak with Receptionist"];
 
-    return {
+    return finalizeNonHiMrReply({
       content: `${greetingHeader}💵 *${clinicNames.clinicName} — Consultation Fee Schedule*\n\n• *General Medicine (OPD)*: ₹500\n• *Specialist Consultation* (Physiotherapy, Pediatrics, Dermatology, Cardiology): ₹700 – ₹1,000\n• *Follow-Up Reviews*: Free or discounted within 7 days of initial consultation\n\n💳 *Payment Methods Accepted*:\n• UPI (Google Pay, PhonePe, Paytm, BHIM)\n• Credit & Debit Cards (Visa, MasterCard, RuPay)\n• Cash at Reception Desk\n• Cashless Health Insurance (selected TPAs)${doctorFeeNote}`,
       buttons: actionButtons,
-    };
+    });
   }
 
   // 1e. Insurance / Mediclaim / Cashless / TPA
@@ -1945,13 +2087,25 @@ export async function processBotActionOrQuery(
     q.includes("hdfc ergo") ||
     q.includes("icici lombard") ||
     q.includes("care health") ||
-    q.includes("बीमा")
+    q.includes("बीमा") ||
+    q.includes("विमा") ||
+    q.includes("मेडिक्लेम") ||
+    q.includes("कॅशलेस") ||
+    q.includes("कैशलेस")
   ) {
+    if (isHiOrMr) {
+      return renderLocalizedInsurance({
+        lang,
+        clinicName: clinicNames.clinicName,
+        isRegistered,
+        firstName,
+      });
+    }
     const greetingHeader = isRegistered && firstName ? `Hello ${firstName}! 🙏 ` : "";
-    return {
+    return finalizeNonHiMrReply({
       content: `${greetingHeader}🛡️ *${clinicNames.clinicName} — Insurance & Cashless Desk*\n\n• *Cashless TPA Support*: We coordinate with major health insurers and TPAs including Star Health, HDFC ERGO, ICICI Lombard, Care Health, Niva Bupa, Medi Assist, and Paramount.\n• *OPD Reimbursements*: We provide itemized GST invoices, doctor consultation receipts, and signed clinical notes for smooth claim submission.\n• *TPA Helpdesk*: Our front desk team assists with insurance paperwork from 09:00 AM – 06:00 PM (Mon–Sat).\n\nWould you like to book a consultation or speak with our insurance desk?`,
       buttons: ["📅 Book Appointment", "👤 Speak with Receptionist", "📞 Call Helpline"],
-    };
+    });
   }
 
   // 1f. Specialties & Clinical Departments / Services
@@ -1963,13 +2117,24 @@ export async function processBotActionOrQuery(
     q.includes("facilities") ||
     (q.includes("service") && !q.includes("customer service")) ||
     q.includes("सुविधा") ||
-    q.includes("इलाज")
+    q.includes("इलाज") ||
+    q.includes("विभाग") ||
+    q.includes("उपचार") ||
+    q.includes("सेवा")
   ) {
+    if (isHiOrMr) {
+      return renderLocalizedSpecialties({
+        lang,
+        clinicName: clinicNames.clinicName,
+        isRegistered,
+        firstName,
+      });
+    }
     const greetingHeader = isRegistered && firstName ? `Hello ${firstName}! 🙏 ` : "";
-    return {
+    return finalizeNonHiMrReply({
       content: `${greetingHeader}🩺 *${clinicNames.clinicName} — Clinical Specialties & Services*\n\nWe provide comprehensive outpatient and diagnostic care across key departments:\n\n• 🩺 *General & Internal Medicine* — fever, infections, diabetes, hypertension\n• 🏃 *Physiotherapy & Rehabilitation* — joint pain, spine rehabilitation, posture correction\n• 👶 *Pediatrics & Child Health* — routine immunization, newborn care, growth monitoring\n• 🧴 *Dermatology & Cosmetology* — skin allergies, acne, eczema, hair treatments\n• ❤️ *Cardiology & Preventive Heart Health* — ECG, BP screening, cardiac consultation\n• 🔬 *NABL-Accredited Diagnostic Lab* — comprehensive blood tests & pathology\n• 💊 *In-House Pharmacy* — genuine prescribed medications\n\nWhich specialty would you like to consult?`,
       buttons: ["📅 Book Appointment", "⏰ Doctor Schedule", "📍 Clinic Location"],
-    };
+    });
   }
 
   // 1g. Emergency & Urgent Guidance
@@ -1982,26 +2147,35 @@ export async function processBotActionOrQuery(
     q.includes("heart attack") ||
     q.includes("heavy bleeding") ||
     q.includes("इमरजेंसी") ||
-    q.includes("आपातकालीन")
+    q.includes("आपातकालीन") ||
+    q.includes("तातडी") ||
+    q.includes("आणीबाणी") ||
+    q.includes("रुग्णवाहिका")
   ) {
-    return {
+    if (isHiOrMr) {
+      return renderLocalizedEmergency({
+        lang,
+        clinicName: clinicNames.clinicName,
+      });
+    }
+    return finalizeNonHiMrReply({
       content: `🚨 *EMERGENCY MEDICAL NOTICE*\n\nIf you or a patient are experiencing a life-threatening medical emergency (such as severe chest pain, acute shortness of breath, sudden paralysis, uncontrolled bleeding, or loss of consciousness):\n\n🚑 *Call National Emergency Ambulance*: *108* or *112* immediately.\n🏥 *Nearest 24/7 ER*: Please proceed directly to the nearest hospital emergency department.\n\n📞 *${clinicNames.clinicName} Urgent Line*: +91 99999 73271\nOur clinic is open for outpatient appointments today. For urgent consultations, please tap below:`,
       buttons: ["📅 Book Urgent Slot", "📍 Clinic Location", "📞 Call Helpline"],
-    };
+    });
   }
 
   // 1h. Specific Doctor or Specialty Match
   const specialtySearchKeywords: { kws: string[]; specMatch: string; docHint?: string }[] = [
-    { kws: ["cardio", "heart", "ecg", "chest pain", "bp", "blood pressure", "palpitation"], specMatch: "Cardiology", docHint: "Rajesh" },
-    { kws: ["skin", "derma", "hair", "acne", "rash", "itching", "allergy", "eczema"], specMatch: "Dermatology", docHint: "Meera" },
-    { kws: ["physio", "back pain", "knee pain", "knee", "back", "joint pain", "joint", "ortho", "rehab", "sprain", "posture"], specMatch: "Physiotherapy", docHint: "Siddharth" },
-    { kws: ["pediatric", "child", "baby", "kid", "vaccin", "infant"], specMatch: "Pediatrics", docHint: "Ananya" },
-    { kws: ["general physician", "physician", "fever", "cold", "cough", "flu", "weakness", "headache", "infection", "body ache", "internal medicine"], specMatch: "General Medicine", docHint: "Vikram" },
-    { kws: ["eye", "ophthalmology", "vision", "cataract"], specMatch: "Ophthalmology", docHint: "Mukherjee" },
-    { kws: ["dental", "teeth", "tooth", "dentist", "gum"], specMatch: "Dental Surgery", docHint: "Swamy" },
+    { kws: ["cardio", "heart", "ecg", "chest pain", "bp", "blood pressure", "palpitation", "हृदय", "छाती", "दिल"], specMatch: "Cardiology", docHint: "Rajesh" },
+    { kws: ["skin", "derma", "hair", "acne", "rash", "itching", "allergy", "eczema", "त्वचा", "खाज", "खुजली", "केस", "बाल"], specMatch: "Dermatology", docHint: "Meera" },
+    { kws: ["physio", "back pain", "knee pain", "knee", "back", "joint pain", "joint", "ortho", "rehab", "sprain", "posture", "कमर दर्द", "पीठ दर्द", "घुटने", "कंबरदुखी", "गुडघेदुखी", "सांधेदुखी", "पाठीत", "कंबरेत"], specMatch: "Physiotherapy", docHint: "Siddharth" },
+    { kws: ["pediatric", "child", "baby", "kid", "vaccin", "infant", "बच्चा", "बच्चों", "शिशु", "लहान मूल", "लसीकरण", "टीकाकरण"], specMatch: "Pediatrics", docHint: "Ananya" },
+    { kws: ["general physician", "physician", "fever", "cold", "cough", "flu", "weakness", "headache", "infection", "body ache", "internal medicine", "बुखार", "खांसी", "जुकाम", "सिरदर्द", "ताप", "खोकला", "सर्दी", "डोकेदुखी", "थकवा"], specMatch: "General Medicine", docHint: "Vikram" },
+    { kws: ["eye", "ophthalmology", "vision", "cataract", "आंख", "आँख", "डोळे", "दृष्टि"], specMatch: "Ophthalmology", docHint: "Mukherjee" },
+    { kws: ["dental", "teeth", "tooth", "dentist", "gum", "दांत", "दात", "मसूड़े", "हिरड्या"], specMatch: "Dental Surgery", docHint: "Swamy" },
   ];
   const matchedSpec = specialtySearchKeywords.find(item => item.kws.some(k => q.includes(k)));
-  if (!isIntakePending && matchedSpec && !q.includes("book")) {
+  if (!isIntakePending && matchedSpec && !q.includes("book") && !q.includes("बुक") && !q.includes("अपॉइंटमेंट")) {
     let matchedDoc: Record<string, unknown> | undefined;
     try {
       if (tenantId) {
@@ -2026,11 +2200,19 @@ export async function processBotActionOrQuery(
     if (matchedDoc) {
       setContextValue("pending_doctor", String(matchedDoc.name));
       setContextValue("symptom", matchedSpec.specMatch);
+      if (isHiOrMr) {
+        return renderLocalizedDoctorMatch({
+          lang,
+          doctor: matchedDoc,
+          isRegistered,
+          firstName,
+        });
+      }
       const greetingHeader = isRegistered && firstName ? `Hello ${firstName}! ` : "";
-      return {
+      return finalizeNonHiMrReply({
         content: `${greetingHeader}👨‍⚕️ *${matchedDoc.name}* (${matchedDoc.specialty})\n\n🕒 *OPD Timing*: ${matchedDoc.opd_timing || "09:00 AM - 01:00 PM"} | 🚪 Room ${matchedDoc.opd_room || "101"}\n💵 *Consultation Fee*: ${formatINR(Number(matchedDoc.consultation_fee || 0))}\n\nWould you like to book an appointment with ${matchedDoc.name}?`,
         buttons: [`Book ${matchedDoc.name}`, "⏰ Other Doctors", "📅 All Slots"],
-      };
+      });
     }
   }
 
@@ -2042,7 +2224,9 @@ export async function processBotActionOrQuery(
     q.includes("revisit") ||
     q.includes("review") ||
     q.includes("फॉलो") ||
-    q.includes("अगली")
+    q.includes("अगली") ||
+    q.includes("पुढील तपासणी") ||
+    q.includes("पुढची भेट")
   ) {
     let rxWithFollowUp: Record<string, unknown> | undefined;
     try {
@@ -2069,37 +2253,58 @@ export async function processBotActionOrQuery(
     }
 
     if (rxWithFollowUp && rxWithFollowUp.follow_up_date) {
-      return {
+      if (isHiOrMr) {
+        return renderLocalizedFollowUp({ lang, patientName, phone, rxWithFollowUp });
+      }
+      return finalizeNonHiMrReply({
         content: `📅 *Follow-Up Consultation Schedule*\n\n*Patient*: ${patientName}\n*Consultant*: ${rxWithFollowUp.doctor_name}\n*Diagnosis*: ${rxWithFollowUp.diagnosis || "Clinical Review"}\n*Recommended Follow-Up*: *${rxWithFollowUp.follow_up_date}*\n\n🔔 *Automated Reminder*: Our system sends an alert to your WhatsApp 24 hours prior to this date.\n\nWould you like to lock in your OPD appointment slot now?`,
         buttons: ["📅 Book Follow-Up Slot", "⏰ Doctor Schedule", "👤 Speak with Receptionist"],
-      };
+      });
     }
 
+    let appt: Record<string, unknown> | undefined;
     try {
-      const appt = db.prepare(`
+      appt = db.prepare(`
         SELECT * FROM appointments
         WHERE (patient_phone = ? OR patient_name = ?)
         ORDER BY date DESC LIMIT 1
       `).get(phone, patientName) as Record<string, unknown> | undefined;
 
       if (appt) {
-        return {
+        if (isHiOrMr) {
+          return renderLocalizedFollowUp({ lang, patientName, phone, lastAppt: appt });
+        }
+        return finalizeNonHiMrReply({
           content: `🔔 *Follow-Up Review*\n\nYour last recorded visit was on *${appt.date}* with *${appt.doctor_name}* (${appt.specialty}).\n\nRoutine post-treatment follow-ups are typically advised 5–7 days following your initial consultation. Would you like to schedule an appointment with ${appt.doctor_name}?`,
           buttons: [`Book ${appt.doctor_name}`, "📅 Other Doctor Slots", "👤 Speak with Receptionist"],
-        };
+        });
       }
     } catch (err) {
       reportCaughtError(err, "whatsapp.follow_up.appt");
     }
 
-    return {
+    if (isHiOrMr) {
+      return renderLocalizedFollowUp({ lang, patientName, phone });
+    }
+    return finalizeNonHiMrReply({
       content: `🔔 *Follow-Up Inquiries*\n\nNo pending follow-up date was found for your registered number (${phone}).\n\nIf you are experiencing symptoms or need a consultation, our doctors are available for OPD bookings today:`,
       buttons: ["📅 Book Doctor Appointment", "⏰ Doctor Schedule", "👤 Speak with Receptionist"],
-    };
+    });
   }
 
   // 3. Prescription Request & Refills
-  if (q.includes("prescription") || q.includes("rx") || q.includes("refill") || q.includes("medicine") || q.includes("दवा") || q.includes("औषध") || q.includes("पर्ची")) {
+  if (
+    q.includes("prescription") ||
+    q.includes("rx") ||
+    q.includes("refill") ||
+    q.includes("medicine") ||
+    q.includes("दवा") ||
+    q.includes("औषध") ||
+    q.includes("औषधपत्र") ||
+    q.includes("पर्ची") ||
+    q.includes("प्रिस्क्रिप्शन") ||
+    q.includes("रिफिल")
+  ) {
     let rx = db.prepare(`
       SELECT * FROM prescriptions
       WHERE patient_phone = ? OR patient_name = ?
@@ -2117,12 +2322,16 @@ export async function processBotActionOrQuery(
       }
     }
 
+    if (isHiOrMr) {
+      return renderLocalizedPrescription({ lang, phone, rx });
+    }
+
     if (rx) {
       const meds = JSON.parse((rx.medicines as string) || "[]");
       const medList = meds.slice(0, 4).map((m: any) => `• *${m.drugName}* (${m.dosage}) — ${m.frequency} [${m.timing}]`).join("\n");
       const followUpText = rx.follow_up_date ? `\n*Next Follow-Up*: *${rx.follow_up_date}*` : "";
 
-      return {
+      return finalizeNonHiMrReply({
         content: `💊 *Prescription Record Found (${rx.rx_number})*\n\n*Patient*: ${rx.patient_name}\n*Consultant*: ${rx.doctor_name} (${rx.doctor_specialty || "Specialist"})\n*Diagnosis*: ${rx.diagnosis}\n*Date*: ${rx.date}${followUpText}\n\n*Prescribed Medications*:\n${medList || "• See attached PDF for complete details"}\n\nTap below to view or download the digitally signed prescription PDF:`,
         buttons: ["📄 Preview Prescription", "📥 Download PDF", "💊 Request Pharmacy Refill"],
         media: {
@@ -2132,17 +2341,24 @@ export async function processBotActionOrQuery(
           size: "210 KB",
           previewData: rx,
         },
-      };
+      });
     }
 
-    return {
+    return finalizeNonHiMrReply({
       content: `💊 *Prescription Records*\n\nWe could not locate an active digitally signed prescription for your registered number (${phone}).\n\nIf you recently consulted, your doctor may still be finalizing the prescription slip, or you can speak with our front desk:`,
       buttons: ["📅 Book Doctor Appointment", "⏰ Doctor Schedule", "👤 Speak with Receptionist"],
-    };
+    });
   }
 
   // 4. Lab Reports Request
-  if (/\b(lab|labs|pathology|blood test|test report|lab report|diagnostic report|reports?)\b/i.test(q) || q.includes("जांच") || q.includes("रिपोर्ट")) {
+  if (
+    /\b(lab|labs|pathology|blood test|test report|lab report|diagnostic report|reports?)\b/i.test(q) ||
+    q.includes("जांच") ||
+    q.includes("रिपोर्ट") ||
+    q.includes("अहवाल") ||
+    q.includes("तपासणी अहवाल") ||
+    q.includes("लॅब")
+  ) {
     const labTenant = String(tenantId || "").trim();
     const lab = labTenant
       ? (db.prepare(`
@@ -2153,6 +2369,16 @@ export async function processBotActionOrQuery(
         `).get(labTenant, patientName, phone) as Record<string, unknown> | undefined)
       : undefined;
 
+    if (isHiOrMr) {
+      return renderLocalizedLabReport({
+        lang,
+        patientName,
+        phone,
+        lab,
+        labPdfUrl: lab ? authenticatedLabReportPath(String(lab.id)) : undefined,
+      });
+    }
+
     if (lab) {
       const results = JSON.parse((lab.results as string) || "[]");
       const flagged = results
@@ -2160,7 +2386,7 @@ export async function processBotActionOrQuery(
         .map((r: any) => `• *${r.param}*: ${r.value} ${r.unit} (${r.status})`)
         .join("\n");
 
-      return {
+      return finalizeNonHiMrReply({
         content: `🔬 *Verified Lab Diagnostic Report*\n\n*Panel*: ${lab.category}\n*Date*: ${lab.date}\n*Facility*: ${lab.lab_name}\n\n*Flagged Out-of-Range Parameters*:\n${flagged || "All tested parameters within normal reference ranges."}\n\n*Doctor's Interpretation*:\n"${lab.doctor_interpretation}"`,
         buttons: ["🔬 Preview Lab Sheet", "📥 Download PDF", "🩺 Consult Doctor"],
         media: {
@@ -2170,13 +2396,13 @@ export async function processBotActionOrQuery(
           size: "185 KB",
           previewData: lab,
         },
-      };
+      });
     }
 
-    return {
+    return finalizeNonHiMrReply({
       content: `🔬 *Diagnostic Reports*\n\nNo pending laboratory test reports were found for ${patientName} (${phone}).\n\nPlease check back once the lab finishes processing your sample, or contact reception:`,
       buttons: ["📅 Book Doctor Appointment", "⏰ Doctor Schedule", "👤 Speak with Receptionist"],
-    };
+    });
   }
 
   // 5. Doctor Schedule & OPD Timings
@@ -2196,7 +2422,12 @@ export async function processBotActionOrQuery(
     (q.includes("dr") && (q.includes("show") || q.includes("list") || q.includes("available"))) ||
     (q.includes("doctor") && (q.includes("show") || q.includes("list") || q.includes("available") || q.includes("who"))) ||
     q.includes("समय") ||
-    q.includes("ओपीडी")
+    q.includes("वेळापत्रक") ||
+    q.includes("ओपीडी") ||
+    q.includes("अन्य डॉक्टर") ||
+    q.includes("इतर डॉक्टर") ||
+    q.includes("सभी स्लॉट") ||
+    q.includes("सर्व स्लॉट्स")
   ) {
     let doctors: Record<string, unknown>[] = [];
     if (tenantId) {
@@ -2225,19 +2456,26 @@ export async function processBotActionOrQuery(
       `).all() as Record<string, unknown>[];
     }
 
+    if (isHiOrMr) {
+      return renderLocalizedDoctorRoster({
+        lang,
+        clinicName: clinicNames.clinicName,
+        doctors,
+      });
+    }
+
     const roster = doctors.map((d) => `👨‍⚕️ *${d.name}* (${d.specialty})\n  🕒 ${d.opd_timing || "09:00 AM - 01:00 PM"} | 🚪 Room ${d.opd_room || "101"}\n  💵 Fee: ${formatINR(Number(d.consultation_fee || 0))}`).join("\n\n");
 
     const rosterCopy = clinicOutboundCopy({
       ...resolveClinicFacingNames(db, tenantId),
       roster,
+      preferredLanguage: lang,
     });
-    return {
+    return finalizeNonHiMrReply({
       content: rosterCopy.roster,
       buttons: doctors.slice(0, 3).map((d) => `Book ${d.name}`),
-    };
+    });
   }
-
-
 
   const isAffirmativeBook =
     Boolean(pendingDoctor) &&
@@ -2255,12 +2493,21 @@ export async function processBotActionOrQuery(
       q === "book" ||
       q.includes("book appointment") ||
       q.includes("book now") ||
-      q.includes("lock")
+      q.includes("lock") ||
+      q === "हाँ" ||
+      q === "हां" ||
+      q === "हो" ||
+      q === "होय" ||
+      q === "नक्की" ||
+      q.includes("बुक करें") ||
+      q.includes("बुक करा") ||
+      q.includes("अपॉइंटमेंट बुक")
     );
 
   // 6. Book Doctor Appointment (specific consultant first)
   const specificBook =
     isAffirmativeBook ||
+    q.startsWith("बुक:") ||
     q.includes("book dr.") ||
     q.includes("book dr ") ||
     q.includes("dr. siddharth") ||
@@ -2269,30 +2516,73 @@ export async function processBotActionOrQuery(
     q.includes("dr. meera") ||
     q.includes("dr. rajesh") ||
     q.includes("dr. harshvardhan") ||
-    (q.includes("book") && (q.includes("slot 1") || q.includes("slot 2") || q.includes("physio") || q.includes("medicine") || q.includes("pediatric")));
+    q.includes("सिद्धार्थ") ||
+    q.includes("विक्रम") ||
+    q.includes("अनन्या") ||
+    q.includes("मीरा") ||
+    q.includes("राजेश") ||
+    q.includes("हर्षवर्धन") ||
+    ((q.includes("book") || q.includes("बुक")) && (q.includes("slot 1") || q.includes("slot 2") || q.includes("physio") || q.includes("medicine") || q.includes("pediatric") || q.includes("डॉ.")));
 
   if (specificBook) {
     clearIntakeTag();
     if (!tenantId) {
-      return {
+      if (isHiOrMr) {
+        return {
+          content:
+            lang === "hi"
+              ? "हम इस चैट को क्लिनिक कैलेंडर से जोड़ नहीं सके। कृपया अपॉइंटमेंट बुक करने के लिए रिसेप्शन से संपर्क करें।"
+              : "आम्ही या चॅटला क्लिनिकच्या वेळापत्रकाशी जोडू शकलो नाही. कृपया अपॉइंटमेंट बुक करण्यासाठी रिसेप्शनशी संपर्क साधा.",
+          buttons: localizeButtonsList(["👤 Speak with Receptionist"], lang),
+        };
+      }
+      return finalizeNonHiMrReply({
         content: "We could not match this chat to a clinic calendar. Please contact reception to book an appointment.",
         buttons: ["👤 Speak with Receptionist"],
-      };
+      });
     }
     try {
-      let doctorName = q.includes("siddharth")
+      let doctorName = q.includes("siddharth") || q.includes("सिद्धार्थ")
         ? "Siddharth"
-        : q.includes("vikram")
+        : q.includes("vikram") || q.includes("विक्रम")
           ? "Vikram"
-          : q.includes("ananya")
+          : q.includes("ananya") || q.includes("अनन्या")
             ? "Ananya"
-            : q.includes("meera")
+            : q.includes("meera") || q.includes("मीरा")
               ? "Meera"
-              : q.includes("rajesh")
+              : q.includes("rajesh") || q.includes("राजेश")
                 ? "Rajesh"
-                : q.includes("harshvardhan")
+                : q.includes("harshvardhan") || q.includes("हर्षवर्धन")
                   ? "Harshvardhan"
                   : undefined;
+
+      // Also match any custom active doctor in this tenant by English or localized Devanagari name
+      if (!doctorName) {
+        try {
+          const tenantDocs = db
+            .prepare(
+              `SELECT d.name FROM doctors d
+               JOIN users u ON u.id = d.user_id
+               WHERE u.tenant_id = ? AND d.active = 1`
+            )
+            .all(tenantId) as Array<{ name?: string }>;
+          for (const d of tenantDocs) {
+            const raw = String(d.name || "").trim();
+            if (!raw) continue;
+            const firstToken = raw.replace(/^dr\.?\s*/i, "").split(/\s+/)[0]?.toLowerCase() || "";
+            const localizedFirst = localizePersonOrClinicName(raw, lang)
+              .replace(/^डॉ\.\s*/, "")
+              .split(/\s+/)[0]
+              ?.toLowerCase() || "";
+            if ((firstToken && q.includes(firstToken)) || (localizedFirst && q.includes(localizedFirst))) {
+              doctorName = raw;
+              break;
+            }
+          }
+        } catch {
+          /* ignore */
+        }
+      }
 
       if (!doctorName && pendingDoctor) {
         const docWords = pendingDoctor.replace(/dr\.?/i, "").trim().split(/\s+/);
@@ -2309,18 +2599,34 @@ export async function processBotActionOrQuery(
       setContextValue("symptom", "");
 
       const appt = booked.appointment;
-      if (!booked.reused) {
+      if (!booked.reused && lang === "en") {
         await dispatchWhatsAppBookConfirmation({ tenantId, appointment: appt });
       }
-      return {
+      if (isHiOrMr) {
+        return renderLocalizedBookingConfirmed({
+          lang,
+          reused: booked.reused,
+          appointment: appt,
+        });
+      }
+      return finalizeNonHiMrReply({
         content: `${booked.reused ? "📌 *Existing Active Booking Found*" : "🎉 *Appointment Confirmed!*"}\n\n*Token Number*: *#${appt.tokenNumber}*\n*Doctor*: ${appt.doctorName}\n*Specialty*: ${appt.specialty}\n*Date*: ${appt.date}\n*Slot*: ${appt.timeSlot || "OPD hours"}\n*UHID*: ${appt.uhid}\n*Status*: ${appt.status}\n\nYour appointment is registered on the clinic calendar. Please arrive 10 minutes prior to your slot.`,
         buttons: ["🎫 View My Queue", "🔄 Reschedule Slot", "❌ Cancel Appointment"],
-      };
+      });
     } catch (err: unknown) {
-      return {
+      if (isHiOrMr) {
+        return {
+          content:
+            lang === "hi"
+              ? "अपॉइंटमेंट बुक करने में समस्या आई। कृपया रिसेप्शन से संपर्क करें।"
+              : "अपॉइंटमेंट बुक करताना अडचण आली. कृपया रिसेप्शनशी संपर्क साधा.",
+          buttons: localizeButtonsList(["👤 Speak with Receptionist"], lang),
+        };
+      }
+      return finalizeNonHiMrReply({
         content: err instanceof Error ? err.message : "Could not complete booking. Please contact reception.",
         buttons: ["👤 Speak with Receptionist"],
-      };
+      });
     }
   }
 
@@ -2339,26 +2645,38 @@ export async function processBotActionOrQuery(
     q.includes("cost") ||
     q.includes("charge") ||
     q.includes("insurance") ||
-    q.includes("emergency");
+    q.includes("emergency") ||
+    q.includes("पत्ता") ||
+    q.includes("पता") ||
+    q.includes("वेळापत्रक") ||
+    q.includes("औषधपत्र") ||
+    q.includes("पर्ची");
 
   if (isIntakePending && !isExcludedFromIntake) {
     clearIntakeTag();
 
-    // Extract Age if provided
+    // Extract Age if provided (supports ASCII + Devanagari digits)
+    const asciiDigitsText = text.replace(/[०-९]/g, (d) => String(d.charCodeAt(0) - 0x0966));
     let extractedAge: number | undefined;
-    const ageMatch = text.match(/\b([1-9][0-9]?)\s*(?:yrs|years?|yo|age)?\b/i) || text.match(/\bage\s*[:=-]?\s*(\d+)/i);
+    const ageMatch =
+      asciiDigitsText.match(/\b([1-9][0-9]?)\s*(?:yrs|years?|yo|age|वर्ष|वर्षे|साल)?\b/i) ||
+      asciiDigitsText.match(/(?:age|उम्र|आयु|वय)\s*[:=-]?\s*(\d+)/i);
     if (ageMatch && Number(ageMatch[1]) > 0 && Number(ageMatch[1]) < 120) {
       extractedAge = Number(ageMatch[1]);
     }
 
-    // Extract Name if provided
+    // Extract Name if provided (supports English & Devanagari names)
     let extractedName: string | undefined;
-    const nameMatch = text.match(/(?:name\s*[:=-]?\s*|i am\s+|my name is\s+)([A-Za-z\s]+?)(?:,|\.|\n|age|\d|$)/i);
+    const nameMatch = text.match(/(?:name\s*[:=-]?\s*|i am\s+|my name is\s+|मेरा नाम\s+|माझे नाव\s+|नाव\s*[:=-]?\s*|नाम\s*[:=-]?\s*)([\p{L}\p{M}\s]+?)(?:,|\.|\n|age|वय|उम्र|\d|[०-९]|है|आहे|$)/iu);
     if (nameMatch && nameMatch[1].trim().length > 1) {
       extractedName = nameMatch[1].trim();
     } else {
       const parts = text.split(/[,;\n]+/).map(p => p.trim());
-      if (parts.length >= 2 && /^[A-Za-z\s]{2,30}$/.test(parts[0]) && !["hi", "hello", "book", "appointment", "skip"].includes(parts[0].toLowerCase())) {
+      if (
+        parts.length >= 2 &&
+        /^[\p{L}\p{M}\s]{2,30}$/u.test(parts[0]) &&
+        !["hi", "hello", "book", "appointment", "skip", "स्लॉट्स देखें", "स्लॉट्स पहा", "वगळा"].includes(parts[0].toLowerCase())
+      ) {
         extractedName = parts[0];
       }
     }
@@ -2382,13 +2700,13 @@ export async function processBotActionOrQuery(
 
     // Identify Symptoms / Health Issue for specialist recommendation
     const symptomKeywords = [
-      { kws: ["back", "knee", "joint", "shoulder", "neck", "spine", "physio", "rehab", "sprain", "fracture", "ortho", "bone", "lumber", "lumbar", "pain"], doc: "Dr. Siddharth Verma", spec: "Physiotherapy & Rehabilitation" },
-      { kws: ["fever", "cold", "cough", "flu", "weakness", "vomiting", "headache", "infection", "body ache", "chills"], doc: "Dr. Vikram Malhotra", spec: "General Medicine" },
-      { kws: ["skin", "rash", "acne", "itching", "allergy", "hair", "derma", "eczema", "pimple"], doc: "Dr. Meera Vasudevan", spec: "Dermatology" },
-      { kws: ["child", "kid", "baby", "infant", "pediatric", "vaccine", "growth"], doc: "Dr. Ananya Sen", spec: "Pediatrics" },
-      { kws: ["heart", "chest", "bp", "blood pressure", "palpitation", "breath"], doc: "Dr. Rajesh Sharma", spec: "Cardiology" },
-      { kws: ["tooth", "teeth", "dental", "gum", "cavity"], doc: "Dr. Arunachalam Swamy", spec: "Dental Surgery" },
-      { kws: ["eye", "vision", "blur", "red eye"], doc: "Dr. Alok Nath Mukherjee", spec: "Ophthalmology" }
+      { kws: ["back", "knee", "joint", "shoulder", "neck", "spine", "physio", "rehab", "sprain", "fracture", "ortho", "bone", "lumber", "lumbar", "pain", "कमर", "पीठ", "घुटने", "कंबर", "गुडघे", "सांधे", "कंबरदुखी", "गुडघेदुखी", "दर्द"], doc: "Dr. Siddharth Verma", spec: "Physiotherapy & Rehabilitation" },
+      { kws: ["fever", "cold", "cough", "flu", "weakness", "vomiting", "headache", "infection", "body ache", "chills", "बुखार", "खांसी", "जुकाम", "सिरदर्द", "ताप", "खोकला", "सर्दी", "डोकेदुखी", "थकवा"], doc: "Dr. Vikram Malhotra", spec: "General Medicine" },
+      { kws: ["skin", "rash", "acne", "itching", "allergy", "hair", "derma", "eczema", "pimple", "त्वचा", "खाज", "खुजली", "मुरूम"], doc: "Dr. Meera Vasudevan", spec: "Dermatology" },
+      { kws: ["child", "kid", "baby", "infant", "pediatric", "vaccine", "growth", "बच्चा", "शिशु", "लहान मूल", "बाळ"], doc: "Dr. Ananya Sen", spec: "Pediatrics" },
+      { kws: ["heart", "chest", "bp", "blood pressure", "palpitation", "breath", "दिल", "हृदय", "छाती", "रक्तदाब"], doc: "Dr. Rajesh Sharma", spec: "Cardiology" },
+      { kws: ["tooth", "teeth", "dental", "gum", "cavity", "दांत", "दात", "हिरड्या"], doc: "Dr. Arunachalam Swamy", spec: "Dental Surgery" },
+      { kws: ["eye", "vision", "blur", "red eye", "आंख", "आँख", "डोळे"], doc: "Dr. Alok Nath Mukherjee", spec: "Ophthalmology" }
     ];
 
     let recommendedDoc = "";
@@ -2448,6 +2766,16 @@ export async function processBotActionOrQuery(
       if (matchedIssue) setContextValue("symptom", matchedIssue);
     }
 
+    if (isHiOrMr) {
+      return renderLocalizedIntakeSlots({
+        lang,
+        patientName,
+        recommendedDoc,
+        recommendedSpec,
+        doctors,
+      });
+    }
+
     const greetingName = patientName && patientName !== "Patient" ? `*${patientName}*` : "there";
     const issueAck = matchedIssue ? `for your *${matchedIssue}* concern` : "";
     const recLine = recommendedDoc
@@ -2458,68 +2786,125 @@ export async function processBotActionOrQuery(
       return `👨‍⚕️ *${d.name}* (${d.specialty})\n  🕒 ${d.opd_timing || "09:00 AM - 01:00 PM"} | 🚪 Room ${d.opd_room || "101"}\n  💵 Fee: ${formatINR(Number(d.consultation_fee || 0))}`;
     }).join("\n\n");
 
-    return {
+    return finalizeNonHiMrReply({
       content: `Thank you ${greetingName}! 🙏 We have noted your details ${issueAck}.\n\n${recLine}📅 *Available OPD Consultation Slots Today*:\n\n${slotItems}\n\nPlease tap an option below or reply *"Book Dr. <Name>"* to lock in your appointment:`,
       buttons: doctors.slice(0, 3).map((d) => `Book ${d.name}`),
-    };
+    });
   }
 
   // 6c. Generic Book inquiry — ask for Name, Age, and Issue first (conversational & optional)
-  if (q.includes("book") || q.includes("appointment") || q.includes("अपॉइंटमेंट") || q.includes("डॉक्टर") || q.includes("slot")) {
+  if (
+    q.includes("book") ||
+    q.includes("appointment") ||
+    q.includes("अपॉइंटमेंट") ||
+    q.includes("डॉक्टर") ||
+    q.includes("slot") ||
+    q.includes("तत्काल स्लॉट") ||
+    q.includes("तातडीची वेळ") ||
+    q.includes("फॉलो-अप बुक")
+  ) {
     setIntakeTag();
-    return {
+    if (isHiOrMr) {
+      return renderLocalizedIntakePrompt(lang);
+    }
+    return finalizeNonHiMrReply({
       content: `📋 *Clinic Pre-Consultation Intake*\n\nTo help our doctors allocate the best consultation slot and prepare for your visit, could you please share:\n\n1️⃣ *Patient Name*\n2️⃣ *Age*\n3️⃣ *Health issue or symptoms you are facing*\n\n_(You can reply with your details in one quick message, or tap **Skip & View Slots** below to view all available slots immediately.)_`,
       buttons: ["Skip & View Slots", "Dr. Siddharth (Physio)", "Dr. Vikram (Medicine)"],
-    };
+    });
   }
 
   // 7. Queue Status
-  if (q.includes("queue") || q.includes("token") || q.includes("wait") || q.includes("कतार") || q.includes("नंबर")) {
+  if (
+    q.includes("queue") ||
+    q.includes("token") ||
+    q.includes("wait") ||
+    q.includes("कतार") ||
+    q.includes("रांग") ||
+    q.includes("टोकन") ||
+    q.includes("नंबर") ||
+    q.includes("स्थिती तपासा")
+  ) {
     if (!tenantId) {
-      return {
+      if (isHiOrMr) {
+        return {
+          content:
+            lang === "hi"
+              ? "हम इस चैट को क्लिनिक कैलेंडर से जोड़ नहीं सके। कृपया रिसेप्शन से अपना व्हाट्सएप नंबर लिंक करवाएं।"
+              : "आम्ही या चॅटला क्लिनिकच्या वेळापत्रकाशी जोडू शकलो नाही. कृपया रिसेप्शनशी संपर्क साधा.",
+          buttons: localizeButtonsList(["📅 Book Appointment", "👤 Speak with Receptionist"], lang),
+        };
+      }
+      return finalizeNonHiMrReply({
         content: "We could not match this chat to a clinic calendar. Please ask reception to link your WhatsApp number.",
         buttons: ["📅 Book Appointment", "👤 Speak with Receptionist"],
-      };
+      });
     }
     const queue = getWhatsAppQueue({ tenantId, patientPhone: phone });
+    if (isHiOrMr) {
+      return renderLocalizedQueueStatus({
+        lang,
+        patientName,
+        appointment: queue.hasAppointment && queue.appointment ? queue.appointment : undefined,
+      });
+    }
     if (queue.hasAppointment && queue.appointment) {
       const appt = queue.appointment;
-      return {
+      return finalizeNonHiMrReply({
         content: `🎫 *Live OPD Token & Queue Status*\n\n*Patient*: ${appt.patientName}\n*Token Number*: *#${appt.tokenNumber}*\n*Consultant*: ${appt.doctorName} (${appt.specialty})\n*Status*: ${appt.status}\n\n👥 *Patients Ahead of You*: *${appt.patientsAhead}*\n⏳ *Estimated Wait*: *~${appt.estimatedWaitMins} minutes*\n\nPlease remain in the waiting lounge. We will notify you on WhatsApp when you are next.`,
         buttons: ["🔄 Refresh Queue", "🔄 Reschedule Slot", "❌ Cancel Appointment"],
-      };
+      });
     }
-    return {
+    return finalizeNonHiMrReply({
       content: `🎫 *Queue Status*\n\nNo active waiting queue token was found for ${patientName} today.\n\nWould you like to book a fresh appointment?`,
       buttons: ["📅 Book Appointment", "⏰ Doctor Schedule"],
-    };
+    });
   }
 
   // 8. Cancel / Reschedule
-  if (tenantId && (q.includes("cancel appointment") || q.includes("cancel my appointment") || q.includes("❌ cancel"))) {
+  if (
+    tenantId &&
+    (q.includes("cancel appointment") ||
+      q.includes("cancel my appointment") ||
+      q.includes("❌ cancel") ||
+      q.includes("रद्द करें") ||
+      q.includes("रद्द करा"))
+  ) {
     try {
       const appointment = patchWhatsAppAppointment({
         tenantId,
         patientPhone: phone,
         body: { status: "Cancelled" },
       });
-      return {
+      if (isHiOrMr) {
+        return renderLocalizedCancelOrReschedule({
+          lang,
+          kind: "cancelled",
+          tokenNumber: appointment.tokenNumber,
+        });
+      }
+      return finalizeNonHiMrReply({
         content: `Your appointment (token #${appointment.tokenNumber}) has been *Cancelled* on the clinic calendar.`,
         buttons: ["📅 Book Appointment", "👤 Speak with Receptionist"],
-      };
+      });
     } catch {
-      return {
+      if (isHiOrMr) {
+        return renderLocalizedCancelOrReschedule({ lang, kind: "cancel_not_found" });
+      }
+      return finalizeNonHiMrReply({
         content: "No active appointment was found to cancel.",
         buttons: ["📅 Book Appointment"],
-      };
+      });
     }
   }
 
-  if (tenantId && q.includes("reschedule")) {
-    return {
+  if (tenantId && (q.includes("reschedule") || q.includes("समय बदलें") || q.includes("वेळ बदला"))) {
+    if (isHiOrMr) {
+      return renderLocalizedCancelOrReschedule({ lang, kind: "reschedule" });
+    }
+    return finalizeNonHiMrReply({
       content: "Please share your preferred date (YYYY-MM-DD) and time slot, or ask reception to reschedule on the clinic calendar.",
       buttons: ["📅 Book Appointment", "👤 Speak with Receptionist"],
-    };
+    });
   }
 
   // 9. General Clinical or Query — Vertex Gemini Medical Triage
@@ -2528,16 +2913,21 @@ export async function processBotActionOrQuery(
       ...resolveClinicFacingNames(db, tenantId),
       patientName,
       patientText: text,
+      preferredLanguage: lang,
     });
     const res = await vertexGenerateContent({
       model: vertexGeminiModel(),
       contents: [{ text: assistantCopy.assistantPrompt }],
     });
-    const reply = String(res.text || "").trim();
-    if (reply) {
+    const rawReply = String(res.text || "").trim();
+    if (rawReply) {
+      const localizedReply = lang === "en" ? rawReply : await ensureFullTargetLanguageText(rawReply, lang);
       return {
-        content: reply,
-        buttons: ["📅 Book Doctor Appointment", "⏰ Doctor Schedule", "💊 My Prescription", "👤 Speak with Receptionist"],
+        content: localizedReply,
+        buttons: localizeButtonsList(
+          ["📅 Book Doctor Appointment", "⏰ Doctor Schedule", "💊 My Prescription", "👤 Speak with Receptionist"],
+          lang
+        ),
       };
     }
   } catch (err: unknown) {
@@ -2546,57 +2936,27 @@ export async function processBotActionOrQuery(
   }
 
   // 10. Default Fallback when no response is available to a specific question
-  const greetingPrefix = patientName && !patientName.startsWith("Patient (") && patientName !== "Patient"
-    ? `Namaste ${patientName}! 🙏`
-    : (isRegistered && firstName
-        ? `Hello ${firstName}! 🙏`
-        : `Hello! 🙏`);
-  const queryAck = text ? ` We have received your query: "${text}".` : "";
-  return {
-    content: `${greetingPrefix}${queryAck} I do not have an answer to that specific question right now, but our clinic front desk team is happy to assist you.\n\nHere is what I can help you with 24/7:\n\n• 📅 *Doctor Appointments* — check slots & instant token booking\n• ⏰ *Doctor Schedule & OPD Timings* — specialist availability\n• 💊 *Prescriptions & Refills* — view & download your prescriptions\n• 🔔 *Follow-Up Status* — check your scheduled review dates\n• 🔬 *Diagnostic Reports* — lab & test results\n• 📍 *Clinic Location & Timings* — address, directions & helpline\n• 👤 *Speak with Front Desk* — connect with our clinic staff\n\nPlease let me know if you would like help with any of the above, or reply *front desk* to speak with our reception.`,
-    buttons: ["📅 Book Appointment", "⏰ Doctor Schedule", "📍 Clinic Location", "👤 Speak with Receptionist"],
-  };
+  if (isHiOrMr) {
+    return buildLocalizedFallbackReply({
+      lang,
+      firstName: isRegistered ? firstName : undefined,
+      patientName,
+      queryText: text,
+    });
+  }
+  const fallbackEn = buildLocalizedFallbackReply({
+    lang: "en",
+    firstName: isRegistered ? firstName : undefined,
+    patientName,
+    queryText: text,
+  });
+  return finalizeNonHiMrReply(fallbackEn);
 }
 
 export function detectLanguageSimple(text: string): string {
   if (!text) return "en";
-  // Check Indic scripts
-  if (/[\u0C00-\u0C7F]/.test(text)) return "te"; // Telugu
-  if (/[\u0B80-\u0BFF]/.test(text)) return "ta"; // Tamil
-  if (/[\u0C80-\u0CFF]/.test(text)) return "kn"; // Kannada
-  if (/[\u0D00-\u0D7F]/.test(text)) return "ml"; // Malayalam
-  if (/[\u0980-\u09FF]/.test(text)) return "bn"; // Bengali
-  if (/[\u0A80-\u0AFF]/.test(text)) return "gu"; // Gujarati
-  if (/[\u0A00-\u0A7F]/.test(text)) return "pa"; // Punjabi
-  if (/[\u0B00-\u0B7F]/.test(text)) return "or"; // Odia
-  if (/[\u0600-\u06FF]/.test(text)) return "ur"; // Urdu
-  if (/[\u0900-\u097F]/.test(text)) {
-    if (
-      text.includes("आहे") ||
-      text.includes("नाही") ||
-      text.includes("झाले") ||
-      text.includes("मला") ||
-      text.includes("कंबरदुखी") ||
-      text.includes("नमस्कार") ||
-      text.includes("दाखवायचे")
-    ) {
-      return "mr"; // Marathi
-    }
-    return "hi"; // Hindi
-  }
-
-  // Transliterated / Romanized Indic checks
-  const lower = text.toLowerCase();
-  if (/\b(naaku|nenu|nopi|baadhaga|undi|kavali|cheyandi)\b/i.test(lower)) return "te";
-  if (/\b(enakku|vali|irukku|vendum|theriyuma)\b/i.test(lower)) return "ta";
-  if (/\b(nanage|novu|ide|beku|hege)\b/i.test(lower)) return "kn";
-  if (/\b(mala|dukhata|aahe|pahije|dakhvayche)\b/i.test(lower)) return "mr";
-  if (/\b(aamar|byatha|korche|chai|dekhte)\b/i.test(lower)) return "bn";
-  if (/\b(mane|dukhavo|chhe|joiye|tamari)\b/i.test(lower)) return "gu";
-  if (/\b(enikku|vedana|undu|kaanan|aano)\b/i.test(lower)) return "ml";
-  if (/\b(mera|meri|mujhe|dard|dikkat|hai|hain|kripya|apka|aapka|namaste|bukhar|dikhana)\b/i.test(lower)) return "hi";
-
-  return "en";
+  const detected = detectWhatsAppMessageLanguage(text);
+  return detected || "en";
 }
 
 export async function translateWithGeminiOrFallback(text: string, targetLang: string, ai: GoogleGenAI | null): Promise<string> {

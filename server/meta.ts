@@ -40,6 +40,16 @@ import {
   maybeEnsureFounderSignupAlertTemplate,
   retryFailedSignupAlertWithTemplate,
 } from "./signup-alert.ts";
+import {
+  buildLocalizedFallbackReply,
+  buildLocalizedHumanHandoverAck,
+  detectWhatsAppMessageLanguage,
+  localizeButtonsList,
+  normalizeStoredLangCode,
+  persistConversationLanguage,
+  resolveWhatsAppConversationLanguage,
+} from "./whatsapp-localization.ts";
+import { renderLocalizedMessagingOnlyNotice } from "./whatsapp-localized-replies.ts";
 
 /** read and failed are terminal. delivered can still become read. */
 function isPendingOutboundStatus(status: string): boolean {
@@ -216,26 +226,33 @@ export function recordInboundWhatsAppMessage(
 
   const existing = db
     .prepare(
-      `SELECT id, patient_name FROM whatsapp_conversations
+      `SELECT id, patient_name, preferred_language FROM whatsapp_conversations
        WHERE (patient_phone = ? OR patient_phone = ? OR patient_phone LIKE ?)
          AND TRIM(COALESCE(tenant_id, '')) = ?
        ORDER BY updated_at DESC LIMIT 1`
     )
-    .get(fromPhone, `+${rawDigits}`, `%${last10}`, tenantId) as { id?: string; patient_name?: string } | undefined;
+    .get(fromPhone, `+${rawDigits}`, `%${last10}`, tenantId) as { id?: string; patient_name?: string; preferred_language?: string } | undefined;
+
+  const existingLang = normalizeStoredLangCode(existing?.preferred_language);
+  const isSystemNotice = textBody.startsWith("📞") || textBody === "[Media/Attachment]";
+  const detectedMsgLang = isSystemNotice ? null : detectWhatsAppMessageLanguage(textBody, existingLang);
+  const resolvedLang = detectedMsgLang || existingLang;
 
   let convId = String(existing?.id || "");
   if (!convId) {
     convId = `conv-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    const initialName = registered?.name || `Patient (+${fromPhone})`;
+    const displayPhone = fromPhone.startsWith("+") ? fromPhone : `+${fromPhone}`;
+    const initialName = registered?.name || `Patient (${displayPhone})`;
     db.prepare(
       `INSERT INTO whatsapp_conversations (
          id, patient_phone, patient_name, handover_mode, assigned_staff, tags, preferred_language,
          unread_count, last_message, last_message_time, updated_at, tenant_id, phone_number_id, waba_id, last_inbound_at
-       ) VALUES (?, ?, ?, 'bot', 'AI Triage Desk', '["New Inquiry"]', 'en', 1, ?, ?, ?, ?, ?, ?, ?)`
+       ) VALUES (?, ?, ?, 'bot', 'AI Triage Desk', '["New Inquiry"]', ?, 1, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       convId,
       fromPhone,
       initialName,
+      resolvedLang,
       textBody,
       opts.now,
       opts.now,
@@ -246,17 +263,18 @@ export function recordInboundWhatsAppMessage(
     );
   } else {
     // If conversation had placeholder or fixture name but patient is registered in DB, heal conversation patient_name
-    if (registered?.name && (!existing.patient_name || /^patient(\s*\(\+?\d+\))?$/i.test(existing.patient_name) || existing.patient_name === "A1 Test Recipient")) {
+    if (registered?.name && (!existing.patient_name || /^patient(\s*\([+\d\s-]+\))?$/i.test(existing.patient_name) || existing.patient_name === "A1 Test Recipient")) {
       db.prepare(`UPDATE whatsapp_conversations SET patient_name = ? WHERE id = ?`).run(registered.name, convId);
     }
     db.prepare(
       `UPDATE whatsapp_conversations
        SET last_message = ?, last_message_time = ?, unread_count = unread_count + 1, updated_at = ?,
            last_inbound_at = ?,
+           preferred_language = ?,
            phone_number_id = CASE WHEN TRIM(COALESCE(phone_number_id, '')) = '' THEN ? ELSE phone_number_id END,
            waba_id = CASE WHEN TRIM(COALESCE(waba_id, '')) = '' THEN ? ELSE waba_id END
        WHERE id = ? AND TRIM(COALESCE(tenant_id, '')) = ?`
-    ).run(textBody, opts.now, opts.now, opts.now, opts.phoneNumberId, opts.wabaId, convId, tenantId);
+    ).run(textBody, opts.now, opts.now, opts.now, resolvedLang, opts.phoneNumberId, opts.wabaId, convId, tenantId);
   }
 
   const msgId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
@@ -264,8 +282,8 @@ export function recordInboundWhatsAppMessage(
     `INSERT INTO whatsapp_messages (
        id, conversation_id, patient_phone, sender, staff_name, content, translated_content,
        detected_language, time_display, buttons, media, status, created_at, tenant_id
-     ) VALUES (?, ?, ?, 'patient', '', ?, ?, 'en', ?, '[]', '[]', 'received', ?, ?)`
-  ).run(msgId, convId, fromPhone, textBody, textBody, timeDisplay, opts.now, tenantId);
+     ) VALUES (?, ?, ?, 'patient', '', ?, ?, ?, ?, '[]', '[]', 'received', ?, ?)`
+  ).run(msgId, convId, fromPhone, textBody, textBody, resolvedLang, timeDisplay, opts.now, tenantId);
 
   return { convId };
 }
@@ -596,14 +614,23 @@ export async function dispatchInboundBotReply(
     )
     .get(convId, tenantId) as Record<string, unknown> | undefined;
 
+  const langResolved = resolveWhatsAppConversationLanguage(textBody, conv);
+  const activeLang = langResolved.lang;
+  if (conv && (langResolved.changed || !conv.preferred_language)) {
+    persistConversationLanguage(db, conv, activeLang);
+  }
+
   let handoverMode = String(conv?.handover_mode || "bot").toLowerCase();
   const qLower = String(textBody || "").toLowerCase().trim();
   const resetToBotKeywords = [
-    "bot", "menu", "start", "restart", "help", "hi", "hello", "hey", "namaste",
+    "bot", "menu", "start", "restart", "help", "hi", "hello", "hey", "namaste", "namaskar",
     "doctor", "dr", "appointment", "book", "timing", "schedule", "rx", "prescription",
-    "report", "lab", "token", "queue", "receptionist", "slot", "#bot"
+    "report", "lab", "token", "queue", "receptionist", "slot", "#bot",
+    "बॉट", "मेनू", "नमस्ते", "नमस्कार", "अपॉइंटमेंट", "डॉक्टर", "वेळापत्रक", "पर्ची", "औषधपत्र", "हिंदी", "मराठी"
   ];
-  const shouldResumeBot = resetToBotKeywords.some((kw) => qLower === kw || qLower.startsWith(kw + " ") || qLower.includes(kw));
+  const shouldResumeBot =
+    Boolean(langResolved.explicitRequest) ||
+    resetToBotKeywords.some((kw) => qLower === kw || qLower.startsWith(kw + " ") || qLower.includes(kw));
 
   if (handoverMode === "human" && shouldResumeBot) {
     handoverMode = "bot";
@@ -614,7 +641,7 @@ export async function dispatchInboundBotReply(
 
   // In NO scenario should a response be avoided! If currently in human mode, send an automated acknowledgement.
   if (handoverMode === "human") {
-    const humanAckContent = `Namaste! 🙏 Your message has been received by our clinic reception desk. A staff member is reviewing your query and will reply shortly.\n\n_(Reply *bot* or *menu* at any time to return to the automated receptionist.)_`;
+    const humanAck = buildLocalizedHumanHandoverAck(activeLang);
     const botMsgId = `bot-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const botTime = new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" });
     const botNow = new Date().toISOString();
@@ -624,13 +651,14 @@ export async function dispatchInboundBotReply(
         `INSERT INTO whatsapp_messages (
            id, conversation_id, patient_phone, sender, staff_name, content, time_display,
            buttons, media, status, created_at, tenant_id
-         ) VALUES (?, ?, ?, 'bot', 'Receptionist AI', ?, ?, '["🤖 Return to Bot", "📅 Book Appointment"]', '[]', 'delivered', ?, ?)`
-      ).run(botMsgId, convId, fromPhone, humanAckContent, botTime, botNow, tenantId);
+         ) VALUES (?, ?, ?, 'bot', 'Receptionist AI', ?, ?, ?, '[]', 'delivered', ?, ?)`
+      ).run(botMsgId, convId, fromPhone, humanAck.content, botTime, JSON.stringify(humanAck.buttons), botNow, tenantId);
 
       const sent = await dispatchPatientCloudText({
         tenantId,
         to: fromPhone,
-        textBody: humanAckContent,
+        textBody: humanAck.content,
+        buttons: humanAck.buttons,
       });
       console.log(`[WhatsApp Human Ack Outbound] to=${fromPhone} result=${JSON.stringify(sent)}`);
     } catch (err) {
@@ -641,7 +669,7 @@ export async function dispatchInboundBotReply(
 
   const registeredPatient = findRegisteredPatient(db, fromPhone, tenantId);
   const patientName = registeredPatient?.name || (
-    String(conv?.patient_name || "").replace(/^Patient \(\+?\d+\)$/, "Patient") || "Patient"
+    String(conv?.patient_name || "").replace(/^Patient\s*\([+\d\s-]+\)$/i, "Patient") || "Patient"
   );
 
   let botReply: { content: string; buttons?: string[]; media?: Record<string, unknown> } | null = null;
@@ -659,15 +687,24 @@ export async function dispatchInboundBotReply(
   }
   if (textBody.startsWith("🎤 Voice") || textBody.startsWith("Voice Note:")) {
     try {
+      const voiceLangHint =
+        activeLang === "hi" ? "Hindi" : activeLang === "mr" ? "Marathi" : undefined;
       const voiceRes = await runGeminiVoiceReceptionist({
         message: textBody.replace(/^(🎤\s*Voice Note:\s*"?|Voice Note:\s*"?|"?$)/g, ""),
         callerName: patientName,
         callerPhone: fromPhone,
+        language: voiceLangHint,
         tenantId,
       });
+      const mayaLabel =
+        activeLang === "hi"
+          ? "🎤 *माया (एआई क्लिनिक रिसेप्शनिस्ट)*:"
+          : activeLang === "mr"
+            ? "🎤 *माया (एआय क्लिनिक रिसेप्शनिस्ट)*:"
+            : "🎤 *Maya (AI Clinic Receptionist)*:";
       botReply = {
-        content: `🎤 *Maya (AI Clinic Receptionist)*:\n\n${voiceRes.speechText}`,
-        buttons: voiceRes.buttons,
+        content: `${mayaLabel}\n\n${voiceRes.speechText}`,
+        buttons: localizeButtonsList(voiceRes.buttons, activeLang),
       };
     } catch {
       /* fallback to processBotActionOrQuery */
@@ -676,7 +713,7 @@ export async function dispatchInboundBotReply(
 
   if (!botReply) {
     try {
-      botReply = await processBotActionOrQuery(textBody, fromPhone, patientName, conv || {}, db, {
+      botReply = await processBotActionOrQuery(textBody, fromPhone, patientName, conv || { preferred_language: activeLang }, db, {
         tenantId,
         sessionTenantId: tenantId,
         phoneNumberId,
@@ -690,11 +727,11 @@ export async function dispatchInboundBotReply(
   // Guaranteed fallback so a response is NEVER avoided
   if (!botReply || !botReply.content) {
     const fName = registeredPatient?.firstName || "";
-    const greetingPrefix = fName ? `Hello ${fName}! 🙏` : `Hello! 🙏`;
-    botReply = {
-      content: `${greetingPrefix} I do not have an answer to that specific question right now, but our clinic front desk team is happy to assist you.\n\nHere is what I can help you with 24/7:\n\n• 📅 *Doctor Appointments* — check slots & instant token booking\n• ⏰ *Doctor Schedule & OPD Timings* — specialist availability\n• 💊 *Prescriptions & Refills* — view & download prescriptions\n• 🔔 *Follow-Up Status* — check your scheduled review dates\n• 🔬 *Diagnostic Reports* — lab & test results\n• 📍 *Clinic Location & Timings* — address, directions & helpline\n• 👤 *Speak with Front Desk* — connect with our clinic staff\n\nPlease let me know if you would like help with any of the above, or reply *front desk* to speak with our reception.`,
-      buttons: ["📅 Book Appointment", "⏰ Doctor Schedule", "📍 Clinic Location", "👤 Speak with Receptionist"],
-    };
+    botReply = buildLocalizedFallbackReply({
+      lang: activeLang,
+      firstName: fName,
+      patientName,
+    });
   }
 
   const botMsgId = `bot-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
@@ -728,11 +765,14 @@ export async function dispatchInboundBotReply(
     reportCaughtError(dbErr, "meta.webhook.bot-reply.db");
   }
 
+  const finalLang = normalizeStoredLangCode(conv?.preferred_language || activeLang);
   let outboundText = botReply.content;
   if (botReply.media && typeof botReply.media === "object") {
     const mediaUrl = (botReply.media as Record<string, unknown>).url;
     if (mediaUrl && !outboundText.includes(String(mediaUrl))) {
-      outboundText += `\n\n📄 Document: ${mediaUrl}`;
+      const docLabel =
+        finalLang === "hi" ? "📄 दस्तावेज़:" : finalLang === "mr" ? "📄 दस्तऐवज:" : "📄 Document:";
+      outboundText += `\n\n${docLabel} ${mediaUrl}`;
     }
   }
 
@@ -1112,11 +1152,20 @@ export function createMetaRouter(): Router {
 
                     const letterhead = getTenantLetterhead(targetTenantId);
                     const clinicName = letterhead.clinicName || "our clinic";
+                    const existingCallerConv = db
+                      .prepare(
+                        `SELECT preferred_language FROM whatsapp_conversations
+                         WHERE patient_phone LIKE ? AND TRIM(COALESCE(tenant_id, '')) = ?
+                         ORDER BY updated_at DESC LIMIT 1`
+                      )
+                      .get(`%${fromPhone.replace(/\D/g, "").slice(-10)}`, targetTenantId) as { preferred_language?: string } | undefined;
+                    const callerLang = normalizeStoredLangCode(existingCallerConv?.preferred_language);
+                    const declineCopy = renderLocalizedMessagingOnlyNotice(callerLang, clinicName);
                     void dispatchPatientCloudText({
                       tenantId: targetTenantId,
                       to: fromPhone,
-                      textBody: `Hello! Thank you for calling *${clinicName}*.\n\nOur clinic line is currently configured for *WhatsApp messaging only*. You can text us right here 24/7 to book doctor appointments, check OPD timings, view your prescriptions, or chat with our front desk.\n\nHow may we assist you today?`,
-                      buttons: ["📅 Book Appointment", "⏰ Doctor Timings", "📍 Clinic Location"],
+                      textBody: declineCopy.textBody,
+                      buttons: declineCopy.buttons,
                     }).catch((textErr) => {
                       console.warn("[Voice Reject Outbound WhatsApp Notice Error]", textErr);
                     });
