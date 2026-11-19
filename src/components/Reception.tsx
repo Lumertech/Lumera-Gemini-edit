@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { apiFetchResponse } from '../api/http';
+import { apiFetch, apiFetchResponse } from '../api/http';
 import { formatINR } from '../lib/currency.ts';
 import { 
   QrCode, 
@@ -34,7 +34,7 @@ interface ReceptionProps {
   appointments: Appointment[];
   onSelectPatient: (patient: Patient) => void;
   onAddNewPatient: (patient: Patient) => void | Promise<Patient | void>;
-  onCheckInPatient: (patient: Patient, doctor: Doctor, type: string) => void | Promise<void>;
+  onCheckInPatient: (patient: Patient, doctor: Doctor, type: string) => void | Promise<void | Appointment>;
   onSwitchToConsultation: () => void;
   onStartConsult?: (patient: Patient) => void;
   canStartConsult?: boolean;
@@ -100,6 +100,12 @@ export const Reception: React.FC<ReceptionProps> = ({
 
   const [savingIntake, setSavingIntake] = useState(false);
   const [intakeError, setIntakeError] = useState<string | null>(null);
+  const [reportFile, setReportFile] = useState<File | null>(null);
+  const [reportTitle, setReportTitle] = useState("");
+  const [reportDate, setReportDate] = useState("");
+  const [reportConsent, setReportConsent] = useState(false);
+  const [guardianName, setGuardianName] = useState("");
+  const [guardianRelation, setGuardianRelation] = useState("");
   const [selectedRecordPatient, setSelectedRecordPatient] = useState<Patient | null>(null);
 
   useEffect(() => {
@@ -286,7 +292,48 @@ export const Reception: React.FC<ReceptionProps> = ({
     setIntakeError(null);
     try {
       const saved = (await onAddNewPatient(newPatient)) || newPatient;
-      await onCheckInPatient(saved, doctor, formData.consultationType);
+      const appointment = await onCheckInPatient(saved, doctor, formData.consultationType);
+      let reportWarning = "";
+      if (reportFile) {
+        try {
+          if (!reportConsent) {
+            throw new Error("Checked in. The report was not stored because consent was not confirmed.");
+          }
+          if (formData.age > 0 && formData.age < 18 && (!guardianName.trim() || !guardianRelation.trim())) {
+            throw new Error("Checked in. A parent or guardian name and relation are required before storing a report for a patient under 18.");
+          }
+          const consentBody: Record<string, unknown> = {
+            language: "en",
+            method: "staff_attested_verbal",
+            attested: true,
+          };
+          if (formData.age > 0 && formData.age < 18) {
+            consentBody.guardianName = guardianName.trim();
+            consentBody.guardianRelation = guardianRelation.trim();
+          }
+          await apiFetch(`/api/patients/${encodeURIComponent(saved.id)}/document-consent`, {
+            method: "POST",
+            body: JSON.stringify(consentBody),
+          });
+          const body = new FormData();
+          body.set("file", reportFile);
+          body.set("title", reportTitle.trim() || reportFile.name.replace(/\.[^.]+$/, "") || "Lab report");
+          body.set("docType", "lab_report");
+          body.set("documentDate", reportDate || new Date().toISOString().slice(0, 10));
+          const visitId = appointment && typeof appointment === "object" && "id" in appointment ? String(appointment.id || "") : "";
+          if (visitId) body.set("appointmentId", visitId);
+          const uploaded = await apiFetchResponse(`/api/patients/${encodeURIComponent(saved.id)}/documents`, {
+            method: "POST",
+            body,
+          });
+          if (!uploaded.ok) {
+            const data = (await uploaded.json().catch(() => ({}))) as { error?: string };
+            throw new Error(data.error || "Checked in. The report was not stored.");
+          }
+        } catch (err) {
+          reportWarning = err instanceof Error ? err.message : "Checked in. The report was not stored.";
+        }
+      }
       onSelectPatient(saved);
       if (openRxAfterSave && canStartConsult && onStartConsult) {
         onStartConsult(saved);
@@ -308,6 +355,13 @@ export const Reception: React.FC<ReceptionProps> = ({
         consultationType: workflow?.consultTypeDefault || 'Walk-in Consultation',
         extra: {},
       });
+      setReportFile(null);
+      setReportTitle("");
+      setReportDate("");
+      setReportConsent(false);
+      setGuardianName("");
+      setGuardianRelation("");
+      if (reportWarning) setIntakeError(reportWarning);
     } catch (err: any) {
       setIntakeError(err?.message || 'Could not save patient. Please try again.');
     } finally {
@@ -603,7 +657,77 @@ export const Reception: React.FC<ReceptionProps> = ({
             </div>
           )}
 
-          <div className="pt-4 border-t border-slate-100 flex items-center justify-between">
+          <div className="pt-4 border-t border-slate-100 space-y-3" data-testid="reception-investigation">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900">Investigation or lab report</h3>
+              <p className="text-xs text-slate-600 mt-1 break-words">
+                Optional. A PDF, JPG, or PNG is stored on this patient and attached to the visit you are checking in. The patient must agree to storing the file.
+              </p>
+            </div>
+            <label className="block text-xs font-semibold text-slate-600">
+              File
+              <input
+                data-testid="reception-report-file"
+                type="file"
+                accept="application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png"
+                onChange={(event) => setReportFile(event.target.files?.[0] || null)}
+                className="mt-1 block w-full min-w-0 text-sm text-slate-800"
+              />
+            </label>
+            {reportFile && (
+              <div className="grid grid-cols-1 gap-3">
+                <label className="block text-xs font-semibold text-slate-600">
+                  Report title
+                  <input
+                    data-testid="reception-report-title"
+                    value={reportTitle}
+                    onChange={(event) => setReportTitle(event.target.value)}
+                    className="mt-1 w-full min-w-0 rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  />
+                </label>
+                <label className="block text-xs font-semibold text-slate-600">
+                  Report date
+                  <input
+                    data-testid="reception-report-date"
+                    type="date"
+                    value={reportDate}
+                    onChange={(event) => setReportDate(event.target.value)}
+                    className="mt-1 w-full min-w-0 rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  />
+                </label>
+                <label className="flex items-start gap-2 text-xs text-slate-700">
+                  <input
+                    data-testid="reception-report-consent"
+                    type="checkbox"
+                    checked={reportConsent}
+                    onChange={(event) => setReportConsent(event.target.checked)}
+                    className="mt-0.5"
+                  />
+                  <span>The patient was shown the storage notice and agreed to keep this report on the chart.</span>
+                </label>
+                {formData.age > 0 && formData.age < 18 && (
+                  <div className="grid grid-cols-1 gap-2">
+                    <input
+                      data-testid="reception-guardian-name"
+                      value={guardianName}
+                      onChange={(event) => setGuardianName(event.target.value)}
+                      placeholder="Parent or guardian name"
+                      className="w-full min-w-0 rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                    />
+                    <input
+                      data-testid="reception-guardian-relation"
+                      value={guardianRelation}
+                      onChange={(event) => setGuardianRelation(event.target.value)}
+                      placeholder="Relation"
+                      className="w-full min-w-0 rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="pt-4 border-t border-slate-100 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="text-xs text-slate-500">
               Consultation Fee:{' '}
               <strong className="text-slate-900 font-mono">

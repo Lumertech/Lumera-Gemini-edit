@@ -461,6 +461,10 @@ const PatientDetail: React.FC<{
           <PatientDocuments
             patientId={patient.id}
             consent={consent}
+            visits={(chart?.visits || []).map((visit) => ({
+              id: visit.id,
+              label: [visit.date, visit.timeSlot, visit.doctorName].filter(Boolean).join(" · "),
+            }))}
             onConsentChange={(next) => {
               setConsent(next);
               setReloadKey((value) => value + 1);

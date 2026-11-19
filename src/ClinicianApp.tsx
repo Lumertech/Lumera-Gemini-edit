@@ -1017,7 +1017,7 @@ export default function ClinicianApp() {
               }}
               onCheckInPatient={async (pat, doc, type) => {
                 try {
-                  await persistAppointmentCreate({
+                  return await persistAppointmentCreate({
                     patientId: pat.id,
                     doctorId: doc.id,
                     date: clinicCalendarDate(),

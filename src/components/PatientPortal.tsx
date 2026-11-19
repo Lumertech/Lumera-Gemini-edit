@@ -39,6 +39,7 @@ export const PatientPortal: React.FC<PatientPortalProps> = ({
   const [diagnoses, setDiagnoses] = useState<ChartDiagnosis[]>([]);
   const [vitalsHistory, setVitalsHistory] = useState<ChartVitalsEntry[]>([]);
   const [uploads, setUploads] = useState<PatientTimelineItem[]>([]);
+  const [investigations, setInvestigations] = useState<Array<{ id: string; title: string; documentDate: string; appointmentId: string; docType: string }>>([]);
   const [chartError, setChartError] = useState("");
 
   useEffect(() => {
@@ -49,6 +50,7 @@ export const PatientPortal: React.FC<PatientPortalProps> = ({
       diagnoses?: ChartDiagnosis[];
       vitalsHistory?: ChartVitalsEntry[];
       timeline?: PatientTimelineItem[];
+      investigations?: { files?: Array<{ id: string; title: string; documentDate: string; appointmentId: string; docType: string }> };
     }>(`/api/patients/${encodeURIComponent(currentPatient.id)}/chart`)
       .then((chart) => {
         if (cancelled) return;
@@ -56,6 +58,7 @@ export const PatientPortal: React.FC<PatientPortalProps> = ({
         setDiagnoses(chart.diagnoses || []);
         setVitalsHistory(chart.vitalsHistory || []);
         setUploads((chart.timeline || []).filter((item) => item.type === "upload"));
+        setInvestigations(chart.investigations?.files || []);
         setChartError("");
       })
       .catch((err: unknown) => {
@@ -301,11 +304,15 @@ export const PatientPortal: React.FC<PatientPortalProps> = ({
           <p className="text-xs text-slate-600 break-words">
             Files the clinic saved on this chart. A reading of the values stays a draft until a doctor confirms it.
           </p>
-          {uploads.length === 0 ? (
+          {investigations.length === 0 && uploads.length === 0 ? (
             <p className="text-sm text-slate-600">Not recorded</p>
           ) : (
             <ul className="space-y-2">
-              {uploads.map((item) => (
+              {(investigations.length ? investigations.map((item) => ({
+                id: item.id,
+                title: item.title,
+                summary: [item.docType === "imaging" ? "Imaging" : "Lab report", item.documentDate, item.appointmentId ? "Attached to a visit" : ""].filter(Boolean).join(" · "),
+              })) : uploads.map((item) => ({ id: item.id, title: item.title, summary: item.summary }))).map((item) => (
                 <li key={item.id} className="text-sm text-slate-800 break-words">
                   <span className="font-semibold">{item.title}</span>
                   {item.summary ? <span className="block text-xs text-slate-500">{item.summary}</span> : null}

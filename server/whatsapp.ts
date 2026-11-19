@@ -1565,6 +1565,9 @@ ${AI_RUPEE_OUTPUT_RULE}`;
       const access = authorizeLabReport(req, String(req.params.id || ""));
       if (!access.ok) return sendLabReportDenied(res, access);
       const lab = access.lab;
+      if (String(lab.status || "confirmed") === "draft") {
+        return res.status(404).send("Lab report not found");
+      }
 
       const results = JSON.parse((lab.results as string) || "[]");
       const rowsHtml = results.map((r: any) => {
