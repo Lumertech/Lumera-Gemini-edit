@@ -826,13 +826,13 @@ export const LandingPage: React.FC = () => {
         <div className="text-center mb-12">
           <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-emerald-500/20 border border-emerald-500/30 text-xs text-emerald-300 mb-3">
             <Award className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Trusted by Leading Practitioners Across India</span>
+            <span>Product tour stories</span>
           </div>
           <h2 className="font-manrope text-3xl sm:text-4xl font-extrabold text-white">
             What Clinicians Are Saying
           </h2>
           <p className="text-slate-400 mt-2 max-w-2xl mx-auto text-sm">
-            Hear from specialist doctors who transformed their patient throughput and eliminated clinical burnout with Lumera.
+            Sample stories for the tour. Not measured results from a named clinic.
           </p>
         </div>
 
@@ -886,7 +886,7 @@ export const LandingPage: React.FC = () => {
                 {"★".repeat(5)}
               </div>
               <p className="text-slate-200 text-xs sm:text-sm leading-relaxed italic">
-                “Parents love receiving their digital queue tokens and immunization schedules right on WhatsApp. It eliminated our morning reception crowd bottlenecks by 85%.”
+                “The childhood immunization chart stays on the patient record. Each dose is a reminder until the doctor confirms it was given. WhatsApp vaccine reminders wait for an approved template.”
               </p>
             </div>
             <div className="pt-4 mt-4 border-t border-slate-800 flex items-center gap-3">

@@ -113,8 +113,8 @@ export const LabReportAnalyzer: React.FC<LabReportAnalyzerProps> = ({
               Pulse AI
             </span>
           </div>
-          <p className="text-xs text-slate-300 max-w-2xl">
-            Upload PDF/JPG diagnostic sheets for automated test extraction, longitudinal biomarker trend plotting, and GFR-based renal medication dose adjustment warnings.
+          <p className="text-xs text-slate-300 max-w-2xl" data-testid="lab-sample-banner">
+            Sample panel for the product tour. These numbers are not read from a patient file and are not this chart.
           </p>
         </div>
 

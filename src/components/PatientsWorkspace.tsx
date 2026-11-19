@@ -5,6 +5,12 @@ import { PatientDocuments } from "./PatientDocuments";
 import { type DocumentConsentStatus } from "./PatientDocumentConsentDialog";
 import { PatientTimeline, type PatientTimelineItem, type TimelineLinkView } from "./PatientTimeline";
 import { ImmunizationChartPanel } from "./immunization/ImmunizationChart";
+import {
+  PatientChartRecord,
+  type ChartDiagnosis,
+  type ChartNote,
+  type ChartVitalsEntry,
+} from "./PatientChartRecord";
 import { CLINIC_NAME_REQUIRED_MESSAGE } from "../lib/healthDocumentNotice";
 import { isAbhaLinked, type Appointment, type Patient, type Prescription } from "../types";
 
@@ -13,6 +19,9 @@ interface ChartResponse {
   visits: Appointment[];
   prescriptions: Prescription[];
   timeline?: PatientTimelineItem[];
+  notes?: ChartNote[];
+  diagnoses?: ChartDiagnosis[];
+  vitalsHistory?: ChartVitalsEntry[];
 }
 
 interface PatientsWorkspaceProps {
@@ -395,10 +404,6 @@ const PatientDetail: React.FC<{
             )}
             <div className="grid grid-cols-1 gap-3 text-sm">
               <div>
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Allergies</p>
-                <p className="text-slate-800 break-words">{patient.allergies?.length ? patient.allergies.join(", ") : "None recorded"}</p>
-              </div>
-              <div>
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Chronic conditions</p>
                 <p className="text-slate-800 break-words">
                   {patient.chronicConditions?.length ? patient.chronicConditions.join(", ") : "None recorded"}
@@ -406,6 +411,16 @@ const PatientDetail: React.FC<{
               </div>
             </div>
           </section>
+
+          <PatientChartRecord
+            patient={patient}
+            visits={chart?.visits || []}
+            notes={chart?.notes || []}
+            diagnoses={chart?.diagnoses || []}
+            vitalsHistory={chart?.vitalsHistory || []}
+            canWriteNotes={canPrescribe}
+            onReload={() => setReloadKey((value) => value + 1)}
+          />
 
           <section data-testid="patient-contact" className="rounded-xl border border-slate-200 bg-white p-4 space-y-2 min-w-0">
             <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">

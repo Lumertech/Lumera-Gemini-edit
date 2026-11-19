@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { formatINR } from '../lib/currency.ts';
 import { 
   User, 
@@ -13,8 +13,11 @@ import {
   ArrowUpRight,
   Printer
 } from 'lucide-react';
+import { apiFetch } from '../api/http';
 import { Patient, Prescription, Appointment } from '../types';
-import { LabReportAnalyzer } from './LabReportAnalyzer';
+import { ImmunizationChartPanel } from './immunization/ImmunizationChart';
+import type { ChartDiagnosis, ChartNote, ChartVitalsEntry } from './PatientChartRecord';
+import type { PatientTimelineItem } from './PatientTimeline';
 
 interface PatientPortalProps {
   currentPatient: Patient;
@@ -31,7 +34,38 @@ export const PatientPortal: React.FC<PatientPortalProps> = ({
   onBookNewSlot,
   unlinked = false,
 }) => {
-  const [activeTab, setActiveTab] = useState<'Prescriptions' | 'Appointments' | 'Vitals' | 'LabReports'>('Prescriptions');
+  const [activeTab, setActiveTab] = useState<'Prescriptions' | 'Appointments' | 'Vitals' | 'LabReports' | 'Chart'>('Chart');
+  const [notes, setNotes] = useState<ChartNote[]>([]);
+  const [diagnoses, setDiagnoses] = useState<ChartDiagnosis[]>([]);
+  const [vitalsHistory, setVitalsHistory] = useState<ChartVitalsEntry[]>([]);
+  const [uploads, setUploads] = useState<PatientTimelineItem[]>([]);
+  const [chartError, setChartError] = useState("");
+
+  useEffect(() => {
+    if (unlinked || !currentPatient.id) return;
+    let cancelled = false;
+    void apiFetch<{
+      notes?: ChartNote[];
+      diagnoses?: ChartDiagnosis[];
+      vitalsHistory?: ChartVitalsEntry[];
+      timeline?: PatientTimelineItem[];
+    }>(`/api/patients/${encodeURIComponent(currentPatient.id)}/chart`)
+      .then((chart) => {
+        if (cancelled) return;
+        setNotes(chart.notes || []);
+        setDiagnoses(chart.diagnoses || []);
+        setVitalsHistory(chart.vitalsHistory || []);
+        setUploads((chart.timeline || []).filter((item) => item.type === "upload"));
+        setChartError("");
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setChartError(err instanceof Error ? err.message : "Could not load this chart");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentPatient.id, unlinked]);
 
   if (unlinked) {
     return (
@@ -64,9 +98,9 @@ export const PatientPortal: React.FC<PatientPortalProps> = ({
             <p className="text-xs text-slate-500 mt-0.5">
               {currentPatient.age} Years • {currentPatient.gender} • Blood Group: <strong className="text-slate-800">{currentPatient.bloodGroup}</strong> • Phone: {currentPatient.phone}
             </p>
-            {currentPatient.allergies.length > 0 && currentPatient.allergies[0] !== 'None known' && (
-              <p className="text-[11px] text-red-600 mt-0.5 font-medium">
-                ⚠️ Allergies: {currentPatient.allergies.join(', ')}
+            {(currentPatient.allergies || []).filter((item) => item && item !== 'None known').length > 0 && (
+              <p className="text-[11px] text-red-600 mt-0.5 font-medium break-words">
+                Allergies: {(currentPatient.allergies || []).filter((item) => item && item !== 'None known').join(', ')}
               </p>
             )}
           </div>
@@ -82,10 +116,15 @@ export const PatientPortal: React.FC<PatientPortalProps> = ({
       </div>
 
       {/* Navigation Tabs */}
-      <div className="flex space-x-1 border-b border-slate-200 pb-2 overflow-x-auto text-xs font-medium">
-        {(['Prescriptions', 'Appointments', 'Vitals', 'LabReports'] as const).map((tab) => (
+      {chartError && (
+        <p className="text-sm text-rose-700 break-words" role="alert">{chartError}</p>
+      )}
+
+      <div className="flex flex-wrap gap-1 border-b border-slate-200 pb-2 text-xs font-medium">
+        {(['Chart', 'Prescriptions', 'Appointments', 'Vitals', 'LabReports'] as const).map((tab) => (
           <button
             key={tab}
+            type="button"
             onClick={() => setActiveTab(tab)}
             className={`px-3 py-1.5 rounded-md transition-all ${
               activeTab === tab
@@ -93,12 +132,43 @@ export const PatientPortal: React.FC<PatientPortalProps> = ({
                 : 'text-slate-600 hover:bg-slate-100'
             }`}
           >
-            {tab === 'Prescriptions' ? '💊 My Prescriptions' :
-             tab === 'Appointments' ? '📅 Visits & Appointments' :
-             tab === 'Vitals' ? '❤️ Vitals History' : '🔬 Diagnostic Lab Reports'}
+            {tab === 'Chart' ? 'My chart' :
+             tab === 'Prescriptions' ? 'My prescriptions' :
+             tab === 'Appointments' ? 'Visits' :
+             tab === 'Vitals' ? 'Vitals' : 'Reports on file'}
           </button>
         ))}
       </div>
+
+      {activeTab === 'Chart' && (
+        <div className="space-y-4 min-w-0" data-testid="portal-chart">
+          <section className="bg-white rounded-xl border border-slate-200 p-4 space-y-2">
+            <h3 className="text-sm font-bold text-slate-900">Diagnoses</h3>
+            {diagnoses.length === 0 ? <p className="text-sm text-slate-600">Not recorded</p> : (
+              <ul className="space-y-2">
+                {diagnoses.map((item) => (
+                  <li key={item.id} className="text-sm text-slate-800 break-words">
+                    {item.label}{item.icd10 ? ` (${item.icd10})` : ''}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+          <section className="bg-white rounded-xl border border-slate-200 p-4 space-y-2">
+            <h3 className="text-sm font-bold text-slate-900">Notes</h3>
+            {notes.length === 0 ? <p className="text-sm text-slate-600">Not recorded</p> : (
+              <ul className="space-y-3">
+                {notes.map((item) => (
+                  <li key={item.id} className="text-sm text-slate-800 whitespace-pre-wrap break-words">
+                    {item.body || 'Note recorded'}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+          <ImmunizationChartPanel patientId={currentPatient.id} audience="auto" canRecord={false} />
+        </div>
+      )}
 
       {/* Tab 1: Prescriptions */}
       {activeTab === 'Prescriptions' && (
@@ -208,39 +278,42 @@ export const PatientPortal: React.FC<PatientPortalProps> = ({
 
       {/* Tab 3: Vitals */}
       {activeTab === 'Vitals' && (
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 space-y-3.5">
-          <h3 className="font-bold text-slate-900 text-xs">Vitals & Physiological Trend</h3>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div className="bg-blue-50/60 p-3.5 rounded-xl border border-blue-200 text-center">
-              <span className="text-[11px] text-blue-800 font-medium block">Blood Pressure</span>
-              <strong className="text-lg font-bold font-mono text-slate-900 block mt-0.5">120/80</strong>
-              <span className="text-[10px] text-blue-600 font-medium">Optimal</span>
-            </div>
-            <div className="bg-blue-50/60 p-3.5 rounded-xl border border-blue-200 text-center">
-              <span className="text-[11px] text-blue-800 font-medium block">Heart Rate</span>
-              <strong className="text-lg font-bold font-mono text-slate-900 block mt-0.5">74 bpm</strong>
-              <span className="text-[10px] text-blue-600 font-medium">Normal Sinus</span>
-            </div>
-            <div className="bg-blue-50/60 p-3.5 rounded-xl border border-blue-200 text-center">
-              <span className="text-[11px] text-blue-800 font-medium block">Blood Sugar (RBS)</span>
-              <strong className="text-lg font-bold font-mono text-slate-900 block mt-0.5">118 mg/dL</strong>
-              <span className="text-[10px] text-blue-600 font-medium">Euglycemic</span>
-            </div>
-            <div className="bg-blue-50/60 p-3.5 rounded-xl border border-blue-200 text-center">
-              <span className="text-[11px] text-blue-800 font-medium block">SpO2 (Room Air)</span>
-              <strong className="text-lg font-bold font-mono text-blue-700 block mt-0.5">99%</strong>
-              <span className="text-[10px] text-emerald-600 font-medium">Adequate</span>
-            </div>
-          </div>
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 space-y-3" data-testid="portal-vitals">
+          <h3 className="font-bold text-slate-900 text-sm">Vitals recorded at visits</h3>
+          {vitalsHistory.length === 0 ? (
+            <p className="text-sm text-slate-600">Not recorded</p>
+          ) : (
+            <ul className="space-y-2">
+              {vitalsHistory.map((item) => (
+                <li key={item.id} className="text-sm text-slate-800 break-words">
+                  <span className="font-semibold">{item.summary}</span>
+                  <span className="block text-xs text-slate-500">{item.date}</span>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
 
-      {/* Tab 4: Lab Reports */}
       {activeTab === 'LabReports' && (
-        <LabReportAnalyzer
-          patientName={currentPatient.name}
-          uhid={currentPatient.uhid}
-        />
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 space-y-3" data-testid="portal-reports">
+          <h3 className="font-bold text-slate-900 text-sm">Reports on file</h3>
+          <p className="text-xs text-slate-600 break-words">
+            Files the clinic saved on this chart. A reading of the values stays a draft until a doctor confirms it.
+          </p>
+          {uploads.length === 0 ? (
+            <p className="text-sm text-slate-600">Not recorded</p>
+          ) : (
+            <ul className="space-y-2">
+              {uploads.map((item) => (
+                <li key={item.id} className="text-sm text-slate-800 break-words">
+                  <span className="font-semibold">{item.title}</span>
+                  {item.summary ? <span className="block text-xs text-slate-500">{item.summary}</span> : null}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       )}
     </div>
   );
