@@ -673,8 +673,8 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
     );
 
     const insertMsg = database.prepare(`
-      INSERT INTO whatsapp_messages (id, conversation_id, patient_phone, sender, staff_name, content, translated_content, detected_language, time_display, buttons, media, audio_url, voice_transcript, status, created_at, tenant_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO whatsapp_messages (id, conversation_id, patient_phone, sender, staff_name, content, translated_content, detected_language, time_display, buttons, media, voice_transcript, status, created_at, tenant_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     insertMsg.run(
@@ -688,7 +688,6 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
       "en",
       "10:15 AM",
       JSON.stringify(["📅 Book Doctor Appointment", "💊 Refill / View Prescription", "🔎 Download Lab Reports", "⏰ Check Doctor Timings"]),
-      null,
       null,
       null,
       "read",
@@ -709,7 +708,6 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
       null,
       null,
       null,
-      null,
       "delivered",
       now,
       DEMO_TENANT_ID
@@ -725,7 +723,6 @@ export function seedClinicalAndWhatsAppIfMissing(database: SqlDatabase) {
       "Namaste Sunita ji, I have reviewed your chart. Please do not panic. Drink plenty of water and report immediately to OPD Room 102. Priority triage token assigned.",
       "hi",
       "09:42 AM",
-      null,
       null,
       null,
       null,
