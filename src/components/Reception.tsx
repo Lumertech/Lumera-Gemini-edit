@@ -27,6 +27,12 @@ import {
 import { Patient, Doctor, Appointment, isAbhaLinked } from '../types';
 import type { SpecialtyWorkflowPack } from '../lib/specialtyWorkflow';
 import { PatientRecordModal } from './PatientRecordModal';
+import {
+  inferHouseholdHolderName,
+  matchingPhoneProfiles,
+  phoneKey10,
+  profileKindBadge,
+} from '../lib/sharedMobile';
 
 interface ReceptionProps {
   patients: Patient[];
@@ -42,7 +48,22 @@ interface ReceptionProps {
   openRxAfterSave?: boolean;
   workflow?: SpecialtyWorkflowPack;
   intakeName?: string;
+  intakePhone?: string;
 }
+
+function defaultRelationshipForWorkflow(workflow?: SpecialtyWorkflowPack): string {
+  if (workflow?.rxModule === 'Veterinary') return 'Pet';
+  if (workflow?.rxModule === 'Pediatrics') return 'Child';
+  return 'Self';
+}
+
+const REGISTERING_FOR_OPTIONS = [
+  { value: 'Self', label: 'Self' },
+  { value: 'Pet', label: "Pet (Owner's Mobile)" },
+  { value: 'Child', label: "Child (Parent's Mobile)" },
+  { value: 'Family Member', label: 'Family Member' },
+  { value: 'Friend / Caregiver', label: 'Friend / Caregiver' },
+] as const;
 
 export const Reception: React.FC<ReceptionProps> = ({
   patients,
@@ -58,6 +79,7 @@ export const Reception: React.FC<ReceptionProps> = ({
   openRxAfterSave = false,
   workflow,
   intakeName = "",
+  intakePhone = "",
 }) => {
   // Search & Filter
   const [searchQuery, setSearchQuery] = useState('');
@@ -87,26 +109,81 @@ export const Reception: React.FC<ReceptionProps> = ({
   const [formData, setFormData] = useState({
     name: '',
     phone: '',
-    age: 35,
+    age: workflow?.rxModule === 'Veterinary' ? 3 : workflow?.rxModule === 'Pediatrics' ? 5 : 35,
     dateOfBirth: '',
     gender: 'Male' as 'Male' | 'Female' | 'Other',
     bloodGroup: 'B+',
     address: '',
     emergencyContact: '',
+    relationshipToHolder: defaultRelationshipForWorkflow(workflow),
+    primaryContactName: '',
+    createNewMember: false,
     selectedDoctorId: doctors[0]?.id || '',
-    consultationType: 'Walk-in Consultation',
+    consultationType: workflow?.consultTypeDefault || 'Walk-in Consultation',
     extra: {} as Record<string, string>,
   });
 
   const [savingIntake, setSavingIntake] = useState(false);
+  const [checkingInPeerId, setCheckingInPeerId] = useState<string | null>(null);
   const [intakeError, setIntakeError] = useState<string | null>(null);
   const [selectedRecordPatient, setSelectedRecordPatient] = useState<Patient | null>(null);
+
+  useEffect(() => {
+    setFormData((prev) => {
+      const nextRel = defaultRelationshipForWorkflow(workflow);
+      if (prev.name || prev.phone) return prev;
+      return {
+        ...prev,
+        relationshipToHolder: nextRel,
+        age: workflow?.rxModule === 'Veterinary' ? 3 : workflow?.rxModule === 'Pediatrics' ? 5 : prev.age,
+        consultationType: workflow?.consultTypeDefault || prev.consultationType,
+      };
+    });
+  }, [workflow?.rxModule, workflow?.consultTypeDefault]);
 
   useEffect(() => {
     const next = intakeName.trim();
     if (!next) return;
     setFormData((prev) => ({ ...prev, name: next }));
   }, [intakeName]);
+
+  useEffect(() => {
+    const nextPhone = intakePhone.trim();
+    if (!nextPhone) return;
+    const peers = matchingPhoneProfiles(patients, nextPhone);
+    const holder = inferHouseholdHolderName(peers);
+    const peerAddress = peers.find((p) => p.address)?.address || '';
+    const defaultRel =
+      workflow?.rxModule === 'Veterinary'
+        ? 'Pet'
+        : workflow?.rxModule === 'Pediatrics'
+          ? 'Child'
+          : 'Family Member';
+    setFormData((prev) => ({
+      ...prev,
+      name: '',
+      phone: nextPhone,
+      relationshipToHolder: prev.relationshipToHolder === 'Self' ? defaultRel : prev.relationshipToHolder,
+      primaryContactName: holder || prev.primaryContactName,
+      emergencyContact: holder || prev.emergencyContact,
+      address: peerAddress || prev.address,
+      createNewMember: true,
+      extra: {
+        ...prev.extra,
+        ...(holder ? { ownerName: holder } : {}),
+      },
+    }));
+  }, [intakePhone, patients, workflow?.rxModule]);
+
+  const phoneMatches = matchingPhoneProfiles(patients, formData.phone);
+  const phoneCounts = React.useMemo(() => {
+    const map = new Map<string, number>();
+    for (const p of patients) {
+      const k = phoneKey10(p.phone);
+      if (k.length >= 10) map.set(k, (map.get(k) || 0) + 1);
+    }
+    return map;
+  }, [patients]);
 
   // Filter patients on search
   useEffect(() => {
@@ -119,7 +196,13 @@ export const Reception: React.FC<ReceptionProps> = ({
       (p) =>
         p.name.toLowerCase().includes(q) ||
         p.phone.includes(q) ||
+        phoneKey10(p.phone).includes(q.replace(/\D/g, '') || '__none__') ||
         p.uhid.toLowerCase().includes(q) ||
+        (p.primaryContactName && p.primaryContactName.toLowerCase().includes(q)) ||
+        (p.ownerName && p.ownerName.toLowerCase().includes(q)) ||
+        (p.emergencyContact && p.emergencyContact.toLowerCase().includes(q)) ||
+        (p.species && p.species.toLowerCase().includes(q)) ||
+        (p.breed && p.breed.toLowerCase().includes(q)) ||
         (p.abhaAddress && p.abhaAddress.toLowerCase().includes(q)) ||
         (p.abhaNumber && p.abhaNumber.includes(q))
     );
@@ -258,22 +341,42 @@ export const Reception: React.FC<ReceptionProps> = ({
     const keptExtra = Object.entries(formData.extra).filter(
       ([key, value]) => !["species", "breed", "ownerName"].includes(key) && String(value || "").trim()
     );
-    const ownerName = String(formData.extra.ownerName || "").trim();
+    const speciesVal =
+      String(formData.extra.species || "").trim() ||
+      (formData.relationshipToHolder === 'Pet' ? 'dog' : '');
+    const resolvedRel = speciesVal ? 'Pet' : formData.relationshipToHolder || 'Self';
+    const holderName = String(
+      formData.primaryContactName ||
+        formData.extra.ownerName ||
+        (resolvedRel !== 'Self' ? inferHouseholdHolderName(phoneMatches) : '') ||
+        ''
+    ).trim();
+    const ownerName = String(formData.extra.ownerName || (resolvedRel === 'Pet' ? holderName : '')).trim();
+    const shouldForceNewMember =
+      Boolean(formData.createNewMember) ||
+      (phoneMatches.length > 0 &&
+        (resolvedRel !== 'Self' ||
+          !phoneMatches.some(
+            (m) => m.name.trim().toLowerCase() === formData.name.trim().toLowerCase()
+          )));
     const newPatient: Patient = {
       id: `pat-${Date.now()}`,
       uhid: generatedUHID,
       name: formData.name,
       age: formData.age,
       dateOfBirth: formData.dateOfBirth,
-      species: formData.extra.species || "",
+      species: speciesVal,
       breed: formData.extra.breed || "",
       ownerName,
+      relationshipToHolder: resolvedRel,
+      primaryContactName: holderName,
+      createNewMember: shouldForceNewMember,
       gender: formData.gender,
       phone: formData.phone,
       bloodGroup: formData.bloodGroup,
       allergies: ['None known'],
       chronicConditions: keptExtra.map(([k, v]) => `${k}: ${v}`),
-      emergencyContact: ownerName || formData.emergencyContact || formData.phone,
+      emergencyContact: holderName || ownerName || formData.emergencyContact || formData.phone,
       address: formData.address || '',
       lastVisit: 'Today',
       abhaNumber: verificationSuccess?.abhaNumber || '',
@@ -298,12 +401,15 @@ export const Reception: React.FC<ReceptionProps> = ({
       setFormData({
         name: '',
         phone: '',
-        age: 35,
+        age: workflow?.rxModule === 'Veterinary' ? 3 : workflow?.rxModule === 'Pediatrics' ? 5 : 35,
         dateOfBirth: '',
         gender: 'Male',
         bloodGroup: 'B+',
         address: '',
         emergencyContact: '',
+        relationshipToHolder: defaultRelationshipForWorkflow(workflow),
+        primaryContactName: '',
+        createNewMember: false,
         selectedDoctorId: doctors[0]?.id || '',
         consultationType: workflow?.consultTypeDefault || 'Walk-in Consultation',
         extra: {},
@@ -471,20 +577,78 @@ export const Reception: React.FC<ReceptionProps> = ({
             )}
           </div>
 
+          <div className="space-y-2 border-b border-slate-100 pb-3" data-testid="reception-registering-for">
+            <span className="block text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+              Registering For (Shared Mobile Supported)
+            </span>
+            <div className="flex flex-wrap gap-1.5">
+              {REGISTERING_FOR_OPTIONS.map((opt) => {
+                const active = formData.relationshipToHolder === opt.value;
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => {
+                      const holder = inferHouseholdHolderName(phoneMatches);
+                      setFormData((prev) => ({
+                        ...prev,
+                        relationshipToHolder: opt.value,
+                        primaryContactName:
+                          opt.value === 'Self'
+                            ? ''
+                            : prev.primaryContactName || prev.extra.ownerName || holder,
+                        createNewMember: opt.value !== 'Self' && phoneMatches.length > 0 ? true : prev.createNewMember,
+                        extra: {
+                          ...prev.extra,
+                          ...(opt.value === 'Pet' && !prev.extra.species ? { species: 'dog' } : {}),
+                        },
+                      }));
+                    }}
+                    className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-all ${
+                      active
+                        ? 'bg-purple-600 text-white border-purple-600 shadow-xs'
+                        : 'bg-slate-50 text-slate-700 border-slate-200 hover:border-purple-300'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
             <div>
-              <label className="block text-slate-600 font-medium mb-1">Patient Full Name *</label>
+              <label className="block text-slate-600 font-medium mb-1">
+                {formData.relationshipToHolder === 'Pet'
+                  ? 'Pet Name *'
+                  : formData.relationshipToHolder === 'Child'
+                    ? 'Child Full Name *'
+                    : 'Patient Full Name *'}
+              </label>
               <input
                 type="text"
                 value={formData.name}
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                placeholder="e.g. Rajiv Saxena"
+                placeholder={
+                  formData.relationshipToHolder === 'Pet'
+                    ? 'e.g. Bruno / Mochi'
+                    : formData.relationshipToHolder === 'Child'
+                      ? 'e.g. Reyansh Gupta'
+                      : 'e.g. Rajiv Saxena'
+                }
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-purple-500"
               />
             </div>
 
             <div>
-              <label className="block text-slate-600 font-medium mb-1">Mobile Number *</label>
+              <label className="block text-slate-600 font-medium mb-1">
+                {formData.relationshipToHolder === 'Pet'
+                  ? "Pet Parent's Mobile *"
+                  : formData.relationshipToHolder === 'Child'
+                    ? "Parent's Mobile *"
+                    : 'Mobile Number *'}
+              </label>
               <input
                 type="text"
                 value={formData.phone}
@@ -493,6 +657,201 @@ export const Reception: React.FC<ReceptionProps> = ({
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-purple-500"
               />
             </div>
+
+            {formData.relationshipToHolder !== 'Self' && (
+              <div className="sm:col-span-2">
+                <label className="block text-slate-600 font-medium mb-1">
+                  {formData.relationshipToHolder === 'Pet'
+                    ? 'Pet Parent / Owner Full Name *'
+                    : formData.relationshipToHolder === 'Child'
+                      ? 'Parent / Guardian Full Name *'
+                      : 'Primary Account Holder / Caregiver Name *'}
+                </label>
+                <input
+                  type="text"
+                  value={formData.primaryContactName}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setFormData((prev) => ({
+                      ...prev,
+                      primaryContactName: val,
+                      emergencyContact: val,
+                      extra:
+                        prev.relationshipToHolder === 'Pet' || workflow?.rxModule === 'Veterinary'
+                          ? { ...prev.extra, ownerName: val }
+                          : prev.extra,
+                    }));
+                  }}
+                  placeholder={
+                    formData.relationshipToHolder === 'Pet'
+                      ? 'e.g. Rahul Verma'
+                      : formData.relationshipToHolder === 'Child'
+                        ? 'e.g. Neha Gupta'
+                        : 'e.g. Rajiv Saxena'
+                  }
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                />
+              </div>
+            )}
+
+            {formData.relationshipToHolder === 'Pet' && workflow?.rxModule !== 'Veterinary' && (
+              <>
+                <div>
+                  <label className="block text-slate-600 font-medium mb-1">Species</label>
+                  <select
+                    value={formData.extra.species || 'dog'}
+                    onChange={(e) =>
+                      setFormData((prev) => ({
+                        ...prev,
+                        extra: { ...prev.extra, species: e.target.value },
+                      }))
+                    }
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900"
+                  >
+                    <option value="dog">Dog</option>
+                    <option value="cat">Cat</option>
+                    <option value="other">Other</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-slate-600 font-medium mb-1">Breed</label>
+                  <input
+                    type="text"
+                    value={formData.extra.breed || ''}
+                    onChange={(e) =>
+                      setFormData((prev) => ({
+                        ...prev,
+                        extra: { ...prev.extra, breed: e.target.value },
+                      }))
+                    }
+                    placeholder="Indie, Golden Retriever, Persian..."
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900"
+                  />
+                </div>
+              </>
+            )}
+
+            {phoneMatches.length > 0 && (
+              <div
+                data-testid="shared-mobile-recognition-card"
+                className="sm:col-span-2 rounded-xl border border-amber-300 bg-amber-50/70 p-3.5 space-y-2.5"
+              >
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <p className="text-xs font-bold text-amber-950">
+                      {phoneMatches.length > 1
+                        ? `Shared Mobile Recognized — ${phoneMatches.length} profiles on this number`
+                        : 'Existing Profile Found on This Mobile Number'}
+                    </p>
+                    <p className="text-[11px] text-amber-800">
+                      Check in an existing pet, child, or family member directly, or add a separate profile without overwriting existing charts.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    data-testid="register-new-member-on-phone"
+                    onClick={() => {
+                      const holder = inferHouseholdHolderName(phoneMatches);
+                      const peerAddress = phoneMatches.find((p) => p.address)?.address || '';
+                      const nextRel =
+                        formData.relationshipToHolder === 'Self'
+                          ? workflow?.rxModule === 'Veterinary'
+                            ? 'Pet'
+                            : workflow?.rxModule === 'Pediatrics'
+                              ? 'Child'
+                              : 'Family Member'
+                          : formData.relationshipToHolder;
+                      const matchesExistingName = phoneMatches.some(
+                        (p) => p.name.trim().toLowerCase() === formData.name.trim().toLowerCase()
+                      );
+                      setFormData((prev) => ({
+                        ...prev,
+                        name: matchesExistingName ? '' : prev.name,
+                        relationshipToHolder: nextRel,
+                        primaryContactName: holder || prev.primaryContactName,
+                        emergencyContact: holder || prev.emergencyContact,
+                        address: peerAddress || prev.address,
+                        createNewMember: true,
+                        extra: {
+                          ...prev.extra,
+                          ...(holder && (nextRel === 'Pet' || workflow?.rxModule === 'Veterinary')
+                            ? { ownerName: holder }
+                            : {}),
+                        },
+                      }));
+                    }}
+                    className={`shrink-0 px-2.5 py-1.5 rounded-lg text-[11px] font-bold border transition-colors ${
+                      formData.createNewMember
+                        ? 'bg-blue-700 text-white border-blue-700'
+                        : 'bg-white text-blue-800 border-blue-300 hover:bg-blue-50'
+                    }`}
+                  >
+                    {formData.createNewMember
+                      ? '✓ Adding Separate Profile on This Mobile'
+                      : '+ Register New Pet / Child / Family / Friend on This Mobile'}
+                  </button>
+                </div>
+
+                <div className="space-y-1.5">
+                  {phoneMatches.map((peer) => {
+                    const badge = profileKindBadge(peer);
+                    const selectedDoctor =
+                      doctors.find((d) => d.id === formData.selectedDoctorId) || doctors[0];
+                    return (
+                      <div
+                        key={peer.id}
+                        className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 rounded-lg bg-white border border-amber-200 px-3 py-2"
+                      >
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="text-xs font-bold text-slate-900">
+                              {badge.icon} {peer.name}
+                            </span>
+                            <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 text-[10px] font-medium">
+                              {badge.label}
+                            </span>
+                            <span className="font-mono text-[10px] text-slate-500">{peer.uhid}</span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            type="button"
+                            disabled={checkingInPeerId === peer.id}
+                            onClick={async () => {
+                              if (!selectedDoctor) return;
+                              setCheckingInPeerId(peer.id);
+                              setIntakeError(null);
+                              try {
+                                await onCheckInPatient(peer, selectedDoctor, formData.consultationType);
+                                onSelectPatient(peer);
+                              } catch (err: any) {
+                                setIntakeError(err?.message || 'Could not check in patient.');
+                              } finally {
+                                setCheckingInPeerId(null);
+                              }
+                            }}
+                            className="px-2.5 py-1 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-semibold disabled:opacity-50"
+                          >
+                            {checkingInPeerId === peer.id ? 'Checking in…' : `Check In ${peer.name}`}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onSelectPatient(peer);
+                              if (canStartConsult && onStartConsult) onStartConsult(peer);
+                              else setSelectedRecordPatient(peer);
+                            }}
+                            className="px-2.5 py-1 rounded-md bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 text-[11px] font-semibold"
+                          >
+                            Open Chart
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             <div>
               <label className="block text-slate-600 font-medium mb-1" htmlFor="intake-dob">Date of birth</label>
@@ -589,7 +948,14 @@ export const Reception: React.FC<ReceptionProps> = ({
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900"
                     placeholder={field.placeholder}
                     value={formData.extra[field.key] || ""}
-                    onChange={(e) => setFormData({ ...formData, extra: { ...formData.extra, [field.key]: e.target.value } })}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setFormData((prev) => ({
+                        ...prev,
+                        ...(field.key === 'ownerName' ? { primaryContactName: val, emergencyContact: val } : {}),
+                        extra: { ...prev.extra, [field.key]: val },
+                      }));
+                    }}
                   />
                 )}
               </div>
@@ -628,7 +994,7 @@ export const Reception: React.FC<ReceptionProps> = ({
             <div>
               <h3 className="font-bold text-sm text-slate-900">Registered Patients & ABHA Status (sandbox)</h3>
               {/* honesty-allow: names the ABHA address field a receptionist can search, not a live-link badge */}
-              <p className="text-xs text-slate-500">Search by ABHA address, UHID, or phone</p>
+              <p className="text-xs text-slate-500">Search by ABHA address, UHID, owner/guardian, or phone</p>
             </div>
             <span className="text-xs font-mono text-slate-500">
               {searchResults.length} patients
@@ -642,7 +1008,7 @@ export const Reception: React.FC<ReceptionProps> = ({
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search by name, UHID, @abdm, or 91-XXXX..."
+              placeholder="Search by name, owner/parent, breed, UHID, @abdm, or 91-XXXX..."
               className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-purple-500"
             />
           </div>
@@ -660,15 +1026,29 @@ export const Reception: React.FC<ReceptionProps> = ({
             )}
             {searchResults.map((p) => {
               const isKyc = isAbhaLinked(p);
+              const badge = profileKindBadge(p);
+              const sharedCount = phoneCounts.get(phoneKey10(p.phone)) || 0;
               return (
                 <div
                   key={p.id}
                   className="p-3.5 rounded-lg border border-slate-200 hover:border-purple-300 hover:bg-purple-50/30 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs group"
                 >
                   <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <strong className="font-bold text-slate-900 text-sm">{p.name}</strong>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <strong className="font-bold text-slate-900 text-sm">
+                        {badge.isPet ? `${badge.icon} ` : ''}{p.name}
+                      </strong>
                       <span className="text-slate-500 font-mono text-[11px]">{p.uhid}</span>
+                      {(badge.isPet || (p.relationshipToHolder && p.relationshipToHolder !== 'Self')) && (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-sky-50 text-sky-800 border border-sky-200">
+                          {badge.icon} {badge.label}
+                        </span>
+                      )}
+                      {sharedCount > 1 && (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                          Shared Mobile ({sharedCount})
+                        </span>
+                      )}
                       {isKyc ? (
                         <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1">
                           <BadgeCheck className="w-3 h-3" /> ABHA (sandbox)
@@ -680,7 +1060,7 @@ export const Reception: React.FC<ReceptionProps> = ({
                       )}
                     </div>
 
-                    <div className="text-slate-500 flex items-center gap-3 text-[11px]">
+                    <div className="text-slate-500 flex flex-wrap items-center gap-2 text-[11px]">
                       <span>{p.age} Yrs / {p.gender}</span>
                       <span>•</span>
                       <span>{p.phone}</span>

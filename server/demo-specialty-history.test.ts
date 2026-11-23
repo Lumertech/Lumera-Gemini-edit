@@ -73,6 +73,8 @@ describe("specialty-wise India history taking and >=5 dummy patients for all dem
 
     const gynaePresets = RX_PRESETS.filter((p) => p.specialty === "Gynecology");
     assert.ok(gynaePresets.length >= 5, "Gynecology should include >= 5 clinical presets across ANC, PCOS, AUB, Fertility OI, and Postnatal care");
+    const vetPresets = RX_PRESETS.filter((p) => p.specialty === "Veterinary");
+    assert.ok(vetPresets.length >= 5, "Veterinary should include >= 5 clinical presets across Tick-Fever, Gastroenteritis, Otitis/Dermatology, Spay/Neuter, and WSAVA Wellness");
     assert.ok(RX_PRESETS.some((p) => p.specialty === "Pediatrics"));
     assert.ok(RX_PRESETS.some((p) => p.specialty === "ENT"));
     assert.ok(RX_PRESETS.some((p) => p.specialty === "Neurology"));
@@ -301,6 +303,141 @@ describe("specialty-wise India history taking and >=5 dummy patients for all dem
     const doses = chartPayload.doses || [];
     assert.ok(doses.some((d) => d.code === "bcg" && d.status === "given"));
     assert.ok(doses.some((d) => d.status === "due" || d.status === "upcoming"));
+  });
+
+  it("populates full Veterinarian (veterinary@lumera.me) 8-patient multi-pet household workspace, 4-mode Rx, WSAVA doses, labs, invoices, and multilingual WhatsApp", async () => {
+    const vet = await login("veterinary@lumera.me");
+    assert.equal(vet.user.tenantId, "tenant-demo-veterinary");
+
+    // 1. >= 8 Pet Patients across shared multi-pet mobiles (>= 3 pets on Rahul Verma's +91 98201 44550)
+    const patRes = await jsonRequest(port, "GET", "/api/patients", undefined, vet.auth);
+    assert.equal(patRes.status, 200);
+    const vetPatients = (patRes.json.patients || []) as Array<{
+      id: string;
+      name: string;
+      phone: string;
+      species?: string;
+      breed?: string;
+      relationshipToHolder?: string;
+      primaryContactName?: string;
+    }>;
+    assert.ok(vetPatients.length >= 8, `Expected >= 8 pet patients for veterinary@lumera.me, got ${vetPatients.length}`);
+    assert.ok(vetPatients.every((p) => p.relationshipToHolder === "Pet"));
+
+    const byPhoneRes = await jsonRequest(
+      port,
+      "GET",
+      `/api/patients/by-phone?phone=${encodeURIComponent("+91 98201 44550")}`,
+      undefined,
+      vet.auth
+    );
+    assert.equal(byPhoneRes.status, 200);
+    assert.equal(byPhoneRes.json.sharedMobile, true);
+    const rahulPets = (byPhoneRes.json.patients || []) as Array<{ name: string }>;
+    assert.ok(rahulPets.length >= 3, `Expected >= 3 pets on Rahul Verma's mobile, got ${rahulPets.length}`);
+    const rahulPetNames = new Set(rahulPets.map((p) => p.name));
+    assert.ok(rahulPetNames.has("Bruno") && rahulPetNames.has("Mochi") && rahulPetNames.has("Coco"));
+
+    // Owner name search returns all pets of Rahul Verma
+    const ownerSearch = await jsonRequest(
+      port,
+      "GET",
+      `/api/patients?q=${encodeURIComponent("Rahul Verma")}`,
+      undefined,
+      vet.auth
+    );
+    assert.equal(ownerSearch.status, 200);
+    assert.ok(((ownerSearch.json.patients || []) as unknown[]).length >= 3);
+
+    // 2. >= 6 Today OPD Visits across Waiting, Confirmed, Completed (including Bruno & Mochi)
+    const todayRes = await jsonRequest(port, "GET", "/api/appointments?date=today", undefined, vet.auth);
+    assert.equal(todayRes.status, 200);
+    const todayVisits = ((todayRes.json.appointments || []) as Array<{
+      id: string;
+      doctorId: string;
+      patientId: string;
+      status: string;
+    }>).filter((a) => a.doctorId === "doc-persona-vet");
+    assert.ok(todayVisits.length >= 6, `Expected >= 6 today OPD visits for doc-persona-vet, got ${todayVisits.length}`);
+    const todayStatuses = new Set(todayVisits.map((a) => a.status));
+    assert.ok(todayStatuses.has("Waiting"), "Expected Waiting visit in today's Vet queue");
+    assert.ok(todayStatuses.has("Confirmed"), "Expected Confirmed visit in today's Vet queue");
+    assert.ok(todayStatuses.has("Completed"), "Expected Completed visit in today's Vet queue");
+
+    // 3. >= 7 Signed Multi-Mode Veterinary Prescriptions across all 4 clinical modes + draft restore
+    const rxRes = await jsonRequest(port, "GET", "/api/prescriptions", undefined, vet.auth);
+    assert.equal(rxRes.status, 200);
+    const vetRxs = ((rxRes.json.prescriptions || []) as Array<{
+      doctorId: string;
+      veterinaryAssessment?: {
+        clinicalMode?: string;
+        vectorSnap4DxStatus?: string;
+        plateletCountLakhs?: number;
+        biteQuarantineStatus?: string;
+      };
+    }>).filter((rx) => rx.doctorId === "doc-persona-vet");
+    assert.ok(vetRxs.length >= 7, `Expected >= 7 signed Veterinary prescriptions, got ${vetRxs.length}`);
+    const vetModes = new Set(vetRxs.map((rx) => rx.veterinaryAssessment?.clinicalMode));
+    assert.ok(vetModes.has("Preventive & Vaccination"));
+    assert.ok(vetModes.has("Tick-Fever & Internal Med"));
+    assert.ok(vetModes.has("Dermatology, Ear & Dental"));
+    assert.ok(vetModes.has("Surgery, Spay/Neuter & Bite"));
+
+    const restoredVet = restoreRxDraft({
+      diagnosis: "Canine Ehrlichiosis",
+      veterinaryAssessment: {
+        clinicalMode: "Tick-Fever & Internal Med",
+        species: "Dog",
+        breed: "Golden Retriever",
+        bodyWeightKg: 31.4,
+        vectorSnap4DxStatus: "Ehrlichia +",
+        plateletCountLakhs: 0.68,
+      },
+    });
+    assert.equal(restoredVet?.veterinaryAssessment?.vectorSnap4DxStatus, "Ehrlichia +");
+    assert.equal(restoredVet?.veterinaryAssessment?.bodyWeightKg, 31.4);
+
+    // 4. Live WSAVA Canine Puppy Immunization Chart on 14-week Shih Tzu Pixel
+    const pixelImm = await jsonRequest(
+      port,
+      "GET",
+      "/api/patients/vet-pat-pixel/immunization-chart?audience=veterinary",
+      undefined,
+      vet.auth
+    );
+    assert.equal(pixelImm.status, 200);
+    const pixelChart = (pixelImm.json.chart || {}) as {
+      schedule?: { id?: string };
+      doses?: Array<{ code: string; status: string }>;
+    };
+    assert.equal(pixelChart.schedule?.id, "canine");
+    assert.ok((pixelChart.doses || []).some((d) => d.code === "dhppil-1" && d.status === "given"));
+    assert.ok((pixelChart.doses || []).some((d) => d.status === "due" || d.status === "overdue" || d.status === "upcoming"));
+
+    // 5. >= 5 Verified Veterinary Lab Reports
+    const labsRes = await jsonRequest(port, "GET", "/api/lab-reports", undefined, vet.auth);
+    assert.equal(labsRes.status, 200);
+    const vetLabs = (labsRes.json.labReports || []) as Array<{ id: string; category: string }>;
+    assert.ok(vetLabs.length >= 5, `Expected >= 5 Veterinary lab reports, got ${vetLabs.length}`);
+
+    // 6. >= 5 Veterinary Invoices & positive today revenue
+    const invRes = await jsonRequest(port, "GET", "/api/invoices", undefined, vet.auth);
+    assert.equal(invRes.status, 200);
+    const vetInvoices = ((invRes.json.invoices || []) as Array<{
+      id: string;
+      consultingDoctorId?: string;
+    }>).filter((inv) => inv.consultingDoctorId === "doc-persona-vet");
+    assert.ok(vetInvoices.length >= 5, `Expected >= 5 Veterinary invoices, got ${vetInvoices.length}`);
+
+    const revRes = await jsonRequest(port, "GET", "/api/billing/revenue", undefined, vet.auth);
+    assert.equal(revRes.status, 200);
+    assert.ok(Number(revRes.json.today) > 0, `Expected positive today Vet revenue, got ${String(revRes.json.today)}`);
+
+    // 7. >= 4 Multilingual WhatsApp Conversations
+    const waRes = await jsonRequest(port, "GET", "/api/whatsapp/conversations", undefined, vet.auth);
+    assert.equal(waRes.status, 200);
+    const vetConvs = (waRes.json.conversations || []) as Array<{ id: string; preferredLanguage?: string }>;
+    assert.ok(vetConvs.length >= 4, `Expected >= 4 Veterinary WhatsApp threads, got ${vetConvs.length}`);
   });
 });
 

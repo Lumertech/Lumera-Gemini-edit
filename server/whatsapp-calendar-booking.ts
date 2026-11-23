@@ -7,6 +7,7 @@ import {
   getTenantPatient,
   insertAppointment,
   insertPatient,
+  listTenantPatientsByPhone,
   tenantTimezone,
   updateAppointment,
 } from "./clinical.ts";
@@ -55,21 +56,58 @@ export function findOrCreateWhatsAppPatient(opts: {
   tenantId: string;
   phone: string;
   name?: string;
+  patientId?: string;
+  createNewMember?: boolean;
+  species?: string;
+  breed?: string;
+  relationshipToHolder?: string;
+  primaryContactName?: string;
 }): Record<string, unknown> {
-  const existing = findPatientByPhoneInTenant(opts.tenantId, opts.phone);
-  if (existing) return existing;
+  if (opts.patientId) {
+    const byId = getTenantPatient(opts.tenantId, opts.patientId);
+    if (byId) return byId;
+  }
 
-  const elsewhere = findPatientsByPhone(opts.phone).find(
-    (row) => String(row.tenant_id || "").trim() && String(row.tenant_id) !== opts.tenantId
-  );
-  if (elsewhere) {
-    throw Object.assign(new Error("Patient phone is registered to another clinic"), { status: 409 });
+  const tenantMatches = listTenantPatientsByPhone(opts.tenantId, opts.phone);
+  const wantedRaw = String(opts.name || "").trim();
+  const wantedKey = wantedRaw.toLowerCase().replace(/\s+/g, " ");
+
+  if (tenantMatches.length > 0 && !opts.createNewMember) {
+    if (wantedKey && wantedKey !== "whatsapp patient") {
+      const exactOrFirst = tenantMatches.find((row) => {
+        const rn = String(row.name || "").trim().toLowerCase().replace(/\s+/g, " ");
+        return rn === wantedKey || rn.split(" ")[0] === wantedKey;
+      });
+      if (exactOrFirst) return exactOrFirst;
+    }
+
+    const explicitOtherMember =
+      Boolean(opts.species && opts.species.toLowerCase() !== "human") ||
+      Boolean(opts.relationshipToHolder && !/^self$/i.test(opts.relationshipToHolder));
+
+    if (!explicitOtherMember) {
+      return tenantMatches[0];
+    }
+  }
+
+  if (tenantMatches.length === 0) {
+    const elsewhere = findPatientsByPhone(opts.phone).find(
+      (row) => String(row.tenant_id || "").trim() && String(row.tenant_id) !== opts.tenantId
+    );
+    if (elsewhere) {
+      throw Object.assign(new Error("Patient phone is registered to another clinic"), { status: 409 });
+    }
   }
 
   return insertPatient(opts.tenantId, {
-    name: String(opts.name || "").trim() || "WhatsApp Patient",
+    name: wantedRaw || "WhatsApp Patient",
     phone: opts.phone,
     gender: "Other",
+    createNewMember: Boolean(opts.createNewMember || tenantMatches.length > 0),
+    ...(opts.species ? { species: opts.species } : {}),
+    ...(opts.breed ? { breed: opts.breed } : {}),
+    ...(opts.relationshipToHolder ? { relationshipToHolder: opts.relationshipToHolder } : {}),
+    ...(opts.primaryContactName ? { primaryContactName: opts.primaryContactName } : {}),
   });
 }
 
@@ -183,6 +221,12 @@ export function bookWhatsAppAppointment(opts: {
   tenantId: string;
   patientPhone: string;
   patientName?: string;
+  patientId?: string;
+  createNewMember?: boolean;
+  species?: string;
+  breed?: string;
+  relationshipToHolder?: string;
+  primaryContactName?: string;
   doctorId?: string;
   doctorName?: string;
   date?: string;
@@ -211,6 +255,12 @@ export function bookWhatsAppAppointment(opts: {
     tenantId,
     phone: opts.patientPhone,
     name: opts.patientName,
+    patientId: opts.patientId,
+    createNewMember: opts.createNewMember,
+    species: opts.species,
+    breed: opts.breed,
+    relationshipToHolder: opts.relationshipToHolder,
+    primaryContactName: opts.primaryContactName,
   });
   const mappedPatient = mapPatient(patient);
   const clock = opts.now ?? new Date();

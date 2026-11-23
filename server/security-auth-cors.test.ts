@@ -230,12 +230,33 @@ describe("Auth / tenant isolation / CORS / CSRF / rate limit", () => {
 
     const indexes = getDb().prepare("PRAGMA index_list(patients)").all() as Array<{ name: string; unique: number }>;
     const uniqueNames = indexes.filter((i) => i.unique).map((i) => i.name);
-    assert.ok(uniqueNames.includes("idx_patients_tenant_phone"));
+    assert.equal(uniqueNames.includes("idx_patients_tenant_phone"), false);
+    assert.ok(indexes.some((i) => i.name === "idx_patients_tenant_phone_lookup" && i.unique === 0));
     for (const name of uniqueNames) {
       const info = getDb().prepare(`PRAGMA index_info("${name.replace(/"/g, "\"\"")}")`).all() as Array<{ name: string }>;
       const cols = info.map((c) => c.name);
       assert.equal(cols.length === 1 && cols[0] === "phone", false, `legacy UNIQUE(phone) still present on ${name}`);
     }
+
+    const householdPet = await jsonRequest(
+      port,
+      "POST",
+      "/api/patients",
+      {
+        name: "Mochi",
+        phone: sharedPhone,
+        age: 2,
+        gender: "Female",
+        species: "Cat",
+        breed: "Persian",
+        relationshipToHolder: "Pet",
+        primaryContactName: "Shared Mobile Patient",
+      },
+      { Authorization: `Bearer ${tokenA}` }
+    );
+    assert.equal(householdPet.status, 201, String(householdPet.json.error || "same-tenant shared mobile pet"));
+    const idPet = String((householdPet.json.patient as { id?: string } | undefined)?.id || "");
+    assert.ok(idPet && idPet !== idA);
   });
 
   it("live registration handlers do not hardcode Lumera@2026", () => {
@@ -250,7 +271,7 @@ describe("Auth / tenant isolation / CORS / CSRF / rate limit", () => {
     assert.equal(apiSrc.includes("hashPassword('Lumera@2026')"), false);
     assert.match(apiSrc, /generateTemporaryPassword\(\)/);
     assert.match(liveSrc, /function liveRegistrationPasswordHash/);
-    assert.equal(PATIENTS_PHONE_UNIQUE, "UNIQUE(tenant_id, phone)");
+    assert.equal(PATIENTS_PHONE_UNIQUE, "INDEX(tenant_id, phone)");
   });
 
   it("requests from a disallowed origin are rejected", async () => {

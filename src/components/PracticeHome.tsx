@@ -23,6 +23,7 @@ import {
 import { completedSessionsForPatient, DEMO_PHYSIO_PACKAGES } from "../lib/demoPhysioBook";
 import { apiFetch } from "../api/http";
 import { GynaecologyPracticeDeck } from "./GynaecologyPracticeDeck";
+import { VeterinaryPracticeDeck } from "./VeterinaryPracticeDeck";
 
 interface PracticeHomeProps {
   user: AppUser;
@@ -41,6 +42,7 @@ interface PracticeHomeProps {
   onReady?: (appointment: Appointment) => void;
   onStartConsult?: (appointment: Appointment) => void;
   onCreateBill?: (appointment: Appointment) => void;
+  onRegisterWithPhone?: (phone: string) => void;
 }
 
 function Kpi({ label, value }: { label: string; value: string }) {
@@ -91,6 +93,7 @@ export const PracticeHome: React.FC<PracticeHomeProps> = ({
   onReady,
   onStartConsult,
   onCreateBill,
+  onRegisterWithPhone,
 }) => {
   const clinic = greetingClinicName(user.clinicName);
   const greeting = homeGreetingLine(user.name, user.role);
@@ -259,6 +262,23 @@ export const PracticeHome: React.FC<PracticeHomeProps> = ({
             onOpen={onOpen}
             onSelectPatient={onSelectPatient}
             onStartConsult={onStartConsult}
+          />
+        );
+      }
+      if (pack.rxModule === "Veterinary") {
+        return (
+          <VeterinaryPracticeDeck
+            patients={patients}
+            appointments={doctorAppointments}
+            prescriptions={prescriptions}
+            doctor={doctor}
+            todayPendingInr={metrics.todayPending}
+            withDoctorCount={metrics.withDoctor}
+            followUpsToday={metrics.followUps}
+            onOpen={onOpen}
+            onSelectPatient={onSelectPatient}
+            onStartConsult={onStartConsult}
+            onRegisterSiblingPet={onRegisterWithPhone}
           />
         );
       }

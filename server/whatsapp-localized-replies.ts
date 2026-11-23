@@ -472,6 +472,7 @@ export function renderLocalizedBookingConfirmed(opts: {
   lang: "hi" | "mr";
   reused: boolean;
   appointment: {
+    patientName?: string;
     tokenNumber: number | string;
     doctorName: string;
     specialty: string;
@@ -485,13 +486,18 @@ export function renderLocalizedBookingConfirmed(opts: {
   const spec = localizeSpecialtyLabel(opts.appointment.specialty, opts.lang);
   const slot = localizeTimingLabel(opts.appointment.timeSlot || "OPD hours", opts.lang);
   const status = localizeAppointmentStatus(opts.appointment.status, opts.lang);
+  const pat = opts.appointment.patientName
+    ? localizePersonOrClinicName(opts.appointment.patientName, opts.lang)
+    : "";
 
   if (opts.lang === "hi") {
     const b = LOCALIZED_BUTTONS.hi;
     const title = opts.reused ? "📌 *आपकी पूर्व-सक्रिय बुकिंग मिली*" : "🎉 *अपॉइंटमेंट की पुष्टि हो गई!*";
+    const patLine = pat ? `*रोगी / प्रोफाइल*: ${pat}\n` : "";
     return {
       content:
         `${title}\n\n` +
+        patLine +
         `*टोकन संख्या*: *#${opts.appointment.tokenNumber}*\n` +
         `*डॉक्टर*: ${doc}\n` +
         `*विभाग*: ${spec}\n` +
@@ -506,9 +512,11 @@ export function renderLocalizedBookingConfirmed(opts: {
 
   const b = LOCALIZED_BUTTONS.mr;
   const title = opts.reused ? "📌 *तुमची आधीची सक्रिय बुकिंग आढळली*" : "🎉 *तुमची अपॉइंटमेंट निश्चित झाली आहे!*";
+  const patLine = pat ? `*रुग्ण / प्रोफाईल*: ${pat}\n` : "";
   return {
     content:
       `${title}\n\n` +
+      patLine +
       `*टोकन क्रमांक*: *#${opts.appointment.tokenNumber}*\n` +
       `*डॉक्टर*: ${doc}\n` +
       `*विभाग*: ${spec}\n` +
@@ -996,5 +1004,134 @@ export function renderLocalizedMessagingOnlyNotice(
       `Our clinic line is currently configured for *WhatsApp messaging only*. You can text us right here 24/7 to book doctor appointments, check OPD timings, view your prescriptions, or chat with our front desk.\n\n` +
       `How may we assist you today?`,
     buttons: ["📅 Book Appointment", "⏰ Doctor Timings", "📍 Clinic Location"],
+  };
+}
+
+function profileEmoji(p: { species?: string; relationshipToHolder?: string }): string {
+  const sp = String(p.species || "").toLowerCase();
+  if (sp === "cat") return "🐱";
+  if (sp && sp !== "human") return "🐾";
+  if (p.relationshipToHolder === "Child") return "👶";
+  return "👤";
+}
+
+function compactProfileReplyButton(
+  profile: { name: string; species?: string; relationshipToHolder?: string },
+  lang: WhatsAppLangCode
+): string {
+  const icon = profileEmoji(profile);
+  const firstWord = String(profile.name || "").trim().split(/\s+/)[0] || "Profile";
+  const label =
+    lang === "hi" || lang === "mr" ? localizePersonOrClinicName(firstWord, lang) : firstWord;
+  const candidate = `${icon} ${label}`.trim();
+  return candidate.length <= 20 ? candidate : candidate.slice(0, 20).trim();
+}
+
+export function renderHouseholdProfilePicker(opts: {
+  lang: WhatsAppLangCode;
+  clinicName: string;
+  holderName?: string;
+  profiles: Array<{
+    id: string;
+    name: string;
+    species?: string;
+    breed?: string;
+    relationshipToHolder?: string;
+    uhid?: string;
+  }>;
+}): BotReplyPayload {
+  const pickedButtons = opts.profiles.slice(0, 2).map((p) => compactProfileReplyButton(p, opts.lang));
+
+  if (opts.lang === "hi") {
+    const clinic = localizePersonOrClinicName(opts.clinicName, "hi");
+    const holder = opts.holderName ? localizePersonOrClinicName(opts.holderName, "hi") : "";
+    const listText = opts.profiles
+      .map((p) => {
+        const icon = profileEmoji(p);
+        const pName = localizePersonOrClinicName(p.name, "hi");
+        const sp = String(p.species || "").toLowerCase();
+        const roleLabel =
+          sp === "dog"
+            ? "श्वान"
+            : sp === "cat"
+              ? "बिल्ली"
+              : sp && sp !== "human"
+                ? "पालतू पशु"
+                : p.relationshipToHolder === "Child"
+                  ? "बच्चा"
+                  : p.relationshipToHolder && p.relationshipToHolder !== "Self"
+                    ? "परिवार / मित्र"
+                    : "स्वयं";
+        return `• ${icon} *${pName}* (${roleLabel}${p.uhid ? ` • ${p.uhid}` : ""})`;
+      })
+      .join("\n");
+    return {
+      content:
+        `नमस्ते${holder ? ` ${holder}` : ""}! 🙏 *${clinic}* में आपके मोबाइल नंबर से एक से अधिक प्रोफाइल जुड़े हैं:\n\n` +
+        `${listText}\n\n` +
+        `कृपया चुनें कि यह अपॉइंटमेंट किसके लिए बुक करना है (या किसी नए पालतू पशु, बच्चे, परिवार के सदस्य या मित्र का नाम लिखें):`,
+      buttons: [...pickedButtons, "➕ नया सदस्य"],
+    };
+  }
+
+  if (opts.lang === "mr") {
+    const clinic = localizePersonOrClinicName(opts.clinicName, "mr");
+    const holder = opts.holderName ? localizePersonOrClinicName(opts.holderName, "mr") : "";
+    const listText = opts.profiles
+      .map((p) => {
+        const icon = profileEmoji(p);
+        const pName = localizePersonOrClinicName(p.name, "mr");
+        const sp = String(p.species || "").toLowerCase();
+        const roleLabel =
+          sp === "dog"
+            ? "श्वान"
+            : sp === "cat"
+              ? "मांजर"
+              : sp && sp !== "human"
+                ? "पाळीव प्राणी"
+                : p.relationshipToHolder === "Child"
+                  ? "मूल"
+                  : p.relationshipToHolder && p.relationshipToHolder !== "Self"
+                    ? "कुटुंब / मित्र"
+                    : "स्वतः";
+        return `• ${icon} *${pName}* (${roleLabel}${p.uhid ? ` • ${p.uhid}` : ""})`;
+      })
+      .join("\n");
+    return {
+      content:
+        `नमस्कार${holder ? ` ${holder}` : ""}! 🙏 *${clinic}* मध्ये तुमच्या मोबाईल क्रमांकावर अनेक प्रोफाईल नोंदणीकृत आहेत:\n\n` +
+        `${listText}\n\n` +
+        `कृपया ही अपॉइंटमेंट कोणासाठी बुक करायची आहे ते निवडा (किंवा नवीन पाळीव प्राणी, मूल, कुटुंब सदस्य किंवा मित्राचे नाव पाठवा):`,
+      buttons: [...pickedButtons, "➕ नवीन सदस्य"],
+    };
+  }
+
+  const listText = opts.profiles
+    .map((p) => {
+      const icon = profileEmoji(p);
+      const sp = String(p.species || "").toLowerCase();
+      const roleLabel =
+        sp === "dog"
+          ? `Dog${p.breed ? ` • ${p.breed}` : ""}`
+          : sp === "cat"
+            ? `Cat${p.breed ? ` • ${p.breed}` : ""}`
+            : sp && sp !== "human"
+              ? "Pet"
+              : p.relationshipToHolder || "Self";
+      return `• ${icon} *${p.name}* (${roleLabel}${p.uhid ? ` • ${p.uhid}` : ""})`;
+    })
+    .join("\n");
+
+  const buttons =
+    opts.profiles.length <= 3
+      ? [...opts.profiles.slice(0, 2).map((p) => compactProfileReplyButton(p, "en")), "➕ New / Other"]
+      : [...pickedButtons, "➕ New / Other"];
+
+  return {
+    content:
+      `Hello${opts.holderName ? ` ${opts.holderName}` : ""}! 🙏 Multiple profiles are linked to your mobile number at *${opts.clinicName}*:\n\n` +
+      `${listText}\n\n` +
+      `Who is this appointment for? Tap a profile below, or reply with a new pet, child, family member, or friend's name (e.g. *"Book for my friend Karan"*):`,
+    buttons,
   };
 }

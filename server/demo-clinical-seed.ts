@@ -19,6 +19,10 @@ interface SeedPatientSpec {
   chronicConditions: string[];
   address: string;
   emergencyContact?: string;
+  species?: string;
+  breed?: string;
+  relationshipToHolder?: string;
+  primaryContactName?: string;
 }
 
 interface SeedRxSpec {
@@ -223,7 +227,7 @@ function buildPolyclinicSpecialtyRoster(today: string): {
       address: "New Town Action Area I, Kolkata 700156",
     },
 
-    // --- PEDIATRICS (5 patients for pediatrics@lumera.me / doc-persona-pedia) ---
+    // --- PEDIATRICS (6 patients including shared-mobile siblings for pediatrics@lumera.me / doc-persona-pedia) ---
     {
       id: "poly-pat-arjun",
       tenantId,
@@ -239,6 +243,8 @@ function buildPolyclinicSpecialtyRoster(today: string): {
       chronicConditions: ["Episodic Viral-Triggered Wheeze"],
       address: "Ballygunge Place, Kolkata 700019",
       emergencyContact: "Subhash Bose (Father) +91 98111 22004",
+      relationshipToHolder: "Child",
+      primaryContactName: "Subhash Bose",
     },
     {
       id: "pedia-pat-aadhya",
@@ -255,6 +261,8 @@ function buildPolyclinicSpecialtyRoster(today: string): {
       chronicConditions: ["9-Month Well-Baby MMR-1 & IYCF Review"],
       address: "Koramangala 4th Block, Bengaluru 560034",
       emergencyContact: "Neha Sharma (Mother) +91 98111 24001",
+      relationshipToHolder: "Child",
+      primaryContactName: "Neha Sharma",
     },
     {
       id: "pedia-pat-vihaan",
@@ -271,6 +279,8 @@ function buildPolyclinicSpecialtyRoster(today: string): {
       chronicConditions: ["Acute Viral Gastroenteritis — ORS + Zinc"],
       address: "Panampilly Nagar, Kochi 682036",
       emergencyContact: "Deepa Nair (Mother) +91 98111 24002",
+      relationshipToHolder: "Child",
+      primaryContactName: "Deepa Nair",
     },
     {
       id: "pedia-pat-diya",
@@ -287,6 +297,8 @@ function buildPolyclinicSpecialtyRoster(today: string): {
       chronicConditions: ["School-Entry DPT/MMR Booster & Mild Nutritional Anemia"],
       address: "Aundh, Pune 411007",
       emergencyContact: "Amit Kulkarni (Father) +91 98111 24003",
+      relationshipToHolder: "Child",
+      primaryContactName: "Amit Kulkarni",
     },
     {
       id: "pedia-pat-reyansh",
@@ -302,7 +314,27 @@ function buildPolyclinicSpecialtyRoster(today: string): {
       allergies: ["Penicillin Rash"],
       chronicConditions: ["Recurrent Acute Tonsillopharyngitis"],
       address: "Gomti Nagar, Lucknow 226010",
-      emergencyContact: "Sanjay Gupta (Father) +91 98111 24004",
+      emergencyContact: "Neha Gupta (Mother) +91 98111 24004",
+      relationshipToHolder: "Child",
+      primaryContactName: "Neha Gupta",
+    },
+    {
+      id: "pedia-pat-kiaan",
+      tenantId,
+      uhid: "LUM-PED-2405",
+      name: "Kiaan Gupta",
+      age: 2,
+      dobOffsetDays: -760,
+      gender: "Male",
+      phone: "+91 98111 24004",
+      email: "parent.reyansh@demo.lumera.in",
+      bloodGroup: "AB+",
+      allergies: [],
+      chronicConditions: ["2-Year Well-Child Growth & Typhoid Conjugate Booster"],
+      address: "Gomti Nagar, Lucknow 226010",
+      emergencyContact: "Neha Gupta (Mother) +91 98111 24004",
+      relationshipToHolder: "Child",
+      primaryContactName: "Neha Gupta",
     },
 
     // --- CARDIOLOGY (5 patients for cardiology@lumera.me / doc-persona-cardio) ---
@@ -2628,9 +2660,10 @@ export function seedAllDemoSpecialtyClinicalData(database: SqlDatabase, nowDate 
   const insertPatient = database.prepare(
     `INSERT INTO patients (
        id, tenant_id, uhid, name, age, gender, phone, email, blood_group, allergies, chronic_conditions,
-       emergency_contact, address, last_visit, created_at, date_of_birth
+       emergency_contact, address, last_visit, created_at, date_of_birth,
+       species, breed, relationship_to_holder, primary_contact_name
      )
-     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
      WHERE NOT EXISTS (SELECT 1 FROM patients WHERE id = ? OR uhid = ?)`
   );
 
@@ -2642,7 +2675,11 @@ export function seedAllDemoSpecialtyClinicalData(database: SqlDatabase, nowDate 
          chronic_conditions = CASE WHEN COALESCE(chronic_conditions, '[]') = '[]' THEN ? ELSE chronic_conditions END,
          address = CASE WHEN COALESCE(address, '') = '' THEN ? ELSE address END,
          email = CASE WHEN COALESCE(email, '') = '' THEN ? ELSE email END,
-         emergency_contact = CASE WHEN COALESCE(emergency_contact, '') = '' THEN ? ELSE emergency_contact END
+         emergency_contact = CASE WHEN COALESCE(emergency_contact, '') = '' THEN ? ELSE emergency_contact END,
+         species = CASE WHEN ? != '' THEN ? ELSE COALESCE(species, '') END,
+         breed = CASE WHEN ? != '' THEN ? ELSE COALESCE(breed, '') END,
+         relationship_to_holder = CASE WHEN ? != '' THEN ? ELSE COALESCE(relationship_to_holder, 'Self') END,
+         primary_contact_name = CASE WHEN ? != '' THEN ? ELSE COALESCE(primary_contact_name, '') END
      WHERE id = ? AND tenant_id = ?`
   );
 
@@ -2650,7 +2687,11 @@ export function seedAllDemoSpecialtyClinicalData(database: SqlDatabase, nowDate 
     const dob = p.dateOfBirth || (typeof p.dobOffsetDays === "number" ? shiftIsoDate(today, p.dobOffsetDays) : "");
     const allergiesJson = JSON.stringify(p.allergies);
     const chronicJson = JSON.stringify(p.chronicConditions);
-    const emergency = p.emergencyContact || p.phone;
+    const emergency = p.emergencyContact || p.primaryContactName || p.phone;
+    const species = p.species || "";
+    const breed = p.breed || "";
+    const rel = p.relationshipToHolder || (species && species !== "human" ? "Pet" : "Self");
+    const holder = p.primaryContactName || "";
     insertPatient.run(
       p.id,
       p.tenantId,
@@ -2668,10 +2709,32 @@ export function seedAllDemoSpecialtyClinicalData(database: SqlDatabase, nowDate 
       today,
       now,
       dob,
+      species,
+      breed,
+      rel,
+      holder,
       p.id,
       p.uhid
     );
-    enrichPatient.run(dob, p.bloodGroup, allergiesJson, chronicJson, p.address, p.email, emergency, p.id, p.tenantId);
+    enrichPatient.run(
+      dob,
+      p.bloodGroup,
+      allergiesJson,
+      chronicJson,
+      p.address,
+      p.email,
+      emergency,
+      species,
+      species,
+      breed,
+      breed,
+      rel,
+      rel,
+      holder,
+      holder,
+      p.id,
+      p.tenantId
+    );
   };
 
   const insertRxStmt = database.prepare(
@@ -2720,15 +2783,17 @@ export function seedAllDemoSpecialtyClinicalData(database: SqlDatabase, nowDate 
     .prepare("UPDATE users SET patient_id = 'ind-pat-rajiv' WHERE lower(email) = 'patient@lumera.me' AND COALESCE(patient_id, '') = ''")
     .run();
   const individualPatients: SeedPatientSpec[] = [
-    { id: "ind-pat-rajiv", tenantId: "tenant-demo-individual", uhid: "LUM-IND-0106", name: "Rajiv Saxena", age: 44, dateOfBirth: "1982-05-14", gender: "Male", phone: "+91 98111 01061", email: "rajiv.saxena@demo.lumera.in", bloodGroup: "B+", allergies: ["Dust", "Sulfa"], chronicConditions: ["Seasonal Allergic Rhinitis", "Borderline Dyslipidemia"], address: "C-18 Hauz Khas, New Delhi 110016" },
+    { id: "ind-pat-rajiv", tenantId: "tenant-demo-individual", uhid: "LUM-IND-0106", name: "Rajiv Saxena", age: 44, dateOfBirth: "1982-05-14", gender: "Male", phone: "+91 98111 01061", email: "rajiv.saxena@demo.lumera.in", bloodGroup: "B+", allergies: ["Dust", "Sulfa"], chronicConditions: ["Seasonal Allergic Rhinitis", "Borderline Dyslipidemia"], address: "C-18 Hauz Khas, New Delhi 110016", relationshipToHolder: "Self", primaryContactName: "Rajiv Saxena" },
     { id: "ind-pat-sunita", tenantId: "tenant-demo-individual", uhid: "LUM-IND-0107", name: "Sunita Roy", age: 38, dateOfBirth: "1988-09-22", gender: "Female", phone: "+91 98111 01062", email: "sunita.roy@demo.lumera.in", bloodGroup: "O+", allergies: [], chronicConditions: ["Type 2 Diabetes Mellitus", "Primary Hypothyroidism"], address: "Salt Lake Sector I, Kolkata 700064" },
     { id: "ind-pat-3", tenantId: "tenant-demo-individual", uhid: "LUM-IND-0108", name: "Asha Menon", age: 29, dateOfBirth: "1997-02-11", gender: "Female", phone: "+91 98400 12003", email: "asha.menon@demo.lumera.in", bloodGroup: "A+", allergies: [], chronicConditions: ["Nutritional Iron Deficiency Anemia", "Episodic Migraine"], address: "Indiranagar, Bengaluru 560038" },
     { id: "ind-pat-4", tenantId: "tenant-demo-individual", uhid: "LUM-IND-0109", name: "Karthik Rao", age: 51, dateOfBirth: "1975-07-03", gender: "Male", phone: "+91 98400 12004", email: "karthik.rao@demo.lumera.in", bloodGroup: "AB+", allergies: ["Ibuprofen"], chronicConditions: ["Essential Hypertension", "Grade I Fatty Liver (MASLD)"], address: "Mylapore, Chennai 600004" },
     { id: "ind-pat-5", tenantId: "tenant-demo-individual", uhid: "LUM-IND-0110", name: "Meera Shah", age: 33, dateOfBirth: "1993-11-29", gender: "Female", phone: "+91 98400 12005", email: "meera.shah@demo.lumera.in", bloodGroup: "O+", allergies: [], chronicConditions: ["Acute Tropical Febrile Illness (Dengue Triage)"], address: "Navrangpura, Ahmedabad 380009" },
+    { id: "ind-pat-rajiv-mother", tenantId: "tenant-demo-individual", uhid: "LUM-IND-0111", name: "Kamla Saxena", age: 71, dateOfBirth: "1955-02-18", gender: "Female", phone: "+91 98111 01061", email: "rajiv.saxena@demo.lumera.in", bloodGroup: "B+", allergies: [], chronicConditions: ["Osteoarthritis Knees", "Controlled Stage I Hypertension"], address: "C-18 Hauz Khas, New Delhi 110016", emergencyContact: "Rajiv Saxena (Son) +91 98111 01061", relationshipToHolder: "Parent", primaryContactName: "Rajiv Saxena" },
+    { id: "ind-pat-rajiv-friend", tenantId: "tenant-demo-individual", uhid: "LUM-IND-0112", name: "Amitabh Verma", age: 45, dateOfBirth: "1981-08-09", gender: "Male", phone: "+91 98111 01061", email: "rajiv.saxena@demo.lumera.in", bloodGroup: "O+", allergies: [], chronicConditions: ["Acute Gastroesophageal Reflux"], address: "C-18 Hauz Khas, New Delhi 110016", emergencyContact: "Rajiv Saxena +91 98111 01061", relationshipToHolder: "Friend / Caregiver", primaryContactName: "Rajiv Saxena" },
   ];
   for (const p of individualPatients) upsertPatientSpec(p);
 
-  individualPatients.slice(1).forEach((p, idx) => {
+  individualPatients.slice(1, 5).forEach((p, idx) => {
     const id = `ind-apt-${idx + 2}`;
     const token = allocateTokenNumber(database, p.tenantId, today, "doc-persona-gp", 10 + idx);
     insertSeedVisit.run(
@@ -3495,6 +3560,1040 @@ export function seedAllDemoSpecialtyClinicalData(database: SqlDatabase, nowDate 
         );
       }
     });
+  }
+
+  // 5. Companion Animal Veterinary Clinic (veterinary@lumera.me / doc-persona-vet / tenant-demo-veterinary)
+  const vetTenantId = "tenant-demo-veterinary";
+  try {
+    database
+      .prepare(
+        `UPDATE tenants
+         SET name = 'Paws & Claws Veterinary Clinic',
+             specialty = 'Veterinary',
+             phone = '+91 98204 77119',
+             clinic_address = 'Shop 4 & 5, Salunkhe Vihar Road, Wanowrie',
+             clinic_city = 'Pune 411040',
+             clinic_tagline = 'Small Animal Medicine, Surgery & WSAVA Vaccination Suite'
+         WHERE id = ?`
+      )
+      .run(vetTenantId);
+  } catch {
+    /* optional letterhead columns added by letterhead migration */
+  }
+
+  const vetPatients: SeedPatientSpec[] = [
+    {
+      id: "vet-pat-bruno",
+      tenantId: vetTenantId,
+      uhid: "LUM-VET-6101",
+      name: "Bruno",
+      age: 4,
+      dobOffsetDays: -1460,
+      gender: "Male",
+      phone: "+91 98201 44550",
+      email: "rahul.verma.pets@demo.lumera.in",
+      bloodGroup: "DEA 1.1+",
+      allergies: ["Chicken Protein Mild Itch"],
+      chronicConditions: ["Canine Monocytic Ehrlichiosis (SNAP 4Dx +)", "Moderate Thrombocytopenia"],
+      address: "A-804 Clover Highlands, NIBM Road, Pune 411048",
+      emergencyContact: "Rahul Verma +91 98201 44550",
+      species: "dog",
+      breed: "Golden Retriever",
+      relationshipToHolder: "Pet",
+      primaryContactName: "Rahul Verma",
+    },
+    {
+      id: "vet-pat-mochi",
+      tenantId: vetTenantId,
+      uhid: "LUM-VET-6102",
+      name: "Mochi",
+      age: 2,
+      dobOffsetDays: -730,
+      gender: "Female",
+      phone: "+91 98201 44550",
+      email: "rahul.verma.pets@demo.lumera.in",
+      bloodGroup: "Type A",
+      allergies: [],
+      chronicConditions: ["Post-Op Elective Ovariohysterectomy (Spay) — Day 3 Suture Check"],
+      address: "A-804 Clover Highlands, NIBM Road, Pune 411048",
+      emergencyContact: "Rahul Verma +91 98201 44550",
+      species: "cat",
+      breed: "Persian",
+      relationshipToHolder: "Pet",
+      primaryContactName: "Rahul Verma",
+    },
+    {
+      id: "vet-pat-coco",
+      tenantId: vetTenantId,
+      uhid: "LUM-VET-6103",
+      name: "Coco",
+      age: 1,
+      dobOffsetDays: -400,
+      gender: "Female",
+      phone: "+91 98201 44550",
+      email: "rahul.verma.pets@demo.lumera.in",
+      bloodGroup: "DEA 1.1-",
+      allergies: [],
+      chronicConditions: ["Adopted Indie — Annual WSAVA DHPPiL & Anti-Rabies Booster"],
+      address: "A-804 Clover Highlands, NIBM Road, Pune 411048",
+      emergencyContact: "Rahul Verma +91 98201 44550",
+      species: "dog",
+      breed: "Indie",
+      relationshipToHolder: "Pet",
+      primaryContactName: "Rahul Verma",
+    },
+    {
+      id: "vet-pat-simba",
+      tenantId: vetTenantId,
+      uhid: "LUM-VET-6104",
+      name: "Simba",
+      age: 3,
+      dobOffsetDays: -1110,
+      gender: "Male",
+      phone: "+91 98302 77881",
+      email: "sneha.kulkarni.pets@demo.lumera.in",
+      bloodGroup: "DEA 1.1+",
+      allergies: ["Flea Saliva Dermatitis"],
+      chronicConditions: ["Bilateral Malassezia Otitis Externa", "Canine Atopic Pododermatitis"],
+      address: "B-302 Magarpatta Cosmos, Hadapsar, Pune 411028",
+      emergencyContact: "Sneha Kulkarni +91 98302 77881",
+      species: "dog",
+      breed: "Beagle",
+      relationshipToHolder: "Pet",
+      primaryContactName: "Sneha Kulkarni",
+    },
+    {
+      id: "vet-pat-nala",
+      tenantId: vetTenantId,
+      uhid: "LUM-VET-6105",
+      name: "Nala",
+      age: 1,
+      dobOffsetDays: -390,
+      gender: "Female",
+      phone: "+91 98302 77881",
+      email: "sneha.kulkarni.pets@demo.lumera.in",
+      bloodGroup: "Type A",
+      allergies: [],
+      chronicConditions: ["Indoor Feline Wellness — FVRCP & Quarterly Spot-On Deworming"],
+      address: "B-302 Magarpatta Cosmos, Hadapsar, Pune 411028",
+      emergencyContact: "Sneha Kulkarni +91 98302 77881",
+      species: "cat",
+      breed: "Indie Shorthair",
+      relationshipToHolder: "Pet",
+      primaryContactName: "Sneha Kulkarni",
+    },
+    {
+      id: "vet-pat-rocky",
+      tenantId: vetTenantId,
+      uhid: "LUM-VET-6106",
+      name: "Rocky",
+      age: 6,
+      dobOffsetDays: -2200,
+      gender: "Male",
+      phone: "+91 98115 66220",
+      email: "vikram.desai.pet@demo.lumera.in",
+      bloodGroup: "DEA 1.1+",
+      allergies: [],
+      chronicConditions: ["Bilateral Hip Dysplasia Osteoarthritis", "Statutory Day-5 Bite Observation"],
+      address: "14 Prabhat Road, Deccan Gymkhana, Pune 411004",
+      emergencyContact: "Vikram Desai +91 98115 66220",
+      species: "dog",
+      breed: "German Shepherd",
+      relationshipToHolder: "Pet",
+      primaryContactName: "Vikram Desai",
+    },
+    {
+      id: "vet-pat-pixel",
+      tenantId: vetTenantId,
+      uhid: "LUM-VET-6107",
+      name: "Pixel",
+      age: 0,
+      dobOffsetDays: -98,
+      gender: "Male",
+      phone: "+91 98452 33991",
+      email: "ananya.nair.pet@demo.lumera.in",
+      bloodGroup: "DEA 1.1+",
+      allergies: [],
+      chronicConditions: ["14-Week Puppy Primary WSAVA Series (DHPPiL-3 + First Rabies)"],
+      address: "C-501 Koregaon Park Annexe, Pune 411036",
+      emergencyContact: "Ananya Nair +91 98452 33991",
+      species: "dog",
+      breed: "Shih Tzu",
+      relationshipToHolder: "Pet",
+      primaryContactName: "Ananya Nair",
+    },
+    {
+      id: "vet-pat-tara",
+      tenantId: vetTenantId,
+      uhid: "LUM-VET-6108",
+      name: "Tara",
+      age: 5,
+      dobOffsetDays: -1830,
+      gender: "Female",
+      phone: "+91 98229 55114",
+      email: "arjun.joshi.pet@demo.lumera.in",
+      bloodGroup: "Type A",
+      allergies: [],
+      chronicConditions: ["Feline IRIS Stage II Chronic Kidney Disease", "Renal Diet & SC Fluids"],
+      address: "72 Baner Balewadi High Street, Pune 411045",
+      emergencyContact: "Arjun Joshi +91 98229 55114",
+      species: "cat",
+      breed: "Siamese",
+      relationshipToHolder: "Pet",
+      primaryContactName: "Arjun Joshi",
+    },
+  ];
+
+  const vetPatById = new Map(vetPatients.map((p) => [p.id, p]));
+  for (const p of vetPatients) upsertPatientSpec(p);
+
+  const vetTodayVisits: Array<{
+    id: string;
+    patientId: string;
+    slot: string;
+    type: string;
+    status: "Waiting" | "Confirmed" | "Completed";
+    weightKg: number;
+    tempF: number;
+    hr: number;
+  }> = [
+    { id: "vet-apt-today-1", patientId: "vet-pat-bruno", slot: "09:15 AM", type: "Emergency Triage", status: "Completed", weightKg: 31.4, tempF: 103.4, hr: 118 },
+    { id: "vet-apt-today-2", patientId: "vet-pat-mochi", slot: "09:45 AM", type: "Follow-up", status: "Completed", weightKg: 3.8, tempF: 101.0, hr: 156 },
+    { id: "vet-apt-today-3", patientId: "vet-pat-pixel", slot: "10:15 AM", type: "Walk-in Consultation", status: "Waiting", weightKg: 2.9, tempF: 101.4, hr: 132 },
+    { id: "vet-apt-today-4", patientId: "vet-pat-simba", slot: "10:45 AM", type: "Walk-in Consultation", status: "Waiting", weightKg: 13.6, tempF: 101.6, hr: 108 },
+    { id: "vet-apt-today-5", patientId: "vet-pat-rocky", slot: "11:30 AM", type: "Follow-up", status: "Confirmed", weightKg: 34.2, tempF: 101.2, hr: 96 },
+    { id: "vet-apt-today-6", patientId: "vet-pat-tara", slot: "04:30 PM", type: "Report Review", status: "Confirmed", weightKg: 3.6, tempF: 100.9, hr: 162 },
+  ];
+
+  const refreshVetTodayApt = database.prepare(
+    `UPDATE appointments SET date = ?, status = ?, is_paid = ?, token_number = ? WHERE id = ? AND tenant_id = ?`
+  );
+  vetTodayVisits.forEach((v, idx) => {
+    const p = vetPatById.get(v.patientId)!;
+    const token = allocateTokenNumber(database, vetTenantId, today, "doc-persona-vet", idx + 1);
+    const vitalsJson = JSON.stringify(
+      defaultVitals({ weightKg: v.weightKg, temperature: v.tempF, heartRate: v.hr })
+    );
+    insertSeedVisit.run(
+      v.id,
+      vetTenantId,
+      token,
+      p.id,
+      p.name,
+      p.phone,
+      p.uhid,
+      "doc-persona-vet",
+      "Dr. Kabir Deshmukh",
+      "Veterinary",
+      today,
+      v.slot,
+      v.type,
+      v.status,
+      650,
+      v.status === "Completed" ? 1 : 0,
+      vitalsJson,
+      now,
+      v.id
+    );
+    const pinnedToken = allocateTokenNumber(database, vetTenantId, today, "doc-persona-vet", idx + 1, v.id);
+    refreshVetTodayApt.run(today, v.status, v.status === "Completed" ? 1 : 0, pinnedToken, v.id, vetTenantId);
+  });
+
+  const vetPrescriptions: SeedRxSpec[] = [
+    {
+      id: "spec-rx-vet-1",
+      rxNumber: "RX-VET-2026-6101",
+      tenantId: vetTenantId,
+      patientId: "vet-pat-bruno",
+      doctorId: "doc-persona-vet",
+      doctorName: "Dr. Kabir Deshmukh",
+      doctorSpecialty: "Veterinary",
+      doctorRegNumber: "VCI-2015-08421",
+      diagnosis: "Canine Monocytic Ehrlichiosis (SNAP 4Dx Ehrlichia +) with Thrombocytopenia",
+      icd10Code: "A77.4",
+      chiefComplaints: ["Lethargy, anorexia & fever 103.4°F (3 days)", "Pale mucous membranes & tick exposure"],
+      vitals: defaultVitals({ weightKg: 31.4, temperature: 103.4, heartRate: 118 }),
+      medicines: [
+        med("m-vet-s1", "Doxycycline Vet 300 mg", "Doxycycline Hyclate (10 mg/kg)", "300 mg", "1-0-0", 28, "Tablet", "After Food", "Give with wet food bolus; complete full 28 days"),
+        med("m-vet-s2", "Pantoprazole Pet 20 mg", "Gastroprotective PPI", "30 mg", "1-0-0", 14, "Tablet", "Before Food"),
+        med("m-vet-s3", "Platepet Carica Papaya + Folate Syrup", "Platelet Support Tonic", "10 ml", "1-0-1", 21, "Syrup"),
+      ],
+      labTests: [{ id: "lt-vet-1", testName: "Repeat Canine CBC & Platelet Count (Day 7)", category: "Hematology", price: 650 }],
+      advice: ["Strict rest for 14 days; monitor gums or nostrils for petechiae/epistaxis", "Never administer human Paracetamol or Ibuprofen"],
+      specialtyType: "Veterinary",
+      modules: {
+        veterinaryAssessment: {
+          clinicalMode: "Tick-Fever & Internal Med",
+          species: "Dog",
+          breed: "Golden Retriever",
+          sexNeuterStatus: "Neutered Male",
+          bodyWeightKg: 31.4,
+          bodyConditionScore: 4,
+          rectalTempF: 103.4,
+          heartRateBpm: 118,
+          respRateMin: 32,
+          mucousMembrane: "Pale / Anemic",
+          crtSeconds: "2.5 sec",
+          hydrationStatus: "Mild 5% dehydration",
+          microchipId: "900118000441901",
+          ownerName: "Rahul Verma",
+          vectorSnap4DxStatus: "Ehrlichia +",
+          parvoDistemperRapid: "Not Indicated",
+          plateletCountLakhs: 0.68,
+          pcvPercent: 27.5,
+          fluidTherapyPlan: "Ringer Lactate 900 mL IV daycare infusion completed today",
+          toxinExposureCheck: "No rodenticide or NSAID exposure",
+        },
+      },
+    },
+    {
+      id: "spec-rx-vet-2",
+      rxNumber: "RX-VET-2026-6102",
+      tenantId: vetTenantId,
+      patientId: "vet-pat-mochi",
+      doctorId: "doc-persona-vet",
+      doctorName: "Dr. Kabir Deshmukh",
+      doctorSpecialty: "Veterinary",
+      doctorRegNumber: "VCI-2015-08421",
+      diagnosis: "Post-Operative Day-3 Elective Feline Ovariohysterectomy (Spay) — Clean Healing",
+      icd10Code: "Z98.89",
+      chiefComplaints: ["Day-3 post-spay incision inspection & analgesia review"],
+      vitals: defaultVitals({ weightKg: 3.8, temperature: 101.0, heartRate: 156 }),
+      medicines: [
+        med("m-vet-s4", "Meloxicam Oral Feline Drop (0.05 mg/kg)", "Veterinary NSAID", "0.2 mg", "1-0-0", 2, "Drops", "After Food"),
+        med("m-vet-s5", "Amoxicillin-Clavulanate Drops (Clavpet)", "12.5 mg/kg BD", "50 mg", "1-0-1", 4, "Syrup"),
+      ],
+      advice: ["Keep soft recovery cone / surgical bodysuit on 24×7 until Day-10 suture removal", "Confine indoors away from high shelves"],
+      specialtyType: "Veterinary",
+      modules: {
+        veterinaryAssessment: {
+          clinicalMode: "Surgery, Spay/Neuter & Bite",
+          species: "Cat",
+          breed: "Persian",
+          sexNeuterStatus: "Spayed Female",
+          bodyWeightKg: 3.8,
+          bodyConditionScore: 5,
+          rectalTempF: 101.0,
+          heartRateBpm: 156,
+          respRateMin: 28,
+          mucousMembrane: "Pink & Moist",
+          crtSeconds: "< 2 sec",
+          microchipId: "900118000441902",
+          ownerName: "Rahul Verma",
+          asaRiskGrade: "ASA I",
+          procedurePlanned: "Elective Midline Ovariohysterectomy (Spay)",
+          anesthesiaAnalgesiaProtocol: "Dexmedetomidine + Butorphanol + Isoflurane O2; Buprenorphine analgesia",
+          eCollarAndSutureDate: "Soft E-collar mandatory • Suture removal in 7 days (Day 10)",
+          biteQuarantineStatus: "Not Applicable",
+        },
+      },
+    },
+    {
+      id: "spec-rx-vet-3",
+      rxNumber: "RX-VET-2026-6103",
+      tenantId: vetTenantId,
+      patientId: "vet-pat-coco",
+      doctorId: "doc-persona-vet",
+      doctorName: "Dr. Kabir Deshmukh",
+      doctorSpecialty: "Veterinary",
+      doctorRegNumber: "VCI-2015-08421",
+      diagnosis: "Annual Canine Preventive Wellness — WSAVA DHPPiL + Anti-Rabies Booster",
+      icd10Code: "Z23",
+      chiefComplaints: ["1-year annual core booster, Anti-Rabies certificate & deworming"],
+      vitals: defaultVitals({ weightKg: 16.2, temperature: 101.3, heartRate: 104 }),
+      medicines: [
+        med("m-vet-s6", "Drontal Plus (Praziquantel + Pyrantel + Febantel)", "Dewormer", "1.5 Tablets", "Once a week", 1, "Tablet", "With Food"),
+        med("m-vet-s7", "Simparica (Sarolaner 40 mg Chewable)", "Monthly Tick & Flea Prophylaxis", "1 Chew", "Once a week", 1),
+      ],
+      advice: ["Observed 20 mins post-vaccine without reaction; avoid bathing for 72 hours"],
+      specialtyType: "Veterinary",
+      modules: {
+        veterinaryAssessment: {
+          clinicalMode: "Preventive & Vaccination",
+          species: "Dog",
+          breed: "Indie",
+          sexNeuterStatus: "Spayed Female",
+          bodyWeightKg: 16.2,
+          bodyConditionScore: 5,
+          rectalTempF: 101.3,
+          heartRateBpm: 104,
+          mucousMembrane: "Pink & Moist",
+          crtSeconds: "< 2 sec",
+          microchipId: "900118000441903",
+          ownerName: "Rahul Verma",
+          antiRabiesStatus: "Annual ARV Booster Administered SC",
+          antiRabiesCertNo: "PMC-ARV-2026-4419",
+          coreVaccineStatus: "Nobivac DHPPi + Lepto Annual Booster Given",
+          dewormingProductAndDose: "Drontal Plus 1.5 tabs (16.2 kg) given",
+          ectoparasiteProphylaxis: "Simparica 40 mg oral chewable active",
+          dietaryRegimen: "Adult maintenance kibble + boiled egg/pumpkin topper",
+        },
+      },
+    },
+    {
+      id: "spec-rx-vet-4",
+      rxNumber: "RX-VET-2026-6104",
+      tenantId: vetTenantId,
+      patientId: "vet-pat-simba",
+      doctorId: "doc-persona-vet",
+      doctorName: "Dr. Kabir Deshmukh",
+      doctorSpecialty: "Veterinary",
+      doctorRegNumber: "VCI-2015-08421",
+      diagnosis: "Bilateral Malassezia Otitis Externa with Canine Atopic Pododermatitis",
+      icd10Code: "H60.3",
+      chiefComplaints: ["Head shaking, waxy ear odor & interdigital paw licking (Pruritus 7/10)"],
+      vitals: defaultVitals({ weightKg: 13.6, temperature: 101.6, heartRate: 108 }),
+      medicines: [
+        med("m-vet-s8", "Epi-Otic Tris-EDTA Ear Cleanser", "Otic Flush", "Flush both canals", "1-0-0", 10, "Drops"),
+        med("m-vet-s9", "Easotic / Pomisol Otic Suspension", "Antifungal + Steroid Otic", "5 Drops each ear", "1-0-1", 10, "Drops"),
+        med("m-vet-s10", "Apoquel (Oclacitinib 5.4 mg)", "JAK1 Pruritus Inhibitor", "1 Tablet", "1-0-1", 7),
+      ],
+      advice: ["Clean ear flap with cotton 30 mins prior to medicated ear drops; keep ears dry during bath"],
+      specialtyType: "Veterinary",
+      modules: {
+        veterinaryAssessment: {
+          clinicalMode: "Dermatology, Ear & Dental",
+          species: "Dog",
+          breed: "Beagle",
+          sexNeuterStatus: "Neutered Male",
+          bodyWeightKg: 13.6,
+          bodyConditionScore: 6,
+          rectalTempF: 101.6,
+          mucousMembrane: "Pink & Moist",
+          ownerName: "Sneha Kulkarni",
+          pruritusScore0to10: 7,
+          lesionDistribution: "Bilateral vertical ear canals & forepaw interdigital webs",
+          skinScrapingCytology: "Malassezia budding yeast +++ (14/HPF); Demodex negative",
+          otoscopyFindings: "Erythematous vertical canals, brown ceruminous exudate, bilateral TM intact",
+          dentalTartarGrade: "Grade 2 (Moderate)",
+        },
+      },
+    },
+    {
+      id: "spec-rx-vet-5",
+      rxNumber: "RX-VET-2026-6105",
+      tenantId: vetTenantId,
+      patientId: "vet-pat-pixel",
+      doctorId: "doc-persona-vet",
+      doctorName: "Dr. Kabir Deshmukh",
+      doctorSpecialty: "Veterinary",
+      doctorRegNumber: "VCI-2015-08421",
+      diagnosis: "14-Week Puppy Primary Immunization — DHPPiL Dose 3 & First Anti-Rabies",
+      icd10Code: "Z23",
+      chiefComplaints: ["14-week puppy wellness check, weight gain tracking & primary vaccine completion"],
+      vitals: defaultVitals({ weightKg: 2.9, temperature: 101.4, heartRate: 132 }),
+      medicines: [
+        med("m-vet-s11", "Drontal Puppy Suspension (Pyrantel + Febantel)", "1 ml/kg Puppy Dewormer", "3 ml", "1-0-0", 1, "Syrup"),
+      ],
+      advice: ["Wait 10 days after final 16-week booster before public dog-park socialization"],
+      specialtyType: "Veterinary",
+      modules: {
+        veterinaryAssessment: {
+          clinicalMode: "Preventive & Vaccination",
+          species: "Dog",
+          breed: "Shih Tzu",
+          sexNeuterStatus: "Intact Male",
+          bodyWeightKg: 2.9,
+          bodyConditionScore: 5,
+          rectalTempF: 101.4,
+          heartRateBpm: 132,
+          mucousMembrane: "Pink & Moist",
+          crtSeconds: "< 2 sec",
+          microchipId: "900118000441907",
+          ownerName: "Ananya Nair",
+          antiRabiesStatus: "First Primary Anti-Rabies (12w+) Scheduled / Given",
+          antiRabiesCertNo: "PMC-ARV-2026-4490",
+          coreVaccineStatus: "WSAVA Puppy DHPPiL-3 (14 Weeks) Due / Administered",
+          dewormingProductAndDose: "Pyrantel + Febantel 3 mL oral suspension",
+          ectoparasiteProphylaxis: "Puppy-safe Fipronil spot-on",
+          dietaryRegimen: "Small-breed starter puppy kibble 4 divided meals/day",
+        },
+      },
+    },
+    {
+      id: "spec-rx-vet-6",
+      rxNumber: "RX-VET-2026-6106",
+      tenantId: vetTenantId,
+      patientId: "vet-pat-rocky",
+      doctorId: "doc-persona-vet",
+      doctorName: "Dr. Kabir Deshmukh",
+      doctorSpecialty: "Veterinary",
+      doctorRegNumber: "VCI-2015-08421",
+      diagnosis: "Canine Hip Dysplasia Osteoarthritis Flare & Statutory Day-5 Bite Observation Check",
+      icd10Code: "M16.9",
+      chiefComplaints: ["Hindlimb stiffness rising in morning", "Day-5 statutory health check following minor territorial nip"],
+      vitals: defaultVitals({ weightKg: 34.2, temperature: 101.2, heartRate: 96 }),
+      medicines: [
+        med("m-vet-s12", "Carprofen Chewable 75 mg (Rimadyl)", "2.2 mg/kg BD Canine NSAID", "1 Tablet", "1-0-1", 7),
+        med("m-vet-s13", "Glucosamine + Chondroitin + Omega-3 Joint Chew", "Chondroprotective", "2 Chews", "1-0-0", 60),
+      ],
+      advice: ["Non-slip floor mats indoors; leash-only walks during remaining 5 days of statutory observation", "Day-10 final observation signoff mandatory"],
+      specialtyType: "Veterinary",
+      modules: {
+        veterinaryAssessment: {
+          clinicalMode: "Surgery, Spay/Neuter & Bite",
+          species: "Dog",
+          breed: "German Shepherd",
+          sexNeuterStatus: "Intact Male",
+          bodyWeightKg: 34.2,
+          bodyConditionScore: 6,
+          rectalTempF: 101.2,
+          heartRateBpm: 96,
+          mucousMembrane: "Pink & Moist",
+          microchipId: "900118000441906",
+          ownerName: "Vikram Desai",
+          asaRiskGrade: "ASA II",
+          procedurePlanned: "Orthopedic Hip Management & 10-Day Statutory Bite Observation",
+          anesthesiaAnalgesiaProtocol: "Oral Carprofen + Gabapentin multimodal analgesia",
+          eCollarAndSutureDate: "Day-10 statutory observation clearance due in 5 days",
+          biteQuarantineStatus: "Day 5 Healthy",
+        },
+      },
+    },
+    {
+      id: "spec-rx-vet-7",
+      rxNumber: "RX-VET-2026-6107",
+      tenantId: vetTenantId,
+      patientId: "vet-pat-tara",
+      doctorId: "doc-persona-vet",
+      doctorName: "Dr. Kabir Deshmukh",
+      doctorSpecialty: "Veterinary",
+      doctorRegNumber: "VCI-2015-08421",
+      diagnosis: "Feline IRIS Stage II Chronic Kidney Disease (Creatinine 2.4 mg/dL, SDMA 18 µg/dL)",
+      icd10Code: "N18.2",
+      chiefComplaints: ["Polyuria, polydipsia & selective appetite (2 weeks)"],
+      vitals: defaultVitals({ weightKg: 3.6, temperature: 100.9, heartRate: 162 }),
+      medicines: [
+        med("m-vet-s14", "Lanthanum Carbonate / Chitosan Renal Binder (Pronefra)", "Phosphate Binder", "1 ml", "1-0-1", 30, "Syrup", "With Food"),
+        med("m-vet-s15", "Mirtazapine Transdermal / Oral 1.88 mg", "Feline Appetite Stimulant", "1.88 mg", "Once a week", 14),
+      ],
+      advice: ["Transition gradually to prescription feline renal wet diet; provide multiple fresh water fountains"],
+      specialtyType: "Veterinary",
+      modules: {
+        veterinaryAssessment: {
+          clinicalMode: "Tick-Fever & Internal Med",
+          species: "Cat",
+          breed: "Siamese",
+          sexNeuterStatus: "Spayed Female",
+          bodyWeightKg: 3.6,
+          bodyConditionScore: 4,
+          rectalTempF: 100.9,
+          heartRateBpm: 162,
+          mucousMembrane: "Pink & Moist",
+          crtSeconds: "2 sec",
+          ownerName: "Arjun Joshi",
+          vectorSnap4DxStatus: "Not Tested",
+          parvoDistemperRapid: "FIV / FeLV Negative",
+          plateletCountLakhs: 2.6,
+          pcvPercent: 33,
+          fluidTherapyPlan: "Ringer Lactate 100 mL subcutaneous fluid bolus twice weekly",
+          toxinExposureCheck: "Confirmed lily-free household",
+        },
+      },
+    },
+  ];
+
+  for (const rx of vetPrescriptions) {
+    const p = vetPatById.get(rx.patientId)!;
+    const ccJson = JSON.stringify(rx.chiefComplaints);
+    const medsJson = JSON.stringify(rx.medicines);
+    const labsJson = JSON.stringify(rx.labTests || []);
+    const adviceJson = JSON.stringify(rx.advice);
+    const modulesJson = JSON.stringify(rx.modules);
+    insertRx.run(
+      rx.id,
+      vetTenantId,
+      rx.rxNumber,
+      p.id,
+      p.name,
+      p.phone,
+      p.uhid,
+      p.age,
+      p.gender,
+      rx.doctorId,
+      rx.doctorName,
+      rx.doctorSpecialty,
+      rx.doctorRegNumber,
+      today,
+      rx.diagnosis,
+      rx.icd10Code,
+      ccJson,
+      medsJson,
+      labsJson,
+      adviceJson,
+      followUp14,
+      `/api/emr/prescription/${rx.id}/pdf`,
+      now,
+      JSON.stringify(rx.vitals),
+      "Paws & Claws Veterinary Clinic",
+      "Veterinary",
+      modulesJson,
+      rx.id
+    );
+    refreshPolyclinicRx.run(
+      rx.diagnosis,
+      rx.icd10Code,
+      ccJson,
+      medsJson,
+      labsJson,
+      adviceJson,
+      modulesJson,
+      today,
+      followUp14,
+      rx.id,
+      vetTenantId
+    );
+  }
+
+  // Seed WSAVA Canine & Feline immunization_dose_records for Bruno, Mochi, and Pixel
+  const insertVetDose = database.prepare(
+    `INSERT INTO immunization_dose_records (
+       id, tenant_id, patient_id, schedule_id, dose_code, occurrence_key, antigen, dose_label,
+       status, given_on, brand, batch_no, given_by_name, confirmed_by_id, confirmed_by_name, created_at, updated_at
+     )
+     SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'given', ?, ?, ?, 'Dr. Kabir Deshmukh', 'user-veterinary', 'Dr. Kabir Deshmukh', ?, ?
+     WHERE NOT EXISTS (
+       SELECT 1 FROM immunization_dose_records WHERE tenant_id = ? AND patient_id = ? AND occurrence_key = ?
+     )`
+  );
+  const vetVaccineSeeds: Array<[string, "canine" | "feline", string, string, string, number, string, string]> = [
+    ["vet-pat-pixel", "canine", "dhppil-1", "DHPPiL", "Puppy dose 1 (6–8 weeks)", -50, "Nobivac DHPPi", "NBV-771A"],
+    ["vet-pat-pixel", "canine", "dhppil-2", "DHPPiL", "Puppy dose 2 (10–12 weeks)", -21, "Nobivac DHPPi + L", "NBV-772B"],
+    ["vet-pat-pixel", "canine", "deworm-puppy", "Deworming", "Fortnightly 2–12 weeks", -14, "Drontal Puppy", "DRP-108"],
+    ["vet-pat-bruno", "canine", "dhppil-1", "DHPPiL", "Puppy dose 1 (6–8 weeks)", -1400, "Eurican DHPPi2-L", "EUR-22A"],
+    ["vet-pat-bruno", "canine", "rabies-1", "Anti-Rabies", "First dose (12 weeks)", -1360, "Nobivac Rabies", "ARV-22R"],
+    ["vet-pat-bruno", "canine", "rabies-annual", "Anti-Rabies", "Annual booster", -120, "Nobivac Rabies", "ARV-26B"],
+    ["vet-pat-mochi", "feline", "fvrcp-1", "FVRCP", "Kitten dose 1 (6–8 weeks)", -680, "Feligen CRP", "FEL-24A"],
+    ["vet-pat-mochi", "feline", "rabies-1", "Anti-Rabies", "First dose (12 weeks)", -640, "Defensor 3", "DEF-24R"],
+  ];
+  for (const [patId, schedId, code, antigen, label, relOffset, brand, batch] of vetVaccineSeeds) {
+    const recId = `imm-vet-${patId}-${code}`;
+    const givenOn = shiftIsoDate(today, relOffset);
+    insertVetDose.run(
+      recId,
+      vetTenantId,
+      patId,
+      schedId,
+      code,
+      code,
+      antigen,
+      label,
+      givenOn,
+      brand,
+      batch,
+      now,
+      now,
+      vetTenantId,
+      patId,
+      code
+    );
+  }
+
+  // Seed 5 Verified Veterinary Lab Reports
+  const vetLabs: SeedLabSpec[] = [
+    {
+      id: "vet-lab-1",
+      tenantId: vetTenantId,
+      patientId: "vet-pat-bruno",
+      uhid: "LUM-VET-6101",
+      patientName: "Bruno",
+      labName: "Paws & Claws Vet Pathology Lab",
+      category: "Canine CBC + SNAP 4Dx Tick-Fever Panel",
+      interpretation: "IDEXX SNAP 4Dx Plus POSITIVE for Ehrlichia canis antibody; marked thrombocytopenia (68,000/µL) and mild non-regenerative anemia (PCV 27.5%). Doxycycline 10 mg/kg initiated.",
+      results: [
+        { param: "SNAP 4Dx (Ehrlichia canis)", value: "POSITIVE", unit: "Index", normalRange: "Negative", status: "Critical" },
+        { param: "Platelet Count", value: 0.68, unit: "Lakhs/µL", normalRange: "1.75 - 5.00", status: "Critical" },
+        { param: "Packed Cell Volume (PCV)", value: 27.5, unit: "%", normalRange: "37.0 - 55.0", status: "Low" },
+        { param: "Hemoglobin", value: 9.4, unit: "g/dL", normalRange: "12.0 - 18.0", status: "Low" },
+      ],
+    },
+    {
+      id: "vet-lab-2",
+      tenantId: vetTenantId,
+      patientId: "vet-pat-mochi",
+      uhid: "LUM-VET-6102",
+      patientName: "Mochi",
+      labName: "Paws & Claws Vet Pathology Lab",
+      category: "Feline Pre-Anesthetic Hepatic & Renal Profile",
+      interpretation: "Unremarkable pre-spay biochemistry and hematology; cleared as ASA Grade I for isoflurane ovariohysterectomy.",
+      results: [
+        { param: "Serum Creatinine", value: 1.1, unit: "mg/dL", normalRange: "0.8 - 1.8", status: "Normal" },
+        { param: "ALT (SGPT)", value: 48, unit: "U/L", normalRange: "12 - 115", status: "Normal" },
+        { param: "Total Protein", value: 6.9, unit: "g/dL", normalRange: "5.7 - 8.2", status: "Normal" },
+      ],
+    },
+    {
+      id: "vet-lab-3",
+      tenantId: vetTenantId,
+      patientId: "vet-pat-simba",
+      uhid: "LUM-VET-6104",
+      patientName: "Simba",
+      labName: "Paws & Claws Vet Dermatology Desk",
+      category: "Ear Swab Cytology & Deep Skin Scraping",
+      interpretation: "Abundant peanut-shaped budding Malassezia pachydermatis yeast (14/HPF) in bilateral ear canals; deep skin scraping negative for Demodex and Sarcoptes mites.",
+      results: [
+        { param: "Malassezia Yeast (Otic Cytology)", value: "14 / HPF (+++)", unit: "per HPF", normalRange: "0 - 2 / HPF", status: "High" },
+        { param: "Deep Skin Scraping (Mites)", value: "Negative", unit: "Microscopy", normalRange: "Negative", status: "Normal" },
+      ],
+    },
+    {
+      id: "vet-lab-4",
+      tenantId: vetTenantId,
+      patientId: "vet-pat-tara",
+      uhid: "LUM-VET-6108",
+      patientName: "Tara",
+      labName: "Paws & Claws Vet Pathology Lab",
+      category: "Feline Senior Renal (SDMA/Creatinine) + Total T4",
+      interpretation: "IRIS Stage II Chronic Kidney Disease (Creatinine 2.4 mg/dL, SDMA 18 µg/dL); euthyroid (Total T4 2.3 µg/dL). Renal diet + phosphate binder advised.",
+      results: [
+        { param: "Symmetric Dimethylarginine (SDMA)", value: 18, unit: "µg/dL", normalRange: "0 - 14", status: "High" },
+        { param: "Serum Creatinine", value: 2.4, unit: "mg/dL", normalRange: "0.8 - 1.8", status: "High" },
+        { param: "Blood Urea Nitrogen (BUN)", value: 42, unit: "mg/dL", normalRange: "16 - 36", status: "High" },
+        { param: "Total T4 (Feline)", value: 2.3, unit: "µg/dL", normalRange: "1.0 - 4.0", status: "Normal" },
+      ],
+    },
+    {
+      id: "vet-lab-5",
+      tenantId: vetTenantId,
+      patientId: "vet-pat-pixel",
+      uhid: "LUM-VET-6107",
+      patientName: "Pixel",
+      labName: "Paws & Claws Point-of-Care Rapid Lab",
+      category: "Canine Parvovirus (CPV) Rapid Fecal Antigen & Floatation",
+      interpretation: "CPV/CCV fecal antigen negative; mild Toxocara canis ova cleared after puppy deworming — fit for DHPPiL-3 vaccination.",
+      results: [
+        { param: "Canine Parvovirus Ag", value: "Negative", unit: "Rapid ICT", normalRange: "Negative", status: "Normal" },
+        { param: "Fecal Floatation Ova", value: "Cleared", unit: "Microscopy", normalRange: "No Ova/Cysts", status: "Normal" },
+      ],
+    },
+  ];
+
+  for (const lab of vetLabs) {
+    const resultsJson = JSON.stringify(lab.results);
+    insertLab.run(
+      lab.id,
+      vetTenantId,
+      lab.patientId,
+      lab.uhid,
+      lab.patientName,
+      today,
+      lab.labName,
+      lab.category,
+      lab.interpretation,
+      resultsJson,
+      now,
+      lab.id
+    );
+    refreshPolyclinicLab.run(today, lab.labName, lab.category, lab.interpretation, resultsJson, lab.id, vetTenantId);
+  }
+
+  // Seed 5 Veterinary Invoices (Paid today + Unpaid daycare/follow-up)
+  const vetInvoices: Array<{
+    id: string;
+    invoiceNo: string;
+    aptId: string;
+    patientId: string;
+    dayOffset: number;
+    status: "Paid" | "Unpaid";
+    paymentMode: string;
+    paymentRef: string;
+    items: Array<{
+      id: string;
+      description: string;
+      category: string;
+      hsnSacCode: string;
+      quantity: number;
+      unitPrice: number;
+      gstPercent: number;
+      total: number;
+    }>;
+  }> = [
+    {
+      id: "vet-inv-1",
+      invoiceNo: "INV-2026-VET001",
+      aptId: "vet-apt-today-1",
+      patientId: "vet-pat-bruno",
+      dayOffset: 0,
+      status: "Paid",
+      paymentMode: "UPI",
+      paymentRef: "UPI-VET-882011",
+      items: [
+        { id: "li-vet-1a", description: "Companion Animal Emergency Tick-Fever Consultation", category: "Consultation", hsnSacCode: "998351", quantity: 1, unitPrice: 650, gstPercent: 0, total: 650 },
+        { id: "li-vet-1b", description: "IDEXX SNAP 4Dx Plus Rapid Vector Test + Canine CBC", category: "Lab", hsnSacCode: "998351", quantity: 1, unitPrice: 1650, gstPercent: 0, total: 1650 },
+        { id: "li-vet-1c", description: "IV Cannulation & Daycare Ringer Lactate Fluid Therapy", category: "Procedure", hsnSacCode: "998351", quantity: 1, unitPrice: 900, gstPercent: 0, total: 900 },
+      ],
+    },
+    {
+      id: "vet-inv-2",
+      invoiceNo: "INV-2026-VET002",
+      aptId: "vet-apt-today-2",
+      patientId: "vet-pat-mochi",
+      dayOffset: 0,
+      status: "Paid",
+      paymentMode: "UPI",
+      paymentRef: "UPI-VET-882049",
+      items: [
+        { id: "li-vet-2a", description: "Post-Op Day-3 Feline Spay Suture Review & Antiseptic Dressing", category: "Consultation", hsnSacCode: "998351", quantity: 1, unitPrice: 650, gstPercent: 0, total: 650 },
+        { id: "li-vet-2b", description: "Soft Recovery E-Collar & Oral Meloxicam Dispensing", category: "Pharmacy", hsnSacCode: "3004", quantity: 1, unitPrice: 550, gstPercent: 0, total: 550 },
+      ],
+    },
+    {
+      id: "vet-inv-3",
+      invoiceNo: "INV-2026-VET003",
+      aptId: "vet-apt-today-3",
+      patientId: "vet-pat-pixel",
+      dayOffset: 0,
+      status: "Paid",
+      paymentMode: "Card",
+      paymentRef: "POS-ICICI-4410",
+      items: [
+        { id: "li-vet-3a", description: "WSAVA Puppy DHPPiL-3 + First Anti-Rabies Vaccination", category: "Procedure", hsnSacCode: "998351", quantity: 1, unitPrice: 1450, gstPercent: 0, total: 1450 },
+        { id: "li-vet-3b", description: "Pediatric Veterinary Wellness & Weight Check", category: "Consultation", hsnSacCode: "998351", quantity: 1, unitPrice: 650, gstPercent: 0, total: 650 },
+      ],
+    },
+    {
+      id: "vet-inv-4",
+      invoiceNo: "INV-2026-VET004",
+      aptId: "vet-apt-today-4",
+      patientId: "vet-pat-simba",
+      dayOffset: 0,
+      status: "Unpaid",
+      paymentMode: "",
+      paymentRef: "",
+      items: [
+        { id: "li-vet-4a", description: "Video Otoscopy, Bilateral Ear Canal Flush & Diff-Quik Cytology", category: "Procedure", hsnSacCode: "998351", quantity: 1, unitPrice: 1100, gstPercent: 0, total: 1100 },
+        { id: "li-vet-4b", description: "Veterinary Dermatology Consultation", category: "Consultation", hsnSacCode: "998351", quantity: 1, unitPrice: 650, gstPercent: 0, total: 650 },
+      ],
+    },
+    {
+      id: "vet-inv-5",
+      invoiceNo: "INV-2026-VET005",
+      aptId: "vet-apt-today-6",
+      patientId: "vet-pat-tara",
+      dayOffset: -2,
+      status: "Paid",
+      paymentMode: "Cash",
+      paymentRef: "CASH-VET-312",
+      items: [
+        { id: "li-vet-5a", description: "Feline Senior Renal Panel (SDMA + Creatinine + Total T4)", category: "Lab", hsnSacCode: "998351", quantity: 1, unitPrice: 1850, gstPercent: 0, total: 1850 },
+        { id: "li-vet-5b", description: "Subcutaneous Fluid Administration & Renal Diet Plan", category: "Consultation", hsnSacCode: "998351", quantity: 1, unitPrice: 650, gstPercent: 0, total: 650 },
+      ],
+    },
+  ];
+
+  for (const inv of vetInvoices) {
+    const p = vetPatById.get(inv.patientId)!;
+    const invDate = shiftIsoDate(today, inv.dayOffset);
+    const total = inv.items.reduce((sum, item) => sum + item.total, 0);
+    const paidAmount = inv.status === "Paid" ? total : 0;
+    const paidAt = inv.status === "Paid" ? (inv.dayOffset === 0 ? now : `${invDate}T11:30:00.000Z`) : null;
+    insertInvoice.run(
+      inv.id,
+      vetTenantId,
+      inv.invoiceNo,
+      inv.aptId,
+      p.id,
+      p.name,
+      p.phone,
+      p.uhid,
+      invDate,
+      JSON.stringify(inv.items),
+      total,
+      total,
+      paidAmount,
+      inv.status,
+      inv.paymentMode,
+      inv.paymentRef,
+      "doc-persona-vet",
+      "Dr. Kabir Deshmukh",
+      inv.status === "Paid" ? "delivered" : "unsent",
+      now,
+      paidAt,
+      inv.id,
+      vetTenantId,
+      inv.invoiceNo
+    );
+    if (inv.dayOffset === 0) {
+      refreshTodayPaidInvoice.run(today, inv.status === "Paid" ? now : null, inv.id, vetTenantId);
+    }
+  }
+
+  // Seed 4 Multilingual WhatsApp Conversations + Messages in tenant-demo-veterinary
+  const vetWhatsAppThreads: Array<{
+    convId: string;
+    patientId: string;
+    displayName: string;
+    mode: "human" | "bot";
+    lang: "en" | "hi" | "mr";
+    unread: number;
+    tags: string[];
+    lastTime: string;
+    messages: Array<{
+      id: string;
+      sender: "user" | "agent" | "bot";
+      staffName: string | null;
+      content: string;
+      translated: string | null;
+      time: string;
+    }>;
+  }> = [
+    {
+      convId: "conv-vet-rahul",
+      patientId: "vet-pat-bruno",
+      displayName: "Rahul Verma (Bruno, Mochi & Coco)",
+      mode: "human",
+      lang: "en",
+      unread: 1,
+      tags: ["Multi-Pet Household (3)", "Tick-Fever + Post-Spay"],
+      lastTime: "09:52 AM",
+      messages: [
+        {
+          id: "msg-vet-rahul-1",
+          sender: "user",
+          staffName: null,
+          content: "Morning Dr. Kabir! Messaging from my number for both Bruno and Mochi — Bruno ate boiled chicken-rice and took his 300mg Doxycycline without vomiting, and Mochi's spay incision looks dry under her soft cone.",
+          translated: null,
+          time: "09:46 AM",
+        },
+        {
+          id: "msg-vet-rahul-2",
+          sender: "agent",
+          staffName: "Dr. Kabir Deshmukh",
+          content: "Great update Rahul! Keep Bruno on strict leash rest until we repeat his Day-7 platelet count, and keep Mochi's cone on 24×7 until Day-10 suture removal. Coco's annual ARV booster card is also updated on your mobile.",
+          translated: null,
+          time: "09:52 AM",
+        },
+      ],
+    },
+    {
+      convId: "conv-vet-ananya",
+      patientId: "vet-pat-pixel",
+      displayName: "Ananya Nair (Pixel — Shih Tzu Puppy)",
+      mode: "human",
+      lang: "hi",
+      unread: 1,
+      tags: ["14w Puppy WSAVA", "Rabies + DHPPiL-3"],
+      lastTime: "09:10 AM",
+      messages: [
+        {
+          id: "msg-vet-ananya-1",
+          sender: "user",
+          staffName: null,
+          content: "नमस्ते डॉ. कबीर, मेरा 14 हफ़्ते का शिह त्ज़ु पपी पिक्सेल आज सुबह एक्टिव है। क्या आज उसका DHPPiL तीसरा टीका और पहला एंटी-रेबीज़ इंजेक्शन साथ लग सकता है?",
+          translated: "Namaste Dr. Kabir, my 14-week Shih Tzu puppy Pixel is active this morning. Can he receive his DHPPiL 3rd dose and first Anti-Rabies shot together today?",
+          time: "09:04 AM",
+        },
+        {
+          id: "msg-vet-ananya-2",
+          sender: "agent",
+          staffName: "Dr. Kabir Deshmukh",
+          content: "नमस्ते अनन्या जी, हाँ बिल्कुल! WSAVA प्रोटोकॉल के अनुसार 14 हफ़्ते पर पिक्सेल का DHPPiL-3 और पहला एंटी-रेबीज़ अलग-अलग साइट पर सुरक्षित रूप से लगाया जा सकता है। सुबह 10:15 AM स्लॉट कन्फर्म है।",
+          translated: "Namaste Ananya ji, yes! Per WSAVA guidelines at 14 weeks Pixel can safely receive DHPPiL-3 and primary Anti-Rabies at separate SC sites. Your 10:15 AM slot is confirmed.",
+          time: "09:10 AM",
+        },
+      ],
+    },
+    {
+      convId: "conv-vet-vikram",
+      patientId: "vet-pat-rocky",
+      displayName: "Vikram Desai (Rocky — GSD)",
+      mode: "human",
+      lang: "mr",
+      unread: 0,
+      tags: ["Hip Dysplasia", "Day-5 Bite Observation"],
+      lastTime: "Yesterday",
+      messages: [
+        {
+          id: "msg-vet-vikram-1",
+          sender: "user",
+          staffName: null,
+          content: "नमस्कार डॉ. कबीर, रॉकी आता व्यवस्थित जेवतोय आणि पाणी पितोय. आज ५ वा दिवसाचा निरीक्षण चेकअप आणि खुब्याच्या दुखण्यासाठी गोळ्या सुरू ठेवू का?",
+          translated: "Hello Dr. Kabir, Rocky is eating and drinking normally. Shall we come for his Day-5 statutory observation check and continue his hip pain tablets?",
+          time: "Yesterday",
+        },
+        {
+          id: "msg-vet-vikram-2",
+          sender: "agent",
+          staffName: "Dr. Kabir Deshmukh",
+          content: "नमस्कार विक्रम जी, छान! रॉकीचे ५ व्या दिवसाचे निरीक्षण नोंदवले आहे. जेवणानंतर रिमाडिल ७५ मिग्रॅ सुरू ठेवा आणि १० व्या दिवशी अंतिम क्लिअरन्ससाठी घेऊन या.",
+          translated: "Hello Vikram ji, good news! Rocky's Day-5 observation check is logged. Continue Rimadyl 75 mg after meals and bring him on Day 10 for final clearance.",
+          time: "Yesterday",
+        },
+      ],
+    },
+    {
+      convId: "conv-vet-sneha",
+      patientId: "vet-pat-simba",
+      displayName: "Sneha Kulkarni (Simba & Nala)",
+      mode: "bot",
+      lang: "en",
+      unread: 0,
+      tags: ["Multi-Pet Household (2)", "Otitis Follow-up"],
+      lastTime: "08:40 AM",
+      messages: [
+        {
+          id: "msg-vet-sneha-1",
+          sender: "user",
+          staffName: null,
+          content: "Hi Paws & Claws Desk, bringing Simba for his 10:45 AM ear otoscopy check today, and can I also pick up Nala's feline spot-on dewormer on the same visit?",
+          translated: null,
+          time: "08:38 AM",
+        },
+        {
+          id: "msg-vet-sneha-2",
+          sender: "bot",
+          staffName: null,
+          content: "Confirmed Sneha! Simba (Beagle) is booked at 10:45 AM with Dr. Kabir Deshmukh, and Nala's feline spot-on dewormer is linked on your shared household chart.",
+          translated: null,
+          time: "08:40 AM",
+        },
+      ],
+    },
+  ];
+
+  for (const th of vetWhatsAppThreads) {
+    const p = vetPatById.get(th.patientId)!;
+    const lastMsg = th.messages[th.messages.length - 1];
+    insertPolyWaConv.run(
+      th.convId,
+      p.phone,
+      th.displayName,
+      p.id,
+      p.uhid,
+      th.mode,
+      "Dr. Kabir Deshmukh",
+      JSON.stringify(th.tags),
+      th.lang,
+      th.unread,
+      lastMsg.content,
+      th.lastTime,
+      now,
+      vetTenantId,
+      th.convId,
+      vetTenantId,
+      p.phone
+    );
+    const convRow = database
+      .prepare("SELECT id FROM whatsapp_conversations WHERE tenant_id = ? AND patient_phone = ?")
+      .get(vetTenantId, p.phone) as { id?: string } | undefined;
+    const effectiveConvId = String(convRow?.id || th.convId);
+    for (const m of th.messages) {
+      insertPolyWaMsg.run(
+        m.id,
+        effectiveConvId,
+        p.phone,
+        m.sender,
+        m.staffName,
+        m.content,
+        m.translated,
+        th.lang,
+        m.time,
+        "read",
+        now,
+        vetTenantId,
+        m.id
+      );
+    }
   }
 }
 

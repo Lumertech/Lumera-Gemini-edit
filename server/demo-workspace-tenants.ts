@@ -13,6 +13,10 @@ export const POLYCLINIC_DEMO_TENANT_ID = "tenant-demo-polyclinic";
 export const POLYCLINIC_DEMO_SLUG = "iyer-city-polyclinic";
 export const POLYCLINIC_DEMO_NAME = "Iyer City Polyclinic";
 
+export const VETERINARY_DEMO_TENANT_ID = "tenant-demo-veterinary";
+export const VETERINARY_DEMO_SLUG = "veterinary-practice";
+export const VETERINARY_DEMO_NAME = "Paws & Claws Veterinary Clinic";
+
 /** doctor@ + front desk share one Individual workspace. */
 const INDIVIDUAL_SHARED_EMAILS = new Set([
   "doctor@lumera.me",
@@ -62,6 +66,14 @@ export function demoWorkspaceForEmail(email?: string | null): DemoWorkspace | nu
       slug: POLYCLINIC_DEMO_SLUG,
       name: POLYCLINIC_DEMO_NAME,
       practiceType: "polyclinic",
+    };
+  }
+  if (key === "veterinary@lumera.me") {
+    return {
+      tenantId: VETERINARY_DEMO_TENANT_ID,
+      slug: VETERINARY_DEMO_SLUG,
+      name: VETERINARY_DEMO_NAME,
+      practiceType: "individual",
     };
   }
   const known = DEMO_LOGIN_MATRIX.some((acct) => acct.email === key);

@@ -5,6 +5,7 @@ import { BOOTSTRAP_DDL } from "./db-bootstrap-ddl.ts";
 import {
   addWhatsAppTenantColumns,
   enforceWhatsAppTenantNotNull,
+  migratePatientsPhoneUnique,
   migrateWhatsAppConversationKey,
 } from "./migrate-patients-phone.ts";
 import { backfillWhatsAppTenantIds } from "./whatsapp-tenant-backfill.ts";
@@ -482,6 +483,13 @@ export function migrate(database: SqlDatabase) {
   try {
     database.exec("ALTER TABLE patients ADD COLUMN date_of_birth TEXT NOT NULL DEFAULT ''");
   } catch {}
+  try {
+    database.exec("ALTER TABLE patients ADD COLUMN relationship_to_holder TEXT NOT NULL DEFAULT 'Self'");
+  } catch {}
+  try {
+    database.exec("ALTER TABLE patients ADD COLUMN primary_contact_name TEXT NOT NULL DEFAULT ''");
+  } catch {}
+  migratePatientsPhoneUnique(database);
   try {
     database.exec("ALTER TABLE tenants ADD COLUMN health_document_retention_years INTEGER NOT NULL DEFAULT 3");
   } catch {}

@@ -32,6 +32,7 @@ Product table (login picker lists these first): `admin@` · `reception@` · `gp.
 | `dermatology@lumera.me` | doctor | individual | Doctors & Clinics | Dermatology | Dermatology module |
 | `orthopedics@lumera.me` | doctor | individual | Doctors & Clinics | Orthopedics | Orthopedics module |
 | `pediatrics@lumera.me` | doctor | individual | Doctors & Clinics | Pediatrics | Pediatrics module |
+| `veterinary@lumera.me` | doctor | individual | Doctors & Clinics | Veterinary | Companion animal command deck & WSAVA chart |
 | `gynecology@lumera.me` | doctor | individual | Doctors & Clinics | Gynecology | Gynecology module |
 | `ent@lumera.me` | doctor | individual | Doctors & Clinics | ENT | ENT intake + consult |
 | `ophthalmology@lumera.me` | doctor | individual | Doctors & Clinics | Ophthalmology | Ophthalmology module |

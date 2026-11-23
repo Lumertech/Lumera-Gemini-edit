@@ -7,6 +7,7 @@ import { PatientTimeline, type PatientTimelineItem, type TimelineLinkView } from
 import { ImmunizationChartPanel } from "./immunization/ImmunizationChart";
 import { CLINIC_NAME_REQUIRED_MESSAGE } from "../lib/healthDocumentNotice";
 import { isAbhaLinked, type Appointment, type Patient, type Prescription } from "../types";
+import { phoneKey10, profileKindBadge } from "../lib/sharedMobile";
 
 interface ChartResponse {
   patient: Patient;
@@ -21,6 +22,7 @@ interface PatientsWorkspaceProps {
   onOpenPatient: (patientId: string) => void;
   onBack: () => void;
   onRegister: (name?: string) => void;
+  onRegisterWithPhone?: (phone: string) => void;
   onSelectPatient: (patient: Patient) => void;
   onOpenPrescription: (patient: Patient) => void;
   onCheckIn: (patient: Patient) => void;
@@ -33,6 +35,7 @@ export const PatientsWorkspace: React.FC<PatientsWorkspaceProps> = ({
   onOpenPatient,
   onBack,
   onRegister,
+  onRegisterWithPhone,
   onSelectPatient,
   onOpenPrescription,
   onCheckIn,
@@ -43,7 +46,9 @@ export const PatientsWorkspace: React.FC<PatientsWorkspaceProps> = ({
       <PatientDetail
         patientId={recordId}
         canPrescribe={canPrescribe}
+        onOpenPatient={onOpenPatient}
         onBack={onBack}
+        onRegisterWithPhone={onRegisterWithPhone || (() => onRegister())}
         onSelectPatient={onSelectPatient}
         onOpenPrescription={onOpenPrescription}
         onCheckIn={onCheckIn}
@@ -177,42 +182,63 @@ const PatientList: React.FC<{
             </button>
           </div>
         )}
-        {patients.map((patient) => {
-          const linked = isAbhaLinked(patient);
-          return (
-            <button
-              key={patient.id}
-              type="button"
-              data-testid={`patient-card-${patient.id}`}
-              onClick={() => onOpenPatient(patient.id)}
-              className="w-full min-w-0 text-left rounded-xl border border-slate-200 bg-white px-3 py-3 hover:border-blue-300 hover:bg-blue-50/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-            >
-              <div className="flex flex-col gap-1 min-w-0">
-                <div className="flex flex-wrap items-center gap-2 min-w-0">
-                  <span className="font-semibold text-slate-900 break-words">{patient.name}</span>
-                  <span className="font-mono text-[11px] text-slate-500 break-all">{patient.uhid}</span>
-                  {linked ? (
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                      ABHA (sandbox)
+        {(() => {
+          const phoneCounts = new Map<string, number>();
+          for (const p of patients) {
+            const k = phoneKey10(p.phone);
+            if (k.length >= 10) phoneCounts.set(k, (phoneCounts.get(k) || 0) + 1);
+          }
+          return patients.map((patient) => {
+            const linked = isAbhaLinked(patient);
+            const badge = profileKindBadge(patient);
+            const sharedCount = phoneCounts.get(phoneKey10(patient.phone)) || 0;
+            return (
+              <button
+                key={patient.id}
+                type="button"
+                data-testid={`patient-card-${patient.id}`}
+                onClick={() => onOpenPatient(patient.id)}
+                className="w-full min-w-0 text-left rounded-xl border border-slate-200 bg-white px-3 py-3 hover:border-blue-300 hover:bg-blue-50/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+              >
+                <div className="flex flex-col gap-1 min-w-0">
+                  <div className="flex flex-wrap items-center gap-2 min-w-0">
+                    <span className="font-semibold text-slate-900 break-words">
+                      {badge.isPet ? `${badge.icon} ` : ""}{patient.name}
                     </span>
-                  ) : (
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-800 border border-amber-200">
-                      ABHA not linked (sandbox)
-                    </span>
+                    <span className="font-mono text-[11px] text-slate-500 break-all">{patient.uhid}</span>
+                    {(badge.isPet || (patient.relationshipToHolder && patient.relationshipToHolder !== "Self")) && (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-sky-50 text-sky-800 border border-sky-200">
+                        {badge.icon} {badge.label}
+                      </span>
+                    )}
+                    {sharedCount > 1 && (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                        Shared Mobile ({sharedCount} profiles)
+                      </span>
+                    )}
+                    {linked ? (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        ABHA (sandbox)
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-800 border border-amber-200">
+                        ABHA not linked (sandbox)
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-slate-600 break-words">
+                    {patient.age} yrs · {patient.gender}
+                    {patient.phone ? ` · ${patient.phone}` : ""}
+                    {patient.abhaAddress ? ` · ${patient.abhaAddress}` : ""}
+                  </p>
+                  {patient.lastVisit && (
+                    <p className="text-[11px] text-slate-500">Last visit {patient.lastVisit}</p>
                   )}
                 </div>
-                <p className="text-xs text-slate-600 break-words">
-                  {patient.age} yrs · {patient.gender}
-                  {patient.phone ? ` · ${patient.phone}` : ""}
-                  {patient.abhaAddress ? ` · ${patient.abhaAddress}` : ""}
-                </p>
-                {patient.lastVisit && (
-                  <p className="text-[11px] text-slate-500">Last visit {patient.lastVisit}</p>
-                )}
-              </div>
-            </button>
-          );
-        })}
+              </button>
+            );
+          });
+        })()}
       </div>
     </div>
   );
@@ -221,13 +247,26 @@ const PatientList: React.FC<{
 const PatientDetail: React.FC<{
   patientId: string;
   canPrescribe: boolean;
+  onOpenPatient: (patientId: string) => void;
   onBack: () => void;
+  onRegisterWithPhone: (phone: string) => void;
   onSelectPatient: (patient: Patient) => void;
   onOpenPrescription: (patient: Patient) => void;
   onCheckIn: (patient: Patient) => void;
   onOpenLinked: (patient: Patient, view: TimelineLinkView) => void;
-}> = ({ patientId, canPrescribe, onBack, onSelectPatient, onOpenPrescription, onCheckIn, onOpenLinked }) => {
+}> = ({
+  patientId,
+  canPrescribe,
+  onOpenPatient,
+  onBack,
+  onRegisterWithPhone,
+  onSelectPatient,
+  onOpenPrescription,
+  onCheckIn,
+  onOpenLinked,
+}) => {
   const [chart, setChart] = useState<ChartResponse | null>(null);
+  const [household, setHousehold] = useState<Patient[]>([]);
   const [consent, setConsent] = useState<DocumentConsentStatus | null>(null);
   const [consentError, setConsentError] = useState("");
   const [withdrawing, setWithdrawing] = useState(false);
@@ -258,6 +297,20 @@ const PatientDetail: React.FC<{
     };
     // onSelectPatient is stable enough for a one-shot load; identity changes must not refetch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [patientId, reloadKey]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void apiFetch<{ patients: Patient[] }>(`/api/patients/household?patientId=${encodeURIComponent(patientId)}`)
+      .then((res) => {
+        if (!cancelled) setHousehold(Array.isArray(res.patients) ? res.patients : []);
+      })
+      .catch(() => {
+        if (!cancelled) setHousehold([]);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [patientId, reloadKey]);
 
   useEffect(() => {
@@ -406,6 +459,64 @@ const PatientDetail: React.FC<{
               </div>
             </div>
           </section>
+
+          {patient.phone && (
+            <section
+              data-testid="patient-shared-mobile"
+              className="rounded-xl border border-indigo-200 bg-indigo-50/50 p-4 space-y-2.5 min-w-0"
+            >
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <h2 className="text-sm font-bold text-slate-900">
+                    {household.length >= 2
+                      ? `Linked Profiles on Same Mobile (${patient.phone})`
+                      : `Mobile Household (${patient.phone})`}
+                  </h2>
+                  <p className="text-xs text-slate-600">
+                    {household.length >= 2
+                      ? `${household.length} distinct charts share this mobile number. Switch pets, siblings, or family members in one click.`
+                      : "Register another pet, child, or family member on this mobile without overwriting this chart."}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  data-testid="add-member-same-mobile"
+                  onClick={() => onRegisterWithPhone(patient.phone)}
+                  className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-indigo-300 text-indigo-800 text-xs font-semibold hover:bg-indigo-100/60"
+                >
+                  <UserPlus className="w-3.5 h-3.5" />
+                  + Add Pet / Family Member on Same Mobile
+                </button>
+              </div>
+              {household.length >= 2 && (
+                <div className="flex flex-wrap gap-2">
+                  {household.map((peer) => {
+                    const badge = profileKindBadge(peer);
+                    const isCurrent = peer.id === patient.id;
+                    return (
+                      <button
+                        key={peer.id}
+                        type="button"
+                        disabled={isCurrent}
+                        onClick={() => onOpenPatient(peer.id)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all flex items-center gap-1.5 ${
+                          isCurrent
+                            ? "bg-indigo-600 text-white border-indigo-600 cursor-default"
+                            : "bg-white text-slate-800 border-slate-300 hover:border-indigo-400 hover:bg-indigo-50"
+                        }`}
+                      >
+                        <span>{badge.icon}</span>
+                        <span>{peer.name}</span>
+                        <span className={isCurrent ? "text-indigo-100 text-[10px]" : "text-slate-500 text-[10px]"}>
+                          ({badge.label})
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          )}
 
           <section data-testid="patient-contact" className="rounded-xl border border-slate-200 bg-white p-4 space-y-2 min-w-0">
             <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">

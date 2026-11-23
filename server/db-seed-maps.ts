@@ -591,6 +591,7 @@ export const PRESCRIPTION_SPECIALTY_KEYS = [
   "cardiologyAssessment",
   "dermatologyAssessment",
   "pediatricAssessment",
+  "veterinaryAssessment",
   "orthopedicAssessment",
   "ophthalmologyAssessment",
   "dentalAssessment",
@@ -613,6 +614,15 @@ export function presentPatientKyc(raw: unknown): string {
 }
 
 export function mapPatient(row: { [key: string]: unknown }) {
+  const species = (row.species as string) || "";
+  const rawRel = String(row.relationship_to_holder || "").trim();
+  const isAnimal = Boolean(species && species.toLowerCase() !== "human");
+  const relationshipToHolder =
+    isAnimal && (!rawRel || rawRel === "Self") ? "Pet" : rawRel || "Self";
+  const emergencyContact = (row.emergency_contact as string) || "";
+  const primaryContactName =
+    String(row.primary_contact_name || "").trim() ||
+    (relationshipToHolder !== "Self" ? emergencyContact : "");
   return {
     id: row.id as string,
     uhid: row.uhid as string,
@@ -625,12 +635,14 @@ export function mapPatient(row: { [key: string]: unknown }) {
     bloodGroup: (row.blood_group as string) || "",
     allergies: parseJsonColumn(row.allergies, []),
     chronicConditions: parseJsonColumn(row.chronic_conditions, []),
-    emergencyContact: (row.emergency_contact as string) || "",
+    emergencyContact,
+    relationshipToHolder,
+    primaryContactName,
     address: (row.address as string) || "",
     lastVisit: (row.last_visit as string) || undefined,
-    species: (row.species as string) || "",
+    species,
     breed: (row.breed as string) || "",
-    ownerName: (row.emergency_contact as string) || "",
+    ownerName: primaryContactName || emergencyContact,
     abhaNumber: (row.abha_number as string) || "",
     abhaAddress: (row.abha_address as string) || "",
     kycStatus: presentPatientKyc(row.kyc_status),

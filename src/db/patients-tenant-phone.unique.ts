@@ -1,15 +1,13 @@
 /**
- * MERGE NOTE for PR #80 `src/db/schema-a.ts` patients table:
+ * Shared-mobile multi-profile lookup index on `patients(tenant_id, phone)`.
  *
- * Replace the global unique on phone:
- *   phone: text("phone").notNull().unique()
- * with a tenant-scoped unique (two clinics may share a patient mobile):
+ * One mobile number in a clinic can hold multiple pets, multiple children under
+ * one parent, or a family member / friend, each with its own `id` and `uhid`.
  *
- *   unique("patients_tenant_id_phone_unique").on(t.tenantId, t.phone)
+ * Runtime sqlite & postgres (`server/migrate-patients-phone.ts`):
+ *   CREATE INDEX IF NOT EXISTS idx_patients_tenant_phone_lookup ON patients(tenant_id, phone)
  *
- * Runtime sqlite (this branch / main `server/db.ts`):
- *   CREATE UNIQUE INDEX idx_patients_tenant_phone ON patients(tenant_id, phone)
- *
- * Do not keep a table-level UNIQUE on phone alone.
+ * Neither `UNIQUE(phone)` nor `UNIQUE(tenant_id, phone)` is enforced at the DB level.
  */
-export const PATIENTS_PHONE_UNIQUE = "UNIQUE(tenant_id, phone)" as const;
+export const PATIENTS_PHONE_INDEX = "INDEX(tenant_id, phone)" as const;
+export const PATIENTS_PHONE_UNIQUE = PATIENTS_PHONE_INDEX;

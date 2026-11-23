@@ -91,6 +91,7 @@ export default function ClinicianApp() {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [intakeName, setIntakeName] = useState('');
+  const [intakePhone, setIntakePhone] = useState('');
 
   const [patients, setPatients] = useState<Patient[]>([]);
   const [doctors, setDoctors] = useState<Doctor[]>(() => (sessionDoctor.id ? [sessionDoctor] : []));
@@ -465,6 +466,7 @@ export default function ClinicianApp() {
       ophthalmologyAssessment: mapped.ophthalmologyAssessment,
       dentalAssessment: mapped.dentalAssessment,
       gynecologyAssessment: mapped.gynecologyAssessment,
+      veterinaryAssessment: mapped.veterinaryAssessment,
       specialtyType: mapped.specialtyType,
       aiSource: mapped.aiSource,
       aiGeneratedAt: mapped.aiGeneratedAt,
@@ -548,6 +550,9 @@ export default function ClinicianApp() {
         ...(input.species ? { species: input.species } : {}),
         ...(input.breed ? { breed: input.breed } : {}),
         ...(input.ownerName ? { ownerName: input.ownerName } : {}),
+        ...(input.relationshipToHolder ? { relationshipToHolder: input.relationshipToHolder } : {}),
+        ...(input.primaryContactName ? { primaryContactName: input.primaryContactName } : {}),
+        ...(input.createNewMember ? { createNewMember: true } : {}),
         gender: input.gender,
         phone: input.phone,
         ...(input.email ? { email: input.email } : {}),
@@ -926,6 +931,12 @@ export default function ClinicianApp() {
                     }}
                     onStartConsult={canStartConsultRole(user.role, allowedViews) ? handleStartConsultation : undefined}
                     onCreateBill={handleOpenBillForAppointment}
+                    onRegisterWithPhone={(phone) => {
+                      setIntakeName('');
+                      setIntakePhone(phone || '');
+                      setIntakeIntent('register');
+                      setCurrentView('reception');
+                    }}
                   />
                   {currentView !== 'welcome' && currentView !== 'gp-home' && (
                     <details className="bg-white rounded-2xl border border-slate-200">
@@ -976,6 +987,13 @@ export default function ClinicianApp() {
                   onBack={() => go('app', { appView: 'patients', workspaceSlug: sessionWorkspace })}
                   onRegister={(name) => {
                     setIntakeName(name || '');
+                    setIntakePhone('');
+                    setIntakeIntent('register');
+                    setCurrentView('reception');
+                  }}
+                  onRegisterWithPhone={(phone) => {
+                    setIntakeName('');
+                    setIntakePhone(phone || '');
                     setIntakeIntent('register');
                     setCurrentView('reception');
                   }}
@@ -1008,10 +1026,13 @@ export default function ClinicianApp() {
               canStartConsult={allowedViews.includes('rx') || allowedViews.includes('smart-rx')}
               openRxAfterSave={intakeIntent === 'start-consult' && (allowedViews.includes('rx') || allowedViews.includes('smart-rx'))}
               intakeName={intakeName}
+              intakePhone={intakePhone}
               onSelectPatient={handleSelectPatient}
               onAddNewPatient={async (newPat) => {
                 try {
-                  return await persistPatientCreate(newPat);
+                  const saved = await persistPatientCreate(newPat);
+                  setIntakePhone('');
+                  return saved;
                 } catch (err) {
                   console.error('Failed to persist patient', err);
                   throw err instanceof Error ? err : new Error('Could not save patient');
@@ -1123,6 +1144,8 @@ export default function ClinicianApp() {
                     appointments={appointments}
                     onBookFollowUp={async (input) => persistAppointmentCreate(input)}
                     onAutoSave={handleAutoSaveDraft}
+                    allPatients={patients}
+                    onSelectPatient={handleSelectPatient}
                   />
                 )}
               </div>
@@ -1292,6 +1315,8 @@ export default function ClinicianApp() {
               appointments={appointments}
               onBookNewSlot={() => setCurrentView('appointments')}
               unlinked={user?.role === 'patient' && !user.chartLinked}
+              householdProfiles={patients}
+              onSelectProfile={handleSelectPatient}
             />
           )}
 

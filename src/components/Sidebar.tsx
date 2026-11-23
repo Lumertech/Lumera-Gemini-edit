@@ -34,6 +34,11 @@ import { isPolyclinicPractice } from '../lib/sessionWorkspace';
 import { allowedViewsForWorkflow, clinicianHomeView, patientsNavLabel, workflowForUser } from '../lib/specialtyWorkflow';
 import { clinicNavItems, greetingClinicName, moreNavItems, primaryNavItems, whatsAppPillFromStatus, type ClinicNavItem, type WhatsAppPillState } from '../lib/clinicNav';
 import { apiFetch } from '../api/http';
+import {
+  inferHouseholdHolderName,
+  matchingPhoneProfiles,
+  profileKindBadge,
+} from '../lib/sharedMobile';
 
 export const ROLE_VISIBLE_VIEWS: Record<string, NavView[]> = {
   doctor: ['welcome', 'gp-home', 'patients', 'queue', 'opd-queue', 'rx', 'smart-rx', 'ambient', 'reports', 'appointments', 'polyclinic', 'whatsapp', 'voicebot', 'pharmacy-hub', 'billing', 'dhis', 'team', 'reception', 'kiosk', 'settings', 'wellness', 'therapy-session', 'consult-practice', 'physio-session', 'dental-chart'],
@@ -298,11 +303,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
     };
   }, [user?.tenantId]);
 
+  const defaultQuickRel =
+    pack.rxModule === 'Veterinary' ? 'Pet' : pack.rxModule === 'Pediatrics' ? 'Child' : 'Self';
   const [isQuickAddOpen, setIsQuickAddOpen] = useState(false);
   const [quickName, setQuickName] = useState('');
   const [quickPhone, setQuickPhone] = useState('');
+  const [quickRelation, setQuickRelation] = useState<string>(defaultQuickRel);
+  const [quickHolder, setQuickHolder] = useState('');
+  const [quickSpecies, setQuickSpecies] = useState('dog');
+  const [quickBreed, setQuickBreed] = useState('');
   const [quickSubmitting, setQuickSubmitting] = useState(false);
   const [quickError, setQuickError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setQuickRelation(defaultQuickRel);
+  }, [defaultQuickRel]);
+
+  const quickMatches = matchingPhoneProfiles(allPatients, quickPhone);
 
   const handleQuickAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -313,14 +330,35 @@ export const Sidebar: React.FC<SidebarProps> = ({
     setQuickSubmitting(true);
     setQuickError(null);
     try {
+      const rel = quickRelation || defaultQuickRel;
+      const resolvedHolder =
+        rel === 'Self'
+          ? ''
+          : (quickHolder.trim() || inferHouseholdHolderName(quickMatches)).trim();
+      const isNewOnExistingPhone =
+        quickMatches.length > 0 &&
+        (rel !== 'Self' ||
+          !quickMatches.some(
+            (m) => m.name.trim().toLowerCase() === quickName.trim().toLowerCase()
+          ));
       const data = await apiFetch<{ patient: Patient }>('/api/patients', {
         method: 'POST',
         body: JSON.stringify({
           name: quickName.trim(),
           phone: quickPhone.trim(),
-          age: 30,
+          age: rel === 'Pet' ? 3 : rel === 'Child' ? 5 : 30,
           gender: 'Other',
-          bloodGroup: 'O+'
+          bloodGroup: 'O+',
+          relationshipToHolder: rel,
+          ...(resolvedHolder ? { primaryContactName: resolvedHolder, emergencyContact: resolvedHolder } : {}),
+          ...(rel === 'Pet'
+            ? {
+                species: quickSpecies || 'dog',
+                breed: quickBreed.trim(),
+                ownerName: resolvedHolder,
+              }
+            : {}),
+          ...(isNewOnExistingPhone ? { createNewMember: true } : {}),
         }),
       });
       if (data && data.patient) {
@@ -329,6 +367,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
         setIsQuickAddOpen(false);
         setQuickName('');
         setQuickPhone('');
+        setQuickHolder('');
+        setQuickBreed('');
       }
     } catch (err: any) {
       setQuickError(err?.message || 'Failed to register patient.');
@@ -484,13 +524,44 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </div>
               )}
 
-              <form onSubmit={handleQuickAddSubmit} className="space-y-3.5">
+              <form onSubmit={handleQuickAddSubmit} className="space-y-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Patient Full Name *</label>
+                  <span className="block text-[11px] font-semibold text-slate-600 mb-1">Registering For</span>
+                  <div className="flex flex-wrap gap-1">
+                    {(['Self', 'Pet', 'Child', 'Family Member', 'Friend / Caregiver'] as const).map((rel) => (
+                      <button
+                        key={rel}
+                        type="button"
+                        onClick={() => {
+                          setQuickRelation(rel);
+                          if (rel !== 'Self' && !quickHolder && quickMatches.length > 0) {
+                            setQuickHolder(inferHouseholdHolderName(quickMatches));
+                          }
+                        }}
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${
+                          quickRelation === rel
+                            ? 'bg-blue-600 text-white border-blue-600'
+                            : 'bg-slate-50 text-slate-700 border-slate-200 hover:border-blue-300'
+                        }`}
+                      >
+                        {rel}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    {quickRelation === 'Pet'
+                      ? 'Pet Name *'
+                      : quickRelation === 'Child'
+                        ? 'Child Full Name *'
+                        : 'Patient Full Name *'}
+                  </label>
                   <input
                     type="text"
                     required
-                    placeholder="e.g. Rahul Sharma"
+                    placeholder={quickRelation === 'Pet' ? 'e.g. Bruno / Mochi' : 'e.g. Rahul Sharma'}
                     value={quickName}
                     onChange={(e) => setQuickName(e.target.value)}
                     className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none"
@@ -499,7 +570,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Phone Number *</label>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    {quickRelation === 'Pet'
+                      ? "Owner's Mobile *"
+                      : quickRelation === 'Child'
+                        ? "Parent's Mobile *"
+                        : 'Phone Number *'}
+                  </label>
                   <input
                     type="tel"
                     required
@@ -509,6 +586,84 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none"
                   />
                 </div>
+
+                {quickMatches.length > 0 && (
+                  <div className="rounded-xl border border-amber-300 bg-amber-50 p-2.5 space-y-1.5" data-testid="quick-add-shared-mobile">
+                    <p className="text-[11px] font-bold text-amber-950">
+                      {quickMatches.length} profile{quickMatches.length > 1 ? 's' : ''} already on this mobile:
+                    </p>
+                    <div className="space-y-1 max-h-28 overflow-y-auto">
+                      {quickMatches.map((peer) => {
+                        const badge = profileKindBadge(peer);
+                        return (
+                          <div key={peer.id} className="flex items-center justify-between gap-2 bg-white rounded-lg border border-amber-200 px-2 py-1">
+                            <span className="text-[11px] font-medium text-slate-800 truncate">
+                              {badge.icon} {peer.name} <span className="text-slate-500">({badge.label})</span>
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                onSelectPatient(peer);
+                                setIsQuickAddOpen(false);
+                              }}
+                              className="shrink-0 px-2 py-0.5 rounded bg-blue-600 text-white text-[10px] font-semibold hover:bg-blue-700"
+                            >
+                              Select {peer.name}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <p className="text-[10px] text-amber-800">
+                      Submitting below adds a separate profile on this mobile without overwriting existing charts.
+                    </p>
+                  </div>
+                )}
+
+                {quickRelation !== 'Self' && (
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      {quickRelation === 'Pet' ? 'Owner Name' : 'Guardian / Account Holder Name'}
+                    </label>
+                    <input
+                      type="text"
+                      placeholder={
+                        inferHouseholdHolderName(quickMatches) ||
+                        (quickRelation === 'Pet' ? 'e.g. Rahul Verma' : 'e.g. Neha Gupta')
+                      }
+                      value={quickHolder}
+                      onChange={(e) => setQuickHolder(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    />
+                  </div>
+                )}
+
+                {quickRelation === 'Pet' && (
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">Species</label>
+                      <select
+                        value={quickSpecies}
+                        onChange={(e) => setQuickSpecies(e.target.value)}
+                        className="w-full px-2.5 py-2 border border-slate-300 rounded-xl text-xs bg-white"
+                      >
+                        <option value="dog">Dog</option>
+                        <option value="cat">Cat</option>
+                        <option value="other">Other</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">Breed</label>
+                      <input
+                        type="text"
+                        placeholder="Indie / Beagle..."
+                        value={quickBreed}
+                        onChange={(e) => setQuickBreed(e.target.value)}
+                        className="w-full px-2.5 py-2 border border-slate-300 rounded-xl text-xs"
+                      />
+                    </div>
+                  </div>
+                )}
 
                 <div className="pt-2 flex items-center justify-end space-x-2.5">
                   <button
@@ -523,7 +678,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     disabled={quickSubmitting}
                     className="px-4 py-2 rounded-xl text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 shadow-sm disabled:opacity-50 flex items-center gap-1.5"
                   >
-                    {quickSubmitting ? 'Registering...' : 'Register & Select'}
+                    {quickSubmitting
+                      ? 'Registering...'
+                      : quickMatches.length > 0
+                        ? 'Add Profile & Select'
+                        : 'Register & Select'}
                   </button>
                 </div>
               </form>

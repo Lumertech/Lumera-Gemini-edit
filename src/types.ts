@@ -169,6 +169,17 @@ export interface Patient {
   breed?: string;
   /** Veterinary owner. Same value as the existing emergency / guardian contact. */
   ownerName?: string;
+  relationshipToHolder?:
+    | 'Self'
+    | 'Pet'
+    | 'Child'
+    | 'Spouse / Partner'
+    | 'Parent'
+    | 'Family Member'
+    | 'Friend / Caregiver'
+    | string;
+  primaryContactName?: string;
+  createNewMember?: boolean;
   gender: 'Male' | 'Female' | 'Other';
   phone: string;
   email?: string;
@@ -511,6 +522,67 @@ export interface NeurologyAssessment {
   neuroimagingEegSummary?: string;
 }
 
+export interface VeterinaryAssessment {
+  clinicalMode?:
+    | 'Preventive & Vaccination'
+    | 'Tick-Fever & Internal Med'
+    | 'Dermatology, Ear & Dental'
+    | 'Surgery, Spay/Neuter & Bite';
+  species?: 'Dog' | 'Cat' | 'Bird' | 'Rabbit' | 'Other' | string;
+  breed?: string;
+  sexNeuterStatus?: 'Intact Male' | 'Neutered Male' | 'Intact Female' | 'Spayed Female';
+  bodyWeightKg?: number;
+  bodyConditionScore?: number;
+  rectalTempF?: number;
+  heartRateBpm?: number;
+  respRateMin?: number;
+  mucousMembrane?: 'Pink & Moist' | 'Pale / Anemic' | 'Icteric' | 'Congested / Brick Red' | 'Cyanotic';
+  crtSeconds?: string;
+  hydrationStatus?: string;
+  microchipId?: string;
+  ownerName?: string;
+  // Mode 1: Preventive & Vaccination
+  antiRabiesStatus?: string;
+  antiRabiesCertNo?: string;
+  coreVaccineStatus?: string;
+  dewormingProductAndDose?: string;
+  ectoparasiteProphylaxis?: string;
+  dietaryRegimen?: string;
+  // Mode 2: Tick-Fever & Internal Med
+  vectorSnap4DxStatus?:
+    | 'Not Tested'
+    | 'Negative'
+    | 'Ehrlichia +'
+    | 'Babesia +'
+    | 'Anaplasma +'
+    | 'Mixed Hemoprotozoa +';
+  parvoDistemperRapid?: string;
+  plateletCountLakhs?: number;
+  pcvPercent?: number;
+  fluidTherapyPlan?: string;
+  toxinExposureCheck?: string;
+  // Mode 3: Dermatology, Ear & Dental
+  pruritusScore0to10?: number;
+  lesionDistribution?: string;
+  skinScrapingCytology?: string;
+  otoscopyFindings?: string;
+  dentalTartarGrade?:
+    | 'Grade 0 (Clean)'
+    | 'Grade 1 (Mild)'
+    | 'Grade 2 (Moderate)'
+    | 'Grade 3-4 (Severe Periodontal)';
+  // Mode 4: Surgery, Spay/Neuter & Bite
+  asaRiskGrade?: 'ASA I' | 'ASA II' | 'ASA III' | 'ASA IV-E';
+  procedurePlanned?: string;
+  anesthesiaAnalgesiaProtocol?: string;
+  eCollarAndSutureDate?: string;
+  biteQuarantineStatus?:
+    | 'Not Applicable'
+    | 'Day 0 Bite Reported — 10d Observation'
+    | 'Day 5 Healthy'
+    | 'Day 10 Cleared';
+}
+
 export interface SpecialtyHistoryData {
   specialty: PolyclinicSpecialty | string;
   symptomDuration?: string;
@@ -626,6 +698,7 @@ export interface SoapNote {
   cardiologyAssessment?: CardiologyAssessment;
   dermatologyAssessment?: DermatologyAssessment;
   pediatricAssessment?: PediatricAssessment;
+  veterinaryAssessment?: VeterinaryAssessment;
   orthopedicAssessment?: OrthopedicAssessment;
   ophthalmologyAssessment?: OphthalmologyAssessment;
   dentalAssessment?: DentalAssessment;
@@ -694,6 +767,7 @@ export interface Prescription {
   cardiologyAssessment?: CardiologyAssessment;
   dermatologyAssessment?: DermatologyAssessment;
   pediatricAssessment?: PediatricAssessment;
+  veterinaryAssessment?: VeterinaryAssessment;
   orthopedicAssessment?: OrthopedicAssessment;
   ophthalmologyAssessment?: OphthalmologyAssessment;
   dentalAssessment?: DentalAssessment;

@@ -96,8 +96,9 @@ describe("tenant phone security migrations (Postgres vs sqlite)", () => {
     assertPostgresSafe(sqls);
     assert.ok(sqls.some((s) => /information_schema\.tables/i.test(s)));
     assert.ok(sqls.some((s) => /ALTER TABLE patients DROP CONSTRAINT IF EXISTS "patients_phone_key"/i.test(s)));
+    assert.ok(sqls.some((s) => /DROP INDEX IF EXISTS idx_patients_tenant_phone/i.test(s)));
     assert.ok(
-      sqls.some((s) => /CREATE UNIQUE INDEX IF NOT EXISTS idx_patients_tenant_phone ON patients\(tenant_id, phone\)/i.test(s))
+      sqls.some((s) => /CREATE INDEX IF NOT EXISTS idx_patients_tenant_phone_lookup ON patients\(tenant_id, phone\)/i.test(s))
     );
   });
 
@@ -212,7 +213,8 @@ describe("tenant phone security migrations (Postgres vs sqlite)", () => {
 
       const indexes = db.prepare("PRAGMA index_list(patients)").all() as Array<{ name: string; unique: number }>;
       const uniqueNames = indexes.filter((i) => i.unique).map((i) => i.name);
-      assert.ok(uniqueNames.includes("idx_patients_tenant_phone"));
+      assert.equal(uniqueNames.includes("idx_patients_tenant_phone"), false);
+      assert.ok(indexes.some((i) => i.name === "idx_patients_tenant_phone_lookup" && i.unique === 0));
       for (const name of uniqueNames) {
         const info = db.prepare(`PRAGMA index_info("${name.replace(/"/g, "\"\"")}")`).all() as Array<{ name: string }>;
         const cols = info.map((c) => c.name);
@@ -226,15 +228,17 @@ describe("tenant phone security migrations (Postgres vs sqlite)", () => {
         "Bina",
         "999"
       );
-      assert.throws(() => {
-        db.prepare("INSERT INTO patients (id, tenant_id, uhid, name, phone) VALUES (?, ?, ?, ?, ?)").run(
-          "p3",
-          "tenant-a",
-          "u3",
-          "Cara",
-          "999"
-        );
-      });
+      db.prepare("INSERT INTO patients (id, tenant_id, uhid, name, phone) VALUES (?, ?, ?, ?, ?)").run(
+        "p3",
+        "tenant-a",
+        "u3",
+        "Cara",
+        "999"
+      );
+      const sameTenantCount = db
+        .prepare("SELECT COUNT(*) AS c FROM patients WHERE tenant_id = 'tenant-a' AND phone = '999'")
+        .get() as { c: number };
+      assert.equal(sameTenantCount.c, 2);
     } finally {
       db.close();
       fs.rmSync(file, { force: true });

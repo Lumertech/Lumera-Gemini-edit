@@ -360,20 +360,26 @@ function readConsentArtefact(body: Record<string, unknown>): Record<string, unkn
   return { ...artefact, consentId };
 }
 
-export function findTenantPatientByPhone(tenantId: string, phone: string) {
+export function listTenantPatientsByPhone(tenantId: string, phone: string): Record<string, unknown>[] {
   const key = phoneMatchKey(phone);
-  if (!tenantId || !key) return undefined;
-  const exact = getDb()
-    .prepare("SELECT * FROM patients WHERE tenant_id = ? AND phone = ?")
-    .get(tenantId, String(phone || "").trim()) as Record<string, unknown> | undefined;
-  if (exact) return exact;
+  if (!tenantId || !key) return [];
   const rows = getDb()
     .prepare("SELECT * FROM patients WHERE tenant_id = ?")
     .all(tenantId) as Record<string, unknown>[];
-  return rows.find((row) => phoneMatchKey(String(row.phone || "")) === key);
+  const matched = rows.filter((row) => phoneMatchKey(String(row.phone || "")) === key);
+  matched.sort((a, b) => {
+    const byDate = patientRecency(b).localeCompare(patientRecency(a));
+    if (byDate !== 0) return byDate;
+    return String(a.name || "").localeCompare(String(b.name || ""), "en");
+  });
+  return matched;
 }
 
-/** Name, phone (last-10 digits), UHID, ABHA number, or ABHA address. Empty query matches every row. */
+export function findTenantPatientByPhone(tenantId: string, phone: string) {
+  return listTenantPatientsByPhone(tenantId, phone)[0];
+}
+
+/** Name, owner/guardian, species/breed, phone (last-10 digits), UHID, ABHA number, or ABHA address. Empty query matches every row. */
 export function patientMatchesQuery(row: Record<string, unknown>, query: string): boolean {
   const q = String(query || "").trim().toLowerCase();
   if (!q) return true;
@@ -382,7 +388,22 @@ export function patientMatchesQuery(row: Record<string, unknown>, query: string)
   const abhaAddress = String(row.abha_address || "").toLowerCase();
   const abhaRaw = String(row.abha_number || "");
   const phone = String(row.phone || "");
-  if (name.includes(q) || uhid.includes(q) || abhaAddress.includes(q) || abhaRaw.toLowerCase().includes(q)) {
+  const primaryContact = String(row.primary_contact_name || "").toLowerCase();
+  const emergencyContact = String(row.emergency_contact || "").toLowerCase();
+  const species = String(row.species || "").toLowerCase();
+  const breed = String(row.breed || "").toLowerCase();
+  const relationship = String(row.relationship_to_holder || "").toLowerCase();
+  if (
+    name.includes(q) ||
+    uhid.includes(q) ||
+    abhaAddress.includes(q) ||
+    abhaRaw.toLowerCase().includes(q) ||
+    primaryContact.includes(q) ||
+    emergencyContact.includes(q) ||
+    species.includes(q) ||
+    breed.includes(q) ||
+    relationship.includes(q)
+  ) {
     return true;
   }
   const wantedAbha = normalizeAbhaNumber(q);
@@ -598,6 +619,21 @@ function applyAbhaFields(
   return getTenantPatient(tenantId, patientId)!;
 }
 
+export function canonicalRelationship(rawRel: unknown, species?: string): string {
+  const sp = String(species || "").trim().toLowerCase();
+  const isAnimal = Boolean(sp && sp !== "human");
+  const raw = String(rawRel ?? "").trim();
+  if (isAnimal && (!raw || /^self$/i.test(raw))) return "Pet";
+  if (!raw || /^self$/i.test(raw)) return "Self";
+  if (/^pet$/i.test(raw)) return "Pet";
+  if (/^(child|son|daughter|kid|infant|baby)$/i.test(raw)) return "Child";
+  if (/^(spouse|partner|wife|husband|spouse\s*\/\s*partner)$/i.test(raw)) return "Spouse / Partner";
+  if (/^(parent|mother|father|mom|dad)$/i.test(raw)) return "Parent";
+  if (/^(family|family member|sibling|brother|sister|relative)$/i.test(raw)) return "Family Member";
+  if (/^(friend|caregiver|friend\s*\/\s*caregiver|other)$/i.test(raw)) return "Friend / Caregiver";
+  return raw.slice(0, 60);
+}
+
 function enrichPatientDemographics(tenantId: string, patientId: string, body: Record<string, unknown>) {
   const existing = getTenantPatient(tenantId, patientId);
   if (!existing) return;
@@ -611,14 +647,21 @@ function enrichPatientDemographics(tenantId: string, patientId: string, body: Re
   const dob = body.dateOfBirth != null || body.date_of_birth != null || body.dob != null ? animal.dob : mapped.dateOfBirth || "";
   const species = body.species != null ? animal.species : mapped.species || "";
   const breed = body.breed != null ? animal.breed : mapped.breed || "";
+  const rel =
+    body.relationshipToHolder != null || body.relationship_to_holder != null || species
+      ? canonicalRelationship(body.relationshipToHolder ?? body.relationship_to_holder ?? mapped.relationshipToHolder, species)
+      : mapped.relationshipToHolder || "Self";
+  const incomingHolder = String(body.primaryContactName ?? body.primary_contact_name ?? "").trim().slice(0, 120);
+  const primaryContactName = incomingHolder || animal.owner || mapped.primaryContactName || "";
   const emergency =
     body.emergencyContact != null || body.emergency_contact != null
       ? String(body.emergencyContact || body.emergency_contact || "")
-      : animal.owner || mapped.emergencyContact || "";
+      : animal.owner || incomingHolder || mapped.emergencyContact || "";
   getDb()
     .prepare(
       `UPDATE patients SET name = ?, age = ?, gender = ?, email = ?, address = ?,
-        date_of_birth = ?, species = ?, breed = ?, emergency_contact = ?
+        date_of_birth = ?, species = ?, breed = ?, emergency_contact = ?,
+        relationship_to_holder = ?, primary_contact_name = ?
        WHERE id = ? AND tenant_id = ?`
     )
     .run(
@@ -631,6 +674,8 @@ function enrichPatientDemographics(tenantId: string, patientId: string, body: Re
       species,
       breed,
       emergency,
+      rel,
+      primaryContactName,
       patientId,
       tenantId
     );
@@ -781,20 +826,66 @@ export function insertPatient(
   const allowAbha = Boolean(options?.allowAbha);
   const abhaNumber = allowAbha ? readAbhaNumber(body) : "";
   const abhaAddress = allowAbha ? readAbhaAddress(body) : "";
-  const existing = findTenantPatientByPhone(tenantId, phone);
-  if (existing) {
-    const existingId = String(existing.id);
-    enrichPatientDemographics(tenantId, existingId, body);
+  const animal = readAnimalFields(body);
+  const species = animal.species;
+  const rel = canonicalRelationship(body.relationshipToHolder ?? body.relationship_to_holder, species);
+  const nameKey = name.toLowerCase().replace(/\s+/g, " ").trim();
+  const forceNew = Boolean(body.createNewMember || body.addHouseholdMember || body.newProfileOnSharedPhone);
+  const existingRows = phone ? listTenantPatientsByPhone(tenantId, phone) : [];
+
+  if (existingRows.length > 0 && !forceNew) {
     if (allowAbha && (abhaNumber || abhaAddress)) {
       const other = findTenantPatientByAbha(tenantId, abhaNumber, abhaAddress);
-      if (other && String(other.id) !== existingId) {
+      if (other && !existingRows.some((r) => String(r.id) === String(other.id))) {
         throw httpError(409, "Phone and ABHA resolve to different patients in this tenant");
       }
+      const target =
+        other ||
+        existingRows.find((r) => String(r.name || "").toLowerCase().replace(/\s+/g, " ").trim() === nameKey) ||
+        existingRows[0];
+      const existingId = String(target.id);
+      enrichPatientDemographics(tenantId, existingId, body);
       applyAbhaFields(tenantId, existingId, { abhaNumber, abhaAddress });
+      const reused = getTenantPatient(tenantId, existingId)!;
+      (reused as Record<string, unknown>).__reused = true;
+      return reused;
     }
-    const reused = getTenantPatient(tenantId, existingId)!;
-    (reused as Record<string, unknown>).__reused = true;
-    return reused;
+
+    const exactMatch = nameKey
+      ? existingRows.find((r) => {
+          const rowNameKey = String(r.name || "").toLowerCase().replace(/\s+/g, " ").trim();
+          const rowSpecies = canonicalSpecies(r.species);
+          return rowNameKey === nameKey && rowSpecies === species;
+        })
+      : undefined;
+    if (exactMatch) {
+      const existingId = String(exactMatch.id);
+      enrichPatientDemographics(tenantId, existingId, body);
+      const reused = getTenantPatient(tenantId, existingId)!;
+      (reused as Record<string, unknown>).__reused = true;
+      return reused;
+    }
+
+    const singleRow = existingRows.length === 1 ? existingRows[0] : undefined;
+    const singleSpecies = singleRow ? canonicalSpecies(singleRow.species) : "";
+    const singleRel = singleRow ? canonicalRelationship(singleRow.relationship_to_holder, singleSpecies) : "Self";
+    if (
+      singleRow &&
+      !species &&
+      !singleSpecies &&
+      rel === "Self" &&
+      singleRel === "Self" &&
+      (String(singleRow.kyc_status || "") === KYC_LINKED_SANDBOX ||
+        !name ||
+        name === "WhatsApp Patient" ||
+        String(singleRow.name || "").trim() === "WhatsApp Patient")
+    ) {
+      const existingId = String(singleRow.id);
+      enrichPatientDemographics(tenantId, existingId, body);
+      const reused = getTenantPatient(tenantId, existingId)!;
+      (reused as Record<string, unknown>).__reused = true;
+      return reused;
+    }
   }
   if (allowAbha && (abhaNumber || abhaAddress)) {
     const byAbha = findTenantPatientByAbha(tenantId, abhaNumber, abhaAddress);
@@ -815,17 +906,28 @@ export function insertPatient(
   const lastVisit = body.lastVisit ? String(body.lastVisit) : now.slice(0, 10);
   const kycStatus = allowAbha && (abhaNumber || abhaAddress) ? KYC_LINKED_SANDBOX : "PENDING";
   const abhaLinkedAt = allowAbha && (abhaNumber || abhaAddress) ? now : "";
-  const animal = readAnimalFields(body);
   const age = body.age != null && body.age !== "" ? Number(body.age) : animal.ageFromDob ?? 0;
+  const selfOnPhone = existingRows.find(
+    (r) => canonicalRelationship(r.relationship_to_holder, canonicalSpecies(r.species)) === "Self"
+  );
+  const existingHolder =
+    String(selfOnPhone?.name || "").trim() ||
+    String(existingRows.find((r) => String(r.primary_contact_name || "").trim())?.primary_contact_name || "").trim();
+  const incomingHolder = String(body.primaryContactName ?? body.primary_contact_name ?? "").trim().slice(0, 120);
+  const primaryContactName =
+    incomingHolder || animal.owner || (rel !== "Self" ? existingHolder : "");
+  const emergencyContact =
+    animal.owner || incomingHolder || String(body.emergencyContact || body.emergency_contact || existingHolder || phone);
   try {
     getDb()
       .prepare(
         `INSERT INTO patients (
           id, tenant_id, uhid, name, age, gender, phone, email, blood_group, allergies,
-          chronic_conditions, emergency_contact, address, last_visit, created_at,
+          chronic_conditions, emergency_contact, relationship_to_holder, primary_contact_name,
+          address, last_visit, created_at,
           abha_number, abha_address, kyc_status, hfr_id, abha_linked_at,
           date_of_birth, species, breed
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -839,7 +941,9 @@ export function insertPatient(
         String(body.bloodGroup || body.blood_group || "O+"),
         jsonText(body.allergies, "[]"),
         jsonText(body.chronicConditions ?? body.chronic_conditions, "[]"),
-        animal.owner || String(body.emergencyContact || body.emergency_contact || phone),
+        emergencyContact,
+        rel,
+        primaryContactName,
         String(body.address || ""),
         lastVisit,
         now,
@@ -856,11 +960,11 @@ export function insertPatient(
     const message = err instanceof Error ? err.message : String(err);
     if (/unique/i.test(message)) {
       const raced = findTenantPatientByPhone(tenantId, phone);
-      if (raced) {
+      if (raced && !forceNew) {
         (raced as Record<string, unknown>).__reused = true;
         return raced;
       }
-      throw httpError(409, "A patient with this phone or ABHA already exists");
+      throw httpError(409, "A patient with this identifier or ABHA already exists");
     }
     throw err;
   }
@@ -1378,6 +1482,113 @@ export function createClinicalRouter(): Router {
     }
   });
 
+  api.get("/patients/by-phone", requireAuth, (req, res) => {
+    if (!denyUnlessPatientRecordRole(req, res)) return;
+    const tenantId = requireTenant(req, res);
+    if (!tenantId) return;
+    try {
+      const phone = String(req.query.phone || "").trim();
+      const matches = phone ? listTenantPatientsByPhone(tenantId, phone) : [];
+      const patients = matches.map(mapPatient);
+      const selfProfile = patients.find((p) => (p.relationshipToHolder || "Self") === "Self");
+      const primaryHolderName =
+        selfProfile?.name ||
+        patients.find((p) => p.primaryContactName)?.primaryContactName ||
+        patients[0]?.ownerName ||
+        "";
+      res.json({
+        patients,
+        count: patients.length,
+        sharedMobile: patients.length > 1,
+        primaryHolderName,
+      });
+    } catch (err) {
+      reportCaughtError(err, "clinical.patientsByPhone");
+      res.status(500).json({ error: "Failed to lookup patients by phone" });
+    }
+  });
+
+  api.get("/patients/household", requireAuth, (req, res) => {
+    if (!requestIsPatient(req) && !denyUnlessPatientRecordRole(req, res)) return;
+    const tenantId = requireTenant(req, res);
+    if (!tenantId) return;
+    try {
+      if (requestIsPatient(req)) {
+        const ownId = sessionPatientId(req);
+        let anchorPhone = "";
+        if (ownId) {
+          const ownRow = getTenantPatient(tenantId, ownId);
+          anchorPhone = String(ownRow?.phone || "").trim();
+        } else if (req.user?.id) {
+          const loginRow = getDb()
+            .prepare("SELECT phone, whatsapp_verified FROM users WHERE id = ? AND tenant_id = ? AND role = 'patient'")
+            .get(String(req.user.id), tenantId) as { phone?: string; whatsapp_verified?: number } | undefined;
+          if (Number(loginRow?.whatsapp_verified || 0) === 1) {
+            anchorPhone = String(loginRow?.phone || "").trim();
+          }
+        }
+        if (!anchorPhone) {
+          return res.json(withPatientTenant(req, tenantId, { patients: [], prescriptions: [], appointments: [] }));
+        }
+        const requestedPhone = String(req.query.phone || "").trim();
+        if (requestedPhone && phoneMatchKey(requestedPhone) !== phoneMatchKey(anchorPhone)) {
+          return res.status(403).json({ error: "Patients may only read profiles on their own verified mobile number" });
+        }
+        const matches = listTenantPatientsByPhone(tenantId, anchorPhone);
+        const requestedPatientId = String(req.query.patientId || "").trim();
+        if (requestedPatientId && !matches.some((m) => String(m.id) === requestedPatientId)) {
+          return res.status(403).json({ error: "Patients may only read profiles on their own verified mobile number" });
+        }
+        const patients = matches.map(mapPatient);
+        const ids = patients.map((p) => p.id).filter(Boolean);
+        const placeholders = ids.map(() => "?").join(", ");
+        const rxRows = ids.length
+          ? (getDb()
+              .prepare(
+                `SELECT * FROM prescriptions
+                 WHERE tenant_id = ? AND patient_id IN (${placeholders})
+                 ORDER BY created_at DESC`
+              )
+              .all(tenantId, ...ids) as Record<string, unknown>[])
+          : [];
+        const aptRows = ids.length
+          ? (getDb()
+              .prepare(
+                `SELECT * FROM appointments
+                 WHERE tenant_id = ? AND patient_id IN (${placeholders}) AND ${hiddenVisitSourceSql()}
+                 ORDER BY date DESC, time_slot DESC`
+              )
+              .all(tenantId, ...ids, ...HIDDEN_AMBIENT_SOURCES) as Record<string, unknown>[])
+          : [];
+        return res.json(
+          withPatientTenant(req, tenantId, {
+            patients,
+            prescriptions: rxRows.map((rx) => prescriptionForViewer(req, tenantId, rx)),
+            appointments: aptRows.map(mapAppointment),
+          })
+        );
+      }
+
+      const requestedId = String(req.query.patientId || "").trim();
+      let phone = String(req.query.phone || "").trim();
+      if (!phone && requestedId) {
+        const row = getTenantPatient(tenantId, requestedId);
+        if (!row) return res.status(404).json({ error: "Patient not found" });
+        phone = String(row.phone || "").trim();
+      }
+      const matches = phone ? listTenantPatientsByPhone(tenantId, phone) : [];
+      const patients = matches.map(mapPatient);
+      res.json({
+        patients,
+        count: patients.length,
+        sharedMobile: patients.length > 1,
+      });
+    } catch (err) {
+      reportCaughtError(err, "clinical.patientHousehold");
+      res.status(500).json({ error: "Failed to fetch household profiles" });
+    }
+  });
+
   api.get("/patients/:id/chart", requireAuth, (req, res) => {
     if (!requestIsPatient(req) && !denyUnlessPatientRecordRole(req, res)) return;
     const tenantId = requireTenant(req, res);
@@ -1519,15 +1730,32 @@ export function createClinicalRouter(): Router {
         : mapped.dateOfBirth || "";
     const species = req.body?.species != null ? animal.species : mapped.species || "";
     const breed = req.body?.breed != null ? animal.breed : mapped.breed || "";
+    const rel =
+      req.body?.relationshipToHolder != null || req.body?.relationship_to_holder != null || species
+        ? canonicalRelationship(
+            req.body?.relationshipToHolder ?? req.body?.relationship_to_holder ?? mapped.relationshipToHolder,
+            species
+          )
+        : mapped.relationshipToHolder || "Self";
+    const incomingHolder = String(
+      req.body?.primaryContactName ?? req.body?.primary_contact_name ?? ""
+    )
+      .trim()
+      .slice(0, 120);
+    const primaryContactName =
+      req.body?.primaryContactName != null || req.body?.primary_contact_name != null
+        ? incomingHolder
+        : animal.owner || mapped.primaryContactName || "";
     const emergency =
       req.body?.ownerName != null || req.body?.owner_name != null
         ? animal.owner || String(next.emergencyContact || "")
-        : String(next.emergencyContact || "");
+        : incomingHolder || String(next.emergencyContact || "");
     getDb()
       .prepare(
         `UPDATE patients SET
           name = ?, age = ?, gender = ?, phone = ?, email = ?, blood_group = ?,
-          allergies = ?, chronic_conditions = ?, emergency_contact = ?, address = ?,
+          allergies = ?, chronic_conditions = ?, emergency_contact = ?,
+          relationship_to_holder = ?, primary_contact_name = ?, address = ?,
           last_visit = ?, abha_number = ?, abha_address = ?, kyc_status = ?, hfr_id = ?,
           date_of_birth = ?, species = ?, breed = ?
          WHERE id = ? AND tenant_id = ?`
@@ -1542,6 +1770,8 @@ export function createClinicalRouter(): Router {
         jsonText(next.allergies, "[]"),
         jsonText(next.chronicConditions, "[]"),
         emergency,
+        rel,
+        primaryContactName,
         String(next.address || ""),
         next.lastVisit || mapped.lastVisit || null,
         String(next.abhaNumber || ""),

@@ -18,10 +18,12 @@ export interface DemoBookWindow {
 export const INDIVIDUAL_DEMO_WINDOW: DemoBookWindow = { today: 8, week: 20, month: 47, doneToday: 0 };
 export const POLYCLINIC_DEMO_WINDOW: DemoBookWindow = { today: 7, week: 16, month: 31, doneToday: 3 };
 export const PHYSIO_DEMO_WINDOW: DemoBookWindow = { today: 5, week: 12, month: 24, doneToday: 2 };
+export const VETERINARY_DEMO_WINDOW: DemoBookWindow = { today: 6, week: 12, month: 20, doneToday: 2 };
 
 export function demoBookWindowFor(tenantId: string): DemoBookWindow {
   if (tenantId === "tenant-demo-polyclinic") return POLYCLINIC_DEMO_WINDOW;
   if (tenantId === "tenant-demo-physio") return PHYSIO_DEMO_WINDOW;
+  if (tenantId === "tenant-demo-veterinary") return VETERINARY_DEMO_WINDOW;
   if (tenantId === "tenant-demo-individual") return INDIVIDUAL_DEMO_WINDOW;
   return { today: 3, week: 9, month: 18, doneToday: 1 };
 }
@@ -536,6 +538,18 @@ function spreadOneDemoTenant(
     }
 
     const refreshed = list.all(tenantId, ...HIDDEN_AMBIENT_SOURCES) as AppointmentRow[];
+    const pinnedToday = refreshed.filter((row) => String(row.id || "").startsWith("vet-apt-today-"));
+    if (pinnedToday.length > 0) {
+      const movable = refreshed.filter((row) => !String(row.id || "").startsWith("vet-apt-today-"));
+      movable.forEach((row, index) => {
+        const date = demoBookDateForIndex(index + pinnedToday.length, today, window);
+        const slot = CLINIC_SLOTS[index % CLINIC_SLOTS.length];
+        moveDemoVisit(database, tenantId, row, date, slot, (token) => {
+          update.run(date, slot, token, row.id, tenantId);
+        });
+      });
+      return;
+    }
     const managed = refreshed.filter((row) => isDemoManagedAppointmentId(row.id));
     const extras = refreshed.filter((row) => !isDemoManagedAppointmentId(row.id));
     const activeRows = refreshed.filter((row) => isActiveStatus(String(row.status || "")));

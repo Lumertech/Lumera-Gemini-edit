@@ -48,14 +48,12 @@ export function addWhatsAppTenantColumns(database: SqlDatabase) {
 }
 
 /**
- * Drop the legacy UNIQUE(phone) constraint and replace it with
- * UNIQUE(tenant_id, phone). SQLite autoindexes cannot always be DROPped, so
- * existing databases rebuild the table.
+ * Drop legacy UNIQUE(phone) and UNIQUE(tenant_id, phone) constraints/indexes and
+ * replace them with a non-unique lookup index on (tenant_id, phone) so one mobile
+ * number in a clinic can hold multiple pets, multiple children, or family/friends.
  *
- * MERGE NOTE (PR #80 schema-a.ts): unique(tenant_id, phone), not phone.unique().
- *
- * Postgres (Cloud SQL) must not query sqlite_master / PRAGMA. Tip 00053 crashed
- * initDatabase with 42P01 relation "sqlite_master" does not exist.
+ * SQLite autoindexes cannot always be DROPped, so existing databases rebuild the table.
+ * Postgres (Cloud SQL) must not query sqlite_master / PRAGMA.
  */
 export function migratePatientsPhoneUnique(
   database: SqlDatabase,
@@ -76,7 +74,7 @@ const PATIENTS_TABLE_POSTGRES_SQL = `
     AND table_type = 'BASE TABLE'
 `;
 
-/** Inline UNIQUE(phone) lands in pg_constraint (typically patients_phone_key). */
+/** Inline UNIQUE(phone) or UNIQUE(tenant_id, phone) lands in pg_constraint. */
 const PHONE_UNIQUE_CONSTRAINTS_SQL = `
   SELECT c.conname AS name
   FROM pg_constraint c
@@ -90,10 +88,13 @@ const PHONE_UNIQUE_CONSTRAINTS_SQL = `
   WHERE n.nspname = current_schema()
     AND t.relname = 'patients'
     AND c.contype = 'u'
-    AND key_cols.col_names = ARRAY['phone']::text[]
+    AND (
+      key_cols.col_names = ARRAY['phone']::text[]
+      OR key_cols.col_names = ARRAY['tenant_id', 'phone']::text[]
+    )
 `;
 
-/** Unique indexes on phone alone that are not the primary key. */
+/** Unique indexes on phone or (tenant_id, phone) that are not the primary key. */
 const PHONE_UNIQUE_INDEXES_SQL = `
   SELECT i.relname AS name
   FROM pg_index ix
@@ -110,8 +111,10 @@ const PHONE_UNIQUE_INDEXES_SQL = `
     AND t.relname = 'patients'
     AND ix.indisunique
     AND NOT ix.indisprimary
-    AND ix.indnatts = 1
-    AND key_cols.col_names = ARRAY['phone']::text[]
+    AND (
+      key_cols.col_names = ARRAY['phone']::text[]
+      OR key_cols.col_names = ARRAY['tenant_id', 'phone']::text[]
+    )
 `;
 
 function catalogNames(database: SqlDatabase, sql: string): string[] {
@@ -144,9 +147,15 @@ function migratePatientsPhoneUniquePostgres(database: SqlDatabase) {
   }
 
   try {
-    database.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_patients_tenant_phone ON patients(tenant_id, phone)");
+    database.exec("DROP INDEX IF EXISTS idx_patients_tenant_phone");
   } catch {
-    /* duplicate (tenant, phone) rows must be resolved before the unique index can apply */
+    /* ignore if constraint-backed or absent */
+  }
+
+  try {
+    database.exec("CREATE INDEX IF NOT EXISTS idx_patients_tenant_phone_lookup ON patients(tenant_id, phone)");
+  } catch {
+    /* ignore */
   }
 }
 
@@ -156,20 +165,28 @@ function migratePatientsPhoneUniqueSqlite(database: SqlDatabase) {
     .get() as { name: string } | undefined;
   if (!table) return;
 
-  let phoneOnlyUnique = false;
+  try {
+    database.exec("DROP INDEX IF EXISTS idx_patients_tenant_phone");
+  } catch {
+    /* ignore */
+  }
+
+  let phoneUniqueStuck = false;
   try {
     const indexes = database.prepare("PRAGMA index_list(patients)").all() as Array<{ name: string; unique: number }>;
     for (const idx of indexes) {
       if (!idx.unique) continue;
       const info = database.prepare(`PRAGMA index_info(${sqlIdent(idx.name)})`).all() as Array<{ name: string }>;
       const cols = info.map((c) => c.name);
-      if (cols.length === 1 && cols[0] === "phone") {
-        phoneOnlyUnique = true;
+      const isPhoneOnly = cols.length === 1 && cols[0] === "phone";
+      const isTenantPhone = cols.length === 2 && cols[0] === "tenant_id" && cols[1] === "phone";
+      if (isPhoneOnly || isTenantPhone) {
+        phoneUniqueStuck = true;
         try {
           database.exec(`DROP INDEX IF EXISTS ${sqlIdent(idx.name)}`);
-          phoneOnlyUnique = false;
+          phoneUniqueStuck = false;
         } catch {
-          phoneOnlyUnique = true;
+          phoneUniqueStuck = true;
         }
       }
     }
@@ -177,14 +194,14 @@ function migratePatientsPhoneUniqueSqlite(database: SqlDatabase) {
     /* pragma unsupported */
   }
 
-  if (phoneOnlyUnique) {
+  if (phoneUniqueStuck) {
     rebuildPatientsTableWithoutPhoneUnique(database);
   }
 
   try {
-    database.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_patients_tenant_phone ON patients(tenant_id, phone)");
+    database.exec("CREATE INDEX IF NOT EXISTS idx_patients_tenant_phone_lookup ON patients(tenant_id, phone)");
   } catch {
-    /* duplicate (tenant, phone) rows must be resolved before the unique index can apply */
+    /* ignore */
   }
 }
 

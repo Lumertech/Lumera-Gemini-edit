@@ -55,6 +55,7 @@ import {
   OphthalmologyAssessment,
   DentalAssessment,
   GynecologyAssessment,
+  VeterinaryAssessment,
   EntAssessment,
   NeurologyAssessment,
   SpecialtyHistoryData,
@@ -75,7 +76,7 @@ import { PhysiotherapyRxModule } from './specialty-rx/PhysiotherapyRxModule';
 import { CardiologyRxModule } from './specialty-rx/CardiologyRxModule';
 import { DermatologyRxModule } from './specialty-rx/DermatologyRxModule';
 import { PediatricsRxModule } from './specialty-rx/PediatricsRxModule';
-import { VeterinaryRxModule } from './specialty-rx/VeterinaryRxModule';
+import { VeterinaryRxModule, defaultVeterinaryAssessment } from './specialty-rx/VeterinaryRxModule';
 import { OrthopedicsRxModule } from './specialty-rx/OrthopedicsRxModule';
 import { OphthalmologyRxModule } from './specialty-rx/OphthalmologyRxModule';
 import { DentalSurgeryRxModule } from './specialty-rx/DentalSurgeryRxModule';
@@ -90,6 +91,7 @@ import { clonePresetExercises, presetHepToastMessage } from '../lib/rxPresetHep'
 import { followUpBookingRef } from '../lib/followUpSlots';
 import { installPrescriptionPrintHooks, joinPresent, printPrescriptionDocument } from '../lib/printPrescription';
 import { resolveRxModule } from '../lib/specialtyWorkflow';
+import { profileKindBadge, samePhone10 } from '../lib/sharedMobile';
 import { PatientRecordModal } from './PatientRecordModal';
 import { ConsultStock } from './ConsultStock';
 import {
@@ -118,6 +120,8 @@ interface PrescriptionWriterProps {
   onBookFollowUp?: (input: Partial<Appointment>) => Promise<Appointment | void>;
   onAutoSave?: (prescription: Prescription, options?: { immediate?: boolean }) => void;
   appointmentId?: string;
+  allPatients?: Patient[];
+  onSelectPatient?: (patient: Patient) => void;
 }
 
 export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
@@ -134,6 +138,8 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
   onBookFollowUp,
   onAutoSave,
   appointmentId,
+  allPatients = [],
+  onSelectPatient,
 }) => {
   // Determine initial specialty from current doctor
   const getInitialSpecialty = (doctorSpec: string): PolyclinicSpecialty =>
@@ -365,6 +371,25 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     }
   );
 
+  const [veterinaryAssessment, setVeterinaryAssessment] = useState<VeterinaryAssessment>(
+    () =>
+      formSeed.veterinaryAssessment ||
+      defaultVeterinaryAssessment({
+        species: currentPatient.species,
+        breed: currentPatient.breed,
+        ownerName: currentPatient.ownerName || currentPatient.primaryContactName,
+        weightKg: formSeed.vitals?.weightKg,
+      })
+  );
+
+  const householdPeers = React.useMemo(
+    () =>
+      (allPatients || []).filter(
+        (p) => p.id && p.id !== currentPatient.id && samePhone10(p.phone, currentPatient.phone)
+      ),
+    [allPatients, currentPatient.id, currentPatient.phone]
+  );
+
   const [specialtyHistory, setSpecialtyHistory] = useState<SpecialtyHistoryData | undefined>(
     formSeed.specialtyHistory
   );
@@ -466,6 +491,18 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     if (preset.ophthalmologyAssessment) setOphthalmologyAssessment(preset.ophthalmologyAssessment);
     if (preset.dentalAssessment) setDentalAssessment(preset.dentalAssessment);
     if (preset.gynecologyAssessment) setGynecologyAssessment(preset.gynecologyAssessment);
+    if (preset.veterinaryAssessment) {
+      setVeterinaryAssessment((prev) => ({
+        ...prev,
+        ...preset.veterinaryAssessment,
+        species: preset.veterinaryAssessment.species || prev.species,
+        breed: preset.veterinaryAssessment.breed || prev.breed,
+        ownerName: preset.veterinaryAssessment.ownerName || prev.ownerName,
+      }));
+      setSavedModuleKeys((prev) =>
+        prev.includes('veterinaryAssessment') ? prev : [...prev, 'veterinaryAssessment']
+      );
+    }
     if (preset.entAssessment) setEntAssessment(preset.entAssessment);
     if (preset.neurologyAssessment) setNeurologyAssessment(preset.neurologyAssessment);
     if (preset.chiefComplaints) setChiefComplaints(preset.chiefComplaints);
@@ -613,6 +650,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     if (formSeed.ophthalmologyAssessment) keys.push('ophthalmologyAssessment');
     if (formSeed.dentalAssessment) keys.push('dentalAssessment');
     if (formSeed.gynecologyAssessment) keys.push('gynecologyAssessment');
+    if (formSeed.veterinaryAssessment) keys.push('veterinaryAssessment');
     return keys;
   });
   const skipInitialAutosave = React.useRef(true);
@@ -670,6 +708,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     ophthalmologyAssessment: keepModule('ophthalmologyAssessment', activeSpecialty === 'Ophthalmology') ? ophthalmologyAssessment : undefined,
     dentalAssessment: keepModule('dentalAssessment', activeSpecialty === 'Dental Surgery') ? dentalAssessment : undefined,
     gynecologyAssessment: keepModule('gynecologyAssessment', activeSpecialty === 'Gynecology') ? gynecologyAssessment : undefined,
+    veterinaryAssessment: keepModule('veterinaryAssessment', activeSpecialty === 'Veterinary') ? veterinaryAssessment : undefined,
     entAssessment: keepModule('entAssessment', activeSpecialty === 'ENT') ? entAssessment : undefined,
     neurologyAssessment: keepModule('neurologyAssessment', activeSpecialty === 'Neurology') ? neurologyAssessment : undefined,
     specialtyHistory: specialtyHistory ? { ...specialtyHistory, specialty: activeSpecialty } : undefined,
@@ -721,6 +760,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
     ophthalmologyAssessment,
     dentalAssessment,
     gynecologyAssessment,
+    veterinaryAssessment,
     entAssessment,
     neurologyAssessment,
     specialtyHistory,
@@ -836,6 +876,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
       setOphthalmologyAssessment(mapped.ophthalmologyAssessment || ophthalmologyAssessment);
       setDentalAssessment(mapped.dentalAssessment || dentalAssessment);
       setGynecologyAssessment(mapped.gynecologyAssessment || gynecologyAssessment);
+      setVeterinaryAssessment(mapped.veterinaryAssessment || veterinaryAssessment);
       setEntAssessment(mapped.entAssessment || entAssessment);
       setNeurologyAssessment(mapped.neurologyAssessment || neurologyAssessment);
       if (mapped.specialtyHistory) setSpecialtyHistory(mapped.specialtyHistory);
@@ -848,6 +889,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
       if (mapped.ophthalmologyAssessment) keys.push('ophthalmologyAssessment');
       if (mapped.dentalAssessment) keys.push('dentalAssessment');
       if (mapped.gynecologyAssessment) keys.push('gynecologyAssessment');
+      if (mapped.veterinaryAssessment) keys.push('veterinaryAssessment');
       if (mapped.entAssessment) keys.push('entAssessment');
       if (mapped.neurologyAssessment) keys.push('neurologyAssessment');
       setSavedModuleKeys(keys);
@@ -891,6 +933,7 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
           ophthalmologyAssessment: mapped.ophthalmologyAssessment,
           dentalAssessment: mapped.dentalAssessment,
           gynecologyAssessment: mapped.gynecologyAssessment,
+          veterinaryAssessment: mapped.veterinaryAssessment,
           aiSource: mapped.aiSource,
           aiGeneratedAt: mapped.aiGeneratedAt,
           transcriptHash: mapped.transcriptHash,
@@ -1304,7 +1347,38 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
       )}
 
       {activeSpecialty === 'Veterinary' && (
-        <VeterinaryRxModule patientId={currentPatient.id} canRecord />
+        <VeterinaryRxModule
+          patientId={currentPatient.id}
+          canRecord
+          assessment={veterinaryAssessment}
+          patientSpecies={currentPatient.species}
+          patientBreed={currentPatient.breed}
+          ownerName={currentPatient.ownerName || currentPatient.primaryContactName}
+          onChange={(nextAss) => {
+            setVeterinaryAssessment(nextAss);
+            setSavedModuleKeys((prev) =>
+              prev.includes('veterinaryAssessment') ? prev : [...prev, 'veterinaryAssessment']
+            );
+          }}
+          onWeightChange={(wKg) => setVitals((prev) => ({ ...prev, weightKg: wKg }))}
+          onAddCalculatedDrug={(calc) => {
+            touchAiField('medicines');
+            setMedicines((prev) => [
+              ...prev,
+              {
+                id: 'med-' + Date.now() + '-' + Math.floor(Math.random() * 1000),
+                drugName: calc.drugName,
+                composition: calc.composition,
+                dosage: calc.dosage,
+                form: 'Tablet',
+                frequency: calc.frequency,
+                timing: 'After Food',
+                durationDays: calc.durationDays,
+                instructions: calc.instructions,
+              },
+            ]);
+          }}
+        />
       )}
 
       {activeSpecialty === 'Orthopedics' && (
@@ -1436,6 +1510,40 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
             </div>
           </div>
         </div>
+
+        {/* Shared-Mobile Quick Switcher Bar (no-print) */}
+        {householdPeers.length > 0 && onSelectPatient && (
+          <div
+            data-testid="rx-household-switcher"
+            className="no-print bg-indigo-50/80 border border-indigo-200 rounded-lg px-3 py-2 flex flex-wrap items-center justify-between gap-2 text-xs"
+          >
+            <div className="flex items-center gap-2">
+              <span className="px-2 py-0.5 rounded-full bg-indigo-600 text-white text-[10px] font-bold">
+                Same Mobile ({householdPeers.length + 1})
+              </span>
+              <span className="text-slate-700 font-medium">
+                Switch Pet / Family on {currentPatient.phone}:
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {householdPeers.map((peer) => {
+                const badge = profileKindBadge(peer);
+                return (
+                  <button
+                    key={peer.id}
+                    type="button"
+                    onClick={() => onSelectPatient(peer)}
+                    className="px-2.5 py-1 rounded-full bg-white hover:bg-indigo-100 text-indigo-900 border border-indigo-300 text-[11px] font-semibold transition-colors flex items-center gap-1 cursor-pointer"
+                  >
+                    <span>{badge.icon}</span>
+                    <span>{peer.name}</span>
+                    <span className="text-slate-500 text-[10px]">({badge.label})</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Patient Demographics Banner */}
         <div className="bg-slate-50 p-3.5 rounded-lg border border-slate-200 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
@@ -2376,6 +2484,144 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
                   </div>
                 </div>
               ) : null}
+            </div>
+          );
+        })()}
+
+        {/* MODE-AWARE VETERINARY PRINT / PDF ASSESSMENT CARD */}
+        {activeSpecialty === 'Veterinary' && (() => {
+          const vetMode = veterinaryAssessment.clinicalMode || 'Preventive & Vaccination';
+          const spLabel =
+            veterinaryAssessment.species ||
+            (currentPatient.species
+              ? currentPatient.species.charAt(0).toUpperCase() + currentPatient.species.slice(1)
+              : 'Dog');
+          const breedLabel = veterinaryAssessment.breed || currentPatient.breed || 'Companion Animal';
+          const parentName =
+            veterinaryAssessment.ownerName ||
+            currentPatient.ownerName ||
+            currentPatient.primaryContactName ||
+            '—';
+          const wt = veterinaryAssessment.bodyWeightKg ?? vitals.weightKg;
+          return (
+            <div
+              data-testid="rx-veterinary-print-card"
+              className="bg-amber-50/70 p-3.5 rounded-lg border border-amber-200 space-y-2.5 text-xs"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-200/80 pb-2">
+                <div className="flex items-center gap-2">
+                  <span className="px-2 py-0.5 rounded bg-amber-900 text-amber-100 text-[10px] font-bold uppercase tracking-wider">
+                    Companion Animal Veterinary Record
+                  </span>
+                  <strong className="text-amber-950 font-bold">{vetMode}</strong>
+                </div>
+                <span className="font-mono text-[11px] text-amber-900 font-semibold">
+                  {veterinaryAssessment.microchipId ? `Microchip: ${veterinaryAssessment.microchipId}` : `UHID: ${currentPatient.uhid}`}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-slate-800">
+                <div>
+                  <span className="text-[10px] uppercase font-bold text-slate-500 block">Species / Breed / Sex</span>
+                  <strong className="text-slate-900">
+                    {spLabel} • {breedLabel}
+                  </strong>
+                  <span className="block text-[11px] text-slate-600">
+                    {veterinaryAssessment.sexNeuterStatus || currentPatient.gender}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[10px] uppercase font-bold text-slate-500 block">Pet Parent &amp; Mobile</span>
+                  <strong className="text-slate-900">{parentName}</strong>
+                  <span className="block text-[11px] text-slate-600">{currentPatient.phone}</span>
+                </div>
+                <div>
+                  <span className="text-[10px] uppercase font-bold text-slate-500 block">Weight &amp; Body Condition</span>
+                  <strong className="text-amber-900 font-mono">
+                    {typeof wt === 'number' ? `${wt} kg` : '—'}
+                  </strong>
+                  <span className="block text-[11px] text-slate-600">
+                    BCS: {veterinaryAssessment.bodyConditionScore ?? 5}/9
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[10px] uppercase font-bold text-slate-500 block">Temp / Mucosa / CRT</span>
+                  <strong className="text-slate-900">
+                    {typeof veterinaryAssessment.rectalTempF === 'number' ? `${veterinaryAssessment.rectalTempF}°F` : '—'}
+                  </strong>
+                  <span className="block text-[11px] text-slate-600">
+                    {veterinaryAssessment.mucousMembrane || 'Pink & Moist'} • CRT {veterinaryAssessment.crtSeconds || '< 2s'}
+                  </span>
+                </div>
+              </div>
+
+              {vetMode === 'Preventive & Vaccination' && (
+                <div className="bg-white p-2 rounded border border-amber-200 text-[11px] text-slate-700 flex flex-wrap gap-x-4 gap-y-1">
+                  {veterinaryAssessment.antiRabiesStatus && (
+                    <span><strong>ARV:</strong> {veterinaryAssessment.antiRabiesStatus}{veterinaryAssessment.antiRabiesCertNo ? ` (${veterinaryAssessment.antiRabiesCertNo})` : ''}</span>
+                  )}
+                  {veterinaryAssessment.coreVaccineStatus && (
+                    <span><strong>Core Vaccine:</strong> {veterinaryAssessment.coreVaccineStatus}</span>
+                  )}
+                  {veterinaryAssessment.dewormingProductAndDose && (
+                    <span><strong>Deworming:</strong> {veterinaryAssessment.dewormingProductAndDose}</span>
+                  )}
+                  {veterinaryAssessment.ectoparasiteProphylaxis && (
+                    <span><strong>Tick/Flea:</strong> {veterinaryAssessment.ectoparasiteProphylaxis}</span>
+                  )}
+                </div>
+              )}
+
+              {vetMode === 'Tick-Fever & Internal Med' && (
+                <div className="bg-white p-2 rounded border border-amber-200 text-[11px] text-slate-700 flex flex-wrap gap-x-4 gap-y-1">
+                  {veterinaryAssessment.vectorSnap4DxStatus && (
+                    <span><strong>SNAP 4Dx:</strong> {veterinaryAssessment.vectorSnap4DxStatus}</span>
+                  )}
+                  {typeof veterinaryAssessment.plateletCountLakhs === 'number' && (
+                    <span><strong>Platelets:</strong> {veterinaryAssessment.plateletCountLakhs} lakhs/µL</span>
+                  )}
+                  {typeof veterinaryAssessment.pcvPercent === 'number' && (
+                    <span><strong>PCV:</strong> {veterinaryAssessment.pcvPercent}%</span>
+                  )}
+                  {veterinaryAssessment.fluidTherapyPlan && (
+                    <span><strong>Fluids:</strong> {veterinaryAssessment.fluidTherapyPlan}</span>
+                  )}
+                </div>
+              )}
+
+              {vetMode === 'Dermatology, Ear & Dental' && (
+                <div className="bg-white p-2 rounded border border-amber-200 text-[11px] text-slate-700 flex flex-wrap gap-x-4 gap-y-1">
+                  {typeof veterinaryAssessment.pruritusScore0to10 === 'number' && (
+                    <span><strong>Pruritus:</strong> {veterinaryAssessment.pruritusScore0to10}/10</span>
+                  )}
+                  {veterinaryAssessment.skinScrapingCytology && (
+                    <span><strong>Cytology:</strong> {veterinaryAssessment.skinScrapingCytology}</span>
+                  )}
+                  {veterinaryAssessment.otoscopyFindings && (
+                    <span><strong>Otoscopy:</strong> {veterinaryAssessment.otoscopyFindings}</span>
+                  )}
+                  {veterinaryAssessment.dentalTartarGrade && (
+                    <span><strong>Dental:</strong> {veterinaryAssessment.dentalTartarGrade}</span>
+                  )}
+                </div>
+              )}
+
+              {vetMode === 'Surgery, Spay/Neuter & Bite' && (
+                <div className="bg-white p-2 rounded border border-amber-200 text-[11px] text-slate-700 flex flex-wrap gap-x-4 gap-y-1">
+                  {veterinaryAssessment.asaRiskGrade && (
+                    <span><strong>ASA:</strong> {veterinaryAssessment.asaRiskGrade}</span>
+                  )}
+                  {veterinaryAssessment.procedurePlanned && (
+                    <span><strong>Procedure:</strong> {veterinaryAssessment.procedurePlanned}</span>
+                  )}
+                  {veterinaryAssessment.eCollarAndSutureDate && (
+                    <span><strong>Post-Op:</strong> {veterinaryAssessment.eCollarAndSutureDate}</span>
+                  )}
+                  {veterinaryAssessment.biteQuarantineStatus && veterinaryAssessment.biteQuarantineStatus !== 'Not Applicable' && (
+                    <span className="text-rose-800 font-bold"><strong>Bite Log:</strong> {veterinaryAssessment.biteQuarantineStatus}</span>
+                  )}
+                </div>
+              )}
             </div>
           );
         })()}

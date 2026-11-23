@@ -41,6 +41,7 @@ import {
   detectWhatsAppMessageLanguage,
   ensureFullTargetLanguageText,
   isPureLanguageSwitchMessage,
+  LOCALIZED_BUTTONS,
   localizeButtonsList,
   localizePersonOrClinicName,
   normalizeStoredLangCode,
@@ -60,6 +61,7 @@ import {
   renderLocalizedFees,
   renderLocalizedFollowUp,
   renderLocalizedGreeting,
+  renderHouseholdProfilePicker,
   renderLocalizedInsurance,
   renderLocalizedIntakePrompt,
   renderLocalizedIntakeSlots,
@@ -1688,6 +1690,242 @@ export interface RegisteredPatientInfo {
   tenantId: string;
 }
 
+export interface RegisteredPatientProfile extends RegisteredPatientInfo {
+  species?: string;
+  breed?: string;
+  relationshipToHolder?: string;
+  primaryContactName?: string;
+}
+
+function isValidRegisteredPatientName(rawName: string): boolean {
+  if (!rawName) return false;
+  if (/^patient(\s*\(\+?\d+\))?$/i.test(rawName)) return false;
+  if (/^whatsapp\s+patient$/i.test(rawName)) return false;
+  if (rawName === "A1 Test Recipient" || rawName === "No Slot" || rawName.startsWith("Test ")) return false;
+  return true;
+}
+
+export function findRegisteredPatientsByPhone(
+  db: any,
+  phone: string,
+  tenantId?: string
+): RegisteredPatientProfile[] {
+  if (!db || !phone) return [];
+  const rawDigits = String(phone).replace(/\D/g, "");
+  const last10 = rawDigits.slice(-10);
+  if (!last10) return [];
+
+  try {
+    let rows: any[] = [];
+    if (tenantId) {
+      try {
+        rows = db
+          .prepare(
+            `SELECT id, tenant_id, uhid, name, phone, species, breed, relationship_to_holder, primary_contact_name, emergency_contact
+             FROM patients
+             WHERE (phone = ? OR phone = ? OR phone LIKE ?)
+               AND (tenant_id = ? OR tenant_id IS NULL OR TRIM(tenant_id) = '')
+             ORDER BY created_at DESC`
+          )
+          .all(phone, `+${rawDigits}`, `%${last10}`, tenantId);
+      } catch {
+        rows = db
+          .prepare(
+            `SELECT id, tenant_id, uhid, name, phone FROM patients
+             WHERE (phone = ? OR phone = ? OR phone LIKE ?)
+               AND (tenant_id = ? OR tenant_id IS NULL OR TRIM(tenant_id) = '')
+             ORDER BY created_at DESC`
+          )
+          .all(phone, `+${rawDigits}`, `%${last10}`, tenantId);
+      }
+    }
+    if (!rows.length) {
+      try {
+        rows = db
+          .prepare(
+            `SELECT id, tenant_id, uhid, name, phone, species, breed, relationship_to_holder, primary_contact_name, emergency_contact
+             FROM patients
+             WHERE phone = ? OR phone = ? OR phone LIKE ?
+             ORDER BY created_at DESC`
+          )
+          .all(phone, `+${rawDigits}`, `%${last10}`);
+      } catch {
+        rows = db
+          .prepare(
+            `SELECT id, tenant_id, uhid, name, phone FROM patients
+             WHERE phone = ? OR phone = ? OR phone LIKE ?
+             ORDER BY created_at DESC`
+          )
+          .all(phone, `+${rawDigits}`, `%${last10}`);
+      }
+    }
+
+    const out: RegisteredPatientProfile[] = [];
+    const seen = new Set<string>();
+    for (const row of rows) {
+      const rawName = String(row?.name || "").trim();
+      const id = String(row?.id || "");
+      if (!id || seen.has(id) || !isValidRegisteredPatientName(rawName)) continue;
+      seen.add(id);
+      const cleaned = rawName.replace(/^(dr\.?|mr\.?|ms\.?|mrs\.?)\s+/i, "").trim();
+      const firstName = cleaned.split(/\s+/)[0] || cleaned;
+      const species = String(row?.species || "").trim();
+      const rawRel = String(row?.relationship_to_holder || "").trim();
+      const isAnimal = Boolean(species && species.toLowerCase() !== "human");
+      const relationshipToHolder =
+        isAnimal && (!rawRel || rawRel === "Self") ? "Pet" : rawRel || "Self";
+      const primaryContactName =
+        String(row?.primary_contact_name || "").trim() ||
+        (relationshipToHolder !== "Self" ? String(row?.emergency_contact || "").trim() : "");
+      out.push({
+        id,
+        name: rawName,
+        firstName,
+        uhid: String(row?.uhid || ""),
+        phone: String(row?.phone || phone),
+        tenantId: String(row?.tenant_id || tenantId || ""),
+        species,
+        breed: String(row?.breed || "").trim(),
+        relationshipToHolder,
+        primaryContactName,
+      });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+export function extractTargetProfileFromQuery(
+  text: string,
+  profiles: RegisteredPatientProfile[]
+): {
+  matchedProfile?: RegisteredPatientProfile;
+  newMember?: { name: string; relationshipToHolder: string; species?: string };
+} {
+  const raw = String(text || "").trim();
+  if (!raw) return {};
+  const cleanLower = raw.toLowerCase();
+
+  const mapRoleKeyword = (kw: string): { relationshipToHolder: string; species?: string } => {
+    const k = kw.toLowerCase().trim();
+    if (/^(dog|puppy|कुत्ते|कुत्ता|कुत्रा|कुत्र्या|श्वान|श्वानां?|kutte|kutta|kutra|kutrya)$/i.test(k)) {
+      return { relationshipToHolder: "Pet", species: "dog" };
+    }
+    if (/^(cat|kitten|बिल्ली|मांजर|मांजरी|billi|manjar)$/i.test(k)) {
+      return { relationshipToHolder: "Pet", species: "cat" };
+    }
+    if (/^(pet|पालतू|पाळीव)$/i.test(k)) {
+      return { relationshipToHolder: "Pet", species: "other" };
+    }
+    if (/^(son|daughter|child|kid|baby|बेटे|बेटा|बेटी|बच्चे|बच्चा|मुला|मुली|मूल|बाळ|बाळा|bete|beti|bachche|mula|muli)$/i.test(k)) {
+      return { relationshipToHolder: "Child" };
+    }
+    if (/^(wife|husband|spouse|partner|पत्नी|पति|पती|patni|pati)$/i.test(k)) {
+      return { relationshipToHolder: "Spouse / Partner" };
+    }
+    if (/^(mother|father|mom|dad|parent|माता|पिता|माँ|आई|बाबा|बाबां?|mata|pita|aai|baba)$/i.test(k)) {
+      return { relationshipToHolder: "Parent" };
+    }
+    if (/^(brother|sister|sibling|family member|relative|भाई|बहन|भाऊ|भावा|बहीण|बहिणी|bhai|behen)$/i.test(k)) {
+      return { relationshipToHolder: "Family Member" };
+    }
+    return { relationshipToHolder: "Friend / Caregiver" };
+  };
+
+  const cleanExtractedName = (val: string): string =>
+    val
+      .replace(/\b(today|tomorrow|please|urgent|slot|appointment|book|with|dr\.?.*|के\s*लिए|साठी|करिता|अपॉइंटमेंट|बुक.*)\b/gi, "")
+      .replace(/[.,!?।:;-]+/g, " ")
+      .replace(/\s{2,}/g, " ")
+      .trim();
+
+  // 1. Check explicit new pet / child / family / friend booking intent first
+  const enNewMatch = raw.match(
+    /\b(?:for|register)\s+(?:my\s+|our\s+|a\s+)?(friend|son|daughter|child|kid|baby|wife|husband|spouse|partner|mother|father|mom|dad|parent|brother|sister|sibling|family member|dog|puppy|cat|kitten|pet)\s+([\p{L}\p{M}][\p{L}\p{M}\s]{1,28}?)(?=\s+(?:today|tomorrow|with|at|please|on|for)\b|[,.!?]|$)/iu
+  );
+  if (enNewMatch) {
+    const candidateName = cleanExtractedName(enNewMatch[2] || "");
+    if (candidateName.length >= 2) {
+      const existing = profiles.find(
+        (p) => p.name.toLowerCase() === candidateName.toLowerCase() || p.firstName.toLowerCase() === candidateName.toLowerCase()
+      );
+      if (existing) return { matchedProfile: existing };
+      const mapped = mapRoleKeyword(enNewMatch[1]);
+      return { newMember: { name: candidateName, ...mapped } };
+    }
+  }
+
+  const romanIndicMatch = raw.match(
+    /\b(?:mere|meri|apne|apni|majhya|mazya|majha|majhi)\s+(dost|mitra|bete|beti|bachche|kutte|kutta|dog|billi|cat|bhai|behen|patni|pati|mata|pita|aai|baba)\s+([A-Za-z][A-Za-z\s]{1,24}?)\s+(?:ke\s+liye|sathi|karita|la)\b/i
+  );
+  if (romanIndicMatch) {
+    const candidateName = cleanExtractedName(romanIndicMatch[2] || "");
+    if (candidateName.length >= 2) {
+      const existing = profiles.find(
+        (p) => p.name.toLowerCase() === candidateName.toLowerCase() || p.firstName.toLowerCase() === candidateName.toLowerCase()
+      );
+      if (existing) return { matchedProfile: existing };
+      const mapped = mapRoleKeyword(romanIndicMatch[1]);
+      return { newMember: { name: candidateName, ...mapped } };
+    }
+  }
+
+  const devIndicNamedMatch = raw.match(
+    /(?:मेरे|मेरी|अपने|अपनी|माझ्या|माझा|माझी)\s+(दोस्त|मित्र|मित्रा|बेटे|बेटा|बेटी|बच्चे|मुला|मुली|कुत्ते|कुत्ता|कुत्रा|कुत्र्या|श्वान|बिल्ली|मांजर|मांजरी|भाई|बहन|भाऊ|भावा|बहीण|बहिणी|पत्नी|पति|पती|माता|पिता|आई|बाबा)\s+([\u0900-\u097FA-Za-z]{2,22}?)(?:\s*(?:के\s*लिए|साठी|करिता)|\s+अपॉइंटमेंट)/u
+  );
+  if (devIndicNamedMatch) {
+    const candidateName = cleanExtractedName(devIndicNamedMatch[2] || "");
+    if (candidateName.length >= 2) {
+      const mapped = mapRoleKeyword(devIndicNamedMatch[1]);
+      return { newMember: { name: candidateName, ...mapped } };
+    }
+  }
+
+  const devIndicPostSathiNamedMatch = raw.match(
+    /(?:मेरे|मेरी|माझ्या|माझा|माझी)\s+(दोस्त|मित्र|मित्रा|बेटे|बेटी|मुला|मुली|कुत्ते|कुत्ता|कुत्रा|कुत्र्या|श्वान|बिल्ली|मांजर|मांजरी)(?:साठी|करिता|\s+के\s+लिए)\s+([\u0900-\u097FA-Za-z]{2,22}?)\s+(?:अपॉइंटमेंट|बुक|टोकन)/u
+  );
+  if (devIndicPostSathiNamedMatch) {
+    const candidateName = cleanExtractedName(devIndicPostSathiNamedMatch[2] || "");
+    if (candidateName.length >= 2 && !/^(अपॉइंटमेंट|बुक|टोकन|आज|कल|उद्या)$/.test(candidateName)) {
+      const mapped = mapRoleKeyword(devIndicPostSathiNamedMatch[1]);
+      return { newMember: { name: candidateName, ...mapped } };
+    }
+  }
+
+  const devIndicUnnamedMatch = raw.match(
+    /(?:मेरे|मेरी|माझ्या|माझा|माझी)\s+(दोस्त|मित्र|मित्रा|बेटे|बेटी|मुला|मुली|कुत्ते|कुत्रा|कुत्र्या|श्वान|बिल्ली|मांजर|मांजरी)(?:साठी|करिता|\s+के\s+लिए)\s+(?:अपॉइंटमेंट|बुक|टोकन)/u
+  );
+  if (devIndicUnnamedMatch) {
+    const roleWord = devIndicUnnamedMatch[1];
+    const mapped = mapRoleKeyword(roleWord);
+    const fallbackLabel = /मित्रा|मित्र|दोस्त/.test(roleWord) ? roleWord.replace(/ा$/, "") : roleWord;
+    return { newMember: { name: fallbackLabel, ...mapped } };
+  }
+
+  // 2. Match one of the existing profiles on this shared mobile by name (Latin or Devanagari)
+  const wordTokens = cleanLower
+    .replace(/[^\p{L}\p{M}0-9\s]/gu, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  for (const p of profiles) {
+    const pFull = p.name.toLowerCase().trim();
+    const pFirst = p.firstName.toLowerCase().trim();
+    const hiFirst = localizePersonOrClinicName(p.firstName, "hi").toLowerCase().trim();
+    const mrFirst = localizePersonOrClinicName(p.firstName, "mr").toLowerCase().trim();
+    if (
+      (pFull.length >= 2 && cleanLower.includes(pFull)) ||
+      (pFirst.length >= 2 && wordTokens.includes(pFirst)) ||
+      (hiFirst.length >= 2 && (cleanLower.includes(hiFirst) || wordTokens.includes(hiFirst))) ||
+      (mrFirst.length >= 2 && (cleanLower.includes(mrFirst) || wordTokens.includes(mrFirst)))
+    ) {
+      return { matchedProfile: p };
+    }
+  }
+
+  return {};
+}
+
 /**
  * Look up whether a phone number belongs to a recognized patient in the database.
  * Returns patient name and clean first name (e.g. "Ravee") for addressing.
@@ -1697,54 +1935,16 @@ export function findRegisteredPatient(
   phone: string,
   tenantId?: string
 ): RegisteredPatientInfo | null {
-  if (!db || !phone) return null;
-  const rawDigits = String(phone).replace(/\D/g, "");
-  const last10 = rawDigits.slice(-10);
-  if (!last10) return null;
-
-  try {
-    let row: any;
-    if (tenantId) {
-      row = db.prepare(`
-        SELECT id, tenant_id, uhid, name, phone FROM patients
-        WHERE (phone = ? OR phone = ? OR phone LIKE ?)
-          AND (tenant_id = ? OR tenant_id IS NULL OR TRIM(tenant_id) = '')
-        ORDER BY created_at DESC LIMIT 1
-      `).get(phone, `+${rawDigits}`, `%${last10}`, tenantId);
-    }
-    if (!row) {
-      row = db.prepare(`
-        SELECT id, tenant_id, uhid, name, phone FROM patients
-        WHERE phone = ? OR phone = ? OR phone LIKE ?
-        ORDER BY created_at DESC LIMIT 1
-      `).get(phone, `+${rawDigits}`, `%${last10}`);
-    }
-
-    if (row && row.name && String(row.name).trim()) {
-      const rawName = String(row.name).trim();
-      // Ignore generic placeholders and test fixture names
-      if (
-        !/^patient(\s*\(\+?\d+\))?$/i.test(rawName) &&
-        rawName !== "A1 Test Recipient" &&
-        rawName !== "No Slot" &&
-        !rawName.startsWith("Test ")
-      ) {
-        const cleaned = rawName.replace(/^(dr\.?|mr\.?|ms\.?|mrs\.?)\s+/i, "").trim();
-        const firstName = cleaned.split(/\s+/)[0] || cleaned;
-        return {
-          id: String(row.id || ""),
-          name: rawName,
-          firstName,
-          uhid: String(row.uhid || ""),
-          phone: String(row.phone || phone),
-          tenantId: String(row.tenant_id || tenantId || ""),
-        };
-      }
-    }
-  } catch {
-    /* ignore */
-  }
-  return null;
+  const first = findRegisteredPatientsByPhone(db, phone, tenantId)[0];
+  if (!first) return null;
+  return {
+    id: first.id,
+    name: first.name,
+    firstName: first.firstName,
+    uhid: first.uhid,
+    phone: first.phone,
+    tenantId: first.tenantId,
+  };
 }
 
 export async function processBotActionOrQuery(
@@ -1891,6 +2091,146 @@ export async function processBotActionOrQuery(
 
   const pendingDoctor = getContextValue("pending_doctor");
   const pendingSymptom = getContextValue("symptom");
+  const householdProfiles = findRegisteredPatientsByPhone(db, phone, tenantId);
+  const profileQueryIntent = extractTargetProfileFromQuery(effectiveText, householdProfiles);
+  const storedSelectedPatientId = getContextValue("selected_patient_id");
+  const pendingProfileChoice = getContextValue("pending_profile_choice");
+  const selfHolderProfile = householdProfiles.find((p) => (p.relationshipToHolder || "Self") === "Self");
+  const householdHolderName =
+    selfHolderProfile?.name ||
+    householdProfiles.find((p) => p.primaryContactName)?.primaryContactName ||
+    validConvName ||
+    validParamName ||
+    registered?.name ||
+    "";
+
+  let activeProfile: RegisteredPatientProfile | undefined = profileQueryIntent.matchedProfile;
+  if (activeProfile) {
+    setContextValue("selected_patient_id", activeProfile.id);
+    patientName = activeProfile.name;
+  } else if (storedSelectedPatientId) {
+    activeProfile = householdProfiles.find((p) => p.id === storedSelectedPatientId);
+    if (activeProfile) {
+      patientName = activeProfile.name;
+    }
+  }
+
+  const formatBookingReply = async (booked: ReturnType<typeof bookWhatsAppAppointment>) => {
+    const appt = booked.appointment;
+    if (!booked.reused && lang === "en") {
+      await dispatchWhatsAppBookConfirmation({ tenantId, appointment: appt });
+    }
+    if (isHiOrMr) {
+      return renderLocalizedBookingConfirmed({
+        lang,
+        reused: booked.reused,
+        appointment: appt,
+      });
+    }
+    return finalizeNonHiMrReply({
+      content: `${booked.reused ? "📌 *Existing Active Booking Found*" : "🎉 *Appointment Confirmed!*"}\n\n*Patient*: ${appt.patientName}\n*Token Number*: *#${appt.tokenNumber}*\n*Doctor*: ${appt.doctorName}\n*Specialty*: ${appt.specialty}\n*Date*: ${appt.date}\n*Slot*: ${appt.timeSlot || "OPD hours"}\n*UHID*: ${appt.uhid}\n*Status*: ${appt.status}\n\nYour appointment is registered on the clinic calendar. Please arrive 10 minutes prior to your slot.`,
+      buttons: ["🎫 View My Queue", "🔄 Reschedule Slot", "❌ Cancel Appointment"],
+    });
+  };
+
+  // 0b. Multi-profile / household picker continuation
+  if (pendingProfileChoice && tenantId) {
+    const isAddNewTap =
+      q.includes("new / other") ||
+      q.includes("नया सदस्य") ||
+      q.includes("नवीन सदस्य") ||
+      q === "other" ||
+      q === "new";
+    if (isAddNewTap) {
+      setContextValue("pending_profile_choice", "awaiting_new_member");
+      if (lang === "hi") {
+        return {
+          content: "कृपया नए सदस्य / पालतू पशु / बच्चे / मित्र का नाम लिखकर भेजें (जैसे: *मेरे मित्र करण के लिए*):",
+          buttons: [LOCALIZED_BUTTONS.hi.doctorSchedule, LOCALIZED_BUTTONS.hi.speakReception],
+        };
+      }
+      if (lang === "mr") {
+        return {
+          content: "कृपया नवीन सदस्य / पाळीव प्राणी / मूल / मित्राचे नाव पाठवा (उदा.: *माझ्या मित्र करणसाठी*):",
+          buttons: [LOCALIZED_BUTTONS.mr.doctorSchedule, LOCALIZED_BUTTONS.mr.speakReception],
+        };
+      }
+      return finalizeNonHiMrReply({
+        content: "Please share the name and relation of the pet, child, family member, or friend (e.g. *\"for my friend Karan\"* or *\"Simba (Dog)\"*):",
+        buttons: ["⏰ Doctor Schedule", "👤 Speak with Receptionist"],
+      });
+    }
+
+    if (profileQueryIntent.matchedProfile) {
+      clearIntakeTag();
+      setContextValue("pending_profile_choice", "");
+      setContextValue("selected_patient_id", profileQueryIntent.matchedProfile.id);
+      const docHint = pendingDoctor ? pendingDoctor.replace(/dr\.?/i, "").trim().split(/\s+/)[0] || pendingDoctor : undefined;
+      const booked = bookWhatsAppAppointment({
+        tenantId,
+        patientPhone: phone,
+        patientId: profileQueryIntent.matchedProfile.id,
+        patientName: profileQueryIntent.matchedProfile.name,
+        doctorName: docHint,
+      });
+      setContextValue("pending_doctor", "");
+      setContextValue("symptom", "");
+      return formatBookingReply(booked);
+    }
+
+    if (profileQueryIntent.newMember) {
+      clearIntakeTag();
+      setContextValue("pending_profile_choice", "");
+      const docHint = pendingDoctor ? pendingDoctor.replace(/dr\.?/i, "").trim().split(/\s+/)[0] || pendingDoctor : undefined;
+      const booked = bookWhatsAppAppointment({
+        tenantId,
+        patientPhone: phone,
+        patientName: profileQueryIntent.newMember.name,
+        createNewMember: true,
+        species: profileQueryIntent.newMember.species,
+        relationshipToHolder: profileQueryIntent.newMember.relationshipToHolder,
+        primaryContactName: householdHolderName,
+        doctorName: docHint,
+      });
+      setContextValue("selected_patient_id", booked.patient.id);
+      setContextValue("pending_doctor", "");
+      setContextValue("symptom", "");
+      return formatBookingReply(booked);
+    }
+
+    if (
+      pendingProfileChoice === "awaiting_new_member" &&
+      /^[\p{L}\p{M}\s()/-]{2,36}$/u.test(effectiveText.trim()) &&
+      !q.includes("schedule") &&
+      !q.includes("location")
+    ) {
+      clearIntakeTag();
+      setContextValue("pending_profile_choice", "");
+      const docHint = pendingDoctor ? pendingDoctor.replace(/dr\.?/i, "").trim().split(/\s+/)[0] || pendingDoctor : undefined;
+      const cleanedName = effectiveText.replace(/\(.*?\)/g, "").trim();
+      const lowerRaw = effectiveText.toLowerCase();
+      const species = /\b(dog|puppy|श्वान|कुत्ता)\b/i.test(lowerRaw)
+        ? "dog"
+        : /\b(cat|kitten|मांजर|बिल्ली)\b/i.test(lowerRaw)
+          ? "cat"
+          : undefined;
+      const rel = species ? "Pet" : /\b(child|kid|son|daughter|बच्चा|मूल)\b/i.test(lowerRaw) ? "Child" : "Friend / Caregiver";
+      const booked = bookWhatsAppAppointment({
+        tenantId,
+        patientPhone: phone,
+        patientName: cleanedName,
+        createNewMember: true,
+        species,
+        relationshipToHolder: rel,
+        primaryContactName: householdHolderName,
+        doctorName: docHint,
+      });
+      setContextValue("selected_patient_id", booked.patient.id);
+      setContextValue("pending_doctor", "");
+      setContextValue("symptom", "");
+      return formatBookingReply(booked);
+    }
+  }
 
   // 1. Receptionist Intake Greeting & Introduction
   const words = q.replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(Boolean);
@@ -2173,6 +2513,7 @@ export async function processBotActionOrQuery(
     { kws: ["general physician", "physician", "fever", "cold", "cough", "flu", "weakness", "headache", "infection", "body ache", "internal medicine", "बुखार", "खांसी", "जुकाम", "सिरदर्द", "ताप", "खोकला", "सर्दी", "डोकेदुखी", "थकवा"], specMatch: "General Medicine", docHint: "Vikram" },
     { kws: ["eye", "ophthalmology", "vision", "cataract", "आंख", "आँख", "डोळे", "दृष्टि"], specMatch: "Ophthalmology", docHint: "Mukherjee" },
     { kws: ["dental", "teeth", "tooth", "dentist", "gum", "दांत", "दात", "मसूड़े", "हिरड्या"], specMatch: "Dental Surgery", docHint: "Swamy" },
+    { kws: ["vet", "veterinary", "pet", "dog", "cat", "puppy", "kitten", "rabies", "deworm", "tick fever", "spay", "neuter", "पशु", "कुत्ता", "बिल्ली", "पाळीव", "श्वान", "मांजर"], specMatch: "Veterinary", docHint: "Kabir" },
   ];
   const matchedSpec = specialtySearchKeywords.find(item => item.kws.some(k => q.includes(k)));
   if (!isIntakePending && matchedSpec && !q.includes("book") && !q.includes("बुक") && !q.includes("अपॉइंटमेंट")) {
@@ -2305,11 +2646,21 @@ export async function processBotActionOrQuery(
     q.includes("प्रिस्क्रिप्शन") ||
     q.includes("रिफिल")
   ) {
-    let rx = db.prepare(`
-      SELECT * FROM prescriptions
-      WHERE patient_phone = ? OR patient_name = ?
-      ORDER BY created_at DESC LIMIT 1
-    `).get(phone, patientName) as Record<string, unknown> | undefined;
+    let rx = activeProfile?.id
+      ? (db.prepare(`
+          SELECT * FROM prescriptions
+          WHERE patient_id = ?
+          ORDER BY created_at DESC LIMIT 1
+        `).get(activeProfile.id) as Record<string, unknown> | undefined)
+      : undefined;
+
+    if (!rx) {
+      rx = db.prepare(`
+        SELECT * FROM prescriptions
+        WHERE patient_phone = ? OR patient_name = ?
+        ORDER BY created_at DESC LIMIT 1
+      `).get(phone, patientName) as Record<string, unknown> | undefined;
+    }
 
     if (!rx) {
       try {
@@ -2361,12 +2712,19 @@ export async function processBotActionOrQuery(
   ) {
     const labTenant = String(tenantId || "").trim();
     const lab = labTenant
-      ? (db.prepare(`
+      ? ((activeProfile?.id
+          ? (db.prepare(`
+              SELECT lr.* FROM lab_reports lr
+              WHERE lr.tenant_id = ? AND lr.patient_id = ?
+              ORDER BY lr.created_at DESC LIMIT 1
+            `).get(labTenant, activeProfile.id) as Record<string, unknown> | undefined)
+          : undefined) ||
+        (db.prepare(`
           SELECT lr.* FROM lab_reports lr
           LEFT JOIN patients p ON p.id = lr.patient_id
           WHERE lr.tenant_id = ? AND (lr.patient_name = ? OR p.phone = ?)
           ORDER BY lr.created_at DESC LIMIT 1
-        `).get(labTenant, patientName, phone) as Record<string, unknown> | undefined)
+        `).get(labTenant, patientName, phone) as Record<string, unknown> | undefined))
       : undefined;
 
     if (isHiOrMr) {
@@ -2504,9 +2862,17 @@ export async function processBotActionOrQuery(
       q.includes("अपॉइंटमेंट बुक")
     );
 
-  // 6. Book Doctor Appointment (specific consultant first)
+  const hasExplicitBookVerb =
+    q.includes("book") ||
+    q.includes("appointment") ||
+    q.includes("अपॉइंटमेंट") ||
+    q.includes("बुक") ||
+    q.includes("slot");
+
+  // 6. Book Doctor Appointment (specific consultant or explicit household/new-member target first)
   const specificBook =
     isAffirmativeBook ||
+    (hasExplicitBookVerb && Boolean(profileQueryIntent.matchedProfile || profileQueryIntent.newMember)) ||
     q.startsWith("बुक:") ||
     q.includes("book dr.") ||
     q.includes("book dr ") ||
@@ -2516,13 +2882,15 @@ export async function processBotActionOrQuery(
     q.includes("dr. meera") ||
     q.includes("dr. rajesh") ||
     q.includes("dr. harshvardhan") ||
+    q.includes("dr. kabir") ||
     q.includes("सिद्धार्थ") ||
     q.includes("विक्रम") ||
     q.includes("अनन्या") ||
     q.includes("मीरा") ||
     q.includes("राजेश") ||
     q.includes("हर्षवर्धन") ||
-    ((q.includes("book") || q.includes("बुक")) && (q.includes("slot 1") || q.includes("slot 2") || q.includes("physio") || q.includes("medicine") || q.includes("pediatric") || q.includes("डॉ.")));
+    q.includes("कबीर") ||
+    ((q.includes("book") || q.includes("बुक")) && (q.includes("slot 1") || q.includes("slot 2") || q.includes("physio") || q.includes("medicine") || q.includes("pediatric") || q.includes("vet") || q.includes("डॉ.")));
 
   if (specificBook) {
     clearIntakeTag();
@@ -2554,7 +2922,9 @@ export async function processBotActionOrQuery(
                 ? "Rajesh"
                 : q.includes("harshvardhan") || q.includes("हर्षवर्धन")
                   ? "Harshvardhan"
-                  : undefined;
+                  : q.includes("kabir") || q.includes("कबीर")
+                    ? "Kabir"
+                    : undefined;
 
       // Also match any custom active doctor in this tenant by English or localized Devanagari name
       if (!doctorName) {
@@ -2589,30 +2959,48 @@ export async function processBotActionOrQuery(
         doctorName = docWords[0] || pendingDoctor;
       }
 
-      const booked = bookWhatsAppAppointment({
-        tenantId,
-        patientPhone: phone,
-        patientName,
-        doctorName,
-      });
+      if (
+        householdProfiles.length > 1 &&
+        !profileQueryIntent.matchedProfile &&
+        !profileQueryIntent.newMember &&
+        !storedSelectedPatientId
+      ) {
+        if (doctorName) setContextValue("pending_doctor", doctorName);
+        setContextValue("pending_profile_choice", "book");
+        const picker = renderHouseholdProfilePicker({
+          lang,
+          clinicName: clinicNames.clinicName,
+          holderName: householdHolderName,
+          profiles: householdProfiles,
+        });
+        return isHiOrMr || lang === "en" ? picker : finalizeNonHiMrReply(picker);
+      }
+
+      const booked = profileQueryIntent.newMember
+        ? bookWhatsAppAppointment({
+            tenantId,
+            patientPhone: phone,
+            patientName: profileQueryIntent.newMember.name,
+            createNewMember: true,
+            species: profileQueryIntent.newMember.species,
+            relationshipToHolder: profileQueryIntent.newMember.relationshipToHolder,
+            primaryContactName: householdHolderName,
+            doctorName,
+          })
+        : bookWhatsAppAppointment({
+            tenantId,
+            patientPhone: phone,
+            patientId: activeProfile?.id,
+            patientName: activeProfile?.name || patientName,
+            doctorName,
+          });
+      if (booked.patient?.id) {
+        setContextValue("selected_patient_id", booked.patient.id);
+      }
+      setContextValue("pending_profile_choice", "");
       setContextValue("pending_doctor", "");
       setContextValue("symptom", "");
-
-      const appt = booked.appointment;
-      if (!booked.reused && lang === "en") {
-        await dispatchWhatsAppBookConfirmation({ tenantId, appointment: appt });
-      }
-      if (isHiOrMr) {
-        return renderLocalizedBookingConfirmed({
-          lang,
-          reused: booked.reused,
-          appointment: appt,
-        });
-      }
-      return finalizeNonHiMrReply({
-        content: `${booked.reused ? "📌 *Existing Active Booking Found*" : "🎉 *Appointment Confirmed!*"}\n\n*Token Number*: *#${appt.tokenNumber}*\n*Doctor*: ${appt.doctorName}\n*Specialty*: ${appt.specialty}\n*Date*: ${appt.date}\n*Slot*: ${appt.timeSlot || "OPD hours"}\n*UHID*: ${appt.uhid}\n*Status*: ${appt.status}\n\nYour appointment is registered on the clinic calendar. Please arrive 10 minutes prior to your slot.`,
-        buttons: ["🎫 View My Queue", "🔄 Reschedule Slot", "❌ Cancel Appointment"],
-      });
+      return formatBookingReply(booked);
     } catch (err: unknown) {
       if (isHiOrMr) {
         return {
@@ -2792,7 +3180,7 @@ export async function processBotActionOrQuery(
     });
   }
 
-  // 6c. Generic Book inquiry — ask for Name, Age, and Issue first (conversational & optional)
+  // 6c. Generic Book inquiry — ask for profile choice when shared mobile has >1 profiles, otherwise intake prompt
   if (
     q.includes("book") ||
     q.includes("appointment") ||
@@ -2803,6 +3191,16 @@ export async function processBotActionOrQuery(
     q.includes("तातडीची वेळ") ||
     q.includes("फॉलो-अप बुक")
   ) {
+    if (householdProfiles.length > 1 && !storedSelectedPatientId) {
+      setContextValue("pending_profile_choice", "book");
+      const picker = renderHouseholdProfilePicker({
+        lang,
+        clinicName: clinicNames.clinicName,
+        holderName: householdHolderName,
+        profiles: householdProfiles,
+      });
+      return isHiOrMr || lang === "en" ? picker : finalizeNonHiMrReply(picker);
+    }
     setIntakeTag();
     if (isHiOrMr) {
       return renderLocalizedIntakePrompt(lang);
@@ -2839,7 +3237,11 @@ export async function processBotActionOrQuery(
         buttons: ["📅 Book Appointment", "👤 Speak with Receptionist"],
       });
     }
-    const queue = getWhatsAppQueue({ tenantId, patientPhone: phone });
+    const queue = getWhatsAppQueue({
+      tenantId,
+      patientPhone: phone,
+      patientId: activeProfile?.id || undefined,
+    });
     if (isHiOrMr) {
       return renderLocalizedQueueStatus({
         lang,

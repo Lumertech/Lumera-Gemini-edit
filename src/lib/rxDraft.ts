@@ -16,6 +16,7 @@ import type {
   PrescribedExercise,
   SoapNote,
   SpecialtyHistoryData,
+  VeterinaryAssessment,
   Vitals,
 } from "../types.ts";
 
@@ -53,6 +54,7 @@ export interface RxClinicalFields {
   cardiologyAssessment?: CardiologyAssessment;
   dermatologyAssessment?: DermatologyAssessment;
   pediatricAssessment?: PediatricAssessment;
+  veterinaryAssessment?: VeterinaryAssessment;
   orthopedicAssessment?: OrthopedicAssessment;
   ophthalmologyAssessment?: OphthalmologyAssessment;
   dentalAssessment?: DentalAssessment;
@@ -95,6 +97,7 @@ export const SOAP_RX_FIELD_NAMES = [
   "cardiologyAssessment",
   "dermatologyAssessment",
   "pediatricAssessment",
+  "veterinaryAssessment",
   "orthopedicAssessment",
   "ophthalmologyAssessment",
   "dentalAssessment",
@@ -274,6 +277,7 @@ export function mapSoapToRxDraft(soap: SoapNote, meta: SoapApplyMeta): RxClinica
     cardiologyAssessment: soap.cardiologyAssessment,
     dermatologyAssessment: soap.dermatologyAssessment,
     pediatricAssessment: soap.pediatricAssessment,
+    veterinaryAssessment: soap.veterinaryAssessment,
     orthopedicAssessment: soap.orthopedicAssessment,
     ophthalmologyAssessment: soap.ophthalmologyAssessment,
     dentalAssessment: soap.dentalAssessment,
@@ -374,6 +378,7 @@ export function restoreRxDraft(raw: unknown): RxClinicalFields | null {
     cardiologyAssessment: source.cardiologyAssessment as CardiologyAssessment | undefined,
     dermatologyAssessment: source.dermatologyAssessment as DermatologyAssessment | undefined,
     pediatricAssessment: source.pediatricAssessment as PediatricAssessment | undefined,
+    veterinaryAssessment: source.veterinaryAssessment as VeterinaryAssessment | undefined,
     orthopedicAssessment: source.orthopedicAssessment as OrthopedicAssessment | undefined,
     ophthalmologyAssessment: source.ophthalmologyAssessment as OphthalmologyAssessment | undefined,
     dentalAssessment: source.dentalAssessment as DentalAssessment | undefined,

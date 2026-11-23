@@ -1176,6 +1176,173 @@ export const RX_PRESETS = [
       'STRICTLY DO NOT take painkillers (NSAIDs/Aspirin) or steroids due to platelet/bleeding risk',
       'Watch critical defervescence phase (Day 3–7): report urgently if abdominal pain, persistent vomiting, gum/mucosal bleeding, black stools, or postural giddiness occurs'
     ]
+  },
+  // Companion Animal Veterinary Presets (WSAVA India)
+  {
+    id: 'preset-vet-canine-tick-fever',
+    specialty: 'Veterinary' as PolyclinicSpecialty,
+    name: 'Canine Tick Fever (Ehrlichiosis) — Doxycycline 10 mg/kg + Platelet Support',
+    diagnosis: 'Canine Monocytic Ehrlichiosis (Ehrlichia canis SNAP 4Dx +) with Moderate Thrombocytopenia',
+    icd10: 'A77.4',
+    chiefComplaints: ['Lethargy, inappetence & fever 103.6°F (3 days)', 'Recent Rhipicephalus brown dog tick infestation'],
+    medicines: [
+      { id: 'm-vet-tf-1', drugName: 'Doxycycline Vet 200 mg', composition: 'Doxycycline Hyclate 200mg', form: 'Tablet' as const, dosage: '10 mg/kg', frequency: '1-0-0' as const, timing: 'After Food' as const, durationDays: 28, instructions: 'Complete full 28-day course; administer with soft food/water bolus to prevent esophageal stricture' },
+      { id: 'm-vet-tf-2', drugName: 'Pantoprazole Pet 20 mg', composition: 'Pantoprazole 20mg', form: 'Tablet' as const, dosage: '1 mg/kg', frequency: '1-0-0' as const, timing: 'Before Food' as const, durationDays: 14, instructions: 'Give 30 minutes before morning meal for gastroprotection' },
+      { id: 'm-vet-tf-3', drugName: 'Carica Papaya + Elemental Iron + Folate Tonic (Platepet)', composition: 'Thrombopoietic & Hematinic Syrup', form: 'Syrup' as const, dosage: '5 ml', frequency: '1-0-1' as const, timing: 'After Food' as const, durationDays: 21, instructions: 'Twice daily for platelet & hematocrit recovery' }
+    ],
+    labTests: [
+      { id: 'lab-vet-tf-1', testName: 'Canine CBC with Reticulocyte, PCV & Repeat Platelet Count (Day 7)', category: 'Hematology' as const, urgent: true, price: 650 },
+      { id: 'lab-vet-tf-2', testName: 'Serum Hepatic & Renal Biochemistry (ALT, ALP, BUN, Creatinine)', category: 'Biochemistry' as const, price: 950 }
+    ],
+    advice: [
+      'Strictly avoid human painkillers (Paracetamol, Ibuprofen, Diclofenac are toxic to dogs & cats)',
+      'Administer oral isoxazoline tick prophylaxis (Sarolaner / Fluralaner) once appetite stabilizes; inspect paws, ears, and collar folds daily',
+      'Return urgently if epistaxis (nosebleed), pale gums, melena, or persistent vomiting develops'
+    ],
+    veterinaryAssessment: {
+      clinicalMode: 'Tick-Fever & Internal Med' as const,
+      species: 'Dog',
+      sexNeuterStatus: 'Neutered Male' as const,
+      bodyConditionScore: 4,
+      rectalTempF: 103.6,
+      mucousMembrane: 'Pale / Anemic' as const,
+      crtSeconds: '2.5 sec',
+      vectorSnap4DxStatus: 'Ehrlichia +' as const,
+      parvoDistemperRapid: 'Not Indicated',
+      plateletCountLakhs: 0.72,
+      pcvPercent: 28,
+      fluidTherapyPlan: 'Ringer Lactate @ 40 mL/kg IV daycare bolus today, then oral electrolyte support',
+      toxinExposureCheck: 'No NSAID or rodenticide exposure'
+    }
+  },
+  {
+    id: 'preset-vet-acute-gastroenteritis',
+    specialty: 'Veterinary' as PolyclinicSpecialty,
+    name: 'Acute Canine Gastroenteritis — Maropitant, Probiotic & Bland Diet',
+    diagnosis: 'Acute Dietary Indiscretion / Hemorrhagic-Negative Canine Gastroenteritis',
+    icd10: 'K52.9',
+    chiefComplaints: ['Repeated bilious vomiting (4 episodes since night)', 'Soft mucoid loose stools after dietary indiscretion'],
+    medicines: [
+      { id: 'm-vet-ge-1', drugName: 'Maropitant Citrate (Cerenia)', composition: 'Maropitant 16mg / 24mg', form: 'Tablet' as const, dosage: '1 mg/kg', frequency: '1-0-0' as const, timing: 'Before Food' as const, durationDays: 4, instructions: 'Once daily NK1 central antiemetic' },
+      { id: 'm-vet-ge-2', drugName: 'Saccharomyces boulardii + Enterococcus Probiotic (Gutwell)', composition: 'Multi-strain Veterinary Probiotic + Kaolin', form: 'Syrup' as const, dosage: '1 sachet / 5 g', frequency: '1-0-1' as const, timing: 'With Food' as const, durationDays: 7, instructions: 'Mix with curd-rice or gastrointestinal recovery wet food' },
+      { id: 'm-vet-ge-3', drugName: 'Sucralfate Oral Suspension', composition: 'Sucralfate 1g / 10ml', form: 'Syrup' as const, dosage: '5 ml', frequency: '1-1-1' as const, timing: 'Empty Stomach' as const, durationDays: 5, instructions: 'Give 1 hour away from other oral medications' }
+    ],
+    labTests: [
+      { id: 'lab-vet-ge-1', testName: 'Canine Parvovirus (CPV) / Coronavirus Rapid Fecal Antigen', category: 'Microbiology' as const, urgent: true, price: 800 }
+    ],
+    advice: [
+      'Offer small frequent bland meals (boiled chicken breast + soft white rice + pumpkin) every 4–6 hours; avoid fatty treats, bones, and milk',
+      'Ensure small frequent sips of Pet-ORS; bring back for IV fluids if pet cannot keep water down for >6 hours or passes frank blood'
+    ],
+    veterinaryAssessment: {
+      clinicalMode: 'Tick-Fever & Internal Med' as const,
+      species: 'Dog',
+      bodyConditionScore: 5,
+      rectalTempF: 101.8,
+      mucousMembrane: 'Pink & Moist' as const,
+      crtSeconds: '< 2 sec',
+      vectorSnap4DxStatus: 'Negative' as const,
+      parvoDistemperRapid: 'CPV Ag Negative',
+      fluidTherapyPlan: 'Subcutaneous Ringer Lactate 20 mL/kg given in clinic; oral Pet-ORS at home',
+      toxinExposureCheck: 'Scavenged table scraps; ruled out foreign body on abdominal palpation'
+    }
+  },
+  {
+    id: 'preset-vet-otitis-dermatology',
+    specialty: 'Veterinary' as PolyclinicSpecialty,
+    name: 'Malassezia Otitis Externa & Atopic Pruritus — Ear Flush + Anti-Itch Protocol',
+    diagnosis: 'Bilateral Malassezia pachydermatis Otitis Externa with Canine Atopic Pododermatitis',
+    icd10: 'H60.3',
+    chiefComplaints: ['Head shaking, ear scratching & waxy malodorous ear discharge', 'Paw licking & ventral erythema (Pruritus 7/10)'],
+    medicines: [
+      { id: 'm-vet-derm-1', drugName: 'Tris-EDTA + Chlorhexidine Otic Cleanser (Epi-Otic)', composition: 'Salicylic Acid + Lactic Acid + PCMX', form: 'Drops' as const, dosage: 'Gentle canal flush', frequency: '1-0-0' as const, timing: 'After Food' as const, durationDays: 10, instructions: 'Flush vertical ear canal, massage base for 30 sec, wipe pinna with cotton (never use cotton buds deep inside)' },
+      { id: 'm-vet-derm-2', drugName: 'Clotrimazole + Gentamicin + Betamethasone Otic (Pomisol / Easotic)', composition: 'Antifungal + Antibacterial + Steroid Ear Drops', form: 'Drops' as const, dosage: '5 Drops each ear', frequency: '1-0-1' as const, timing: 'After Food' as const, durationDays: 10, instructions: 'Instill 30 minutes AFTER ear cleanser has dried' },
+      { id: 'm-vet-derm-3', drugName: 'Oclacitinib (Apoquel)', composition: 'Oclacitinib Maleate', form: 'Tablet' as const, dosage: '0.5 mg/kg', frequency: '1-0-1' as const, timing: 'With Food' as const, durationDays: 7, instructions: 'Twice daily for 7 days for acute itch control, then once daily maintenance if advised' }
+    ],
+    labTests: [
+      { id: 'lab-vet-derm-1', testName: 'Bilateral Ear Swab Diff-Quik Cytology & Deep Skin Scraping', category: 'Microbiology' as const, price: 500 }
+    ],
+    advice: [
+      'Keep ears dry during baths using cotton plugs; apply Elizabethan collar if self-trauma / ear-flap hematoma risk',
+      'Weekly medicated Miconazole + Chlorhexidine bath with 10-minute contact lather on paws and groin'
+    ],
+    veterinaryAssessment: {
+      clinicalMode: 'Dermatology, Ear & Dental' as const,
+      species: 'Dog',
+      bodyConditionScore: 5,
+      rectalTempF: 101.4,
+      mucousMembrane: 'Pink & Moist' as const,
+      pruritusScore0to10: 7,
+      lesionDistribution: 'Bilateral pinnae, vertical ear canals, and interdigital forepaws',
+      skinScrapingCytology: 'Malassezia budding yeast +++ (>10/HPF); Demodex/Sarcoptes negative',
+      otoscopyFindings: 'Erythematous stenotic vertical canals with dark ceruminous exudate; bilateral tympanic membranes intact',
+      dentalTartarGrade: 'Grade 1 (Mild)' as const
+    }
+  },
+  {
+    id: 'preset-vet-postop-spay-neuter',
+    specialty: 'Veterinary' as PolyclinicSpecialty,
+    name: 'Post-Op Spay / Castration Discharge — Meloxicam, Amox-Clav & E-Collar Care',
+    diagnosis: 'Elective Ovariohysterectomy / Orchiectomy — Uncomplicated ASA-I Post-Operative Discharge',
+    icd10: 'Z98.89',
+    chiefComplaints: ['Same-day surgical discharge following elective spay/neuter under isoflurane anesthesia'],
+    medicines: [
+      { id: 'm-vet-surg-1', drugName: 'Meloxicam Oral Suspension (Melonex Pet)', composition: 'Meloxicam 1.5mg/ml Veterinary', form: 'Syrup' as const, dosage: '0.1 mg/kg', frequency: '1-0-0' as const, timing: 'After Food' as const, durationDays: 4, instructions: 'Start tomorrow morning (24h after in-clinic post-op analgesia injection); give strictly after meal' },
+      { id: 'm-vet-surg-2', drugName: 'Amoxicillin + Clavulanate Vet (Clavpet)', composition: 'Amoxicillin + Potassium Clavulanate', form: 'Tablet' as const, dosage: '12.5 mg/kg', frequency: '1-0-1' as const, timing: 'After Food' as const, durationDays: 5, instructions: 'Twice daily surgical prophylaxis' },
+      { id: 'm-vet-surg-3', drugName: 'Povidone-Iodine + Mupirocin Wound Spray', composition: 'Topical Surgical Antiseptic', form: 'Ointment' as const, dosage: 'Local spray', frequency: '1-0-1' as const, timing: 'After Food' as const, durationDays: 7, instructions: 'Lightly dab/spray incision line twice daily; keep dry' }
+    ],
+    labTests: [],
+    advice: [
+      'MANDATORY Elizabethan collar (E-collar / surgical suit) 24×7 for 10 days — even 2 minutes of licking can dehisce sutures',
+      'Strict leash rest indoors for 10 days: no running, stairs, jumping on furniture, or bathing until suture removal on Day 10',
+      'Offer half-portion soft meal tonight once fully ambulatory; call clinic if incision swelling, serosanguinous ooze, or lethargy occurs'
+    ],
+    veterinaryAssessment: {
+      clinicalMode: 'Surgery, Spay/Neuter & Bite' as const,
+      species: 'Cat',
+      sexNeuterStatus: 'Spayed Female' as const,
+      bodyConditionScore: 5,
+      rectalTempF: 100.8,
+      mucousMembrane: 'Pink & Moist' as const,
+      crtSeconds: '< 2 sec',
+      asaRiskGrade: 'ASA I' as const,
+      procedurePlanned: 'Elective Midline Ovariohysterectomy (Spay)',
+      anesthesiaAnalgesiaProtocol: 'Dexmedetomidine + Butorphanol pre-med, Propofol induction, Isoflurane O2 maintenance, Buprenorphine + Meloxicam',
+      eCollarAndSutureDate: '24×7 E-collar mandatory • Dressing check Day 3 • Suture removal Day 10',
+      biteQuarantineStatus: 'Not Applicable' as const
+    }
+  },
+  {
+    id: 'preset-vet-annual-wellness-wsava',
+    specialty: 'Veterinary' as PolyclinicSpecialty,
+    name: 'Annual Canine/Feline Wellness — DHPPiL/FVRCP + Anti-Rabies & Deworming',
+    diagnosis: 'Annual Companion Animal Preventive Wellness, WSAVA Core Booster & Statutory Anti-Rabies Immunization',
+    icd10: 'Z23',
+    chiefComplaints: ['Annual preventive health check, core vaccine booster, Anti-Rabies (ARV) & quarterly deworming'],
+    medicines: [
+      { id: 'm-vet-prev-1', drugName: 'Praziquantel + Pyrantel Embonate + Febantel (Drontal Plus)', composition: 'Broad-spectrum Cestocide & Nematocide', form: 'Tablet' as const, dosage: '1 Tab per 10 kg', frequency: 'Once a week' as const, timing: 'With Food' as const, durationDays: 1, instructions: 'Single weight-calibrated oral deworming dose today; repeat every 3 months' },
+      { id: 'm-vet-prev-2', drugName: 'Fluralaner Chewable (Bravecto) / Sarolaner (Simparica)', composition: 'Isoxazoline Systemic Ectoparasiticide', form: 'Tablet' as const, dosage: 'Weight-band chew', frequency: 'Once a week' as const, timing: 'With Food' as const, durationDays: 1, instructions: 'Protects against ticks (Ehrlichia/Babesia vectors), fleas & mites per schedule' }
+    ],
+    labTests: [
+      { id: 'lab-vet-prev-1', testName: 'Annual Wellness Fecal Floatation & Heartworm/Tick Screen', category: 'Microbiology' as const, price: 550 }
+    ],
+    advice: [
+      'Observe pet in clinic for 20 minutes post-vaccination; mild sleepiness or slight warmth at SC injection site for 24h is normal',
+      'Avoid bath or strenuous outdoor swimming for 72 hours post-vaccination; maintain annual Anti-Rabies booster card for municipal pet license'
+    ],
+    veterinaryAssessment: {
+      clinicalMode: 'Preventive & Vaccination' as const,
+      species: 'Dog',
+      bodyConditionScore: 5,
+      rectalTempF: 101.2,
+      mucousMembrane: 'Pink & Moist' as const,
+      crtSeconds: '< 2 sec',
+      antiRabiesStatus: 'Annual Inactivated Anti-Rabies Booster Administered SC Today',
+      coreVaccineStatus: 'WSAVA Core Booster (DHPPiL / FVRCP) Administered Today',
+      dewormingProductAndDose: 'Praziquantel + Pyrantel + Febantel 1 tab/10 kg dispensed',
+      ectoparasiteProphylaxis: 'Isoxazoline tick/flea chewable active',
+      dietaryRegimen: 'Weight-calibrated adult maintenance nutrition + daily dental chew'
+    }
   }
 ];
 

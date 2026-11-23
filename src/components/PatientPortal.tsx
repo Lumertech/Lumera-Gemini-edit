@@ -1,5 +1,7 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { formatINR } from '../lib/currency.ts';
+import { apiFetch } from '../api/http';
+import { profileKindBadge, samePhone10 } from '../lib/sharedMobile';
 import { 
   User, 
   FileText, 
@@ -11,7 +13,8 @@ import {
   Heart, 
   ShieldCheck, 
   ArrowUpRight,
-  Printer
+  Printer,
+  Users
 } from 'lucide-react';
 import { Patient, Prescription, Appointment } from '../types';
 import { LabReportAnalyzer } from './LabReportAnalyzer';
@@ -22,6 +25,8 @@ interface PatientPortalProps {
   appointments: Appointment[];
   onBookNewSlot: () => void;
   unlinked?: boolean;
+  householdProfiles?: Patient[];
+  onSelectProfile?: (patient: Patient) => void;
 }
 
 export const PatientPortal: React.FC<PatientPortalProps> = ({
@@ -30,8 +35,85 @@ export const PatientPortal: React.FC<PatientPortalProps> = ({
   appointments,
   onBookNewSlot,
   unlinked = false,
+  householdProfiles,
+  onSelectProfile,
 }) => {
   const [activeTab, setActiveTab] = useState<'Prescriptions' | 'Appointments' | 'Vitals' | 'LabReports'>('Prescriptions');
+  const [fetchedHousehold, setFetchedHousehold] = useState<Patient[]>([]);
+  const [selectedProfileId, setSelectedProfileId] = useState<string>(currentPatient.id);
+  const [fetchedRx, setFetchedRx] = useState<Prescription[]>([]);
+  const [fetchedApts, setFetchedApts] = useState<Appointment[]>([]);
+
+  useEffect(() => {
+    setSelectedProfileId(currentPatient.id);
+  }, [currentPatient.id]);
+
+  useEffect(() => {
+    if (unlinked) return;
+    let cancelled = false;
+    const query = currentPatient.id ? `?patientId=${encodeURIComponent(currentPatient.id)}` : '';
+    void apiFetch<{ patients: Patient[] }>(`/api/patients/household${query}`)
+      .then((res) => {
+        if (!cancelled && Array.isArray(res.patients)) {
+          setFetchedHousehold(res.patients);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setFetchedHousehold([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentPatient.id, unlinked]);
+
+  const profiles = useMemo(() => {
+    const byId = new Map<string, Patient>();
+    if (currentPatient?.id) byId.set(currentPatient.id, currentPatient);
+    for (const p of householdProfiles || []) {
+      if (p?.id) byId.set(p.id, p);
+    }
+    for (const p of fetchedHousehold) {
+      if (p?.id) byId.set(p.id, p);
+    }
+    return [...byId.values()].filter(
+      (p) => !currentPatient.phone || !p.phone || samePhone10(p.phone, currentPatient.phone) || fetchedHousehold.some((f) => f.id === p.id)
+    );
+  }, [currentPatient, householdProfiles, fetchedHousehold]);
+
+  const activePatient = useMemo(
+    () => profiles.find((p) => p.id === selectedProfileId) || currentPatient,
+    [profiles, selectedProfileId, currentPatient]
+  );
+
+  useEffect(() => {
+    if (unlinked || !activePatient?.id) return;
+    let cancelled = false;
+    void Promise.all([
+      apiFetch<{ prescriptions: Prescription[] }>(`/api/prescriptions?patientId=${encodeURIComponent(activePatient.id)}`).catch(() => ({ prescriptions: [] })),
+      apiFetch<{ appointments: Appointment[] }>(`/api/appointments?patientId=${encodeURIComponent(activePatient.id)}`).catch(() => ({ appointments: [] })),
+    ]).then(([rxRes, aptRes]) => {
+      if (cancelled) return;
+      if (Array.isArray(rxRes.prescriptions)) setFetchedRx(rxRes.prescriptions);
+      if (Array.isArray(aptRes.appointments)) setFetchedApts(aptRes.appointments);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [activePatient?.id, unlinked]);
+
+  const mergedRx = useMemo(() => {
+    const byId = new Map<string, Prescription>();
+    for (const r of prescriptions) if (r.patientId === activePatient.id) byId.set(r.id, r);
+    for (const r of fetchedRx) if (r.patientId === activePatient.id) byId.set(r.id, r);
+    return [...byId.values()];
+  }, [prescriptions, fetchedRx, activePatient.id]);
+
+  const mergedApts = useMemo(() => {
+    const byId = new Map<string, Appointment>();
+    for (const a of appointments) if (a.patientId === activePatient.id) byId.set(a.id, a);
+    for (const a of fetchedApts) if (a.patientId === activePatient.id) byId.set(a.id, a);
+    return [...byId.values()];
+  }, [appointments, fetchedApts, activePatient.id]);
 
   if (unlinked) {
     return (
@@ -43,30 +125,85 @@ export const PatientPortal: React.FC<PatientPortalProps> = ({
     );
   }
 
-  const patientRxList = prescriptions.filter((p) => p.patientId === currentPatient.id);
-  const patientAptList = appointments.filter((a) => a.patientId === currentPatient.id);
+  const patientRxList = mergedRx;
+  const patientAptList = mergedApts;
+  const activeBadge = profileKindBadge(activePatient);
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-6 space-y-6">
+      {/* Shared-Mobile Household / Multi-Pet Switcher Bar */}
+      {profiles.length > 1 && (
+        <div
+          data-testid="portal-household-switcher"
+          className="bg-indigo-50/80 border border-indigo-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+        >
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-indigo-600 text-white flex items-center justify-center shrink-0">
+              <Users className="w-4 h-4" />
+            </div>
+            <div>
+              <p className="text-xs font-bold text-slate-900">
+                Profiles on Your Mobile ({profiles.length})
+              </p>
+              <p className="text-[11px] text-slate-600">
+                Switch between pets, children, or family profiles linked to {activePatient.phone}
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {profiles.map((peer) => {
+              const badge = profileKindBadge(peer);
+              const selected = peer.id === activePatient.id;
+              return (
+                <button
+                  key={peer.id}
+                  type="button"
+                  onClick={() => {
+                    setSelectedProfileId(peer.id);
+                    onSelectProfile?.(peer);
+                  }}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all flex items-center gap-1.5 ${
+                    selected
+                      ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                      : 'bg-white text-slate-800 border-slate-300 hover:border-indigo-400'
+                  }`}
+                >
+                  <span>{badge.icon}</span>
+                  <span>{peer.name}</span>
+                  <span className={selected ? 'text-indigo-100 text-[10px]' : 'text-slate-500 text-[10px]'}>
+                    ({badge.label})
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Patient Profile Card */}
       <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
         <div className="flex items-center space-x-4">
           <div className="w-12 h-12 rounded-lg bg-blue-50 border border-blue-200 text-blue-700 flex items-center justify-center font-bold text-lg">
-            {currentPatient.name.charAt(0)}
+            {activeBadge.isPet ? activeBadge.icon : activePatient.name.charAt(0)}
           </div>
           <div>
-            <div className="flex items-center space-x-2">
-              <h1 className="text-lg font-bold text-slate-900">{currentPatient.name}</h1>
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-lg font-bold text-slate-900">{activePatient.name}</h1>
               <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-blue-50 text-blue-700 border border-blue-200">
-                UHID: {currentPatient.uhid}
+                UHID: {activePatient.uhid}
               </span>
+              {(activeBadge.isPet || (activePatient.relationshipToHolder && activePatient.relationshipToHolder !== 'Self')) && (
+                <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-sky-50 text-sky-800 border border-sky-200">
+                  {activeBadge.icon} {activeBadge.label}
+                </span>
+              )}
             </div>
             <p className="text-xs text-slate-500 mt-0.5">
-              {currentPatient.age} Years • {currentPatient.gender} • Blood Group: <strong className="text-slate-800">{currentPatient.bloodGroup}</strong> • Phone: {currentPatient.phone}
+              {activePatient.age} Years • {activePatient.gender} • Blood Group: <strong className="text-slate-800">{activePatient.bloodGroup}</strong> • Phone: {activePatient.phone}
             </p>
-            {currentPatient.allergies.length > 0 && currentPatient.allergies[0] !== 'None known' && (
+            {activePatient.allergies.length > 0 && activePatient.allergies[0] !== 'None known' && (
               <p className="text-[11px] text-red-600 mt-0.5 font-medium">
-                ⚠️ Allergies: {currentPatient.allergies.join(', ')}
+                ⚠️ Allergies: {activePatient.allergies.join(', ')}
               </p>
             )}
           </div>
@@ -238,8 +375,9 @@ export const PatientPortal: React.FC<PatientPortalProps> = ({
       {/* Tab 4: Lab Reports */}
       {activeTab === 'LabReports' && (
         <LabReportAnalyzer
-          patientName={currentPatient.name}
-          uhid={currentPatient.uhid}
+          currentPatient={activePatient}
+          patientName={activePatient.name}
+          uhid={activePatient.uhid}
         />
       )}
     </div>
