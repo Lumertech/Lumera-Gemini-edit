@@ -72,7 +72,7 @@ describe("specialty-wise India history taking and >=5 dummy patients for all dem
     }
 
     const gynaePresets = RX_PRESETS.filter((p) => p.specialty === "Gynecology");
-    assert.ok(gynaePresets.length >= 3, "Gynecology should include ANC, PCOS, and AUB presets");
+    assert.ok(gynaePresets.length >= 5, "Gynecology should include >= 5 clinical presets across ANC, PCOS, AUB, Fertility OI, and Postnatal care");
     assert.ok(RX_PRESETS.some((p) => p.specialty === "Pediatrics"));
     assert.ok(RX_PRESETS.some((p) => p.specialty === "ENT"));
     assert.ok(RX_PRESETS.some((p) => p.specialty === "Neurology"));
@@ -192,8 +192,60 @@ describe("specialty-wise India history taking and >=5 dummy patients for all dem
     }
   });
 
-  it("populates full Gynaecology ANC/PCOS/AUB charts and Pediatric IAP immunization charts", async () => {
+  it("populates full Gynaecology 7-patient multi-mode workspace, labs, invoices, WhatsApp threads, and Pediatric IAP charts", async () => {
     const gynae = await login("gynecology@lumera.me");
+
+    // 1. >= 7 Ob/Gyn patients & today's active OPD appointments across Waiting, Confirmed, Completed
+    const gynaeAptsRes = await jsonRequest(port, "GET", "/api/appointments", undefined, gynae.auth);
+    assert.equal(gynaeAptsRes.status, 200);
+    const gynaeApts = ((gynaeAptsRes.json.appointments || []) as Array<{
+      id: string;
+      doctorId: string;
+      patientId: string;
+      date: string;
+      status: string;
+    }>).filter((a) => a.doctorId === "doc-persona-gynae");
+    const uniqueGynaePatients = new Set(gynaeApts.map((a) => a.patientId));
+    assert.ok(uniqueGynaePatients.size >= 7, `Expected >= 7 Ob/Gyn patients for doc-persona-gynae, got ${uniqueGynaePatients.size}`);
+
+    const todayAptsRes = await jsonRequest(port, "GET", "/api/appointments?date=today", undefined, gynae.auth);
+    assert.equal(todayAptsRes.status, 200);
+    const todayGynaeApts = ((todayAptsRes.json.appointments || []) as Array<{
+      doctorId: string;
+      status: string;
+    }>).filter((a) => a.doctorId === "doc-persona-gynae");
+    assert.ok(todayGynaeApts.length >= 5, `Expected >= 5 today Ob/Gyn OPD appointments, got ${todayGynaeApts.length}`);
+    const statuses = new Set(todayGynaeApts.map((a) => a.status));
+    assert.ok(statuses.has("Waiting"), "Expected Waiting visit in today's Ob/Gyn queue");
+    assert.ok(statuses.has("Confirmed"), "Expected Confirmed visit in today's Ob/Gyn queue");
+    assert.ok(statuses.has("Completed"), "Expected Completed visit in today's Ob/Gyn queue");
+
+    // 2. Multi-mode prescriptions across all 4 Gynaecology clinical modes
+    const gynaeRxsRes = await jsonRequest(port, "GET", "/api/prescriptions", undefined, gynae.auth);
+    assert.equal(gynaeRxsRes.status, 200);
+    const gynaeRxs = ((gynaeRxsRes.json.prescriptions || []) as Array<{
+      doctorId: string;
+      gynecologyAssessment?: {
+        clinicalMode?: string;
+        dipsiOgtt2HrMgDl?: number;
+        pcpndtFormFLogged?: boolean;
+        fertilityCycleDay?: number;
+        aubPalmCoeinClass?: string;
+        nstBppStatus?: string;
+        postpartumDays?: number;
+      };
+    }>).filter((rx) => rx.doctorId === "doc-persona-gynae");
+    assert.ok(gynaeRxs.length >= 7, `Expected >= 7 signed Ob/Gyn prescriptions, got ${gynaeRxs.length}`);
+    const modes = new Set(gynaeRxs.map((rx) => rx.gynecologyAssessment?.clinicalMode));
+    assert.ok(modes.has("Antenatal / Obstetric"));
+    assert.ok(modes.has("Fertility & PCOS"));
+    assert.ok(modes.has("Gynaecology & Menstrual"));
+    assert.ok(modes.has("Postnatal / Menopause"));
+    assert.ok(gynaeRxs.some((rx) => rx.gynecologyAssessment?.fertilityCycleDay === 12));
+    assert.ok(gynaeRxs.some((rx) => rx.gynecologyAssessment?.aubPalmCoeinClass === "AUB-L (Leiomyoma / Fibroid)"));
+    assert.ok(gynaeRxs.some((rx) => rx.gynecologyAssessment?.nstBppStatus === "Reactive NST"));
+    assert.ok(gynaeRxs.some((rx) => rx.gynecologyAssessment?.postpartumDays === 10));
+
     const nishaChart = await jsonRequest(port, "GET", "/api/patients/poly-pat-nisha/chart", undefined, gynae.auth);
     assert.equal(nishaChart.status, 200);
     const nishaRxs = (nishaChart.json.prescriptions || []) as Array<{
@@ -201,6 +253,40 @@ describe("specialty-wise India history taking and >=5 dummy patients for all dem
     }>;
     assert.ok(nishaRxs.some((rx) => rx.gynecologyAssessment?.dipsiOgtt2HrMgDl === 156));
     assert.ok(nishaRxs.some((rx) => rx.gynecologyAssessment?.pcpndtFormFLogged === true));
+
+    // 3. >= 5 verified Ob/Gyn Lab Reports
+    const labsRes = await jsonRequest(port, "GET", "/api/lab-reports", undefined, gynae.auth);
+    assert.equal(labsRes.status, 200);
+    const gynaeLabs = ((labsRes.json.labReports || []) as Array<{
+      id: string;
+      patientId: string;
+      category: string;
+    }>).filter((l) => uniqueGynaePatients.has(l.patientId));
+    assert.ok(gynaeLabs.length >= 5, `Expected >= 5 Ob/Gyn lab reports, got ${gynaeLabs.length}`);
+
+    // 4. >= 5 Ob/Gyn Invoices & active today revenue
+    const invRes = await jsonRequest(port, "GET", "/api/invoices", undefined, gynae.auth);
+    assert.equal(invRes.status, 200);
+    const gynaeInvoices = ((invRes.json.invoices || []) as Array<{
+      id: string;
+      consultingDoctorId?: string;
+      totalAmount?: number;
+    }>).filter((inv) => inv.consultingDoctorId === "doc-persona-gynae");
+    assert.ok(gynaeInvoices.length >= 5, `Expected >= 5 Ob/Gyn invoices, got ${gynaeInvoices.length}`);
+
+    const revRes = await jsonRequest(port, "GET", "/api/billing/revenue", undefined, gynae.auth);
+    assert.equal(revRes.status, 200);
+    assert.ok(Number(revRes.json.today) > 0, `Expected positive today collected revenue, got ${String(revRes.json.today)}`);
+
+    // 5. >= 4 Ob/Gyn WhatsApp conversations
+    const waRes = await jsonRequest(port, "GET", "/api/whatsapp/conversations", undefined, gynae.auth);
+    assert.equal(waRes.status, 200);
+    const gynaeWa = ((waRes.json.conversations || []) as Array<{
+      id: string;
+      patientId?: string;
+      assignedStaff?: string;
+    }>).filter((c) => (c.patientId && uniqueGynaePatients.has(c.patientId)) || c.assignedStaff === "Dr. Shalini Mukhopadhyay");
+    assert.ok(gynaeWa.length >= 4, `Expected >= 4 Ob/Gyn WhatsApp threads, got ${gynaeWa.length}`);
 
     const pedia = await login("pediatrics@lumera.me");
     const immChart = await jsonRequest(

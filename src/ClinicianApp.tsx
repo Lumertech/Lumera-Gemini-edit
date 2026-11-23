@@ -890,11 +890,13 @@ export default function ClinicianApp() {
                     pack={pack}
                     patients={patients}
                     appointments={appointments}
+                    prescriptions={prescriptions}
                     doctor={currentDoctor}
                     canConsult={canStartConsultRole(user.role, allowedViews)}
                     hasLogo={Boolean(letterhead?.signatureUrl)}
                     hasHoursAndFees={Number(currentDoctor.consultationFee) > 0}
                     onOpen={setCurrentView}
+                    onSelectPatient={handleSelectPatient}
                     onCheckInWalkIn={() => {
                       const patient = patients[0];
                       if (!patient) {

@@ -1328,6 +1328,56 @@ export function createClinicalRouter(): Router {
     }
   });
 
+  api.get("/lab-reports", requireAuth, (req, res) => {
+    if (!requestIsPatient(req) && !denyUnlessPatientRecordRole(req, res)) return;
+    const tenantId = requireTenant(req, res);
+    if (!tenantId) return;
+    try {
+      const requestedPatientId = String(req.query.patientId || "").trim();
+      const ownPatientId = requestIsPatient(req) ? String(sessionPatientId(req) || "").trim() : "";
+      if (requestIsPatient(req) && !ownPatientId) {
+        return res.json({ labReports: [] });
+      }
+      const filterPatientId = requestIsPatient(req) ? ownPatientId : requestedPatientId;
+      const rows = filterPatientId
+        ? (getDb()
+            .prepare(
+              `SELECT * FROM lab_reports
+               WHERE tenant_id = ? AND patient_id = ?
+               ORDER BY date DESC, created_at DESC`
+            )
+            .all(tenantId, filterPatientId) as Record<string, unknown>[])
+        : (getDb()
+            .prepare(
+              `SELECT * FROM lab_reports
+               WHERE tenant_id = ?
+               ORDER BY date DESC, created_at DESC`
+            )
+            .all(tenantId) as Record<string, unknown>[]);
+      const labReports = rows.map((l) => ({
+        id: String(l.id || ""),
+        patientId: String(l.patient_id || ""),
+        uhid: String(l.patient_uhid || ""),
+        patientName: String(l.patient_name || ""),
+        date: String(l.date || ""),
+        labName: String(l.lab_name || ""),
+        category: String(l.category || ""),
+        doctorInterpretation: String(l.doctor_interpretation || ""),
+        results: (() => {
+          try {
+            return JSON.parse(String(l.results || "[]"));
+          } catch {
+            return [];
+          }
+        })(),
+      }));
+      res.json({ labReports });
+    } catch (err) {
+      reportCaughtError(err, "clinical.listLabReports");
+      res.status(500).json({ error: "Failed to fetch lab reports" });
+    }
+  });
+
   api.get("/patients/:id/chart", requireAuth, (req, res) => {
     if (!requestIsPatient(req) && !denyUnlessPatientRecordRole(req, res)) return;
     const tenantId = requireTenant(req, res);

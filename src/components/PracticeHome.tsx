@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
-import type { Appointment, AppUser, Doctor, Patient } from "../types";
+import type { Appointment, AppUser, Doctor, Patient, Prescription } from "../types";
 import type { SpecialtyWorkflowPack } from "../lib/specialtyWorkflow";
 import type { NavView } from "./Navbar";
 import {
@@ -22,17 +22,20 @@ import {
 } from "../lib/clinicNav";
 import { completedSessionsForPatient, DEMO_PHYSIO_PACKAGES } from "../lib/demoPhysioBook";
 import { apiFetch } from "../api/http";
+import { GynaecologyPracticeDeck } from "./GynaecologyPracticeDeck";
 
 interface PracticeHomeProps {
   user: AppUser;
   pack: SpecialtyWorkflowPack;
   patients: Patient[];
   appointments: Appointment[];
+  prescriptions?: Prescription[];
   doctor: Doctor;
   canConsult: boolean;
   hasLogo: boolean;
   hasHoursAndFees: boolean;
   onOpen: (view: NavView) => void;
+  onSelectPatient?: (patient: Patient) => void;
   onCheckInWalkIn?: () => void;
   onCheckIn?: (appointment: Appointment) => void;
   onReady?: (appointment: Appointment) => void;
@@ -76,11 +79,13 @@ export const PracticeHome: React.FC<PracticeHomeProps> = ({
   pack,
   patients,
   appointments,
+  prescriptions,
   doctor,
   canConsult,
   hasLogo,
   hasHoursAndFees,
   onOpen,
+  onSelectPatient,
   onCheckInWalkIn,
   onCheckIn,
   onReady,
@@ -241,6 +246,22 @@ export const PracticeHome: React.FC<PracticeHomeProps> = ({
       );
     }
     if (pack.kind === "medical") {
+      if (pack.rxModule === "Gynecology") {
+        return (
+          <GynaecologyPracticeDeck
+            patients={patients}
+            appointments={doctorAppointments}
+            prescriptions={prescriptions}
+            doctor={doctor}
+            todayPendingInr={metrics.todayPending}
+            withDoctorCount={metrics.withDoctor}
+            followUpsToday={metrics.followUps}
+            onOpen={onOpen}
+            onSelectPatient={onSelectPatient}
+            onStartConsult={onStartConsult}
+          />
+        );
+      }
       return (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Tile title="With the doctor">

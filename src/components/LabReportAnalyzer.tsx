@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   FileText, 
   UploadCloud, 
@@ -27,6 +27,7 @@ import {
 import { chartCurrencyFormatter } from '../lib/chartCurrency.ts';
 import { LabReportRecord, Patient, LabResultParam } from '../types';
 import { MOCK_LAB_REPORTS } from '../data/clinicalData';
+import { apiFetch } from '../api/http';
 
 interface LabReportAnalyzerProps {
   currentPatient?: Patient;
@@ -73,6 +74,7 @@ export const LabReportAnalyzer: React.FC<LabReportAnalyzerProps> = ({
   const effectivePatientName = currentPatient?.name || patientName;
   const effectiveUhid = currentPatient?.uhid || uhid;
 
+  const [tenantReports, setTenantReports] = useState<LabReportRecord[]>([]);
   const [selectedReportId, setSelectedReportId] = useState<string>(
     MOCK_LAB_REPORTS[0]?.id || ''
   );
@@ -82,7 +84,28 @@ export const LabReportAnalyzer: React.FC<LabReportAnalyzerProps> = ({
   const [searchFilter, setSearchFilter] = useState('');
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
 
-  const activeReport = MOCK_LAB_REPORTS.find((r) => r.id === selectedReportId) || MOCK_LAB_REPORTS[0];
+  useEffect(() => {
+    let cancelled = false;
+    void apiFetch<{ labReports?: LabReportRecord[] }>('/api/lab-reports')
+      .then((res) => {
+        if (cancelled) return;
+        const rows = Array.isArray(res.labReports) ? res.labReports : [];
+        setTenantReports(rows);
+        if (rows.length > 0) {
+          const match = currentPatient?.id ? rows.find((r) => r.patientId === currentPatient.id) : undefined;
+          setSelectedReportId((match || rows[0]).id);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setTenantReports([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentPatient?.id]);
+
+  const allReports = tenantReports.length > 0 ? [...tenantReports, ...MOCK_LAB_REPORTS] : MOCK_LAB_REPORTS;
+  const activeReport = allReports.find((r) => r.id === selectedReportId) || allReports[0];
 
   const handleSimulateOcrUpload = (fileName: string = 'Thyrocare_Biochem_Report_Aug2026.pdf') => {
     setIsProcessingOcr(true);
@@ -153,7 +176,7 @@ export const LabReportAnalyzer: React.FC<LabReportAnalyzerProps> = ({
             </h3>
 
             <div className="space-y-2">
-              {MOCK_LAB_REPORTS.map((rep) => (
+              {allReports.map((rep) => (
                 <button
                   key={rep.id}
                   onClick={() => setSelectedReportId(rep.id)}

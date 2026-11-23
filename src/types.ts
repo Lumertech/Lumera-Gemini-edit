@@ -440,6 +440,52 @@ export interface GynecologyAssessment {
   pelvicSpeculumSummary?: string;
   pelvicUsgSummary?: string;
   chaperonePresent?: boolean;
+  // Advanced ANC Biometry, Doppler & NST
+  estimatedFetalWeightGrams?: number;
+  cervicalLengthMm?: number;
+  placentalLocalization?: 'Fundal / Anterior' | 'Fundal / Posterior' | 'Low Lying (Grade I/II)' | 'Placenta Previa (Major)';
+  nstBppStatus?: 'Not Done' | 'Reactive NST' | 'Non-Reactive — Repeat/BPP' | 'BPP 8/8 Reassuring';
+  // FIGO PALM-COEIN AUB & Syndromic Care
+  aubPalmCoeinClass?:
+    | 'Not Applicable'
+    | 'AUB-P (Polyp)'
+    | 'AUB-A (Adenomyosis)'
+    | 'AUB-L (Leiomyoma / Fibroid)'
+    | 'AUB-M (Malignancy / Hyperplasia)'
+    | 'AUB-C (Coagulopathy)'
+    | 'AUB-O (Ovulatory)'
+    | 'AUB-E (Endometrial)'
+    | 'AUB-I (Iatrogenic)';
+  vaginalDischargeSyndromic?: string;
+  // Fertility, Ovulation Induction & Follicular Monitoring
+  fertilityCycleDay?: number;
+  ovulationInductionProtocol?:
+    | 'Natural Cycle'
+    | 'Letrozole 2.5 mg (CD2-6)'
+    | 'Letrozole 5 mg (CD2-6)'
+    | 'Clomiphene Citrate (CD2-6)'
+    | 'Gonadotropin (rFSH / hMG)'
+    | 'IUI / IVF Prep';
+  rightOvaryFollicleMm?: string;
+  leftOvaryFollicleMm?: string;
+  endometrialThicknessMm?: number;
+  endometrialPattern?: 'Trilaminar (Grade A)' | 'Isoechoic (Grade B)' | 'Homogeneous';
+  amhNgMl?: number;
+  tubalPatencyStatus?: string;
+  partnerSemenSummary?: string;
+  ovulationTriggerPlan?: string;
+  // Postnatal / Lactation & Perimenopause / Menopause
+  postnatalOrMenopauseFocus?: 'Postnatal / Lactation (42d)' | 'Perimenopause / Menopause';
+  postpartumDays?: number;
+  lochiaAndScarStatus?: string;
+  lactationLatchStatus?:
+    | 'Exclusive BF — Good Latch'
+    | 'Latch Support Needed'
+    | 'Mixed / Top Feed'
+    | 'Lactation Suppressed';
+  epdsPostnatalMood?: 'Normal (EPDS <10)' | 'Borderline (10-12) — Counsel' | 'High Risk (>=13) — Refer';
+  vasomotorSeverity?: 'None' | 'Mild' | 'Moderate' | 'Severe Hot Flushes / Night Sweats';
+  dexaTScoreSummary?: string;
 }
 
 export interface EntAssessment {

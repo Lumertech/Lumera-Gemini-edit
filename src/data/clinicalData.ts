@@ -981,7 +981,93 @@ export const RX_PRESETS = [
       dysmenorrheaSeverity: 'Moderate' as const,
       intermenstrualOrPostcoitalBleeding: 'None' as const,
       maternalHemoglobinGdl: 9.2,
+      aubPalmCoeinClass: 'AUB-L (Leiomyoma / Fibroid)' as const,
       cervicalScreeningPapVia: 'LBC Pap smear advised post-menses',
+      chaperonePresent: true
+    }
+  },
+  {
+    id: 'preset-gynecology-fertility-oi',
+    specialty: 'Gynecology' as PolyclinicSpecialty,
+    name: 'Fertility — Letrozole Ovulation Induction & CD12 Follicular Study',
+    diagnosis: 'Primary Anovulatory Infertility — Letrozole Ovulation Induction Cycle (CD12 Dominant Follicle)',
+    icd10: 'N97.0',
+    chiefComplaints: ['Trying to conceive for 18 months', 'Cycle Day 12 transvaginal follicular tracking review'],
+    medicines: [
+      { id: 'm-fert-1', drugName: 'Recombinant hCG 250 mcg Pre-filled Syringe (Ovitrelle)', composition: 'Choriogonadotropin Alfa 250 mcg SC', form: 'Injection' as const, dosage: '250 mcg SC STAT', frequency: 'Once Only' as const, timing: 'At Bedtime' as const, durationDays: 1, instructions: 'Administer subcutaneously at 9:00 PM tonight for ovulation trigger; timed intercourse / IUI at 36 hours' },
+      { id: 'm-fert-2', drugName: 'Micronized Natural Progesterone SR 200 mg (Susten / Lupigest)', composition: 'Natural Micronized Progesterone 200mg', form: 'Capsule' as const, dosage: '200 mg', frequency: '0-0-1' as const, timing: 'After Food' as const, durationDays: 14, instructions: 'Start 48 hours post-trigger for luteal phase support x 14 days' },
+      { id: 'm-fert-3', drugName: 'L-Methylfolate + Mecobalamin + Pyridoxal-5-Phosphate (Folvite-Active)', composition: 'L-Methylfolate 1mg + Vit B12 + Vit B6', form: 'Tablet' as const, dosage: '1 Tablet', frequency: '1-0-0' as const, timing: 'After Food' as const, durationDays: 30, instructions: 'Pre-conceptional neural tube defect prophylaxis' }
+    ],
+    labTests: [
+      { id: 'lab-fert-1', testName: 'TVS Post-Trigger Rupture Confirmation Scan (CD14)', category: 'Radiology' as const, price: 800 },
+      { id: 'lab-fert-2', testName: 'Serum Beta-hCG Quantitative (16 Days Post-Ovulation if Period Missed)', category: 'Biochemistry' as const, price: 650 }
+    ],
+    advice: [
+      'Timed intercourse advised tonight and 36 hours after trigger injection (or report at 9:00 AM on CD14 for scheduled IUI)',
+      'Continue pre-conceptional folate daily; avoid NSAIDs (Ibuprofen/Diclofenac) around periovulatory window as they inhibit follicular rupture',
+      'Perform serum Beta-hCG / urine pregnancy test if menses is delayed beyond Cycle Day 30'
+    ],
+    gynecologyAssessment: {
+      clinicalMode: 'Fertility & PCOS' as const,
+      lmpDate: '2026-11-11',
+      calculatedEdd: '',
+      gestationalAgeWeeks: 0,
+      gestationalAgeDays: 0,
+      trimester: '1st Trimester' as const,
+      gravidaPara: { g: 0, p: 0, l: 0, a: 0 },
+      menarcheAge: 13,
+      cycleRegularity: 'Oligomenorrhea (>35d)' as const,
+      contraceptionMethod: 'None' as const,
+      fertilityCycleDay: 12,
+      ovulationInductionProtocol: 'Letrozole 5 mg (CD2-6)' as const,
+      rightOvaryFollicleMm: '19.5 x 18.8 mm Dominant Follicle',
+      leftOvaryFollicleMm: '11 mm, 9 mm (Quiescent)',
+      endometrialThicknessMm: 8.8,
+      endometrialPattern: 'Trilaminar (Grade A)' as const,
+      amhNgMl: 3.9,
+      tubalPatencyStatus: 'HSG: Bilateral free peritoneal spill',
+      partnerSemenSummary: 'WHO 6th Normozoospermia (46M/mL, progressive motility 54%)',
+      ovulationTriggerPlan: 'Inj r-hCG 250 mcg SC tonight -> TI / IUI at 36 hrs',
+      pelvicUsgSummary: 'CD12 TVS: Single periovulatory 19.5 mm follicle in RO with perifollicular vascularity; ET 8.8 mm trilaminar'
+    }
+  },
+  {
+    id: 'preset-gynecology-postnatal-lscs',
+    specialty: 'Gynecology' as PolyclinicSpecialty,
+    name: 'Postnatal Day-10 LSCS Scar & Lactation Care',
+    diagnosis: 'Postnatal Day-10 Follow-Up Post-FTLSCS — Healthy Involution & Exclusive Lactation',
+    icd10: 'Z39.2',
+    chiefComplaints: ['Post-LSCS Day-10 dressing removal & scar check', 'Mild nipple soreness during night feeds'],
+    medicines: [
+      { id: 'm-pnc-1', drugName: 'Ferrous Ascorbate + Folic Acid (Orofer-XT)', composition: 'Elemental Iron 100mg + Folic Acid 1.5mg', form: 'Tablet' as const, dosage: '1 Tablet', frequency: '1-0-0' as const, timing: 'After Food' as const, durationDays: 90, instructions: 'Continue postnatal iron replenishment for 6 months (MoHFW PNC protocol)' },
+      { id: 'm-pnc-2', drugName: 'Calcium Carbonate + Vitamin D3 (Shelcal-HD)', composition: 'Elemental Calcium 500mg + Vitamin D3 500 IU', form: 'Tablet' as const, dosage: '1 Tablet', frequency: '1-0-1' as const, timing: 'After Food' as const, durationDays: 90, instructions: 'Twice daily during lactation to protect maternal bone density' },
+      { id: 'm-pnc-3', drugName: 'Purified Lanolin Nipple Emollient (Nipcare)', composition: 'USP Modified Lanolin', form: 'Ointment' as const, dosage: 'Thin layer', frequency: '1-1-1' as const, timing: 'After Food' as const, durationDays: 14, instructions: 'Apply after feeds; safe for infant without wiping off' }
+    ],
+    labTests: [
+      { id: 'lab-pnc-1', testName: '6-Week Postpartum CBC & 75g OGTT Recall (if Prior GDM)', category: 'Hematology' as const, price: 550 }
+    ],
+    advice: [
+      'Exclusive breastfeeding on demand every 2–3 hours (8–12 feeds/24h); ensure deep areolar latch and football/cradle hold to prevent scar pressure',
+      'Keep Pfannenstiel scar clean and dry after bath; avoid lifting heavy weights (>5 kg) for 6 weeks',
+      'Postpartum spacing counselled (Chhaya non-hormonal weekly pill / Cu-IUCD at 6-week Day-42 visit)',
+      'Puerperal red flags — report immediately if fever >100.4°F, foul-smelling lochia, wound ooze, calf pain, or persistent low mood'
+    ],
+    gynecologyAssessment: {
+      clinicalMode: 'Postnatal / Menopause' as const,
+      postnatalOrMenopauseFocus: 'Postnatal / Lactation (42d)' as const,
+      lmpDate: '',
+      calculatedEdd: '',
+      gestationalAgeWeeks: 0,
+      gestationalAgeDays: 0,
+      trimester: 'Postpartum' as const,
+      gravidaPara: { g: 1, p: 1, l: 1, a: 0 },
+      previousDeliveryMode: 'Previous 1 LSCS' as const,
+      postpartumDays: 10,
+      lochiaAndScarStatus: 'Lochia serosa minimal, non-foul; Pfannenstiel LSCS scar well-approximated, clean & dry',
+      lactationLatchStatus: 'Latch Support Needed' as const,
+      epdsPostnatalMood: 'Normal (EPDS <10)' as const,
+      contraceptionMethod: 'Chhaya (Centchroman)' as const,
+      breastExamSummary: 'Bilateral breasts lactating, soft post-feed, superficial left nipple fissure counselled on deep latch',
       chaperonePresent: true
     }
   },

@@ -101,7 +101,7 @@ function buildPolyclinicSpecialtyRoster(today: string): {
     dayOffset: number;
     slot: string;
     type: string;
-    status: "Waiting" | "Completed";
+    status: "Waiting" | "Confirmed" | "Completed";
     vitals: Record<string, unknown>;
   }>;
   prescriptions: SeedRxSpec[];
@@ -112,9 +112,11 @@ function buildPolyclinicSpecialtyRoster(today: string): {
   const edd26w = shiftIsoDate(lmp26w, 280);
   const lmp12w = shiftIsoDate(today, -88);
   const edd12w = shiftIsoDate(lmp12w, 280);
+  const lmp35w = shiftIsoDate(today, -247);
+  const edd35w = shiftIsoDate(lmp35w, 280);
 
   const patients: SeedPatientSpec[] = [
-    // --- GYNAECOLOGY (5 patients for gynecology@lumera.me / doc-persona-gynae) ---
+    // --- GYNAECOLOGY (7 patients for gynecology@lumera.me / doc-persona-gynae) ---
     {
       id: "poly-pat-nisha",
       tenantId,
@@ -142,7 +144,7 @@ function buildPolyclinicSpecialtyRoster(today: string): {
       email: "kavya.chatterjee@demo.lumera.in",
       bloodGroup: "O+",
       allergies: [],
-      chronicConditions: ["PCOS (Rotterdam Phenotype A)", "Insulin Resistance"],
+      chronicConditions: ["PCOS (Rotterdam Phenotype A)", "Letrozole CD12 Follicular Study", "Insulin Resistance"],
       address: "Salt Lake Sector II, Kolkata 700091",
     },
     {
@@ -189,6 +191,36 @@ function buildPolyclinicSpecialtyRoster(today: string): {
       allergies: [],
       chronicConditions: ["Perimenopausal Vasomotor Symptoms", "Osteopenia"],
       address: "Vashi Sector 17, Navi Mumbai 400703",
+    },
+    {
+      id: "gynae-pat-anjali",
+      tenantId,
+      uhid: "LUM-GYN-2305",
+      name: "Anjali Verma",
+      age: 29,
+      dateOfBirth: "1997-03-14",
+      gender: "Female",
+      phone: "+91 98111 23005",
+      email: "anjali.verma@demo.lumera.in",
+      bloodGroup: "B+",
+      allergies: [],
+      chronicConditions: ["Primigravida G1P0 — 35w ANC", "Mild Gestational Hypertension (PIH)", "NST Surveillance"],
+      address: "powai Hiranandani Gardens, Mumbai 400076",
+    },
+    {
+      id: "gynae-pat-sneha",
+      tenantId,
+      uhid: "LUM-GYN-2306",
+      name: "Sneha Banerjee",
+      age: 31,
+      dateOfBirth: "1995-10-06",
+      gender: "Female",
+      phone: "+91 98111 23006",
+      email: "sneha.banerjee@demo.lumera.in",
+      bloodGroup: "O+",
+      allergies: [],
+      chronicConditions: ["Postnatal Day-10 Post-FTLSCS", "Lactation & Scar Care (42d PNC)"],
+      address: "New Town Action Area I, Kolkata 700156",
     },
 
     // --- PEDIATRICS (5 patients for pediatrics@lumera.me / doc-persona-pedia) ---
@@ -666,7 +698,15 @@ function buildPolyclinicSpecialtyRoster(today: string): {
       regNumber: "WBMC-2011-44910",
       specialty: "Gynecology",
       fee: 800,
-      patientIds: ["poly-pat-nisha", "gynae-pat-kavya", "gynae-pat-rekha", "gynae-pat-pooja", "gynae-pat-savita"],
+      patientIds: [
+        "poly-pat-nisha",
+        "gynae-pat-kavya",
+        "gynae-pat-rekha",
+        "gynae-pat-pooja",
+        "gynae-pat-savita",
+        "gynae-pat-anjali",
+        "gynae-pat-sneha",
+      ],
     },
     {
       doctorId: "doc-persona-pedia",
@@ -718,7 +758,7 @@ function buildPolyclinicSpecialtyRoster(today: string): {
     },
   ];
 
-  const slots = ["09:15 AM", "10:15 AM", "11:15 AM", "04:15 PM", "05:00 PM"];
+  const slots = ["09:15 AM", "10:00 AM", "10:45 AM", "11:30 AM", "12:15 PM", "04:15 PM", "05:00 PM"];
   const visits: Array<{
     id: string;
     patientId: string;
@@ -729,14 +769,40 @@ function buildPolyclinicSpecialtyRoster(today: string): {
     dayOffset: number;
     slot: string;
     type: string;
-    status: "Waiting" | "Completed";
+    status: "Waiting" | "Confirmed" | "Completed";
     vitals: Record<string, unknown>;
   }> = [];
 
   for (const doc of doctorMeta) {
     doc.patientIds.forEach((pid, idx) => {
-      const dayOffset = idx < 3 ? 0 : idx === 3 ? -2 : -5;
-      const status: "Waiting" | "Completed" = idx < 2 ? "Waiting" : "Completed";
+      let dayOffset = idx < 3 ? 0 : idx === 3 ? -2 : -5;
+      let status: "Waiting" | "Confirmed" | "Completed" = idx < 2 ? "Waiting" : "Completed";
+      let visitType = idx % 2 === 0 ? "New Consultation" : "Follow-up";
+      if (doc.specialty === "Gynecology") {
+        // 5 today's OPD visits across Waiting, Confirmed, and Completed + 2 recent historical visits
+        const gynOffsets = [0, 0, -2, 0, -4, 0, 0];
+        const gynStatuses: Array<"Waiting" | "Confirmed" | "Completed"> = [
+          "Waiting",
+          "Confirmed",
+          "Completed",
+          "Completed",
+          "Completed",
+          "Waiting",
+          "Completed",
+        ];
+        const gynTypes = [
+          "Follow-up",
+          "Follow-up",
+          "New Consultation",
+          "New Consultation",
+          "Follow-up",
+          "Follow-up",
+          "Follow-up",
+        ];
+        dayOffset = gynOffsets[idx] ?? 0;
+        status = gynStatuses[idx] ?? "Waiting";
+        visitType = gynTypes[idx] ?? "Follow-up";
+      }
       visits.push({
         id: `spec-poly-apt-${doc.specialty.toLowerCase().slice(0, 4)}-${idx + 1}`,
         patientId: pid,
@@ -746,7 +812,7 @@ function buildPolyclinicSpecialtyRoster(today: string): {
         fee: doc.fee,
         dayOffset,
         slot: slots[idx % slots.length],
-        type: idx % 2 === 0 ? "New Consultation" : "Follow-up",
+        type: visitType,
         status,
         vitals: defaultVitals(
           doc.specialty === "Pediatrics"
@@ -754,7 +820,11 @@ function buildPolyclinicSpecialtyRoster(today: string): {
             : doc.specialty === "Cardiology"
               ? { bloodPressureSystolic: [148, 126, 114, 134, 138][idx], bloodPressureDiastolic: [92, 78, 72, 84, 86][idx], heartRate: [82, 66, 78, 88, 74][idx] }
               : doc.specialty === "Gynecology"
-                ? { bloodPressureSystolic: [118, 114, 110, 112, 128][idx], bloodPressureDiastolic: [76, 74, 70, 72, 82][idx], weightKg: [67, 68, 59, 56, 65][idx] }
+                ? {
+                    bloodPressureSystolic: [118, 114, 110, 112, 128, 144, 116][idx],
+                    bloodPressureDiastolic: [76, 74, 70, 72, 82, 92, 74][idx],
+                    weightKg: [67, 68, 59, 56, 65, 71, 63][idx],
+                  }
                 : {}
         ),
       });
@@ -831,6 +901,10 @@ function buildPolyclinicSpecialtyRoster(today: string): {
           ifaCalciumStarted: true,
           pcpndtFormFLogged: true,
           quickeningPresent: true,
+          estimatedFetalWeightGrams: 940,
+          cervicalLengthMm: 34,
+          placentalLocalization: "Fundal / Posterior",
+          nstBppStatus: "Not Done",
           highRiskFactors: ["Anemia in Pregnancy (Hb < 11 g/dL)", "Gestational Diabetes (DIPSI >= 140)", "Previous LSCS"],
           antenatalChecklist: [
             { item: "First Trimester Dating Scan (CRL)", completed: true },
@@ -851,22 +925,23 @@ function buildPolyclinicSpecialtyRoster(today: string): {
       doctorName: "Dr. Shalini Mukhopadhyay",
       doctorSpecialty: "Gynecology",
       doctorRegNumber: "WBMC-2011-44910",
-      diagnosis: "Polycystic Ovary Syndrome (Rotterdam Phenotype A) with Insulin Resistance",
+      diagnosis: "PCOS (Rotterdam Phenotype A) — Letrozole Ovulation Induction Cycle (CD12 Dominant Follicle)",
       icd10Code: "E28.2",
-      chiefComplaints: ["Oligomenorrhea — cycles every 45–60 days (8 months)", "Chin hirsutism & persistent jawline acne"],
+      chiefComplaints: ["Cycle Day 12 TVS follicular tracking on Letrozole 2.5 mg", "Oligomenorrhea & insulin resistance"],
       vitals: defaultVitals({ bloodPressureSystolic: 116, bloodPressureDiastolic: 74, weightKg: 68, heightCm: 157, bmi: 27.6 }),
       medicines: [
         med("m-gyn-2a", "Myo-Inositol + D-Chiro-Inositol (Normoz-DS)", "Myo-inositol 2g + DCI 50mg + Chromium + Folate", "1 Tablet", "1-0-1", 90, "Tablet", "After Food"),
         med("m-gyn-2b", "Metformin SR 500 mg", "Metformin Sustained Release", "500 mg", "0-0-1", 60, "Tablet", "After Food"),
+        med("m-gyn-2c", "Recombinant hCG 250 mcg SC (Ovitrelle)", "Choriogonadotropin Alfa 250 mcg", "250 mcg SC", "Once Only", 1, "Injection", "At Bedtime", "Trigger tonight at 9 PM; timed intercourse at 36h"),
       ],
-      advice: ["45 mins brisk walking + resistance training 5x/week", "Low-GI Indian home diet; avoid refined flour/sugary beverages"],
+      advice: ["45 mins brisk walking + resistance training 5x/week", "Low-GI Indian home diet; report on CD14 for rupture confirmation TVS"],
       specialtyType: "Gynecology",
       modules: {
-        historyOfPresentIllness: "24y unmarried software engineer with cycles delayed 45–60 days over 8 months, progressive chin hirsutism (mFG 10), and weight gain of 5 kg. Velvety acanthosis nigricans over nape of neck.",
+        historyOfPresentIllness: "24y married 18 months with PCOS Phenotype A on Letrozole 2.5 mg (CD2–CD6) + Myo-inositol + Metformin. CD12 TVS today shows 18.8 mm dominant follicle in right ovary and 8.6 mm trilaminar endometrium.",
         physicalExamination: "BMI 27.6 kg/m2 (Asian obese), mFG score 10, acanthosis nigricans +, thyroid not enlarged, galactorrhea absent.",
         gynecologyAssessment: {
           clinicalMode: "Fertility & PCOS",
-          lmpDate: shiftIsoDate(today, -48),
+          lmpDate: shiftIsoDate(today, -12),
           calculatedEdd: "",
           gestationalAgeWeeks: 0,
           gestationalAgeDays: 0,
@@ -877,6 +952,16 @@ function buildPolyclinicSpecialtyRoster(today: string): {
           menstrualFlowVolume: "Scanty (Hypomenorrhea)",
           dysmenorrheaSeverity: "Mild",
           contraceptionMethod: "None",
+          fertilityCycleDay: 12,
+          ovulationInductionProtocol: "Letrozole 2.5 mg (CD2-6)",
+          rightOvaryFollicleMm: "18.8 x 18.2 mm Dominant Follicle",
+          leftOvaryFollicleMm: "10 mm / PCOM",
+          endometrialThicknessMm: 8.6,
+          endometrialPattern: "Trilaminar (Grade A)",
+          amhNgMl: 6.8,
+          tubalPatencyStatus: "SIS: Bilateral free tubal spill",
+          partnerSemenSummary: "WHO 6th Normozoospermia (48M/mL, motility 56%)",
+          ovulationTriggerPlan: "Inj r-hCG 250 mcg SC tonight -> TI at 36h",
           pcosPhenotypeFlags: [
             "Oligo / Anovulation (>35d cycles)",
             "Clinical Hirsutism (mFG >= 8)",
@@ -884,7 +969,7 @@ function buildPolyclinicSpecialtyRoster(today: string): {
             "PCOM on Pelvic USG",
             "Central Truncal Obesity (BMI >= 23 Asian)",
           ],
-          pelvicUsgSummary: "TAS Pelvis: Right ovary 12.4 cc, Left ovary 11.8 cc with >20 peripheral follicles; ET 7.2 mm",
+          pelvicUsgSummary: "CD12 TVS: Right ovary 18.8 mm dominant follicle; Left ovary PCOM; ET 8.6 mm trilaminar",
           hpvVaccineStatus: "Completed (Cervavac / Gardasil)",
         },
       },
@@ -925,8 +1010,12 @@ function buildPolyclinicSpecialtyRoster(today: string): {
           dysmenorrheaSeverity: "Moderate",
           intermenstrualOrPostcoitalBleeding: "None",
           contraceptionMethod: "Tubal Ligation",
+          aubPalmCoeinClass: "AUB-L (Leiomyoma / Fibroid)",
+          vaginalDischargeSyndromic: "No mucopurulent discharge; cervical motion tenderness absent",
           maternalHemoglobinGdl: 8.9,
-          cervicalScreeningPapVia: "LBC Pap Smear NILM (2026)",
+          cervicalScreeningPapVia: "LBC Pap Smear NILM & HPV 16/18 Negative (2026)",
+          hpvVaccineStatus: "Unvaccinated",
+          breastExamSummary: "Bilateral breasts soft, no palpable mass or axillary lymphadenopathy",
           pelvicSpeculumSummary: "P/S: Healthy multiparous cervix; P/V: Bulky 8–10w firm uterus, non-tender fornices",
           pelvicUsgSummary: "TVS: 2.6 x 2.3 cm posterior wall FIGO Type 2 submucosal fibroid indenting cavity; ET 9 mm",
           chaperonePresent: true,
@@ -951,6 +1040,9 @@ function buildPolyclinicSpecialtyRoster(today: string): {
         med("m-gyn-4b", "Folic Acid 5 mg (Folvite)", "Folic Acid 5mg", "5 mg", "1-0-0", 30, "Tablet", "After Food"),
         med("m-gyn-4c", "Doxylamine + Pyridoxine (Doxinate)", "Doxylamine 10mg + Vit B6 10mg", "2 Tablets", "0-0-1", 15, "Tablet", "At Bedtime"),
       ],
+      labTests: [
+        { id: "lt-gyn-4a", testName: "NT + Nasal Bone Scan & Dual Marker (11-13 Weeks)", category: "Radiology", price: 2200 },
+      ],
       advice: ["Indirect Coombs Test (ICT) at 16w & 28w; Anti-D 300 mcg prophylaxis planned at 28 weeks", "Repeat TSH in 4 weeks (1st trimester target <2.5 mIU/L)"],
       specialtyType: "Gynecology",
       modules: {
@@ -959,6 +1051,7 @@ function buildPolyclinicSpecialtyRoster(today: string): {
           clinicalMode: "Antenatal / Obstetric",
           lmpDate: lmp12w,
           calculatedEdd: edd12w,
+          correctedUsgEdd: shiftIsoDate(edd12w, 2),
           gestationalAgeWeeks: 12,
           gestationalAgeDays: 4,
           trimester: "1st Trimester",
@@ -970,6 +1063,9 @@ function buildPolyclinicSpecialtyRoster(today: string): {
           maternalHemoglobinGdl: 12.1,
           maternalBloodGroupRh: "O- (Husband B+, ICT Negative)",
           tshMiuL: 4.2,
+          cervicalLengthMm: 38,
+          placentalLocalization: "Fundal / Anterior",
+          nstBppStatus: "Not Done",
           tdVaccineStatus: "Td-1 Given",
           ifaCalciumStarted: false,
           pcpndtFormFLogged: true,
@@ -1006,6 +1102,9 @@ function buildPolyclinicSpecialtyRoster(today: string): {
         historyOfPresentIllness: "49y P2L2 with irregular cycles every 2–3 months and hot flushes. No postmenopausal or intermenstrual spotting.",
         gynecologyAssessment: {
           clinicalMode: "Postnatal / Menopause",
+          postnatalOrMenopauseFocus: "Perimenopause / Menopause",
+          vasomotorSeverity: "Moderate",
+          dexaTScoreSummary: "Lumbar L1-L4 DEXA T-score -1.7 (Osteopenia); Screening Mammogram BIRADS-1",
           lmpDate: shiftIsoDate(today, -68),
           calculatedEdd: "",
           gestationalAgeWeeks: 0,
@@ -1014,8 +1113,120 @@ function buildPolyclinicSpecialtyRoster(today: string): {
           gravidaPara: { g: 2, p: 2, l: 2, a: 0 },
           cycleRegularity: "Oligomenorrhea (>35d)",
           cervicalScreeningPapVia: "VIA Negative & LBC NILM",
+          hpvVaccineStatus: "Unvaccinated",
           breastExamSummary: "Bilateral breasts soft, no mass/skin dimpling/nipple discharge, axillae normal",
           pelvicUsgSummary: "TVS: Thin homogeneous endometrium 4.1 mm; bilateral ovaries small quiescent",
+          chaperonePresent: true,
+        },
+      },
+    },
+    {
+      id: "spec-rx-gyn-6",
+      rxNumber: "RX-GYN-2026-0106",
+      tenantId,
+      patientId: "gynae-pat-anjali",
+      doctorId: "doc-persona-gynae",
+      doctorName: "Dr. Shalini Mukhopadhyay",
+      doctorSpecialty: "Gynecology",
+      doctorRegNumber: "WBMC-2011-44910",
+      diagnosis: "Primigravida (G1P0) at 35w 2d Gestation with Mild Gestational Hypertension (PIH) — Reactive NST",
+      icd10Code: "O13.3",
+      chiefComplaints: ["35-week high-risk ANC & BP surveillance (144/92 mmHg)", "Mild bilateral ankle puffiness"],
+      vitals: defaultVitals({ bloodPressureSystolic: 144, bloodPressureDiastolic: 92, heartRate: 84, weightKg: 71, heightCm: 161, bmi: 27.4 }),
+      medicines: [
+        med("m-gyn-6a", "Labetalol 100 mg (Lobet 100)", "Labetalol Hydrochloride 100mg", "100 mg", "1-0-1", 14, "Tablet", "After Food", "Target pregnancy BP <135/85 mmHg; monitor home BP twice daily"),
+        med("m-gyn-6b", "Ferrous Ascorbate + Folic Acid (Orofer-XT)", "Elemental Iron 100mg + Folate 1.5mg", "1 Tablet", "1-0-0", 30, "Tablet", "After Food"),
+        med("m-gyn-6c", "Calcium Carbonate + Vit D3 (Shelcal 500)", "Calcium 500mg + Vit D3 250 IU", "1 Tablet", "0-1-1", 30, "Tablet", "After Food"),
+      ],
+      labTests: [
+        { id: "lt-gyn-6a", testName: "Weekly Non-Stress Test (NST) & Umbilical Artery S/D Doppler", category: "Radiology", price: 1600 },
+        { id: "lt-gyn-6b", testName: "PIH Panel (CBC, Platelets, SGOT/SGPT, Uric Acid, Spot Urine PCR)", category: "Biochemistry", price: 1250 },
+      ],
+      advice: [
+        "Home BP chart morning & evening; left lateral rest and daily fetal kick count (>=10 kicks/2h)",
+        "PIH Danger Signs — report to labour room immediately if severe frontal headache, blurring/scotomata, epigastric/RUQ pain, or reduced urine/fetal movements",
+      ],
+      specialtyType: "Gynecology",
+      modules: {
+        historyOfPresentIllness: "29y primigravida at 35w2d with new-onset BP 144/92 mmHg since 34 weeks without severe pre-eclamptic features. NST today reactive (2 accelerations >15 bpm x 15s in 20 mins); umbilical Doppler S/D normal.",
+        riskLevel: "High",
+        gynecologyAssessment: {
+          clinicalMode: "Antenatal / Obstetric",
+          lmpDate: lmp35w,
+          calculatedEdd: edd35w,
+          gestationalAgeWeeks: 35,
+          gestationalAgeDays: 2,
+          trimester: "3rd Trimester",
+          gravidaPara: { g: 1, p: 0, l: 0, a: 0 },
+          previousDeliveryMode: "Nulliparous",
+          fundalHeightCm: 34,
+          fetalHeartRateBpm: 142,
+          presentation: "Cephalic / Vertex",
+          liquorAdequacy: "Adequate",
+          pedalEdema: "Mild (+)",
+          urineAlbuminSugar: "Albumin Trace / Sugar Nil",
+          maternalHemoglobinGdl: 11.6,
+          maternalBloodGroupRh: "B+",
+          estimatedFetalWeightGrams: 2480,
+          cervicalLengthMm: 31,
+          placentalLocalization: "Fundal / Anterior",
+          nstBppStatus: "Reactive NST",
+          tdVaccineStatus: "Tdap Given (27-36w)",
+          ifaCalciumStarted: true,
+          pcpndtFormFLogged: true,
+          quickeningPresent: true,
+          highRiskFactors: ["PIH / Pre-eclampsia"],
+          antenatalChecklist: [
+            { item: "First Trimester Dating & NT Scan", completed: true },
+            { item: "TIFFA Anomaly Scan (19w)", completed: true },
+            { item: "DIPSI 75g OGTT (118 mg/dL Normal)", completed: true },
+            { item: "35w Fetal Growth, Doppler & NST", completed: true },
+            { item: "37w Term Delivery Plan Review", completed: false },
+          ],
+        },
+      },
+    },
+    {
+      id: "spec-rx-gyn-7",
+      rxNumber: "RX-GYN-2026-0107",
+      tenantId,
+      patientId: "gynae-pat-sneha",
+      doctorId: "doc-persona-gynae",
+      doctorName: "Dr. Shalini Mukhopadhyay",
+      doctorSpecialty: "Gynecology",
+      doctorRegNumber: "WBMC-2011-44910",
+      diagnosis: "Postnatal Day-10 Follow-Up Post-FTLSCS — Clean Pfannenstiel Scar & Exclusive Lactation Support",
+      icd10Code: "Z39.2",
+      chiefComplaints: ["Postnatal Day-10 LSCS dressing check", "Latch positioning check for exclusive breastfeeding"],
+      vitals: defaultVitals({ bloodPressureSystolic: 116, bloodPressureDiastolic: 74, heartRate: 78, weightKg: 63, heightCm: 159, bmi: 24.9 }),
+      medicines: [
+        med("m-gyn-7a", "Ferrous Ascorbate + Folic Acid (Orofer-XT)", "Elemental Iron 100mg + Folic Acid 1.5mg", "1 Tablet", "1-0-0", 90, "Tablet", "After Food", "Postnatal 180-day iron replenishment"),
+        med("m-gyn-7b", "Calcium Carbonate + Vitamin D3 (Shelcal-HD)", "Calcium 500mg + Vit D3 500 IU", "1 Tablet", "1-0-1", 90, "Tablet", "After Food"),
+        med("m-gyn-7c", "Purified Lanolin Nipple Cream (Nipcare)", "Modified Lanolin USP", "Thin layer", "1-1-1", 14, "Ointment", "After Food", "Apply post-feed for nipple comfort"),
+      ],
+      advice: [
+        "Exclusive demand breastfeeding every 2–3 hours; demonstrated cradle & football hold to avoid scar pressure",
+        "Schedule Day-42 (6-week) postnatal pelvic involution check and Chhaya / Cu-IUCD spacing initiation",
+      ],
+      specialtyType: "Gynecology",
+      modules: {
+        historyOfPresentIllness: "31y P1L1 on Postpartum Day 10 following emergency lower-segment cesarean section (healthy 3.2 kg female neonate, birth vaccines given). Afebrile, voiding & bowel normal, mild left nipple soreness.",
+        gynecologyAssessment: {
+          clinicalMode: "Postnatal / Menopause",
+          postnatalOrMenopauseFocus: "Postnatal / Lactation (42d)",
+          lmpDate: "",
+          calculatedEdd: "",
+          gestationalAgeWeeks: 0,
+          gestationalAgeDays: 0,
+          trimester: "Postpartum",
+          gravidaPara: { g: 1, p: 1, l: 1, a: 0 },
+          previousDeliveryMode: "Previous 1 LSCS",
+          postpartumDays: 10,
+          lochiaAndScarStatus: "Lochia serosa minimal, non-foul; Pfannenstiel LSCS scar clean, dry & well-approximated",
+          lactationLatchStatus: "Latch Support Needed",
+          epdsPostnatalMood: "Normal (EPDS <10)",
+          contraceptionMethod: "Chhaya (Centchroman)",
+          breastExamSummary: "Bilateral breasts lactating, soft post-feed, no engorgement/mastitis; deep latch demonstrated",
           chaperonePresent: true,
         },
       },
@@ -1963,13 +2174,29 @@ function buildPolyclinicSpecialtyRoster(today: string): {
 
   const labs: SeedLabSpec[] = [
     {
+      id: "spec-lab-gyn-pooja",
+      tenantId,
+      patientId: "gynae-pat-pooja",
+      uhid: "LUM-GYN-2303",
+      patientName: "Pooja Agarwal",
+      labName: "Iyer Polyclinic Maternal-Fetal Lab",
+      category: "ANC Booking + Double Marker",
+      interpretation: "1st trimester Dual Marker low risk for Trisomy 21/18/13; Indirect Coombs negative in O Rh-negative primigravida; mild gestational TSH elevation (4.2 mIU/L) on Thyronorm 25 mcg.",
+      results: [
+        { param: "Hemoglobin (Booking)", value: 12.1, unit: "g/dL", normalRange: "11.0 - 14.5", status: "Normal" },
+        { param: "TSH (1st Trimester)", value: 4.2, unit: "mIU/L", normalRange: "0.1 - 2.5", status: "High" },
+        { param: "Indirect Coombs Test (ICT)", value: "Negative", unit: "titer", normalRange: "Negative", status: "Normal" },
+        { param: "Dual Marker Combined T21 Risk", value: "1:4800", unit: "ratio", normalRange: "Low Risk (< 1:250)", status: "Normal" },
+      ],
+    },
+    {
       id: "spec-lab-gyn-nisha",
       tenantId,
       patientId: "poly-pat-nisha",
       uhid: "LUM-POLY-2203",
       patientName: "Nisha Kulkarni",
       labName: "Iyer Polyclinic Women's Diagnostics",
-      category: "Metabolic & Diabetes",
+      category: "DIPSI 75g OGTT",
       interpretation: "2-hr 75g DIPSI Glucose elevated (156 mg/dL — GDM threshold >=140) with mild maternal anemia (Hb 10.6 g/dL). Initiated MNT + Metformin SR 500 + BD Iron.",
       results: [
         { param: "DIPSI 75g 2-Hr Plasma Glucose", value: 156, unit: "mg/dL", normalRange: "< 140 (Pregnancy)", status: "High" },
@@ -1984,8 +2211,8 @@ function buildPolyclinicSpecialtyRoster(today: string): {
       uhid: "LUM-GYN-2301",
       patientName: "Kavya Chatterjee",
       labName: "Iyer Polyclinic Endocrine Lab",
-      category: "Thyroid",
-      interpretation: "Elevated fasting insulin & HOMA-IR with LH:FSH reversal consistent with insulin-resistant PCOS.",
+      category: "PCOS AMH & Hormone Panel",
+      interpretation: "Elevated AMH (6.8 ng/mL) and fasting insulin (21.4 uIU/mL) consistent with Rotterdam Phenotype A PCOS; undergoing Letrozole ovulation induction.",
       results: [
         { param: "Fasting Serum Insulin", value: 21.4, unit: "uIU/mL", normalRange: "2.6 - 15.0", status: "High" },
         { param: "AMH (Anti-Mullerian Hormone)", value: 6.8, unit: "ng/mL", normalRange: "1.5 - 4.0", status: "High" },
@@ -1998,12 +2225,30 @@ function buildPolyclinicSpecialtyRoster(today: string): {
       patientId: "gynae-pat-rekha",
       uhid: "LUM-GYN-2302",
       patientName: "Rekha Deshpande",
-      labName: "Iyer Polyclinic Hematology",
-      category: "Complete Blood Count",
-      interpretation: "Microcytic hypochromic iron-deficiency anemia secondary to AUB-L.",
+      labName: "Iyer Polyclinic Cytopathology & Hematology",
+      category: "LBC Pap + HPV Co-Test",
+      interpretation: "Liquid-based cervical cytology NILM and High-Risk HPV 16/18 negative; microcytic hypochromic anemia (Hb 8.9 g/dL, Ferritin 7.4 ng/mL) secondary to AUB-L fibroid.",
       results: [
+        { param: "LBC Cervical Cytology (Bethesda)", value: "NILM", unit: "grade", normalRange: "NILM", status: "Normal" },
+        { param: "High-Risk HPV 16/18 DNA PCR", value: "Not Detected", unit: "qualitative", normalRange: "Not Detected", status: "Normal" },
         { param: "Hemoglobin", value: 8.9, unit: "g/dL", normalRange: "12.0 - 15.5", status: "Low" },
         { param: "Serum Ferritin", value: 7.4, unit: "ng/mL", normalRange: "15 - 150", status: "Low" },
+      ],
+    },
+    {
+      id: "spec-lab-gyn-anjali",
+      tenantId,
+      patientId: "gynae-pat-anjali",
+      uhid: "LUM-GYN-2305",
+      patientName: "Anjali Verma",
+      labName: "Iyer Polyclinic High-Risk Obstetric Lab",
+      category: "PIH Preeclampsia Panel",
+      interpretation: "Borderline spot urine protein:creatinine ratio (0.24) and mild gestational hyperuricemia (5.9 mg/dL); platelets and transaminases normal (no HELLP features).",
+      results: [
+        { param: "Spot Urine Protein:Creatinine Ratio", value: 0.24, unit: "mg/mg", normalRange: "< 0.20", status: "High" },
+        { param: "Serum Uric Acid (3rd Trimester)", value: 5.9, unit: "mg/dL", normalRange: "3.1 - 5.5", status: "High" },
+        { param: "Platelet Count", value: 198, unit: "x10^3/uL", normalRange: "150 - 410", status: "Normal" },
+        { param: "SGOT / AST", value: 26, unit: "U/L", normalRange: "< 35", status: "Normal" },
       ],
     },
     {
@@ -2617,9 +2862,26 @@ export function seedAllDemoSpecialtyClinicalData(database: SqlDatabase, nowDate 
     const nextToken = allocateTokenNumber(database, p.tenantId, visitDate, v.doctorId, 2100, v.id);
     refreshPolyclinicVisitDate.run(visitDate, nextToken, v.id, p.tenantId, visitDate);
   }
+  database
+    .prepare(
+      "UPDATE appointments SET status = 'Confirmed' WHERE id = 'spec-poly-apt-gyne-2' AND tenant_id = 'tenant-demo-polyclinic' AND status = 'Waiting'"
+    )
+    .run();
+
+  const refreshPolyclinicRx = database.prepare(
+    `UPDATE prescriptions
+     SET diagnosis = ?, icd10_code = ?, chief_complaints = ?, medicines = ?, lab_tests = ?,
+         advice = ?, specialty_modules = ?, date = ?, follow_up_date = ?
+     WHERE id = ? AND tenant_id = ?`
+  );
 
   for (const rx of poly.prescriptions) {
     const p = polyPatById.get(rx.patientId)!;
+    const ccJson = JSON.stringify(rx.chiefComplaints);
+    const medsJson = JSON.stringify(rx.medicines);
+    const labsJson = JSON.stringify(rx.labTests || []);
+    const adviceJson = JSON.stringify(rx.advice);
+    const modulesJson = JSON.stringify(rx.modules);
     insertRx.run(
       rx.id,
       rx.tenantId,
@@ -2637,22 +2899,44 @@ export function seedAllDemoSpecialtyClinicalData(database: SqlDatabase, nowDate 
       today,
       rx.diagnosis,
       rx.icd10Code,
-      JSON.stringify(rx.chiefComplaints),
-      JSON.stringify(rx.medicines),
-      JSON.stringify(rx.labTests || []),
-      JSON.stringify(rx.advice),
+      ccJson,
+      medsJson,
+      labsJson,
+      adviceJson,
       followUp14,
       `/api/emr/prescription/${rx.id}/pdf`,
       now,
       JSON.stringify(rx.vitals),
       "Iyer City Polyclinic",
       rx.specialtyType,
-      JSON.stringify(rx.modules),
+      modulesJson,
       rx.id
     );
+    if (rx.doctorId === "doc-persona-gynae") {
+      refreshPolyclinicRx.run(
+        rx.diagnosis,
+        rx.icd10Code,
+        ccJson,
+        medsJson,
+        labsJson,
+        adviceJson,
+        modulesJson,
+        today,
+        followUp14,
+        rx.id,
+        rx.tenantId
+      );
+    }
   }
 
+  const refreshPolyclinicLab = database.prepare(
+    `UPDATE lab_reports
+     SET date = ?, lab_name = ?, category = ?, doctor_interpretation = ?, results = ?
+     WHERE id = ? AND tenant_id = ?`
+  );
+
   for (const lab of poly.labs) {
+    const resultsJson = JSON.stringify(lab.results);
     insertLab.run(
       lab.id,
       lab.tenantId,
@@ -2663,10 +2947,364 @@ export function seedAllDemoSpecialtyClinicalData(database: SqlDatabase, nowDate 
       lab.labName,
       lab.category,
       lab.interpretation,
-      JSON.stringify(lab.results),
+      resultsJson,
       now,
       lab.id
     );
+    if (lab.id.startsWith("spec-lab-gyn-")) {
+      refreshPolyclinicLab.run(
+        today,
+        lab.labName,
+        lab.category,
+        lab.interpretation,
+        resultsJson,
+        lab.id,
+        lab.tenantId
+      );
+    }
+  }
+
+  // Seed 5 Ob/Gyn Invoices for Dr. Shalini Mukhopadhyay (doc-persona-gynae, tenant-demo-polyclinic)
+  const insertInvoice = database.prepare(
+    `INSERT INTO invoices (
+       id, tenant_id, invoice_number, appointment_id, patient_id, patient_name, patient_phone, patient_uhid,
+       date, items, subtotal, discount_amount, gstin, gst_percent, tax_amount, total_amount, paid_amount,
+       status, payment_mode, payment_ref, issued_by, consulting_doctor_id, consulting_doctor_name,
+       receipt_whatsapp_status, created_at, paid_at
+     )
+     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '', 0, 0, ?, ?, ?, ?, ?, 'Polyclinic Billing Desk', ?, ?, ?, ?, ?
+     WHERE NOT EXISTS (SELECT 1 FROM invoices WHERE id = ? OR (tenant_id = ? AND invoice_number = ?))`
+  );
+  const refreshTodayPaidInvoice = database.prepare(
+    `UPDATE invoices SET date = ?, paid_at = ? WHERE id = ? AND tenant_id = ?`
+  );
+
+  const gynaeInvoices: Array<{
+    id: string;
+    invoiceNo: string;
+    aptId: string;
+    patientId: string;
+    dayOffset: number;
+    status: "Paid" | "Unpaid";
+    paymentMode: string;
+    paymentRef: string;
+    items: Array<{
+      id: string;
+      description: string;
+      category: string;
+      hsnSacCode: string;
+      quantity: number;
+      unitPrice: number;
+      gstPercent: number;
+      total: number;
+    }>;
+  }> = [
+    {
+      id: "inv-gyn-1",
+      invoiceNo: "INV-2026-GYN001",
+      aptId: "spec-poly-apt-gyne-4",
+      patientId: "gynae-pat-pooja",
+      dayOffset: 0,
+      status: "Paid",
+      paymentMode: "UPI",
+      paymentRef: "UPI-4289102441",
+      items: [
+        { id: "li-gyn-1a", description: "ANC 1st Trimester Booking & Dual Marker Package", category: "Package", hsnSacCode: "9993", quantity: 1, unitPrice: 2200, gstPercent: 0, total: 2200 },
+        { id: "li-gyn-1b", description: "Obstetric Specialist Consultation (Dr. Shalini Mukhopadhyay)", category: "Consultation", hsnSacCode: "9993", quantity: 1, unitPrice: 800, gstPercent: 0, total: 800 },
+      ],
+    },
+    {
+      id: "inv-gyn-2",
+      invoiceNo: "INV-2026-GYN002",
+      aptId: "spec-poly-apt-gyne-2",
+      patientId: "gynae-pat-kavya",
+      dayOffset: 0,
+      status: "Paid",
+      paymentMode: "UPI",
+      paymentRef: "UPI-4289102782",
+      items: [
+        { id: "li-gyn-2a", description: "Follicular Monitoring TVS Series (CD9 / CD12 / CD14)", category: "Package", hsnSacCode: "9993", quantity: 1, unitPrice: 2400, gstPercent: 0, total: 2400 },
+        { id: "li-gyn-2b", description: "Fertility & Ovulation Induction Consultation", category: "Consultation", hsnSacCode: "9993", quantity: 1, unitPrice: 800, gstPercent: 0, total: 800 },
+      ],
+    },
+    {
+      id: "inv-gyn-3",
+      invoiceNo: "INV-2026-GYN003",
+      aptId: "spec-poly-apt-gyne-3",
+      patientId: "gynae-pat-rekha",
+      dayOffset: -2,
+      status: "Paid",
+      paymentMode: "Card",
+      paymentRef: "POS-HDFC-8812",
+      items: [
+        { id: "li-gyn-3a", description: "Diagnostic Video Colposcopy", category: "Procedure", hsnSacCode: "9993", quantity: 1, unitPrice: 1800, gstPercent: 0, total: 1800 },
+        { id: "li-gyn-3b", description: "Liquid-Based Cytology (LBC Pap) + HPV 16/18 Co-Test", category: "Lab", hsnSacCode: "9993", quantity: 1, unitPrice: 1400, gstPercent: 0, total: 1400 },
+        { id: "li-gyn-3c", description: "Gynaecology Specialist Consultation", category: "Consultation", hsnSacCode: "9993", quantity: 1, unitPrice: 800, gstPercent: 0, total: 800 },
+      ],
+    },
+    {
+      id: "inv-gyn-4",
+      invoiceNo: "INV-2026-GYN004",
+      aptId: "spec-poly-apt-gyne-6",
+      patientId: "gynae-pat-anjali",
+      dayOffset: 0,
+      status: "Unpaid",
+      paymentMode: "",
+      paymentRef: "",
+      items: [
+        { id: "li-gyn-4a", description: "Cardiotocography Non-Stress Test (NST)", category: "Procedure", hsnSacCode: "9993", quantity: 1, unitPrice: 900, gstPercent: 0, total: 900 },
+        { id: "li-gyn-4b", description: "Fetal Growth & Umbilical Artery Doppler USG", category: "Lab", hsnSacCode: "9993", quantity: 1, unitPrice: 1600, gstPercent: 0, total: 1600 },
+        { id: "li-gyn-4c", description: "High-Risk Obstetric Consultation (PIH Surveillance)", category: "Consultation", hsnSacCode: "9993", quantity: 1, unitPrice: 800, gstPercent: 0, total: 800 },
+      ],
+    },
+    {
+      id: "inv-gyn-5",
+      invoiceNo: "INV-2026-GYN005",
+      aptId: "spec-poly-apt-gyne-7",
+      patientId: "gynae-pat-sneha",
+      dayOffset: 0,
+      status: "Paid",
+      paymentMode: "Cash",
+      paymentRef: "CASH-REC-904",
+      items: [
+        { id: "li-gyn-5a", description: "Postnatal Day-10 OPD Gynaecology & Lactation Consultation", category: "Consultation", hsnSacCode: "9993", quantity: 1, unitPrice: 800, gstPercent: 0, total: 800 },
+        { id: "li-gyn-5b", description: "Aseptic LSCS Pfannenstiel Scar Inspection & Dressing", category: "Nursing", hsnSacCode: "9993", quantity: 1, unitPrice: 450, gstPercent: 0, total: 450 },
+      ],
+    },
+  ];
+
+  for (const inv of gynaeInvoices) {
+    const p = polyPatById.get(inv.patientId)!;
+    const invDate = shiftIsoDate(today, inv.dayOffset);
+    const total = inv.items.reduce((sum, item) => sum + item.total, 0);
+    const paidAmount = inv.status === "Paid" ? total : 0;
+    const paidAt =
+      inv.status === "Paid"
+        ? inv.dayOffset === 0
+          ? now
+          : `${invDate}T11:15:00.000Z`
+        : null;
+    insertInvoice.run(
+      inv.id,
+      "tenant-demo-polyclinic",
+      inv.invoiceNo,
+      inv.aptId,
+      p.id,
+      p.name,
+      p.phone,
+      p.uhid,
+      invDate,
+      JSON.stringify(inv.items),
+      total,
+      total,
+      paidAmount,
+      inv.status,
+      inv.paymentMode,
+      inv.paymentRef,
+      "doc-persona-gynae",
+      "Dr. Shalini Mukhopadhyay",
+      inv.status === "Paid" ? "delivered" : "unsent",
+      now,
+      paidAt,
+      inv.id,
+      "tenant-demo-polyclinic",
+      inv.invoiceNo
+    );
+    if (inv.dayOffset === 0) {
+      refreshTodayPaidInvoice.run(today, inv.status === "Paid" ? now : null, inv.id, "tenant-demo-polyclinic");
+    }
+  }
+
+  // Seed 4 Ob/Gyn WhatsApp Conversations + Messages in tenant-demo-polyclinic
+  const insertPolyWaConv = database.prepare(
+    `INSERT INTO whatsapp_conversations (
+       id, patient_phone, patient_name, patient_id, uhid, handover_mode, assigned_staff,
+       tags, preferred_language, unread_count, last_message, last_message_time, updated_at, tenant_id
+     )
+     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+     WHERE NOT EXISTS (
+       SELECT 1 FROM whatsapp_conversations WHERE id = ? OR (tenant_id = ? AND patient_phone = ?)
+     )`
+  );
+  const insertPolyWaMsg = database.prepare(
+    `INSERT INTO whatsapp_messages (
+       id, conversation_id, patient_phone, sender, staff_name, content, translated_content,
+       detected_language, time_display, status, created_at, tenant_id
+     )
+     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+     WHERE NOT EXISTS (SELECT 1 FROM whatsapp_messages WHERE id = ?)`
+  );
+
+  const gynaeWhatsAppThreads: Array<{
+    convId: string;
+    patientId: string;
+    mode: "human" | "bot";
+    lang: "en" | "hi" | "mr";
+    unread: number;
+    tags: string[];
+    lastTime: string;
+    messages: Array<{
+      id: string;
+      sender: "user" | "agent" | "bot";
+      staffName: string | null;
+      content: string;
+      translated: string | null;
+      time: string;
+    }>;
+  }> = [
+    {
+      convId: "conv-gyn-nisha",
+      patientId: "poly-pat-nisha",
+      mode: "human",
+      lang: "en",
+      unread: 1,
+      tags: ["ANC High-Risk", "GDM Sugar Log"],
+      lastTime: "09:25 AM",
+      messages: [
+        {
+          id: "msg-gyn-nisha-1",
+          sender: "user",
+          staffName: null,
+          content: "Good morning Dr. Shalini, my fasting sugar today is 91 mg/dL and 2-hr post-breakfast after 20-min walk is 118 mg/dL. Fetal kick count was 12 kicks in 2 hours.",
+          translated: null,
+          time: "09:18 AM",
+        },
+        {
+          id: "msg-gyn-nisha-2",
+          sender: "agent",
+          staffName: "Dr. Shalini Mukhopadhyay",
+          content: "Good morning Nisha! Both fasting (<95) and 2-hr post-meal (<120 mg/dL) values are right on target. Continue Metformin SR 500 after dinner, split meals, and bring your SMBG log today.",
+          translated: null,
+          time: "09:25 AM",
+        },
+      ],
+    },
+    {
+      convId: "conv-gyn-pooja",
+      patientId: "gynae-pat-pooja",
+      mode: "human",
+      lang: "hi",
+      unread: 1,
+      tags: ["1st Trimester ANC", "Rh Negative"],
+      lastTime: "08:50 AM",
+      messages: [
+        {
+          id: "msg-gyn-pooja-1",
+          sender: "user",
+          staffName: null,
+          content: "नमस्ते डॉ. शालिनी, सुबह हल्की मतली हो रही है। क्या मैं खाली पेट थायरॉइड की गोली लेने के 45 मिनट बाद नींबू पानी और टोस्ट ले सकती हूँ?",
+          translated: "Namaste Dr. Shalini, having mild morning nausea. Can I take lemon water and toast 45 minutes after my empty-stomach thyroid tablet?",
+          time: "08:42 AM",
+        },
+        {
+          id: "msg-gyn-pooja-2",
+          sender: "agent",
+          staffName: "Dr. Shalini Mukhopadhyay",
+          content: "नमस्ते पूजा जी, बिल्कुल! थायरोनॉर्म 25 mcg लेने के 45 मिनट बाद गुनगुना नींबू पानी और सूखा टोस्ट/भुना चना ले सकती हैं। रात को डॉक्सिनेट की 2 गोली जारी रखें।",
+          translated: "Namaste Pooja ji, certainly! After 45 minutes of Thyronorm 25 mcg you may take lemon water and dry toast/roasted chana. Continue Doxinate 2 tablets at bedtime.",
+          time: "08:50 AM",
+        },
+      ],
+    },
+    {
+      convId: "conv-gyn-rekha",
+      patientId: "gynae-pat-rekha",
+      mode: "bot",
+      lang: "mr",
+      unread: 0,
+      tags: ["AUB-L Fibroid", "Lab Follow-up"],
+      lastTime: "Yesterday",
+      messages: [
+        {
+          id: "msg-gyn-rekha-1",
+          sender: "user",
+          staffName: null,
+          content: "नमस्कार मॅडम, आयर्नच्या गोळ्या सुरू केल्यापासून थकवा बराच कमी झाला आहे. पॅप स्मिअर रिपोर्ट नॉर्मल आला आहे का?",
+          translated: "Hello Madam, fatigue has reduced after starting iron tablets. Is my Pap smear report normal?",
+          time: "Yesterday",
+        },
+        {
+          id: "msg-gyn-rekha-2",
+          sender: "agent",
+          staffName: "Dr. Shalini Mukhopadhyay",
+          content: "नमस्कार रेखा ताई, तुमचा LBC पॅप स्मिअर आणि HPV रिपोर्ट पूर्णपणे नॉर्मल (NILM) आला आहे. हिमोग्लोबिन वाढण्यासाठी आयर्नच्या गोळ्या ६० दिवस नियमित घ्या.",
+          translated: "Hello Rekha tai, your LBC Pap smear and HPV co-test report is completely normal (NILM). Continue iron tablets regularly for 60 days to restore hemoglobin.",
+          time: "Yesterday",
+        },
+      ],
+    },
+    {
+      convId: "conv-gyn-kavya",
+      patientId: "gynae-pat-kavya",
+      mode: "bot",
+      lang: "en",
+      unread: 0,
+      tags: ["Fertility & PCOS", "Follicular Study"],
+      lastTime: "10:05 AM",
+      messages: [
+        {
+          id: "msg-gyn-kavya-1",
+          sender: "user",
+          staffName: null,
+          content: "Hi Women's Desk, today is Cycle Day 12 of my Letrozole cycle. Confirming my morning TVS follicular study appointment with Dr. Shalini.",
+          translated: null,
+          time: "10:02 AM",
+        },
+        {
+          id: "msg-gyn-kavya-2",
+          sender: "bot",
+          staffName: null,
+          content: "Confirmed Kavya! Your Cycle Day 12 TVS Follicular Tracking consult with Dr. Shalini Mukhopadhyay (Women & Maternity Suite 203) is confirmed for today.",
+          translated: null,
+          time: "10:05 AM",
+        },
+      ],
+    },
+  ];
+
+  for (const th of gynaeWhatsAppThreads) {
+    const p = polyPatById.get(th.patientId)!;
+    const lastMsg = th.messages[th.messages.length - 1];
+    insertPolyWaConv.run(
+      th.convId,
+      p.phone,
+      p.name,
+      p.id,
+      p.uhid,
+      th.mode,
+      "Dr. Shalini Mukhopadhyay",
+      JSON.stringify(th.tags),
+      th.lang,
+      th.unread,
+      lastMsg.content,
+      th.lastTime,
+      now,
+      "tenant-demo-polyclinic",
+      th.convId,
+      "tenant-demo-polyclinic",
+      p.phone
+    );
+    const convRow = database
+      .prepare("SELECT id FROM whatsapp_conversations WHERE tenant_id = ? AND patient_phone = ?")
+      .get("tenant-demo-polyclinic", p.phone) as { id?: string } | undefined;
+    const effectiveConvId = String(convRow?.id || th.convId);
+    for (const m of th.messages) {
+      insertPolyWaMsg.run(
+        m.id,
+        effectiveConvId,
+        p.phone,
+        m.sender,
+        m.staffName,
+        m.content,
+        m.translated,
+        th.lang,
+        m.time,
+        "read",
+        now,
+        "tenant-demo-polyclinic",
+        m.id
+      );
+    }
   }
 
   // Seed confirmed Pediatric IAP immunization doses for Aadhya (9.5m) & Vihaan (3y) & Arjun (8y)

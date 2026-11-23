@@ -2168,31 +2168,217 @@ export const PrescriptionWriter: React.FC<PrescriptionWriterProps> = ({
         )}
 
         {/* PRINT/PREVIEW SECTION FOR GYNECOLOGY */}
-        {activeSpecialty === 'Gynecology' && gynecologyAssessment && (
-          <div className="space-y-2 pt-2 border-t border-slate-200 bg-purple-50/40 p-3.5 rounded-lg border border-purple-200 text-xs">
-            <h4 className="font-bold text-purple-900 uppercase tracking-wider flex items-center gap-1.5">
-              🌸 Gynecology & Obstetric Assessment
-            </h4>
-            <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 text-slate-700">
-              <div>
-                <span className="font-semibold text-slate-900 block">LMP / EDD:</span>
-                <span>{gynecologyAssessment.lmpDate} (EDD: {gynecologyAssessment.calculatedEdd})</span>
+        {activeSpecialty === 'Gynecology' && gynecologyAssessment && (() => {
+          const gynMode = gynecologyAssessment.clinicalMode || 'Antenatal / Obstetric';
+          const gp = gynecologyAssessment.gravidaPara || { g: 0, p: 0, l: 0, a: 0 };
+          const gpLabel = `G${gp.g} P${gp.p} L${gp.l} A${gp.a}${gynecologyAssessment.ectopicCount ? ` E${gynecologyAssessment.ectopicCount}` : ''}`;
+          return (
+            <div className="space-y-2 pt-2 border-t border-slate-200 bg-purple-50/40 p-3.5 rounded-lg border border-purple-200 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h4 className="font-bold text-purple-900 uppercase tracking-wider flex items-center gap-1.5">
+                  🌸 Gynecology &amp; Obstetric Assessment
+                </h4>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-900 border border-purple-300">
+                  {gynMode}
+                </span>
               </div>
-              <div>
-                <span className="font-semibold text-slate-900 block">Gestational Age:</span>
-                <span className="font-bold text-purple-800">{gynecologyAssessment.gestationalAgeWeeks} Wks ({gynecologyAssessment.trimester})</span>
-              </div>
-              <div>
-                <span className="font-semibold text-slate-900 block">Gravida / Para:</span>
-                <span>G{gynecologyAssessment.gravidaPara.g} P{gynecologyAssessment.gravidaPara.p} L{gynecologyAssessment.gravidaPara.l} A{gynecologyAssessment.gravidaPara.a}</span>
-              </div>
-              <div>
-                <span className="font-semibold text-slate-900 block">Fetal Heart Rate:</span>
-                <span>{gynecologyAssessment.fetalHeartRateBpm || 142} bpm</span>
-              </div>
+
+              {gynMode === 'Antenatal / Obstetric' && (
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 text-slate-700">
+                    <div>
+                      <span className="font-semibold text-slate-900 block">LMP / EDD:</span>
+                      <span>
+                        {gynecologyAssessment.lmpDate || '—'} (EDD: {gynecologyAssessment.correctedUsgEdd || gynecologyAssessment.calculatedEdd || '—'})
+                      </span>
+                    </div>
+                    <div>
+                      <span className="font-semibold text-slate-900 block">Gestational Age:</span>
+                      <span className="font-bold text-purple-800">
+                        {gynecologyAssessment.gestationalAgeWeeks}w {gynecologyAssessment.gestationalAgeDays || 0}d ({gynecologyAssessment.trimester})
+                      </span>
+                    </div>
+                    <div>
+                      <span className="font-semibold text-slate-900 block">Obstetric Formula:</span>
+                      <span>{gpLabel}{gynecologyAssessment.previousDeliveryMode ? ` • ${gynecologyAssessment.previousDeliveryMode}` : ''}</span>
+                    </div>
+                    <div>
+                      <span className="font-semibold text-slate-900 block">Fetal Heart Rate &amp; Lie:</span>
+                      <span>
+                        {gynecologyAssessment.fetalHeartRateBpm || 142} bpm
+                        {gynecologyAssessment.presentation ? ` • ${gynecologyAssessment.presentation}` : ''}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="text-[11px] bg-white p-2 rounded border border-purple-100 text-slate-700 flex flex-wrap gap-x-4 gap-y-1">
+                    {typeof gynecologyAssessment.maternalHemoglobinGdl === 'number' && (
+                      <span><strong>Hb:</strong> {gynecologyAssessment.maternalHemoglobinGdl} g/dL</span>
+                    )}
+                    {gynecologyAssessment.maternalBloodGroupRh && (
+                      <span><strong>BG/Rh:</strong> {gynecologyAssessment.maternalBloodGroupRh}</span>
+                    )}
+                    {typeof gynecologyAssessment.dipsiOgtt2HrMgDl === 'number' && (
+                      <span><strong>DIPSI 2h:</strong> {gynecologyAssessment.dipsiOgtt2HrMgDl} mg/dL</span>
+                    )}
+                    {gynecologyAssessment.nstBppStatus && gynecologyAssessment.nstBppStatus !== 'Not Done' && (
+                      <span><strong>Surveillance:</strong> {gynecologyAssessment.nstBppStatus}</span>
+                    )}
+                    {gynecologyAssessment.pcpndtFormFLogged && (
+                      <span className="text-emerald-800 font-semibold">PCPNDT Form F Statutory Log Attested</span>
+                    )}
+                  </div>
+                </>
+              )}
+
+              {gynMode === 'Fertility & PCOS' && (
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 text-slate-700">
+                    <div>
+                      <span className="font-semibold text-slate-900 block">Cycle Day &amp; Protocol:</span>
+                      <span className="font-bold text-purple-800">
+                        {gynecologyAssessment.fertilityCycleDay ? `CD ${gynecologyAssessment.fertilityCycleDay} • ` : ''}
+                        {gynecologyAssessment.ovulationInductionProtocol || gynecologyAssessment.cycleRegularity || 'PCOS / OI Workup'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="font-semibold text-slate-900 block">Follicular Study (RO / LO):</span>
+                      <span>
+                        RO: {gynecologyAssessment.rightOvaryFollicleMm || '—'} | LO: {gynecologyAssessment.leftOvaryFollicleMm || '—'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="font-semibold text-slate-900 block">Endometrium (ET):</span>
+                      <span>
+                        {typeof gynecologyAssessment.endometrialThicknessMm === 'number'
+                          ? `${gynecologyAssessment.endometrialThicknessMm} mm (${gynecologyAssessment.endometrialPattern || 'TVS'})`
+                          : gynecologyAssessment.pelvicUsgSummary || '—'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="font-semibold text-slate-900 block">Reserve &amp; Trigger Plan:</span>
+                      <span>
+                        {typeof gynecologyAssessment.amhNgMl === 'number' ? `AMH ${gynecologyAssessment.amhNgMl} ng/mL` : gpLabel}
+                        {gynecologyAssessment.ovulationTriggerPlan ? ` • ${gynecologyAssessment.ovulationTriggerPlan}` : ''}
+                      </span>
+                    </div>
+                  </div>
+                  {(gynecologyAssessment.tubalPatencyStatus || gynecologyAssessment.partnerSemenSummary || (gynecologyAssessment.pcosPhenotypeFlags && gynecologyAssessment.pcosPhenotypeFlags.length > 0)) && (
+                    <div className="text-[11px] bg-white p-2 rounded border border-purple-100 text-slate-700 flex flex-wrap gap-x-4 gap-y-1">
+                      {gynecologyAssessment.tubalPatencyStatus && (
+                        <span><strong>Tubal:</strong> {gynecologyAssessment.tubalPatencyStatus}</span>
+                      )}
+                      {gynecologyAssessment.partnerSemenSummary && (
+                        <span><strong>Partner Semen:</strong> {gynecologyAssessment.partnerSemenSummary}</span>
+                      )}
+                      {gynecologyAssessment.pcosPhenotypeFlags && gynecologyAssessment.pcosPhenotypeFlags.length > 0 && (
+                        <span><strong>Phenotype:</strong> {gynecologyAssessment.pcosPhenotypeFlags.join(', ')}</span>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
+
+              {gynMode === 'Gynaecology & Menstrual' && (
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 text-slate-700">
+                    <div>
+                      <span className="font-semibold text-slate-900 block">LMP &amp; Cycle Pattern:</span>
+                      <span>
+                        {gynecologyAssessment.lmpDate || '—'} • {gynecologyAssessment.cycleRegularity || 'Regular'} ({gynecologyAssessment.menstrualFlowVolume || 'Normal'})
+                      </span>
+                    </div>
+                    <div>
+                      <span className="font-semibold text-slate-900 block">FIGO PALM-COEIN:</span>
+                      <span className="font-bold text-purple-800">
+                        {gynecologyAssessment.aubPalmCoeinClass || 'Routine Gynaecology'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="font-semibold text-slate-900 block">Parity &amp; Contraception:</span>
+                      <span>{gpLabel} • {gynecologyAssessment.contraceptionMethod || 'None'}</span>
+                    </div>
+                    <div>
+                      <span className="font-semibold text-slate-900 block">Pap / HPV Screen:</span>
+                      <span>
+                        {gynecologyAssessment.cervicalScreeningPapVia || 'Pending'}
+                        {gynecologyAssessment.hpvVaccineStatus ? ` (${gynecologyAssessment.hpvVaccineStatus})` : ''}
+                      </span>
+                    </div>
+                  </div>
+                  {(gynecologyAssessment.pelvicUsgSummary || gynecologyAssessment.pelvicSpeculumSummary || gynecologyAssessment.chaperonePresent !== undefined) && (
+                    <div className="text-[11px] bg-white p-2 rounded border border-purple-100 text-slate-700 flex flex-wrap gap-x-4 gap-y-1">
+                      {gynecologyAssessment.pelvicUsgSummary && (
+                        <span><strong>Pelvic USG:</strong> {gynecologyAssessment.pelvicUsgSummary}</span>
+                      )}
+                      {gynecologyAssessment.pelvicSpeculumSummary && (
+                        <span><strong>P/S &amp; P/V:</strong> {gynecologyAssessment.pelvicSpeculumSummary}</span>
+                      )}
+                      {typeof gynecologyAssessment.maternalHemoglobinGdl === 'number' && (
+                        <span><strong>Hb:</strong> {gynecologyAssessment.maternalHemoglobinGdl} g/dL</span>
+                      )}
+                      {gynecologyAssessment.chaperonePresent && (
+                        <span className="text-emerald-800 font-semibold">Female Chaperone Present</span>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
+
+              {gynMode === 'Postnatal / Menopause' && (
+                (gynecologyAssessment.postnatalOrMenopauseFocus || 'Postnatal / Lactation (42d)') === 'Postnatal / Lactation (42d)'
+                  && (gynecologyAssessment.postpartumDays !== undefined || gynecologyAssessment.lochiaAndScarStatus || gynecologyAssessment.lactationLatchStatus)
+              ) ? (
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 text-slate-700">
+                  <div>
+                    <span className="font-semibold text-slate-900 block">Postpartum Day:</span>
+                    <span className="font-bold text-purple-800">
+                      Day {gynecologyAssessment.postpartumDays ?? '—'} ({gpLabel})
+                    </span>
+                  </div>
+                  <div>
+                    <span className="font-semibold text-slate-900 block">Lochia &amp; Scar Status:</span>
+                    <span>{gynecologyAssessment.lochiaAndScarStatus || 'Healthy involution'}</span>
+                  </div>
+                  <div>
+                    <span className="font-semibold text-slate-900 block">Lactation &amp; Latch:</span>
+                    <span>{gynecologyAssessment.lactationLatchStatus || 'Exclusive BF — Good Latch'}</span>
+                  </div>
+                  <div>
+                    <span className="font-semibold text-slate-900 block">EPDS Mood &amp; Spacing:</span>
+                    <span>
+                      {gynecologyAssessment.epdsPostnatalMood || 'Normal (EPDS <10)'}
+                      {gynecologyAssessment.contraceptionMethod ? ` • ${gynecologyAssessment.contraceptionMethod}` : ''}
+                    </span>
+                  </div>
+                </div>
+              ) : gynMode === 'Postnatal / Menopause' ? (
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 text-slate-700">
+                  <div>
+                    <span className="font-semibold text-slate-900 block">Vasomotor / GSM:</span>
+                    <span className="font-bold text-purple-800">
+                      {gynecologyAssessment.vasomotorSeverity || 'Moderate'} ({gpLabel})
+                    </span>
+                  </div>
+                  <div>
+                    <span className="font-semibold text-slate-900 block">DEXA &amp; Mammogram:</span>
+                    <span>{gynecologyAssessment.dexaTScoreSummary || gynecologyAssessment.pelvicUsgSummary || 'Scheduled'}</span>
+                  </div>
+                  <div>
+                    <span className="font-semibold text-slate-900 block">Cervical Screen:</span>
+                    <span>{gynecologyAssessment.cervicalScreeningPapVia || 'LBC NILM'}</span>
+                  </div>
+                  <div>
+                    <span className="font-semibold text-slate-900 block">Clinical Breast Exam:</span>
+                    <span>
+                      {gynecologyAssessment.breastExamSummary || 'Normal CBE'}
+                      {gynecologyAssessment.chaperonePresent ? ' • Chaperone Present' : ''}
+                    </span>
+                  </div>
+                </div>
+              ) : null}
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* DRUG ADDER & FORMULARY SEARCH (Interactive Builder) */}
         <div className="no-print bg-slate-50 p-3.5 rounded-lg border border-slate-200 space-y-3">

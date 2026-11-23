@@ -424,6 +424,76 @@ export const GynecologyRxModule: React.FC<GynecologyRxModuleProps> = ({
             </div>
           </div>
 
+          {/* Fetal Biometry, Placental Site, Cervical Length & NST / BPP Strip */}
+          <div className="bg-white rounded-lg border border-pink-200/70 p-3.5 shadow-xs space-y-2.5">
+            <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5 border-b border-slate-100 pb-2">
+              <Sparkles className="w-3.5 h-3.5 text-purple-600" />
+              Fetal Biometry, Placental Localization, Cervical Length &amp; NST / BPP Surveillance
+            </span>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase block">Est. Fetal Weight (g)</label>
+                <input
+                  type="number"
+                  placeholder="e.g. 950 / 2450"
+                  value={assessment.estimatedFetalWeightGrams ?? ''}
+                  onChange={(e) =>
+                    onChange({
+                      ...assessment,
+                      estimatedFetalWeightGrams: e.target.value === '' ? undefined : parseInt(e.target.value, 10),
+                    })
+                  }
+                  className="w-full mt-1 p-1.5 rounded border bg-slate-50 border-slate-200 text-xs font-semibold text-slate-800"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase block">Cervical Length (mm)</label>
+                <input
+                  type="number"
+                  placeholder="Normal >= 25 mm"
+                  value={assessment.cervicalLengthMm ?? ''}
+                  onChange={(e) =>
+                    onChange({
+                      ...assessment,
+                      cervicalLengthMm: e.target.value === '' ? undefined : parseInt(e.target.value, 10),
+                    })
+                  }
+                  className={`w-full mt-1 p-1.5 rounded border text-xs font-bold ${
+                    typeof assessment.cervicalLengthMm === 'number' && assessment.cervicalLengthMm > 0 && assessment.cervicalLengthMm < 25
+                      ? 'bg-rose-50 border-rose-300 text-rose-900'
+                      : 'bg-slate-50 border-slate-200 text-slate-800'
+                  }`}
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase block">Placental Site</label>
+                <select
+                  value={assessment.placentalLocalization || 'Fundal / Anterior'}
+                  onChange={(e) => onChange({ ...assessment, placentalLocalization: e.target.value as any })}
+                  className="w-full mt-1 p-1.5 rounded border bg-slate-50 border-slate-200 text-xs font-semibold text-slate-800"
+                >
+                  <option value="Fundal / Anterior">Fundal / Anterior (Upper)</option>
+                  <option value="Fundal / Posterior">Fundal / Posterior (Upper)</option>
+                  <option value="Low Lying (Grade I/II)">Low Lying (Grade I / II ⚠️)</option>
+                  <option value="Placenta Previa (Major)">Placenta Previa (Major 🚨)</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase block">NST / BPP Surveillance</label>
+                <select
+                  value={assessment.nstBppStatus || 'Not Done'}
+                  onChange={(e) => onChange({ ...assessment, nstBppStatus: e.target.value as any })}
+                  className="w-full mt-1 p-1.5 rounded border bg-slate-50 border-slate-200 text-xs font-semibold text-slate-800"
+                >
+                  <option value="Not Done">Not Indicated (&lt;32w)</option>
+                  <option value="Reactive NST">Reactive NST (Reassuring)</option>
+                  <option value="BPP 8/8 Reassuring">Biophysical Profile 8/8</option>
+                  <option value="Non-Reactive — Repeat/BPP">Non-Reactive ⚠️ Escalate</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
           {/* Physical Findings & Antenatal Protocol Milestones */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div className="bg-white rounded-lg border border-slate-200 p-3.5 space-y-3 shadow-xs">
@@ -711,6 +781,310 @@ export const GynecologyRxModule: React.FC<GynecologyRxModuleProps> = ({
               </div>
             </div>
           </div>
+
+          {/* MODE 3 DEDICATED: FOLLICULAR STUDY, OVULATION INDUCTION & INFERTILITY WORKUP */}
+          {activeMode === 'Fertility & PCOS' && (
+            <div className="bg-white rounded-lg border border-purple-200 p-3.5 space-y-3 shadow-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-purple-100 pb-2">
+                <span className="text-xs font-bold text-purple-950 flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-purple-600" />
+                  Follicular Monitoring (TVS), Ovulation Induction &amp; Couple Fertility Workup (ISAR / FOGSI)
+                </span>
+                {typeof assessment.endometrialThicknessMm === 'number' && assessment.endometrialThicknessMm >= 8 && (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                    Receptive Endometrium ({assessment.endometrialThicknessMm} mm)
+                  </span>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 text-xs">
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase block">Cycle Day (CD)</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={45}
+                    placeholder="e.g. CD 12"
+                    value={assessment.fertilityCycleDay ?? ''}
+                    onChange={(e) =>
+                      onChange({
+                        ...assessment,
+                        fertilityCycleDay: e.target.value === '' ? undefined : parseInt(e.target.value, 10),
+                      })
+                    }
+                    className="w-full mt-1 p-1.5 rounded border bg-purple-50/40 border-purple-200 text-xs font-bold text-purple-900"
+                  />
+                </div>
+
+                <div className="col-span-1 sm:col-span-2">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase block">Ovulation Induction Protocol</label>
+                  <select
+                    value={assessment.ovulationInductionProtocol || 'Letrozole 2.5 mg (CD2-6)'}
+                    onChange={(e) => onChange({ ...assessment, ovulationInductionProtocol: e.target.value as any })}
+                    className="w-full mt-1 p-1.5 rounded border bg-slate-50 border-slate-200 text-xs font-semibold text-slate-800"
+                  >
+                    <option value="Natural Cycle">Natural Cycle Follicular Tracking</option>
+                    <option value="Letrozole 2.5 mg (CD2-6)">Letrozole 2.5 mg OD (CD2–CD6)</option>
+                    <option value="Letrozole 5 mg (CD2-6)">Letrozole 5 mg OD (CD2–CD6)</option>
+                    <option value="Clomiphene Citrate (CD2-6)">Clomiphene Citrate 50/100 mg (CD2–CD6)</option>
+                    <option value="Gonadotropin (rFSH / hMG)">Low-Dose Gonadotropin (rFSH / hMG)</option>
+                    <option value="IUI / IVF Prep">IUI / Controlled Ovarian Stimulation</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase block">Right Ovary (mm)</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. 19x18 mm DF"
+                    value={assessment.rightOvaryFollicleMm || ''}
+                    onChange={(e) => onChange({ ...assessment, rightOvaryFollicleMm: e.target.value })}
+                    className="w-full mt-1 p-1.5 rounded border bg-slate-50 border-slate-200 text-xs font-semibold"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase block">Left Ovary (mm)</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. 11 mm / PCOM"
+                    value={assessment.leftOvaryFollicleMm || ''}
+                    onChange={(e) => onChange({ ...assessment, leftOvaryFollicleMm: e.target.value })}
+                    className="w-full mt-1 p-1.5 rounded border bg-slate-50 border-slate-200 text-xs font-semibold"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase block">ET (mm) &amp; Pattern</label>
+                  <div className="flex gap-1 mt-1">
+                    <input
+                      type="number"
+                      step="0.1"
+                      placeholder="8.4"
+                      value={assessment.endometrialThicknessMm ?? ''}
+                      onChange={(e) =>
+                        onChange({
+                          ...assessment,
+                          endometrialThicknessMm: e.target.value === '' ? undefined : parseFloat(e.target.value),
+                        })
+                      }
+                      className="w-14 p-1.5 rounded border bg-slate-50 border-slate-200 text-xs font-bold"
+                    />
+                    <select
+                      value={assessment.endometrialPattern || 'Trilaminar (Grade A)'}
+                      onChange={(e) => onChange({ ...assessment, endometrialPattern: e.target.value as any })}
+                      className="flex-1 p-1.5 rounded border bg-slate-50 border-slate-200 text-[11px] font-semibold"
+                    >
+                      <option value="Trilaminar (Grade A)">Trilaminar</option>
+                      <option value="Isoechoic (Grade B)">Isoechoic</option>
+                      <option value="Homogeneous">Homogeneous</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5 text-xs">
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase block">AMH (ng/mL)</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    placeholder="e.g. 3.8"
+                    value={assessment.amhNgMl ?? ''}
+                    onChange={(e) =>
+                      onChange({
+                        ...assessment,
+                        amhNgMl: e.target.value === '' ? undefined : parseFloat(e.target.value),
+                      })
+                    }
+                    className="w-full mt-1 p-1.5 rounded border bg-slate-50 border-slate-200 text-xs font-semibold"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase block">Tubal Patency (HSG / SIS)</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Bilateral spill free"
+                    value={assessment.tubalPatencyStatus || ''}
+                    onChange={(e) => onChange({ ...assessment, tubalPatencyStatus: e.target.value })}
+                    className="w-full mt-1 p-1.5 rounded border bg-slate-50 border-slate-200 text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase block">Partner Semen (WHO 6th)</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Normozoospermia 42M/mL"
+                    value={assessment.partnerSemenSummary || ''}
+                    onChange={(e) => onChange({ ...assessment, partnerSemenSummary: e.target.value })}
+                    className="w-full mt-1 p-1.5 rounded border bg-slate-50 border-slate-200 text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase block">Trigger &amp; TI / IUI Plan</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Inj r-hCG 250mcg -> IUI at 36h"
+                    value={assessment.ovulationTriggerPlan || ''}
+                    onChange={(e) => onChange({ ...assessment, ovulationTriggerPlan: e.target.value })}
+                    className="w-full mt-1 p-1.5 rounded border bg-purple-50/40 border-purple-200 text-xs font-semibold text-purple-950"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* MODE 2 DEDICATED: FIGO PALM-COEIN AUB & SYNDROMIC RTI/STI CARE */}
+          {activeMode === 'Gynaecology & Menstrual' && (
+            <div className="bg-white rounded-lg border border-pink-200 p-3.5 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs shadow-xs">
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase block">
+                  FIGO PALM-COEIN Classification (Abnormal Uterine Bleeding)
+                </label>
+                <select
+                  value={assessment.aubPalmCoeinClass || 'Not Applicable'}
+                  onChange={(e) => onChange({ ...assessment, aubPalmCoeinClass: e.target.value as any })}
+                  className="w-full mt-1 p-1.5 rounded border bg-slate-50 border-slate-200 text-xs font-semibold text-slate-800"
+                >
+                  <option value="Not Applicable">Not Applicable / Routine Gynae</option>
+                  <option value="AUB-P (Polyp)">AUB-P (Endometrial / Cervical Polyp)</option>
+                  <option value="AUB-A (Adenomyosis)">AUB-A (Adenomyosis)</option>
+                  <option value="AUB-L (Leiomyoma / Fibroid)">AUB-L (Leiomyoma / Submucosal-Intramural Fibroid)</option>
+                  <option value="AUB-M (Malignancy / Hyperplasia)">AUB-M (Endometrial Hyperplasia / EIN ⚠️)</option>
+                  <option value="AUB-C (Coagulopathy)">AUB-C (Systemic Coagulopathy)</option>
+                  <option value="AUB-O (Ovulatory)">AUB-O (Ovulatory Dysfunction)</option>
+                  <option value="AUB-E (Endometrial)">AUB-E (Primary Endometrial)</option>
+                  <option value="AUB-I (Iatrogenic)">AUB-I (Iatrogenic / Anticoagulant / Hormonal)</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase block">
+                  Leucorrhea / PID / Endometriosis Clinical Notes
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Candidal vaginitis / Chronic pelvic pain / Dyspareunia check"
+                  value={assessment.vaginalDischargeSyndromic || ''}
+                  onChange={(e) => onChange({ ...assessment, vaginalDischargeSyndromic: e.target.value })}
+                  className="w-full mt-1 p-1.5 rounded border bg-slate-50 border-slate-200 text-xs"
+                />
+              </div>
+            </div>
+          )}
+
+          {/* MODE 4 DEDICATED: POSTNATAL / PUERPERIUM (42d) & MENOPAUSE CLINIC */}
+          {activeMode === 'Postnatal / Menopause' && (
+            <div className="bg-white rounded-lg border border-rose-200 p-3.5 space-y-3 shadow-xs text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-rose-100 pb-2">
+                <span className="text-xs font-bold text-rose-950 flex items-center gap-1.5">
+                  <Heart className="w-3.5 h-3.5 text-rose-600" />
+                  Postnatal Puerperium (MoHFW 42-Day Care) &amp; Menopause / Bone Health Suite
+                </span>
+                <div className="flex gap-1.5">
+                  {(['Postnatal / Lactation (42d)', 'Perimenopause / Menopause'] as const).map((focus) => {
+                    const selected = (assessment.postnatalOrMenopauseFocus || 'Postnatal / Lactation (42d)') === focus;
+                    return (
+                      <button
+                        key={focus}
+                        type="button"
+                        onClick={() => onChange({ ...assessment, postnatalOrMenopauseFocus: focus })}
+                        className={`px-2.5 py-1 rounded text-[11px] font-bold border ${
+                          selected
+                            ? 'bg-rose-600 text-white border-rose-700'
+                            : 'bg-slate-50 text-slate-600 border-slate-200'
+                        }`}
+                      >
+                        {focus}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {(assessment.postnatalOrMenopauseFocus || 'Postnatal / Lactation (42d)') === 'Postnatal / Lactation (42d)' ? (
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-500 uppercase block">Postpartum Day</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={365}
+                      placeholder="e.g. Day 10 / Day 42"
+                      value={assessment.postpartumDays ?? ''}
+                      onChange={(e) =>
+                        onChange({
+                          ...assessment,
+                          postpartumDays: e.target.value === '' ? undefined : parseInt(e.target.value, 10),
+                        })
+                      }
+                      className="w-full mt-1 p-1.5 rounded border bg-slate-50 border-slate-200 text-xs font-bold"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-500 uppercase block">Lochia &amp; Scar / Episiotomy</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Lochia serosa; LSCS scar clean & dry"
+                      value={assessment.lochiaAndScarStatus || ''}
+                      onChange={(e) => onChange({ ...assessment, lochiaAndScarStatus: e.target.value })}
+                      className="w-full mt-1 p-1.5 rounded border bg-slate-50 border-slate-200 text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-500 uppercase block">Lactation &amp; Latch</label>
+                    <select
+                      value={assessment.lactationLatchStatus || 'Exclusive BF — Good Latch'}
+                      onChange={(e) => onChange({ ...assessment, lactationLatchStatus: e.target.value as any })}
+                      className="w-full mt-1 p-1.5 rounded border bg-slate-50 border-slate-200 text-xs font-semibold"
+                    >
+                      <option value="Exclusive BF — Good Latch">Exclusive BF — Good Latch</option>
+                      <option value="Latch Support Needed">Cracked Nipple / Latch Support</option>
+                      <option value="Mixed / Top Feed">Mixed / Galactagogue Counsel</option>
+                      <option value="Lactation Suppressed">Lactation Suppressed</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-500 uppercase block">Postpartum Mood (EPDS)</label>
+                    <select
+                      value={assessment.epdsPostnatalMood || 'Normal (EPDS <10)'}
+                      onChange={(e) => onChange({ ...assessment, epdsPostnatalMood: e.target.value as any })}
+                      className="w-full mt-1 p-1.5 rounded border bg-slate-50 border-slate-200 text-xs font-semibold"
+                    >
+                      <option value="Normal (EPDS <10)">Normal Mood (EPDS &lt;10)</option>
+                      <option value="Borderline (10-12) — Counsel">Baby Blues / Borderline (10–12)</option>
+                      <option value="High Risk (>=13) — Refer">Postpartum Depression Risk (&gt;=13 ⚠️)</option>
+                    </select>
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-500 uppercase block">Vasomotor / GSM Severity (IMS)</label>
+                    <select
+                      value={assessment.vasomotorSeverity || 'Moderate'}
+                      onChange={(e) => onChange({ ...assessment, vasomotorSeverity: e.target.value as any })}
+                      className="w-full mt-1 p-1.5 rounded border bg-slate-50 border-slate-200 text-xs font-semibold"
+                    >
+                      <option value="None">None / Routine Preventive</option>
+                      <option value="Mild">Mild Hot Flushes / Sleep Disturbance</option>
+                      <option value="Moderate">Moderate VMS + Genitourinary Dryness (GSM)</option>
+                      <option value="Severe Hot Flushes / Night Sweats">Severe VMS — MHT Eligibility Screen</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-500 uppercase block">DEXA Bone Density (T-Score) &amp; Mammogram</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Lumbar T-score -1.6 (Osteopenia); Mammogram BIRADS-1; ET 3.4 mm"
+                      value={assessment.dexaTScoreSummary || ''}
+                      onChange={(e) => onChange({ ...assessment, dexaTScoreSummary: e.target.value })}
+                      className="w-full mt-1 p-1.5 rounded border bg-slate-50 border-slate-200 text-xs"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {/* PCOS, Fertility & Pelvic / USG Findings */}
