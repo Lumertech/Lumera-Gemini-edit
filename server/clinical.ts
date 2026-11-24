@@ -1532,12 +1532,12 @@ export function createClinicalRouter(): Router {
         }
         const requestedPhone = String(req.query.phone || "").trim();
         if (requestedPhone && phoneMatchKey(requestedPhone) !== phoneMatchKey(anchorPhone)) {
-          return res.status(403).json({ error: "Patients may only read profiles on their own verified mobile number" });
+          return res.status(403).json({ error: "Patients may only read profiles on their own registered mobile number" });
         }
         const matches = listTenantPatientsByPhone(tenantId, anchorPhone);
         const requestedPatientId = String(req.query.patientId || "").trim();
         if (requestedPatientId && !matches.some((m) => String(m.id) === requestedPatientId)) {
-          return res.status(403).json({ error: "Patients may only read profiles on their own verified mobile number" });
+          return res.status(403).json({ error: "Patients may only read profiles on their own registered mobile number" });
         }
         const patients = matches.map(mapPatient);
         const ids = patients.map((p) => p.id).filter(Boolean);
