@@ -53,6 +53,7 @@ export function upsertWhatsAppNumber(actor: WabaActor, input: UpsertWhatsAppNumb
 
   const wabaId = String(input.wabaId ?? existing?.waba_id ?? "").trim();
   const phoneNumberId = String(input.phoneNumberId ?? existing?.phone_number_id ?? "").trim();
+  const displayPhoneNumber = String(input.displayPhoneNumber ?? existing?.display_phone_number ?? "").trim();
   const metaWabaName = String(input.metaWabaName ?? existing?.meta_waba_name ?? "").trim();
   const status = (input.status || (wabaId && phoneNumberId ? "connected" : existing?.status) || "pending") as WhatsAppNumberStatus;
   const connectedVia = (input.connectedVia || existing?.connected_via || (actor.kind === "platform_admin" ? "master_admin" : "embedded_signup")) as WhatsAppConnectedVia;
@@ -86,18 +87,18 @@ export function upsertWhatsAppNumber(actor: WabaActor, input: UpsertWhatsAppNumb
     database
       .prepare(
         `UPDATE whatsapp_numbers
-         SET waba_id = ?, phone_number_id = ?, meta_waba_name = ?, status = ?, connected_via = ?, meta_token_ref = ?, meta_token_expires_at = ?, updated_at = ?
+         SET waba_id = ?, phone_number_id = ?, display_phone_number = ?, meta_waba_name = ?, status = ?, connected_via = ?, meta_token_ref = ?, meta_token_expires_at = ?, updated_at = ?
          WHERE id = ?`
       )
-      .run(wabaId, phoneNumberId, metaWabaName, status, connectedVia, tokenRef, expiresAt, now, existing.id);
+      .run(wabaId, phoneNumberId, displayPhoneNumber, metaWabaName, status, connectedVia, tokenRef, expiresAt, now, existing.id);
   } else {
     database
       .prepare(
         `INSERT INTO whatsapp_numbers
-          (id, owner_type, owner_id, waba_id, phone_number_id, meta_waba_name, status, connected_via, meta_token_ref, meta_token_expires_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          (id, owner_type, owner_id, waba_id, phone_number_id, display_phone_number, meta_waba_name, status, connected_via, meta_token_ref, meta_token_expires_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(numberId, ownerType, ownerId, wabaId, phoneNumberId, metaWabaName, status, connectedVia, tokenRef, expiresAt, now, now);
+      .run(numberId, ownerType, ownerId, wabaId, phoneNumberId, displayPhoneNumber, metaWabaName, status, connectedVia, tokenRef, expiresAt, now, now);
   }
 
   storeToken(database, numberId, tokenRef, tokenToStore, input.registrationPin);
@@ -119,7 +120,7 @@ export function disconnectWhatsAppNumber(actor: WabaActor, ownerType: WhatsAppOw
   database
     .prepare(
       `UPDATE whatsapp_numbers
-       SET status = 'disconnected', waba_id = '', phone_number_id = '', updated_at = ?
+       SET status = 'disconnected', waba_id = '', phone_number_id = '', display_phone_number = '', updated_at = ?
        WHERE id = ?`
     )
     .run(now, existing.id);
@@ -141,6 +142,7 @@ export function publicWhatsAppNumber(row: WhatsAppNumberRow) {
     ownerId: row.owner_id,
     wabaId: row.waba_id,
     phoneNumberId: row.phone_number_id,
+    displayPhoneNumber: row.display_phone_number || "",
     metaWabaName: row.meta_waba_name,
     status: row.status,
     connectedVia: row.connected_via,

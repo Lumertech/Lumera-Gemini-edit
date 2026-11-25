@@ -182,6 +182,31 @@ function keepsLooseDuplicateCsrf(req: Request): boolean {
   return LOOSE_DUPLICATE_CSRF_PATHS.has(`/api${path.startsWith("/") ? path : `/${path}`}`);
 }
 
+const OAUTH_BROWSER_NAVIGATION_PATHS = new Set([
+  "/api/auth/facebook",
+  "/api/auth/facebook/callback",
+  "/api/auth/google",
+  "/api/auth/google/callback",
+  "/auth/facebook",
+  "/auth/facebook/callback",
+  "/auth/google",
+  "/auth/google/callback",
+]);
+
+/**
+ * Top-level browser navigations for OAuth initiation and provider redirect
+ * callbacks (Facebook / Google) send GET with no Origin (or literal Origin: null)
+ * and `Sec-Fetch-Site: cross-site`. Signed OAuth `state` protects the callback;
+ * an explicit disallowed `Origin` header is still rejected before this check.
+ */
+export function isOAuthBrowserNavigationGet(req: Request): boolean {
+  const method = String(req.method || "GET").toUpperCase();
+  if (method !== "GET" && method !== "HEAD") return false;
+  const p1 = requestPathname(req).toLowerCase();
+  const p2 = String(req.originalUrl || "").split("?")[0].toLowerCase();
+  return OAUTH_BROWSER_NAVIGATION_PATHS.has(p1) || OAUTH_BROWSER_NAVIGATION_PATHS.has(p2);
+}
+
 /**
  * Safe document navigations (GET/HEAD to any SPA/HTML path — /login, /app,
  * /w/{clinic}/… deep links, admin shells, etc.) omit Origin or send the
@@ -249,6 +274,7 @@ export function corsShouldReject(req: Request, env: NodeJS.ProcessEnv = process.
   if (!isMissingOrNullOrigin(origin)) return !originAllowed(origin, env);
   if (!isProductionFromEnv(env)) return false;
   if (isSafeDocumentGetWithoutOrigin(req)) return false;
+  if (isOAuthBrowserNavigationGet(req)) return false;
   if (isLiteralNullOrigin(origin)) return true;
   if (allowsAbsentOriginApiRequest(req)) return false;
   return true;

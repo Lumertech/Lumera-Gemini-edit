@@ -8,7 +8,14 @@ import { createMetaRouter } from "./meta.ts";
 import { bootWhatsAppOwnershipSchema, createWhatsAppNumbersRouter, practitionerLinkMiddleware } from "./whatsapp-numbers-routes.ts";
 import { getDb, initDatabase } from "./db.ts";
 import { hashPassword } from "./password.ts";
-import { completeEmbeddedSignup, embeddedSignupPublicConfig, exchangeEmbeddedSignupCode, subscribeAppToCustomerWaba } from "./embedded-signup.ts";
+import {
+  completeEmbeddedSignup,
+  EmbeddedSignupError,
+  embeddedSignupPublicConfig,
+  exchangeEmbeddedSignupCode,
+  subscribeAppToCustomerWaba,
+  syncAndProvisionClinicWabaTemplates,
+} from "./embedded-signup.ts";
 import { clinicActor, getTenantWabaNumber, getWhatsAppRegistrationPin } from "./whatsapp-numbers.ts";
 import { buildMetaReadinessOverview } from "./meta-security.ts";
 import {
@@ -420,6 +427,145 @@ describe("Embedded Signup v4 handshake", () => {
     } finally {
       process.env.NODE_ENV = prevNode;
     }
+  });
+
+  it("skips Cloud API /register when signupEvent is FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING (Coexistence) and stores displayPhoneNumber", async () => {
+    const clinic = seedClinic("coexistence");
+    const calls: Array<{ url: string; method: string; body?: string }> = [];
+    const wabaId = `10229${Date.now().toString().slice(-8)}${Math.floor(100 + Math.random() * 900)}`;
+    const phoneId = `10654${Date.now().toString().slice(-8)}${Math.floor(100 + Math.random() * 900)}`;
+    const result = await completeEmbeddedSignup({
+      code: "AQB-coexistence-code",
+      wabaId,
+      phoneNumberId: phoneId,
+      actor: clinicActor(clinic.tenantId),
+      ownerType: "tenant",
+      ownerId: clinic.tenantId,
+      signupEvent: "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING",
+      fetchImpl: mockGraphFetch(calls, { wabaId, phoneId }) as typeof fetch,
+    });
+    assert.equal(result.coexistence, true);
+    assert.equal(result.registrationPinStored, false);
+    assert.equal(result.whatsappNumber.displayPhoneNumber, "+15550001234");
+    assert.equal(calls.some((c) => c.url.includes("/subscribed_apps")), true);
+    assert.equal(calls.some((c) => c.url.includes("/register")), false, "Coexistence must not call /register");
+  });
+
+  it("returns 409 PIN_REQUIRED when Meta /register reports 2FA PIN mismatch (133005) and succeeds when retried with existingPin", async () => {
+    const clinic = seedClinic("pin-mismatch");
+    const calls: Array<{ url: string; method: string; body?: string }> = [];
+    const wabaId = `10229${Date.now().toString().slice(-8)}${Math.floor(100 + Math.random() * 900)}`;
+    const phoneId = `10654${Date.now().toString().slice(-8)}${Math.floor(100 + Math.random() * 900)}`;
+    const baseFetch = mockGraphFetch(calls, { wabaId, phoneId });
+    const pinEnforcedFetch: typeof fetch = async (input, init) => {
+      const url = String(input);
+      if (url.includes(`/${phoneId}/register`)) {
+        const parsed = JSON.parse(String(init?.body || "{}")) as { pin?: string };
+        calls.push({ url, method: "POST", body: String(init?.body || "") });
+        if (parsed.pin !== "654321") {
+          return new Response(
+            JSON.stringify({
+              error: {
+                message: "Two step verification code mismatch",
+                code: 133005,
+                error_subcode: 2388001,
+              },
+            }),
+            { status: 400 }
+          );
+        }
+        return new Response(JSON.stringify({ success: true }), { status: 200 });
+      }
+      return baseFetch(input, init);
+    };
+
+    await assert.rejects(
+      () =>
+        completeEmbeddedSignup({
+          code: "AQB-pin-code",
+          wabaId,
+          phoneNumberId: phoneId,
+          actor: clinicActor(clinic.tenantId),
+          ownerType: "tenant",
+          ownerId: clinic.tenantId,
+          fetchImpl: pinEnforcedFetch,
+        }),
+      (err: unknown) => {
+        assert.equal(err instanceof EmbeddedSignupError, true);
+        assert.equal((err as EmbeddedSignupError).status, 409);
+        assert.equal((err as EmbeddedSignupError).code, "PIN_REQUIRED");
+        return true;
+      }
+    );
+
+    const retried = await completeEmbeddedSignup({
+      code: "AQB-pin-code",
+      wabaId,
+      phoneNumberId: phoneId,
+      actor: clinicActor(clinic.tenantId),
+      ownerType: "tenant",
+      ownerId: clinic.tenantId,
+      existingPin: "654321",
+      fetchImpl: pinEnforcedFetch,
+    });
+    assert.equal(retried.registrationPinStored, true);
+    const row = getTenantWabaNumber(clinic.tenantId);
+    assert.equal(getWhatsAppRegistrationPin(row!.meta_token_ref), "654321");
+  });
+
+  it("syncs existing WABA templates into meta_templates and provisions missing standard utility templates", async () => {
+    const clinic = seedClinic("tpl-sync");
+    const wabaId = `10229${Date.now().toString().slice(-8)}${Math.floor(100 + Math.random() * 900)}`;
+    const postedTemplates: string[] = [];
+    const tplFetch: typeof fetch = async (input, init) => {
+      const url = String(input);
+      const method = String(init?.method || "GET").toUpperCase();
+      if (url.includes(`/${wabaId}/message_templates`) && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: "meta-tpl-existing-1",
+                name: "lumera_appointment_reminder",
+                category: "UTILITY",
+                language: "en_US",
+                status: "APPROVED",
+                components: [{ type: "BODY", text: "Hi {{1}}, reminder for {{2}} with {{3}} on {{4}} at {{5}}." }],
+              },
+            ],
+          }),
+          { status: 200 }
+        );
+      }
+      if (url.includes(`/${wabaId}/message_templates`) && method === "POST") {
+        const parsed = JSON.parse(String(init?.body || "{}")) as { name?: string };
+        postedTemplates.push(String(parsed.name || ""));
+        return new Response(
+          JSON.stringify({ id: `meta-created-${postedTemplates.length}`, status: "PENDING" }),
+          { status: 200 }
+        );
+      }
+      return new Response(JSON.stringify({ error: { message: `unexpected ${url}` } }), { status: 500 });
+    };
+
+    const summary = await syncAndProvisionClinicWabaTemplates({
+      tenantId: clinic.tenantId,
+      wabaId,
+      accessToken: BUSINESS_TOKEN,
+      fetchImpl: tplFetch,
+    });
+    assert.equal(summary.synced, 1);
+    assert.equal(summary.provisioned, 2);
+    assert.deepEqual(
+      postedTemplates.sort(),
+      ["lumera_appointment_booked", "lumera_payment_receipt"].sort()
+    );
+    const rows = getDb()
+      .prepare("SELECT name, status FROM meta_templates WHERE tenant_id = ? ORDER BY name ASC")
+      .all(clinic.tenantId) as Array<{ name: string; status: string }>;
+    assert.equal(rows.some((r) => r.name === "lumera_appointment_reminder" && r.status === "APPROVED"), true);
+    assert.equal(rows.some((r) => r.name === "lumera_appointment_booked" && r.status === "PENDING"), true);
+    assert.equal(rows.some((r) => r.name === "lumera_payment_receipt" && r.status === "PENDING"), true);
   });
 });
 

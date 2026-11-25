@@ -25,6 +25,7 @@ export type WhatsAppNumberRow = {
   owner_id: string;
   waba_id: string;
   phone_number_id: string;
+  display_phone_number?: string;
   meta_waba_name: string;
   status: WhatsAppNumberStatus;
   connected_via: WhatsAppConnectedVia | "";
@@ -102,6 +103,11 @@ export function ensureWhatsAppOwnershipSchema(database: DatabaseSync) {
   `);
   try {
     database.exec("ALTER TABLE whatsapp_number_secrets ADD COLUMN registration_pin TEXT NOT NULL DEFAULT ''");
+  } catch {
+    /* already present */
+  }
+  try {
+    database.exec("ALTER TABLE whatsapp_numbers ADD COLUMN display_phone_number TEXT NOT NULL DEFAULT ''");
   } catch {
     /* already present */
   }
@@ -602,6 +608,7 @@ export type UpsertWhatsAppNumberInput = {
   ownerId: string;
   wabaId?: string;
   phoneNumberId?: string;
+  displayPhoneNumber?: string;
   metaWabaName?: string;
   metaAccessToken?: string;
   status?: WhatsAppNumberStatus;

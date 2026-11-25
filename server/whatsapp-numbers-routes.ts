@@ -14,6 +14,7 @@ import {
   ensurePractitionerForUser,
   getPractitionerIdForUser,
   getTenantWabaNumber,
+  getWhatsAppNumberSecret,
   listAdminWhatsAppDirectory,
   migrateTenantWabasToWhatsAppNumbers,
   migrateWhatsAppSecretEncryption,
@@ -30,6 +31,7 @@ import {
   completeEmbeddedSignup,
   EmbeddedSignupError,
   embeddedSignupPublicConfig,
+  syncAndProvisionClinicWabaTemplates,
 } from "./embedded-signup.ts";
 import { wabaOnboardingCapsOverview } from "./waba-onboarding-caps.ts";
 import { handleMetaDataDeletionPost } from "./meta-signed-request.ts";
@@ -276,7 +278,7 @@ export function createWhatsAppNumbersRouter(): Router {
       doctorNumber: doctorNumber ? publicWhatsAppNumber(doctorNumber) : null,
       sandbox: !isProduction(),
       simulatorsEnabled: signup.simulatorsEnabled,
-      embeddedSignupLive: false,
+      embeddedSignupLive: Boolean(signup.configured && isProduction()),
       embeddedSignupConfigured: signup.configured,
       notice: signup.notice,
     });
@@ -386,10 +388,36 @@ export function createWhatsAppNumbersRouter(): Router {
         ownerType: owner.ownerType,
         ownerId: owner.ownerId,
         displayName: String(body.displayName || body.clinicName || req.user?.name || ""),
+        signupEvent: String(body.event || body.signupEvent || "").trim() || undefined,
+        existingPin: String(body.pin || body.existingPin || "").trim() || undefined,
       });
       res.json(result);
     } catch (err) {
       handleWabaError(res, err, "Failed to complete Embedded Signup");
+    }
+  });
+
+  router.post("/whatsapp-numbers/sync-templates", requireAuth, requireRole(...CLINIC_MANAGER_ROLES), async (req, res) => {
+    try {
+      bootWhatsAppOwnershipSchema();
+      const tenantId = String(req.user?.tenantId || "").trim();
+      if (!tenantId) return res.status(403).json({ error: "No clinic tenant is linked to this account." });
+      const row = getTenantWabaNumber(tenantId);
+      if (!row || row.status !== "connected" || !row.waba_id || !row.meta_token_ref) {
+        return res.status(400).json({ error: "Connect your clinic WhatsApp Business Account before syncing templates." });
+      }
+      const accessToken = getWhatsAppNumberSecret(row.meta_token_ref);
+      if (!accessToken) {
+        return res.status(503).json({ error: "Stored WhatsApp Business token is unavailable. Reconnect with Meta Embedded Signup." });
+      }
+      const summary = await syncAndProvisionClinicWabaTemplates({
+        tenantId,
+        wabaId: row.waba_id,
+        accessToken,
+      });
+      res.json({ ok: true, ...summary });
+    } catch (err) {
+      handleWabaError(res, err, "Failed to sync WhatsApp templates");
     }
   });
 

@@ -729,4 +729,55 @@ describe("Auth / tenant isolation / CORS / CSRF / rate limit", () => {
       await new Promise<void>((resolve, reject) => srv.close((err) => (err ? reject(err) : resolve())));
     }
   });
+
+  it("allows top-level cross-site GET OAuth callbacks without Origin in production while still blocking hostile Origins and POSTs", () => {
+    const prod = {
+      NODE_ENV: "production",
+      APP_URL: "https://www.mylumera.in",
+      ALLOWED_ORIGINS: "https://www.mylumera.in",
+    } as NodeJS.ProcessEnv;
+
+    const fbCallbackNavigate = {
+      method: "GET",
+      path: "/api/auth/facebook/callback",
+      originalUrl: "/api/auth/facebook/callback?code=AQB-123&state=xyz",
+      headers: {
+        "sec-fetch-site": "cross-site",
+        "sec-fetch-mode": "navigate",
+        "sec-fetch-dest": "document",
+      },
+    } as unknown as express.Request;
+    assert.equal(corsShouldReject(fbCallbackNavigate, prod), false);
+
+    const googleCallbackNullOrigin = {
+      method: "GET",
+      path: "/api/auth/google/callback",
+      originalUrl: "/api/auth/google/callback?code=4/0Aean&state=abc",
+      headers: {
+        origin: "null",
+        "sec-fetch-site": "cross-site",
+      },
+    } as unknown as express.Request;
+    assert.equal(corsShouldReject(googleCallbackNullOrigin, prod), false);
+
+    const evilOriginGet = {
+      method: "GET",
+      path: "/api/auth/facebook/callback",
+      originalUrl: "/api/auth/facebook/callback?code=AQB-123",
+      headers: {
+        origin: "https://evil.example",
+      },
+    } as unknown as express.Request;
+    assert.equal(corsShouldReject(evilOriginGet, prod), true);
+
+    const postWithoutOrigin = {
+      method: "POST",
+      path: "/api/auth/facebook/callback",
+      originalUrl: "/api/auth/facebook/callback",
+      headers: {
+        "sec-fetch-site": "cross-site",
+      },
+    } as unknown as express.Request;
+    assert.equal(corsShouldReject(postWithoutOrigin, prod), true);
+  });
 });

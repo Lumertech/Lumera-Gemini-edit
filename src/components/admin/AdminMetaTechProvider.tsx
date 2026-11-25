@@ -594,15 +594,15 @@ export const AdminMetaTechProvider: React.FC = () => {
             </h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs text-slate-300">
               <div className="p-3.5 bg-slate-800/80 rounded-lg border border-slate-700/70">
-                <div className="font-semibold text-amber-300 mb-1">Embedded Signup — not live</div>
+                <div className="font-semibold text-emerald-300 mb-1">Embedded Signup v4 — wired</div>
                 <p>
-                  Real Embedded Signup (JS SDK + auth-code exchange) is not wired. The simulate route is SANDBOX / DEV-ONLY and is disabled in production.
+                  Uses the Meta JS SDK with <code>config_id</code>, server-side authorization-code exchange, WABA webhook subscription, and WhatsApp Business App Coexistence onboarding. The simulate route stays SANDBOX / DEV-ONLY and is disabled in production.
                 </p>
               </div>
               <div className="p-3.5 bg-slate-800/80 rounded-lg border border-slate-700/70">
-                <div className="font-semibold text-amber-300 mb-1">WABA connect — local store</div>
+                <div className="font-semibold text-emerald-300 mb-1">WABA tokens — secret-table storage</div>
                 <p>
-                  Clinic WABA ids are stored locally. Demo tokens with <code>EAAJ...</code> are not live Graph credentials.
+                  Business tokens and registration PINs are stored in <code>whatsapp_number_secrets</code> (AES-256-GCM encrypted when <code>WA_TOKEN_KEY</code> is configured). Demo <code>EAAJ...</code> placeholders are rejected in production.
                 </p>
               </div>
               <div className="p-3.5 bg-slate-800/80 rounded-lg border border-slate-700/70">

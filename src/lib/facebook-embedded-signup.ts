@@ -54,6 +54,7 @@ export type EmbeddedSignupSession = {
   wabaId: string;
   phoneNumberId: string;
   businessId?: string;
+  event?: string;
 };
 
 type FbLoginResponse = {
@@ -232,21 +233,37 @@ export function launchEmbeddedSignupV4(config: EmbeddedSignupConfig): Promise<Em
     let wabaId = "";
     let phoneNumberId = "";
     let businessId = "";
+    let finishEvent = "";
     let settled = false;
+
+    const cleanup = () => {
+      clearTimeout(timeoutHandle);
+      window.removeEventListener("message", onMessage);
+    };
 
     const trySettle = () => {
       if (settled || !code || !wabaId || !phoneNumberId) return;
       settled = true;
-      window.removeEventListener("message", onMessage);
-      resolve({ code, wabaId, phoneNumberId, businessId: businessId || undefined });
+      cleanup();
+      resolve({
+        code,
+        wabaId,
+        phoneNumberId,
+        businessId: businessId || undefined,
+        event: finishEvent || undefined,
+      });
     };
 
     const fail = (message: string) => {
       if (settled) return;
       settled = true;
-      window.removeEventListener("message", onMessage);
+      cleanup();
       reject(new Error(message));
     };
+
+    const timeoutHandle = setTimeout(() => {
+      fail("Meta Embedded Signup timed out. Please reopen the popup and try again.");
+    }, 5 * 60 * 1000);
 
     const onMessage = (event: MessageEvent) => {
       if (!isFacebookEmbeddedSignupOrigin(String(event.origin || ""))) return;
@@ -258,6 +275,8 @@ export function launchEmbeddedSignupV4(config: EmbeddedSignupConfig): Promise<Em
         }
         return;
       }
+      const rawEvent = String(data.event || data.type || "").trim();
+      if (rawEvent) finishEvent = rawEvent;
       const assets = extractSessionAssets(data);
       if (assets.wabaId) wabaId = assets.wabaId;
       if (assets.phoneNumberId) phoneNumberId = assets.phoneNumberId;
