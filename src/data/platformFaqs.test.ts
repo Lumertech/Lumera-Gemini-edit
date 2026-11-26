@@ -9,6 +9,7 @@ import { LandingPage } from "../components/LandingPage.tsx";
 import {
   FAQ_CATEGORIES,
   PLATFORM_FAQS,
+  WHATSAPP_LINKING_JOURNEY_STEPS,
   WHATSAPP_NUMBER_OPTIONS,
   WHATSAPP_SETUP_FAQS,
   buildFaqPageJsonLd,
@@ -70,6 +71,11 @@ describe("Platform & WhatsApp Linking FAQ section", () => {
     assert.match(html, /data-testid="landing-footer-faq"/);
     assert.match(html, /data-testid="platform-faq-section"/);
     assert.match(html, /data-testid="whatsapp-number-options-matrix"/);
+    assert.match(html, /data-testid="whatsapp-linking-journey-steps"/);
+    assert.equal(WHATSAPP_LINKING_JOURNEY_STEPS.length, 6);
+    for (let step = 1; step <= 6; step++) {
+      assert.match(html, new RegExp(`data-testid="wa-journey-step-${step}"`));
+    }
     assert.match(html, /application\/ld\+json/);
   });
 });

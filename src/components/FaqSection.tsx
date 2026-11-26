@@ -13,11 +13,13 @@ import {
   CreditCard,
   Stethoscope,
   Info,
+  ListChecks,
   X,
 } from "lucide-react";
 import {
   FAQ_CATEGORIES,
   PLATFORM_FAQS,
+  WHATSAPP_LINKING_JOURNEY_STEPS,
   WHATSAPP_NUMBER_OPTIONS,
   WHATSAPP_SETUP_FAQS,
   buildFaqPageJsonLd,
@@ -50,6 +52,226 @@ function matchesFaqQuery(item: PlatformFaqItem, rawQuery: string): boolean {
   return q.split(/\s+/).every((word) => haystack.includes(word));
 }
 
+export const WhatsAppLinkingJourneyGuide: React.FC<{
+  variant?: "dark" | "light";
+  compact?: boolean;
+}> = ({ variant = "dark", compact = false }) => {
+  const isDark = variant === "dark";
+
+  return (
+    <div
+      data-testid="whatsapp-number-options-matrix"
+      className={
+        isDark
+          ? "mb-8 rounded-2xl border border-emerald-500/30 bg-gradient-to-br from-emerald-950/40 via-slate-900/95 to-slate-900/95 p-5 sm:p-6 space-y-6"
+          : "mb-6 rounded-2xl border border-emerald-200 bg-emerald-50/40 p-4 sm:p-6 space-y-6"
+      }
+    >
+      {/* Part A: 3 Number Choices Side-by-Side */}
+      <div className="space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div>
+            <span
+              className={
+                isDark
+                  ? "text-[11px] font-bold uppercase tracking-wider text-emerald-300"
+                  : "text-[11px] font-bold uppercase tracking-wider text-emerald-800"
+              }
+            >
+              WhatsApp Number Linking — Complete Clinic Walkthrough
+            </span>
+            <h3
+              className={
+                isDark
+                  ? "text-base sm:text-xl font-bold text-white mt-0.5"
+                  : "text-sm sm:text-lg font-bold text-slate-900 mt-0.5"
+              }
+            >
+              Part 1: Which Phone Number Can Your Clinic Connect?
+            </h3>
+            <p className={isDark ? "text-xs text-slate-300 mt-1" : "text-xs text-slate-600 mt-1"}>
+              Before launching Meta Embedded Signup, choose which of these three phone number paths fits your practice:
+            </p>
+          </div>
+          <span
+            className={
+              isDark
+                ? "text-[11px] px-2.5 py-1 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-200 self-start sm:self-auto shrink-0"
+                : "text-[11px] px-2.5 py-1 rounded-lg bg-white border border-emerald-200 text-emerald-800 font-medium self-start sm:self-auto shrink-0"
+            }
+          >
+            3 Supported Number Paths
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          {WHATSAPP_NUMBER_OPTIONS.map((opt) => {
+            const verdictStyle =
+              opt.verdict === "Recommended"
+                ? isDark
+                  ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
+                  : "bg-emerald-100 text-emerald-800 border-emerald-300"
+                : opt.verdict === "No Extra SIM Needed"
+                  ? isDark
+                    ? "bg-blue-500/20 text-blue-300 border-blue-500/40"
+                    : "bg-blue-100 text-blue-800 border-blue-300"
+                  : isDark
+                    ? "bg-amber-500/20 text-amber-300 border-amber-500/40"
+                    : "bg-amber-100 text-amber-900 border-amber-300";
+
+            return (
+              <div
+                key={opt.id}
+                className={
+                  isDark
+                    ? "rounded-xl border border-slate-800 bg-slate-950/85 p-4 flex flex-col justify-between space-y-3"
+                    : "rounded-xl border border-slate-200 bg-white p-4 flex flex-col justify-between space-y-3 shadow-2xs"
+                }
+              >
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <span
+                      className={
+                        isDark
+                          ? "text-[10px] font-semibold text-slate-400 uppercase tracking-wider"
+                          : "text-[10px] font-semibold text-slate-500 uppercase tracking-wider"
+                      }
+                    >
+                      {opt.badge}
+                    </span>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${verdictStyle}`}>
+                      {opt.verdict}
+                    </span>
+                  </div>
+                  <h4 className={isDark ? "text-sm font-bold text-white" : "text-sm font-bold text-slate-900"}>
+                    {opt.title}
+                  </h4>
+                  <p className={isDark ? "text-xs text-slate-300 leading-relaxed" : "text-xs text-slate-600 leading-relaxed"}>
+                    {opt.summary}
+                  </p>
+                </div>
+
+                <ul className="space-y-1.5 pt-2 border-t border-slate-800/40">
+                  {opt.details.map((detail, idx) => (
+                    <li
+                      key={idx}
+                      className={`flex items-start gap-1.5 text-[11px] leading-relaxed ${
+                        isDark ? "text-slate-300" : "text-slate-600"
+                      }`}
+                    >
+                      <CheckCircle2
+                        className={`w-3.5 h-3.5 shrink-0 mt-0.5 ${
+                          isDark ? "text-emerald-400" : "text-emerald-600"
+                        }`}
+                      />
+                      <span>{detail}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Part B: End-to-End 6-Step Linking Journey */}
+      <div
+        data-testid="whatsapp-linking-journey-steps"
+        className={`pt-5 border-t ${isDark ? "border-slate-800" : "border-emerald-200/80"} space-y-4`}
+      >
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div>
+            <span
+              className={
+                isDark
+                  ? "text-[11px] font-bold uppercase tracking-wider text-blue-300 flex items-center gap-1.5"
+                  : "text-[11px] font-bold uppercase tracking-wider text-blue-700 flex items-center gap-1.5"
+              }
+            >
+              <ListChecks className="w-3.5 h-3.5" />
+              End-to-End Onboarding Flow
+            </span>
+            <h3
+              className={
+                isDark
+                  ? "text-base sm:text-xl font-bold text-white mt-0.5"
+                  : "text-sm sm:text-lg font-bold text-slate-900 mt-0.5"
+              }
+            >
+              Part 2: Step-by-Step WhatsApp Number Linking Journey (Steps 1 to 6)
+            </h3>
+            <p className={isDark ? "text-xs text-slate-300 mt-1" : "text-xs text-slate-600 mt-1"}>
+              Exactly what happens before, during, and right after you connect your clinic's WhatsApp Business Account:
+            </p>
+          </div>
+        </div>
+
+        <div className={`grid grid-cols-1 ${compact ? "" : "md:grid-cols-2"} gap-4`}>
+          {WHATSAPP_LINKING_JOURNEY_STEPS.map((step) => (
+            <div
+              key={step.id}
+              data-testid={`wa-journey-step-${step.stepNumber}`}
+              className={
+                isDark
+                  ? "rounded-xl border border-slate-800 bg-slate-950/80 p-4 space-y-2.5"
+                  : "rounded-xl border border-slate-200 bg-white p-4 space-y-2.5 shadow-2xs"
+              }
+            >
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <span
+                    className={
+                      isDark
+                        ? "w-6 h-6 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-xs font-extrabold flex items-center justify-center shrink-0"
+                        : "w-6 h-6 rounded-full bg-emerald-100 border border-emerald-300 text-emerald-800 text-xs font-extrabold flex items-center justify-center shrink-0"
+                    }
+                  >
+                    {step.stepNumber}
+                  </span>
+                  <span
+                    className={
+                      isDark
+                        ? "text-[10px] font-bold uppercase tracking-wider text-emerald-300"
+                        : "text-[10px] font-bold uppercase tracking-wider text-emerald-700"
+                    }
+                  >
+                    Step {step.stepNumber} · {step.badge}
+                  </span>
+                </div>
+              </div>
+
+              <h4 className={isDark ? "text-sm font-bold text-white" : "text-sm font-bold text-slate-900"}>
+                {step.title}
+              </h4>
+              <p className={isDark ? "text-xs text-slate-300 leading-relaxed" : "text-xs text-slate-600 leading-relaxed"}>
+                {step.summary}
+              </p>
+
+              <ul className="space-y-1.5 pt-1">
+                {step.points.map((pt, idx) => (
+                  <li
+                    key={idx}
+                    className={`flex items-start gap-1.5 text-[11px] leading-relaxed ${
+                      isDark ? "text-slate-300" : "text-slate-600"
+                    }`}
+                  >
+                    <CheckCircle2
+                      className={`w-3.5 h-3.5 shrink-0 mt-0.5 ${
+                        isDark ? "text-blue-400" : "text-blue-600"
+                      }`}
+                    />
+                    <span>{pt}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export interface FaqSectionProps {
   variant?: "dark" | "light";
   includeJsonLd?: boolean;
@@ -69,6 +291,10 @@ export const FaqSection: React.FC<FaqSectionProps> = ({
   const [openIds, setOpenIds] = useState<Record<string, boolean>>({
     "wa-existing-number": true,
     "wa-virtual-number": true,
+    "wa-landline-number": true,
+    "wa-checklist-before-signup": true,
+    "wa-2fa-pin": true,
+    "wa-meta-billing-and-templates": true,
     "shared-mobile-multi-pet-child-family": true,
   });
 
@@ -101,7 +327,9 @@ export const FaqSection: React.FC<FaqSectionProps> = ({
   const showWhatsAppMatrix =
     (selectedCategory === "all" || selectedCategory === "whatsapp-linking") &&
     (!searchQuery.trim() ||
-      /whatsapp|number|sim|virtual|landline|existing|meta|coexistence|business/i.test(searchQuery));
+      /whatsapp|number|sim|virtual|landline|existing|meta|coexistence|business|pin|template|step/i.test(
+        searchQuery
+      ));
 
   const jsonLd = useMemo(() => JSON.stringify(buildFaqPageJsonLd(PLATFORM_FAQS)), []);
 
@@ -132,7 +360,7 @@ export const FaqSection: React.FC<FaqSectionProps> = ({
           }
         >
           <HelpCircle className="w-3.5 h-3.5" />
-          <span>Setup, WhatsApp Linking &amp; Clinical Workflow Guide</span>
+          <span>Setup, WhatsApp Number Linking Journey &amp; Clinical Workflow Guide</span>
         </div>
         <h2
           className={
@@ -141,16 +369,16 @@ export const FaqSection: React.FC<FaqSectionProps> = ({
               : "text-xl sm:text-2xl font-bold text-slate-900"
           }
         >
-          Frequently Asked Questions
+          WhatsApp Linking Journey &amp; Frequently Asked Questions
         </h2>
         <p
           className={
             isDark
-              ? "text-slate-400 mt-2 max-w-2xl mx-auto text-sm"
+              ? "text-slate-400 mt-2 max-w-3xl mx-auto text-sm"
               : "text-slate-600 text-xs sm:text-sm max-w-3xl"
           }
         >
-          Clear answers on connecting your clinic WhatsApp number (new SIM, landline, existing WhatsApp, or Meta virtual number), shared family/pet mobile numbers, ambient scribing, pricing, and data privacy.
+          Step-by-step walkthrough of connecting your clinic WhatsApp number (new SIM, clinic landline, existing WhatsApp rules, or Meta virtual number), plus answers on shared family/pet mobile numbers, ambient scribing, pricing, and data privacy.
         </p>
       </div>
 
@@ -158,16 +386,14 @@ export const FaqSection: React.FC<FaqSectionProps> = ({
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 mb-5">
         <div className="relative flex-1">
           <Search
-            className={`w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 ${
-              isDark ? "text-slate-400" : "text-slate-400"
-            }`}
+            className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400"
           />
           <input
             type="search"
             data-testid="faq-search-input"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search questions (e.g. existing WhatsApp number, virtual number, landline, multiple pets, trial)..."
+            placeholder="Search questions (e.g. existing WhatsApp number, virtual number, landline, 6-digit PIN, multiple pets, trial)..."
             aria-label="Search frequently asked questions"
             className={
               isDark
@@ -254,132 +480,8 @@ export const FaqSection: React.FC<FaqSectionProps> = ({
         })}
       </div>
 
-      {/* 3-Path WhatsApp Number Options Matrix */}
-      {showWhatsAppMatrix && (
-        <div
-          data-testid="whatsapp-number-options-matrix"
-          className={
-            isDark
-              ? "mb-8 rounded-2xl border border-emerald-500/30 bg-gradient-to-br from-emerald-950/40 via-slate-900/90 to-slate-900/90 p-5 sm:p-6"
-              : "mb-6 rounded-2xl border border-emerald-200 bg-emerald-50/50 p-4 sm:p-5"
-          }
-        >
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
-            <div>
-              <span
-                className={
-                  isDark
-                    ? "text-[11px] font-bold uppercase tracking-wider text-emerald-300"
-                    : "text-[11px] font-bold uppercase tracking-wider text-emerald-800"
-                }
-              >
-                WhatsApp Number Linking — Quick Decision Guide
-              </span>
-              <h3
-                className={
-                  isDark
-                    ? "text-base sm:text-lg font-bold text-white mt-0.5"
-                    : "text-sm sm:text-base font-bold text-slate-900 mt-0.5"
-                }
-              >
-                Which Phone Number Can Your Clinic Connect?
-              </h3>
-            </div>
-            <span
-              className={
-                isDark
-                  ? "text-[11px] px-2.5 py-1 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-200 self-start sm:self-auto"
-                  : "text-[11px] px-2.5 py-1 rounded-lg bg-white border border-emerald-200 text-emerald-800 font-medium self-start sm:self-auto"
-              }
-            >
-              3 Supported Paths via Meta Embedded Signup
-            </span>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            {WHATSAPP_NUMBER_OPTIONS.map((opt) => {
-              const verdictStyle =
-                opt.verdict === "Recommended"
-                  ? isDark
-                    ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
-                    : "bg-emerald-100 text-emerald-800 border-emerald-300"
-                  : opt.verdict === "No Extra SIM Needed"
-                    ? isDark
-                      ? "bg-blue-500/20 text-blue-300 border-blue-500/40"
-                      : "bg-blue-100 text-blue-800 border-blue-300"
-                    : isDark
-                      ? "bg-amber-500/20 text-amber-300 border-amber-500/40"
-                      : "bg-amber-100 text-amber-900 border-amber-300";
-
-              return (
-                <div
-                  key={opt.id}
-                  className={
-                    isDark
-                      ? "rounded-xl border border-slate-800 bg-slate-950/80 p-4 flex flex-col justify-between space-y-3"
-                      : "rounded-xl border border-slate-200 bg-white p-4 flex flex-col justify-between space-y-3 shadow-2xs"
-                  }
-                >
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <span
-                        className={
-                          isDark
-                            ? "text-[10px] font-semibold text-slate-400 uppercase tracking-wider"
-                            : "text-[10px] font-semibold text-slate-500 uppercase tracking-wider"
-                        }
-                      >
-                        {opt.badge}
-                      </span>
-                      <span
-                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${verdictStyle}`}
-                      >
-                        {opt.verdict}
-                      </span>
-                    </div>
-                    <h4
-                      className={
-                        isDark
-                          ? "text-sm font-bold text-white"
-                          : "text-sm font-bold text-slate-900"
-                      }
-                    >
-                      {opt.title}
-                    </h4>
-                    <p
-                      className={
-                        isDark
-                          ? "text-xs text-slate-300 leading-relaxed"
-                          : "text-xs text-slate-600 leading-relaxed"
-                      }
-                    >
-                      {opt.summary}
-                    </p>
-                  </div>
-
-                  <ul className="space-y-1.5 pt-2 border-t border-slate-800/40">
-                    {opt.details.map((detail, idx) => (
-                      <li
-                        key={idx}
-                        className={`flex items-start gap-1.5 text-[11px] leading-relaxed ${
-                          isDark ? "text-slate-400" : "text-slate-600"
-                        }`}
-                      >
-                        <CheckCircle2
-                          className={`w-3.5 h-3.5 shrink-0 mt-0.5 ${
-                            isDark ? "text-emerald-400" : "text-emerald-600"
-                          }`}
-                        />
-                        <span>{detail}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
+      {/* Full WhatsApp Number Options + 6-Step End-to-End Linking Journey */}
+      {showWhatsAppMatrix && <WhatsAppLinkingJourneyGuide variant={variant} />}
 
       {/* FAQ Accordion List */}
       {filteredFaqs.length === 0 ? (
@@ -548,8 +650,9 @@ export const FaqSection: React.FC<FaqSectionProps> = ({
 };
 
 /**
- * Compact contextual accordion placed right alongside ClinicWabaConnect in Onboarding & Clinic Settings
- * so clinicians get immediate answers during Meta Embedded Signup.
+ * Contextual WhatsApp Number Linking Walkthrough + FAQs placed directly alongside
+ * ClinicWabaConnect in Onboarding & Clinic Settings so clinicians get the full
+ * step-by-step explanation right where they connect their number.
  */
 export const WhatsAppLinkingFaqCard: React.FC<{
   variant?: "dark" | "light";
@@ -557,6 +660,7 @@ export const WhatsAppLinkingFaqCard: React.FC<{
 }> = ({ variant = "light", defaultOpen = false }) => {
   const isDark = variant === "dark";
   const [expanded, setExpanded] = useState(defaultOpen);
+  const [subTab, setSubTab] = useState<"journey" | "faqs">("journey");
   const [openQuestionId, setOpenQuestionId] = useState<string>(WHATSAPP_SETUP_FAQS[0]?.id || "");
 
   return (
@@ -564,8 +668,8 @@ export const WhatsAppLinkingFaqCard: React.FC<{
       data-testid="whatsapp-linking-faq-card"
       className={
         isDark
-          ? "mt-3 mb-4 rounded-xl border border-slate-800 bg-slate-950/70 overflow-hidden"
-          : "mt-3 rounded-xl border border-slate-200 bg-slate-50/80 overflow-hidden"
+          ? "mt-3 mb-4 rounded-xl border border-emerald-800/50 bg-slate-950/80 overflow-hidden"
+          : "mt-3 rounded-xl border border-slate-200 bg-slate-50/90 overflow-hidden"
       }
     >
       <button
@@ -576,76 +680,121 @@ export const WhatsAppLinkingFaqCard: React.FC<{
       >
         <div className="flex items-center gap-2 min-w-0">
           <HelpCircle className={isDark ? "w-4 h-4 text-emerald-400 shrink-0" : "w-4 h-4 text-emerald-700 shrink-0"} />
-          <span className={isDark ? "text-xs font-semibold text-slate-200" : "text-xs font-semibold text-slate-800"}>
-            WhatsApp Number FAQs: Can I use my existing number, a clinic landline, or a Meta virtual number?
-          </span>
+          <div className="min-w-0">
+            <span className={isDark ? "text-xs font-bold text-white block" : "text-xs font-bold text-slate-900 block"}>
+              Step-by-Step WhatsApp Number Linking Guide &amp; FAQs
+            </span>
+            <span className={isDark ? "text-[11px] text-slate-400 block" : "text-[11px] text-slate-600 block"}>
+              New SIM / Landline vs. Meta Virtual Number vs. Existing WhatsApp Number Rules (Steps 1–6)
+            </span>
+          </div>
         </div>
-        <span className={isDark ? "text-slate-400 shrink-0" : "text-slate-500 shrink-0"}>
-          {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+        <span
+          className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold shrink-0 ${
+            isDark ? "bg-slate-800 text-emerald-300" : "bg-white border border-slate-200 text-emerald-800"
+          }`}
+        >
+          {expanded ? "Hide Guide" : "Read Guide"}
+          {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
         </span>
       </button>
 
       {expanded && (
         <div
-          className={`px-4 pb-4 pt-2 space-y-2 border-t ${
+          className={`px-4 pb-4 pt-3 space-y-4 border-t ${
             isDark ? "border-slate-800" : "border-slate-200"
           }`}
         >
-          {WHATSAPP_SETUP_FAQS.map((faq) => {
-            const isItemOpen = openQuestionId === faq.id;
-            return (
-              <div
-                key={faq.id}
-                className={
-                  isDark
-                    ? "rounded-lg border border-slate-800 bg-slate-900/80"
-                    : "rounded-lg border border-slate-200 bg-white"
-                }
-              >
-                <button
-                  type="button"
-                  aria-expanded={isItemOpen}
-                  onClick={() => setOpenQuestionId(isItemOpen ? "" : faq.id)}
-                  className="w-full px-3 py-2.5 flex items-center justify-between gap-2 text-left cursor-pointer"
-                >
-                  <span className={isDark ? "text-xs font-semibold text-white" : "text-xs font-semibold text-slate-900"}>
-                    {faq.question}
-                  </span>
-                  {isItemOpen ? (
-                    <ChevronUp className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                  ) : (
-                    <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                  )}
-                </button>
-                {isItemOpen && (
+          {/* Mode Toggle: Step-by-Step Journey vs. Detailed Q&A */}
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setSubTab("journey")}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition cursor-pointer ${
+                subTab === "journey"
+                  ? "bg-emerald-600 border-emerald-600 text-white"
+                  : isDark
+                    ? "bg-slate-900 border-slate-700 text-slate-300 hover:border-slate-500"
+                    : "bg-white border-slate-200 text-slate-700 hover:border-slate-300"
+              }`}
+            >
+              1. Complete Linking Journey (3 Paths + 6 Steps)
+            </button>
+            <button
+              type="button"
+              onClick={() => setSubTab("faqs")}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition cursor-pointer ${
+                subTab === "faqs"
+                  ? "bg-blue-600 border-blue-600 text-white"
+                  : isDark
+                    ? "bg-slate-900 border-slate-700 text-slate-300 hover:border-slate-500"
+                    : "bg-white border-slate-200 text-slate-700 hover:border-slate-300"
+              }`}
+            >
+              2. Specific Questions ({WHATSAPP_SETUP_FAQS.length} FAQs)
+            </button>
+          </div>
+
+          {subTab === "journey" ? (
+            <WhatsAppLinkingJourneyGuide variant={variant} compact />
+          ) : (
+            <div className="space-y-2">
+              {WHATSAPP_SETUP_FAQS.map((faq) => {
+                const isItemOpen = openQuestionId === faq.id;
+                return (
                   <div
-                    className={`px-3 pb-3 pt-1 space-y-1.5 text-[11px] leading-relaxed border-t ${
-                      isDark ? "border-slate-800 text-slate-300" : "border-slate-100 text-slate-600"
-                    }`}
+                    key={faq.id}
+                    className={
+                      isDark
+                        ? "rounded-lg border border-slate-800 bg-slate-900/80"
+                        : "rounded-lg border border-slate-200 bg-white"
+                    }
                   >
-                    <p>{faq.answer}</p>
-                    {faq.bullets && (
-                      <ul className="space-y-1">
-                        {faq.bullets.map((b, idx) => (
-                          <li key={idx} className="flex items-start gap-1.5">
-                            <CheckCircle2
-                              className={`w-3 h-3 shrink-0 mt-0.5 ${
-                                isDark ? "text-emerald-400" : "text-emerald-600"
-                              }`}
-                            />
-                            <span>{b}</span>
-                          </li>
-                        ))}
-                      </ul>
+                    <button
+                      type="button"
+                      aria-expanded={isItemOpen}
+                      onClick={() => setOpenQuestionId(isItemOpen ? "" : faq.id)}
+                      className="w-full px-3 py-2.5 flex items-center justify-between gap-2 text-left cursor-pointer"
+                    >
+                      <span className={isDark ? "text-xs font-semibold text-white" : "text-xs font-semibold text-slate-900"}>
+                        {faq.question}
+                      </span>
+                      {isItemOpen ? (
+                        <ChevronUp className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                      ) : (
+                        <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                      )}
+                    </button>
+                    {isItemOpen && (
+                      <div
+                        className={`px-3 pb-3 pt-1 space-y-1.5 text-[11px] leading-relaxed border-t ${
+                          isDark ? "border-slate-800 text-slate-300" : "border-slate-100 text-slate-600"
+                        }`}
+                      >
+                        <p>{faq.answer}</p>
+                        {faq.bullets && (
+                          <ul className="space-y-1">
+                            {faq.bullets.map((b, idx) => (
+                              <li key={idx} className="flex items-start gap-1.5">
+                                <CheckCircle2
+                                  className={`w-3 h-3 shrink-0 mt-0.5 ${
+                                    isDark ? "text-emerald-400" : "text-emerald-600"
+                                  }`}
+                                />
+                                <span>{b}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
                     )}
                   </div>
-                )}
-              </div>
-            );
-          })}
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
     </div>
   );
 };
-

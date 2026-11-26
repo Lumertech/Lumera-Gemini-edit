@@ -255,7 +255,33 @@ export const ClinicWabaConnect: React.FC<ClinicWabaConnectProps> = ({ variant = 
           </button>
         </div>
       ) : (
-        <div className="space-y-2 pt-1">
+        <div className="space-y-2.5 pt-1">
+          <ul
+            className={`space-y-1 text-[11px] leading-relaxed rounded-lg p-2.5 border ${
+              variant === "onboarding"
+                ? "bg-slate-950/60 border-slate-800 text-slate-300"
+                : "bg-white/80 border-slate-200 text-slate-600"
+            }`}
+          >
+            <li>
+              <strong className={variant === "onboarding" ? "text-emerald-300" : "text-slate-900"}>
+                1. Dedicated new SIM or clinic landline (Recommended):
+              </strong>{" "}
+              Any number not active on WhatsApp links in 2 minutes via 6-digit SMS or direct voice call OTP.
+            </li>
+            <li>
+              <strong className={variant === "onboarding" ? "text-blue-300" : "text-slate-900"}>
+                2. Meta virtual number (No extra SIM needed):
+              </strong>{" "}
+              Meta can provision a cloud business number inside Embedded Signup once your Meta Business Portfolio is verified.
+            </li>
+            <li>
+              <strong className={variant === "onboarding" ? "text-amber-300" : "text-slate-900"}>
+                3. Existing WhatsApp number rules:
+              </strong>{" "}
+              Personal WhatsApp Messenger numbers cannot run simultaneously on Cloud API (delete the in-app account first to migrate), whereas eligible WhatsApp Business App numbers can link via Coexistence QR scan.
+            </li>
+          </ul>
           <div className="flex flex-wrap gap-2">
             <button
               type="button"

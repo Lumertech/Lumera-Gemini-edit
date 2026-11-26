@@ -41,6 +41,16 @@ export interface WhatsAppNumberOptionCard {
   details: string[];
 }
 
+export interface WhatsAppLinkingJourneyStep {
+  stepNumber: number;
+  id: string;
+  badge: string;
+  title: string;
+  summary: string;
+  points: string[];
+  callout?: string;
+}
+
 export const FAQ_CATEGORIES: FaqCategoryMeta[] = [
   {
     id: "whatsapp-linking",
@@ -117,6 +127,87 @@ export const WHATSAPP_NUMBER_OPTIONS: WhatsAppNumberOptionCard[] = [
     details: [
       "Personal WhatsApp Messenger app: Cannot run simultaneously on Cloud API. To reuse that number, back up chats, delete the WhatsApp account inside the mobile app (Settings → Account → Delete my account), then link it as a clean number.",
       "WhatsApp Business App (Coexistence): If your clinic already uses the WhatsApp Business App (not personal Messenger), Meta Embedded Signup v4 supports Coexistence in eligible regions by scanning a QR code from your Business App.",
+    ],
+  },
+];
+
+export const WHATSAPP_LINKING_JOURNEY_STEPS: WhatsAppLinkingJourneyStep[] = [
+  {
+    stepNumber: 1,
+    id: "choose-number-path",
+    badge: "Before You Start",
+    title: "Decide Which Phone Number Path Your Clinic Will Use",
+    summary:
+      "Meta enforces strict rules on which phone numbers can connect to the WhatsApp Business Cloud API. Pick one of these three paths first:",
+    points: [
+      "Path 1 — Dedicated New SIM or Clinic Landline (Recommended): Use a fresh mobile SIM or your clinic reception landline not active on WhatsApp. Verifies in 2 minutes via SMS or direct voice call OTP, keeping the doctor's personal WhatsApp untouched.",
+      "Path 2 — Meta-Provided Virtual Business Number (No Extra SIM Needed): Inside Meta Embedded Signup, Meta can provision a cloud virtual number after verifying your Meta Business Portfolio (clinic GST, Clinical Establishment / Shop Act, MSME Udyam, or utility proof).",
+      "Path 3 — Existing WhatsApp Number Rules: Regular personal WhatsApp Messenger numbers cannot run on Cloud API while active on your phone (you must first delete the WhatsApp account inside the mobile app under Settings → Account → Delete my account). Eligible WhatsApp Business App numbers can link via Meta Embedded Signup v4 Coexistence QR scan.",
+    ],
+  },
+  {
+    stepNumber: 2,
+    id: "pre-signup-checklist",
+    badge: "2-Minute Prep",
+    title: "Keep Your 4-Item Pre-Signup Checklist Ready",
+    summary:
+      "Having these four items ready ensures you finish the Meta popup in one smooth session without timeouts:",
+    points: [
+      "Facebook login with admin access to your clinic's Meta Business Portfolio (or create a new Business Portfolio directly inside the popup).",
+      "Public clinic display name matching your clinic signboard/letterhead, plus your clinic website or social profile link.",
+      "Immediate access to the SIM phone or reception landline for the 6-digit OTP (for landlines, pick 'Phone Call' OTP and temporarily bypass any 'Press 1' IVR menu).",
+      "Browser popups enabled for www.mylumera.in so the Facebook Embedded Signup window opens cleanly.",
+    ],
+  },
+  {
+    stepNumber: 3,
+    id: "embedded-signup-popup",
+    badge: "Inside Meta Popup",
+    title: "Complete Meta Embedded Signup (~2–3 Minutes)",
+    summary:
+      "Click 'Connect with Meta Embedded Signup' in Onboarding or Clinic Settings to launch Meta's guided flow:",
+    points: [
+      "Sign in with Facebook and select (or create) your clinic's Meta Business Portfolio and WhatsApp Business Account (WABA).",
+      "Enter your clinic's public WhatsApp display name and choose Medical & Health as your business category.",
+      "Enter your new SIM/landline number (verify the 6-digit SMS/call code), select a Meta virtual number, or scan the QR code from your WhatsApp Business App for Coexistence.",
+    ],
+  },
+  {
+    stepNumber: 4,
+    id: "cloud-webhook-and-pin",
+    badge: "Automatic Handshake",
+    title: "Cloud Webhook Wiring & Existing 6-Digit 2FA PIN (If Prompted)",
+    summary:
+      "Once the Meta window finishes, Lumera automatically exchanges the authorization code, subscribes your WABA webhooks, and registers the line:",
+    points: [
+      "Fresh numbers & Coexistence lines connect automatically with zero manual token copying.",
+      "If your number previously had WhatsApp Two-Step Verification (2FA) enabled, Meta asks for that existing 6-digit PIN — enter it right inside our inline PIN box and click 'Verify PIN & Connect' without restarting signup.",
+      "Forgot an old 6-digit PIN? Reset or disable Two-Step Verification inside Meta WhatsApp Manager → Phone Numbers using your Meta recovery email.",
+    ],
+  },
+  {
+    stepNumber: 5,
+    id: "meta-billing-and-templates",
+    badge: "Billing & Templates",
+    title: "Add INR Payment Method in Meta & Sync Utility Templates",
+    summary: `${META_TECH_PROVIDER_STATEMENT} Your clinic owns its WABA directly:`,
+    points: [
+      "Direct Meta billing (0% Lumera markup): Add an INR card or UPI AutoPay in Meta Business Settings → WhatsApp Payment Settings. Meta bills conversation charges directly to your clinic.",
+      "24-hour patient service window: Whenever a patient messages your clinic first to book an appointment or ask timings, replies within 24 hours run inside Meta's customer service window.",
+      "One-click utility templates: Click 'Sync WhatsApp templates' in Clinic Settings to submit standard appointment confirmation, queue reminder, and payment receipt templates to Meta.",
+    ],
+  },
+  {
+    stepNumber: 6,
+    id: "voice-languages-and-routing",
+    badge: "Go Live Controls",
+    title: "Configure Voice vs. Messaging-Only, Regional Languages & Doctor Routing",
+    summary:
+      "Customize how your connected clinic line greets and routes patients in WhatsApp Hub:",
+    points: [
+      "Voice + Chat vs. Messaging-Only: Enable live inbound AI Voice Receptionist calls + chat, or switch to Messaging-Only Mode (gracefully declining voice calls and instantly texting an interactive booking menu).",
+      "Sticky Hindi, Marathi & Regional Languages: Patients asking for Hindi or Marathi receive 100% localized Devanagari replies and quick-reply buttons, with 1-click Human Handover to your front desk anytime.",
+      "Shared Mobile & Multi-Doctor Routing: Supports multiple children, pets, or family members on one patient mobile number, plus one central Polyclinic reception line or optional visiting-doctor personal lines.",
     ],
   },
 ];
