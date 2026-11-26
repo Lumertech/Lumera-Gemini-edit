@@ -344,10 +344,7 @@ export const FaqSection: React.FC<FaqSectionProps> = ({
       }
     >
       {includeJsonLd && (
-        <script
-          type="application/ld+json"
-          dangerouslySetInnerHTML={{ __html: jsonLd }}
-        />
+        <script type="application/ld+json">{jsonLd}</script>
       )}
 
       {/* Header */}
