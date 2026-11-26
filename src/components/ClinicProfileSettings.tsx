@@ -5,6 +5,7 @@ import { useAuth } from "../auth/AuthContext";
 import { patchTenantLetterhead } from "../lib/letterhead";
 import { PersonalWabaConnect } from "./PersonalWabaConnect";
 import { ClinicWabaConnect } from "./ClinicWabaConnect";
+import { WhatsAppLinkingFaqCard } from "./FaqSection";
 
 const SPECIALTIES: PolyclinicSpecialty[] = [
   "General Medicine",
@@ -300,7 +301,10 @@ export const ClinicProfileSettings: React.FC<ClinicProfileSettingsProps> = ({
       </div>
 
       {user?.role === "CLINIC_ADMIN" || user?.role === "polyclinic_admin" || user?.role === "doctor" ? (
-        <ClinicWabaConnect />
+        <>
+          <ClinicWabaConnect />
+          <WhatsAppLinkingFaqCard variant="light" />
+        </>
       ) : null}
       {user?.role === "doctor" ? <PersonalWabaConnect variant="settings" /> : null}
 

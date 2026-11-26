@@ -39,6 +39,7 @@ import { LEGAL_ENTITY_NAME, PRODUCT_NAME } from "../brand";
 import { META_TECH_PROVIDER_STATEMENT } from "../lib/metaStatus";
 import { AMBIENT_SCRIBE_MISSION, CONTACT_EMAIL, TRIAL_LENGTH_BADGE } from "../lib/pricingCopy";
 import { BrandMark } from "./BrandMark";
+import { FaqSection } from "./FaqSection";
 import { ProspectAdvert } from "./ProspectAdvert";
 import { useNav } from "../nav/NavigationContext";
 import { surfaceToPath } from "../nav/surfaces";
@@ -286,6 +287,13 @@ export const LandingPage: React.FC = () => {
 
         {/* Consolidated Single Sign In Button */}
         <div className="flex items-center gap-3">
+          <a
+            href="#faq"
+            data-testid="landing-faq"
+            className="px-3 py-2 text-sm font-semibold text-slate-200 hover:text-white"
+          >
+            FAQ
+          </a>
           <a
             href="/pricing"
             data-testid="landing-pricing"
@@ -900,9 +908,14 @@ export const LandingPage: React.FC = () => {
             </div>
           </div>
         </div>
+      </section>
 
-        {/* Conversion Banner */}
-        <div className="mt-14 p-8 rounded-3xl bg-gradient-to-r from-blue-900/60 via-indigo-900/60 to-purple-900/60 border border-blue-500/30 text-center space-y-4 shadow-2xl">
+      {/* FREQUENTLY ASKED QUESTIONS & WHATSAPP NUMBER LINKING GUIDE */}
+      <FaqSection variant="dark" includeJsonLd />
+
+      {/* CONVERSION BANNER */}
+      <section className="max-w-6xl mx-auto px-4 pb-16">
+        <div className="p-8 rounded-3xl bg-gradient-to-r from-blue-900/60 via-indigo-900/60 to-purple-900/60 border border-blue-500/30 text-center space-y-4 shadow-2xl">
           <h3 className="text-2xl sm:text-3xl font-extrabold text-white font-manrope">
             Ready to Experience the AI Clinical Operating System?
           </h3>
@@ -940,6 +953,9 @@ export const LandingPage: React.FC = () => {
 
           {/* Policy Links */}
           <nav aria-label="Footer navigation" className="flex flex-wrap justify-center gap-4 sm:gap-6 text-xs text-slate-300 font-medium pt-2 border-t border-slate-900">
+            <a href="#faq" data-testid="landing-footer-faq" className="hover:text-blue-400 transition">
+              FAQ
+            </a>
             <a href="/pricing" data-testid="landing-footer-pricing" className="hover:text-blue-400 transition">
               Pricing
             </a>

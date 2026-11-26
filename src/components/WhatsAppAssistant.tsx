@@ -31,11 +31,13 @@ import {
   Unlock,
   CornerDownRight,
   SlidersHorizontal,
-  Stethoscope
+  Stethoscope,
+  HelpCircle
 } from 'lucide-react';
 import { apiFetchResponse } from '../api/http';
 import { Patient, Doctor } from '../types';
 import { InertText } from '../lib/inertText';
+import { FaqSection } from './FaqSection';
 import { DocumentPreviewModal, DocumentPreviewData } from './whatsapp/DocumentPreviewModal';
 import { OutboundTriggerPanel } from './whatsapp/OutboundTriggerPanel';
 import { VoiceSettingsPanel } from './whatsapp/VoiceSettingsPanel';
@@ -103,7 +105,7 @@ export const WhatsAppAssistant: React.FC<WhatsAppAssistantProps> = ({
   doctors,
 }) => {
   // Navigation tabs: 'chat' (Patient Simulator), 'inbox' (Staff 2-Way Dashboard), 'outbound' (Trigger Engine), 'voice' (Voice Calls & AI Receptionist)
-  const [activeTab, setActiveTab] = useState<'chat' | 'inbox' | 'outbound' | 'voice'>('chat');
+  const [activeTab, setActiveTab] = useState<'chat' | 'inbox' | 'outbound' | 'voice' | 'faq'>('chat');
 
   // Conversations and active thread
   const [conversations, setConversations] = useState<ConversationItem[]>([]);
@@ -562,8 +564,27 @@ export const WhatsAppAssistant: React.FC<WhatsAppAssistantProps> = ({
             <PhoneCall className="w-3.5 h-3.5 text-purple-600" />
             Voice & Receptionist
           </button>
+          <button
+            onClick={() => setActiveTab('faq')}
+            data-testid="whatsapp-hub-faq-tab"
+            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              activeTab === 'faq'
+                ? 'bg-white text-emerald-700 shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <HelpCircle className="w-3.5 h-3.5 text-emerald-600" />
+            Setup & FAQs
+          </button>
         </div>
       </div>
+
+      {/* 1B. TAB: WHATSAPP SETUP & LINKING FAQS */}
+      {activeTab === 'faq' && (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 sm:p-7">
+          <FaqSection variant="light" defaultCategory="whatsapp-linking" id="whatsapp-hub-faq" />
+        </div>
+      )}
 
       {/* 2. TAB: VOICE & RECEPTIONIST SETTINGS */}
       {activeTab === 'voice' && <VoiceSettingsPanel />}

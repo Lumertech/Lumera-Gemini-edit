@@ -28,6 +28,7 @@ import { displayDoctorName, markWelcomeDashboard } from "../lib/sessionWorkspace
 import { formatAbdmRegistryLabel } from "../lib/abdmRegistryLabel";
 import { letterheadFromSessionHints, patchTenantLetterhead } from "../lib/letterhead";
 import { ClinicWabaConnect } from "../components/ClinicWabaConnect";
+import { WhatsAppLinkingFaqCard } from "../components/FaqSection";
 import { PersonalWabaConnect } from "../components/PersonalWabaConnect";
 import {
   DEFAULT_FRONT_DESK,
@@ -531,6 +532,7 @@ export const OnboardingWizard: React.FC = () => {
             inputClass={inputClass}
           />
           <ClinicWabaConnect variant="onboarding" />
+          <WhatsAppLinkingFaqCard variant="dark" />
           <PersonalWabaConnect variant="onboarding" />
           <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
             <button type="button" className={`${backBtn} w-full sm:w-auto justify-center`} onClick={() => setIndividualStep(2)}>
@@ -783,6 +785,7 @@ export const OnboardingWizard: React.FC = () => {
             inputClass={inputClass}
           />
           <ClinicWabaConnect variant="onboarding" />
+          <WhatsAppLinkingFaqCard variant="dark" />
           <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
             <button type="button" className={`${backBtn} w-full sm:w-auto justify-center`} onClick={() => setPolyclinicStep(3)}>
               <ArrowLeft className="w-3.5 h-3.5" /> Back
